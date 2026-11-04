@@ -10,10 +10,10 @@ use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallKind, MemoryCall, ViewSplit};
 use ralph_core::chat_thread::{
-    digest_with, drop_message, fork_check, guard_check, label_item, ls_counts, merge_prompt,
-    merged_check, merged_report, open_check, pull_message, revive_check, thread_split, Guarded,
-    Live, Merged, Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR,
-    THREAD_FILE,
+    digest_with, drop_message, fork_check, fork_launch, guard_check, label_item, ls_counts,
+    merge_prompt, merged_check, merged_report, open_check, pull_message, revive_check,
+    thread_split, ForkCommand, ForkLaunch, ForkSpawn, Guarded, Live, Merged, Parked, Scope,
+    ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
 };
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
@@ -253,6 +253,59 @@ fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
                 .unwrap_or_default();
             format!("thread {name} is in use{by}; close its chat first.")
         })
+}
+
+fn fork_ready(store: &Path, name: &ThreadName) -> Result<(), String> {
+    if fork_of(store).is_some() {
+        return Err(FORK_IN_THREAD.to_string());
+    }
+    let dir = thread_dir(store, name);
+    if !dir.join(THREAD_FILE).is_file() {
+        return Ok(());
+    }
+    let meta = read_meta(&dir).map_err(|e| format!("thread {name}: {e}"))?;
+    open_check(name, &meta)?;
+    claim_closed(&dir, name).map(drop)
+}
+
+pub fn fork(store: &Path, command: ForkCommand) -> String {
+    let name = match command {
+        ForkCommand::Open(name) => name,
+        ForkCommand::Usage(usage) => return usage,
+    };
+    if let Err(refused) = fork_ready(store, &name) {
+        return refused;
+    }
+    let (exe, cwd) = match (std::env::current_exe(), std::env::current_dir()) {
+        (Ok(exe), Ok(cwd)) => (exe, cwd),
+        (Err(e), _) | (_, Err(e)) => return format!("could not fork thread {name}: {e}"),
+    };
+    let (exe, main, cwd) = (
+        exe.to_string_lossy(),
+        store.to_string_lossy(),
+        cwd.to_string_lossy(),
+    );
+    let block = std::env::var("REX_BLOCK").ok();
+    let config_dir = std::env::var("RALPH_CONFIG_DIR").ok();
+    let spawn = ForkSpawn {
+        name: &name,
+        exe: &exe,
+        main: &main,
+        cwd: &cwd,
+        block: block.as_deref(),
+        config_dir: config_dir.as_deref(),
+    };
+    match fork_launch(spawn) {
+        ForkLaunch::Manual(text) => text,
+        ForkLaunch::Rex(argv) => match std::process::Command::new("rex").args(&argv).output() {
+            Ok(out) if out.status.success() => format!("opened thread {name} in a new Rex block"),
+            Ok(out) => format!(
+                "rex split failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Err(e) => format!("could not run rex: {e}"),
+        },
+    }
 }
 
 pub fn list(main: &Path, workers: &dyn Fn(&ThreadName) -> usize) -> io::Result<String> {
@@ -610,6 +663,30 @@ mod tests {
         park_thread(&main, &name("spare"), &[]).unwrap();
         drop_thread(&main, &name("spare"), &[]).unwrap();
         assert!(!thread_dir(&main, &name("spare")).exists());
+    }
+
+    #[test]
+    fn fork_refuses_open_parked_merged_and_from_inside_a_thread() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        assert_eq!(fork_ready(&main, &name("fresh")), Ok(()));
+        assert!(!thread_dir(&main, &name("fresh")).exists());
+        assert_eq!(fork_ready(&main, &auth), Ok(()));
+        assert_eq!(fork_ready(&main, &auth), Ok(()));
+        let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
+        let open = fork_ready(&main, &auth).unwrap_err();
+        assert!(open.starts_with("thread auth is in use"), "{open}");
+        drop(held);
+        assert_eq!(
+            fork_ready(&dir, &name("other")).unwrap_err(),
+            FORK_IN_THREAD
+        );
+        park_thread(&main, &auth, &[]).unwrap();
+        let parked = fork_ready(&main, &auth).unwrap_err();
+        assert!(parked.contains("is parked"), "{parked}");
+        merge_thread(&main, &auth, &[], &mut digest("x #auth:0")).unwrap();
+        let merged = fork_ready(&main, &auth).unwrap_err();
+        assert!(merged.contains("merged"), "{merged}");
     }
 
     fn save_records(dir: &Path) {

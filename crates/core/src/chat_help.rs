@@ -20,6 +20,7 @@ pub enum Command {
     Hold,
     Nudge,
     SendIt,
+    Fork,
     Config,
     View,
     Read,
@@ -29,7 +30,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 15] = [
+    pub const ALL: [Command; 16] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -39,6 +40,7 @@ impl Command {
         Command::Hold,
         Command::Nudge,
         Command::SendIt,
+        Command::Fork,
         Command::Config,
         Command::View,
         Command::Read,
@@ -58,6 +60,7 @@ impl Command {
             Command::Hold => "/hold",
             Command::Nudge => "/nudge",
             Command::SendIt => "/send-it",
+            Command::Fork => "/fork",
             Command::Config => "/config",
             Command::View => "/view",
             Command::Read => "/read",
@@ -183,6 +186,10 @@ impl Command {
                     "delete the plan and its approval; starts no turn",
                 ),
             ],
+            Command::Fork => &[(
+                "/fork <name>",
+                "open thread <name> in a new Rex block next to this chat, on this chat's store; main's chat only; refused when the thread is merged, parked or already open; outside Rex it prints the command to run instead; while a turn runs it waits in the queue",
+            )],
             Command::Config => &[(
                 "/config",
                 "the config this chat resolved at start: warnings, source files and paths, set RALPH_* and editor or color variables, start flags, and every merged key with its source (default, global, store, env or flag); notes config files changed on disk since start; starts no turn",

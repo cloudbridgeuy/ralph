@@ -83,6 +83,7 @@ fn lists_hold_every_variant() {
             Hold,
             Nudge,
             SendIt,
+            Fork,
             Config,
             View,
             Read,
@@ -109,6 +110,13 @@ fn lists_hold_every_variant() {
             Restart
         }
     );
+}
+
+#[test]
+fn the_fork_row_says_it_opens_a_rex_block() {
+    let wide = help_text(2_000);
+    assert!(wide.contains("/fork <name>"), "{wide}");
+    assert!(wide.contains("new Rex block"), "{wide}");
 }
 
 #[test]
