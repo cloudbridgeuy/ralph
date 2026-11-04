@@ -189,6 +189,38 @@ fn test_cli_stop_hook_takes_usage_with_usage_seen() {
 }
 
 #[test]
+fn test_cli_stop_hook_config_store_is_optional_beside_store() {
+    let site = ["--store", "/s", "--id", "A", "--worktree", "/w"];
+    let with = stop_hook_args(&[site.as_slice(), &["--config-store", "/link/s"]].concat()).unwrap();
+    assert_eq!(with.config_store, Some(std::path::PathBuf::from("/link/s")));
+    assert_eq!(stop_hook_args(&site).unwrap().config_store, None);
+}
+
+#[test]
+fn test_cli_stop_hook_config_store_requires_store() {
+    assert!(stop_hook_args(&["--config-store", "/link/s"]).is_err());
+}
+
+#[test]
+fn test_cli_stop_hook_layer_store_prefers_config_store() {
+    let site = ["--store", "/s", "--id", "A", "--worktree", "/w"];
+    let args = stop_hook_args(&[site.as_slice(), &["--config-store", "/link/s"]].concat()).unwrap();
+    assert_eq!(args.layer_store(), Some(std::path::Path::new("/link/s")));
+}
+
+#[test]
+fn test_cli_stop_hook_layer_store_falls_back_to_store() {
+    let site = ["--store", "/s", "--id", "A", "--worktree", "/w"];
+    let args = stop_hook_args(&site).unwrap();
+    assert_eq!(args.layer_store(), Some(std::path::Path::new("/s")));
+}
+
+#[test]
+fn test_cli_stop_hook_layer_store_is_none_without_a_store() {
+    assert_eq!(stop_hook_args(&[]).unwrap().layer_store(), None);
+}
+
+#[test]
 fn test_cli_chat_history_takes_a_scope() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from([
         "ralph", "chat", "--thread", "t1", "history", "recall", "x", "--in", "main",

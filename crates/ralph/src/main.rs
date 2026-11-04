@@ -330,7 +330,7 @@ fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Err
 }
 
 fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(store) = &args.store {
+    if let Some(store) = args.layer_store() {
         config::set_store_layer(store);
     }
     let store = args.store.clone();

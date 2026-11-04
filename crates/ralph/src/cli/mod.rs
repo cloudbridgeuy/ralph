@@ -609,11 +609,20 @@ pub struct WorkerStopHookArgs {
     #[arg(long, value_name = "DIR", requires_all = ["id", "worktree"])]
     pub store: Option<std::path::PathBuf>,
 
+    #[arg(long, value_name = "DIR", requires = "store")]
+    pub config_store: Option<std::path::PathBuf>,
+
     #[arg(long, value_name = "WORKER")]
     pub id: Option<String>,
 
     #[arg(long, value_name = "DIR")]
     pub worktree: Option<std::path::PathBuf>,
+}
+
+impl WorkerStopHookArgs {
+    pub fn layer_store(&self) -> Option<&std::path::Path> {
+        self.config_store.as_deref().or(self.store.as_deref())
+    }
 }
 
 #[derive(clap::Args, Debug)]

@@ -15,9 +15,9 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
-    fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, import_servers,
-    opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
+    branch_name, claude_worker_settings_with_config, close_clear_paths, encode_spawn_record,
+    exclude_lines, fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text,
+    import_servers, opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
     resolve_codex_warning, resolve_cursor_model, resolve_opencode_model, resolve_ticket,
     rollback_plan, rollback_report, session_name, spawn_handoff, spawn_record_path, startup_state,
     task_dir_path, task_file_path, trust_key, with_start_warning, worker_command,
@@ -541,7 +541,7 @@ impl Workers {
         let path = dir.join(format!("{id}.settings.json"));
         fs::write(
             &path,
-            claude_worker_settings(
+            claude_worker_settings_with_config(
                 &self.exe,
                 markers,
                 site,
@@ -550,6 +550,7 @@ impl Workers {
                     worker: id,
                     usage: &usage,
                 },
+                Some(&self.written_store),
             )
             .to_string(),
         )?;
@@ -823,6 +824,28 @@ mod tests {
         let source = import_source(HarnessId::Claude, Ok::<_, String>(&config)).unwrap();
         assert_eq!(source.names, ["docs"]);
         assert_eq!(source.config_dir, Some(PathBuf::from("/alt")));
+    }
+
+    #[test]
+    fn settings_pass_the_written_store_path_as_config_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let workers = Workers::new(link.clone(), "/bin/ralph".into(), "auto".into(), None);
+        let markers = WorkerMarkers::new(&workers.store_dir, "A");
+        let site = WorkerSite {
+            store: workers.store_dir.clone(),
+            id: "A".into(),
+            worktree: dir.path().join("w"),
+        };
+        let path = workers.write_settings("A", &markers, Some(&site)).unwrap();
+        let settings: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(command.contains(&format!("--config-store '{}'", link.display())));
     }
 
     #[test]
