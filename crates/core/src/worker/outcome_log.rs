@@ -5,9 +5,9 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-pub const WORKERS_LOG_VERSION: u32 = 1;
-pub const ANALYTICS_DIR: &str = "analytics";
-pub const WORKERS_LOG_FILE: &str = "workers.jsonl";
+const WORKERS_LOG_VERSION: u32 = 1;
+const ANALYTICS_DIR: &str = "analytics";
+const WORKERS_LOG_FILE: &str = "workers.jsonl";
 
 pub fn workers_log_path(store: &Path) -> PathBuf {
     store.join(ANALYTICS_DIR).join(WORKERS_LOG_FILE)
@@ -15,13 +15,13 @@ pub fn workers_log_path(store: &Path) -> PathBuf {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum CloseOutcome {
+enum CloseOutcome {
     Landed,
     Abandoned,
     Forced,
 }
 
-pub fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcome {
+fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcome {
     if abandon {
         CloseOutcome::Abandoned
     } else if force && foreign_owner {
@@ -31,7 +31,7 @@ pub fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOu
     }
 }
 
-pub fn duration_secs(spawn_at: Option<u64>, closed_at: u64) -> Option<u64> {
+fn duration_secs(spawn_at: Option<u64>, closed_at: u64) -> Option<u64> {
     spawn_at
         .filter(|spawned| *spawned > 0)
         .and_then(|spawned| closed_at.checked_sub(spawned))
@@ -85,7 +85,7 @@ pub struct ReportFacts<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
-pub enum LifecycleKind {
+enum LifecycleKind {
     Spawn {
         ticket: Option<String>,
         tracker: Option<Tracker>,
@@ -123,7 +123,7 @@ pub struct LifecycleEvent {
     pub store: String,
     pub worker_id: String,
     #[serde(flatten)]
-    pub kind: LifecycleKind,
+    kind: LifecycleKind,
 }
 
 fn event(key: &LogKey, kind: LifecycleKind) -> LifecycleEvent {
