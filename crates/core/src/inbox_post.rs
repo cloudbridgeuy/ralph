@@ -44,7 +44,7 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
     Ok(text)
 }
 
-pub fn mark_untrusted(text: &str) -> String {
+pub(crate) fn mark_untrusted(text: &str) -> String {
     text.lines()
         .map(|line| {
             if line.is_empty() {
