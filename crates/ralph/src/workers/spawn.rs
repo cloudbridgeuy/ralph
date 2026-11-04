@@ -339,7 +339,7 @@ impl Workers {
         for marker in close_clear_paths(&self.store_dir, id) {
             clear_marker(&marker)?;
         }
-        self.write_spawn_record(id, ticket.clone(), base_sha.clone())?;
+        self.write_spawn_record(id, *harness, ticket.clone(), base_sha.clone())?;
         let command = match harness {
             HarnessId::Claude => {
                 let settings = self.write_settings(id, &markers, *site)?;
@@ -423,6 +423,7 @@ impl Workers {
     fn write_spawn_record(
         &self,
         id: &str,
+        harness: HarnessId,
         ticket: Option<Ticket>,
         base_sha: Option<String>,
     ) -> io::Result<()> {
@@ -430,7 +431,7 @@ impl Workers {
         let dir = path.parent().unwrap_or(&self.store_dir);
         fs::create_dir_all(dir)?;
         let tmp = dir.join(format!(".{id}.{}.tmp", std::process::id()));
-        let record = SpawnRecord::new(ticket, base_sha, now_secs());
+        let record = SpawnRecord::new(ticket, base_sha, harness, now_secs());
         fs::write(&tmp, encode_spawn_record(&record)?)?;
         fs::rename(tmp, path)
     }

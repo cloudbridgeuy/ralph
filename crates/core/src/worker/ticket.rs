@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use super::kind::HarnessId;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const SPAWN_RECORD_DIR: &str = "spawn";
@@ -80,15 +81,34 @@ pub struct SpawnRecord {
     pub at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_sha: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient_harness",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub harness: Option<HarnessId>,
+}
+
+fn lenient_harness<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<HarnessId>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 impl SpawnRecord {
-    pub fn new(ticket: Option<Ticket>, base_sha: Option<String>, at: u64) -> Self {
+    pub fn new(
+        ticket: Option<Ticket>,
+        base_sha: Option<String>,
+        harness: HarnessId,
+        at: u64,
+    ) -> Self {
         Self {
             tracker: ticket.as_ref().and_then(|ticket| ticket.tracker),
             ticket: ticket.map(|ticket| ticket.key),
             at,
             base_sha,
+            harness: Some(harness),
         }
     }
 
@@ -232,10 +252,15 @@ mod tests {
         let record = SpawnRecord::new(
             ticket("GUZ-918", Some(Tracker::Linear)),
             Some("abc123".into()),
+            HarnessId::ClaudeHeadless,
             1_767_225_600,
         );
         let encoded = encode_spawn_record(&record).unwrap();
         assert!(encoded.contains(r#""tracker":"linear""#), "{encoded}");
+        assert!(
+            encoded.contains(r#""harness":"claude-headless""#),
+            "{encoded}"
+        );
         assert!(encoded.contains(r#""base_sha":"abc123""#), "{encoded}");
         assert_eq!(decode_spawn_record(&encoded), Some(record.clone()));
         assert_eq!(record.ticket(), ticket("GUZ-918", Some(Tracker::Linear)));
@@ -243,8 +268,11 @@ mod tests {
 
     #[test]
     fn a_record_without_a_ticket_has_none() {
-        let record = SpawnRecord::new(None, None, 5);
-        assert_eq!(encode_spawn_record(&record).unwrap(), r#"{"at":5}"#);
+        let record = SpawnRecord::new(None, None, HarnessId::Claude, 5);
+        assert_eq!(
+            encode_spawn_record(&record).unwrap(),
+            r#"{"at":5,"harness":"claude"}"#
+        );
         assert_eq!(record.ticket(), None);
     }
 
@@ -256,7 +284,8 @@ mod tests {
                 ticket: None,
                 tracker: None,
                 at: 0,
-                base_sha: None
+                base_sha: None,
+                harness: None
             })
         );
         assert_eq!(
@@ -273,6 +302,27 @@ mod tests {
         assert_eq!(record.base_sha, None);
         let record = decode_spawn_record(r#"{"at":9,"base_sha":"abc"}"#).unwrap();
         assert_eq!(record.base_sha.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn an_older_record_without_a_harness_decodes_with_none() {
+        let record = decode_spawn_record(r#"{"at":9,"base_sha":"abc"}"#).unwrap();
+        assert_eq!(record.harness, None);
+    }
+
+    #[test]
+    fn an_unknown_harness_keeps_the_other_fields() {
+        let record = decode_spawn_record(
+            r#"{"ticket":"GUZ-1","at":9,"base_sha":"abc","harness":"future-agent"}"#,
+        )
+        .unwrap();
+        assert_eq!(record.harness, None);
+        assert_eq!(record.ticket.as_deref(), Some("GUZ-1"));
+        assert_eq!(record.at, 9);
+        assert_eq!(record.base_sha.as_deref(), Some("abc"));
+        let record = decode_spawn_record(r#"{"at":9,"harness":7}"#).unwrap();
+        assert_eq!(record.harness, None);
+        assert_eq!(record.at, 9);
     }
 
     #[test]
