@@ -487,6 +487,19 @@ mod tests {
         assert_eq!(excludes, [":(exclude,literal,top).ralph"]);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_is_kept_as_written_under_a_resolved_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let real = root.join("real");
+        fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(root.join("missing"), real.join("link")).unwrap();
+        std::os::unix::fs::symlink(&real, root.join("alias")).unwrap();
+        let resolved = canonical_or_planned(&Path::new("alias").join("link"), &root);
+        assert_eq!(resolved, real.join("link"));
+    }
+
     #[test]
     fn a_store_inside_the_repo_is_excluded_even_before_it_exists() {
         let dir = tempfile::tempdir().unwrap();
