@@ -170,6 +170,10 @@ pub fn config_root(store: &Path) -> PathBuf {
     fork_of(store).map_or_else(|| store.to_path_buf(), |(main, _)| main)
 }
 
+pub fn store_config_path(written: &Path) -> PathBuf {
+    config_root(written).join("config.toml")
+}
+
 pub fn thread_dir(main: &Path, name: &ThreadName) -> PathBuf {
     main.join(THREADS_DIR).join(name.as_str())
 }
@@ -441,6 +445,35 @@ mod tests {
 
     fn call(memory: &Memory, tool: &str, args: serde_json::Value) -> Result<String, String> {
         memory.call(&parse_tool_call(tool, &args).unwrap())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_config_of_a_plain_store_linked_to_a_thread_folder_stays_its_own() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        let x_foo = base.join("x").join("threads").join("foo");
+        fs::create_dir_all(&x_foo).unwrap();
+        let plain = base.join("plain");
+        std::os::unix::fs::symlink(&x_foo, &plain).unwrap();
+        assert_eq!(store_config_path(&plain), plain.join("config.toml"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_config_of_a_linked_thread_folder_is_mains() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path();
+        let elsewhere = base.join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let m_threads = base.join("m").join("threads");
+        fs::create_dir_all(&m_threads).unwrap();
+        let linked = m_threads.join("foo");
+        std::os::unix::fs::symlink(&elsewhere, &linked).unwrap();
+        assert_eq!(
+            store_config_path(&linked),
+            base.join("m").join("config.toml")
+        );
     }
 
     fn forked() -> (tempfile::TempDir, PathBuf, PathBuf) {

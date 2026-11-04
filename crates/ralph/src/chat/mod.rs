@@ -229,7 +229,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let store_dir = chat_dir(args.store, args.thread.as_ref())?;
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store_root = canonical_store(store_dir.clone());
-    crate::config::set_store_layer(&store_root);
+    crate::config::set_store_layer(&store_dir);
     let store = Store::new(store_dir.clone());
     let _chat = store
         .claim_chat()?
@@ -244,7 +244,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir()?;
     let global_config = absolute_from(&config_path(), &cwd);
-    let store_config = thread::config_root(&store_root).join("config.toml");
+    let store_config = thread::store_config_path(&store_dir);
     let loaded = load_for_chat(&global_config, &store_config);
     let config = loaded.config;
     let permission_mode = config.chat_permission_mode(
