@@ -251,7 +251,7 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 | `reply` | `harness`, `interrupt`, `via_permission`, `text_bytes`                                           |
 | `report` | `status` (`done`, `blocked`, `question`), `text_bytes`, `seq`                                   |
 
-- `spawn` is written after the launch succeeds, so a spawn that fails and rolls back has no row. `base_sha` is the tip of the worker branch when the worktree is ready.
+- `spawn` is written after the launch succeeds, so a spawn that fails and rolls back has no row. Rows are ordered by `at`, not by position in the file: a fast worker can append a report row before its own spawn row. `base_sha` is the tip of the worker branch when the worktree is ready.
 - `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
 - `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
 - `dirty` is `null` when the worktree is gone.
@@ -274,11 +274,12 @@ SELECT w.worker_id, w.outcome, w.duration_s, sum(u.cost_usd) AS cost_usd
 FROM last_close w
 LEFT JOIN read_json_auto('<config dir>/usage.jsonl') u
   ON u.store = w.store AND u.worker_id = w.worker_id AND u.kind = 'worker'
-  AND CAST(u.at AS TIMESTAMPTZ) BETWEEN CAST(w.spawn_at AS TIMESTAMPTZ) AND CAST(w.at AS TIMESTAMPTZ)
+  AND CAST(u.at AS TIMESTAMPTZ) >= CAST(w.spawn_at AS TIMESTAMPTZ)
+  AND CAST(u.at AS TIMESTAMPTZ) < CAST(w.at AS TIMESTAMPTZ) + INTERVAL 1 SECOND
 GROUP BY ALL;
 ```
 
-A worker id can run again after a close. The query keeps the latest close of each `store` and `worker_id`, and counts only usage rows between that close's `spawn_at` and its `at`. Limit: `cost_usd` is `NULL` when the close has no `spawn_at`. A usage row written after the close `at` is not counted.
+A worker id can run again after a close. The query keeps the latest close of each `store` and `worker_id`, and counts only usage rows from that close's `spawn_at` through the second of its `at`. Both are whole seconds and usage `at` keeps sub-seconds, so the upper bound is the next second. Limit: `cost_usd` is `NULL` when the close has no `spawn_at`. A usage row written after the close `at` is not counted.
 
 Closes per outcome (jq):
 
