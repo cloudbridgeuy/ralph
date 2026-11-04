@@ -92,6 +92,17 @@ fn thread_merge_digests_count_as_nap() {
 }
 
 #[test]
+fn ask_rows_show_as_ask() {
+    let mut ask = nap("claude-haiku-5-5", 0.04);
+    ask["kind"] = json!("ask");
+    let rows = rows_of(&jsonl(&[nap("claude-haiku-5-5", 0.01), ask.clone(), ask]));
+    let row = find(&rows, "ask", "claude-haiku-5-5");
+    assert_eq!(row.runs, Some(2));
+    assert!(close(row.usd, 0.08));
+    assert!(close(find(&rows, "nap", "claude-haiku-5-5").usd, 0.01));
+}
+
+#[test]
 fn main_rows_split_by_model() {
     let mut opus = turn("r1", 1, 0.5);
     opus["model"] = json!("claude-opus-5-5");

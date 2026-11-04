@@ -1,11 +1,12 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::keepalive::Stamp;
-use crate::chat::memory::{append_usage, usage_path, Store};
+use crate::chat::memory::{usage_path, Store};
 use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::chat::thread::{fork_view, Fork};
 use crate::highlight::ThemeConfig;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
+use crate::ledger;
 use crate::private_file::write_private;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
@@ -25,7 +26,7 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    carry_metadata, reply_entries, split_view, trigger_entries, usage_record, view_stats, CallKind,
+    carry_metadata, reply_entries, split_view, trigger_entries, usage_record, view_stats, CallSite,
     Trigger, ViewSplit,
 };
 use ralph_core::chat_process::ResetReason;
@@ -302,7 +303,7 @@ impl Turn<'_> {
             }
         };
         if let Some(mut record) = usage_record(
-            CallKind::Turn { trigger },
+            CallSite::Turn { trigger },
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
             &identity,
@@ -317,13 +318,14 @@ impl Turn<'_> {
                     .concat(),
                 ));
             }
-            record.process_turn = Some(process_turns);
-            record.request_at = result.request_at.map(|at| at.to_rfc3339());
-            record.reset = launch.as_ref().and_then(|spawned| spawned.reset);
-            record.run = Some(self.run.to_string());
-            record.store = Some(usage_store(self.store_dir));
+            let record = record
+                .with_process_turn(process_turns)
+                .with_request_at(result.request_at.map(|at| at.to_rfc3339()))
+                .with_reset(launch.as_ref().and_then(|spawned| spawned.reset))
+                .with_run(Some(self.run.to_string()))
+                .with_store(Some(usage_store(self.store_dir)));
             self.warn_if_err(
-                append_usage(&usage_path(), &record),
+                ledger::record(&usage_path(), &record),
                 "Failed to record chat usage",
             );
         }
@@ -571,7 +573,7 @@ mod tests {
         let identity = carry_metadata(&IterationMetadata::new(), true, &turn_metadata(&result));
         let costs = &result.as_ref().unwrap().stream_result.costs;
         let row = usage_record(
-            CallKind::Turn {
+            CallSite::Turn {
                 trigger: Trigger::User,
             },
             "t".into(),
@@ -579,8 +581,9 @@ mod tests {
             &identity,
         )
         .unwrap();
-        assert_eq!(row.model.as_deref(), Some("claude-haiku-5-5"));
-        assert_eq!(row.session_id.as_deref(), Some("s1"));
+        let row = serde_json::to_value(row).unwrap();
+        assert_eq!(row["model"], "claude-haiku-5-5");
+        assert_eq!(row["session_id"], "s1");
     }
 
     fn previous() -> IterationMetadata {

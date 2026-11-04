@@ -26,6 +26,7 @@ mod inbox_post;
 mod input_theme;
 mod invoke;
 mod json_file;
+mod ledger;
 pub mod markdown;
 mod mermaid_guard;
 mod opencode_usage;
@@ -198,6 +199,20 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let result = invoke::invoke(config)?;
     let costs = &result.stream_result.costs;
+    if let Some(record) = ralph_core::chat_memory::usage_record(
+        ralph_core::chat_memory::CallSite::Ask,
+        chrono::Utc::now().to_rfc3339(),
+        costs,
+        &result.stream_result.metadata,
+    ) {
+        warn_if_err(
+            ledger::record(
+                &chat::memory::usage_path(),
+                &record.with_request_at(result.request_at.map(|at| at.to_rfc3339())),
+            ),
+            "Failed to record ask usage",
+        );
+    }
     startup::display_ask_summary(
         &startup::AskSummary {
             success: result.exit_code == 0,
@@ -361,7 +376,7 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
         run_curator(
             prompt,
             &Curator {
-                kind: ralph_core::chat_memory::CallKind::Nap,
+                kind: ralph_core::chat_memory::CallSite::Nap,
                 store: &args.store,
                 run: args.run.clone(),
                 timeout: args.timeout,
@@ -372,7 +387,7 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
 }
 
 pub(crate) struct Curator<'a> {
-    pub kind: ralph_core::chat_memory::CallKind,
+    pub kind: ralph_core::chat_memory::CallSite,
     pub store: &'a std::path::Path,
     pub run: Option<String>,
     pub timeout: u64,
@@ -408,16 +423,17 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
         |delay| backoff::wait_unless(signal::is_terminated, delay),
     )
     .map_err(|e| e.to_string())?;
-    if let Some(mut record) = ralph_core::chat_memory::usage_record(
+    if let Some(record) = ralph_core::chat_memory::usage_record(
         curator.kind.clone(),
         chrono::Utc::now().to_rfc3339(),
         &result.stream_result.costs,
         &result.stream_result.metadata,
     ) {
-        record.run = curator.run.clone();
-        record.store = Some(workers::usage_store(curator.store));
+        let record = record
+            .with_run(curator.run.clone())
+            .with_store(Some(workers::usage_store(curator.store)));
         warn_if_err(
-            chat::memory::append_usage(&chat::memory::usage_path(), &record),
+            ledger::record(&chat::memory::usage_path(), &record),
             "Failed to record chat usage",
         );
     }

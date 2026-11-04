@@ -43,7 +43,7 @@ pub use tree::{
 };
 pub use usage::{
     carry_metadata, encode_usage, reply_entries, trigger_entries, usage_record, view_stats,
-    worker_usage_record, CallKind, Trigger, UsageRecord,
+    worker_usage_record, CallSite, LedgerRole, LedgerRow, Trigger,
 };
 
 pub const SUMMARY_BYTES: usize = 512;
