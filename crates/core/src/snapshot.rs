@@ -837,7 +837,6 @@ mod tests {
         assert!(!inside_without_pathspec(Path::new("/r"), Path::new("/r/s")));
     }
 
-    #[cfg(unix)]
     #[test]
     fn the_repo_root_store_message_words_the_folders_by_store_kind() {
         let store = Path::new("/r");
@@ -851,6 +850,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_not_excludable_message_names_the_path_that_failed() {
         use std::os::unix::ffi::OsStrExt;
