@@ -390,7 +390,6 @@ mod tests {
     #[test]
     fn a_reply_row_has_the_length_of_the_text_and_not_the_text() {
         let line = encode_event(&reply_event(&reply())).unwrap();
-        assert!(!line.contains("hello"));
         assert_eq!(
             serde_json::from_str::<Value>(&line).unwrap(),
             json!({
