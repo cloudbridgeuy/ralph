@@ -171,27 +171,37 @@ pub fn index_env(side: &Path, owner: &str) -> [(&'static str, OsString); 2] {
 
 pub const HEAD_CHECK_ARGS: [&str; 4] = ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"];
 
+pub fn store_exclude(repo: &Path, store: &Path) -> Option<String> {
+    let rel = store.strip_prefix(repo).ok()?.to_string_lossy();
+    let rel = if rel.is_empty() { "." } else { &rel };
+    Some(format!(":(exclude,literal){rel}"))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexStep {
+    ReadEmpty,
     ReadHead,
     AddAll,
 }
 
 impl IndexStep {
-    pub fn args(self) -> &'static [&'static str] {
-        match self {
-            IndexStep::ReadHead => &["read-tree", "-m", "-i", "HEAD"],
-            IndexStep::AddAll => &["add", "-A"],
+    pub fn args(self, exclude: Option<&str>) -> Vec<&str> {
+        match (self, exclude) {
+            (IndexStep::ReadEmpty, _) => vec!["read-tree", "--empty"],
+            (IndexStep::ReadHead, _) => vec!["read-tree", "-m", "-i", "HEAD"],
+            (IndexStep::AddAll, None) => vec!["add", "-A"],
+            (IndexStep::AddAll, Some(exclude)) => vec!["add", "-A", "--", exclude],
         }
     }
 }
 
 pub fn index_steps(has_head: bool) -> Vec<IndexStep> {
-    has_head
-        .then_some(IndexStep::ReadHead)
-        .into_iter()
-        .chain([IndexStep::AddAll])
-        .collect()
+    let start = if has_head {
+        IndexStep::ReadHead
+    } else {
+        IndexStep::ReadEmpty
+    };
+    vec![start, IndexStep::AddAll]
 }
 
 pub fn identity_env() -> [(&'static str, &'static str); 4] {
@@ -584,15 +594,55 @@ mod tests {
     fn index_steps_read_head_before_adding_everything() {
         assert_eq!(index_steps(true), [IndexStep::ReadHead, IndexStep::AddAll]);
         assert_eq!(
-            IndexStep::ReadHead.args(),
+            IndexStep::ReadHead.args(None),
             ["read-tree", "-m", "-i", "HEAD"]
         );
-        assert_eq!(IndexStep::AddAll.args(), ["add", "-A"]);
     }
 
     #[test]
-    fn index_steps_skip_read_head_without_head() {
-        assert_eq!(index_steps(false), [IndexStep::AddAll]);
+    fn index_steps_without_head_start_from_empty_index() {
+        assert_eq!(
+            index_steps(false),
+            [IndexStep::ReadEmpty, IndexStep::AddAll]
+        );
+        assert_eq!(IndexStep::ReadEmpty.args(None), ["read-tree", "--empty"]);
+    }
+
+    #[test]
+    fn add_all_args_without_exclude_are_unchanged() {
+        assert_eq!(IndexStep::AddAll.args(None), ["add", "-A"]);
+    }
+
+    #[test]
+    fn add_all_args_end_with_store_exclude() {
+        assert_eq!(
+            IndexStep::AddAll.args(Some(":(exclude,literal).ralph")),
+            ["add", "-A", "--", ":(exclude,literal).ralph"]
+        );
+    }
+
+    #[test]
+    fn store_exclude_is_literal_and_relative_to_repo() {
+        assert_eq!(
+            store_exclude(Path::new("/r"), Path::new("/r/.ralph")),
+            Some(":(exclude,literal).ralph".to_string())
+        );
+    }
+
+    #[test]
+    fn store_outside_repo_has_no_exclude() {
+        assert_eq!(
+            store_exclude(Path::new("/r"), Path::new("/elsewhere/s")),
+            None
+        );
+    }
+
+    #[test]
+    fn store_at_repo_root_excludes_everything() {
+        assert_eq!(
+            store_exclude(Path::new("/r"), Path::new("/r")),
+            Some(":(exclude,literal).".to_string())
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ use ralph_core::snapshot::{
     commit_tree_args, delete_payload, delete_refs_args, gc_args, identity_env, index_env,
     index_lock_path, index_path, index_steps, init_args, list_prefix_args, next_turn,
     parse_snapshot_base, parse_turns, refs_to_prune, side_dir, snapshot_lock_expired,
-    snapshot_lock_path, snapshot_message, update_ref_args, IndexStep, SnapshotBase,
+    snapshot_lock_path, snapshot_message, store_exclude, update_ref_args, IndexStep, SnapshotBase,
     CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS, SNAPSHOT_LOCK_POLL,
 };
 use ralph_core::worker::{base_branch, project_slug};
@@ -23,6 +23,7 @@ pub struct Snapshotter {
     repo: PathBuf,
     side: PathBuf,
     owner: String,
+    exclude: Option<String>,
 }
 
 fn git(args: &[OsString]) -> Command {
@@ -122,24 +123,33 @@ fn main_repo_of(cwd: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+fn exclude_of(repo: &Path, store: &Path) -> Option<String> {
+    let canonical = fs::canonicalize(store).unwrap_or_else(|_| store.to_path_buf());
+    store_exclude(repo, &crate::chat::thread::config_root(&canonical))
+}
+
 impl Snapshotter {
     pub fn open(store: &Path, cwd: &Path, owner: &str) -> Option<Self> {
         let repo = repo_of(cwd)?;
         let side = side_dir(store, &project_slug(&repo));
+        let exclude = exclude_of(&repo, store);
         Some(Self {
             repo,
             side,
             owner: owner.to_string(),
+            exclude,
         })
     }
 
     pub fn open_worktree(store: &Path, worktree: &Path, owner: &str) -> Option<Self> {
         let repo = repo_of(worktree)?;
         let side = side_dir(store, &project_slug(&main_repo_of(worktree)?));
+        let exclude = exclude_of(&repo, store);
         Some(Self {
             repo,
             side,
             owner: owner.to_string(),
+            exclude,
         })
     }
 
@@ -176,17 +186,15 @@ impl Snapshotter {
         command
     }
 
-    // HEAD's objects live in the repo, not the side dir, so read-tree swaps
-    // only the index. Stat-clean entries keep blobs an earlier add wrote to
-    // the side dir; the rest are rehashed by add -A.
     fn step_git(&self, step: IndexStep) -> Command {
+        let args = step.args(self.exclude.as_deref());
         match step {
-            IndexStep::ReadHead => {
-                let mut command = self.repo_command(step.args());
+            IndexStep::ReadEmpty | IndexStep::ReadHead => {
+                let mut command = self.repo_command(&args);
                 command.env("GIT_INDEX_FILE", index_path(&self.side, &self.owner));
                 command
             }
-            IndexStep::AddAll => self.repo_git(step.args()),
+            IndexStep::AddAll => self.repo_git(&args),
         }
     }
 
@@ -371,6 +379,7 @@ mod tests {
             repo: side.to_path_buf(),
             side: side.to_path_buf(),
             owner: worker_owner("A"),
+            exclude: None,
         }
     }
 
