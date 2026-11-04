@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 pub const KEEP_TURNS: usize = 20;
@@ -171,12 +171,6 @@ pub fn index_env(side: &Path, owner: &str) -> [(&'static str, OsString); 2] {
 
 pub const HEAD_CHECK_ARGS: [&str; 4] = ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"];
 
-pub fn store_exclude(repo: &Path, store: &Path) -> Option<String> {
-    let rel = store.strip_prefix(repo).ok()?.to_string_lossy();
-    let rel = if rel.is_empty() { "." } else { &rel };
-    Some(format!(":(exclude,literal){rel}"))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexStep {
     ReadEmpty,
@@ -185,23 +179,97 @@ pub enum IndexStep {
 }
 
 impl IndexStep {
-    pub fn args(self, exclude: Option<&str>) -> Vec<&str> {
-        match (self, exclude) {
-            (IndexStep::ReadEmpty, _) => vec!["read-tree", "--empty"],
-            (IndexStep::ReadHead, _) => vec!["read-tree", "-m", "-i", "HEAD"],
-            (IndexStep::AddAll, None) => vec!["add", "-A"],
-            (IndexStep::AddAll, Some(exclude)) => vec!["add", "-A", "--", exclude],
-        }
+    pub fn args(self, excludes: &[String]) -> Vec<String> {
+        let base: &[&str] = match self {
+            IndexStep::ReadEmpty => &["read-tree", "--empty"],
+            IndexStep::ReadHead => &["read-tree", "-m", "-i", "HEAD"],
+            IndexStep::AddAll => &["add", "-A", "--", "."],
+        };
+        let tail = match self {
+            IndexStep::ReadEmpty | IndexStep::ReadHead => &[],
+            IndexStep::AddAll => excludes,
+        };
+        base.iter()
+            .map(|arg| arg.to_string())
+            .chain(tail.iter().cloned())
+            .collect()
     }
 }
 
+fn exclude_pathspec(repo: &Path, path: &Path) -> Option<String> {
+    let parts = path
+        .strip_prefix(repo)
+        .ok()?
+        .components()
+        .map(|part| part.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+    (!parts.is_empty()).then(|| format!(":(exclude,literal,top){}", parts.join("/")))
+}
+
+fn inside_without_pathspec(repo: &Path, path: &Path) -> bool {
+    let inside = path
+        .strip_prefix(repo)
+        .is_ok_and(|rest| rest.components().next().is_some());
+    inside && exclude_pathspec(repo, path).is_none()
+}
+
+pub fn not_excludable_message(repo: &Path, store: &Path, side: &Path) -> Option<String> {
+    [("ralph store", store), ("snapshot repo folder", side)]
+        .into_iter()
+        .find(|(_, path)| inside_without_pathspec(repo, path))
+        .map(|(label, path)| {
+            format!(
+                "the {label} {} is inside the repo but its path is not valid UTF-8; snapshots will include it",
+                path.display()
+            )
+        })
+}
+
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut parts: Vec<Component> = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => match parts.last() {
+                Some(Component::Normal(_)) => {
+                    parts.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => parts.push(part),
+            },
+            _ => parts.push(part),
+        }
+    }
+    parts.iter().collect()
+}
+
+pub fn exclude_base(store: &Path, cwd: Option<PathBuf>) -> Option<PathBuf> {
+    match cwd {
+        Some(cwd) => Some(cwd),
+        None => store.is_absolute().then(PathBuf::new),
+    }
+}
+
+pub fn append_lexically(resolved: &Path, tail: &Path) -> PathBuf {
+    normalize_lexically(&resolved.join(tail))
+}
+
+pub fn snapshot_excludes(repo: &Path, store: &Path, side: &Path) -> Vec<String> {
+    let store_exclude = exclude_pathspec(repo, store);
+    let side_covered = store_exclude.is_some() && side.starts_with(store);
+    let side_exclude = (!side_covered)
+        .then(|| exclude_pathspec(repo, side))
+        .flatten();
+    store_exclude.into_iter().chain(side_exclude).collect()
+}
+
 pub fn index_steps(has_head: bool) -> Vec<IndexStep> {
-    let start = if has_head {
+    let read = if has_head {
         IndexStep::ReadHead
     } else {
         IndexStep::ReadEmpty
     };
-    vec![start, IndexStep::AddAll]
+    vec![read, IndexStep::AddAll]
 }
 
 pub fn identity_env() -> [(&'static str, &'static str); 4] {
@@ -594,54 +662,213 @@ mod tests {
     fn index_steps_read_head_before_adding_everything() {
         assert_eq!(index_steps(true), [IndexStep::ReadHead, IndexStep::AddAll]);
         assert_eq!(
-            IndexStep::ReadHead.args(None),
+            IndexStep::ReadHead.args(&["x".to_string()]),
             ["read-tree", "-m", "-i", "HEAD"]
+        );
+        assert_eq!(IndexStep::AddAll.args(&[]), ["add", "-A", "--", "."]);
+    }
+
+    #[test]
+    fn add_all_args_append_the_excludes_after_the_dot() {
+        let excludes = vec![
+            ":(exclude,literal,top)store".to_string(),
+            ":(exclude,literal,top)a/b".to_string(),
+        ];
+        assert_eq!(
+            IndexStep::AddAll.args(&excludes),
+            [
+                "add",
+                "-A",
+                "--",
+                ".",
+                ":(exclude,literal,top)store",
+                ":(exclude,literal,top)a/b"
+            ]
+        );
+    }
+
+    fn excludes_for(repo: &str, store: &str) -> Vec<String> {
+        let store = Path::new(store);
+        snapshot_excludes(Path::new(repo), store, &side_dir(store, "slug"))
+    }
+
+    #[test]
+    fn excludes_nothing_when_store_and_side_are_outside_the_repo() {
+        assert!(excludes_for("/r", "/elsewhere/store").is_empty());
+    }
+
+    #[test]
+    fn excludes_the_store_folder_when_it_is_inside_the_repo() {
+        assert_eq!(
+            excludes_for("/r", "/r/.ralph"),
+            [":(exclude,literal,top).ralph"]
         );
     }
 
     #[test]
-    fn index_steps_without_head_start_from_empty_index() {
+    fn excludes_a_nested_store_by_its_repo_relative_path() {
+        assert_eq!(
+            excludes_for("/r", "/r/a/b/store"),
+            [":(exclude,literal,top)a/b/store"]
+        );
+    }
+
+    #[test]
+    fn excludes_only_the_side_dir_when_the_store_is_the_repo_root() {
+        assert_eq!(
+            excludes_for("/r", "/r"),
+            [":(exclude,literal,top)snapshots/slug.git"]
+        );
+    }
+
+    #[test]
+    fn a_prefix_lookalike_is_not_inside_the_repo() {
+        assert!(excludes_for("/repo", "/repo-x/store").is_empty());
+    }
+
+    #[test]
+    fn trailing_slashes_do_not_change_the_result() {
+        assert_eq!(
+            excludes_for("/r/", "/r/.ralph/"),
+            [":(exclude,literal,top).ralph"]
+        );
+    }
+
+    #[test]
+    fn excludes_the_side_dir_when_only_it_is_inside_the_repo() {
+        let side = Path::new("/r/side/slug.git");
+        assert_eq!(
+            snapshot_excludes(Path::new("/r"), Path::new("/elsewhere"), side),
+            [":(exclude,literal,top)side/slug.git"]
+        );
+    }
+
+    #[test]
+    fn a_side_dir_under_the_store_is_not_listed_twice() {
+        assert_eq!(excludes_for("/r", "/r/s").len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_path_inside_the_repo_has_no_pathspec() {
+        use std::os::unix::ffi::OsStrExt;
+        let odd = Path::new("/r").join(std::ffi::OsStr::from_bytes(b"s\xff"));
+        assert!(inside_without_pathspec(Path::new("/r"), &odd));
+        assert!(!inside_without_pathspec(Path::new("/r"), Path::new("/r/s")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_not_excludable_message_names_the_path_that_failed() {
+        use std::os::unix::ffi::OsStrExt;
+        let odd = Path::new("/r").join(std::ffi::OsStr::from_bytes(b"s\xff"));
+        let repo = Path::new("/r");
+        let ok_store = Path::new("/r/s");
+        let ok_side = Path::new("/r/s/snapshots/x.git");
+        let on_store = not_excludable_message(repo, &odd, ok_side).unwrap();
+        assert!(on_store.contains("ralph store"), "{on_store}");
+        assert!(on_store.contains(&odd.display().to_string()), "{on_store}");
+        let on_side = not_excludable_message(repo, ok_store, &odd).unwrap();
+        assert!(on_side.contains("snapshot repo folder"), "{on_side}");
+        assert!(on_side.contains(&odd.display().to_string()), "{on_side}");
+        assert!(!on_side.contains("/r/s,"), "{on_side}");
+    }
+
+    #[test]
+    fn the_not_excludable_message_is_absent_when_both_paths_have_pathspecs() {
+        let repo = Path::new("/r");
+        assert!(not_excludable_message(repo, Path::new("/r/s"), Path::new("/r/s/x.git")).is_none());
+        assert!(not_excludable_message(repo, Path::new("/o"), Path::new("/o/x.git")).is_none());
+    }
+
+    #[test]
+    fn paths_outside_the_repo_or_the_repo_itself_are_not_missing_a_pathspec() {
+        assert!(!inside_without_pathspec(Path::new("/r"), Path::new("/o/s")));
+        assert!(!inside_without_pathspec(Path::new("/r"), Path::new("/r")));
+    }
+
+    #[test]
+    fn normalizing_drops_current_dir_parts() {
+        assert_eq!(normalize_lexically(Path::new("/a/./b")), Path::new("/a/b"));
+    }
+
+    #[test]
+    fn normalizing_resolves_parent_parts_against_the_part_before() {
+        assert_eq!(normalize_lexically(Path::new("/a/../b")), Path::new("/b"));
+        assert_eq!(
+            normalize_lexically(Path::new("/a/b/../../c/d")),
+            Path::new("/c/d")
+        );
+    }
+
+    #[test]
+    fn normalizing_stops_parent_parts_at_the_root() {
+        assert_eq!(normalize_lexically(Path::new("/../../a")), Path::new("/a"));
+        assert_eq!(normalize_lexically(Path::new("/..")), Path::new("/"));
+    }
+
+    #[test]
+    fn normalizing_keeps_leading_parents_of_a_relative_path() {
+        assert_eq!(normalize_lexically(Path::new("../a")), Path::new("../a"));
+        assert_eq!(
+            normalize_lexically(Path::new("a/../../b")),
+            Path::new("../b")
+        );
+        assert_eq!(normalize_lexically(Path::new("a/..")), Path::new(""));
+    }
+
+    #[test]
+    fn a_relative_store_needs_a_working_directory_for_its_base() {
+        assert_eq!(exclude_base(Path::new(".ralph"), None), None);
+        assert_eq!(
+            exclude_base(Path::new(".ralph"), Some("/w".into())),
+            Some(PathBuf::from("/w"))
+        );
+    }
+
+    #[test]
+    fn an_absolute_store_needs_no_working_directory() {
+        assert_eq!(exclude_base(Path::new("/s"), None), Some(PathBuf::new()));
+        assert_eq!(
+            exclude_base(Path::new("/s"), Some("/w".into())),
+            Some(PathBuf::from("/w"))
+        );
+    }
+
+    #[test]
+    fn appending_applies_parent_parts_only_to_the_tail() {
+        assert_eq!(
+            append_lexically(Path::new("/real/sub"), Path::new("../.ralph")),
+            Path::new("/real/.ralph")
+        );
+        assert_eq!(
+            append_lexically(Path::new("/real"), Path::new("a/./b/../c")),
+            Path::new("/real/a/c")
+        );
+    }
+
+    #[test]
+    fn appending_an_empty_tail_keeps_the_resolved_path() {
+        assert_eq!(
+            append_lexically(Path::new("/real"), Path::new("")),
+            Path::new("/real")
+        );
+    }
+
+    #[test]
+    fn normalizing_a_clean_path_changes_nothing() {
+        assert_eq!(normalize_lexically(Path::new("/a/b")), Path::new("/a/b"));
+    }
+
+    #[test]
+    fn index_steps_reset_the_index_before_adding_everything_without_head() {
         assert_eq!(
             index_steps(false),
             [IndexStep::ReadEmpty, IndexStep::AddAll]
         );
-        assert_eq!(IndexStep::ReadEmpty.args(None), ["read-tree", "--empty"]);
-    }
-
-    #[test]
-    fn add_all_args_without_exclude_are_unchanged() {
-        assert_eq!(IndexStep::AddAll.args(None), ["add", "-A"]);
-    }
-
-    #[test]
-    fn add_all_args_end_with_store_exclude() {
         assert_eq!(
-            IndexStep::AddAll.args(Some(":(exclude,literal).ralph")),
-            ["add", "-A", "--", ":(exclude,literal).ralph"]
-        );
-    }
-
-    #[test]
-    fn store_exclude_is_literal_and_relative_to_repo() {
-        assert_eq!(
-            store_exclude(Path::new("/r"), Path::new("/r/.ralph")),
-            Some(":(exclude,literal).ralph".to_string())
-        );
-    }
-
-    #[test]
-    fn store_outside_repo_has_no_exclude() {
-        assert_eq!(
-            store_exclude(Path::new("/r"), Path::new("/elsewhere/s")),
-            None
-        );
-    }
-
-    #[test]
-    fn store_at_repo_root_excludes_everything() {
-        assert_eq!(
-            store_exclude(Path::new("/r"), Path::new("/r")),
-            Some(":(exclude,literal).".to_string())
+            IndexStep::ReadEmpty.args(&["x".to_string()]),
+            ["read-tree", "--empty"]
         );
     }
 
