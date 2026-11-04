@@ -225,6 +225,18 @@ pub fn not_excludable_message(repo: &Path, store: &Path, side: &Path) -> Option<
         })
 }
 
+pub fn repo_root_store_message(store: &Path, is_thread: bool) -> String {
+    let folders = if is_thread {
+        "snapshots folders"
+    } else {
+        "snapshots folder"
+    };
+    format!(
+        "the ralph store {} is the repo root; snapshots skip only its {folders}",
+        store.display()
+    )
+}
+
 fn normalize_lexically(path: &Path) -> PathBuf {
     let mut parts: Vec<Component> = Vec::new();
     for part in path.components() {
@@ -826,6 +838,19 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn the_repo_root_store_message_words_the_folders_by_store_kind() {
+        let store = Path::new("/r");
+        assert_eq!(
+            repo_root_store_message(store, false),
+            "the ralph store /r is the repo root; snapshots skip only its snapshots folder"
+        );
+        assert_eq!(
+            repo_root_store_message(store, true),
+            "the ralph store /r is the repo root; snapshots skip only its snapshots folders"
+        );
+    }
+
     #[test]
     fn the_not_excludable_message_names_the_path_that_failed() {
         use std::os::unix::ffi::OsStrExt;

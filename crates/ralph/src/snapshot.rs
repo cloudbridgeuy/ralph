@@ -8,10 +8,10 @@ use ralph_core::changes::{
 use ralph_core::snapshot::{
     append_lexically, commit_tree_args, delete_payload, delete_refs_args, exclude_base, gc_args,
     identity_env, index_env, index_lock_path, index_path, index_steps, init_args, list_prefix_args,
-    next_turn, not_excludable_message, parse_snapshot_base, parse_turns, refs_to_prune, side_dir,
-    snapshot_excludes, snapshot_lock_expired, snapshot_lock_path, snapshot_message,
-    update_ref_args, IndexStep, SnapshotBase, CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS,
-    SNAPSHOT_LOCK_POLL,
+    next_turn, not_excludable_message, parse_snapshot_base, parse_turns, refs_to_prune,
+    repo_root_store_message, side_dir, snapshot_excludes, snapshot_lock_expired,
+    snapshot_lock_path, snapshot_message, update_ref_args, IndexStep, SnapshotBase,
+    CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS, SNAPSHOT_LOCK_POLL,
 };
 use ralph_core::worker::{base_branch, project_slug};
 use std::ffi::OsString;
@@ -160,20 +160,20 @@ fn excludes_for(repo: &Path, store: &Path, side: &Path, slug: &str, base: &Path)
     let repo = canonical_or_planned(repo, base);
     let written = base.join(store);
     let mapped = config_root(&written);
-    let main_store = if mapped == written {
-        config_root(&canonical_or_planned(store, base))
+    let (main_store, is_thread) = if mapped == written {
+        let resolved = canonical_or_planned(store, base);
+        let main = config_root(&resolved);
+        let is_thread = main != resolved;
+        (main, is_thread)
     } else {
-        mapped
+        (mapped, true)
     };
     let store = canonical_or_planned(&main_store, base);
     let main_side = canonical_or_planned(&side_dir(&main_store, slug), base);
     if store == repo {
         warn_once(
             "snapshot-store-is-repo-root",
-            format!(
-                "the ralph store {} is the repo root; snapshots skip only its snapshots folders",
-                store.display()
-            ),
+            repo_root_store_message(&store, is_thread),
         );
     }
     let side = canonical_or_planned(side, base);
