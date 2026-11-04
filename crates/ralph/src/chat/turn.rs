@@ -283,6 +283,36 @@ impl Turn<'_> {
             *held = carry_metadata(&held, launch.is_some(), &turn_metadata(&result));
             held.clone()
         };
+        if let Some((turn, mut record)) = recorded_turn(&result).and_then(|turn| {
+            usage_record(
+                CallSite::Turn { trigger },
+                chrono::Utc::now().to_rfc3339(),
+                &turn.stream_result.costs,
+                &identity,
+            )
+            .map(|record| (turn, record))
+        }) {
+            if let Some(spawned) = &launch {
+                record = record.with_view(view_stats(
+                    &[
+                        spawned.split.older.as_slice(),
+                        spawned.split.middle.as_slice(),
+                        spawned.split.tail.as_slice(),
+                    ]
+                    .concat(),
+                ));
+            }
+            let record = record
+                .with_process_turn(process_turns)
+                .with_request_at(turn.request_at.map(|at| at.to_rfc3339()))
+                .with_reset(launch.as_ref().and_then(|spawned| spawned.reset))
+                .with_run(Some(self.run.to_string()))
+                .with_store(Some(usage_store(self.store_dir)));
+            self.warn_if_err(
+                ledger::record(&usage_path(), &record),
+                "Failed to record chat usage",
+            );
+        }
         match end {
             TurnEnd::Exit => return Ok(TurnOutcome::Exit),
             TurnEnd::Cancelled => {
@@ -302,33 +332,6 @@ impl Turn<'_> {
                 return Ok(TurnOutcome::Unanswered);
             }
         };
-        if let Some(mut record) = usage_record(
-            CallSite::Turn { trigger },
-            chrono::Utc::now().to_rfc3339(),
-            &result.stream_result.costs,
-            &identity,
-        ) {
-            if let Some(spawned) = &launch {
-                record = record.with_view(view_stats(
-                    &[
-                        spawned.split.older.as_slice(),
-                        spawned.split.middle.as_slice(),
-                        spawned.split.tail.as_slice(),
-                    ]
-                    .concat(),
-                ));
-            }
-            let record = record
-                .with_process_turn(process_turns)
-                .with_request_at(result.request_at.map(|at| at.to_rfc3339()))
-                .with_reset(launch.as_ref().and_then(|spawned| spawned.reset))
-                .with_run(Some(self.run.to_string()))
-                .with_store(Some(usage_store(self.store_dir)));
-            self.warn_if_err(
-                ledger::record(&usage_path(), &record),
-                "Failed to record chat usage",
-            );
-        }
         self.print_rule();
         let costs = &result.stream_result.costs;
         *locked(&self.last_cost_usd) = costs.cost_usd;
@@ -495,15 +498,23 @@ fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
         )
 }
 
-fn turn_metadata(result: &Result<StreamingSubprocessResult, SubprocessError>) -> IterationMetadata {
+fn recorded_turn(
+    result: &Result<StreamingSubprocessResult, SubprocessError>,
+) -> Option<&StreamingSubprocessResult> {
     match result {
-        Ok(done) => done.stream_result.metadata.clone(),
+        Ok(done) => Some(done),
         Err(
             SubprocessError::Timeout { partial_result, .. }
             | SubprocessError::Interrupted { partial_result },
-        ) => partial_result.stream_result.metadata.clone(),
-        Err(_) => IterationMetadata::new(),
+        ) => Some(partial_result),
+        Err(_) => None,
     }
+}
+
+fn turn_metadata(result: &Result<StreamingSubprocessResult, SubprocessError>) -> IterationMetadata {
+    recorded_turn(result).map_or_else(IterationMetadata::new, |turn| {
+        turn.stream_result.metadata.clone()
+    })
 }
 
 fn next_process_turns(ran: bool, launched: bool, current: u64) -> u64 {
@@ -584,6 +595,45 @@ mod tests {
         let row = serde_json::to_value(row).unwrap();
         assert_eq!(row["model"], "claude-haiku-5-5");
         assert_eq!(row["session_id"], "s1");
+    }
+
+    const PROBE_RESULT: &str = r#"{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0024732699999999996,"duration_ms":4404,"session_id":"47488cc1","usage":{"input_tokens":2,"cache_creation_input_tokens":10086,"cache_read_input_tokens":6887,"output_tokens":774,"output_tokens_details":{"thinking_tokens":565},"cache_creation":{"ephemeral_1h_input_tokens":10086,"ephemeral_5m_input_tokens":0}}}"#;
+
+    fn probe_partial() -> StreamingSubprocessResult {
+        let mut processor = crate::stream_processor::StreamProcessor::new();
+        processor.process_line(PROBE_RESULT);
+        StreamingSubprocessResult {
+            exit_code: 1,
+            stderr: String::new(),
+            stream_result: processor.finish(),
+            request_at: None,
+        }
+    }
+
+    fn recorded_cache_writes(
+        result: &Result<StreamingSubprocessResult, SubprocessError>,
+    ) -> Option<u64> {
+        recorded_turn(result)
+            .and_then(|turn| turn.stream_result.costs.usage.as_ref())
+            .and_then(|usage| usage.cache_creation_input_tokens)
+    }
+
+    #[test]
+    fn a_cancelled_turn_with_a_result_still_records_its_usage() {
+        let cancelled = Ok(probe_partial());
+        assert_eq!(recorded_cache_writes(&cancelled), Some(10086));
+    }
+
+    #[test]
+    fn an_interrupted_or_timed_out_turn_records_its_partial_usage() {
+        let interrupted = Err(SubprocessError::Interrupted {
+            partial_result: Box::new(probe_partial()),
+        });
+        assert_eq!(recorded_cache_writes(&interrupted), Some(10086));
+        let timed_out = Err(timeout(probe_partial()));
+        assert_eq!(recorded_cache_writes(&timed_out), Some(10086));
+        let stale = Err(SubprocessError::Stale);
+        assert_eq!(recorded_cache_writes(&stale), None);
     }
 
     fn previous() -> IterationMetadata {
