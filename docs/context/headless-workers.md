@@ -261,16 +261,24 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 - `text_bytes` is the UTF-8 byte length of the text. The row holds no text. For a report it counts the text as posted, with the attached change summary when there is one.
 - A close that only removes leftover markers writes no row.
 
-Last close of each worker, with its cost (DuckDB):
+Last close of each worker, with the cost of that run (DuckDB):
 
 ```sql
+WITH last_close AS (
+  SELECT *
+  FROM read_json_auto('<store>/analytics/workers.jsonl')
+  WHERE event = 'close'
+  QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
+)
 SELECT w.worker_id, w.outcome, w.duration_s, sum(u.cost_usd) AS cost_usd
-FROM read_json_auto('<store>/analytics/workers.jsonl') w
+FROM last_close w
 LEFT JOIN read_json_auto('<config dir>/usage.jsonl') u
   ON u.store = w.store AND u.worker_id = w.worker_id AND u.kind = 'worker'
-WHERE w.event = 'close'
+  AND CAST(u.at AS TIMESTAMPTZ) BETWEEN CAST(w.spawn_at AS TIMESTAMPTZ) AND CAST(w.at AS TIMESTAMPTZ)
 GROUP BY ALL;
 ```
+
+A worker id can run again after a close. The query keeps the latest close of each `store` and `worker_id`, and counts only usage rows between that close's `spawn_at` and its `at`. Limit: `cost_usd` is `NULL` when the close has no `spawn_at`. A usage row written after the close `at` is not counted.
 
 Closes per outcome (jq):
 
