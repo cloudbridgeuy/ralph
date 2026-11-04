@@ -32,6 +32,7 @@ const HEADERS: [&str; 11] = [
 enum Source {
     Main,
     Nap,
+    Ask,
     Worker(String),
 }
 
@@ -40,6 +41,7 @@ impl Source {
         match line.kind.as_str() {
             "turn" | "ping" => Some(Source::Main),
             "nap" | "merge" => Some(Source::Nap),
+            "ask" => Some(Source::Ask),
             "worker" => Some(Source::Worker(
                 line.harness.clone().unwrap_or_else(|| UNKNOWN.to_string()),
             )),
@@ -51,6 +53,7 @@ impl Source {
         match self {
             Source::Main => "main",
             Source::Nap => "nap",
+            Source::Ask => "ask",
             Source::Worker(harness) => harness,
         }
     }
@@ -273,7 +276,7 @@ fn cost_row(
 ) -> CostRow {
     let (runs, usd) = match source {
         Source::Main => main_runs(lines),
-        Source::Nap => (lines.len(), summed(lines, priced)),
+        Source::Nap | Source::Ask => (lines.len(), summed(lines, priced)),
         Source::Worker(_) => (worker_runs(lines), summed(lines, priced)),
     };
     CostRow {

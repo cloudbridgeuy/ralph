@@ -756,6 +756,26 @@ mod tests {
     }
 
     #[test]
+    fn ask_rows_carry_the_harness_fields_but_no_store_or_run() {
+        let value = line(
+            usage_record(
+                CallSite::Ask,
+                "t".into(),
+                &costs(Some(7)),
+                &seen(Some("m"), Some("s")),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            (&value["harness"], &value["model"], &value["session_id"]),
+            (&"claude".into(), &"m".into(), &"s".into())
+        );
+        assert_eq!(value["cost_usd"], 0.5);
+        assert_eq!(value["cache_read_input_tokens"], 7);
+        assert!(value.get("store").is_none() && value.get("run").is_none());
+    }
+
+    #[test]
     fn view_hash_is_stable_and_head_ignores_the_tail() {
         let short = vec!["a".repeat(VIEW_HEAD_BYTES)];
         let long = vec!["a".repeat(VIEW_HEAD_BYTES), "tail".to_string()];

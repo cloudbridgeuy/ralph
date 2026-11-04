@@ -1,6 +1,6 @@
 # ralph ask Command
 
-This document provides comprehensive documentation for the `ralph ask` command, which sends a single-shot prompt to Claude. Nothing is stored.
+This document provides comprehensive documentation for the `ralph ask` command, which sends a single-shot prompt to Claude. Only a usage row is stored; the prompt and the reply are not.
 
 ## Code Locations
 
@@ -16,7 +16,7 @@ This document provides comprehensive documentation for the `ralph ask` command, 
 
 ## Purpose
 
-The `ralph ask` command provides a streamlined interface for quick LLM interactions. `ask` sends a single prompt and displays the response. It keeps no session, history, or log on disk; each call is independent. Use [ralph chat](ralph-chat.md) for a conversation that persists.
+The `ralph ask` command provides a streamlined interface for quick LLM interactions. `ask` sends a single prompt and displays the response. It keeps no session, history, or log on disk; each call is independent. Each call appends one usage row (`kind` and `role` `ask`) to `<config_dir>/usage.jsonl` through `ledger::record`, with the harness, model, session id, token counts and harness `cost_usd`, as a chat turn row does. The row has no `store`, no `run` and no prompt text. A call that gives no usage (for example a failed spawn) writes no row. `/workers costs` shows these rows as `ask` ([ralph chat](ralph-chat.md#workers-costs)). Use [ralph chat](ralph-chat.md) for a conversation that persists.
 
 ## CLI Flags
 
