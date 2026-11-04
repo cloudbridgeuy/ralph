@@ -5,6 +5,7 @@ use super::{
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
+use crate::outcome_log;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
 use ralph_core::claude_leftovers::{
@@ -120,7 +121,7 @@ impl Workers {
                 |text, warning| format!("{text} {warning}"),
             ));
         }
-        self.record_lifecycle(id, |key| {
+        outcome_log::record(&self.store_dir, id, |key| {
             close_event(&CloseFacts {
                 key,
                 abandon,

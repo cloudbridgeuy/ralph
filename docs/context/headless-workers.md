@@ -240,7 +240,7 @@ Neither harness sends activity while a tool call runs, so silence equals the too
 
 ## Worker lifecycle log
 
-Each worker spawn and close appends one line to `<store>/analytics/workers.jsonl`. The store is the canonical store path, the same string as `store` in `usage.jsonl` rows. The file holds no cost, tokens or session id; join on `store` and `worker_id` to read them from `usage.jsonl`. Every line is one JSON object written with one `write_all` on an `O_APPEND` file (`outcome_log::append`), with no lock. A reader must skip a torn last line. A write failure only warns and never fails the spawn or close. The pure builders and the encoder are `crates/core/src/worker/outcome_log.rs`. Unknown values are `null`, never `0`.
+Each worker spawn, reply, report and close appends one line to `<store>/analytics/workers.jsonl`. The store is the canonical store path, the same string as `store` in `usage.jsonl` rows. The file holds no cost, tokens or session id; join on `store` and `worker_id` to read them from `usage.jsonl`. Every line is one JSON object written with one `write_all` on an `O_APPEND` file (`outcome_log::append`), with no lock. A reader must skip a torn last line. A write failure only warns and never fails the spawn or close. The pure builders and the encoder are `crates/core/src/worker/outcome_log.rs`. Unknown values are `null`, never `0`.
 
 Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `event`.
 
@@ -248,12 +248,17 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 | ------- | ------------------------------------------------------------------------------------------------ |
 | `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`              |
 | `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `merged_sha` (`null`), `ci` (`null`) |
+| `reply` | `harness`, `interrupt`, `via_permission`, `text_bytes`                                           |
+| `report` | `status` (`done`, `blocked`, `question`), `text_bytes`, `seq`                                   |
 
 - `spawn` is written after the spawn record, so a spawn that fails later still has a row. `base_sha` is the tip of the worker branch when the worktree is ready.
 - `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
 - `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
 - `dirty` is `null` when the worktree is gone.
 - `duration_s` is the close time minus `spawn_at`, the time in the spawn record. Both are `null` when the record is missing or unreadable.
+- `reply` is written after the send succeeds, by `Workers::reply` (`/reply`, `reply_worker`). A nudge writes no row. `harness` is the running harness, `claude` for a tmux worker. `via_permission` is true when the reply answered a permission request, by request id or because the worker awaited one; an interrupt is never a permission answer.
+- `report` is written by the worker MCP server after it posts the report to the inbox. `seq` is the report number in that server process. A report posted by another program (`ralph inbox post`, a thread or version warning) writes no row.
+- `text_bytes` is the UTF-8 byte length of the text. The row holds no text. For a report it counts the text as posted, with the attached change summary when there is one.
 - A close that only removes leftover markers writes no row.
 
 Last close of each worker, with its cost (DuckDB):

@@ -2,9 +2,9 @@ use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     accept_report, append_status, decode_statuses, encode_statuses, handle_request,
-    inbox_file_name, reported_path, sent_path, status_path, stop_activity_state, stop_block_output,
-    stop_decision, unreported_path, ActivityMark, ActivityState, Outcome, Report, StatusLine,
-    StopDecision,
+    inbox_file_name, report_event, reported_path, sent_path, status_path, stop_activity_state,
+    stop_block_output, stop_decision, unreported_path, ActivityMark, ActivityState, Outcome,
+    Report, ReportFacts, ReportStatus, StatusLine, StopDecision,
 };
 use serde_json::Value;
 use std::fs;
@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use crate::cursor_owner::{now_secs, write_file};
+use crate::outcome_log;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_usage::{record_or_warn, UsageTarget};
 
@@ -51,6 +52,18 @@ impl Inbox {
         let tmp = self.dir.join(format!(".{name}"));
         fs::write(&tmp, serde_json::to_vec(report)?)?;
         fs::rename(tmp, self.dir.join(name))
+    }
+
+    fn log_report(&self, report: &Report, status: ReportStatus, seq: u64) {
+        let store = self.dir.parent().unwrap_or(Path::new("."));
+        outcome_log::record(store, &report.worker, |key| {
+            report_event(&ReportFacts {
+                key,
+                status,
+                text_bytes: report.text.len(),
+                seq,
+            })
+        });
     }
 
     fn set_status(&self, worker: &str, text: &str) -> io::Result<()> {
@@ -249,6 +262,7 @@ pub fn run_stdio_server(
                 };
                 match inbox.post(&report, seq) {
                     Ok(()) => {
+                        inbox.log_report(&report, status, seq);
                         if let Err(e) = inbox.mark_reported(worker) {
                             crate::warn::warn(format!("could not write the reported marker: {e}"));
                         }

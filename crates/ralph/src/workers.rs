@@ -11,13 +11,13 @@ use ralph_core::worker::{
     activity_path, base_config_key, blocked_path, branch_name, capabilities, close_clear_paths,
     close_handoff, close_remove_paths, delivery_line, describe, interrupt_reply,
     legacy_base_unset_warning, opencode_close_handoff, parse_interrupt_result, project_slug,
-    prompt_entry_name, ready_path, resolve_worktree_dir, sent_path, session_name, session_owner,
-    session_survived_kill, tagged_sessions, uptake, worktree_for_branch, worktree_path,
-    ActivityMark, CloseStep, Feature, Handoff, HandoffFiles, HarnessId, InterruptOutcome, Owner,
-    Probe, Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
-    OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path, session_name,
+    session_owner, session_survived_kill, tagged_sessions, uptake, via_permission,
+    worktree_for_branch, worktree_path, ActivityMark, CloseStep, Feature, Handoff, HandoffFiles,
+    HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep, TaggedSession,
+    WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT,
+    WORKTREE_DIR_ENV,
 };
-use ralph_core::worker::{LifecycleEvent, LogKey};
 use ralph_core::worker_check::pane_busy;
 use std::collections::HashSet;
 use std::fs;
@@ -91,19 +91,6 @@ impl Workers {
         sent
     }
 
-    fn record_lifecycle(&self, id: &str, build: impl FnOnce(LogKey<'_>) -> LifecycleEvent) {
-        let store = usage_store(&self.store_dir);
-        let event = build(LogKey {
-            store: &store,
-            worker_id: id,
-            at: chrono::Utc::now(),
-        });
-        warn_if_err(
-            outcome_log::append(&self.store_dir, &event),
-            format!("logging the lifecycle of worker {id}"),
-        );
-    }
-
     pub fn reply(
         &self,
         id: &str,
@@ -111,6 +98,7 @@ impl Workers {
         interrupt: bool,
         request: Option<&str>,
     ) -> io::Result<String> {
+        let awaiting = self.awaits_permission(id);
         let delivered = match request.filter(|_| !interrupt) {
             Some(request_id) => self
                 .answer_permission(id, request_id, text)
@@ -118,6 +106,18 @@ impl Workers {
             None => self.deliver(id, text, interrupt),
         };
         let sent = self.mark_sent(id, delivered)?;
+        let harness = self
+            .headless_files(id)
+            .map_or(HarnessId::Claude, |(kind, _)| kind);
+        outcome_log::record(&self.store_dir, id, |key| {
+            reply_event(&ReplyFacts {
+                key,
+                harness,
+                interrupt,
+                via_permission: via_permission(request.is_some(), interrupt, awaiting),
+                text_bytes: text.len(),
+            })
+        });
         Ok(match sent.watch {
             Some(watch) => self.confirm(id, &watch),
             None => sent.line,

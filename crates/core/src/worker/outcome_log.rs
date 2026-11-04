@@ -1,5 +1,6 @@
 use super::kind::HarnessId;
 use super::ticket::Tracker;
+use super::tools::ReportStatus;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -65,6 +66,23 @@ pub struct CloseFacts<'a> {
     pub spawn_at: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ReplyFacts<'a> {
+    pub key: LogKey<'a>,
+    pub harness: HarnessId,
+    pub interrupt: bool,
+    pub via_permission: bool,
+    pub text_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ReportFacts<'a> {
+    pub key: LogKey<'a>,
+    pub status: ReportStatus,
+    pub text_bytes: usize,
+    pub seq: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LifecycleKind {
@@ -84,6 +102,17 @@ pub enum LifecycleKind {
         spawn_at: Option<String>,
         merged_sha: Option<String>,
         ci: Option<String>,
+    },
+    Reply {
+        harness: String,
+        interrupt: bool,
+        via_permission: bool,
+        text_bytes: u64,
+    },
+    Report {
+        status: String,
+        text_bytes: u64,
+        seq: u64,
     },
 }
 
@@ -136,6 +165,37 @@ pub fn close_event(facts: &CloseFacts) -> LifecycleEvent {
                 .map(|moment| moment.to_rfc3339_opts(SecondsFormat::Secs, true)),
             merged_sha: None,
             ci: None,
+        },
+    )
+}
+
+fn byte_count(len: usize) -> u64 {
+    u64::try_from(len).unwrap_or(u64::MAX)
+}
+
+pub fn via_permission(request_given: bool, interrupt: bool, awaiting: bool) -> bool {
+    !interrupt && (request_given || awaiting)
+}
+
+pub fn reply_event(facts: &ReplyFacts) -> LifecycleEvent {
+    event(
+        &facts.key,
+        LifecycleKind::Reply {
+            harness: facts.harness.as_str().to_string(),
+            interrupt: facts.interrupt,
+            via_permission: facts.via_permission,
+            text_bytes: byte_count(facts.text_bytes),
+        },
+    )
+}
+
+pub fn report_event(facts: &ReportFacts) -> LifecycleEvent {
+    event(
+        &facts.key,
+        LifecycleKind::Report {
+            status: facts.status.as_str().to_string(),
+            text_bytes: byte_count(facts.text_bytes),
+            seq: facts.seq,
         },
     )
 }
@@ -314,6 +374,101 @@ mod tests {
             for field in ["cost", "tokens", "session_id", "text", "reply_count"] {
                 assert!(value.get(field).is_none(), "{field}");
             }
+        }
+    }
+
+    fn reply() -> ReplyFacts<'static> {
+        ReplyFacts {
+            key: key(1_700_000_050),
+            harness: HarnessId::Codex,
+            interrupt: false,
+            via_permission: false,
+            text_bytes: 5,
+        }
+    }
+
+    #[test]
+    fn a_reply_row_has_the_length_of_the_text_and_not_the_text() {
+        let line = encode_event(&reply_event(&reply())).unwrap();
+        assert!(!line.contains("hello"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&line).unwrap(),
+            json!({
+                "v": 1,
+                "at": "2023-11-14T22:14:10Z",
+                "store": "/s",
+                "worker_id": "GUZ-1",
+                "event": "reply",
+                "harness": "codex",
+                "interrupt": false,
+                "via_permission": false,
+                "text_bytes": 5
+            })
+        );
+    }
+
+    #[test]
+    fn a_reply_counts_bytes_not_chars() {
+        let facts = ReplyFacts {
+            text_bytes: "h\u{e9}llo".len(),
+            interrupt: true,
+            via_permission: true,
+            ..reply()
+        };
+        let value = row(&reply_event(&facts));
+        assert_eq!(value["text_bytes"], 6);
+        assert_eq!(value["interrupt"], true);
+        assert_eq!(value["via_permission"], true);
+    }
+
+    #[test]
+    fn a_reply_is_a_permission_answer_when_asked_or_awaited() {
+        assert!(via_permission(true, false, false));
+        assert!(via_permission(false, false, true));
+        assert!(via_permission(true, false, true));
+        assert!(!via_permission(false, false, false));
+        assert!(!via_permission(true, true, false));
+        assert!(!via_permission(false, true, true));
+    }
+
+    #[test]
+    fn a_report_row_has_the_status_length_and_sequence() {
+        let facts = ReportFacts {
+            key: key(1_700_000_060),
+            status: ReportStatus::Blocked,
+            text_bytes: 12,
+            seq: 3,
+        };
+        let line = encode_event(&report_event(&facts)).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&line).unwrap(),
+            json!({
+                "v": 1,
+                "at": "2023-11-14T22:14:20Z",
+                "store": "/s",
+                "worker_id": "GUZ-1",
+                "event": "report",
+                "status": "blocked",
+                "text_bytes": 12,
+                "seq": 3
+            })
+        );
+    }
+
+    #[test]
+    fn every_report_status_is_named() {
+        for (status, name) in [
+            (ReportStatus::Done, "done"),
+            (ReportStatus::Blocked, "blocked"),
+            (ReportStatus::Question, "question"),
+        ] {
+            let facts = ReportFacts {
+                key: key(0),
+                status,
+                text_bytes: 0,
+                seq: 1,
+            };
+            assert_eq!(row(&report_event(&facts))["status"], name);
         }
     }
 }

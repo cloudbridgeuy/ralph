@@ -7,6 +7,7 @@ use crate::chat::memory::usage_path;
 use crate::chat::read_claude_config;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
+use crate::outcome_log;
 use crate::paths::absolute_from;
 use crate::private_file::{check_path, write_private, write_worker_config};
 use crate::subprocess::kill_process_group;
@@ -318,7 +319,7 @@ impl Workers {
             clear_marker(&marker)?;
         }
         self.write_spawn_record(id, ticket.clone())?;
-        self.record_lifecycle(id, |key| {
+        outcome_log::record(&self.store_dir, id, |key| {
             spawn_event(&SpawnFacts {
                 key,
                 ticket: ticket.as_ref().map(|ticket| ticket.key.as_str()),

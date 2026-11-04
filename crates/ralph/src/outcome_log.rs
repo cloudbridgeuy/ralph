@@ -1,10 +1,25 @@
 use crate::private_file::check_path;
-use ralph_core::worker::{encode_event, workers_log_path, LifecycleEvent};
+use crate::warn::warn_if_err;
+use crate::workers::usage_store;
+use ralph_core::worker::{encode_event, workers_log_path, LifecycleEvent, LogKey};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
-pub(crate) fn append(store: &Path, event: &LifecycleEvent) -> io::Result<()> {
+pub(crate) fn record(store: &Path, id: &str, build: impl FnOnce(LogKey<'_>) -> LifecycleEvent) {
+    let canonical = usage_store(store);
+    let event = build(LogKey {
+        store: &canonical,
+        worker_id: id,
+        at: chrono::Utc::now(),
+    });
+    warn_if_err(
+        append(store, &event),
+        format!("logging the lifecycle of worker {id}"),
+    );
+}
+
+fn append(store: &Path, event: &LifecycleEvent) -> io::Result<()> {
     let line = encode_event(event).map_err(io::Error::other)?;
     let path = workers_log_path(store);
     if let Some(parent) = path.parent() {
@@ -64,5 +79,26 @@ mod tests {
         std::os::unix::fs::symlink(&target, &path).unwrap();
         assert!(append(dir.path(), &event("A")).is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "");
+    }
+
+    #[test]
+    fn record_stamps_the_canonical_store_and_the_worker_id() {
+        let dir = tempfile::tempdir().unwrap();
+        record(dir.path(), "GUZ-9", |key| {
+            spawn_event(&SpawnFacts {
+                key,
+                ticket: None,
+                tracker: None,
+                harness: HarnessId::Claude,
+                model: None,
+                base_sha: None,
+                scheduled: true,
+            })
+        });
+        let text = fs::read_to_string(workers_log_path(dir.path())).unwrap();
+        let value: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(value["worker_id"], "GUZ-9");
+        assert_eq!(value["store"], usage_store(dir.path()));
+        assert_eq!(value["scheduled"], true);
     }
 }
