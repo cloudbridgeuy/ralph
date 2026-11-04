@@ -1,5 +1,97 @@
 # Changelog
 
+## v0.4.0 - 2026-11-04
+
+This release adds threaded work (fork, squash and rebase merge, park and revive), a reworked `/send-it` with a planning driver, and chat commands for nudging workers, holding progress, running local shell commands with `!!`, and rendering markdown with `/view`. It also adds a usage ledger that prices every agent call at list rates by token kind, `ralph worker verify` for all five harnesses, hardens external inbox reports against control and bidi characters, and fixes several worker, snapshot, and upgrade bugs, including musl hosts downloading the glibc asset.
+
+### Features
+
+- Split chat prompt into frozen block and live tail (GUZ-413)
+- ralph wire: OpenAI Chat Completions and Responses providers (GUZ-773)
+- chat: `!!<command>` runs a shell command locally without starting a turn (GUZ-783)
+- Shell cells: separate stdout/stderr blocks and stream output live (GUZ-792)
+- ralph: expose the inbox target to agents via an environment variable (GUZ-1142)
+- chat: /hold progress line and stall auto-continue (GUZ-1169)
+- ralph chat: startup recap of the previous session (chat.resume_summary, --skip-summary) (GUZ-1189)
+- chat: /nudge <id> [text] asks a worker for progress without a model turn (GUZ-1191)
+- Bare /nudge auto-selects the only running worker (GUZ-1196)
+- `ralph worker verify` for all five harnesses (drift guard phase 1) (GUZ-1202)
+- Add `assumptions:` line to WORKER_PROMPT worker reports (GUZ-1215)
+- /view <file.md>: render a markdown file in chat with inline images and mermaid as pictures (GUZ-1221)
+- /view and mermaid colours from ralph's own palette, plus a mermaid styling pass (GUZ-1225)
+- Threads S1: fork, drop and ls with prefixed ids (GUZ-1230)
+- Threads S2: squash merge into main via inbox (GUZ-1231)
+- Threads S3: park, revive and pull from main (GUZ-1232)
+- Threads S4: ownership guards (GUZ-1233)
+- Threads S5: /fork opens a thread in a new Rex pane (GUZ-1234)
+- Threads S6: rebase merge as labelled block append (GUZ-1235)
+- send-it S1: run plan core types, parse, render, advance(); delete the reply classifier and countdown (GUZ-1249)
+- send-it S2: propose_run tool, /send-it text|edit|go|status|off, run.toml store (GUZ-1250)
+- send-it S3: driver loop, hold integration, measurable criteria, stops and alert (GUZ-1251)
+- Telemetry T1: usage rows price every agent call at list rates by token kind, with 5m/1h cache-write tiers, rows for partial turns and subagent rows (GUZ-1310)
+
+### Improvements
+
+- ralph wire diff: servable tokens should use the writer's breakpoints (GUZ-803)
+- claude-headless workers: pass --strict-mcp-config so user MCP servers don't load (GUZ-1227)
+- worker: record usage rows for claude-headless workers; check cursor ACP for token data (GUZ-1258)
+- worker: GUZ-1258 follow-ups — close cleanup honours inherited CLAUDE_CONFIG_DIR, relative path, turn-end test (GUZ-1302)
+
+### Fixes
+
+- Default model parity across harnesses (GUZ-736)
+- Configurable default codex worker model ([codex] model) (GUZ-948)
+- Worker usage rows record a canonical store path that differs from main and nap rows (GUZ-1042)
+- upgrade: musl hosts download the glibc asset (GUZ-1184)
+- Release-notes draft includes stray 'next: … Go?' chatter line (GUZ-1188)
+- Release workflow uses Node 20 actions (upload-artifact@v4) that GitHub deprecated (GUZ-1190)
+- Queued `!` cell merges with other queued lines, running them as shell (GUZ-1199)
+- Worker snapshot fails forever after a stale index.lock in the side repo (GUZ-1216)
+- `ralph worker verify claude-headless --live`: check the ralph-worker MCP connection (GUZ-1219)
+- Harness drift detection: free verify on version change, inbox alert on failure (drift guard phase 2) (GUZ-1242)
+- Drift guard follow-ups: surface lock errors, fix doc line, Safety wording, loser-run exit (GUZ-1242 review) (GUZ-1247)
+- Flaky thread tests: 'thread auth is in use by pid N' under parallel cargo test (GUZ-1248)
+- chat: turn snapshots include the store folder when it lives inside the worktree (snapshot repo snapshots itself) (GUZ-1259)
+- Hidden tool output leaves pending tool calls and file snapshots in memory until the stream processor drops (GUZ-1348)
+
+### Other
+
+- fix(worker): accept SHA-256 ids in the diff range
+- fix(worker): record the merge-base as base_sha on respawn
+- fix(worker): guard the git diff range
+- fix(worker): diff the close row from the spawn base_sha
+- feat(worker): record the turn count of a worker on its close row
+- feat(worker): record the diff size of a worker on its close row
+- feat(worker): record the phase of a worker on its spawn row
+- fix(worker): open the lifecycle log with O_NOFOLLOW
+- fix(worker): record the close row right after the close steps
+- fix(worker): log the spawn row only after the launch succeeds
+- fix(worker): keep chat nudges out of the lifecycle log
+- feat(worker): log replies and reports to analytics/workers.jsonl
+- feat(worker): log spawn and close to analytics/workers.jsonl
+- fix(worker): write the stop hook config store as an absolute path
+- fix(worker): load the stop hook config by the written store path
+- fix(chat): load the store config by its written path
+- fix(snapshot): map a thread store to its main store by its written path only
+- fix(snapshot): word the root-store warning for both store kinds
+- fix(snapshot): map a dot-dotted thread store to its main store
+- fix(snapshot): exclude the main store snapshot repo when the main store is the repo root
+- fix(snapshot): map a thread store to its main store before resolving symlinks
+- fix(snapshot): name the path that is not excludable in the UTF-8 warning
+- fix(snapshot): exclude the main store from thread and thread-worker snapshots
+- feat(snapshot): compute exclude pathspecs for the snapshot store
+- feat(inbox): name the refused character in external report errors
+- fix(inbox): allow U+200C and U+200D joiners in external reports
+- fix(inbox): strip one leading BOM from external reports
+- fix(inbox): refuse bidi and zero-width format characters
+- fix(inbox): refuse U+2028 and U+2029 in external reports
+- fix(inbox): refuse control characters in external reports
+- fix(chat): mark every line of external report text as untrusted
+- feat(cli): add ralph inbox post to deliver an outside report
+- feat(chat): frame external reports as untrusted outside data
+- feat(inbox): build an external report record in core
+- plus 22 other commits
+
 ## v0.3.0 - 2026-11-02
 
 Version 0.3.0 adds background watches, a `/diff` command, and new worker harnesses for Codex, opencode v2, and Cursor over ACP. Chat gains richer memory and recall, an opt-in vi edit mode, Kitty image rendering, and mermaid state diagrams. Workers now report token usage and diffstats, and the release adds `ralph wire`, `ralph config check`, and `ralph upgrade`.
