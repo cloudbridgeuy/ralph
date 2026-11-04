@@ -65,6 +65,14 @@ fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcom
     }
 }
 
+/// The git range of a worker's own commits: from the tip when its worktree was
+/// ready to the worker branch. `None` when that tip was not recorded.
+pub fn diff_range(base_sha: Option<&str>, branch: &str) -> Option<String> {
+    base_sha
+        .filter(|sha| !sha.is_empty())
+        .map(|sha| format!("{sha}..{branch}"))
+}
+
 /// Turn-end snapshots after the spawn snapshot (turn 0), or `None` when the
 /// worker has no turn snapshots.
 pub fn turn_count(harness: HarnessId, turn_ids: &[u64]) -> Option<u64> {
@@ -422,6 +430,20 @@ mod tests {
         ] {
             assert_eq!(value.get(field), Some(&Value::Null), "{field}");
         }
+    }
+
+    #[test]
+    fn the_diff_range_starts_at_the_recorded_base_sha() {
+        assert_eq!(
+            diff_range(Some("abc123"), "worker/GUZ-1").as_deref(),
+            Some("abc123..worker/GUZ-1")
+        );
+    }
+
+    #[test]
+    fn the_diff_range_is_none_without_a_base_sha() {
+        assert_eq!(diff_range(None, "worker/GUZ-1"), None);
+        assert_eq!(diff_range(Some(""), "worker/GUZ-1"), None);
     }
 
     #[test]
