@@ -4,6 +4,7 @@ use crate::workers::usage_store;
 use ralph_core::worker::{encode_event, workers_log_path, LifecycleEvent, LogKey};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 pub(crate) fn record(store: &Path, id: &str, build: impl FnOnce(LogKey<'_>) -> LifecycleEvent) {
@@ -26,8 +27,16 @@ fn append(store: &Path, event: &LifecycleEvent) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     check_path(&path)?;
-    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-    file.write_all(line.as_bytes())
+    open_log(&path)?.write_all(line.as_bytes())
+}
+
+fn open_log(path: &Path) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options
+        .create(true)
+        .append(true)
+        .custom_flags(libc::O_NOFOLLOW);
+    options.open(path)
 }
 
 #[cfg(test)]
@@ -79,6 +88,16 @@ mod tests {
         std::os::unix::fs::symlink(&target, &path).unwrap();
         assert!(append(dir.path(), &event("A")).is_err());
         assert_eq!(fs::read_to_string(&target).unwrap(), "");
+    }
+
+    #[test]
+    fn opening_a_symlinked_log_fails_without_the_path_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, "").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(open_log(&link).is_err());
     }
 
     #[test]
