@@ -328,3 +328,62 @@ fn test_cli_thread_pull_takes_a_name() {
     assert_eq!(name.as_str(), "auth");
     assert!(Cli::try_parse_from(["ralph", "thread", "pull", "Bad"]).is_err());
 }
+
+#[test]
+fn test_cli_inbox_post_takes_store_from_and_input() {
+    let Some(Commands::Inbox(inbox)) = Cli::try_parse_from([
+        "ralph",
+        "inbox",
+        "post",
+        "--store",
+        "S",
+        "--from",
+        "ci",
+        "report.txt",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected inbox");
+    };
+    let InboxCommand::Post { store, from, input } = inbox.command;
+    assert_eq!(store, PathBuf::from("S"));
+    assert_eq!(from, "ci");
+    assert_eq!(input, PathBuf::from("report.txt"));
+}
+
+#[test]
+fn test_cli_inbox_post_takes_dash_for_stdin() {
+    let Some(Commands::Inbox(inbox)) = Cli::try_parse_from([
+        "ralph", "inbox", "post", "--store", "S", "--from", "ci", "-",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected inbox");
+    };
+    let InboxCommand::Post { input, .. } = inbox.command;
+    assert_eq!(input, PathBuf::from("-"));
+}
+
+#[test]
+fn test_cli_inbox_post_requires_store_from_and_input() {
+    for args in [
+        vec!["ralph", "inbox", "post", "--from", "ci", "-"],
+        vec!["ralph", "inbox", "post", "--store", "S", "-"],
+        vec!["ralph", "inbox", "post", "--store", "S", "--from", "ci"],
+    ] {
+        assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn test_cli_inbox_post_rejects_a_bad_source() {
+    for bad in ["external:x", "Ci", "-x", "", &"a".repeat(33)] {
+        assert!(
+            Cli::try_parse_from(["ralph", "inbox", "post", "--store", "S", "--from", bad, "-"])
+                .is_err(),
+            "{bad}"
+        );
+    }
+}

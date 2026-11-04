@@ -9,7 +9,7 @@ pub fn strip_controls(text: &str) -> Cow<'_, str> {
     }
 }
 
-fn forbidden_control(c: char) -> bool {
+pub(crate) fn forbidden_control(c: char) -> bool {
     c.is_control() && c != '\n' && c != '\t'
 }
 

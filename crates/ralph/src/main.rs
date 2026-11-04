@@ -22,6 +22,7 @@ pub mod formatting;
 mod frame;
 pub mod highlight;
 mod inbox_alert;
+mod inbox_post;
 mod input_theme;
 mod invoke;
 mod json_file;
@@ -96,6 +97,7 @@ fn main() -> ExitCode {
         Commands::Chat(args) => chat::run(args),
         Commands::Wire(args) => wire::run(args),
         Commands::Thread(args) => chat::thread::run(args),
+        Commands::Inbox(args) => inbox_post::run(args),
         Commands::Config(args) => execute_config(args),
         Commands::Worker(args) => execute_worker(args),
         Commands::Upgrade(args) => upgrade::run(args),
