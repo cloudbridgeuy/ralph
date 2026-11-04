@@ -32,6 +32,28 @@ impl HarnessId {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LiveHarness {
+    pub cursor: bool,
+    pub codex: bool,
+    pub claude_headless: bool,
+    pub opencode: bool,
+}
+
+pub fn close_harness(recorded: Option<HarnessId>, live: LiveHarness) -> HarnessId {
+    if live.cursor {
+        HarnessId::Cursor
+    } else if live.codex {
+        HarnessId::Codex
+    } else if live.claude_headless {
+        HarnessId::ClaudeHeadless
+    } else if live.opencode {
+        HarnessId::Opencode
+    } else {
+        recorded.unwrap_or_default()
+    }
+}
+
 impl<'de> Deserialize<'de> for HarnessId {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
@@ -66,6 +88,7 @@ impl<'de> Deserialize<'de> for HarnessId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::turn_count;
 
     #[test]
     fn kinds_round_trip_with_stable_names() {
@@ -103,6 +126,74 @@ mod tests {
     fn invalid_kinds_are_rejected() {
         for json in ["null", "1", "{}", "\"unknown\""] {
             assert!(serde_json::from_str::<HarnessId>(json).is_err());
+        }
+    }
+
+    fn probes(cursor: bool, codex: bool, claude_headless: bool, opencode: bool) -> LiveHarness {
+        LiveHarness {
+            cursor,
+            codex,
+            claude_headless,
+            opencode,
+        }
+    }
+
+    #[test]
+    fn a_dead_claude_headless_worker_with_a_record_keeps_its_harness() {
+        let kind = close_harness(
+            Some(HarnessId::ClaudeHeadless),
+            probes(false, false, false, false),
+        );
+        assert_eq!(kind, HarnessId::ClaudeHeadless);
+        assert_eq!(turn_count(kind, &[0]), None);
+    }
+
+    #[test]
+    fn without_a_record_the_live_order_holds() {
+        assert_eq!(
+            close_harness(None, probes(false, false, false, false)),
+            HarnessId::Claude
+        );
+        assert_eq!(
+            close_harness(None, probes(true, true, true, true)),
+            HarnessId::Cursor
+        );
+        assert_eq!(
+            close_harness(None, probes(false, true, true, true)),
+            HarnessId::Codex
+        );
+        assert_eq!(
+            close_harness(None, probes(false, false, true, true)),
+            HarnessId::ClaudeHeadless
+        );
+        assert_eq!(
+            close_harness(None, probes(false, false, false, true)),
+            HarnessId::Opencode
+        );
+    }
+
+    #[test]
+    fn a_live_probe_wins_over_the_record() {
+        assert_eq!(
+            close_harness(Some(HarnessId::Claude), probes(false, true, false, false)),
+            HarnessId::Codex
+        );
+        assert_eq!(
+            close_harness(
+                Some(HarnessId::ClaudeHeadless),
+                probes(true, false, false, false)
+            ),
+            HarnessId::Cursor
+        );
+    }
+
+    #[test]
+    fn a_dead_worker_with_a_record_keeps_any_recorded_harness() {
+        for kind in HarnessId::ALL {
+            assert_eq!(
+                close_harness(Some(kind), probes(false, false, false, false)),
+                kind
+            );
         }
     }
 }
