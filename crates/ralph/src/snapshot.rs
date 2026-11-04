@@ -158,7 +158,7 @@ fn excludes_for_store(repo: &Path, store: &Path, side: &Path) -> Vec<String> {
 
 fn excludes_for(repo: &Path, store: &Path, side: &Path, base: &Path) -> Vec<String> {
     let repo = canonical_or_planned(repo, base);
-    let store = config_root(&canonical_or_planned(store, base));
+    let store = canonical_or_planned(&config_root(&base.join(store)), base);
     if store == repo {
         warn_once(
             "snapshot-store-is-repo-root",
@@ -460,6 +460,23 @@ mod tests {
         assert_eq!(read[read.len() - 4..], ["read-tree", "-m", "-i", "HEAD"]);
         let empty = args_of(&snapshotter.step_git(IndexStep::ReadEmpty));
         assert_eq!(empty[empty.len() - 2..], ["read-tree", "--empty"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_thread_store_still_excludes_the_main_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let repo = root.join("repo");
+        let main = repo.join(".ralph");
+        let outside = root.join("outside");
+        fs::create_dir_all(main.join("threads")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let thread_store = main.join("threads").join("t");
+        std::os::unix::fs::symlink(&outside, &thread_store).unwrap();
+        let side = side_dir(&thread_store, "slug");
+        let excludes = excludes_for(&repo, &thread_store, &side, Path::new("/"));
+        assert!(excludes.contains(&":(exclude,literal,top).ralph".to_string()));
     }
 
     #[test]
