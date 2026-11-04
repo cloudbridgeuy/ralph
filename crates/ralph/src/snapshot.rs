@@ -158,7 +158,13 @@ fn excludes_for_store(repo: &Path, store: &Path, side: &Path, slug: &str) -> Vec
 
 fn excludes_for(repo: &Path, store: &Path, side: &Path, slug: &str, base: &Path) -> Vec<String> {
     let repo = canonical_or_planned(repo, base);
-    let main_store = config_root(&base.join(store));
+    let written = base.join(store);
+    let mapped = config_root(&written);
+    let main_store = if mapped == written {
+        config_root(&canonical_or_planned(store, base))
+    } else {
+        mapped
+    };
     let store = canonical_or_planned(&main_store, base);
     let main_side = canonical_or_planned(&side_dir(&main_store, slug), base);
     if store == repo {
@@ -559,6 +565,24 @@ mod tests {
         assert_eq!(
             excludes_for(&repo, &link, &side, "slug", dir.path()),
             [":(exclude,literal,top)real"]
+        );
+    }
+
+    #[test]
+    fn a_dot_dotted_thread_store_excludes_the_main_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let store = repo
+            .join(".ralph")
+            .join("threads")
+            .join("x")
+            .join("..")
+            .join("t");
+        let side = side_dir(&store, "slug");
+        assert_eq!(
+            excludes_for(&repo, &store, &side, "slug", dir.path()),
+            [":(exclude,literal,top).ralph"]
         );
     }
 
