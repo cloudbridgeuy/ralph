@@ -1,8 +1,9 @@
 //! Cost and usage extraction from result events.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use super::events::{ResultEvent, StreamEvent, Usage};
+use super::events::{ModelTotals, ResultEvent, StreamEvent, Usage};
 
 /// Cost and usage statistics extracted from a result event.
 ///
@@ -32,6 +33,7 @@ use super::events::{ResultEvent, StreamEvent, Usage};
 ///         num_turns: Some(3),
 ///         result: None,
 ///         terminal_reason: None,
+///         model_usage: Default::default(),
 ///     }),
 /// ];
 ///
@@ -64,6 +66,9 @@ pub struct IterationCosts {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_reason: Option<String>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_usage: BTreeMap<String, ModelTotals>,
 }
 
 impl IterationCosts {
@@ -107,6 +112,7 @@ impl ResultEvent {
     ///     num_turns: None,
     ///     result: None,
     ///     terminal_reason: None,
+    ///     model_usage: Default::default(),
     /// };
     ///
     /// let costs = event.extract_costs();
@@ -124,6 +130,7 @@ impl ResultEvent {
             usage: self.usage.clone(),
             context_tokens: None,
             terminal_reason: self.terminal_reason.clone(),
+            model_usage: self.model_usage.clone(),
         }
     }
 }
@@ -176,6 +183,7 @@ impl ResultEvent {
 ///         num_turns: None,
 ///         result: None,
 ///         terminal_reason: None,
+///         model_usage: Default::default(),
 ///     }),
 /// ];
 ///

@@ -26,8 +26,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    carry_metadata, reply_entries, split_view, trigger_entries, usage_record, view_stats, CallSite,
-    Trigger, ViewSplit,
+    carry_metadata, reply_entries, split_view, subagent_records, trigger_entries, usage_record,
+    view_stats, CallSite, Trigger, ViewSplit,
 };
 use ralph_core::chat_process::ResetReason;
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
@@ -283,10 +283,11 @@ impl Turn<'_> {
             *held = carry_metadata(&held, launch.is_some(), &turn_metadata(&result));
             held.clone()
         };
+        let at = chrono::Utc::now().to_rfc3339();
         if let Some((turn, mut record)) = recorded_turn(&result).and_then(|turn| {
             usage_record(
                 CallSite::Turn { trigger },
-                chrono::Utc::now().to_rfc3339(),
+                at.clone(),
                 &turn.stream_result.costs,
                 &identity,
             )
@@ -311,6 +312,16 @@ impl Turn<'_> {
             self.warn_if_err(
                 ledger::record(&usage_path(), &record),
                 "Failed to record chat usage",
+            );
+            let subagents = subagent_records(&at, &turn.stream_result.costs, &identity)
+                .into_iter()
+                .map(|row| {
+                    row.with_run(Some(self.run.to_string()))
+                        .with_store(Some(usage_store(self.store_dir)))
+                });
+            self.warn_if_err(
+                ledger::record_all(&usage_path(), subagents),
+                "Failed to record subagent usage",
             );
         }
         match end {

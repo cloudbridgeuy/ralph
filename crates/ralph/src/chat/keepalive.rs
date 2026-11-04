@@ -8,7 +8,7 @@ use ralph_core::chat_keepalive::{
     keepalive_action, keeps_after, keeps_for_turn, ping_follow_up, Keepalive, KeepaliveInput,
     PingFollowUp, KEEPALIVE_PING_PROMPT,
 };
-use ralph_core::chat_memory::{usage_record, CallSite};
+use ralph_core::chat_memory::{subagent_records, usage_record, CallSite};
 use ralph_core::stream::IterationMetadata;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -99,9 +99,10 @@ impl KeepaliveWatch {
 
     fn record(&self, result: &StreamingSubprocessResult) {
         let identity = locked(&self.identity).clone();
+        let at = Utc::now().to_rfc3339();
         let Some(record) = usage_record(
             CallSite::Ping,
-            Utc::now().to_rfc3339(),
+            at.clone(),
             &result.stream_result.costs,
             &identity,
         ) else {
@@ -114,6 +115,16 @@ impl KeepaliveWatch {
         warn_if_err(
             ledger::record(&usage_path(), &record),
             "Failed to record keepalive ping usage",
+        );
+        let subagents = subagent_records(&at, &result.stream_result.costs, &identity)
+            .into_iter()
+            .map(|row| {
+                row.with_run(Some(self.run.clone()))
+                    .with_store(Some(self.store.clone()))
+            });
+        warn_if_err(
+            ledger::record_all(&usage_path(), subagents),
+            "Failed to record keepalive subagent usage",
         );
     }
 }

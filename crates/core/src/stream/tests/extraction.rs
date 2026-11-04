@@ -361,6 +361,7 @@ fn test_extract_metadata_init_at_end() {
             num_turns: None,
             result: None,
             terminal_reason: None,
+            model_usage: Default::default(),
         }),
         StreamEvent::System(SystemEvent {
             subtype: Some("init".to_string()),

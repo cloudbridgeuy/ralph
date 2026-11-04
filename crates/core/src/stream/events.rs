@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// A stream event from Claude CLI's `--output-format stream-json` output.
 ///
@@ -186,6 +187,9 @@ pub struct ResultEvent {
 
     #[serde(default)]
     pub terminal_reason: Option<String>,
+
+    #[serde(default, rename = "modelUsage")]
+    pub model_usage: BTreeMap<String, ModelTotals>,
 }
 
 impl ResultEvent {
@@ -233,6 +237,57 @@ pub struct CacheCreation {
 pub struct OutputTokensDetails {
     #[serde(default)]
     pub thinking_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ModelTotals {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    #[serde(rename = "cacheCreationEphemeral5mInputTokens")]
+    pub cache_write_5m: u64,
+    #[serde(rename = "cacheCreationEphemeral1hInputTokens")]
+    pub cache_write_1h: u64,
+    pub thinking_tokens: u64,
+}
+
+impl ModelTotals {
+    pub fn saturating_sub(&self, other: &ModelTotals) -> ModelTotals {
+        ModelTotals {
+            input_tokens: self.input_tokens.saturating_sub(other.input_tokens),
+            output_tokens: self.output_tokens.saturating_sub(other.output_tokens),
+            cache_read_input_tokens: self
+                .cache_read_input_tokens
+                .saturating_sub(other.cache_read_input_tokens),
+            cache_creation_input_tokens: self
+                .cache_creation_input_tokens
+                .saturating_sub(other.cache_creation_input_tokens),
+            cache_write_5m: self.cache_write_5m.saturating_sub(other.cache_write_5m),
+            cache_write_1h: self.cache_write_1h.saturating_sub(other.cache_write_1h),
+            thinking_tokens: self.thinking_tokens.saturating_sub(other.thinking_tokens),
+        }
+    }
+}
+
+impl From<&Usage> for ModelTotals {
+    fn from(usage: &Usage) -> ModelTotals {
+        let tiers = usage.cache_creation.clone().unwrap_or_default();
+        ModelTotals {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
+            cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
+            cache_write_5m: tiers.ephemeral_5m_input_tokens,
+            cache_write_1h: tiers.ephemeral_1h_input_tokens,
+            thinking_tokens: usage
+                .output_tokens_details
+                .as_ref()
+                .and_then(|details| details.thinking_tokens)
+                .unwrap_or(0),
+        }
+    }
 }
 
 impl Usage {

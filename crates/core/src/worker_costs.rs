@@ -35,6 +35,7 @@ enum Source {
     Main,
     Nap,
     Ask,
+    Subagent,
     Worker(String),
 }
 
@@ -44,6 +45,7 @@ impl Source {
             "turn" | "ping" => Some(Source::Main),
             "nap" | "merge" => Some(Source::Nap),
             "ask" => Some(Source::Ask),
+            "subagent" => Some(Source::Subagent),
             "worker" => Some(Source::Worker(
                 line.harness.clone().unwrap_or_else(|| UNKNOWN.to_string()),
             )),
@@ -56,6 +58,7 @@ impl Source {
             Source::Main => "main",
             Source::Nap => "nap",
             Source::Ask => "ask",
+            Source::Subagent => "subagent",
             Source::Worker(harness) => harness,
         }
     }
@@ -285,7 +288,9 @@ fn cost_row(
             let (runs, harness_usd) = main_runs(lines);
             (runs, summed(lines, priced), harness_usd)
         }
-        Source::Nap | Source::Ask => (lines.len(), summed(lines, priced), summed(lines, &harness)),
+        Source::Nap | Source::Ask | Source::Subagent => {
+            (lines.len(), summed(lines, priced), summed(lines, &harness))
+        }
         Source::Worker(_) => (
             worker_runs(lines),
             summed(lines, priced),
