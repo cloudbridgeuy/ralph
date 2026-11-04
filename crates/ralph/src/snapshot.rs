@@ -159,15 +159,8 @@ fn excludes_for_store(repo: &Path, store: &Path, side: &Path, slug: &str) -> Vec
 fn excludes_for(repo: &Path, store: &Path, side: &Path, slug: &str, base: &Path) -> Vec<String> {
     let repo = canonical_or_planned(repo, base);
     let written = base.join(store);
-    let mapped = config_root(&written);
-    let (main_store, is_thread) = if mapped == written {
-        let resolved = canonical_or_planned(store, base);
-        let main = config_root(&resolved);
-        let is_thread = main != resolved;
-        (main, is_thread)
-    } else {
-        (mapped, true)
-    };
+    let main_store = config_root(&written);
+    let is_thread = main_store != written;
     let store = canonical_or_planned(&main_store, base);
     let main_side = canonical_or_planned(&side_dir(&main_store, slug), base);
     if store == repo {
@@ -568,8 +561,25 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn a_dot_dotted_thread_store_excludes_the_main_store() {
+    fn a_plain_folder_symlinked_to_a_thread_folder_is_not_a_thread_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let repo = root.join("repo");
+        let target = repo.join("x").join("threads").join("foo");
+        fs::create_dir_all(&target).unwrap();
+        let link = root.join("plain");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let side = side_dir(&link, "slug");
+        assert_eq!(
+            excludes_for(&repo, &link, &side, "slug", Path::new("/")),
+            [":(exclude,literal,top)x/threads/foo"]
+        );
+    }
+
+    #[test]
+    fn a_dot_dotted_store_under_threads_is_a_main_store_not_a_thread() {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo");
         fs::create_dir_all(&repo).unwrap();
@@ -582,7 +592,7 @@ mod tests {
         let side = side_dir(&store, "slug");
         assert_eq!(
             excludes_for(&repo, &store, &side, "slug", dir.path()),
-            [":(exclude,literal,top).ralph"]
+            [":(exclude,literal,top).ralph/threads/t"]
         );
     }
 
