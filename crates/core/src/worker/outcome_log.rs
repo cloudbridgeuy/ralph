@@ -65,11 +65,23 @@ fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcom
     }
 }
 
-/// The git range of a worker's own commits: from the tip when its worktree was
-/// ready to the worker branch. `None` when that tip was not recorded.
+/// New branch -> tip; existing branch -> merge-base, never the tip; None on failure.
+pub fn spawn_base_sha(
+    created_branch: bool,
+    tip: Option<&str>,
+    merge_base: Option<&str>,
+) -> Option<String> {
+    let chosen = if created_branch { tip } else { merge_base };
+    chosen.filter(|sha| !sha.is_empty()).map(str::to_string)
+}
+
+/// The git range of a worker's own commits, `<base_sha>..<branch>`; None unless base_sha is a valid hex id.
 pub fn diff_range(base_sha: Option<&str>, branch: &str) -> Option<String> {
     base_sha
-        .filter(|sha| !sha.is_empty())
+        .filter(|sha| {
+            ((7..=40).contains(&sha.len()) || sha.len() == 64)
+                && sha.bytes().all(|b| b.is_ascii_hexdigit())
+        })
         .map(|sha| format!("{sha}..{branch}"))
 }
 
@@ -435,9 +447,60 @@ mod tests {
     #[test]
     fn the_diff_range_starts_at_the_recorded_base_sha() {
         assert_eq!(
-            diff_range(Some("abc123"), "worker/GUZ-1").as_deref(),
-            Some("abc123..worker/GUZ-1")
+            diff_range(Some("abc1234"), "worker/GUZ-1").as_deref(),
+            Some("abc1234..worker/GUZ-1")
         );
+        let full = "a".repeat(40);
+        assert_eq!(
+            diff_range(Some(&full), "worker/GUZ-1"),
+            Some(format!("{full}..worker/GUZ-1"))
+        );
+    }
+
+    #[test]
+    fn the_diff_range_accepts_a_64_hex_sha256_id() {
+        let full = "b".repeat(64);
+        assert_eq!(
+            diff_range(Some(&full), "worker/GUZ-1"),
+            Some(format!("{full}..worker/GUZ-1"))
+        );
+    }
+
+    #[test]
+    fn the_diff_range_refuses_a_base_sha_that_is_not_7_to_40_or_64_hex() {
+        for bad in [
+            "--output=/tmp/x",
+            "abc123",
+            &"a".repeat(41),
+            &"a".repeat(63),
+            &"a".repeat(65),
+            "xyz1234",
+            "abc 1234",
+        ] {
+            assert_eq!(diff_range(Some(bad), "worker/GUZ-1"), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_fresh_branch_records_its_tip_as_the_base() {
+        assert_eq!(
+            spawn_base_sha(true, Some("tip1234"), Some("mb12345")).as_deref(),
+            Some("tip1234")
+        );
+    }
+
+    #[test]
+    fn an_existing_branch_records_the_merge_base_not_the_tip() {
+        assert_eq!(
+            spawn_base_sha(false, Some("tip1234"), Some("mb12345")).as_deref(),
+            Some("mb12345")
+        );
+    }
+
+    #[test]
+    fn an_existing_branch_without_a_merge_base_records_nothing() {
+        assert_eq!(spawn_base_sha(false, Some("tip1234"), None), None);
+        assert_eq!(spawn_base_sha(false, Some("tip1234"), Some("")), None);
     }
 
     #[test]

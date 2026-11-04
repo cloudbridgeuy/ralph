@@ -1,5 +1,5 @@
 use super::{
-    branch_exists, clear_marker, git_value, locate_worktree, repo_root, run, stdout_line,
+    branch_exists, clear_marker, locate_worktree, repo_root, resolve_base_branch, run, stdout_line,
     unset_legacy_base, Workers,
 };
 use crate::claude_cleanup::cleanup_worktree_leftovers;
@@ -13,7 +13,7 @@ use ralph_core::claude_leftovers::{
 };
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
-    base_branch, branch_name, close_clear_paths, close_event, close_plan, close_remove_paths,
+    branch_name, close_clear_paths, close_event, close_plan, close_remove_paths,
     decode_spawn_record, diff_range, project_slug, spawn_record_path, turn_count, CloseFacts,
     CloseState, CloseStep, HandoffFiles, HarnessId, Owner, OPENCODE_CONFIG_FILE,
 };
@@ -27,7 +27,8 @@ fn branch_diff(repo: &Path, range: &str) -> Option<Diff> {
     let output = run(Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["diff", "--numstat", range]))
+        .args(["diff", "--numstat", "--end-of-options"])
+        .arg(range))
     .ok()?;
     Some(parse_numstat(&String::from_utf8_lossy(&output.stdout)))
 }
@@ -54,13 +55,7 @@ impl Workers {
         } else {
             None
         };
-        let base = base_branch(
-            config
-                .as_ref()
-                .map(|config| config.chat.worker_base.as_deref())
-                .map_err(String::as_str),
-            git_value(&repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
-        );
+        let base = resolve_base_branch(&repo, &config)?;
         let unmerged_commits = if branch_exists(&repo, &branch)? {
             let count = stdout_line(run(Command::new("git")
                 .arg("-C")
