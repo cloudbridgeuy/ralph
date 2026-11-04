@@ -8,15 +8,15 @@ use crate::outcome_log;
 use crate::warn::warn_if_err;
 use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::worker::{
-    activity_path, base_config_key, blocked_path, branch_name, capabilities, close_clear_paths,
-    close_handoff, close_remove_paths, delivery_line, describe, interrupt_reply,
+    activity_path, base_branch, base_config_key, blocked_path, branch_name, capabilities,
+    close_clear_paths, close_handoff, close_remove_paths, delivery_line, describe, interrupt_reply,
     legacy_base_unset_warning, opencode_close_handoff, parse_interrupt_result, project_slug,
     prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path, session_name,
     session_owner, session_survived_kill, tagged_sessions, uptake, via_permission,
-    worktree_for_branch, worktree_path, ActivityMark, CloseStep, Feature, Handoff, HandoffFiles,
-    HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep, TaggedSession,
-    WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT,
-    WORKTREE_DIR_ENV,
+    worktree_for_branch, worktree_path, ActivityMark, Base, CloseStep, Feature, Handoff,
+    HandoffFiles, HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep,
+    TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_OWNER_DIR, REPLY_CONFIRM,
+    SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use ralph_core::worker_check::pane_busy;
 use std::collections::HashSet;
@@ -576,6 +576,16 @@ fn git_value(repo: &Path, args: &[&str]) -> io::Result<Option<String>> {
     }
     let value = stdout_line(output);
     Ok((!value.is_empty()).then_some(value))
+}
+
+fn resolve_base_branch(repo: &Path, config: &Result<AppConfig, String>) -> io::Result<Base> {
+    Ok(base_branch(
+        config
+            .as_ref()
+            .map(|config| config.chat.worker_base.as_deref())
+            .map_err(String::as_str),
+        git_value(repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
+    ))
 }
 
 fn unset_legacy_base(repo: &Path, id: &str) -> Option<String> {

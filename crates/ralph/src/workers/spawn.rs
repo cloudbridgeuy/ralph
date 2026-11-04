@@ -1,6 +1,6 @@
 use super::{
-    branch_exists, check, clear_marker, exclude, git_value, guard, locate_worktree, repo_root, run,
-    Workers,
+    branch_exists, check, clear_marker, exclude, git_value, guard, locate_worktree, repo_root,
+    resolve_base_branch, run, Workers,
 };
 use crate::chat::cell::detach_from_terminal;
 use crate::chat::memory::usage_path;
@@ -20,14 +20,15 @@ use ralph_core::worker::{
     exclude_lines, fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text,
     import_servers, opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
     resolve_codex_warning, resolve_cursor_model, resolve_opencode_model, resolve_ticket,
-    rollback_plan, rollback_report, session_name, spawn_event, spawn_handoff, spawn_record_path,
-    startup_state, task_dir_path, task_file_path, trust_key, with_start_warning, worker_command,
-    worker_config_path, worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args,
-    ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner,
-    Rollback, SpawnFacts, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys,
-    UsageSink, WorkPhase, WorkerImport, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR,
-    CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS,
-    HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
+    rollback_plan, rollback_report, session_name, spawn_base_sha, spawn_event, spawn_handoff,
+    spawn_record_path, startup_state, task_dir_path, task_file_path, trust_key, with_start_warning,
+    worker_command, worker_config_path, worker_mcp_args, worker_mcp_config, worktree_add_args,
+    wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn,
+    Owner, Rollback, SpawnFacts, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket,
+    TicketKeys, UsageSink, WorkPhase, WorkerImport, WorkerMarkers, WorktreeBase, WorktreeVia,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS,
+    FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
+    WORKERS_DIR,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -125,17 +126,20 @@ impl Workers {
             &branch,
             WorktreeBase::scheduled(scheduled),
         )?;
-        let created_at = git_value(
-            &repo,
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{branch}"),
-            ],
-        )
-        .ok()
-        .flatten();
+        let branch_ref = format!("refs/heads/{branch}");
+        let tip = git_value(&repo, &["rev-parse", "--verify", "--quiet", &branch_ref])
+            .ok()
+            .flatten();
+        let merge_base = if created_branch {
+            None
+        } else {
+            resolve_base_branch(&repo, &config).ok().and_then(|base| {
+                git_value(&repo, &["merge-base", &base.branch, &branch_ref])
+                    .ok()
+                    .flatten()
+            })
+        };
+        let created_at = spawn_base_sha(created_branch, tip.as_deref(), merge_base.as_deref());
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
         let (model, model_warning) = match harness {

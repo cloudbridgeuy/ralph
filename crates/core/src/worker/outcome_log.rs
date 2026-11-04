@@ -65,6 +65,15 @@ fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcom
     }
 }
 
+pub fn spawn_base_sha(
+    created_branch: bool,
+    tip: Option<&str>,
+    merge_base: Option<&str>,
+) -> Option<String> {
+    let chosen = if created_branch { tip } else { merge_base };
+    chosen.filter(|sha| !sha.is_empty()).map(str::to_string)
+}
+
 pub fn diff_range(base_sha: Option<&str>, branch: &str) -> Option<String> {
     base_sha
         .filter(|sha| (7..=40).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -454,6 +463,28 @@ mod tests {
         ] {
             assert_eq!(diff_range(Some(bad), "worker/GUZ-1"), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn a_fresh_branch_records_its_tip_as_the_base() {
+        assert_eq!(
+            spawn_base_sha(true, Some("tip1234"), Some("mb12345")).as_deref(),
+            Some("tip1234")
+        );
+    }
+
+    #[test]
+    fn an_existing_branch_records_the_merge_base_not_the_tip() {
+        assert_eq!(
+            spawn_base_sha(false, Some("tip1234"), Some("mb12345")).as_deref(),
+            Some("mb12345")
+        );
+    }
+
+    #[test]
+    fn an_existing_branch_without_a_merge_base_records_nothing() {
+        assert_eq!(spawn_base_sha(false, Some("tip1234"), None), None);
+        assert_eq!(spawn_base_sha(false, Some("tip1234"), Some("")), None);
     }
 
     #[test]
