@@ -1,3 +1,4 @@
+use crate::chat::thread::config_root;
 use crate::config::AppConfig;
 use crate::warn::warn_once;
 use ralph_core::changes::{
@@ -157,7 +158,7 @@ fn excludes_for_store(repo: &Path, store: &Path, side: &Path) -> Vec<String> {
 
 fn excludes_for(repo: &Path, store: &Path, side: &Path, base: &Path) -> Vec<String> {
     let repo = canonical_or_planned(repo, base);
-    let store = canonical_or_planned(store, base);
+    let store = config_root(&canonical_or_planned(store, base));
     if store == repo {
         warn_once(
             "snapshot-store-is-repo-root",
@@ -498,6 +499,19 @@ mod tests {
         let repo = dir.path().join("repo");
         fs::create_dir_all(&repo).unwrap();
         let store = repo.join(".ralph");
+        let side = side_dir(&store, "slug");
+        assert_eq!(
+            excludes_for(&repo, &store, &side, dir.path()),
+            [":(exclude,literal,top).ralph"]
+        );
+    }
+
+    #[test]
+    fn a_thread_store_excludes_the_main_store_not_only_its_own_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let store = repo.join(".ralph").join("threads").join("foo");
         let side = side_dir(&store, "slug");
         assert_eq!(
             excludes_for(&repo, &store, &side, dir.path()),
