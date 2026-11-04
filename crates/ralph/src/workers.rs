@@ -77,7 +77,7 @@ impl Workers {
     ) -> Self {
         Self {
             store_dir: canonical_store(store_dir.clone()),
-            written_store: store_dir,
+            written_store: std::path::absolute(&store_dir).unwrap_or(store_dir),
             exe,
             permission_mode,
             worktree_dir,
@@ -873,6 +873,18 @@ mod tests {
             usage_store(&root.join("a/b/../b")),
             usage_store(&root.join("a/b"))
         );
+    }
+
+    #[test]
+    fn a_relative_store_is_written_as_an_absolute_path() {
+        let workers = Workers::new(
+            PathBuf::from("rel/store"),
+            "/bin/ralph".into(),
+            "auto".into(),
+            None,
+        );
+        assert!(workers.written_store.is_absolute());
+        assert!(workers.written_store.ends_with("rel/store"));
     }
 
     #[test]
