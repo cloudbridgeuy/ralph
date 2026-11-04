@@ -251,7 +251,7 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 | `reply` | `harness`, `interrupt`, `via_permission`, `text_bytes`                                           |
 | `report` | `status` (`done`, `blocked`, `question`), `text_bytes`, `seq`                                   |
 
-- `spawn` is written after the spawn record, so a spawn that fails later still has a row. `base_sha` is the tip of the worker branch when the worktree is ready.
+- `spawn` is written after the launch succeeds, so a spawn that fails and rolls back has no row. `base_sha` is the tip of the worker branch when the worktree is ready.
 - `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
 - `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
 - `dirty` is `null` when the worktree is gone.

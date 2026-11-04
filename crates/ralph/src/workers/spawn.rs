@@ -235,6 +235,19 @@ impl Workers {
         } else {
             self.launch(&launch)
         };
+        if launched.is_ok() {
+            outcome_log::record(&self.store_dir, id, |key| {
+                spawn_event(&SpawnFacts {
+                    key,
+                    ticket: launch.ticket.as_ref().map(|ticket| ticket.key.as_str()),
+                    tracker: launch.ticket.as_ref().and_then(|ticket| ticket.tracker),
+                    harness: launch.harness,
+                    model: launch.model,
+                    base_sha: launch.base_sha.as_deref(),
+                    scheduled: launch.scheduled,
+                })
+            });
+        }
         launched.map_err(|error| {
             warn_if_err(
                 self.clear_changes(id, &worktree),
@@ -308,8 +321,8 @@ impl Workers {
             site,
             session,
             ticket,
-            base_sha,
             started,
+            ..
         } = launch;
         let inbox = self.store_dir.join(INBOX_DIR);
         let attachments = self.store_dir.join(ATTACHMENTS_DIR);
@@ -319,17 +332,6 @@ impl Workers {
             clear_marker(&marker)?;
         }
         self.write_spawn_record(id, ticket.clone())?;
-        outcome_log::record(&self.store_dir, id, |key| {
-            spawn_event(&SpawnFacts {
-                key,
-                ticket: ticket.as_ref().map(|ticket| ticket.key.as_str()),
-                tracker: ticket.as_ref().and_then(|ticket| ticket.tracker),
-                harness: *harness,
-                model: *model,
-                base_sha: base_sha.as_deref(),
-                scheduled: *scheduled,
-            })
-        });
         let command = match harness {
             HarnessId::Claude => {
                 let settings = self.write_settings(id, &markers, *site)?;
