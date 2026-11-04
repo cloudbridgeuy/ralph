@@ -315,6 +315,22 @@ fn test_cli_thread_park_and_revive_take_a_name() {
 }
 
 #[test]
+fn test_cli_thread_merge_takes_rebase() {
+    for (args, rebase) in [
+        (&["ralph", "thread", "merge", "auth"][..], false),
+        (&["ralph", "thread", "merge", "auth", "--rebase"][..], true),
+    ] {
+        let Some(Commands::Thread(thread)) = Cli::try_parse_from(args).unwrap().command else {
+            panic!("expected thread");
+        };
+        let ThreadCommand::Merge { name, rebase: got } = thread.command else {
+            panic!("expected merge");
+        };
+        assert_eq!((name.as_str(), got), ("auth", rebase), "{args:?}");
+    }
+}
+
+#[test]
 fn test_cli_thread_pull_takes_a_name() {
     let Some(Commands::Thread(thread)) = Cli::try_parse_from(["ralph", "thread", "pull", "auth"])
         .unwrap()

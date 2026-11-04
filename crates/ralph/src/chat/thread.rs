@@ -8,16 +8,17 @@ use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, running_workers};
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
-use ralph_core::chat_memory::{view, CallKind, MemoryCall, ViewSplit};
+use ralph_core::chat_memory::{view, CallKind, Entry, MemoryCall, Tree, ViewSplit};
 use ralph_core::chat_thread::{
     digest_with, drop_message, fork_check, fork_launch, guard_check, label_item, ls_counts,
-    merge_prompt, merged_check, merged_report, open_check, pull_message, revive_check,
-    thread_split, ForkCommand, ForkLaunch, ForkSpawn, Guarded, Live, Merged, Parked, Scope,
-    ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
+    merge_prompt, merged_check, merged_report, open_check, pull_message, rebase_block,
+    rebased_report, revive_check, thread_split, ForkCommand, ForkLaunch, ForkSpawn, Guarded, Live,
+    Merged, Parked, Scope, ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, REBASE_LINES,
+    THREADS_DIR, THREAD_FILE,
 };
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
-use ralph_core::worker::{chat_message, INBOX_DIR};
+use ralph_core::worker::{chat_message, Report, INBOX_DIR};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -119,7 +120,14 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         ThreadCommand::Drop { name } => {
             println!("{}", drop_thread(&main, &name, &running_ids(&main, &name))?);
         }
-        ThreadCommand::Merge { name } => {
+        ThreadCommand::Merge { name, rebase: true } => {
+            let message = rebase_thread(&main, &name, &running_ids(&main, &name))?;
+            println!("rebased thread {name} into main's inbox\n{message}");
+        }
+        ThreadCommand::Merge {
+            name,
+            rebase: false,
+        } => {
             let dir = thread_dir(&main, &name);
             let curator = Curator {
                 kind: CallKind::Merge,
@@ -195,6 +203,30 @@ pub fn merge_thread(
     running: &[String],
     curate: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<String, String> {
+    merge_with(main, name, running, |meta, entries, tree, at| {
+        let lines: Vec<String> = view(entries, tree, VIEW_LINES)
+            .iter()
+            .map(|line| label_item(line, name))
+            .collect();
+        let digest = digest_with(&merge_prompt(name, meta.base, &lines), name, curate)
+            .map_err(|e| format!("thread {name} was not merged: {e}"))?;
+        Ok(merged_report(name, &digest, at))
+    })
+}
+
+pub fn rebase_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<String, String> {
+    merge_with(main, name, running, |meta, entries, tree, at| {
+        let block = rebase_block(name, meta.base, &view(entries, tree, REBASE_LINES))?;
+        Ok(rebased_report(name, &block, at))
+    })
+}
+
+fn merge_with(
+    main: &Path,
+    name: &ThreadName,
+    running: &[String],
+    report: impl FnOnce(&ThreadMeta, &[Entry], &Tree, &str) -> Result<Report, String>,
+) -> Result<String, String> {
     let dir = thread_dir(main, name);
     let meta = known_meta(&dir, name)?;
     merged_check(name, &meta)?;
@@ -202,16 +234,13 @@ pub fn merge_thread(
     let _claim = claim_closed(&dir, name)?;
     let failed = |e: io::Error| format!("could not merge thread {name}: {e}");
     let (entries, tree) = Store::new(dir.clone()).load().map_err(failed)?;
-    let lines: Vec<String> = view(&entries, &tree, VIEW_LINES)
-        .iter()
-        .map(|line| label_item(line, name))
-        .collect();
-    let digest = digest_with(&merge_prompt(name, meta.base, &lines), name, curate)
-        .map_err(|e| format!("thread {name} was not merged: {e}"))?;
     let at = chrono::Utc::now().to_rfc3339();
-    let report = merged_report(name, &digest, &at);
+    let report = report(&meta, &entries, &tree, &at)?;
     let merged = ThreadMeta {
-        merged: Some(Merged { at, digest }),
+        merged: Some(Merged {
+            at,
+            digest: report.text.clone(),
+        }),
         parked: None,
         ..meta
     };
@@ -716,6 +745,61 @@ mod tests {
                 deadline: None,
             })
             .unwrap();
+    }
+
+    #[test]
+    fn rebase_posts_the_block_to_main_and_freezes_the_thread_without_a_curator() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        let printed = rebase_thread(&main, &auth, &[]).unwrap();
+        let head = "[thread auth · rebased]\nThread auth, forked from main at #2, rebased onto main as its memory view:\n#auth:0 user";
+        assert!(printed.starts_with(head), "{printed}");
+        let merged = read_meta(&dir).unwrap().merged.unwrap();
+        assert!(printed.ends_with(&merged.digest), "{printed}");
+        let inbox = Inbox::new(main.join(INBOX_DIR)).peek().unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(
+            (inbox[0].worker.as_str(), inbox[0].status.as_str()),
+            ("thread:auth", "rebased")
+        );
+        assert_eq!((&inbox[0].text, &inbox[0].at), (&merged.digest, &merged.at));
+        let again = rebase_thread(&main, &auth, &[]).unwrap_err();
+        assert!(
+            again.starts_with("thread auth is merged into main"),
+            "{again}"
+        );
+        assert_eq!(Inbox::new(main.join(INBOX_DIR)).peek().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rebase_refuses_like_merge_before_writing() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        let busy = rebase_thread(&main, &auth, &["w1".to_string()]).unwrap_err();
+        assert!(busy.contains("running workers (w1)"), "{busy}");
+        let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
+        let open = rebase_thread(&main, &auth, &[]).unwrap_err();
+        assert!(open.contains("in use"), "{open}");
+        std::mem::drop(held);
+        save_records(&dir);
+        let saved = rebase_thread(&main, &auth, &[]).unwrap_err();
+        assert!(saved.starts_with("thread auth has 2 saved"), "{saved}");
+        let unknown = rebase_thread(&main, &name("nope"), &[]).unwrap_err();
+        assert!(unknown.starts_with("no thread nope"), "{unknown}");
+        ensure(&main, &name("empty")).unwrap();
+        assert_eq!(
+            rebase_thread(&main, &name("empty"), &[]).unwrap_err(),
+            "thread empty has no messages to rebase."
+        );
+        assert_eq!(
+            read_meta(&thread_dir(&main, &name("empty")))
+                .unwrap()
+                .merged,
+            None
+        );
+        assert_eq!(read_meta(&dir).unwrap().merged, None);
+        let inbox = Inbox::new(main.join(INBOX_DIR)).peek().unwrap_or_default();
+        assert!(inbox.is_empty());
     }
 
     #[test]
