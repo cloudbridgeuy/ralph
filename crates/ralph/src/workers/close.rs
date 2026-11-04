@@ -27,7 +27,8 @@ fn branch_diff(repo: &Path, range: &str) -> Option<Diff> {
     let output = run(Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["diff", "--numstat", range]))
+        .args(["diff", "--numstat", "--end-of-options"])
+        .arg(range))
     .ok()?;
     Some(parse_numstat(&String::from_utf8_lossy(&output.stdout)))
 }

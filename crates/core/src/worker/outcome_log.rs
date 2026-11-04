@@ -65,11 +65,9 @@ fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcom
     }
 }
 
-/// The git range of a worker's own commits: from the tip when its worktree was
-/// ready to the worker branch. `None` when that tip was not recorded.
 pub fn diff_range(base_sha: Option<&str>, branch: &str) -> Option<String> {
     base_sha
-        .filter(|sha| !sha.is_empty())
+        .filter(|sha| (7..=40).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit()))
         .map(|sha| format!("{sha}..{branch}"))
 }
 
@@ -435,9 +433,27 @@ mod tests {
     #[test]
     fn the_diff_range_starts_at_the_recorded_base_sha() {
         assert_eq!(
-            diff_range(Some("abc123"), "worker/GUZ-1").as_deref(),
-            Some("abc123..worker/GUZ-1")
+            diff_range(Some("abc1234"), "worker/GUZ-1").as_deref(),
+            Some("abc1234..worker/GUZ-1")
         );
+        let full = "a".repeat(40);
+        assert_eq!(
+            diff_range(Some(&full), "worker/GUZ-1"),
+            Some(format!("{full}..worker/GUZ-1"))
+        );
+    }
+
+    #[test]
+    fn the_diff_range_refuses_a_base_sha_that_is_not_7_to_40_hex() {
+        for bad in [
+            "--output=/tmp/x",
+            "abc123",
+            &"a".repeat(41),
+            "xyz1234",
+            "abc 1234",
+        ] {
+            assert_eq!(diff_range(Some(bad), "worker/GUZ-1"), None, "{bad}");
+        }
     }
 
     #[test]
