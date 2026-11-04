@@ -25,7 +25,7 @@ use ralph_core::worker::{
     worker_config_path, worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args,
     ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner,
     Rollback, SpawnFacts, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys,
-    UsageSink, WorkerImport, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR,
+    UsageSink, WorkPhase, WorkerImport, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR,
     CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS,
     HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
 };
@@ -81,6 +81,7 @@ impl Workers {
             model,
             ticket,
             scheduled,
+            phase,
         } = *args;
         let repo = repo_root()?;
         let project = project_slug(&repo);
@@ -225,6 +226,7 @@ impl Workers {
             session: &session,
             ticket,
             base_sha: created_at.clone(),
+            phase,
             started: started_text(id, &worktree, &via, &warnings),
         };
         if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
@@ -245,6 +247,7 @@ impl Workers {
                     model: launch.model,
                     base_sha: launch.base_sha.as_deref(),
                     scheduled: launch.scheduled,
+                    phase: launch.phase,
                 })
             });
         }
@@ -321,6 +324,7 @@ impl Workers {
             site,
             session,
             ticket,
+            base_sha,
             started,
             ..
         } = launch;
@@ -331,7 +335,7 @@ impl Workers {
         for marker in close_clear_paths(&self.store_dir, id) {
             clear_marker(&marker)?;
         }
-        self.write_spawn_record(id, ticket.clone())?;
+        self.write_spawn_record(id, ticket.clone(), base_sha.clone())?;
         let command = match harness {
             HarnessId::Claude => {
                 let settings = self.write_settings(id, &markers, *site)?;
@@ -412,12 +416,17 @@ impl Workers {
         })
     }
 
-    fn write_spawn_record(&self, id: &str, ticket: Option<Ticket>) -> io::Result<()> {
+    fn write_spawn_record(
+        &self,
+        id: &str,
+        ticket: Option<Ticket>,
+        base_sha: Option<String>,
+    ) -> io::Result<()> {
         let path = spawn_record_path(&self.store_dir, id);
         let dir = path.parent().unwrap_or(&self.store_dir);
         fs::create_dir_all(dir)?;
         let tmp = dir.join(format!(".{id}.{}.tmp", std::process::id()));
-        let record = SpawnRecord::new(ticket, now_secs());
+        let record = SpawnRecord::new(ticket, base_sha, now_secs());
         fs::write(&tmp, encode_spawn_record(&record)?)?;
         fs::rename(tmp, path)
     }
@@ -618,6 +627,7 @@ struct Launch<'a> {
     session: &'a str,
     ticket: Option<Ticket>,
     base_sha: Option<String>,
+    phase: Option<WorkPhase>,
     started: String,
 }
 
@@ -629,6 +639,7 @@ pub(crate) struct SpawnArgs<'a> {
     pub model: Option<&'a str>,
     pub ticket: Option<&'a str>,
     pub scheduled: bool,
+    pub phase: Option<WorkPhase>,
 }
 
 fn require_on_path(program: &str) -> io::Result<()> {

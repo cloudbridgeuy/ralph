@@ -207,6 +207,7 @@ pub enum Command {
         harness: HarnessId,
         model: Option<String>,
         ticket: Option<String>,
+        phase: Option<WorkPhase>,
     },
     Reply {
         id: String,

@@ -30,7 +30,7 @@ impl WorkerChanges {
         })
     }
 
-    fn turns(&self) -> io::Result<Vec<u64>> {
+    pub fn turns(&self) -> io::Result<Vec<u64>> {
         Ok(parse_worker_turns(
             &self.id,
             &self.snapshotter.refs(&worker_ref_prefix(&self.id))?,

@@ -78,14 +78,17 @@ pub struct SpawnRecord {
     pub tracker: Option<Tracker>,
     #[serde(default)]
     pub at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_sha: Option<String>,
 }
 
 impl SpawnRecord {
-    pub fn new(ticket: Option<Ticket>, at: u64) -> Self {
+    pub fn new(ticket: Option<Ticket>, base_sha: Option<String>, at: u64) -> Self {
         Self {
             tracker: ticket.as_ref().and_then(|ticket| ticket.tracker),
             ticket: ticket.map(|ticket| ticket.key),
             at,
+            base_sha,
         }
     }
 
@@ -226,16 +229,21 @@ mod tests {
 
     #[test]
     fn a_record_round_trips() {
-        let record = SpawnRecord::new(ticket("GUZ-918", Some(Tracker::Linear)), 1_767_225_600);
+        let record = SpawnRecord::new(
+            ticket("GUZ-918", Some(Tracker::Linear)),
+            Some("abc123".into()),
+            1_767_225_600,
+        );
         let encoded = encode_spawn_record(&record).unwrap();
         assert!(encoded.contains(r#""tracker":"linear""#), "{encoded}");
+        assert!(encoded.contains(r#""base_sha":"abc123""#), "{encoded}");
         assert_eq!(decode_spawn_record(&encoded), Some(record.clone()));
         assert_eq!(record.ticket(), ticket("GUZ-918", Some(Tracker::Linear)));
     }
 
     #[test]
     fn a_record_without_a_ticket_has_none() {
-        let record = SpawnRecord::new(None, 5);
+        let record = SpawnRecord::new(None, None, 5);
         assert_eq!(encode_spawn_record(&record).unwrap(), r#"{"at":5}"#);
         assert_eq!(record.ticket(), None);
     }
@@ -247,7 +255,8 @@ mod tests {
             Some(SpawnRecord {
                 ticket: None,
                 tracker: None,
-                at: 0
+                at: 0,
+                base_sha: None
             })
         );
         assert_eq!(
@@ -259,11 +268,17 @@ mod tests {
     }
 
     #[test]
+    fn an_older_record_without_a_base_sha_decodes_with_none() {
+        let record = decode_spawn_record(r#"{"at":9}"#).unwrap();
+        assert_eq!(record.base_sha, None);
+        let record = decode_spawn_record(r#"{"at":9,"base_sha":"abc"}"#).unwrap();
+        assert_eq!(record.base_sha.as_deref(), Some("abc"));
+    }
+
+    #[test]
     fn unknown_fields_are_ignored_and_garbage_does_not_decode() {
         assert_eq!(
-            decode_spawn_record(r#"{"at":9,"base_sha":"abc"}"#)
-                .unwrap()
-                .at,
+            decode_spawn_record(r#"{"at":9,"extra":"abc"}"#).unwrap().at,
             9
         );
         assert_eq!(decode_spawn_record("not json"), None);

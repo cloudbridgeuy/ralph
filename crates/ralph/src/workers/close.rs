@@ -14,13 +14,23 @@ use ralph_core::claude_leftovers::{
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, branch_name, close_clear_paths, close_event, close_plan, close_remove_paths,
-    decode_spawn_record, project_slug, spawn_record_path, CloseFacts, CloseState, CloseStep,
-    HandoffFiles, HarnessId, Owner, OPENCODE_CONFIG_FILE,
+    decode_spawn_record, diff_range, project_slug, spawn_record_path, turn_count, CloseFacts,
+    CloseState, CloseStep, HandoffFiles, HarnessId, Owner, OPENCODE_CONFIG_FILE,
 };
+use ralph_core::workers_view::{parse_numstat, Diff};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+fn branch_diff(repo: &Path, range: &str) -> Option<Diff> {
+    let output = run(Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--numstat", range]))
+    .ok()?;
+    Some(parse_numstat(&String::from_utf8_lossy(&output.stdout)))
+}
 
 impl Workers {
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
@@ -94,12 +104,22 @@ impl Workers {
         };
         let steps = close_plan(&state, abandon, force)
             .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
-        let spawn_at = fs::read_to_string(spawn_record_path(&self.store_dir, id))
+        let record = fs::read_to_string(spawn_record_path(&self.store_dir, id))
             .ok()
-            .and_then(|raw| decode_spawn_record(&raw))
-            .map(|record| record.at);
+            .and_then(|raw| decode_spawn_record(&raw));
+        let spawn_at = record.as_ref().map(|record| record.at);
+        let diff = unmerged_commits
+            .and(diff_range(
+                record.and_then(|record| record.base_sha).as_deref(),
+                &branch,
+            ))
+            .and_then(|range| branch_diff(&repo, &range));
         let real_worktree = fs::canonicalize(&worktree).unwrap_or_else(|_| worktree.clone());
         let changes = WorkerChanges::open(&self.site(id, &worktree));
+        let turns = changes
+            .as_ref()
+            .and_then(|changes| changes.turns().ok())
+            .and_then(|ids| turn_count(kind, &ids));
         for step in &steps {
             self.close_step(step, &repo, &worktree, id).map_err(|e| {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
@@ -115,6 +135,8 @@ impl Workers {
                     commit_count: unmerged_commits.and_then(|count| u64::try_from(count).ok()),
                     dirty: dirty_worktree,
                     spawn_at,
+                    diff: diff.as_ref(),
+                    turns,
                 })
             });
         }

@@ -1,7 +1,7 @@
 use super::{
     capabilities, decide, is_claude_model, is_cursor_model, is_model_id, is_token_model,
-    model_refusal, Command, Feature, HarnessId, SpawnSpec, Support, WorkerCommand, WorkerEvent,
-    CLAUDE_HEADLESS_HARNESS, CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
+    model_refusal, Command, Feature, HarnessId, SpawnSpec, Support, WorkPhase, WorkerCommand,
+    WorkerEvent, CLAUDE_HEADLESS_HARNESS, CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
 use crate::chat_status::WORKER_COSTS;
 use crate::chat_thread::refuse_thread_report;
@@ -23,6 +23,7 @@ pub fn command_definitions() -> [Value; 5] {
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
                     "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
+                    "phase": {"type": "string", "enum": WorkPhase::ALL.map(WorkPhase::as_str), "description": "What this worker does: plan, build, fix or live-check. Recorded in the lifecycle log. Omit when none fits."},
                     "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. claude-headless: as claude."}
                 },
                 "required": ["id", "task"]
@@ -81,6 +82,7 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
                 harness: spawn.harness,
                 model: spawn.model,
                 ticket: ticket_arg(args)?,
+                phase: phase_arg(args)?,
             })
         }),
         "reply" => string_arg(args, "text").and_then(|text| {
@@ -141,6 +143,18 @@ fn ticket_arg(args: &Value) -> Result<Option<String>, String> {
                     "Ticket '{ticket}' may only use letters, digits and dashes, must include a letter or digit, and may be at most {TICKET_MAX_LEN} characters."
                 ))
             }
+        }
+    }
+}
+
+fn phase_arg(args: &Value) -> Result<Option<WorkPhase>, String> {
+    match args.get("phase") {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => {
+            let phase = string_arg(args, "phase")?;
+            WorkPhase::parse(&phase).map(Some).ok_or_else(|| {
+                format!("Phase '{phase}' is not known. Use plan, build, fix, live-check.")
+            })
         }
     }
 }
@@ -308,6 +322,7 @@ mod tests {
                 harness: HarnessId::Claude,
                 model: None,
                 ticket: None,
+                phase: None,
             }))
         );
         assert_eq!(
@@ -384,6 +399,44 @@ mod tests {
             Some(Ok(other)) => panic!("unexpected {other:?}"),
             Some(Err(e)) => Err(e),
             None => panic!("not a worker command"),
+        }
+    }
+
+    fn spawn_phase(extra: Value) -> Result<Option<WorkPhase>, String> {
+        let mut args = json!({"id": "A", "task": "t"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        match parse_command("spawn_worker", &args) {
+            Some(Ok(Command::Spawn { phase, .. })) => Ok(phase),
+            Some(Ok(other)) => panic!("unexpected {other:?}"),
+            Some(Err(e)) => Err(e),
+            None => panic!("not a worker command"),
+        }
+    }
+
+    #[test]
+    fn spawn_reads_the_phase() {
+        assert_eq!(spawn_phase(json!({})), Ok(None));
+        assert_eq!(spawn_phase(json!({"phase": null})), Ok(None));
+        assert_eq!(
+            spawn_phase(json!({"phase": "fix"})),
+            Ok(Some(WorkPhase::Fix))
+        );
+        assert_eq!(
+            spawn_phase(json!({"phase": "live-check"})),
+            Ok(Some(WorkPhase::LiveCheck))
+        );
+    }
+
+    #[test]
+    fn spawn_refuses_an_unknown_or_mistyped_phase() {
+        for bad in [json!("live check"), json!("Plan"), json!(""), json!(3)] {
+            let refused = spawn_phase(json!({ "phase": bad }));
+            assert!(
+                matches!(&refused, Err(message) if message.contains("plan, build, fix, live-check") || message.contains("string")),
+                "{bad}: {refused:?}"
+            );
         }
     }
 

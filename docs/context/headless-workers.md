@@ -246,27 +246,32 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 
 | event   | fields                                                                                           |
 | ------- | ------------------------------------------------------------------------------------------------ |
-| `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`              |
-| `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `merged_sha` (`null`), `ci` (`null`) |
+| `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`, `phase` (`plan`, `build`, `fix`, `live-check`) |
+| `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `files`, `insertions`, `deletions`, `turns`, `merged_sha` (`null`), `ci` (`null`) |
 | `reply` | `harness`, `interrupt`, `via_permission`, `text_bytes`                                           |
 | `report` | `status` (`done`, `blocked`, `question`), `text_bytes`, `seq`                                   |
 
 - `spawn` is written after the launch succeeds, so a spawn that fails and rolls back has no row. Rows are ordered by `at`, not by position in the file: a fast worker can append a report row before its own spawn row. `base_sha` is the tip of the worker branch when the worktree is ready.
+- `phase` is the optional `phase` argument of `spawn_worker`, recorded at spawn and never inferred later. It is `null` when the argument is missing, and always `null` for a scheduled worker. Any other value is refused. Rows written before `phase` existed lack the field: read it as `null`. The close row has no `phase`: join on `store` and `worker_id`.
 - `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
 - `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
 - `dirty` is `null` when the worktree is gone.
+- `turns` is the highest turn snapshot id of the worker at close. The spawn snapshot is turn 0, so the id equals the number of snapshots taken after spawn, one per turn boundary: the Stop hook of a claude worker (a Stop that the report check blocks counts again), the turn start of a codex worker. It is `0` for a worker that never finished a turn. It is `null` when snapshots are off or unreadable, and always `null` for a `claude-headless` worker, which takes no snapshots. A turn running at close may or may not be counted. If the spawn snapshot failed, the first turn snapshot gets id 0, so `turns` is one lower than the real count. The id survives pruning of old snapshots. Rows of an older release lack it: read it as `null`.
+- `files`, `insertions` and `deletions` come from one `git diff --numstat <base_sha>..<branch>` run at close, before the branch is deleted. `base_sha` is the spawn row value, kept in the spawn record. This is the worker's own committed range, so it still shows the work after the branch merged into the base branch. The diff is two-dot: it compares the `base_sha` tree with the branch tip. If the worker branch was rebased onto a newer base, the counts also include every commit that landed on the base in between, so they overcount. Uncommitted and untracked changes are not counted. A binary file counts as one file and 0 lines. All three are `null` when the spawn record or its `base_sha` is missing (a worker spawned by an older release), the branch is gone, or git fails. They are `0` only when the branch has no changed files. The close row of an older release lacks them: read them as `null`. There is no polling: the diff runs once per close.
 - `duration_s` is the close time minus `spawn_at`, the time in the spawn record. Both are `null` when the record is missing or unreadable.
 - `reply` is written after the send succeeds, by `Workers::reply` (`/reply`, `reply_worker`). A nudge writes no row. `harness` is the running harness, `claude` for a tmux worker. `via_permission` is true when the reply answered a permission request, by request id or because the worker awaited one; an interrupt is never a permission answer.
 - `report` is written by the worker MCP server after it posts the report to the inbox. `seq` is the report number in that server process. A report posted by another program (`ralph inbox post`, a thread or version warning) writes no row.
 - `text_bytes` is the UTF-8 byte length of the text. The row holds no text. For a report it counts the text as posted, with the attached change summary when there is one.
 - A close that only removes leftover markers writes no row.
 
+Each DuckDB query reads the whole file to infer its columns (`sample_size = -1`). Without it DuckDB infers from the first rows only, and a query on `phase`, `turns`, `files`, `insertions` or `deletions` fails with a binder error when the log starts with rows from an older release. To read several stores at once, pass a list of paths and add `union_by_name = true`.
+
 Last close of each worker, with the cost of that run (DuckDB):
 
 ```sql
 WITH last_close AS (
   SELECT *
-  FROM read_json_auto('<store>/analytics/workers.jsonl')
+  FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
   WHERE event = 'close'
   QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
 )
@@ -291,4 +296,42 @@ Spawn rows with the harness and model:
 
 ```sh
 jq -c 'select(.event == "spawn") | [.worker_id, .harness, .model]' <store>/analytics/workers.jsonl
+```
+
+Spawn rows per phase (jq):
+
+```sh
+jq -s '[.[] | select(.event == "spawn")] | group_by(.phase) | map({phase: .[0].phase, n: length})' <store>/analytics/workers.jsonl
+```
+
+Diff size per phase of the last close of each worker (DuckDB):
+
+```sql
+WITH last_close AS (
+  SELECT *
+  FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
+  WHERE event = 'close'
+  QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
+),
+spawns AS (
+  SELECT *
+  FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
+  WHERE event = 'spawn'
+  QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
+)
+SELECT s.phase, count(*) AS closes, sum(c.files) AS files, sum(c.insertions) AS insertions, sum(c.deletions) AS deletions
+FROM last_close c
+JOIN spawns s ON s.store = c.store AND s.worker_id = c.worker_id
+GROUP BY ALL;
+```
+
+The join takes the latest spawn of each worker id, so a reused id counts once. `phase` is `NULL` for a spawn row written before `phase` existed and for a scheduled worker.
+
+Turns and diff size per close (DuckDB):
+
+```sql
+SELECT worker_id, turns, files, insertions, deletions
+FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
+WHERE event = 'close' AND turns IS NOT NULL
+ORDER BY turns DESC;
 ```

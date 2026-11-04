@@ -141,6 +141,7 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
             model: None,
             ticket: None,
             scheduled: true,
+            phase: None,
         };
         let spawned = workers.spawn(&args);
         let wanted = is_still_running(&store.load_all(), &task.id);

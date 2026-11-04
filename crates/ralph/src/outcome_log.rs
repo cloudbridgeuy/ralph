@@ -58,6 +58,7 @@ mod tests {
             model: None,
             base_sha: None,
             scheduled: false,
+            phase: None,
         })
     }
 
@@ -112,6 +113,7 @@ mod tests {
                 model: None,
                 base_sha: None,
                 scheduled: true,
+                phase: None,
             })
         });
         let text = fs::read_to_string(workers_log_path(dir.path())).unwrap();
