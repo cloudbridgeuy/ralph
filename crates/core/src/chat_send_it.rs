@@ -848,15 +848,15 @@ fn fold(plan: &RunPlan, progress: Progress, events: &[Event]) -> (Progress, Next
 }
 
 pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
-    let run = Run {
+    let counted = Run {
         turns: driving.run.turns + 1,
         spent_usd: driving.run.spent_usd + ended.cost_usd,
     };
-    let finish = |progress: Progress, next: Next, met: Option<String>| Ticked {
+    let finish = |run: Run, progress: Progress, next: Next, met: Option<String>| Ticked {
         driving: Driving {
             hash: driving.hash.clone(),
             progress,
-            run: run.clone(),
+            run,
             awaiting: awaiting(&next, progress),
         },
         next,
@@ -864,10 +864,19 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
     };
     let file = match admitted(ended, &driving.hash) {
         Ok(file) => file,
-        Err(reason) => return finish(driving.progress, Next::Stop(reason), None),
+        Err(reason) => return finish(counted, driving.progress, Next::Stop(reason), None),
     };
     let plan = &file.plan;
     let (progress, decided) = fold(plan, driving.progress, &events(&driving.awaiting, ended));
+    let settled_report = matches!(driving.awaiting, Awaiting::Report(_)) && decided != Next::Wait;
+    let run = if settled_report {
+        Run {
+            turns: driving.run.turns,
+            ..counted
+        }
+    } else {
+        counted
+    };
     let evidence = (driving.awaiting == Awaiting::Verdict)
         .then_some(ended.step_result)
         .flatten()
@@ -875,14 +884,14 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
     let met = (progress.step > driving.progress.step || decided == Next::Done)
         .then(|| met_line(plan, driving.progress.step, evidence));
     if matches!(decided, Next::Done | Next::Stop(_)) {
-        return finish(progress, decided, met);
+        return finish(run, progress, decided, met);
     }
     let next = match advance(plan, progress, Event::TurnEnded(&run)).1 {
         stop @ Next::Stop(_) => stop,
         waiting if decided == Next::Wait => waiting,
         _ => decided,
     };
-    finish(progress, next, met)
+    finish(run, progress, next, met)
 }
 
 fn met_line(plan: &RunPlan, step: usize, evidence: Option<&str>) -> String {
