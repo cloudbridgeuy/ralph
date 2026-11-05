@@ -82,7 +82,7 @@ impl Memory {
     }
 }
 
-fn fork_of(store: &Path) -> Option<(PathBuf, ThreadName)> {
+pub(super) fn fork_of(store: &Path) -> Option<(PathBuf, ThreadName)> {
     let threads = store.parent()?;
     if threads.file_name()? != THREADS_DIR {
         return None;
@@ -161,7 +161,7 @@ fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
         .collect()
 }
 
-fn read_meta(dir: &Path) -> io::Result<ThreadMeta> {
+pub(super) fn read_meta(dir: &Path) -> io::Result<ThreadMeta> {
     let text = fs::read_to_string(dir.join(THREAD_FILE))?;
     serde_json::from_str(&text).map_err(io::Error::other)
 }
@@ -276,7 +276,7 @@ fn known_meta(dir: &Path, name: &ThreadName) -> Result<ThreadMeta, String> {
     read_meta(dir).map_err(|e| format!("thread {name}: {e}"))
 }
 
-fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
+pub(super) fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
     Store::new(dir.to_path_buf())
         .claim_chat()
         .map_err(|e| format!("could not claim thread {name}: {e}"))?
@@ -339,6 +339,19 @@ pub fn fork(store: &Path, command: ForkCommand) -> String {
             Err(e) => format!("could not run rex: {e}"),
         },
     }
+}
+
+pub fn open_names(main: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(main.join(THREADS_DIR)) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| ThreadName::parse(entry.ok()?.file_name().to_str()?).ok())
+        .filter(|name| {
+            read_meta(&thread_dir(main, name)).is_ok_and(|meta| open_check(name, &meta).is_ok())
+        })
+        .map(|name| name.to_string())
+        .collect()
 }
 
 pub fn list(main: &Path, workers: &dyn Fn(&ThreadName) -> usize) -> io::Result<String> {

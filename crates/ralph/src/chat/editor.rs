@@ -1,6 +1,7 @@
 use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
 use crate::chat::suggestion::SuggestionHighlighter;
+use crate::chat::thread::{fork_of, open_names};
 use crate::clipboard::PASTE_IMAGE;
 use crate::render::image::resolve;
 use crate::signal::default_sigttou_in;
@@ -9,6 +10,7 @@ use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
 use ralph_core::chat_hold::{hold_completions, HoldCompletion};
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_nudge::nudge_completions;
+use ralph_core::chat_switch::switch_completions;
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
@@ -18,7 +20,7 @@ use reedline::{
     Suggestion, Vi,
 };
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
@@ -30,14 +32,18 @@ const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
 const COMPLETION_MENU: &str = "completion_menu";
 
-struct HoldCompleter(Arc<Monitor>);
+struct HoldCompleter {
+    monitor: Arc<Monitor>,
+    store: PathBuf,
+}
 
 impl Completer for HoldCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
-        let status = self.0.status();
+        let status = self.monitor.status();
         let suggestions: Vec<Suggestion> = hold_completions(line, pos, &status)
             .or_else(|| nudge_completions(line, pos, &status))
             .or_else(|| view_completions(line, pos))
+            .or_else(|| self.thread_completions(line, pos))
             .map(|completion| {
                 let span = Span::new(completion.span.start, completion.span.end);
                 completion
@@ -52,6 +58,16 @@ impl Completer for HoldCompleter {
             })
             .unwrap_or_default();
         CompletionResult::fresh(suggestions)
+    }
+}
+
+impl HoldCompleter {
+    fn thread_completions(&self, line: &str, pos: usize) -> Option<HoldCompletion> {
+        let (main, current) = match fork_of(&self.store) {
+            Some((main, name)) => (main, Some(name)),
+            None => (self.store.clone(), None),
+        };
+        switch_completions(line, pos, current.as_ref(), &open_names(&main))
     }
 }
 
@@ -227,7 +243,10 @@ pub(super) fn build_editor(
     let editor = Reedline::create()
         .with_history(Box::new(history))
         .with_edit_mode(Box::new(edit_mode(mode)))
-        .with_completer(Box::new(HoldCompleter(monitor)))
+        .with_completer(Box::new(HoldCompleter {
+            monitor,
+            store: store_dir.to_path_buf(),
+        }))
         .with_menu(ReedlineMenu::EngineCompleter(Box::new(
             ColumnarMenu::default().with_name(COMPLETION_MENU),
         )))

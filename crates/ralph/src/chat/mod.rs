@@ -25,6 +25,7 @@ mod recap;
 mod route;
 mod schedule;
 mod schedule_worker;
+mod session;
 mod skills;
 mod stall;
 pub(crate) use skills::{read_claude_config, SKILLS_ENV};
@@ -33,6 +34,7 @@ mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
 mod suggestion;
+mod switch;
 mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
@@ -53,7 +55,7 @@ use crate::chat::monitor::{
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
-    decide, draft_with_queue, draft_with_typed, exit_notice, next_batch, unsent, Decision, Queue,
+    decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
@@ -65,13 +67,13 @@ use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
+use crate::chat::switch::{check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
-use crate::chat::thread::Memory;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
-use crate::cli::{ChatArgs, ChatCommand, HistoryArgs};
-use crate::config::{load_for_chat, ConfigSnapshot, FileState, PromptFiles};
+use crate::cli::{ChatArgs, ChatCommand};
+use crate::config::{load_for_chat, ConfigSnapshot, FileState};
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;
@@ -90,24 +92,24 @@ use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, usage_store, Workers};
 use keepalive::{KeepaliveWatch, Stamp};
 use ralph_core::chat::{
-    prompt_text, resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
-    resolve_wrap_width, select_servers, CustomPrompt, ReplyImages,
+    resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
+    resolve_wrap_width, select_servers, ReplyImages,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
-use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
-use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
+use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
 use ralph_core::chat_send_it::{propose_prompt, usage as send_it_usage, Ended, SendItCommand};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
-use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
+use ralph_core::chat_status::{orphan_hint, Route, Status};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
-use ralph_core::chat_thread::{in_scope, open_check, ThreadName};
+use ralph_core::chat_switch::SwitchArgv;
+use ralph_core::chat_thread::{open_check, ThreadName};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -115,13 +117,16 @@ use ralph_core::program_status::{status_enabled, Phase};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
-use reedline::{EditCommand, ExternalPrinter, HistoryItem, Reedline};
+use reedline::{EditCommand, ExternalPrinter};
+#[cfg(test)]
+use session::resolve_store;
+use session::{chat_dir, load_custom_prompt, print_history, route_queued, save_unsent, store_dir};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::{self, IsTerminal};
-use std::path::{Path, PathBuf};
+use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+pub(crate) use switch::ChatExit;
 
 const STORE_ENV: &str = "RALPH_CHAT_STORE";
 const REX_SESSION_ENV: &str = "REX_SESSION";
@@ -130,98 +135,10 @@ pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
 pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
 
-fn resolve_store(
-    flag: Option<PathBuf>,
-    env: Option<PathBuf>,
-    cwd: &Path,
-    home: Option<&Path>,
-) -> io::Result<PathBuf> {
-    let env = env.filter(|dir| !dir.as_os_str().is_empty());
-    match flag.or(env) {
-        Some(dir) => Ok(cwd.join(dir)),
-        None => home
-            .map(|home| home.join(".ralph").join("chat"))
-            .ok_or_else(|| io::Error::other("home directory not found")),
-    }
-}
-
-fn store_dir(flag: Option<PathBuf>) -> io::Result<PathBuf> {
-    resolve_store(
-        flag,
-        std::env::var_os(STORE_ENV).map(PathBuf::from),
-        &std::env::current_dir()?,
-        dirs::home_dir().as_deref(),
-    )
-}
-
-fn chat_dir(flag: Option<PathBuf>, thread: Option<&ThreadName>) -> io::Result<PathBuf> {
-    let main = store_dir(flag)?;
-    Ok(match thread {
-        Some(name) => thread::thread_dir(&main, name),
-        None => main,
-    })
-}
-
-fn print_history(
-    store_dir: &Path,
-    history: &HistoryArgs,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let text = history_tool(
-        history.tool.name(),
-        &history.words.join(" "),
-        history.cursor.as_deref(),
-    )
-    .and_then(|call| match &history.scope {
-        Some(scope) => in_scope(call, scope),
-        None => Ok(call),
-    })
-    .and_then(|call| Memory::open(store_dir)?.call(&call))?;
-    println!("{text}");
-    Ok(())
-}
-
-fn read_prompt_file(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path)
-        .map_err(|e| format!("Skipping prompt file {}: {e}", path.display()))
-}
-
-fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
-    let (behaviour, behaviour_warning) = match files.behaviour.as_deref() {
-        Some(path) => match read_prompt_file(path) {
-            Ok(text) => match prompt_text(text) {
-                Some(text) => (Some(text), None),
-                None => (
-                    None,
-                    Some(format!(
-                        "Prompt file {} is empty; using the default reply rules",
-                        path.display()
-                    )),
-                ),
-            },
-            Err(warning) => (None, Some(warning)),
-        },
-        None => (None, None),
-    };
-    let (appends, append_warnings): (Vec<_>, Vec<_>) = files
-        .appends
-        .iter()
-        .map(|path| read_prompt_file(path))
-        .partition(Result::is_ok);
-    (
-        CustomPrompt {
-            behaviour,
-            appends: appends.into_iter().flatten().collect(),
-        },
-        behaviour_warning
-            .into_iter()
-            .chain(append_warnings.into_iter().filter_map(Result::err))
-            .collect(),
-    )
-}
-
-pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     if let Some(ChatCommand::History(history)) = args.command {
-        return print_history(&chat_dir(args.store, args.thread.as_ref())?, &history);
+        print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
+        return Ok(ChatExit::Quit);
     }
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     signal::ignore_sigttou();
@@ -617,6 +534,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut sending: Option<Active> = None;
     let mut offered: Option<(String, u64)> = None;
     let mut carried: Vec<String> = Vec::new();
+    let mut leaving: Option<ChatExit> = None;
     let show_cells = |shown: &str| {
         let ctx = RenderContext::new(&agent_highlighter, color)
             .with_diff(diff_colors)
@@ -807,6 +725,45 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 shown_plan = screen.shown;
                 continue;
             }
+            Route::Switch(parsed) => {
+                let leave = Leave {
+                    store_dir: &store_dir,
+                    current: args.thread.as_ref(),
+                    monitor: &monitor,
+                };
+                let target = match parsed
+                    .and_then(|target| check_switch(&leave, &target).map(|()| target))
+                {
+                    Ok(target) => target,
+                    Err(refusal) => {
+                        println!("{refusal}");
+                        continue;
+                    }
+                };
+                let lost = unsent_texts(&carried, editor.current_buffer_contents());
+                if !save_unsent(&mut editor, &lost) {
+                    println!("could not save the unsent text; the switch is cancelled.");
+                    continue;
+                }
+                warn_if_err(editor.sync_history(), "Failed to save chat history");
+                idle.store(false, Ordering::SeqCst);
+                *turn.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                leaving = Some(ChatExit::Switch(
+                    target,
+                    SwitchArgv {
+                        store: thread::config_root(&store_dir),
+                        recent_history_tokens: args.recent_history_tokens,
+                        wrap_width: args.wrap_width,
+                        skills: args.skills.clone(),
+                        permission_mode: args.permission_mode.clone(),
+                        worktree_dir: args.worktree_dir.clone(),
+                        no_inbox_sound: args.no_inbox_sound,
+                        no_inbox_notification: args.no_inbox_notification,
+                        skip_summary: args.skip_summary,
+                    },
+                ));
+                break;
+            }
             local => {
                 run_local(local, &local_route, || {
                     monitor.refresh(true);
@@ -900,38 +857,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Next::Nothing => {}
         }
     }
-    Ok(())
-}
-
-fn route_queued(text: String, editor: &mut Reedline, prompt: &ChatPrompt) -> Route {
-    print!("{}", prompt.echo(&text));
-    warn_if_err(
-        editor
-            .history_mut()
-            .save(HistoryItem::from_command_line(text.clone())),
-        "Failed to save chat history",
-    );
-    let status = prompt.monitor.status();
-    route_input(
-        &text,
-        status.unread,
-        &prompt.empty_submit,
-        &hold_targets(&status),
-    )
-}
-
-fn save_unsent(editor: &mut Reedline, lost: &[String]) {
-    for text in lost {
-        warn_if_err(
-            editor
-                .history_mut()
-                .save(HistoryItem::from_command_line(text.clone())),
-            "Failed to save chat history",
-        );
-    }
-    if let Some(notice) = exit_notice(lost.len()) {
-        eprintln!("{notice}");
-    }
+    Ok(leaving.unwrap_or(ChatExit::Quit))
 }
 
 #[cfg(test)]
