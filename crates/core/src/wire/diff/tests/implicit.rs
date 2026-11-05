@@ -163,6 +163,20 @@ fn implicit_short_shared_prefix_is_too_short_to_cache() {
 }
 
 #[test]
+fn implicit_prefix_exactly_at_the_minimum_is_not_too_short() {
+    let (a, b) = unmarked_pair(written(0, 100), 400);
+    let servable = implicit_view_with(&a, &b, IMPLICIT_30M, None)
+        .explanation
+        .servable_tokens
+        .unwrap();
+    let view = implicit_view_with(&a, &b, IMPLICIT_30M, Some(servable));
+    assert!(matches!(
+        view.explanation.verdict,
+        Verdict::Unexplained { .. }
+    ));
+}
+
+#[test]
 fn implicit_prefix_at_or_above_the_minimum_keeps_the_other_verdicts() {
     let (a, b) = unmarked_pair(written(0, 100), 2_000);
     let view = implicit_view_with(&a, &b, IMPLICIT_30M, Some(10));

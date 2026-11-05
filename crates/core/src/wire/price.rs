@@ -490,6 +490,14 @@ mod tests {
     }
 
     #[test]
+    fn zero_override_price_is_allowed() {
+        let mut over = overrides(1.0);
+        over.get_mut("claude-haiku-5-5").unwrap().input = 0.0;
+        over.get_mut("claude-haiku-5-5").unwrap().output = Some(0.0);
+        assert!(validate_price_overrides(&over).is_ok());
+    }
+
+    #[test]
     fn dashed_date_snapshot_matches_its_listed_id() {
         assert!(matches_prefix("gpt-6.1-sol-2026-09-01", "gpt-6.1-sol"));
         assert!(matches_prefix("claude-opus-5-20260901", "claude-opus-5"));
