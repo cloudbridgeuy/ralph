@@ -6,12 +6,13 @@ use ralph_core::changes::{
     DiffBase, SnapshotRange, UPSTREAM_NOTE,
 };
 use ralph_core::snapshot::{
-    append_lexically, commit_tree_args, delete_payload, delete_refs_args, exclude_base, gc_args,
-    identity_env, index_env, index_lock_path, index_path, index_steps, init_args, list_prefix_args,
-    next_turn, not_excludable_message, parse_snapshot_base, parse_turns, refs_to_prune,
-    repo_root_store_message, side_dir, snapshot_excludes, snapshot_lock_expired,
-    snapshot_lock_path, snapshot_message, update_ref_args, IndexStep, SnapshotBase,
-    CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS, SNAPSHOT_LOCK_POLL,
+    append_lexically, check_ignore_payload, commit_tree_args, delete_payload, delete_refs_args,
+    exclude_base, gc_args, identity_env, index_env, index_lock_path, index_path, index_steps,
+    init_args, list_prefix_args, next_turn, not_excludable_message, parse_snapshot_base,
+    parse_turns, refs_to_prune, repo_root_store_message, side_dir, snapshot_excludes,
+    snapshot_lock_expired, snapshot_lock_path, snapshot_message, update_ref_args, without_ignored,
+    IndexStep, SnapshotBase, CHAT_REF_PREFIX, CHECK_IGNORE_ARGS, HEAD_CHECK_ARGS, KEEP_TURNS,
+    SNAPSHOT_LOCK_POLL,
 };
 use ralph_core::worker::{base_branch, project_slug};
 use std::ffi::OsString;
@@ -244,17 +245,14 @@ impl Snapshotter {
         command
     }
 
-    // HEAD's objects live in the repo, not the side dir, so read-tree swaps
-    // only the index. Stat-clean entries keep blobs an earlier add wrote to
-    // the side dir; the rest are rehashed by add -A.
-    fn step_git(&self, step: IndexStep) -> Command {
+    fn step_git(&self, step: IndexStep, excludes: &[String]) -> Command {
         match step {
             IndexStep::ReadEmpty | IndexStep::ReadHead => {
                 let mut command = self.repo_command(step.args(&[]));
                 command.env("GIT_INDEX_FILE", index_path(&self.side, &self.owner));
                 command
             }
-            IndexStep::AddAll => self.repo_git(step.args(&self.excludes)),
+            IndexStep::AddAll => self.repo_git(step.args(excludes)),
         }
     }
 
@@ -282,6 +280,37 @@ impl Snapshotter {
         }
     }
 
+    fn excludes_not_ignored(&self) -> Vec<String> {
+        let Some(payload) = check_ignore_payload(&self.excludes) else {
+            return self.excludes.clone();
+        };
+        match self.ignored_paths(&payload) {
+            Ok(ignored) => without_ignored(&self.excludes, &ignored),
+            Err(_) => self.excludes.clone(),
+        }
+    }
+
+    fn ignored_paths(&self, payload: &str) -> io::Result<String> {
+        let mut child = self
+            .repo_command(CHECK_IGNORE_ARGS)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(payload.as_bytes())?;
+        }
+        let output = child.wait_with_output()?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        } else {
+            Err(io::Error::other(format!(
+                "git check-ignore {}",
+                output.status
+            )))
+        }
+    }
+
     pub fn write_tree(&self) -> io::Result<String> {
         self.ensure_side()?;
         let _lock = self.lock_index()?;
@@ -292,8 +321,9 @@ impl Snapshotter {
             .stderr(Stdio::null())
             .status()?
             .success();
+        let excludes = self.excludes_not_ignored();
         for step in index_steps(has_head) {
-            stdout_of(&mut self.step_git(step))?;
+            stdout_of(&mut self.step_git(step, &excludes))?;
         }
         stdout_of(&mut self.repo_git(["write-tree"]))
     }
@@ -454,14 +484,14 @@ mod tests {
     fn add_all_carries_the_excludes_and_read_head_does_not() {
         let mut snapshotter = snapshotter_in(Path::new("/s"));
         snapshotter.excludes = vec![":(exclude,literal,top).ralph".to_string()];
-        let add = args_of(&snapshotter.step_git(IndexStep::AddAll));
+        let add = args_of(&snapshotter.step_git(IndexStep::AddAll, &snapshotter.excludes));
         assert_eq!(
             add[add.len() - 5..],
             ["add", "-A", "--", ".", ":(exclude,literal,top).ralph"]
         );
-        let read = args_of(&snapshotter.step_git(IndexStep::ReadHead));
+        let read = args_of(&snapshotter.step_git(IndexStep::ReadHead, &snapshotter.excludes));
         assert_eq!(read[read.len() - 4..], ["read-tree", "-m", "-i", "HEAD"]);
-        let empty = args_of(&snapshotter.step_git(IndexStep::ReadEmpty));
+        let empty = args_of(&snapshotter.step_git(IndexStep::ReadEmpty, &snapshotter.excludes));
         assert_eq!(empty[empty.len() - 2..], ["read-tree", "--empty"]);
     }
 
