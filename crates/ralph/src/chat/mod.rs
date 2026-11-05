@@ -756,11 +756,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 };
                 let lost = unsent_texts(&carried, editor.current_buffer_contents());
                 if !save_unsent(&mut editor, &lost) {
-                    println!("could not save the unsent text; the switch is cancelled.");
-                    restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
                     if signal::is_terminated() {
+                        println!("could not save the unsent text; exiting on signal.");
                         break;
                     }
+                    println!("could not save the unsent text; the switch is cancelled.");
+                    restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
                     continue;
                 }
                 warn_if_err(editor.sync_history(), "Failed to save chat history");
