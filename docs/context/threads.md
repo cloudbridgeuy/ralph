@@ -23,7 +23,7 @@ The thread starts from main's memory as it was at that moment. This point is the
 Quit the thread chat. Main's chat stays open in its own terminal or Rex block. There is no command to switch between chats.
 
 - Press Ctrl-D on an empty prompt.
-- Press Ctrl-C at the prompt. It quits also when the draft has text. While a turn runs, Ctrl-C clears the draft or cancels the turn instead.
+- Press Ctrl-C at the prompt. It quits also when the draft has text. During a turn, Ctrl-C cancels the turn. It clears the draft only inside the queue editor.
 
 ## List threads
 
@@ -56,7 +56,7 @@ ralph thread merge <name>
 ```
 
 - It makes one paid call to the Haiku model, and up to 3 if the model's digest is refused. The model writes a digest from a 200-line view of the thread.
-- The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing.
+- The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing. If posting the digest to main's inbox fails, the thread stays merged and the error names `thread.json`, which holds the digest.
 
 Rebase merge:
 
