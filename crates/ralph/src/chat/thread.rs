@@ -13,8 +13,8 @@ use ralph_core::chat_thread::{
     digest_with, drop_message, fork_check, fork_launch, guard_check, label_item, ls_counts,
     merge_prompt, merged_check, merged_report, open_check, pull_message, revive_check,
     thread_split, view_block, view_report, ForkCommand, ForkLaunch, ForkSpawn, Guarded, Live,
-    Merged, Parked, Scope, ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, THREADS_DIR,
-    THREAD_FILE, VIEW_BLOCK_LINES,
+    Merged, Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
+    VIEW_BLOCK_LINES,
 };
 use ralph_core::chat_thread_cmd::{parked_message, view_posted_message};
 use ralph_core::schedule_request::SCHEDULE_DIR;
@@ -297,17 +297,15 @@ pub(super) fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, S
         })
 }
 
-fn fork_ready(store: &Path, name: &ThreadName) -> Result<(), String> {
-    if fork_of(store).is_some() {
-        return Err(FORK_IN_THREAD.to_string());
-    }
-    let dir = thread_dir(store, name);
+fn fork_ready(store: &Path, name: &ThreadName) -> Result<PathBuf, String> {
+    let main = config_root(store);
+    let dir = thread_dir(&main, name);
     if !dir.join(THREAD_FILE).is_file() {
-        return Ok(());
+        return Ok(main);
     }
     let meta = read_meta(&dir).map_err(|e| format!("thread {name}: {e}"))?;
     open_check(name, &meta)?;
-    claim_closed(&dir, name).map(drop)
+    claim_closed(&dir, name).map(|_| main)
 }
 
 pub fn fork(store: &Path, command: ForkCommand) -> String {
@@ -315,16 +313,17 @@ pub fn fork(store: &Path, command: ForkCommand) -> String {
         ForkCommand::Open(name) => name,
         ForkCommand::Usage(usage) => return usage,
     };
-    if let Err(refused) = fork_ready(store, &name) {
-        return refused;
-    }
+    let main = match fork_ready(store, &name) {
+        Ok(main) => main,
+        Err(refused) => return refused,
+    };
     let (exe, cwd) = match (std::env::current_exe(), std::env::current_dir()) {
         (Ok(exe), Ok(cwd)) => (exe, cwd),
         (Err(e), _) | (_, Err(e)) => return format!("could not fork thread {name}: {e}"),
     };
     let (exe, main, cwd) = (
         exe.to_string_lossy(),
-        store.to_string_lossy(),
+        main.to_string_lossy(),
         cwd.to_string_lossy(),
     );
     let block = std::env::var("REX_BLOCK").ok();
@@ -750,27 +749,32 @@ mod tests {
     }
 
     #[test]
-    fn fork_refuses_open_parked_merged_and_from_inside_a_thread() {
+    fn fork_refuses_open_parked_merged_and_forks_a_sibling_from_inside_a_thread() {
         let (_root, main, dir) = forked();
         let auth = name("auth");
-        assert_eq!(fork_ready(&main, &name("fresh")), Ok(()));
+        assert_eq!(fork_ready(&main, &name("fresh")), Ok(main.clone()));
         assert!(!thread_dir(&main, &name("fresh")).exists());
-        assert_eq!(fork_ready(&main, &auth), Ok(()));
-        assert_eq!(fork_ready(&main, &auth), Ok(()));
+        assert_eq!(fork_ready(&main, &auth), Ok(main.clone()));
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
         let open = fork_ready(&main, &auth).unwrap_err();
         assert!(open.starts_with("thread auth is in use"), "{open}");
         drop(held);
-        assert_eq!(
-            fork_ready(&dir, &name("other")).unwrap_err(),
-            FORK_IN_THREAD
-        );
+        assert_eq!(fork_ready(&dir, &name("other")), Ok(main.clone()));
+        // A thread's chat holds its own claim, so it cannot fork itself.
+        let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
+        let open = fork_ready(&dir, &auth).unwrap_err();
+        assert!(open.starts_with("thread auth is in use"), "{open}");
+        drop(held);
         park_thread(&main, &auth, &[]).unwrap();
-        let parked = fork_ready(&main, &auth).unwrap_err();
-        assert!(parked.contains("is parked"), "{parked}");
+        for store in [&main, &dir] {
+            let parked = fork_ready(store, &auth).unwrap_err();
+            assert!(parked.contains("is parked"), "{parked}");
+        }
         merge_thread(&main, &auth, &[], &mut digest("x #auth:0")).unwrap();
-        let merged = fork_ready(&main, &auth).unwrap_err();
-        assert!(merged.contains("merged"), "{merged}");
+        for store in [&main, &dir] {
+            let merged = fork_ready(store, &auth).unwrap_err();
+            assert!(merged.contains("merged"), "{merged}");
+        }
     }
 
     fn save_records(dir: &Path) {

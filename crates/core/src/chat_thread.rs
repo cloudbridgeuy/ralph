@@ -18,7 +18,6 @@ pub const MAX_MERGE_ATTEMPTS: usize = 3;
 const MAIN: &str = "main";
 pub const FORK_USAGE: &str =
     "usage: /fork <name> opens thread <name> in a new Rex block next to this chat.";
-pub const FORK_IN_THREAD: &str = "threads fork from main; run /fork in main's chat.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThreadName(String);
