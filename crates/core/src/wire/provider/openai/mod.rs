@@ -191,8 +191,8 @@ fn listed(model: &str) -> Option<PriceEntry> {
         .max_by_key(|entry| entry.model.len())
 }
 
-fn ratios(model: &str) -> BillingRates {
-    let Some(entry) = listed(model).filter(|entry| entry.price.input > 0.0) else {
+fn ratios(entry: Option<PriceEntry>) -> BillingRates {
+    let Some(entry) = entry.filter(|entry| entry.price.input > 0.0) else {
         return BillingRates {
             cache_read: DEFAULT_CACHE_READ,
             cache_writes: vec![
@@ -328,7 +328,7 @@ impl Provider for OpenAi {
     }
 
     fn rates(&self, model: &str) -> BillingRates {
-        ratios(model)
+        ratios(listed(model))
     }
 
     fn prices(&self) -> PriceTable {

@@ -514,6 +514,13 @@ fn unknown_model_gets_the_default_ratios() {
 }
 
 #[test]
+fn listed_entry_with_zero_input_gets_the_default_ratios() {
+    let mut entry = listed("gpt-6.1-sol").unwrap();
+    entry.price.input = 0.0;
+    assert_eq!(ratios(Some(entry)), OpenAi.rates("gpt-unlisted"));
+}
+
+#[test]
 fn input_equivalent_prices_the_json_fixture() {
     let value = input_equivalent(&json_usage(), &OpenAi.rates("gpt-6.1-sol")).unwrap();
     assert!((value - (500.0 + 400.0 * 0.05 + 100.0 * 1.25 + 80.0 * 5.0)).abs() < 1e-9);
@@ -718,6 +725,22 @@ fn responses_error_event_is_recorded() {
 }
 
 #[test]
+fn responses_first_error_event_wins() {
+    let body = b"data: {\"type\":\"error\",\"message\":\"first\"}\n\n\
+        data: {\"type\":\"error\",\"message\":\"second\"}\n\n";
+    assert_eq!(resp_usage(body).error.as_deref(), Some("first"));
+}
+
+#[test]
+fn responses_error_event_survives_a_clean_terminal_event() {
+    let mut body = b"data: {\"type\":\"error\",\"message\":\"overloaded\"}\n\n".to_vec();
+    body.extend_from_slice(RESP_COMPLETED);
+    let result = resp_usage(&body);
+    assert_eq!(result.outcome, UsageOutcome::Reported(resp_sse_usage()));
+    assert_eq!(result.error.as_deref(), Some("overloaded"));
+}
+
+#[test]
 fn responses_awkward_splits_give_identical_usage() {
     let expected = resp_usage(RESP_COMPLETED);
     assert_eq!(expected.outcome, UsageOutcome::Reported(resp_sse_usage()));
@@ -777,6 +800,22 @@ fn string_input_is_one_user_segment() {
     let labels: Vec<&str> = segments.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(labels, ["instructions", "input user/text"]);
     assert_eq!(segments[1].source, SegmentSource::Messages);
+}
+
+#[test]
+fn input_or_instructions_alone_selects_the_responses_shape() {
+    let labels = |body: Value| -> Vec<String> {
+        OpenAi
+            .segments(&body)
+            .into_iter()
+            .map(|s| s.label)
+            .collect()
+    };
+    assert_eq!(labels(json!({"input": "hi"})), ["input user/text"]);
+    assert_eq!(
+        labels(json!({"instructions": "be brief"})),
+        ["instructions"]
+    );
 }
 
 #[test]
