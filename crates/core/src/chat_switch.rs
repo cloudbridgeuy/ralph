@@ -1,3 +1,4 @@
+use crate::chat_hold::{command_args, word_completion, HoldCompletion};
 use crate::chat_thread::{open_check, ThreadMeta, ThreadName};
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -118,6 +119,26 @@ pub fn switch_argv(opts: &SwitchArgv, target: &SwitchTarget) -> Vec<OsString> {
             .map(|(_, flag)| flag.into()),
     );
     argv
+}
+
+pub fn switch_completions(
+    line: &str,
+    cursor: usize,
+    current: Option<&ThreadName>,
+    threads: &[String],
+) -> Option<HoldCompletion> {
+    let args = command_args(line, cursor, "/thread")?;
+    if args.trim_start().contains(char::is_whitespace) {
+        return None;
+    }
+    let main = current.map(|_| MAIN.to_string());
+    let targets = threads
+        .iter()
+        .filter(|name| current.is_none_or(|now| now.as_str() != name.as_str()))
+        .cloned()
+        .chain(main)
+        .collect();
+    Some(word_completion(args, cursor, targets))
 }
 
 #[cfg(test)]
@@ -354,5 +375,42 @@ mod tests {
                 "--skip-summary",
             ]
         );
+    }
+
+    fn complete(line: &str, current: Option<&str>) -> Option<Vec<String>> {
+        let current = current.map(name);
+        let threads = ["auth", "side", "sub"].map(String::from);
+        switch_completions(line, line.len(), current.as_ref(), &threads).map(|c| c.values)
+    }
+
+    #[test]
+    fn thread_completion_lists_open_threads_and_main() {
+        assert_eq!(
+            complete("/thread ", Some("side")),
+            Some(vec!["auth".into(), "main".into(), "sub".into()])
+        );
+    }
+
+    #[test]
+    fn thread_completion_in_main_has_no_main_entry() {
+        assert_eq!(
+            complete("/thread s", None),
+            Some(vec!["side".into(), "sub".into()])
+        );
+    }
+
+    #[test]
+    fn thread_completion_takes_one_word_and_only_the_thread_command() {
+        assert_eq!(complete("/thread auth ", None), None);
+        assert_eq!(complete("/thread", None), None);
+        assert_eq!(complete("/main ", None), None);
+        assert_eq!(complete("/fork a", None), None);
+    }
+
+    #[test]
+    fn thread_completion_span_covers_the_partial_word() {
+        let threads = ["auth".to_string()];
+        let found = switch_completions("/thread au", 10, None, &threads).unwrap();
+        assert_eq!(found.span, 8..10);
     }
 }

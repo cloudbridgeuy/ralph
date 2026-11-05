@@ -82,7 +82,7 @@ impl Memory {
     }
 }
 
-fn fork_of(store: &Path) -> Option<(PathBuf, ThreadName)> {
+pub(super) fn fork_of(store: &Path) -> Option<(PathBuf, ThreadName)> {
     let threads = store.parent()?;
     if threads.file_name()? != THREADS_DIR {
         return None;
@@ -339,6 +339,19 @@ pub fn fork(store: &Path, command: ForkCommand) -> String {
             Err(e) => format!("could not run rex: {e}"),
         },
     }
+}
+
+pub fn open_names(main: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(main.join(THREADS_DIR)) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| ThreadName::parse(entry.ok()?.file_name().to_str()?).ok())
+        .filter(|name| {
+            read_meta(&thread_dir(main, name)).is_ok_and(|meta| open_check(name, &meta).is_ok())
+        })
+        .map(|name| name.to_string())
+        .collect()
 }
 
 pub fn list(main: &Path, workers: &dyn Fn(&ThreadName) -> usize) -> io::Result<String> {
