@@ -761,16 +761,21 @@ mod tests {
         assert!(open.starts_with("thread auth is in use"), "{open}");
         drop(held);
         assert_eq!(fork_ready(&dir, &name("other")), Ok(main.clone()));
+        // A thread's chat holds its own claim, so it cannot fork itself.
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
         let open = fork_ready(&dir, &auth).unwrap_err();
         assert!(open.starts_with("thread auth is in use"), "{open}");
         drop(held);
         park_thread(&main, &auth, &[]).unwrap();
-        let parked = fork_ready(&main, &auth).unwrap_err();
-        assert!(parked.contains("is parked"), "{parked}");
+        for store in [&main, &dir] {
+            let parked = fork_ready(store, &auth).unwrap_err();
+            assert!(parked.contains("is parked"), "{parked}");
+        }
         merge_thread(&main, &auth, &[], &mut digest("x #auth:0")).unwrap();
-        let merged = fork_ready(&main, &auth).unwrap_err();
-        assert!(merged.contains("merged"), "{merged}");
+        for store in [&main, &dir] {
+            let merged = fork_ready(store, &auth).unwrap_err();
+            assert!(merged.contains("merged"), "{merged}");
+        }
     }
 
     fn save_records(dir: &Path) {
