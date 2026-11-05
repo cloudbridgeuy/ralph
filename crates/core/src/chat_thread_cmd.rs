@@ -2,6 +2,8 @@ use crate::chat_help::Command;
 use crate::chat_thread::ThreadName;
 
 const THREADS_USAGE: &str = "usage: /threads takes no arguments and lists the threads.";
+const PARK_USAGE: &str =
+    "usage: /park <name> stops thread <name> from opening; run it in main's chat.";
 const PULL_USAGE: &str =
     "usage: /pull <name> moves thread <name> to main's end; run it in main's chat.";
 
@@ -9,6 +11,7 @@ const PULL_USAGE: &str =
 pub enum ThreadOp {
     Ls,
     Pull(ThreadName),
+    Park(ThreadName),
 }
 
 pub fn parse_thread_op(command: Command, args: &str) -> Result<ThreadOp, String> {
@@ -16,6 +19,7 @@ pub fn parse_thread_op(command: Command, args: &str) -> Result<ThreadOp, String>
         Command::Threads if args.trim().is_empty() => Ok(ThreadOp::Ls),
         Command::Threads => Err(THREADS_USAGE.to_string()),
         Command::Pull => thread_arg(PULL_USAGE, args).map(ThreadOp::Pull),
+        Command::Park => thread_arg(PARK_USAGE, args).map(ThreadOp::Park),
         other => Err(format!("{} is not a thread command.", other.name())),
     }
 }
@@ -24,6 +28,7 @@ pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
     match op {
         ThreadOp::Ls => None,
         ThreadOp::Pull(_) => in_thread.then(|| main_only(Command::Pull)),
+        ThreadOp::Park(_) => in_thread.then(|| main_only(Command::Park)),
     }
 }
 
@@ -120,6 +125,32 @@ mod tests {
             }
         );
         assert!(!routed.runs_mid_turn());
+    }
+
+    #[test]
+    fn park_takes_one_thread_name() {
+        assert_eq!(
+            parse_thread_op(Command::Park, "auth"),
+            Ok(ThreadOp::Park(auth()))
+        );
+    }
+
+    #[test]
+    fn park_without_a_name_or_with_extra_words_is_a_usage_error() {
+        for args in ["", "auth now"] {
+            let err = parse_thread_op(Command::Park, args).unwrap_err();
+            assert!(err.starts_with("usage: /park <name>"), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_thread_chat_refuses_park_with_a_hint_and_main_allows_it() {
+        let park = ThreadOp::Park(auth());
+        assert_eq!(
+            op_refusal(true, &park),
+            Some("/park runs in main's chat. Run /main, then /park <name>.".to_string())
+        );
+        assert_eq!(op_refusal(false, &park), None);
     }
 
     #[test]

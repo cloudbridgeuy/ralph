@@ -87,6 +87,7 @@ fn lists_hold_every_variant() {
             Thread,
             Threads,
             Pull,
+            Park,
             Main,
             Config,
             View,

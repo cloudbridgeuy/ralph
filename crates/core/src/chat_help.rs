@@ -24,6 +24,7 @@ pub enum Command {
     Thread,
     Threads,
     Pull,
+    Park,
     Main,
     Config,
     View,
@@ -34,7 +35,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 20] = [
+    pub const ALL: [Command; 21] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -48,6 +49,7 @@ impl Command {
         Command::Thread,
         Command::Threads,
         Command::Pull,
+        Command::Park,
         Command::Main,
         Command::Config,
         Command::View,
@@ -72,6 +74,7 @@ impl Command {
             Command::Thread => "/thread",
             Command::Threads => "/threads",
             Command::Pull => "/pull",
+            Command::Park => "/park",
             Command::Main => "/main",
             Command::Config => "/config",
             Command::View => "/view",
@@ -213,6 +216,10 @@ impl Command {
             Command::Pull => &[(
                 "/pull <name>",
                 "move thread <name>'s fork point to the end of main, like ralph thread pull; main's chat only, with no model call; refused when the thread's own chat is open, when the thread is merged or unknown, and inside a thread's chat (run /main first); works on a parked thread; the next ralph chat --thread <name> starts with the newer main messages; while a turn runs it waits in the queue",
+            )],
+            Command::Park => &[(
+                "/park <name>",
+                "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /main first); the thread's saved watches and schedules wait; ralph thread revive <name> opens it again; while a turn runs it waits in the queue",
             )],
             Command::Main => &[(
                 "/main",
