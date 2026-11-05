@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 use ralph_core::attachment::attachment_paths;
 use ralph_core::file_link::path_line;
 use ralph_core::kitty::{
-    cell_grid, clamp_placeholder_grid, encode_apc, encode_virtual, graphics_probe, graphics_query,
-    graphics_reply, parse_image_markers, placeholder_rows, strip_kitty_apc, GraphicsReply,
-    Placement, Segment, TerminalSnapshot, GRAPHICS_QUERY_TIMEOUT,
+    cell_grid, clamp_placeholder_grid, encode_animation, encode_apc, encode_virtual,
+    graphics_probe, graphics_query, graphics_reply, parse_image_markers, placeholder_rows,
+    strip_kitty_apc, GraphicsReply, Placement, Segment, TerminalSnapshot, GRAPHICS_QUERY_TIMEOUT,
 };
 
-use ralph_core::kitty_image::prepare;
+use ralph_core::kitty_image::{prepare, prepare_animation};
 
 use super::text::render_markdown;
 use super::wrap::wrap_width;
@@ -185,6 +185,25 @@ pub fn render_attachments(text: &str, images: ImageSettings, bounds: ImageBounds
 }
 
 pub fn draw_png(bytes: &[u8], images: ImageSettings, bounds: ImageBounds) -> Option<String> {
+    if let Some(frames) = prepare_animation(bytes) {
+        let grid = cell_grid(
+            frames[0].image.size,
+            images.cell_px,
+            bounds.cols,
+            bounds.rows,
+        );
+        let (cols, rows) = match images.placement {
+            Placement::Direct => grid,
+            Placement::Tmux => clamp_placeholder_grid(grid),
+        };
+        let id = next_image_id();
+        let encoded = encode_animation(&frames, id, cols, rows, images.placement);
+        let suffix = match images.placement {
+            Placement::Direct => "\n".repeat(rows as usize),
+            Placement::Tmux => placeholder_rows(id, cols, rows),
+        };
+        return Some(encoded + &suffix);
+    }
     let image = prepare(bytes)?;
     let grid = cell_grid(image.size, images.cell_px, bounds.cols, bounds.rows);
     Some(match images.placement {
@@ -268,6 +287,94 @@ mod tests {
         cell_px: None,
     };
     const BOUNDS: ImageBounds = ImageBounds { cols: 80, rows: 50 };
+
+    fn assert_fox_animation(placement: Placement) {
+        let bytes = include_bytes!("../../tests/fixtures/guz1408-fox.gif");
+        let settings = ImageSettings {
+            placement,
+            ..SETTINGS
+        };
+        let out = draw_png(bytes, settings, BOUNDS).unwrap();
+        let normalized = if placement == Placement::Tmux {
+            assert_eq!(
+                out.matches("\x1bPtmux;").count(),
+                out.matches("\x1b\x1b_G").count()
+            );
+            out.replace("\x1bPtmux;", "").replace("\x1b\x1b", "\x1b")
+        } else {
+            out.clone()
+        };
+        let controls: Vec<_> = normalized
+            .split("\x1b_G")
+            .skip(1)
+            .map(|command| command.split(';').next().unwrap())
+            .filter(|control| control.split(',').any(|key| key.starts_with("i=")))
+            .collect();
+        assert_eq!(controls.len(), 9);
+        let keys: Vec<Vec<_>> = controls
+            .iter()
+            .map(|control| control.split(',').collect())
+            .collect();
+        let id = *keys[1].iter().find(|key| key.starts_with("i=")).unwrap();
+        assert!(keys.iter().all(|keys| keys.contains(&id)));
+        assert!(keys[0].contains(&"a=d") && keys[0].contains(&"d=I"));
+        assert!(keys[1].contains(&"a=T"));
+        assert!(keys[1].contains(&match placement {
+            Placement::Direct => "C=1",
+            Placement::Tmux => "U=1",
+        }));
+        assert!(keys[2].contains(&"a=a") && keys[2].contains(&"r=1") && keys[2].contains(&"z=200"));
+        for keys in &keys[3..8] {
+            assert!(keys.contains(&"a=f") && keys.contains(&"z=200"));
+        }
+        assert!(keys[8].contains(&"a=a") && keys[8].contains(&"s=3") && keys[8].contains(&"v=1"));
+        let (cols, rows) = cell_grid((512, 512), settings.cell_px, BOUNDS.cols, BOUNDS.rows);
+        if placement == Placement::Tmux {
+            let (cols, rows) = clamp_placeholder_grid((cols, rows));
+            assert_eq!(out.matches('\u{10EEEE}').count(), (cols * rows) as usize);
+            assert_eq!(out.matches('\n').count(), rows as usize);
+        } else {
+            assert_eq!(out.matches('\u{10EEEE}').count(), 0);
+            assert_eq!(out.matches('\n').count(), rows as usize);
+        }
+        let replayed = format!("{normalized}{normalized}");
+        assert_eq!(replayed.matches(&format!("a=d,d=I,{id},q=2;")).count(), 2);
+    }
+
+    #[test]
+    fn fox_animation_direct_has_all_frames() {
+        assert_fox_animation(Placement::Direct);
+    }
+
+    #[test]
+    fn fox_animation_tmux_has_all_frames() {
+        assert_fox_animation(Placement::Tmux);
+    }
+
+    #[test]
+    fn gif_uses_native_animation_in_both_placements() {
+        let hex = "47494638396103000300f00000ff000000000021ff0b4e45545343415045322e30030100000021f904000a0000002c0000000003000300000203847f050021f904000a0000002c0000000003000300800000ff0000000203847f05003b";
+        let bytes: Vec<_> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        for placement in [Placement::Direct, Placement::Tmux] {
+            let out = draw_png(
+                &bytes,
+                ImageSettings {
+                    placement,
+                    ..SETTINGS
+                },
+                BOUNDS,
+            )
+            .unwrap();
+            assert!(
+                out.contains("a=f"),
+                "{placement:?} must transmit animation frames"
+            );
+            assert!(out.contains("a=a"));
+        }
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ralph-image-{name}-{}", std::process::id()));

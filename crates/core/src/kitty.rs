@@ -504,14 +504,58 @@ pub fn encode_apc(image: &KittyImage, cols: u32, rows: u32) -> String {
 }
 
 pub fn encode_virtual(image: &KittyImage, id: u8, cols: u32, rows: u32) -> String {
-    encode_chunks(
+    let delete = tmux_wrap(&format!("{APC_START}a=d,d=I,i={id},q=2;{APC_END}"));
+    let chunks: String = encode_chunks(
         &image.payload,
         &format!("a=T,U=1,i={id},{}c={cols},r={rows},q=2,", image.keys),
         &format!("i={id},"),
     )
     .iter()
     .map(|chunk| tmux_wrap(chunk))
-    .collect()
+    .collect();
+    delete + &chunks
+}
+
+pub fn encode_animation(
+    frames: &[crate::kitty_image::AnimationFrame],
+    id: u8,
+    cols: u32,
+    rows: u32,
+    placement: Placement,
+) -> String {
+    let wrap = |command: &str| match placement {
+        Placement::Direct => command.to_string(),
+        Placement::Tmux => tmux_wrap(command),
+    };
+    let control = |keys: &str| wrap(&format!("{APC_START}{keys};{APC_END}"));
+    let root = &frames[0];
+    let place = match placement {
+        Placement::Direct => "C=1",
+        Placement::Tmux => "U=1",
+    };
+    let mut out = control(&format!("a=d,d=I,i={id},q=2"));
+    for chunk in encode_chunks(
+        &root.image.payload,
+        &format!(
+            "a=T,i={id},{place},{}c={cols},r={rows},q=2,",
+            root.image.keys
+        ),
+        "",
+    ) {
+        out.push_str(&wrap(&chunk));
+    }
+    out.push_str(&control(&format!("a=a,i={id},r=1,z={},q=2", root.delay_ms)));
+    for frame in &frames[1..] {
+        for chunk in encode_chunks(
+            &frame.image.payload,
+            &format!("a=f,i={id},{}z={},q=2,", frame.image.keys, frame.delay_ms),
+            "a=f,",
+        ) {
+            out.push_str(&wrap(&chunk));
+        }
+    }
+    out.push_str(&control(&format!("a=a,i={id},s=3,v=1,q=2")));
+    out
 }
 
 pub fn placeholder_rows(id: u8, cols: u32, rows: u32) -> String {
@@ -869,13 +913,14 @@ mod tests {
         let single = encode_virtual(&png(b"abc"), 7, 3, 2);
         assert_eq!(
             single,
-            "\x1bPtmux;\x1b\x1b_Ga=T,U=1,i=7,f=100,c=3,r=2,q=2,m=0;YWJj\x1b\x1b\\\x1b\\"
+            "\x1bPtmux;\x1b\x1b_Ga=d,d=I,i=7,q=2;\x1b\x1b\\\x1b\\\x1bPtmux;\x1b\x1b_Ga=T,U=1,i=7,f=100,c=3,r=2,q=2,m=0;YWJj\x1b\x1b\\\x1b\\"
         );
         let multi = encode_virtual(&png(&[7u8; 3073]), 7, 3, 2);
         let parts: Vec<&str> = multi.split_inclusive("\x1b\x1b\\\x1b\\").collect();
-        assert_eq!(parts.len(), 2);
-        assert!(parts[0].contains("U=1,i=7,f=100,c=3,r=2,q=2,m=1;"));
-        assert!(parts[1].starts_with("\x1bPtmux;\x1b\x1b_Gi=7,m=0;"));
+        assert_eq!(parts.len(), 3);
+        assert!(parts[0].contains("a=d,d=I,i=7,q=2;"));
+        assert!(parts[1].contains("U=1,i=7,f=100,c=3,r=2,q=2,m=1;"));
+        assert!(parts[2].starts_with("\x1bPtmux;\x1b\x1b_Gi=7,m=0;"));
     }
 
     #[test]
