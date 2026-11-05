@@ -3,6 +3,10 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
+mod ignore;
+
+pub use ignore::{check_ignore_payload, without_ignored, CHECK_IGNORE_ARGS};
+
 pub const KEEP_TURNS: usize = 20;
 pub const SNAPSHOT_LOCK_WAIT: Duration = Duration::from_secs(5);
 pub const SNAPSHOT_LOCK_POLL: Duration = Duration::from_millis(100);
@@ -203,8 +207,10 @@ fn exclude_pathspec(repo: &Path, path: &Path) -> Option<String> {
         .components()
         .map(|part| part.as_os_str().to_str())
         .collect::<Option<Vec<_>>>()?;
-    (!parts.is_empty()).then(|| format!(":(exclude,literal,top){}", parts.join("/")))
+    (!parts.is_empty()).then(|| format!("{EXCLUDE_MAGIC}{}", parts.join("/")))
 }
+
+const EXCLUDE_MAGIC: &str = ":(exclude,literal,top)";
 
 fn inside_without_pathspec(repo: &Path, path: &Path) -> bool {
     let inside = path
