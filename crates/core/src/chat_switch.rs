@@ -61,14 +61,7 @@ pub fn switch_decision(
     }
 }
 
-pub fn switch_blockers(
-    workers: &[String],
-    watches: &[String],
-    turn_running: bool,
-) -> Result<(), String> {
-    if turn_running {
-        return Err("a turn is running; wait for it to end before you switch.".to_string());
-    }
+pub fn switch_blockers(workers: &[String], watches: &[String]) -> Result<(), String> {
     if !workers.is_empty() {
         return Err(format!(
             "workers are running ({}); close them before you switch.",
@@ -291,16 +284,7 @@ mod tests {
 
     #[test]
     fn nothing_running_allows_the_switch() {
-        assert_eq!(switch_blockers(&[], &[], false), Ok(()));
-    }
-
-    #[test]
-    fn a_running_turn_blocks_first() {
-        let workers = vec!["w1".to_string()];
-        assert_eq!(
-            switch_blockers(&workers, &[], true),
-            Err("a turn is running; wait for it to end before you switch.".to_string())
-        );
+        assert_eq!(switch_blockers(&[], &[]), Ok(()));
     }
 
     #[test]
@@ -308,11 +292,11 @@ mod tests {
         let workers = vec!["w1".to_string(), "w2".to_string()];
         let watches = vec!["k1".to_string()];
         assert_eq!(
-            switch_blockers(&workers, &watches, false),
+            switch_blockers(&workers, &watches),
             Err("workers are running (w1, w2); close them before you switch.".to_string())
         );
         assert_eq!(
-            switch_blockers(&[], &watches, false),
+            switch_blockers(&[], &watches),
             Err("watches are running (k1); stop them before you switch.".to_string())
         );
     }

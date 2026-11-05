@@ -43,7 +43,7 @@ pub(super) fn check(leave: &Leave, target: &SwitchTarget) -> Result<(), String> 
         .into_iter()
         .map(|watch| watch.id)
         .collect();
-    switch_blockers(&workers, &watches, false)?;
+    switch_blockers(&workers, &watches)?;
     match (target, known) {
         (SwitchTarget::Thread(name), Some((dir, _))) => claim_closed(&dir, name).map(drop),
         (SwitchTarget::Main, _) => main_free(&main),

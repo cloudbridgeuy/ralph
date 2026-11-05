@@ -198,7 +198,7 @@ impl Command {
             )],
             Command::Thread => &[(
                 "/thread <name>",
-                "switch this chat to thread <name> in the same terminal: the chat quits and ralph chat starts again on the thread; /thread main returns to main; an unknown name creates the thread; refused when the thread is merged, parked or open elsewhere, or while a turn, workers or watches run; scheduled tasks stay saved and do not fire while you are away; while a turn runs it waits in the queue",
+                "switch this chat to thread <name> in the same terminal: the chat quits and ralph chat starts again on the thread; /thread main returns to main; an unknown name creates the thread; refused when the thread is merged, parked or open elsewhere, or while workers or watches run; scheduled tasks stay saved and do not fire while you are away; while a turn runs it waits in the queue",
             )],
             Command::Main => &[(
                 "/main",
