@@ -598,7 +598,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         }
                     }
                     Err(TurnOutcome::Exit) => {
-                        let lost = std::mem::take(&mut carried);
+                        let lost = unsent_texts(&carried, editor.current_buffer_contents());
                         save_unsent(&mut editor, &lost);
                         editor.sync_history()?;
                         break;
