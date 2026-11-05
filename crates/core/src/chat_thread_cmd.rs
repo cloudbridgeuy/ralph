@@ -63,6 +63,10 @@ fn parse_merge(args: &str) -> Option<ThreadOp> {
     }
 }
 
+pub fn view_posted_message(name: &ThreadName, report: &str) -> String {
+    format!("posted thread {name}'s memory view to main's inbox.\n{report}")
+}
+
 pub fn parked_message(name: &ThreadName) -> String {
     format!("parked thread {name}; `ralph thread revive {name}` opens it again")
 }
@@ -363,6 +367,14 @@ mod tests {
             route("/merge auth --view"),
             Route::ThreadOp { op: Ok(_), .. }
         ));
+    }
+
+    #[test]
+    fn the_view_posted_message_names_the_thread_and_keeps_the_report() {
+        assert_eq!(
+            view_posted_message(&auth(), "[thread auth · view]\nblock"),
+            "posted thread auth's memory view to main's inbox.\n[thread auth · view]\nblock"
+        );
     }
 
     #[test]

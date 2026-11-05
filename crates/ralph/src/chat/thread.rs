@@ -16,7 +16,7 @@ use ralph_core::chat_thread::{
     Merged, Parked, Scope, ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, THREADS_DIR,
     THREAD_FILE, VIEW_BLOCK_LINES,
 };
-use ralph_core::chat_thread_cmd::parked_message;
+use ralph_core::chat_thread_cmd::{parked_message, view_posted_message};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
@@ -123,7 +123,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         ThreadCommand::Merge { name, view: true } => {
             let message = view_thread(&main, &name, &running_ids(&main, &name))?;
-            println!("viewed thread {name} into main's inbox\n{message}");
+            println!("{}", view_posted_message(&name, &message));
         }
         ThreadCommand::Merge { name, view: false } => {
             let dir = thread_dir(&main, &name);

@@ -8,7 +8,8 @@ use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::{
-    merge_answer, merge_question, merging_notice, op_refusal, parked_message, ThreadOp,
+    merge_answer, merge_question, merging_notice, op_refusal, parked_message, view_posted_message,
+    ThreadOp,
 };
 use std::io;
 use std::path::Path;
@@ -39,7 +40,7 @@ pub(super) fn run(
             park_thread(&main, name, &running_of(name)).map(|()| parked_message(name))
         }
         ThreadOp::Merge { name, view: true } => view_thread(&main, name, &running_of(name))
-            .map(|message| format!("viewed thread {name} into main's inbox\n{message}")),
+            .map(|message| view_posted_message(name, &message)),
         ThreadOp::Merge { name, view: false } => {
             let running = running_of(name);
             merge_precheck(&main, name, &running)?;
