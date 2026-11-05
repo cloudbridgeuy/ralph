@@ -1,6 +1,6 @@
 use crate::chat::turn::TurnOutcome;
 use ralph_core::chat_cell::{bang, Bang};
-use ralph_core::chat_help::Command;
+use ralph_core::chat_thread_cmd::is_cell_command;
 
 const JOIN: &str = "\n\n";
 
@@ -103,9 +103,7 @@ pub(super) fn draft_with_typed(draft: Option<String>, typed: &str) -> Option<Str
 
 fn is_cell(entry: &str) -> bool {
     let line = entry.trim();
-    matches!(bang(line), Bang::Send(_) | Bang::Local(_))
-        || Command::Thread.args(line).is_some()
-        || Command::Main.args(line).is_some()
+    matches!(bang(line), Bang::Send(_) | Bang::Local(_)) || is_cell_command(line)
 }
 
 pub(super) fn next_batch(mut entries: Vec<String>) -> Option<(String, Vec<String>)> {
@@ -394,6 +392,22 @@ mod tests {
         assert_eq!(
             next_batch(entries(&["/threads x", "b"])),
             Some(("/threads x\n\nb".to_string(), Vec::new()))
+        );
+        assert_eq!(
+            next_batch(entries(&["/threads are slow", "b"])),
+            Some(("/threads are slow\n\nb".to_string(), Vec::new()))
+        );
+        assert_eq!(
+            next_batch(entries(&["/merge requests failing on CI", "b"])),
+            Some(("/merge requests failing on CI\n\nb".to_string(), Vec::new()))
+        );
+        assert_eq!(
+            next_batch(entries(&["fix", "/merge a", "run it"])),
+            Some(("fix".to_string(), entries(&["/merge a", "run it"])))
+        );
+        assert_eq!(
+            next_batch(entries(&["/merge a", "run it"])),
+            Some(("/merge a".to_string(), entries(&["run it"])))
         );
     }
 

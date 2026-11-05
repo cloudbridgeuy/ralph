@@ -49,7 +49,7 @@ Type `/thread <name>` to move this chat to another thread in the same terminal. 
 ralph thread ls
 ```
 
-Inside a chat, type `/threads` for the same list. It works in main's chat and in a thread's chat, takes no arguments and starts no turn. A turn in progress does not block it, but it waits in the queue like `/thread`.
+Inside a chat, type `/threads` for the same list. It works in main's chat and in a thread's chat, takes no arguments and starts no turn. A turn in progress does not block it, but it waits in the queue like `/thread`. `/threads`, `/pull`, `/park` and `/merge` run alone in the queue, never joined with other lines, in typed order.
 
 Each line shows the name, the fork point, the message count and the creation time. A line also shows `merged` or `parked` with a time, the running workers and the unread reports. The last three appear only when they are not zero. The command prints `no threads` when there are none. It is safe while a thread chat is open.
 
@@ -77,7 +77,7 @@ Squash merge:
 ralph thread merge <name>
 ```
 
-- In main's chat, type `/merge <name>`. It first checks the cheap refusals (unknown or merged thread, running workers or saved records, an open chat: `merge_precheck`) and prints them with no question. Then it asks `[y/n]`, because it makes a paid call. Any answer other than `y`, `yes`, `n` or `no` asks again; `n`, Ctrl-C or a closed input cancels with `merge cancelled.` After `y` it prints `merging <name> (one paid Haiku call)...` and runs in the foreground, so the prompt returns when it ends. It does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.`; the other refusals of the shell command, such as a failed digest, still apply after the answer.
+- In main's chat, type `/merge <name>`. It first checks the cheap refusals (unknown or merged thread, running workers or saved records, an open chat: `merge_precheck`) and prints them with no question. Then it asks `[y/n]`, because it makes a paid call. Any answer other than `y`, `yes`, `n` or `no` asks again; `n` or `no` cancels with `merge cancelled.` and the queued lines go on as usual. Ctrl-C, a closed input or a signal aborts instead: it prints `merge aborted; the command stays in the prompt.` and puts `/merge <name>` and the rest of the queue back in the prompt, with nothing sent. After `y` it reads the running workers again, so a worker that started during the question is refused. It then prints `merging <name> (one paid Haiku call, up to 3 if the digest is refused)...` and runs in the foreground, so the prompt returns when it ends. It does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.`; the other refusals of the shell command, such as a failed digest, still apply after the answer.
 - It makes one paid call to the Haiku model, and up to 3 if the model's digest is refused. The model writes a digest from a 200-line view of the thread.
 - The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing. If posting the digest to main's inbox fails, the thread stays merged and the error names `thread.json`, which holds the digest.
 

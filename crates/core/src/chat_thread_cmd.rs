@@ -66,10 +66,37 @@ pub fn parked_message(name: &ThreadName) -> String {
     format!("parked thread {name}; `ralph thread revive {name}` opens it again")
 }
 
+pub fn is_cell_command(line: &str) -> bool {
+    let plain = [Command::Thread, Command::Main]
+        .iter()
+        .any(|command| command.args(line).is_some());
+    let shaped = [
+        Command::Threads,
+        Command::Pull,
+        Command::Park,
+        Command::Merge,
+    ]
+    .iter()
+    .any(|command| {
+        command
+            .args(line)
+            .is_some_and(|args| parse_thread_op(*command, args).is_some())
+    });
+    plain || shaped
+}
+
+pub fn merging_notice(name: &ThreadName) -> String {
+    format!("merging {name} (one paid Haiku call, up to 3 if the digest is refused)...")
+}
+
 pub fn merge_question(name: &ThreadName) -> String {
     format!(
         "Merge thread {name} into main? This makes one paid Haiku call, and up to 3 if the digest is refused. [y/n] "
     )
+}
+
+pub fn merge_answer(answer: Option<bool>) -> Result<bool, String> {
+    answer.ok_or_else(|| "merge aborted; the command stays in the prompt.".to_string())
 }
 
 fn main_only(command: Command) -> String {
@@ -90,6 +117,14 @@ mod tests {
     use super::*;
     use crate::chat_help::Command;
     use crate::chat_thread::ThreadName;
+
+    #[test]
+    fn only_an_answer_decides_the_merge() {
+        assert_eq!(merge_answer(Some(true)), Ok(true));
+        assert_eq!(merge_answer(Some(false)), Ok(false));
+        let aborted = merge_answer(None).unwrap_err();
+        assert!(aborted.starts_with("merge aborted"), "{aborted}");
+    }
 
     #[test]
     fn threads_without_arguments_lists() {
@@ -322,6 +357,46 @@ mod tests {
         assert_eq!(
             parked_message(&auth()),
             "parked thread auth; `ralph thread revive auth` opens it again"
+        );
+    }
+
+    #[test]
+    fn thread_and_switch_commands_are_cell_commands() {
+        for line in [
+            "/merge a",
+            "/threads",
+            "/pull a",
+            "/park a",
+            "/thread a",
+            "/main",
+            "/merge a --rebase",
+            "/merge",
+            "/pull",
+            "/park",
+            "/thread a b",
+        ] {
+            assert!(is_cell_command(line), "{line}");
+        }
+        for line in [
+            "/threadsx",
+            "/merged",
+            "hello",
+            "/threads are slow",
+            "/merge requests failing on CI",
+            "/pull a b",
+            "/park a b",
+        ] {
+            assert!(!is_cell_command(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_merging_notice_names_the_thread_and_the_retry_cost() {
+        let notice = merging_notice(&auth());
+        assert!(notice.contains("auth"), "{notice}");
+        assert!(
+            notice.contains("up to 3 if the digest is refused"),
+            "{notice}"
         );
     }
 }
