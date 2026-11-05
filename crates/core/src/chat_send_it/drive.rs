@@ -94,9 +94,6 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             };
             (progress, next)
         }
-        (Event::Report(report), _) if flagged(report) => {
-            (progress, Next::Stop(StopReason::WorkerFlagged))
-        }
         (Event::Report(report), Criterion::WorkerDone { worker }) if report.worker == *worker => {
             if report.status == "done" {
                 step_met(plan, progress)
@@ -173,6 +170,7 @@ pub struct Ended<'a> {
     pub step_result: Option<&'a StepResult>,
     pub drained: &'a [Report],
     pub unread: &'a [Report],
+    pub answered: &'a [String],
     pub watched: Option<&'a WatchOutcome>,
     pub refused: Option<&'a str>,
 }
@@ -242,6 +240,16 @@ fn is_off(line: &str) -> bool {
     Command::SendIt.args(line.trim()).map(parse_send_it_args) == Some(SendItCommand::Off)
 }
 
+fn unanswered_flag(ended: &Ended, file: &RunFile) -> bool {
+    let may_reply = file.plan.allowed.contains(&Action::Reply);
+    worker_flagged(ended.unread)
+        || ended
+            .drained
+            .iter()
+            .filter(|report| flagged(report))
+            .any(|report| !(may_reply && ended.answered.contains(&report.worker)))
+}
+
 fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason> {
     let file = ended
         .file
@@ -259,7 +267,7 @@ fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason
         Some(StopReason::TookOver)
     } else if ended.asked {
         Some(StopReason::NeedsYou)
-    } else if worker_flagged(ended.unread, ended.drained) {
+    } else if unanswered_flag(ended, file) {
         Some(StopReason::WorkerFlagged)
     } else {
         None
@@ -279,7 +287,7 @@ fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
                 ended
                     .drained
                     .iter()
-                    .filter(|report| report.worker == *source)
+                    .filter(|report| report.worker == *source && !flagged(report))
                     .map(Event::Report),
             )
             .collect(),

@@ -281,7 +281,9 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
             if let Some(refusal) = reply_refusal(id, &schedule.load_all()) {
                 return Err(refusal);
             }
-            workers.reply(id, text, *interrupt, request.as_deref())
+            workers
+                .reply(id, text, *interrupt, request.as_deref())
+                .inspect(|_| send_it.answer(id.clone()))
         }
         Command::Close { id, abandon, force } => workers.close(id, *abandon, *force),
         Command::Watch(request) => {

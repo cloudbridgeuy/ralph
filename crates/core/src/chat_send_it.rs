@@ -589,8 +589,8 @@ fn flagged(report: &Report) -> bool {
     FLAGGED_STATUSES.contains(&report.status.as_str())
 }
 
-pub fn worker_flagged(unread: &[Report], drained: &[Report]) -> bool {
-    unread.iter().chain(drained).any(flagged)
+pub fn worker_flagged(reports: &[Report]) -> bool {
+    reports.iter().any(flagged)
 }
 
 pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {

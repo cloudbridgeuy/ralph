@@ -851,6 +851,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 step_result: None,
                 drained: &drained,
                 unread: &unread,
+                answered: &[],
                 watched: None,
                 refused: None,
             };

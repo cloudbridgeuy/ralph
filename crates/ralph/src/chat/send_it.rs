@@ -36,6 +36,7 @@ pub(crate) struct SendIt {
     limits: Limits,
     refused: Arc<Mutex<Option<String>>>,
     judged: Arc<Mutex<Option<StepResult>>>,
+    answered: Arc<Mutex<Vec<String>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +88,7 @@ impl SendIt {
             limits,
             refused: Arc::default(),
             judged: Arc::default(),
+            answered: Arc::default(),
         }
     }
 
@@ -118,6 +120,10 @@ impl SendIt {
 
     pub(crate) fn refuse(&self, tool: String) {
         *locked(&self.refused) = Some(tool);
+    }
+
+    pub(crate) fn answer(&self, worker: String) {
+        locked(&self.answered).push(worker);
     }
 
     pub(crate) fn record(&self, result: StepResult) {
@@ -182,6 +188,7 @@ impl SendIt {
             Ok(None) => return (NO_RUN.to_string(), None),
             Err(text) => return (text, None),
         };
+        locked(&self.answered).clear();
         let approved = approve(&file, shown, typed_at_prompt)
             .and_then(|approved| self.save(&approved).map(|()| approved));
         match approved {
@@ -205,12 +212,14 @@ impl SendIt {
             .and_then(|slot| locked(slot).clone());
         let refused = locked(&self.refused).take();
         let judged = locked(&self.judged).take();
+        let answered = std::mem::take(&mut *locked(&self.answered));
         tick(
             &active.driving,
             &Ended {
                 file: file.as_ref(),
                 watched: watched.as_ref(),
                 refused: refused.as_deref(),
+                answered: &answered,
                 step_result: judged.as_ref(),
                 ..ended
             },
@@ -636,6 +645,7 @@ mod tests {
             step_result: None,
             drained: &[],
             unread: &[],
+            answered: &[],
             watched: None,
             refused: None,
         }
@@ -725,6 +735,39 @@ mod tests {
         let hash = send_it.status().shown.unwrap();
         send_it.go(Some(&hash), true);
         assert_eq!(send_it.allowed(), vec![Action::Reply, Action::Watch]);
+    }
+
+    #[test]
+    fn the_next_tick_takes_the_answered_workers_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = SendIt::new(dir.path(), LIMITS);
+        let mut args = plan_args();
+        args["allowed"] = json!([{"kind": "reply"}]);
+        send_it.propose(&args).unwrap();
+        let hash = send_it.status().shown.unwrap();
+        let active = Active {
+            driving: send_it.go(Some(&hash), true).1.unwrap().driving,
+            watched: None,
+        };
+        let flagged = [ralph_core::worker::Report {
+            worker: "E1".to_string(),
+            at: "2026-01-01T00:00:00Z".to_string(),
+            status: "question".to_string(),
+            text: "q".to_string(),
+        }];
+        let with_question = || Ended {
+            drained: &flagged,
+            ..ended()
+        };
+        send_it.answer("E1".to_string());
+        assert_eq!(
+            send_it.tick(&active, with_question()).next,
+            Next::Check("cargo xtask lint".to_string())
+        );
+        assert_eq!(
+            send_it.tick(&active, with_question()).next,
+            Next::Stop(StopReason::WorkerFlagged)
+        );
     }
 
     #[test]
