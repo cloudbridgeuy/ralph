@@ -808,6 +808,7 @@ fn route_input_parses_send_it_commands() {
         ("  /send-it  ", SendItCommand::Usage),
         ("/send-it off", SendItCommand::Off),
         ("/send-it go", SendItCommand::Go),
+        ("/send-it templates", SendItCommand::Templates),
         (
             "/send-it ship GUZ-1162",
             SendItCommand::Propose("ship GUZ-1162".into()),

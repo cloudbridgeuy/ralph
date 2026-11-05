@@ -9,6 +9,10 @@ fn usage_names_the_instructions_form_and_the_default_caps() {
     assert!(text.starts_with("Usage: /send-it <instructions>"), "{text}");
     assert!(text.contains("exit criterion"), "{text}");
     assert!(text.contains("Default caps: 15 turns, $5.00."), "{text}");
+    assert!(
+        text.ends_with("/send-it templates, /send-it <ticket> <name>."),
+        "{text}"
+    );
 }
 
 #[test]

@@ -191,6 +191,18 @@ impl Command {
                     "/send-it off",
                     "delete the plan and its approval; starts no turn",
                 ),
+                (
+                    "/send-it save <name> [<ticket>]",
+                    "save the stored plan, approved or not, as template <name> (letters, digits and dashes); <ticket> becomes {ticket}; without it the plan is saved as is; an existing name is replaced; starts no turn",
+                ),
+                (
+                    "/send-it templates",
+                    "list the saved templates; starts no turn",
+                ),
+                (
+                    "/send-it <ticket> <name>",
+                    "fill template <name> with <ticket> and store it as the plan, not approved; only an exact template name counts, other text is instructions; refused while an approved run is active; starts no turn",
+                ),
             ],
             Command::Fork => &[(
                 "/fork <name>",

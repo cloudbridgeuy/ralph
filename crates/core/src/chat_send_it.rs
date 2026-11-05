@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+pub mod template;
+
 pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
 pub const STEP_RESULT: &str = "step_result";
 pub const STEP_RESULT_MAX_CHARS: usize = 300;
@@ -241,6 +243,11 @@ pub enum SendItCommand {
     Go,
     Status,
     Off,
+    Save {
+        name: String,
+        ticket: Option<String>,
+    },
+    Templates,
 }
 
 pub fn parse_send_it_args(args: &str) -> SendItCommand {
@@ -250,7 +257,17 @@ pub fn parse_send_it_args(args: &str) -> SendItCommand {
         "go" => SendItCommand::Go,
         "status" => SendItCommand::Status,
         "off" => SendItCommand::Off,
-        text => SendItCommand::Propose(text.to_string()),
+        "templates" => SendItCommand::Templates,
+        text => {
+            let words: Vec<&str> = text.split_whitespace().collect();
+            match words.as_slice() {
+                ["save", name] | ["save", name, _] => SendItCommand::Save {
+                    name: name.to_string(),
+                    ticket: words.get(2).map(|ticket| ticket.to_string()),
+                },
+                _ => SendItCommand::Propose(text.to_string()),
+            }
+        }
     }
 }
 
@@ -477,7 +494,7 @@ pub struct Run {
 
 pub fn usage(defaults: &Limits) -> String {
     format!(
-        "Usage: /send-it <instructions>. ralph restates them as numbered steps, each with an exit criterion, plus the actions the run may take; you approve once and the run needs no input. Default caps: {} turns, ${:.2}.",
+        "Usage: /send-it <instructions>. ralph restates them as numbered steps, each with an exit criterion, plus the actions the run may take; you approve once and the run needs no input. Default caps: {} turns, ${:.2}. Templates: /send-it save <name> [<ticket>], /send-it templates, /send-it <ticket> <name>.",
         defaults.max_turns, defaults.max_usd
     )
 }

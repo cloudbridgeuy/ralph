@@ -125,7 +125,7 @@ pub fn is_dashed_token(text: &str) -> bool {
 
 const TICKET_MAX_LEN: usize = 64;
 
-fn is_ticket_key(text: &str) -> bool {
+pub fn is_ticket_key(text: &str) -> bool {
     text.len() <= TICKET_MAX_LEN
         && is_dashed_token(text)
         && text.chars().any(|c| c.is_ascii_alphanumeric())

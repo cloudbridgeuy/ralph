@@ -3,6 +3,9 @@ use crate::chat::monitor::Monitor;
 use crate::inbox_alert;
 use crate::watches::{locked, OutcomeSlot};
 use ralph_core::chat_hold::HoldFilter;
+use ralph_core::chat_send_it::template::{
+    fill_template, match_template, render_templates, save_notice, template_name, template_text,
+};
 use ralph_core::chat_send_it::{
     approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
     plan_hash, propose_refusal, read_run, render_status, running_line, start_run, tick, write_run,
@@ -17,13 +20,19 @@ use std::sync::{Arc, Mutex};
 
 const RUN_DIR: &str = "send-it";
 const RUN_FILE: &str = "run.toml";
+const TEMPLATE_DIR: &str = "templates";
 const NO_RUN: &str = "No send-it run. Start one with /send-it <instructions>.";
 const NOT_PROPOSED: &str =
     "No new run plan was stored. Try /send-it again with clearer instructions.";
 
+fn unreadable(path: &Path, error: io::Error) -> String {
+    format!("Could not read {}: {error}", path.display())
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SendIt {
     path: PathBuf,
+    templates: PathBuf,
     limits: Limits,
     refused: Arc<Mutex<Option<String>>>,
     judged: Arc<Mutex<Option<StepResult>>>,
@@ -88,6 +97,7 @@ impl SendIt {
     pub(crate) fn new(store_dir: &Path, limits: Limits) -> Self {
         Self {
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
+            templates: store_dir.join(RUN_DIR).join(TEMPLATE_DIR),
             limits,
             refused: Arc::default(),
             judged: Arc::default(),
@@ -98,7 +108,7 @@ impl SendIt {
         match fs::read_to_string(&self.path) {
             Ok(text) => read_run(&text, self.limits).map(Some),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(format!("Could not read {}: {error}", self.path.display())),
+            Err(error) => Err(unreadable(&self.path, error)),
         }
     }
 
@@ -292,6 +302,63 @@ impl SendIt {
         }
     }
 
+    pub(crate) fn save_template(&self, name: &str, ticket: Option<&str>) -> String {
+        let saved = template_name(name).and_then(|name| {
+            let file = self.load()?.ok_or(NO_RUN)?;
+            let text = template_text(&file.plan, ticket)?;
+            let path = self.templates.join(format!("{name}.toml"));
+            let replaced = path.exists();
+            fs::create_dir_all(&self.templates)
+                .and_then(|()| fs::write(&path, &text))
+                .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
+            Ok(save_notice(name, ticket, &text, replaced))
+        });
+        saved.unwrap_or_else(|text| text)
+    }
+
+    fn template_names(&self) -> Result<Vec<String>, String> {
+        let entries = match fs::read_dir(&self.templates) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(unreadable(&self.templates, error)),
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .filter_map(|path| Some(path.file_stem()?.to_str()?.to_string()))
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
+    pub(crate) fn templates(&self) -> String {
+        self.template_names()
+            .map_or_else(|text| text, |names| render_templates(&names))
+    }
+
+    pub(crate) fn template_use(&self, text: &str) -> Option<(String, String)> {
+        match_template(text, &self.template_names().ok()?)
+    }
+
+    pub(crate) fn use_template(&self, ticket: &str, name: &str) -> Screen {
+        if let Some(refusal) = self.refusal() {
+            return Screen::text(refusal);
+        }
+        let path = self.templates.join(format!("{name}.toml"));
+        let stored = fs::read_to_string(&path)
+            .map_err(|error| unreadable(&path, error))
+            .and_then(|text| {
+                fill_template(&text, ticket, self.limits)
+                    .map_err(|error| format!("Template {name}: {error}"))
+            })
+            .and_then(|file| self.save(&file));
+        match stored {
+            Ok(()) => self.status(),
+            Err(text) => Screen::text(text),
+        }
+    }
+
     fn clear_approval(&self) -> Screen {
         match self.load() {
             Ok(Some(file)) => match self.save(&RunFile {
@@ -404,6 +471,59 @@ mod tests {
         assert!(refused.contains("approved and active"), "{refused}");
         assert_eq!(send_it.off(), "send-it off: the run plan is deleted.");
         assert!(send_it.propose(&plan_args()).is_ok());
+    }
+
+    #[test]
+    fn save_writes_the_stored_plan_as_a_template_and_overwrites_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = SendIt::new(dir.path(), LIMITS);
+        assert_eq!(send_it.save_template("ship", None), NO_RUN);
+        proposed(dir.path());
+        let saved = send_it.save_template("ship", Some("GUZ-1"));
+        assert!(saved.starts_with("Template ship saved: GUZ-1 became {ticket}."));
+        let saved = || fs::read_to_string(dir.path().join("send-it/templates/ship.toml")).unwrap();
+        assert!(saved().contains("goal = \"ship {ticket}\""));
+        let replaced = send_it.save_template("ship", None);
+        assert!(replaced.starts_with("Template ship replaced. No ticket given"));
+        assert!(saved().contains("goal = \"ship GUZ-1\""));
+        assert!(send_it.save_template("../ship", None).contains("dashes"));
+        assert!(!dir.path().join("send-it/ship.toml").exists());
+    }
+
+    #[test]
+    fn templates_lists_the_saved_names_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = SendIt::new(dir.path(), LIMITS);
+        assert!(send_it.templates().starts_with("No templates."));
+        proposed(dir.path());
+        send_it.save_template("ship", None);
+        send_it.save_template("review", None);
+        fs::write(dir.path().join("send-it/templates/notes.txt"), "x").unwrap();
+        assert_eq!(
+            send_it.templates(),
+            "Templates: review, ship. Use one with /send-it <ticket> <name>."
+        );
+        assert!(send_it.template_use("GUZ-7 ship").is_some());
+        assert_eq!(send_it.template_use("GUZ-7 notes"), None);
+    }
+
+    #[test]
+    fn using_a_template_stores_an_unapproved_plan_and_shows_its_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, hash) = proposed(dir.path());
+        send_it.save_template("ship", Some("GUZ-1"));
+        send_it.go(Some(&hash), true);
+        let refused = send_it.use_template("GUZ-2", "ship");
+        assert!(refused.text.contains("approved and active"));
+        assert_eq!(refused.shown, None);
+        send_it.off();
+        let screen = send_it.use_template("GUZ-2", "ship");
+        let file = send_it.load().unwrap().unwrap();
+        assert_eq!(file.plan.goal, "ship GUZ-2");
+        assert_eq!(file.approved, None);
+        assert_eq!(screen, send_it.status());
+        let missing = send_it.use_template("GUZ-2", "gone");
+        assert!(missing.text.starts_with("Could not read"));
     }
 
     #[test]
