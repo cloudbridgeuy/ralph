@@ -128,7 +128,6 @@ pub(super) struct Turn<'a> {
     pub(super) last_turn_end: Stamp,
     pub(super) identity: Arc<Mutex<IterationMetadata>>,
     pub(super) last_cost_usd: Mutex<Option<f64>>,
-    pub(super) last_reply: Mutex<Option<String>>,
 }
 
 impl Turn<'_> {
@@ -170,10 +169,6 @@ impl Turn<'_> {
         locked(&self.last_cost_usd).take()
     }
 
-    pub(super) fn take_reply(&self) -> Option<String> {
-        locked(&self.last_reply).take()
-    }
-
     fn take_session(&self) -> Option<Session> {
         let held = match self.session.try_lock() {
             Ok(mut slot) => slot.take(),
@@ -203,7 +198,6 @@ impl Turn<'_> {
         message: &str,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
         locked(&self.last_cost_usd).take();
-        locked(&self.last_reply).take();
         let outcome = self.run_turn(trigger, logged, message);
         *locked(&self.last_turn_end) = Some(chrono::Utc::now());
         self.live
@@ -355,7 +349,6 @@ impl Turn<'_> {
                 reply_entries(&reply)
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
-                *locked(&self.last_reply) = Some(reply);
                 self.warn_if_err(
                     spawn_nap(self.store_dir, self.run),
                     "Failed to start chat memory nap",

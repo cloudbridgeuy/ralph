@@ -287,7 +287,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         last_turn_end: Arc::clone(&last_turn_end),
         identity: Arc::default(),
         last_cost_usd: Mutex::new(None),
-        last_reply: Mutex::new(None),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -786,7 +785,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         let asked = approve_proposed(&schedule_store, watch_timeout);
         if let Some(active) = sending.take() {
             let unread = monitor.inbox.peek().unwrap_or_default();
-            let reply = turn.take_reply().unwrap_or_default();
             let ended = Ended {
                 file: None,
                 replied: outcome == TurnOutcome::Replied,
@@ -794,7 +792,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 typed: queue.held || !queue.typed.is_empty(),
                 queued: &queue.entries,
                 cost_usd: turn.take_cost().unwrap_or_default(),
-                reply: &reply,
+                step_result: None,
                 drained: &drained,
                 unread: &unread,
                 watched: None,

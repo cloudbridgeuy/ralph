@@ -3,7 +3,7 @@ use super::search::{parse_search_args, SearchRequest};
 use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
 use crate::chat_help::{config_topic, help_tool, help_topic};
-use crate::chat_send_it::propose_run_tool;
+use crate::chat_send_it::{propose_run_tool, step_result_tool};
 use crate::chat_socket::is_socket_tool;
 use crate::chat_suggestion::suggest_reply_tool;
 use crate::chat_thread::{scope_arg, split_scope, Scope};
@@ -54,6 +54,7 @@ pub fn tool_definitions() -> Value {
         list.extend(command_definitions());
         list.push(suggest_reply_tool());
         list.push(propose_run_tool());
+        list.push(step_result_tool());
         list.push(help_tool());
     }
     tools
@@ -272,6 +273,7 @@ mod tests {
                 "schedule",
                 "suggest_reply",
                 "propose_run",
+                "step_result",
                 "help"
             ]
         );

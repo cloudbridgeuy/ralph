@@ -21,7 +21,10 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
         StopReason::CostCap,
         StopReason::Unmet { step: 2 },
         StopReason::WorkerFlagged,
-        StopReason::JudgeRounds { step: 2 },
+        StopReason::JudgeRounds {
+            step: 2,
+            evidence: "tests fail".to_string(),
+        },
         StopReason::CheckFailed { step: 2 },
         StopReason::PlanChanged,
         StopReason::NoReply,
@@ -418,29 +421,45 @@ fn a_check_runs_as_a_plain_watch_named_for_its_step() {
     );
 }
 
+fn judged(met: bool, evidence: &str) -> StepResult {
+    StepResult {
+        met,
+        evidence: evidence.to_string(),
+    }
+}
+
 #[test]
-fn verdicts_finish_retry_then_stop_after_the_judge_rounds() {
+fn verdicts_finish_or_retry_with_the_evidence_and_no_call_is_a_failed_round() {
     let plan = plan();
+    let met = judged(true, "all 3 findings fixed");
+    let unmet = judged(false, "finding 2 is open");
     assert_eq!(
-        advance(&plan, at(3), Event::Verdict(true)),
+        advance(&plan, at(3), Event::Verdict(Some(&met))),
         (at(3), Next::Done)
+    );
+    assert_eq!(
+        advance(&plan, at(0), Event::Verdict(Some(&met))),
+        (at(0), Next::Wait)
     );
     let retried = Progress {
         step: 3,
         judge_rounds: 1,
     };
-    assert_eq!(
-        advance(&plan, at(3), Event::Verdict(false)),
-        (retried, Next::Send(STEP_4.to_string()))
-    );
-    assert_eq!(
-        advance(&plan, retried, Event::Verdict(false)),
-        (retried, Next::Stop(StopReason::JudgeRounds { step: 4 }))
-    );
-    assert_eq!(
-        advance(&plan, at(0), Event::Verdict(true)),
-        (at(0), Next::Wait)
-    );
+    for (result, evidence) in [(Some(&unmet), "finding 2 is open"), (None, NO_STEP_RESULT)] {
+        let retry = Next::Send(format!("{STEP_4}\njudge: not met: {evidence}"));
+        assert_eq!(
+            advance(&plan, at(3), Event::Verdict(result)),
+            (retried, retry)
+        );
+        let stop = StopReason::JudgeRounds {
+            step: 4,
+            evidence: evidence.to_string(),
+        };
+        assert_eq!(
+            advance(&plan, retried, Event::Verdict(result)),
+            (retried, Next::Stop(stop))
+        );
+    }
 }
 
 #[test]
@@ -453,9 +472,14 @@ fn new_stop_notices_name_the_step() {
     assert!(StopReason::WorkerFlagged
         .notice(&run)
         .contains("a worker asked a question"));
-    assert!(StopReason::JudgeRounds { step: 4 }
-        .notice(&run)
-        .contains("step 4 was still not met"));
+    assert_eq!(
+        StopReason::JudgeRounds {
+            step: 4,
+            evidence: "finding 2 is open.".to_string()
+        }
+        .notice(&run),
+        format!("send-it stopped: step 4 was still not met after the last judge round: finding 2 is open. {RESTART}")
+    );
     for (reason, why) in [
         (
             StopReason::CheckFailed { step: 3 },
@@ -655,7 +679,7 @@ fn ended(file: &RunFile) -> Ended<'_> {
         typed: false,
         queued: &[],
         cost_usd: 0.5,
-        reply: "",
+        step_result: None,
         drained: &[],
         unread: &[],
         watched: None,
@@ -854,52 +878,77 @@ fn caps_stop_before_a_send_but_not_before_the_finish() {
         },
     );
     assert_eq!(capped.next, Next::Stop(StopReason::TurnCap));
+    let met = judged(true, "all 3 findings fixed");
     let finished = tick(
         &driving(3, Awaiting::Verdict, spent(29, 3.9)),
         &Ended {
-            reply: "All resolved.\nverdict: met",
+            step_result: Some(&met),
             ..ended(&file)
         },
     );
     assert_eq!(finished.next, Next::Done);
     assert_eq!(
         finished.met.as_deref(),
-        Some("send-it: step 4/4 met (judged: are all findings resolved?)")
+        Some("send-it: step 4/4 met (judged: are all findings resolved?): all 3 findings fixed")
     );
 }
 
 #[test]
-fn an_unmet_or_missing_verdict_sends_the_step_again() {
+fn an_unmet_or_missing_step_result_sends_the_step_again() {
     let file = approved(plan());
-    for reply in ["verdict: unmet", "I think so."] {
+    let unmet = judged(false, "finding 2 is open");
+    for step_result in [Some(&unmet), None] {
         let ticked = tick(
             &driving(3, Awaiting::Verdict, Run::default()),
             &Ended {
-                reply,
+                step_result,
                 ..ended(&file)
             },
         );
-        assert_eq!(ticked.next, Next::Send(STEP_4.to_string()));
+        let retry = format!("{STEP_4}\njudge: not met: ");
+        assert!(
+            matches!(&ticked.next, Next::Send(line) if line.starts_with(&retry)),
+            "{:?}",
+            ticked.next
+        );
         assert_eq!(ticked.driving.progress.judge_rounds, 1);
     }
 }
 
 #[test]
-fn only_a_last_line_verdict_met_counts() {
-    assert!(parse_verdict("Looks good.\n\n**Verdict: MET**\n"));
-    assert!(parse_verdict("verdict: met"));
-    assert!(!parse_verdict("verdict: met\nmore text"));
-    assert!(!parse_verdict("verdict: unmet"));
-    assert!(!parse_verdict(""));
+fn a_step_result_needs_a_bool_met_and_one_line_of_evidence() {
+    use serde_json::json;
+    let parsed = parse_step_result(&json!({"met": true, "evidence": "  all 3 fixed  "}));
+    assert_eq!(parsed, Ok(judged(true, "all 3 fixed")));
+    let too_long = "x".repeat(STEP_RESULT_MAX_CHARS + 1);
+    for args in [
+        json!({"evidence": "x"}),
+        json!({"met": "yes", "evidence": "x"}),
+        json!({"met": true}),
+        json!({"met": true, "evidence": "  "}),
+        json!({"met": true, "evidence": "a\nb"}),
+        json!({"met": false, "evidence": too_long}),
+    ] {
+        assert!(parse_step_result(&args).is_err(), "{args}");
+    }
 }
 
 #[test]
-fn the_judge_prompt_asks_the_step_question_for_a_verdict_line() {
+fn the_step_result_tool_requires_met_and_evidence() {
+    let tool = step_result_tool();
+    assert_eq!(tool["name"], STEP_RESULT);
+    let schema = &tool["inputSchema"];
+    assert_eq!(schema["required"], serde_json::json!(["met", "evidence"]));
+    assert_eq!(schema["properties"]["met"]["type"], "boolean");
+}
+
+#[test]
+fn the_judge_prompt_asks_the_step_question_for_one_step_result_call() {
     let prompt = judge_prompt(&plan(), at(3)).unwrap();
     assert!(prompt.contains("[send-it 4/4]"), "{prompt}");
     assert!(prompt.contains("are all findings resolved?"), "{prompt}");
-    assert!(prompt.contains("verdict: met"), "{prompt}");
-    assert!(prompt.contains("verdict: unmet"), "{prompt}");
+    assert!(prompt.contains("Call `step_result` once"), "{prompt}");
+    assert!(!prompt.contains("verdict:"), "{prompt}");
     assert_eq!(judge_prompt(&plan(), at(0)), None);
 }
 
