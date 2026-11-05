@@ -347,18 +347,19 @@ fn test_cli_thread_park_and_revive_take_a_name() {
 }
 
 #[test]
-fn test_cli_thread_merge_takes_rebase() {
-    for (args, rebase) in [
+fn test_cli_thread_merge_takes_view() {
+    for (args, view) in [
         (&["ralph", "thread", "merge", "auth"][..], false),
         (&["ralph", "thread", "merge", "auth", "--rebase"][..], true),
+        (&["ralph", "thread", "merge", "auth", "--view"][..], true),
     ] {
         let Some(Commands::Thread(thread)) = Cli::try_parse_from(args).unwrap().command else {
             panic!("expected thread");
         };
-        let ThreadCommand::Merge { name, rebase: got } = thread.command else {
+        let ThreadCommand::Merge { name, view: got } = thread.command else {
             panic!("expected merge");
         };
-        assert_eq!((name.as_str(), got), ("auth", rebase), "{args:?}");
+        assert_eq!((name.as_str(), got), ("auth", view), "{args:?}");
     }
 }
 

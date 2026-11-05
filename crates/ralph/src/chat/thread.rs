@@ -11,10 +11,10 @@ use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallSite, Entry, MemoryCall, Tree, ViewSplit};
 use ralph_core::chat_thread::{
     digest_with, drop_message, fork_check, fork_launch, guard_check, label_item, ls_counts,
-    merge_prompt, merged_check, merged_report, open_check, pull_message, rebase_block,
-    rebased_report, revive_check, thread_split, ForkCommand, ForkLaunch, ForkSpawn, Guarded, Live,
-    Merged, Parked, Scope, ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, REBASE_LINES,
-    THREADS_DIR, THREAD_FILE,
+    merge_prompt, merged_check, merged_report, open_check, pull_message, revive_check,
+    thread_split, view_block, view_report, ForkCommand, ForkLaunch, ForkSpawn, Guarded, Live,
+    Merged, Parked, Scope, ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, THREADS_DIR,
+    THREAD_FILE, VIEW_BLOCK_LINES,
 };
 use ralph_core::chat_thread_cmd::parked_message;
 use ralph_core::schedule_request::SCHEDULE_DIR;
@@ -121,14 +121,11 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         ThreadCommand::Drop { name } => {
             println!("{}", drop_thread(&main, &name, &running_ids(&main, &name))?);
         }
-        ThreadCommand::Merge { name, rebase: true } => {
-            let message = rebase_thread(&main, &name, &running_ids(&main, &name))?;
-            println!("rebased thread {name} into main's inbox\n{message}");
+        ThreadCommand::Merge { name, view: true } => {
+            let message = view_thread(&main, &name, &running_ids(&main, &name))?;
+            println!("viewed thread {name} into main's inbox\n{message}");
         }
-        ThreadCommand::Merge {
-            name,
-            rebase: false,
-        } => {
+        ThreadCommand::Merge { name, view: false } => {
             let dir = thread_dir(&main, &name);
             let curator = Curator {
                 kind: CallSite::Merge,
@@ -219,10 +216,10 @@ pub fn merge_thread(
     })
 }
 
-pub fn rebase_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<String, String> {
+pub fn view_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<String, String> {
     merge_with(main, name, running, |meta, entries, tree, at| {
-        let block = rebase_block(name, meta.base, &view(entries, tree, REBASE_LINES))?;
-        Ok(rebased_report(name, &block, at))
+        let block = view_block(name, meta.base, &view(entries, tree, VIEW_BLOCK_LINES))?;
+        Ok(view_report(name, &block, at))
     })
 }
 
@@ -806,11 +803,11 @@ mod tests {
     }
 
     #[test]
-    fn rebase_posts_the_block_to_main_and_freezes_the_thread_without_a_curator() {
+    fn view_posts_the_block_to_main_and_freezes_the_thread_without_a_curator() {
         let (_root, main, dir) = forked();
         let auth = name("auth");
-        let printed = rebase_thread(&main, &auth, &[]).unwrap();
-        let head = "[thread auth · rebased]\nThread auth, forked from main at #2, rebased onto main as its memory view:\n#auth:0 user";
+        let printed = view_thread(&main, &auth, &[]).unwrap();
+        let head = "[thread auth · view]\nThread auth, forked from main at #2, with its memory view posted to main:\n#auth:0 user";
         assert!(printed.starts_with(head), "{printed}");
         let merged = read_meta(&dir).unwrap().merged.unwrap();
         assert!(printed.ends_with(&merged.digest), "{printed}");
@@ -818,10 +815,10 @@ mod tests {
         assert_eq!(inbox.len(), 1);
         assert_eq!(
             (inbox[0].worker.as_str(), inbox[0].status.as_str()),
-            ("thread:auth", "rebased")
+            ("thread:auth", "view")
         );
         assert_eq!((&inbox[0].text, &inbox[0].at), (&merged.digest, &merged.at));
-        let again = rebase_thread(&main, &auth, &[]).unwrap_err();
+        let again = view_thread(&main, &auth, &[]).unwrap_err();
         assert!(
             again.starts_with("thread auth is merged into main"),
             "{again}"
@@ -830,24 +827,24 @@ mod tests {
     }
 
     #[test]
-    fn rebase_refuses_like_merge_before_writing() {
+    fn view_refuses_like_merge_before_writing() {
         let (_root, main, dir) = forked();
         let auth = name("auth");
-        let busy = rebase_thread(&main, &auth, &["w1".to_string()]).unwrap_err();
+        let busy = view_thread(&main, &auth, &["w1".to_string()]).unwrap_err();
         assert!(busy.contains("running workers (w1)"), "{busy}");
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
-        let open = rebase_thread(&main, &auth, &[]).unwrap_err();
+        let open = view_thread(&main, &auth, &[]).unwrap_err();
         assert!(open.contains("in use"), "{open}");
         std::mem::drop(held);
         save_records(&dir);
-        let saved = rebase_thread(&main, &auth, &[]).unwrap_err();
+        let saved = view_thread(&main, &auth, &[]).unwrap_err();
         assert!(saved.starts_with("thread auth has 2 saved"), "{saved}");
-        let unknown = rebase_thread(&main, &name("nope"), &[]).unwrap_err();
+        let unknown = view_thread(&main, &name("nope"), &[]).unwrap_err();
         assert!(unknown.starts_with("no thread nope"), "{unknown}");
         ensure(&main, &name("empty")).unwrap();
         assert_eq!(
-            rebase_thread(&main, &name("empty"), &[]).unwrap_err(),
-            "thread empty has no messages to rebase."
+            view_thread(&main, &name("empty"), &[]).unwrap_err(),
+            "thread empty has no messages to post."
         );
         assert_eq!(
             read_meta(&thread_dir(&main, &name("empty")))

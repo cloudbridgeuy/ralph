@@ -1,7 +1,8 @@
 use crate::chat_help::Command;
 use crate::chat_thread::ThreadName;
 
-pub const REBASE_FLAG: &str = "--rebase";
+pub const VIEW_FLAG: &str = "--view";
+const VIEW_ALIAS: &str = "--rebase";
 const PARK_USAGE: &str =
     "usage: /park <name> stops thread <name> from opening; run it in main's chat.";
 const PULL_USAGE: &str =
@@ -12,7 +13,7 @@ pub enum ThreadOp {
     Ls,
     Pull(ThreadName),
     Park(ThreadName),
-    Merge { name: ThreadName, rebase: bool },
+    Merge { name: ThreadName, view: bool },
 }
 
 pub fn parse_thread_op(command: Command, args: &str) -> Option<Result<ThreadOp, String>> {
@@ -45,18 +46,18 @@ pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
 
 fn merge_usage() -> String {
     format!(
-        "usage: /merge <name> [{REBASE_FLAG}] merges thread <name> into main's inbox; {REBASE_FLAG} posts its memory view with no model call and no confirmation; run it in main's chat."
+        "usage: /merge <name> [{VIEW_FLAG}] merges thread <name> into main's inbox; {VIEW_FLAG} posts its memory view with no model call and no confirmation; run it in main's chat."
     )
 }
 
 fn parse_merge(args: &str) -> Option<ThreadOp> {
     let (flags, rest): (Vec<&str>, Vec<&str>) = args
         .split_whitespace()
-        .partition(|word| *word == REBASE_FLAG);
+        .partition(|word| *word == VIEW_FLAG || *word == VIEW_ALIAS);
     match (flags.len(), rest.as_slice()) {
         (0 | 1, [word]) => ThreadName::parse(word).ok().map(|name| ThreadOp::Merge {
             name,
-            rebase: !flags.is_empty(),
+            view: !flags.is_empty(),
         }),
         _ => None,
     }
@@ -234,11 +235,8 @@ mod tests {
         assert_eq!(op_refusal(false, &park), None);
     }
 
-    fn merge(rebase: bool) -> ThreadOp {
-        ThreadOp::Merge {
-            name: auth(),
-            rebase,
-        }
+    fn merge(view: bool) -> ThreadOp {
+        ThreadOp::Merge { name: auth(), view }
     }
 
     #[test]
@@ -250,43 +248,58 @@ mod tests {
     }
 
     #[test]
-    fn merge_with_the_rebase_flag_in_either_place_rebases() {
-        let line = format!("auth {REBASE_FLAG}");
-        assert_eq!(
-            parse_thread_op(Command::Merge, &line),
-            Some(Ok(merge(true)))
-        );
-        let line = format!("{REBASE_FLAG}  auth");
-        assert_eq!(
-            parse_thread_op(Command::Merge, &line),
-            Some(Ok(merge(true)))
-        );
+    fn merge_with_the_rebase_alias_in_either_place_posts_the_view() {
+        for line in ["auth --rebase", "--rebase  auth"] {
+            assert_eq!(
+                parse_thread_op(Command::Merge, line),
+                Some(Ok(merge(true))),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn merge_with_the_view_flag_in_either_place_posts_the_view() {
+        for line in ["auth --view", "--view  auth"] {
+            assert_eq!(
+                parse_thread_op(Command::Merge, line),
+                Some(Ok(merge(true))),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn merge_with_the_view_flag_and_its_alias_is_a_repeat() {
+        for line in ["auth --view --rebase", "auth --view --view"] {
+            assert_eq!(parse_thread_op(Command::Merge, line), None, "{line}");
+        }
     }
 
     #[test]
     fn merge_without_arguments_is_a_usage_error() {
         let err = parse_thread_op(Command::Merge, "").unwrap().unwrap_err();
-        assert!(err.starts_with("usage: /merge <name> [--rebase]"), "{err}");
-        assert!(err.contains(&format!("[{REBASE_FLAG}]")), "{err}");
+        assert!(err.starts_with("usage: /merge <name> [--view]"), "{err}");
+        assert!(err.contains(&format!("[{VIEW_FLAG}]")), "{err}");
     }
 
     #[test]
     fn merge_with_the_wrong_shape_is_not_a_thread_op() {
-        let both = format!("auth other {REBASE_FLAG}");
-        let twice = format!("auth {REBASE_FLAG} {REBASE_FLAG}");
-        for args in [REBASE_FLAG, "auth other", "Bad_Name", &both, &twice] {
+        let both = format!("auth other {VIEW_FLAG}");
+        let twice = format!("auth {VIEW_FLAG} {VIEW_FLAG}");
+        for args in [VIEW_FLAG, "auth other", "Bad_Name", &both, &twice] {
             assert_eq!(parse_thread_op(Command::Merge, args), None, "{args}");
         }
     }
 
     #[test]
     fn a_thread_chat_refuses_both_merges_with_a_hint_and_main_allows_them() {
-        for rebase in [false, true] {
+        for view in [false, true] {
             assert_eq!(
-                op_refusal(true, &merge(rebase)),
+                op_refusal(true, &merge(view)),
                 Some("/merge runs in main's chat. Run /main, then /merge <name>.".to_string())
             );
-            assert_eq!(op_refusal(false, &merge(rebase)), None);
+            assert_eq!(op_refusal(false, &merge(view)), None);
         }
     }
 
@@ -326,9 +339,9 @@ mod tests {
             "/merge requests are failing on CI",
             "/pull Bad_Name",
             "/park auth now",
-            "/merge --rebase",
+            "/merge --view",
             "/merge auth --force",
-            "/merge auth --rebase --rebase",
+            "/merge auth --view --view",
             "/threads x",
         ] {
             assert_eq!(route(line), Route::Send(line.to_string()), "{line}");
@@ -347,7 +360,7 @@ mod tests {
             );
         }
         assert!(matches!(
-            route("/merge auth --rebase"),
+            route("/merge auth --view"),
             Route::ThreadOp { op: Ok(_), .. }
         ));
     }
@@ -369,7 +382,7 @@ mod tests {
             "/park a",
             "/thread a",
             "/main",
-            "/merge a --rebase",
+            "/merge a --view",
             "/merge",
             "/pull",
             "/park",

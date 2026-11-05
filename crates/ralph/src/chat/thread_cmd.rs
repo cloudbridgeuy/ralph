@@ -1,7 +1,7 @@
 use crate::chat::schedule::{ask_answer, read_answer};
 use crate::chat::thread::{
-    config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, rebase_thread,
-    thread_dir,
+    config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, thread_dir,
+    view_thread,
 };
 use crate::cli::NAP_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
@@ -38,12 +38,9 @@ pub(super) fn run(
         ThreadOp::Park(name) => {
             park_thread(&main, name, &running_of(name)).map(|()| parked_message(name))
         }
-        ThreadOp::Merge { name, rebase: true } => rebase_thread(&main, name, &running_of(name))
-            .map(|message| format!("rebased thread {name} into main's inbox\n{message}")),
-        ThreadOp::Merge {
-            name,
-            rebase: false,
-        } => {
+        ThreadOp::Merge { name, view: true } => view_thread(&main, name, &running_of(name))
+            .map(|message| format!("viewed thread {name} into main's inbox\n{message}")),
+        ThreadOp::Merge { name, view: false } => {
             let running = running_of(name);
             merge_precheck(&main, name, &running)?;
             if !merge_answer(confirm(&merge_question(name)))? {
@@ -104,7 +101,7 @@ mod tests {
     fn merge_auth() -> ThreadOp {
         ThreadOp::Merge {
             name: ThreadName::parse("auth").unwrap(),
-            rebase: false,
+            view: false,
         }
     }
 

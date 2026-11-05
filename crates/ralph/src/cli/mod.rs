@@ -239,9 +239,10 @@ pub enum ThreadCommand {
         name: ThreadName,
         #[arg(
             long,
+            alias = "rebase",
             help = "Post the thread's labelled memory view (100 lines, at most 64 KB) to main's inbox instead of a Haiku digest; no model call."
         )]
-        rebase: bool,
+        view: bool,
     },
     #[command(
         about = "Park a thread: it refuses to open, so its watches and schedules pause, until revive. Refuses while a chat or a worker uses it."

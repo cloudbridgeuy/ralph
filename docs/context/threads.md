@@ -63,7 +63,7 @@ This moves the fork point of the thread to the end of main. The next `ralph chat
 
 - Close the thread chat first. Pull refuses while the chat is open.
 - In main's chat, type `/pull <name>` for the same result. It runs in main's chat only, makes no model call and does not leave the chat. In a thread's chat it refuses with `Run /main, then /pull <name>.`; the thread's own chat holds its claim, so it cannot pull itself.
-- `/threads`, `/pull`, `/park` and `/merge` only take a line that has the shape of the command: `/threads` alone, one valid name, and for `/merge` the optional `--rebase`. Any other line, such as `/merge requests are failing on CI`, goes to the model as a normal message, so a prose line or a user skill with that name still works. Typed with no argument, `/pull`, `/park` and `/merge` print their usage.
+- `/threads`, `/pull`, `/park` and `/merge` only take a line that has the shape of the command: `/threads` alone, one valid name, and for `/merge` the optional `--view` (or its alias `--rebase`). Any other line, such as `/merge requests are failing on CI`, goes to the model as a normal message, so a prose line or a user skill with that name still works. Typed with no argument, `/pull`, `/park` and `/merge` print their usage.
 - Pull works on a parked thread.
 - Pull prints `already at main's end` and changes nothing when the thread is up to date.
 
@@ -81,18 +81,18 @@ ralph thread merge <name>
 - It makes one paid call to the Haiku model, and up to 3 if the model's digest is refused. The model writes a digest from a 200-line view of the thread.
 - The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing. If posting the digest to main's inbox fails, the thread stays merged and the error names `thread.json`, which holds the digest.
 
-Rebase merge:
+View merge:
 
 ```bash
-ralph thread merge <name> --rebase
+ralph thread merge <name> --view
 ```
 
 - It makes no model call.
-- It posts the thread's own memory view, at most 100 lines and 64 KB, with a header line. It is not a git rebase. No git command runs and no branch changes.
+- It posts the thread's own memory view, at most 100 lines and 64 KB, with a header line. It is not a git rebase; to bring main into a thread, use `pull`. No git command runs and no branch changes.
 - It refuses a thread with no messages. It refuses a block over 64 KB. Use the squash merge for these.
-- In main's chat, type `/merge <name> --rebase` for the same result. It asks no confirmation and makes no model call. It runs in main's chat only and does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.` The flag text is the `REBASE_FLAG` constant in `crates/core/src/chat_thread_cmd.rs`.
+- In main's chat, type `/merge <name> --view` for the same result. It asks no confirmation and makes no model call. It runs in main's chat only and does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.` The flag text is the `VIEW_FLAG` constant in `crates/core/src/chat_thread_cmd.rs`.
 
-Use the squash merge when you want a short digest. Use `--rebase` when you want main to see the memory view and you want no cost.
+Use the squash merge when you want a short digest. Use `--view` when you want main to see the memory view and you want no cost. `--rebase` is the old name of `--view`. It still works and is hidden from help. The inbox status is `view`; entries posted before the rename show `rebased`.
 
 Merge refuses while a worker of the thread runs or while the thread has saved watches or schedules. Close or stop them from the thread's chat first.
 

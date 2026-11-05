@@ -10,9 +10,9 @@ pub const MAIN_PREFIX_LINES: usize = 100;
 pub const MAX_NAME_CHARS: usize = 32;
 pub const THREAD_REPORT_PREFIX: &str = "thread:";
 pub const MERGED_STATUS: &str = "merged";
-pub const REBASED_STATUS: &str = "rebased";
-pub const REBASE_LINES: usize = 100;
-pub const MAX_REBASE_BYTES: usize = 64 * 1024;
+pub const VIEW_STATUS: &str = "view";
+pub const VIEW_BLOCK_LINES: usize = 100;
+pub const MAX_VIEW_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_DIGEST_BYTES: usize = 2048;
 pub const MAX_MERGE_ATTEMPTS: usize = 3;
 const MAIN: &str = "main";
@@ -198,27 +198,27 @@ pub fn merged_report(name: &ThreadName, digest: &str, at: &str) -> Report {
     }
 }
 
-pub fn rebase_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<String, String> {
+pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<String, String> {
     if lines.is_empty() {
-        return Err(format!("thread {name} has no messages to rebase."));
+        return Err(format!("thread {name} has no messages to post."));
     }
     let labelled: Vec<String> = lines.iter().map(|line| label_item(line, name)).collect();
     let block = format!(
-        "Thread {name}, forked from main at #{base}, rebased onto main as its memory view:\n{}",
+        "Thread {name}, forked from main at #{base}, with its memory view posted to main:\n{}",
         labelled.join("\n")
     );
-    if block.len() > MAX_REBASE_BYTES {
+    if block.len() > MAX_VIEW_BLOCK_BYTES {
         return Err(format!(
-            "thread {name}'s rebase block is {} bytes; the limit is {MAX_REBASE_BYTES}. To merge it, use squash: `ralph thread merge {name}`.",
+            "thread {name}'s view block is {} bytes; the limit is {MAX_VIEW_BLOCK_BYTES}. To merge it, use squash: `ralph thread merge {name}`.",
             block.len()
         ));
     }
     Ok(block)
 }
 
-pub fn rebased_report(name: &ThreadName, block: &str, at: &str) -> Report {
+pub fn view_report(name: &ThreadName, block: &str, at: &str) -> Report {
     Report {
-        status: REBASED_STATUS.to_string(),
+        status: VIEW_STATUS.to_string(),
         ..merged_report(name, block, at)
     }
 }
@@ -862,27 +862,27 @@ mod tests {
     }
 
     #[test]
-    fn a_rebase_block_labels_the_thread_lines_and_names_the_thread() {
+    fn a_view_block_labels_the_thread_lines_and_names_the_thread() {
         let lines = ["#0 user x hello".to_string(), "#1-4 summary y".to_string()];
         assert_eq!(
-            rebase_block(&name("auth"), 7, &lines).unwrap(),
-            "Thread auth, forked from main at #7, rebased onto main as its memory view:\n#auth:0 user x hello\n#auth:1-4 summary y"
+            view_block(&name("auth"), 7, &lines).unwrap(),
+            "Thread auth, forked from main at #7, with its memory view posted to main:\n#auth:0 user x hello\n#auth:1-4 summary y"
         );
     }
 
     #[test]
-    fn a_rebase_refuses_an_empty_thread_and_a_block_over_the_cap() {
+    fn a_view_refuses_an_empty_thread_and_a_block_over_the_cap() {
         let auth = name("auth");
         assert_eq!(
-            rebase_block(&auth, 0, &[]).unwrap_err(),
-            "thread auth has no messages to rebase."
+            view_block(&auth, 0, &[]).unwrap_err(),
+            "thread auth has no messages to post."
         );
-        let fits = ["x".repeat(MAX_REBASE_BYTES - 200)];
-        assert!(rebase_block(&auth, 0, &fits).unwrap().len() <= MAX_REBASE_BYTES);
-        let big = ["x".repeat(MAX_REBASE_BYTES)];
-        let refused = rebase_block(&auth, 0, &big).unwrap_err();
+        let fits = ["x".repeat(MAX_VIEW_BLOCK_BYTES - 200)];
+        assert!(view_block(&auth, 0, &fits).unwrap().len() <= MAX_VIEW_BLOCK_BYTES);
+        let big = ["x".repeat(MAX_VIEW_BLOCK_BYTES)];
+        let refused = view_block(&auth, 0, &big).unwrap_err();
         assert!(
-            refused.starts_with("thread auth's rebase block is ")
+            refused.starts_with("thread auth's view block is ")
                 && refused.contains("bytes; the limit is 65536."),
             "{refused}"
         );
@@ -893,15 +893,15 @@ mod tests {
     }
 
     #[test]
-    fn a_rebased_report_reads_as_thread_rebased_in_main() {
-        let report = rebased_report(&name("auth"), "block", "t");
+    fn a_view_report_reads_as_thread_view_in_main() {
+        let report = view_report(&name("auth"), "block", "t");
         assert_eq!(
             (report.worker.as_str(), report.at.as_str()),
             ("thread:auth", "t")
         );
         assert_eq!(
             crate::worker::chat_message(&[report]),
-            "[thread auth · rebased]\nblock"
+            "[thread auth · view]\nblock"
         );
     }
 
