@@ -6,7 +6,7 @@ use crate::chat::thread::{
 use crate::cli::NAP_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
-use ralph_core::chat_thread_cmd::{merge_question, op_refusal, ThreadOp};
+use ralph_core::chat_thread_cmd::{merge_question, op_refusal, parked_message, ThreadOp};
 use std::io;
 use std::path::Path;
 
@@ -32,7 +32,7 @@ pub(super) fn run(
         }
         ThreadOp::Pull(name) => pull_thread(&main, name),
         ThreadOp::Park(name) => {
-            park_thread(&main, name, &running_ids(&main, name)).map(|()| format!("parked {name}"))
+            park_thread(&main, name, &running_ids(&main, name)).map(|()| parked_message(name))
         }
         ThreadOp::Merge { name, rebase: true } => {
             rebase_thread(&main, name, &running_ids(&main, name))

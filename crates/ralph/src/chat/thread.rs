@@ -16,6 +16,7 @@ use ralph_core::chat_thread::{
     Merged, Parked, Scope, ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, REBASE_LINES,
     THREADS_DIR, THREAD_FILE,
 };
+use ralph_core::chat_thread_cmd::parked_message;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
@@ -143,7 +144,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         ThreadCommand::Park { name } => {
             park_thread(&main, &name, &running_ids(&main, &name))?;
-            println!("parked thread {name}; `ralph thread revive {name}` opens it again");
+            println!("{}", parked_message(&name));
         }
         ThreadCommand::Revive { name } => {
             revive_thread(&main, &name)?;

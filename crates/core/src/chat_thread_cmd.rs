@@ -62,6 +62,10 @@ fn parse_merge(args: &str) -> Option<ThreadOp> {
     }
 }
 
+pub fn parked_message(name: &ThreadName) -> String {
+    format!("parked thread {name}; `ralph thread revive {name}` opens it again")
+}
+
 pub fn merge_question(name: &ThreadName) -> String {
     format!(
         "Merge thread {name} into main? This makes one paid Haiku call, and up to 3 if the digest is refused. [y/n] "
@@ -311,5 +315,13 @@ mod tests {
             route("/merge auth --rebase"),
             Route::ThreadOp { op: Ok(_), .. }
         ));
+    }
+
+    #[test]
+    fn the_parked_message_names_the_thread_and_the_way_back() {
+        assert_eq!(
+            parked_message(&auth()),
+            "parked thread auth; `ralph thread revive auth` opens it again"
+        );
     }
 }

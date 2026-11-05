@@ -114,7 +114,7 @@ Park stops a thread from opening. Its saved watches and schedules wait. They kee
 
 - Park refuses an open chat, running workers, a merged thread and a thread that is already parked.
 - Revive refuses a thread that is not parked.
-- In main's chat, type `/park <name>` to park. It prints `parked <name>`, makes no model call and does not leave the chat. It refuses in a thread's chat with `Run /main, then /park <name>.` There is no `/revive`; run `ralph thread revive <name>`.
+- In main's chat, type `/park <name>` to park. It prints `parked thread <name>; `ralph thread revive <name>` opens it again`, the same text as the shell command (`parked_message`), makes no model call and does not leave the chat. It refuses in a thread's chat with `Run /main, then /park <name>.` There is no `/revive`; run `ralph thread revive <name>`.
 - `history` still reads a parked thread. `pull`, `drop` and `merge` work on it.
 
 ## Drop a thread
@@ -145,8 +145,8 @@ Each message is quoted in its stable part. `<name>` is the thread. The checks ar
 | Refusal (start of message) | Cause | Fix |
 | --- | --- | --- |
 | `store <path> is in use` | `ralph chat --thread <name>` found a chat that has the store open (`crates/core/src/chat_memory/claim.rs`). | Quit the other chat. |
-| `thread <name> is in use` | `pull`, `/pull`, `drop`, `park`, `/park`, `revive`, `merge` or `/fork` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
-| `thread <name> has running workers` | `drop`, `park`, `/park` or `merge` found a running worker (`guard_check`). | Close the workers from the thread's chat. |
+| `thread <name> is in use` | `pull`, `/pull`, `drop`, `park`, `/park`, `revive`, `merge`, `/merge` or `/fork` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
+| `thread <name> has running workers` | `drop`, `park`, `/park`, `merge` or `/merge` found a running worker (`guard_check`). | Close the workers from the thread's chat. |
 | `thread <name> has N saved watch` | `merge` found a saved watch or schedule (`guard_check`). | Stop it from the thread's chat. |
 | `thread <name> is merged into main` | You opened, forked, dropped, parked, revived, pulled or merged a merged thread (`merged_check`). | None. Read it with `history`. |
 | `thread <name> is parked` | You opened, forked or parked a parked thread (`open_check`). | Run `ralph thread revive <name>`. |
