@@ -97,4 +97,48 @@ mod tests {
         drop(held);
         assert_eq!(merge_precheck(&main, &auth, &[]), Ok(()));
     }
+
+    fn merge_auth() -> ThreadOp {
+        ThreadOp::Merge {
+            name: ThreadName::parse("auth").unwrap(),
+            rebase: false,
+        }
+    }
+
+    #[test]
+    fn a_declined_merge_cancels_after_one_question() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
+        let mut asked = 0;
+        let mut confirm = |_: &str| {
+            asked += 1;
+            false
+        };
+        let result = run(&merge_auth(), &main, false, &mut confirm);
+        assert_eq!(result, Ok("merge cancelled.".to_string()));
+        assert_eq!(asked, 1);
+    }
+
+    #[test]
+    fn merging_an_unknown_thread_refuses_without_asking() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let mut confirm = |_: &str| -> bool { panic!("must not ask") };
+        let refusal = run(&merge_auth(), &main, false, &mut confirm).unwrap_err();
+        assert!(refusal.starts_with("no thread auth"), "{refusal}");
+    }
+
+    #[test]
+    fn merging_from_a_thread_refuses_without_asking() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
+        let mut confirm = |_: &str| -> bool { panic!("must not ask") };
+        let refusal = run(&merge_auth(), &main, true, &mut confirm).unwrap_err();
+        assert!(
+            refusal.contains("Run /main, then /merge <name>."),
+            "{refusal}"
+        );
+    }
 }
