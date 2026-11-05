@@ -875,6 +875,15 @@ fn route_input_parses_thread_and_main_switches() {
     };
     assert!(parsed.is_err());
     assert_eq!(line, "/main\nfix the test");
+    assert_eq!(
+        route("/thread\nauth"),
+        Route::Switch {
+            parsed: Ok(SwitchTarget::Thread(
+                crate::chat_thread::ThreadName::parse("auth").unwrap()
+            )),
+            line: "/thread\nauth".into(),
+        }
+    );
     assert_eq!(route("/threads"), Route::Send("/threads".into()));
     assert_eq!(route("/mainx"), Route::Send("/mainx".into()));
 }
