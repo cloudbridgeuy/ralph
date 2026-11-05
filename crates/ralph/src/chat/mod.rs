@@ -122,7 +122,10 @@ use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use reedline::{EditCommand, ExternalPrinter, Reedline};
 #[cfg(test)]
 use session::resolve_store;
-use session::{chat_dir, load_custom_prompt, print_history, route_queued, save_unsent, store_dir};
+use session::{
+    chat_dir, load_custom_prompt, print_exit_notice, print_history, route_queued, save_unsent,
+    store_dir,
+};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
@@ -599,7 +602,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     }
                     Err(TurnOutcome::Exit) => {
                         let lost = unsent_texts(&carried, editor.current_buffer_contents());
-                        save_unsent(&mut editor, &lost);
+                        let saved = save_unsent(&mut editor, &lost);
+                        print_exit_notice(lost.len(), saved);
                         editor.sync_history()?;
                         break;
                     }
@@ -755,15 +759,18 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     }
                 };
                 let lost = unsent_texts(&carried, editor.current_buffer_contents());
-                if !save_unsent(&mut editor, &lost) {
+                let saved = save_unsent(&mut editor, &lost);
+                if !saved {
                     if signal::is_terminated() {
-                        println!("could not save the unsent text; exiting on signal.");
+                        print_exit_notice(lost.len(), saved);
+                        eprintln!("could not save the unsent text; exiting on signal.");
                         break;
                     }
-                    println!("could not save the unsent text; the switch is cancelled.");
+                    eprintln!("could not save the unsent text; the switch is cancelled.");
                     restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
                     continue;
                 }
+                print_exit_notice(lost.len(), saved);
                 warn_if_err(editor.sync_history(), "Failed to save chat history");
                 idle.store(false, Ordering::SeqCst);
                 *turn.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -825,7 +832,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         });
         monitor.refresh(true);
         if outcome == TurnOutcome::Exit {
-            save_unsent(&mut editor, &unsent(&queue));
+            let lost = unsent(&queue);
+            let saved = save_unsent(&mut editor, &lost);
+            print_exit_notice(lost.len(), saved);
             editor.sync_history()?;
             break;
         }
@@ -913,7 +922,8 @@ fn refuse_or_exit(
     let buffer = editor.current_buffer_contents().to_string();
     match refusal_action(signal::is_terminated(), line, &carried, &buffer) {
         Refusal::Save(lost) => {
-            save_unsent(editor, &lost);
+            let saved = save_unsent(editor, &lost);
+            print_exit_notice(lost.len(), saved);
             editor.sync_history()?;
             Ok(true)
         }
