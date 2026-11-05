@@ -55,7 +55,7 @@ Squash merge:
 ralph thread merge <name>
 ```
 
-- It makes one paid call to the Haiku model. The model writes a digest from a 200-line view of the thread.
+- It makes one paid call to the Haiku model, and up to 3 if the model's digest is refused. The model writes a digest from a 200-line view of the thread.
 - The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A failed merge changes nothing.
 
 Rebase merge:
@@ -109,7 +109,7 @@ ralph chat --thread auth       # work on the auth topic, then quit with Ctrl-D
 ralph thread ls                # auth  forked at #42  6 messages ...
 ralph thread pull auth         # take main's newer messages
 ralph chat --thread auth       # continue with the new view
-ralph thread merge auth        # one Haiku call; digest goes to main's inbox
+ralph thread merge auth        # Haiku digest (1-3 calls); goes to main's inbox
 ralph chat history zoom auth:0 # the merged thread is still readable
 ```
 
