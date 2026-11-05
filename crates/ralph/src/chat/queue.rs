@@ -1,5 +1,6 @@
 use crate::chat::turn::TurnOutcome;
 use ralph_core::chat_cell::{bang, Bang};
+use ralph_core::chat_help::Command;
 
 const JOIN: &str = "\n\n";
 
@@ -92,7 +93,10 @@ pub(super) fn draft_with_typed(draft: Option<String>, typed: &str) -> Option<Str
 }
 
 fn is_cell(entry: &str) -> bool {
-    matches!(bang(entry.trim()), Bang::Send(_) | Bang::Local(_))
+    let line = entry.trim();
+    matches!(bang(line), Bang::Send(_) | Bang::Local(_))
+        || Command::Thread.args(line).is_some()
+        || Command::Main.args(line).is_some()
 }
 
 pub(super) fn next_batch(mut entries: Vec<String>) -> Option<(String, Vec<String>)> {
@@ -342,6 +346,26 @@ mod tests {
         assert_eq!(
             decide(TurnOutcome::Replied, cancelled),
             Decision::Keep(entries(&["a"]))
+        );
+    }
+
+    #[test]
+    fn a_switch_line_is_its_own_batch() {
+        assert_eq!(
+            next_batch(entries(&["/thread side", "hi"])),
+            Some(("/thread side".to_string(), entries(&["hi"])))
+        );
+        assert_eq!(
+            next_batch(entries(&["hi", "/thread side", "yo"])),
+            Some(("hi".to_string(), entries(&["/thread side", "yo"])))
+        );
+        assert_eq!(
+            next_batch(entries(&["a", "  /main  "])),
+            Some(("a".to_string(), entries(&["  /main  "])))
+        );
+        assert_eq!(
+            next_batch(entries(&["/threads x", "b"])),
+            Some(("/threads x\n\nb".to_string(), Vec::new()))
         );
     }
 }
