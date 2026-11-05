@@ -784,6 +784,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Ok(text) => {
                         println!("{text}");
                         monitor.refresh(true);
+                        if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
+                            carried = rest;
+                            pending = Some(route_queued(text, &mut editor, &prompt));
+                        }
                     }
                     Err(refusal) => {
                         println!("{refusal}");

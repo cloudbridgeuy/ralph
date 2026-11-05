@@ -66,6 +66,19 @@ pub fn parked_message(name: &ThreadName) -> String {
     format!("parked thread {name}; `ralph thread revive {name}` opens it again")
 }
 
+pub fn is_cell_command(line: &str) -> bool {
+    [
+        Command::Thread,
+        Command::Main,
+        Command::Threads,
+        Command::Pull,
+        Command::Park,
+        Command::Merge,
+    ]
+    .iter()
+    .any(|command| command.args(line).is_some())
+}
+
 pub fn merge_question(name: &ThreadName) -> String {
     format!(
         "Merge thread {name} into main? This makes one paid Haiku call, and up to 3 if the digest is refused. [y/n] "
@@ -323,5 +336,22 @@ mod tests {
             parked_message(&auth()),
             "parked thread auth; `ralph thread revive auth` opens it again"
         );
+    }
+
+    #[test]
+    fn thread_and_switch_commands_are_cell_commands() {
+        for line in [
+            "/merge a",
+            "/threads",
+            "/pull a",
+            "/park a",
+            "/thread a",
+            "/main",
+        ] {
+            assert!(is_cell_command(line), "{line}");
+        }
+        for line in ["/threadsx", "/merged", "hello"] {
+            assert!(!is_cell_command(line), "{line}");
+        }
     }
 }

@@ -49,7 +49,7 @@ Type `/thread <name>` to move this chat to another thread in the same terminal. 
 ralph thread ls
 ```
 
-Inside a chat, type `/threads` for the same list. It works in main's chat and in a thread's chat, takes no arguments and starts no turn. A turn in progress does not block it, but it waits in the queue like `/thread`.
+Inside a chat, type `/threads` for the same list. It works in main's chat and in a thread's chat, takes no arguments and starts no turn. A turn in progress does not block it, but it waits in the queue like `/thread`. `/threads`, `/pull`, `/park` and `/merge` run alone in the queue, never joined with other lines, in typed order.
 
 Each line shows the name, the fork point, the message count and the creation time. A line also shows `merged` or `parked` with a time, the running workers and the unread reports. The last three appear only when they are not zero. The command prints `no threads` when there are none. It is safe while a thread chat is open.
 
