@@ -119,12 +119,12 @@ Each message is quoted in its stable part. `<name>` is the thread. The checks ar
 
 | Refusal (start of message) | Cause | Fix |
 | --- | --- | --- |
-| `store <path> is in use by pid` | `ralph chat --thread <name>` found a chat that has the store open (`crates/core/src/chat_memory/claim.rs`). | Quit the other chat. |
-| `thread <name> is in use by pid` | `pull`, `drop`, `park`, `merge` or `/fork` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
+| `store <path> is in use` | `ralph chat --thread <name>` found a chat that has the store open (`crates/core/src/chat_memory/claim.rs`). | Quit the other chat. |
+| `thread <name> is in use` | `pull`, `drop`, `park`, `revive`, `merge` or `/fork` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
 | `thread <name> has running workers` | `drop`, `park` or `merge` found a running worker (`guard_check`). | Close the workers from the thread's chat. |
 | `thread <name> has N saved watch` | `merge` found a saved watch or schedule (`guard_check`). | Stop it from the thread's chat. |
-| `thread <name> is merged into main` | You opened, dropped, parked, pulled or merged a merged thread (`merged_check`). | None. Read it with `history`. |
-| `thread <name> is parked` | You opened a parked thread (`open_check`). | Run `ralph thread revive <name>`. |
+| `thread <name> is merged into main` | You opened, forked, dropped, parked, revived, pulled or merged a merged thread (`merged_check`). | None. Read it with `history`. |
+| `thread <name> is parked` | You opened, forked or parked a parked thread (`open_check`). | Run `ralph thread revive <name>`. |
 | `thread <name> is not parked` | `revive` found a thread that is not parked. | None. |
 | `no thread <name>` | The name is unknown. | Run `ralph thread ls`. |
 | `#N is after this thread's fork point` | A thread read a main id newer than its fork point. | Run `ralph thread pull <name>`, then reopen the chat. |
