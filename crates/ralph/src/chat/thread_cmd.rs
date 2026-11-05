@@ -47,6 +47,7 @@ pub(super) fn run(
             if !confirm(&merge_question(name)) {
                 return Ok("merge cancelled.".to_string());
             }
+            let running = running_ids(&main, name);
             println!("merging {name} (one paid Haiku call)...");
             let dir = thread_dir(&main, name);
             let curator = Curator {
