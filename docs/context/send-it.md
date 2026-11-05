@@ -61,7 +61,7 @@ Each step has one criterion. The run goes to the next step only when the criteri
 - `check_passes { command }` and `watch_passes { command }`: ralph runs the command as a watch. The step is met when the command exits 0. Any other result stops the run.
 - `judge { question }`: the model answers the question with "met" or "not met" and one line of evidence. See [Judge steps](#judge-steps).
 
-A question or a blocked report from any worker stops the run.
+A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it.
 
 ## Judge steps
 
@@ -104,7 +104,7 @@ A run stops when:
 
 - it reaches a cap,
 - a step misses its criterion, or its check fails,
-- a worker asks a question or is blocked,
+- a worker asks a question or is blocked and the model did not reply to it under an allowed `reply`,
 - the last judge round is not met,
 - the plan changes or loses its approval,
 - a turn ends with no reply,

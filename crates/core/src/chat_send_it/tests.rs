@@ -3,6 +3,7 @@ use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
 
+mod drive;
 mod plan;
 mod template;
 
@@ -74,18 +75,10 @@ fn report(status: &str) -> Report {
 
 #[test]
 fn only_question_and_blocked_reports_flag_a_worker() {
-    assert!(worker_flagged(&[report("done"), report("question")], &[]));
-    assert!(worker_flagged(&[report("blocked")], &[]));
-    assert!(!worker_flagged(&[report("done"), report("progress")], &[]));
-    assert!(!worker_flagged(&[], &[]));
-}
-
-#[test]
-fn reports_drained_during_the_turn_also_flag_a_worker() {
-    assert!(worker_flagged(&[], &[report("question")]));
-    assert!(worker_flagged(&[], &[report("done"), report("blocked")]));
-    assert!(worker_flagged(&[report("question")], &[report("done")]));
-    assert!(!worker_flagged(&[report("done")], &[report("progress")]));
+    assert!(worker_flagged(&[report("done"), report("question")]));
+    assert!(worker_flagged(&[report("blocked")]));
+    assert!(!worker_flagged(&[report("done"), report("progress")]));
+    assert!(!worker_flagged(&[]));
 }
 
 #[test]
@@ -359,14 +352,6 @@ fn reports_move_on_wait_or_stop() {
         ),
         (worker_report("X9", "done"), (at(0), Next::Wait)),
         (
-            worker_report("X9", "question"),
-            (at(0), Next::Stop(StopReason::WorkerFlagged)),
-        ),
-        (
-            worker_report("E1", "blocked"),
-            (at(0), Next::Stop(StopReason::WorkerFlagged)),
-        ),
-        (
             worker_report("E1", "exited"),
             (at(0), Next::Stop(StopReason::Unmet { step: 1 })),
         ),
@@ -528,6 +513,7 @@ fn ended(file: &RunFile) -> Ended<'_> {
         step_result: None,
         drained: &[],
         unread: &[],
+        answered: &[],
         watched: None,
         refused: None,
     }
