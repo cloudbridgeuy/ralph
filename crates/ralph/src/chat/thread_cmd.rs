@@ -1,7 +1,7 @@
 use crate::chat::schedule::read_answer;
 use crate::chat::thread::{
-    config_root, list, merge_thread, park_thread, pull_thread, rebase_thread, running_ids,
-    thread_dir,
+    config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, rebase_thread,
+    running_ids, thread_dir,
 };
 use crate::cli::NAP_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
@@ -43,6 +43,8 @@ pub(super) fn run(
             name,
             rebase: false,
         } => {
+            let running = running_ids(&main, name);
+            merge_precheck(&main, name, &running)?;
             if needs_confirm(op) && !confirm(&merge_question(name)) {
                 return Ok("merge cancelled.".to_string());
             }
@@ -54,12 +56,9 @@ pub(super) fn run(
                 run: None,
                 timeout: NAP_TIMEOUT_SECS,
             };
-            merge_thread(
-                &main,
-                name,
-                &running_ids(&main, name),
-                &mut |prompt: &str| run_curator(prompt, &curator),
-            )
+            merge_thread(&main, name, &running, &mut |prompt: &str| {
+                run_curator(prompt, &curator)
+            })
             .map(|message| format!("merged thread {name} into main's inbox\n{message}"))
         }
     }
@@ -88,6 +87,9 @@ fn ask(question: &str, read: &mut impl FnMut() -> Option<String>, out: &mut impl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::memory::Store;
+    use crate::chat::thread::ensure;
+    use ralph_core::chat_thread::ThreadName;
 
     fn answers(lines: &[&str]) -> impl FnMut() -> Option<String> {
         let mut lines: Vec<String> = lines.iter().rev().map(|l| l.to_string()).collect();
@@ -112,5 +114,26 @@ mod tests {
     fn a_closed_input_declines() {
         let mut out = Vec::new();
         assert!(!ask("go? ", &mut answers(&[]), &mut out));
+    }
+
+    #[test]
+    fn the_merge_precheck_refuses_before_any_question() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        let unknown = merge_precheck(&main, &auth, &[]).unwrap_err();
+        assert!(unknown.starts_with("no thread auth"), "{unknown}");
+        ensure(&main, &auth).unwrap();
+        assert_eq!(merge_precheck(&main, &auth, &[]), Ok(()));
+        let busy = merge_precheck(&main, &auth, &["w1".to_string()]).unwrap_err();
+        assert!(busy.contains("running workers (w1)"), "{busy}");
+        let held = Store::new(thread_dir(&main, &auth))
+            .claim_chat()
+            .unwrap()
+            .unwrap();
+        let open = merge_precheck(&main, &auth, &[]).unwrap_err();
+        assert!(open.contains("in use"), "{open}");
+        drop(held);
+        assert_eq!(merge_precheck(&main, &auth, &[]), Ok(()));
     }
 }

@@ -260,6 +260,17 @@ fn merge_with(
     Ok(chat_message(&[report]))
 }
 
+pub(super) fn merge_precheck(
+    main: &Path,
+    name: &ThreadName,
+    running: &[String],
+) -> Result<(), String> {
+    let dir = thread_dir(main, name);
+    merged_check(name, &known_meta(&dir, name)?)?;
+    guard_check(name, Guarded::Merge, live(&dir, running))?;
+    claim_closed(&dir, name).map(drop)
+}
+
 fn live<'a>(dir: &Path, running: &'a [String]) -> Live<'a> {
     let records = WatchStore::new(dir.join(WATCHES_DIR)).load_all().len()
         + ScheduleStore::new(dir.join(SCHEDULE_DIR)).load_all().len();
