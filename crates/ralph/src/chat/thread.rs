@@ -755,7 +755,6 @@ mod tests {
         assert_eq!(fork_ready(&main, &name("fresh")), Ok(main.clone()));
         assert!(!thread_dir(&main, &name("fresh")).exists());
         assert_eq!(fork_ready(&main, &auth), Ok(main.clone()));
-        assert_eq!(fork_ready(&main, &auth), Ok(main.clone()));
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
         let open = fork_ready(&main, &auth).unwrap_err();
         assert!(open.starts_with("thread auth is in use"), "{open}");
