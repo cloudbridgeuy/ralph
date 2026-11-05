@@ -192,10 +192,13 @@ pub fn route_input(
                     line: line.to_string(),
                 },
                 Command::Threads | Command::Pull | Command::Park | Command::Merge => {
-                    Route::ThreadOp {
-                        op: parse_thread_op(command, args),
-                        line: line.to_string(),
-                    }
+                    parse_thread_op(command, args).map_or_else(
+                        || Route::Send(line.to_string()),
+                        |op| Route::ThreadOp {
+                            op,
+                            line: line.to_string(),
+                        },
+                    )
                 }
                 Command::Main => Route::Switch {
                     parsed: parse_main_args(args),

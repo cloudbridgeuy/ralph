@@ -63,6 +63,7 @@ This moves the fork point of the thread to the end of main. The next `ralph chat
 
 - Close the thread chat first. Pull refuses while the chat is open.
 - In main's chat, type `/pull <name>` for the same result. It runs in main's chat only, makes no model call and does not leave the chat. In a thread's chat it refuses with `Run /main, then /pull <name>.`; the thread's own chat holds its claim, so it cannot pull itself.
+- `/threads`, `/pull`, `/park` and `/merge` only take a line that has the shape of the command: `/threads` alone, one valid name, and for `/merge` the optional `--rebase`. Any other line, such as `/merge requests are failing on CI`, goes to the model as a normal message, so a prose line or a user skill with that name still works. Typed with no argument, `/pull`, `/park` and `/merge` print their usage.
 - Pull works on a parked thread.
 - Pull prints `already at main's end` and changes nothing when the thread is up to date.
 
