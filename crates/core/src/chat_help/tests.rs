@@ -4,6 +4,7 @@ use crate::chat_process::SessionCost;
 use crate::chat_status::{
     route_input, EmptySubmit, Route, ScheduleState, Status, WatchState, WorkerState,
 };
+use crate::chat_thread_cmd::VIEW_FLAG;
 use crate::status_mode::mode;
 use crate::status_queue::QueueCell;
 use crate::status_segments::{segments, Context};
@@ -115,6 +116,15 @@ fn lists_hold_every_variant() {
             Turns,
             Restart
         }
+    );
+}
+
+#[test]
+fn the_merge_view_row_uses_the_view_flag_constant() {
+    let wide = help_text(2_000);
+    assert!(
+        wide.contains(&format!("/merge <name> {VIEW_FLAG}")),
+        "{wide}"
     );
 }
 

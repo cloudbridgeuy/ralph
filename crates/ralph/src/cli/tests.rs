@@ -364,7 +364,7 @@ fn test_cli_thread_merge_takes_view() {
 }
 
 #[test]
-fn test_cli_thread_merge_refuses_the_view_flag_and_its_alias_together() {
+fn test_cli_thread_merge_refuses_a_repeated_view_flag_or_its_alias() {
     for flags in [["--view", "--rebase"], ["--view", "--view"]] {
         let args = ["ralph", "thread", "merge", "auth", flags[0], flags[1]];
         assert!(Cli::try_parse_from(args).is_err(), "{flags:?}");
