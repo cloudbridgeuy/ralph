@@ -168,6 +168,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
+- [Threads Guide](docs/context/threads.md) - Task-first how-to: open, pull, merge, park, revive and drop threads, and the refusals
 - [ralph wire Command](docs/context/ralph-wire.md) - Recording proxy, storage layout, live rows, `ls`/`sessions`, chat usage
 - [Release Process](docs/context/release-process.md) - `cargo xtask release`, release workflow, asset contract, `ralph upgrade`, version scheme
 - [Mutation Testing](docs/context/mutation-testing.md) - cargo-mutants setup, pure scope, local runs, survivor ledger, CI status
