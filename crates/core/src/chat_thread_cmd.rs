@@ -67,16 +67,22 @@ pub fn parked_message(name: &ThreadName) -> String {
 }
 
 pub fn is_cell_command(line: &str) -> bool {
-    [
-        Command::Thread,
-        Command::Main,
+    let plain = [Command::Thread, Command::Main]
+        .iter()
+        .any(|command| command.args(line).is_some());
+    let shaped = [
         Command::Threads,
         Command::Pull,
         Command::Park,
         Command::Merge,
     ]
     .iter()
-    .any(|command| command.args(line).is_some())
+    .any(|command| {
+        command
+            .args(line)
+            .is_some_and(|args| parse_thread_op(*command, args).is_some())
+    });
+    plain || shaped
 }
 
 pub fn merging_notice(name: &ThreadName) -> String {
@@ -363,10 +369,23 @@ mod tests {
             "/park a",
             "/thread a",
             "/main",
+            "/merge a --rebase",
+            "/merge",
+            "/pull",
+            "/park",
+            "/thread a b",
         ] {
             assert!(is_cell_command(line), "{line}");
         }
-        for line in ["/threadsx", "/merged", "hello"] {
+        for line in [
+            "/threadsx",
+            "/merged",
+            "hello",
+            "/threads are slow",
+            "/merge requests failing on CI",
+            "/pull a b",
+            "/park a b",
+        ] {
             assert!(!is_cell_command(line), "{line}");
         }
     }

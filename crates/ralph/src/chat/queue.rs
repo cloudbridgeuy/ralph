@@ -391,7 +391,15 @@ mod tests {
         );
         assert_eq!(
             next_batch(entries(&["/threads x", "b"])),
-            Some(("/threads x".to_string(), entries(&["b"])))
+            Some(("/threads x\n\nb".to_string(), Vec::new()))
+        );
+        assert_eq!(
+            next_batch(entries(&["/threads are slow", "b"])),
+            Some(("/threads are slow\n\nb".to_string(), Vec::new()))
+        );
+        assert_eq!(
+            next_batch(entries(&["/merge requests failing on CI", "b"])),
+            Some(("/merge requests failing on CI\n\nb".to_string(), Vec::new()))
         );
         assert_eq!(
             next_batch(entries(&["fix", "/merge a", "run it"])),
