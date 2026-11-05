@@ -122,7 +122,7 @@ fn the_fork_row_says_it_opens_a_rex_block() {
 }
 
 #[test]
-fn the_send_it_rows_cover_propose_status_edit_go_and_off() {
+fn the_send_it_rows_cover_every_form_including_templates() {
     let wide = help_text(2_000);
     for form in [
         "/send-it <instructions>",
@@ -130,6 +130,9 @@ fn the_send_it_rows_cover_propose_status_edit_go_and_off() {
         "/send-it edit",
         "/send-it go",
         "/send-it off",
+        "/send-it save <name> [<ticket>]",
+        "/send-it templates",
+        "/send-it <ticket> <name>",
     ] {
         assert!(wide.contains(form), "{form}");
     }

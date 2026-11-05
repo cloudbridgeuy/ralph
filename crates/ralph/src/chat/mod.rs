@@ -675,6 +675,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             Route::SendIt(SendItCommand::Propose(text)) => {
+                if let Some((ticket, name)) = send_it.template_use(&text) {
+                    let screen = send_it.use_template(&ticket, &name);
+                    println!("{}", screen.text);
+                    shown_plan = screen.shown;
+                    continue;
+                }
                 if let Some(refusal) = send_it.refusal() {
                     println!("{refusal}");
                     continue;
@@ -691,6 +697,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 println!("{}", screen.text);
                 shown_plan = screen.shown;
                 (outcome, None)
+            }
+            Route::SendIt(SendItCommand::Save { name, ticket }) => {
+                println!("{}", send_it.save_template(&name, ticket.as_deref()));
+                continue;
+            }
+            Route::SendIt(SendItCommand::Templates) => {
+                println!("{}", send_it.templates());
+                continue;
             }
             Route::SendIt(SendItCommand::Usage) => {
                 println!("{}", send_it_usage(&send_it_limits));
