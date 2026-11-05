@@ -841,6 +841,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 drained: &drained,
                 unread: &unread,
                 watched: None,
+                refused: None,
             };
             let driven = send_it.dispatch(send_it.tick(&active, ended), &monitor);
             sending = driven.active;

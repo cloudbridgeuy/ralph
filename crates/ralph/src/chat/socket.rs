@@ -7,6 +7,7 @@ use crate::warn::warn;
 use crate::watch_requests;
 use crate::workers::{SpawnArgs, Workers};
 use chrono::{Local, Utc};
+use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_socket::{
     check_socket_path, decode_line, dir_name, dir_pid, encode_line, orphan_sidecar_fate,
     sidecar_name, sidecar_pid, socket_fate, socket_file_name, SocketFacts, SocketFate, SocketOwner,
@@ -18,7 +19,7 @@ use ralph_core::schedule_request::{
 };
 use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
-use ralph_core::worker::{command_allowed, parse_command, Command};
+use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command};
 use std::collections::BTreeSet;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -213,12 +214,7 @@ fn handle_connection(stream: &UnixStream, (shared, roster): &(Shared, Roster)) -
         Ok(request) if request.tool == PROPOSE_RUN => {
             to_response(shared.send_it.propose(&request.args))
         }
-        Ok(request) => respond(
-            &shared.store,
-            &shared.workers,
-            &shared.suggestions,
-            &request,
-        ),
+        Ok(request) => respond(shared, &request),
         Err(text) => SocketResponse {
             text,
             is_error: true,
@@ -229,12 +225,13 @@ fn handle_connection(stream: &UnixStream, (shared, roster): &(Shared, Roster)) -
     writer.flush()
 }
 
-fn run_command(
-    store: &Store,
-    workers: &Workers,
-    suggestions: &SuggestionSlot,
-    request: &SocketRequest,
-) -> Result<String, String> {
+fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, String> {
+    let Shared {
+        store,
+        workers,
+        suggestions,
+        send_it,
+    } = shared;
     if request.tool == SUGGEST_REPLY {
         suggestions.set(parse_suggestion(&request.args)?);
         return Ok(
@@ -246,7 +243,12 @@ fn run_command(
     let pending = store
         .pending_turn()
         .map_err(|e| format!("Could not read chat memory: {e}"))?;
-    command_allowed(&command, pending)?;
+    if let Err(refusal) = command_allowed(&command, pending, &send_it.allowed()) {
+        if pending == Some(Trigger::SendIt) {
+            send_it.refuse(refused_tool(&command));
+        }
+        return Err(refusal);
+    }
     match &command {
         Command::Spawn {
             id,
@@ -297,13 +299,8 @@ fn propose_schedule(store: &Store, request: &ScheduleRequest) -> Result<String, 
     Ok(proposed_message(&task.id))
 }
 
-pub(crate) fn respond(
-    store: &Store,
-    workers: &Workers,
-    suggestions: &SuggestionSlot,
-    request: &SocketRequest,
-) -> SocketResponse {
-    to_response(run_command(store, workers, suggestions, request))
+pub(crate) fn respond(shared: &Shared, request: &SocketRequest) -> SocketResponse {
+    to_response(run_command(shared, request))
 }
 
 fn to_response(result: Result<String, String>) -> SocketResponse {
@@ -349,7 +346,6 @@ pub(crate) fn forward(socket: &Path, request: &SocketRequest) -> Result<SocketRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::chat_memory::Trigger;
     use ralph_core::chat_send_it::Limits;
     use serde_json::{json, Value};
 
@@ -388,12 +384,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
         store.set_pending_turn(Trigger::User).unwrap();
-        let response = respond(
-            &store,
-            &workers(),
-            &SuggestionSlot::default(),
-            &request("watch", watch_args()),
-        );
+        let response = respond(&shared(store.dir()), &request("watch", watch_args()));
         assert!(!response.is_error);
         let queued = watch_requests::take_all(dir.path());
         assert_eq!(queued.len(), 1);
@@ -408,25 +399,12 @@ mod tests {
         let store = Store::new(dir.path().to_path_buf());
         store.set_pending_turn(Trigger::Worker).unwrap();
         let args = json!({"id":"ci","command":"c","follow_up":"f"});
-        assert!(
-            respond(
-                &store,
-                &workers(),
-                &SuggestionSlot::default(),
-                &request("watch", args)
-            )
-            .is_error
-        );
+        assert!(respond(&shared(store.dir()), &request("watch", args)).is_error);
         assert!(watch_requests::take_all(dir.path()).is_empty());
     }
 
     fn schedule_response(store: &Store, args: Value) -> SocketResponse {
-        respond(
-            store,
-            &workers(),
-            &SuggestionSlot::default(),
-            &request("schedule", args),
-        )
+        respond(&shared(store.dir()), &request("schedule", args))
     }
 
     fn schedule_args() -> Value {
@@ -495,9 +473,7 @@ mod tests {
         .unwrap();
         store.set_pending_turn(Trigger::Worker).unwrap();
         let response = respond(
-            &store,
-            &workers(),
-            &SuggestionSlot::default(),
+            &shared(store.dir()),
             &request("spawn_worker", json!({"id":"A","task":"merge"})),
         );
         assert!(response.is_error);
@@ -509,9 +485,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
         let response = respond(
-            &store,
-            &workers(),
-            &SuggestionSlot::default(),
+            &shared(store.dir()),
             &request("spawn_worker", json!({"id":"A","task":"t"})),
         );
         assert!(response.is_error);
@@ -521,19 +495,9 @@ mod tests {
     fn invalid_arguments_and_unknown_tools_are_errors() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
-        let bad = respond(
-            &store,
-            &workers(),
-            &SuggestionSlot::default(),
-            &request("reply", json!({"id":"A"})),
-        );
+        let bad = respond(&shared(store.dir()), &request("reply", json!({"id":"A"})));
         assert!(bad.is_error);
-        let unknown = respond(
-            &store,
-            &workers(),
-            &SuggestionSlot::default(),
-            &request("zoom", json!({})),
-        );
+        let unknown = respond(&shared(store.dir()), &request("zoom", json!({})));
         assert!(unknown.is_error);
         assert!(unknown.text.contains("Unknown tool"));
     }
@@ -542,30 +506,30 @@ mod tests {
     fn suggest_reply_stores_the_newest_text_without_a_pending_turn() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
-        let slot = SuggestionSlot::default();
+        let shared = shared(store.dir());
         for text in ["first", " second "] {
             let call = request("suggest_reply", json!({"text": text}));
-            let response = respond(&store, &workers(), &slot, &call);
+            let response = respond(&shared, &call);
             assert!(!response.is_error);
             assert_eq!(
                 response.text,
                 "Suggested reply set. Now write your reply; do not mention the suggestion."
             );
         }
-        assert_eq!(slot.take(), Some("second".to_string()));
+        assert_eq!(shared.suggestions.take(), Some("second".to_string()));
     }
 
     #[test]
     fn invalid_suggest_reply_is_an_error_and_keeps_the_slot() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
-        let slot = SuggestionSlot::default();
-        slot.set("kept".to_string());
+        let shared = shared(store.dir());
+        shared.suggestions.set("kept".to_string());
         let call = request("suggest_reply", json!({"text": "a\nb"}));
-        let response = respond(&store, &workers(), &slot, &call);
+        let response = respond(&shared, &call);
         assert!(response.is_error);
         assert!(response.text.contains("line break"));
-        assert_eq!(slot.take(), Some("kept".to_string()));
+        assert_eq!(shared.suggestions.take(), Some("kept".to_string()));
     }
 
     #[test]

@@ -432,7 +432,7 @@ pub fn usage(defaults: &Limits) -> String {
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopReason {
     TurnCap,
     CostCap,
@@ -445,6 +445,7 @@ pub enum StopReason {
     NoReply,
     NeedsYou,
     TookOver,
+    Refused { tool: String },
 }
 
 impl StopReason {
@@ -463,6 +464,7 @@ impl StopReason {
             StopReason::NoReply => "a turn ended without a reply".to_string(),
             StopReason::NeedsYou => "a schedule waits for your approval".to_string(),
             StopReason::TookOver => "you took over".to_string(),
+            StopReason::Refused { tool } => format!("the plan does not allow `{tool}`"),
         };
         format!("send-it stopped: {why}. {RESTART_HINT}")
     }
@@ -641,6 +643,7 @@ pub struct Ended<'a> {
     pub drained: &'a [Report],
     pub unread: &'a [Report],
     pub watched: Option<&'a WatchOutcome>,
+    pub refused: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -712,6 +715,10 @@ fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason
         .ok_or(StopReason::Off)?;
     let stop = if !file.is_approved() || plan_hash(&file.plan) != hash {
         Some(StopReason::PlanChanged)
+    } else if let Some(tool) = ended.refused {
+        Some(StopReason::Refused {
+            tool: tool.to_string(),
+        })
     } else if !ended.replied {
         Some(StopReason::NoReply)
     } else if ended.typed || !ended.queued.is_empty() {
