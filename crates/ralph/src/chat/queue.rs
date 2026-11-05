@@ -66,11 +66,14 @@ pub(super) fn draft_with_queue(draft: Option<String>, entries: &[String]) -> Opt
 }
 
 pub(super) fn unsent(queue: &Queue) -> Vec<String> {
-    queue
-        .entries
+    unsent_texts(&queue.entries, &queue.typed)
+}
+
+pub(super) fn unsent_texts(entries: &[String], typed: &str) -> Vec<String> {
+    entries
         .iter()
         .map(String::as_str)
-        .chain(Some(queue.typed.as_str()))
+        .chain(Some(typed))
         .filter(|text| !text.trim().is_empty())
         .map(str::to_string)
         .collect()
@@ -367,5 +370,17 @@ mod tests {
             next_batch(entries(&["/threads x", "b"])),
             Some(("/threads x\n\nb".to_string(), Vec::new()))
         );
+    }
+
+    #[test]
+    fn leaving_saves_the_queue_and_the_typed_text() {
+        let mut queue = queue(&["a", " "]);
+        queue.typed = "b".to_string();
+        assert_eq!(unsent(&queue), entries(&["a", "b"]));
+        assert_eq!(
+            unsent_texts(&entries(&["c"]), "draft in the editor"),
+            entries(&["c", "draft in the editor"])
+        );
+        assert_eq!(unsent_texts(&[], "  \n"), Vec::<String>::new());
     }
 }

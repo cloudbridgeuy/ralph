@@ -55,7 +55,7 @@ use crate::chat::monitor::{
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
-    decide, draft_with_queue, draft_with_typed, next_batch, unsent, Decision, Queue,
+    decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
@@ -740,10 +740,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         continue;
                     }
                 };
-                let lost = std::mem::take(&mut carried);
+                let lost = unsent_texts(&carried, editor.current_buffer_contents());
                 if !save_unsent(&mut editor, &lost) {
-                    println!("could not save the queued text; the switch is cancelled.");
-                    carried = lost;
+                    println!("could not save the unsent text; the switch is cancelled.");
                     continue;
                 }
                 warn_if_err(editor.sync_history(), "Failed to save chat history");
