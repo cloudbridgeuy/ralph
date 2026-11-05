@@ -75,6 +75,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         ),
         Route::Send(_)
         | Route::Switch { .. }
+        | Route::ThreadOp { .. }
         | Route::Shell(_)
         | Route::ReadInbox(_)
         | Route::Hold(_)

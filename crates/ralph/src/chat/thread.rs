@@ -16,6 +16,7 @@ use ralph_core::chat_thread::{
     Merged, Parked, Scope, ThreadMeta, ThreadName, FORK_IN_THREAD, MAIN_PREFIX_LINES, REBASE_LINES,
     THREADS_DIR, THREAD_FILE,
 };
+use ralph_core::chat_thread_cmd::parked_message;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
@@ -143,7 +144,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         ThreadCommand::Park { name } => {
             park_thread(&main, &name, &running_ids(&main, &name))?;
-            println!("parked thread {name}; `ralph thread revive {name}` opens it again");
+            println!("{}", parked_message(&name));
         }
         ThreadCommand::Revive { name } => {
             revive_thread(&main, &name)?;
@@ -154,7 +155,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
+pub(super) fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
     running_workers(&canonical_store(thread_dir(main, name)))
         .into_iter()
         .map(|worker| worker.id)
@@ -258,6 +259,17 @@ fn merge_with(
             )
         })?;
     Ok(chat_message(&[report]))
+}
+
+pub(super) fn merge_precheck(
+    main: &Path,
+    name: &ThreadName,
+    running: &[String],
+) -> Result<(), String> {
+    let dir = thread_dir(main, name);
+    merged_check(name, &known_meta(&dir, name)?)?;
+    guard_check(name, Guarded::Merge, live(&dir, running))?;
+    claim_closed(&dir, name).map(drop)
 }
 
 fn live<'a>(dir: &Path, running: &'a [String]) -> Live<'a> {

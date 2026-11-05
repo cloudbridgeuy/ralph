@@ -7,6 +7,7 @@ use crate::chat_process::ProcessCell;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
 use crate::chat_switch::{parse_main_args, parse_switch_args, SwitchTarget};
 use crate::chat_thread::{parse_fork_args, ForkCommand};
+use crate::chat_thread_cmd::{parse_thread_op, ThreadOp};
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -105,6 +106,10 @@ pub enum Route {
         parsed: Result<SwitchTarget, String>,
         line: String,
     },
+    ThreadOp {
+        op: Result<ThreadOp, String>,
+        line: String,
+    },
     History(Result<MemoryCall, String>),
     View(ViewArgs),
     Help,
@@ -135,6 +140,7 @@ impl Route {
             | Route::SendIt(_)
             | Route::Fork(_)
             | Route::Switch { .. }
+            | Route::ThreadOp { .. }
             | Route::View(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
@@ -185,6 +191,15 @@ pub fn route_input(
                     parsed: parse_switch_args(args),
                     line: line.to_string(),
                 },
+                Command::Threads | Command::Pull | Command::Park | Command::Merge => {
+                    parse_thread_op(command, args).map_or_else(
+                        || Route::Send(line.to_string()),
+                        |op| Route::ThreadOp {
+                            op,
+                            line: line.to_string(),
+                        },
+                    )
+                }
                 Command::Main => Route::Switch {
                     parsed: parse_main_args(args),
                     line: line.to_string(),

@@ -22,6 +22,10 @@ pub enum Command {
     SendIt,
     Fork,
     Thread,
+    Threads,
+    Pull,
+    Park,
+    Merge,
     Main,
     Config,
     View,
@@ -32,7 +36,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 18] = [
+    pub const ALL: [Command; 22] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -44,6 +48,10 @@ impl Command {
         Command::SendIt,
         Command::Fork,
         Command::Thread,
+        Command::Threads,
+        Command::Pull,
+        Command::Park,
+        Command::Merge,
         Command::Main,
         Command::Config,
         Command::View,
@@ -66,6 +74,10 @@ impl Command {
             Command::SendIt => "/send-it",
             Command::Fork => "/fork",
             Command::Thread => "/thread",
+            Command::Threads => "/threads",
+            Command::Pull => "/pull",
+            Command::Park => "/park",
+            Command::Merge => "/merge",
             Command::Main => "/main",
             Command::Config => "/config",
             Command::View => "/view",
@@ -212,6 +224,28 @@ impl Command {
                 "/thread <name>",
                 "switch this chat to thread <name> in the same terminal: the chat quits and ralph chat starts again on the thread; /thread main returns to main; an unknown name creates the thread; refused when the thread is merged, parked or open elsewhere, or while workers or watches run; scheduled tasks stay saved and do not fire while you are away; while a turn runs it waits in the queue",
             )],
+            Command::Threads => &[(
+                "/threads",
+                "list the threads with their fork point, message count, running workers and unread reports, like ralph thread ls; works in main's chat and in a thread's chat; takes no arguments; starts no turn",
+            )],
+            Command::Pull => &[(
+                "/pull <name>",
+                "move thread <name>'s fork point to the end of main, like ralph thread pull; main's chat only, with no model call; refused when the thread's own chat is open, when the thread is merged or unknown, and inside a thread's chat (run /main first); works on a parked thread; the next ralph chat --thread <name> starts with the newer main messages; while a turn runs it waits in the queue",
+            )],
+            Command::Park => &[(
+                "/park <name>",
+                "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /main first); the thread's saved watches and schedules wait; ralph thread revive <name> opens it again; while a turn runs it waits in the queue",
+            )],
+            Command::Merge => &[
+                (
+                    "/merge <name>",
+                    "squash thread <name> into a digest in main's inbox and make the thread read-only, like ralph thread merge; asks y/n first because it makes one paid Haiku call, up to 3 if the digest is refused; runs in the foreground, so the prompt returns when it ends; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it is merged or unknown, and inside a thread's chat (run /main first); while a turn runs it waits in the queue",
+                ),
+                (
+                    "/merge <name> --rebase",
+                    "post thread <name>'s memory view (at most 100 lines and 64 KB) to main's inbox and make the thread read-only; no model call and no confirmation; refused for a thread with no messages, plus the /merge <name> refusals",
+                ),
+            ],
             Command::Main => &[(
                 "/main",
                 "switch this chat to main in the same terminal, like /thread main; takes no arguments; refused in main and under the same limits as /thread",

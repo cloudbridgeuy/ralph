@@ -49,6 +49,8 @@ Type `/thread <name>` to move this chat to another thread in the same terminal. 
 ralph thread ls
 ```
 
+Inside a chat, type `/threads` for the same list. It works in main's chat and in a thread's chat, takes no arguments and starts no turn. A turn in progress does not block it, but it waits in the queue like `/thread`.
+
 Each line shows the name, the fork point, the message count and the creation time. A line also shows `merged` or `parked` with a time, the running workers and the unread reports. The last three appear only when they are not zero. The command prints `no threads` when there are none. It is safe while a thread chat is open.
 
 ## Pull main's new messages
@@ -60,6 +62,8 @@ ralph thread pull <name>
 This moves the fork point of the thread to the end of main. The next `ralph chat --thread <name>` starts with the newer main messages. The thread's own messages do not change.
 
 - Close the thread chat first. Pull refuses while the chat is open.
+- In main's chat, type `/pull <name>` for the same result. It runs in main's chat only, makes no model call and does not leave the chat. In a thread's chat it refuses with `Run /main, then /pull <name>.`; the thread's own chat holds its claim, so it cannot pull itself.
+- `/threads`, `/pull`, `/park` and `/merge` only take a line that has the shape of the command: `/threads` alone, one valid name, and for `/merge` the optional `--rebase`. Any other line, such as `/merge requests are failing on CI`, goes to the model as a normal message, so a prose line or a user skill with that name still works. Typed with no argument, `/pull`, `/park` and `/merge` print their usage.
 - Pull works on a parked thread.
 - Pull prints `already at main's end` and changes nothing when the thread is up to date.
 
@@ -73,6 +77,7 @@ Squash merge:
 ralph thread merge <name>
 ```
 
+- In main's chat, type `/merge <name>`. It first checks the cheap refusals (unknown or merged thread, running workers or saved records, an open chat: `merge_precheck`) and prints them with no question. Then it asks `[y/n]`, because it makes a paid call. Any answer other than `y`, `yes`, `n` or `no` asks again; `n`, Ctrl-C or a closed input cancels with `merge cancelled.` After `y` it prints `merging <name> (one paid Haiku call)...` and runs in the foreground, so the prompt returns when it ends. It does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.`; the other refusals of the shell command, such as a failed digest, still apply after the answer.
 - It makes one paid call to the Haiku model, and up to 3 if the model's digest is refused. The model writes a digest from a 200-line view of the thread.
 - The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing. If posting the digest to main's inbox fails, the thread stays merged and the error names `thread.json`, which holds the digest.
 
@@ -85,6 +90,7 @@ ralph thread merge <name> --rebase
 - It makes no model call.
 - It posts the thread's own memory view, at most 100 lines and 64 KB, with a header line. It is not a git rebase. No git command runs and no branch changes.
 - It refuses a thread with no messages. It refuses a block over 64 KB. Use the squash merge for these.
+- In main's chat, type `/merge <name> --rebase` for the same result. It asks no confirmation and makes no model call. It runs in main's chat only and does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.` The flag text is the `REBASE_FLAG` constant in `crates/core/src/chat_thread_cmd.rs`.
 
 Use the squash merge when you want a short digest. Use `--rebase` when you want main to see the memory view and you want no cost.
 
@@ -108,6 +114,7 @@ Park stops a thread from opening. Its saved watches and schedules wait. They kee
 
 - Park refuses an open chat, running workers, a merged thread and a thread that is already parked.
 - Revive refuses a thread that is not parked.
+- In main's chat, type `/park <name>` to park. It prints `parked thread <name>; `ralph thread revive <name>` opens it again`, the same text as the shell command (`parked_message`), makes no model call and does not leave the chat. It refuses in a thread's chat with `Run /main, then /park <name>.` There is no `/revive`; run `ralph thread revive <name>`.
 - `history` still reads a parked thread. `pull`, `drop` and `merge` work on it.
 
 ## Drop a thread
@@ -138,12 +145,13 @@ Each message is quoted in its stable part. `<name>` is the thread. The checks ar
 | Refusal (start of message) | Cause | Fix |
 | --- | --- | --- |
 | `store <path> is in use` | `ralph chat --thread <name>` found a chat that has the store open (`crates/core/src/chat_memory/claim.rs`). | Quit the other chat. |
-| `thread <name> is in use` | `pull`, `drop`, `park`, `revive`, `merge` or `/fork` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
-| `thread <name> has running workers` | `drop`, `park` or `merge` found a running worker (`guard_check`). | Close the workers from the thread's chat. |
+| `thread <name> is in use` | `pull`, `/pull`, `drop`, `park`, `/park`, `revive`, `merge`, `/merge` or `/fork` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
+| `thread <name> has running workers` | `drop`, `park`, `/park`, `merge` or `/merge` found a running worker (`guard_check`). | Close the workers from the thread's chat. |
 | `thread <name> has N saved watch` | `merge` found a saved watch or schedule (`guard_check`). | Stop it from the thread's chat. |
 | `thread <name> is merged into main` | You opened, forked, dropped, parked, revived, pulled or merged a merged thread (`merged_check`). | None. Read it with `history`. |
 | `thread <name> is parked` | You opened, forked or parked a parked thread (`open_check`). | Run `ralph thread revive <name>`. |
 | `thread <name> is not parked` | `revive` found a thread that is not parked. | None. |
+| `/pull runs in main's chat.`, `/park runs in main's chat.` or `/merge runs in main's chat.` | You typed `/pull`, `/park` or `/merge` in a thread's chat (`op_refusal` in `crates/core/src/chat_thread_cmd.rs`). | Run `/main`, then the same command with the name. |
 | `no thread <name>` | The name is unknown. | Run `ralph thread ls`. |
 | `#N is after this thread's fork point` | A thread read a main id newer than its fork point. | Run `ralph thread pull <name>`, then reopen the chat. |
 
