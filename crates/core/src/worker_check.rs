@@ -73,6 +73,16 @@ pub fn logged_reports(entries: &[Entry]) -> HashMap<String, String> {
     reports
 }
 
+pub fn logged_states(entries: &[Entry]) -> HashMap<String, String> {
+    entries
+        .iter()
+        .filter(|entry| entry.role == Role::Worker)
+        .flat_map(|entry| entry.text.lines().filter_map(message_header))
+        .filter(|(_, status)| is_report_status(status))
+        .map(|(id, status)| (id.to_string(), status.to_string()))
+        .collect()
+}
+
 fn report_header_id(line: &str) -> Option<&str> {
     let (id, status) = message_header(line)?;
     is_report_status(status).then_some(id)
@@ -789,6 +799,18 @@ mod tests {
         };
         let inline = worker_entry("t2", "see [worker w2 · done] above");
         assert!(logged_reports(&[user, inline]).is_empty());
+    }
+
+    #[test]
+    fn logged_states_keep_the_last_report_status_per_worker() {
+        let entries = [
+            worker_entry("t1", "[worker w1 · question]\nx\n\n[worker w2 · done]\ny"),
+            worker_entry("t2", "[worker w1 · done]\nz\n\n[worker w3 · check]\nstuck"),
+        ];
+        let states = logged_states(&entries);
+        assert_eq!(states.get("w1").map(String::as_str), Some("done"));
+        assert_eq!(states.get("w2").map(String::as_str), Some("done"));
+        assert!(!states.contains_key("w3"));
     }
 
     #[test]

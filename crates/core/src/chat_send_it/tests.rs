@@ -276,8 +276,23 @@ fn a_restatement_without_grants_or_actions_says_so() {
 fn at(step: usize) -> Progress {
     Progress {
         step,
-        judge_rounds: 0,
+        ..Progress::default()
     }
+}
+
+fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Ticked> {
+    let last: HashMap<String, String> = known
+        .iter()
+        .map(|(id, status)| (id.to_string(), status.to_string()))
+        .collect();
+    let running: Vec<String> = running.iter().map(ToString::to_string).collect();
+    start_run(
+        file,
+        &Seen {
+            last: &last,
+            running: &running,
+        },
+    )
 }
 
 fn worker_report(worker: &str, status: &str) -> Report {
@@ -429,8 +444,8 @@ fn verdicts_finish_or_retry_with_the_evidence_and_no_call_is_a_failed_round() {
         (at(0), Next::Wait)
     );
     let retried = Progress {
-        step: 3,
         judge_rounds: 1,
+        ..at(3)
     };
     for (result, evidence) in [(Some(&unmet), "finding 2 is open"), (None, NO_STEP_RESULT)] {
         let retry = Next::Send(format!("{STEP_4}\njudge: not met: {evidence}"));
@@ -528,9 +543,11 @@ fn only_an_approved_file_starts_a_run_at_step_one() {
         approved: None,
         stopped: None,
     };
-    assert_eq!(start_run(&unapproved), None);
-    let (state, next) = start_run(&approved(plan())).unwrap();
-    assert_eq!(state, driving(0, Awaiting::Turn, Run::default()));
+    assert_eq!(start(&unapproved, &[], &[]), None);
+    let started = start(&approved(plan()), &[("E1", "done")], &["E1"]).unwrap();
+    assert_eq!(started.met, None);
+    assert_eq!(started.driving, driving(0, Awaiting::Turn, Run::default()));
+    let next = started.next;
     let Next::Send(brief) = next else {
         panic!("{next:?}")
     };
@@ -894,12 +911,12 @@ fn go_resumes_at_the_stopped_step_only_for_the_same_plan() {
         stopped: stopped_at(2),
         ..approved(plan())
     };
-    let (state, next) = start_run(&resumed).unwrap();
-    assert_eq!(state, driving(1, Awaiting::Turn, Run::default()));
-    let Next::Send(brief) = next else {
-        panic!("{next:?}")
-    };
-    assert!(brief.ends_with(LINE_2), "{brief}");
+    let started = start(&resumed, &[], &[]).unwrap();
+    assert_eq!(started.driving.progress.step, 1);
+    assert_eq!(
+        started.next,
+        Next::Watch("gh pr checks --watch".to_string())
+    );
     let other = RunFile {
         stopped: Some(Stopped {
             step: 2,
@@ -907,12 +924,15 @@ fn go_resumes_at_the_stopped_step_only_for_the_same_plan() {
         }),
         ..approved(plan())
     };
-    assert_eq!(start_run(&other).unwrap().0.progress, at(0));
+    assert_eq!(start(&other, &[], &[]).unwrap().driving.progress, at(0));
     let past_the_end = RunFile {
         stopped: stopped_at(9),
         ..approved(plan())
     };
-    assert_eq!(start_run(&past_the_end).unwrap().0.progress, at(0));
+    assert_eq!(
+        start(&past_the_end, &[], &[]).unwrap().driving.progress,
+        at(0)
+    );
 }
 
 #[test]

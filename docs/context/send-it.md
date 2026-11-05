@@ -116,7 +116,7 @@ ralph shows a notice with the reason and the step that stopped, and tells you ho
 
 After a stop or a finished run, the plan stays in `run.toml` without its approval, until you type `/send-it off`. You can save it as a template or propose a new plan.
 
-To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The status line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
+To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The status line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. ralph first checks if step N is already met. For a worker step, a `done` report from the worker moves the run to the next step; a worker that is running, or that last reported anything else, makes the run wait for its report and does not send the step again; a worker ralph does not know gets the step again. A check or watch step runs its command first: exit 0 moves on, any other result sends the step again. A judge step is judged first: not met sends the step again, and this first judgement does not count as a judge round. A met step prints `send-it: step N/M met`. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
 
 For the exact notices, see [ralph chat: /send-it](ralph-chat.md#send-it).
 

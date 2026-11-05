@@ -6,6 +6,7 @@ use crate::worker::{HarnessId, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 mod drive;
 pub mod template;

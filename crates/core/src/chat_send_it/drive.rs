@@ -4,6 +4,12 @@ use super::*;
 pub struct Progress {
     pub step: usize,
     pub judge_rounds: u32,
+    pub probing: bool,
+}
+
+pub struct Seen<'a> {
+    pub last: &'a HashMap<String, String>,
+    pub running: &'a [String],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -67,7 +73,7 @@ fn step_met(plan: &RunPlan, progress: Progress) -> (Progress, Next) {
         Some(step) => (
             Progress {
                 step: index,
-                judge_rounds: 0,
+                ..Progress::default()
             },
             Next::Send(step_line(plan, index, step)),
         ),
@@ -107,6 +113,14 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
         ) => {
             if *outcome == WatchOutcome::Exited(0) {
                 step_met(plan, progress)
+            } else if progress.probing {
+                (
+                    Progress {
+                        probing: false,
+                        ..progress
+                    },
+                    Next::Send(step_line(plan, progress.step, step)),
+                )
             } else {
                 (
                     progress,
@@ -119,7 +133,7 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
         }
         (Event::Verdict(result), Criterion::Judge { .. }) => {
             let evidence = result.map_or(NO_STEP_RESULT, |result| &result.evidence);
-            let judge_rounds = progress.judge_rounds + 1;
+            let judge_rounds = progress.judge_rounds + u32::from(!progress.probing);
             if judge_rounds >= plan.judge_rounds {
                 (
                     progress,
@@ -131,8 +145,9 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             } else {
                 (
                     Progress {
+                        step: progress.step,
                         judge_rounds,
-                        ..progress
+                        probing: false,
                     },
                     Next::Send(format!(
                         "{}\njudge: not met: {evidence}",
@@ -208,16 +223,42 @@ fn awaiting(next: &Next, progress: Progress) -> Awaiting {
     }
 }
 
-pub fn start_run(file: &RunFile) -> Option<(Driving, Next)> {
+fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
+    let Some(step) = plan.steps.get(progress.step) else {
+        return (progress, Next::Done);
+    };
+    match &step.criterion {
+        Criterion::WorkerDone { worker } => match seen.last.get(worker) {
+            Some(status) if status == "done" => step_met(plan, progress),
+            known if known.is_some() || seen.running.contains(worker) => {
+                (progress, Next::Hold(worker.clone()))
+            }
+            _ => advance(plan, progress, Event::Start),
+        },
+        criterion => (
+            Progress {
+                probing: true,
+                ..progress
+            },
+            wait_on(criterion),
+        ),
+    }
+}
+
+pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
     if !file.is_approved() {
         return None;
     }
     let hash = plan_hash(&file.plan);
     let start = Progress {
         step: resume_step(file).map_or(0, |step| step - 1),
-        judge_rounds: 0,
+        ..Progress::default()
     };
-    let (progress, next) = match advance(&file.plan, start, Event::Start) {
+    let first = match resume_step(file) {
+        Some(_) => probe(&file.plan, start, seen),
+        None => advance(&file.plan, start, Event::Start),
+    };
+    let (progress, next) = match first {
         (progress, Next::Send(line)) => (
             progress,
             Next::Send(format!(
@@ -227,13 +268,15 @@ pub fn start_run(file: &RunFile) -> Option<(Driving, Next)> {
         ),
         started => started,
     };
+    let met = (progress.step > start.step || next == Next::Done)
+        .then(|| met_line(&file.plan, start.step, None));
     let driving = Driving {
         hash,
+        awaiting: awaiting(&next, progress),
         progress,
         run: Run::default(),
-        awaiting: Awaiting::Turn,
     };
-    Some((driving, next))
+    Some(Ticked { driving, next, met })
 }
 
 fn is_off(line: &str) -> bool {

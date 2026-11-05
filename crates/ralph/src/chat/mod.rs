@@ -61,7 +61,7 @@ use crate::chat::queue::{
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
-use crate::chat::send_it::{Active, SendIt};
+use crate::chat::send_it::{worker_states, Active, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
@@ -103,7 +103,9 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
-use ralph_core::chat_send_it::{propose_prompt, usage as send_it_usage, Ended, SendItCommand};
+use ralph_core::chat_send_it::{
+    propose_prompt, usage as send_it_usage, Ended, Seen, SendItCommand,
+};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, Route, Status};
@@ -716,7 +718,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             Route::SendIt(SendItCommand::Go) => {
-                let (text, started) = send_it.go(shown_plan.as_deref(), typed_at_prompt);
+                let (last, running) = worker_states(&monitor);
+                let seen = Seen {
+                    last: &last,
+                    running: &running,
+                };
+                let (text, started) = send_it.go(shown_plan.as_deref(), typed_at_prompt, &seen);
                 println!("{text}");
                 if let Some(started) = started {
                     shown_plan = None;

@@ -126,3 +126,126 @@ fn an_answered_question_does_not_stop_a_judge_step() {
     );
     assert_eq!(ticked.next, Next::Done);
 }
+
+fn stopped_on(step: usize) -> RunFile {
+    RunFile {
+        stopped: stopped_at(step),
+        ..approved(plan())
+    }
+}
+
+const STEP_3: &str = "[send-it 3/4] run the checks · exit: `cargo xtask lint` exits 0";
+
+#[test]
+fn a_resumed_worker_step_whose_worker_reported_done_moves_to_the_next_step() {
+    let started = start(&stopped_on(1), &[("E1", "done")], &[]).unwrap();
+    assert_eq!(started.driving, driving(1, Awaiting::Turn, Run::default()));
+    let Next::Send(brief) = &started.next else {
+        panic!("{:?}", started.next)
+    };
+    assert!(brief.starts_with("send-it run "), "{brief}");
+    assert!(brief.ends_with(LINE_2), "{brief}");
+    assert_eq!(
+        started.met.as_deref(),
+        Some("send-it: step 1/4 met (worker E1 reports done)")
+    );
+}
+
+#[test]
+fn a_resumed_worker_step_with_a_known_or_running_worker_holds_and_does_not_resend() {
+    let question: &[(&str, &str)] = &[("E1", "question")];
+    let idle: &[(&str, &str)] = &[("E1", "idle")];
+    for (known, running) in [(question, &[][..]), (idle, &[][..]), (&[][..], &["E1"][..])] {
+        let started = start(&stopped_on(1), known, running).unwrap();
+        assert_eq!(started.next, Next::Hold("E1".to_string()));
+        assert_eq!(
+            started.driving,
+            driving(0, Awaiting::Report("E1".to_string()), Run::default())
+        );
+        assert_eq!(started.met, None);
+    }
+}
+
+#[test]
+fn a_resumed_worker_step_with_an_unknown_worker_sends_the_step() {
+    let started = start(&stopped_on(1), &[("X9", "done")], &["X9"]).unwrap();
+    let Next::Send(brief) = &started.next else {
+        panic!("{:?}", started.next)
+    };
+    assert!(brief.ends_with(STEP_1), "{brief}");
+    assert_eq!(started.driving.awaiting, Awaiting::Turn);
+}
+
+#[test]
+fn a_resumed_check_step_runs_the_check_first_and_a_failure_sends_the_step() {
+    let file = stopped_on(3);
+    let started = start(&file, &[], &[]).unwrap();
+    assert_eq!(started.next, Next::Check("cargo xtask lint".to_string()));
+    assert_eq!(
+        started.driving.awaiting,
+        Awaiting::Report("watch:send-it-3".to_string())
+    );
+    let failed = WatchOutcome::Exited(1);
+    let probed = tick(
+        &started.driving,
+        &Ended {
+            watched: Some(&failed),
+            ..ended(&file)
+        },
+    );
+    assert_eq!(probed.next, Next::Send(STEP_3.to_string()));
+    assert_eq!(probed.driving.progress, at(2));
+    let checking = tick(&probed.driving, &ended(&file));
+    assert_eq!(checking.next, Next::Check("cargo xtask lint".to_string()));
+    let stopped = tick(
+        &checking.driving,
+        &Ended {
+            watched: Some(&failed),
+            ..ended(&file)
+        },
+    );
+    assert_eq!(
+        stopped.next,
+        Next::Stop(StopReason::CheckFailed { step: 3 })
+    );
+}
+
+#[test]
+fn a_resumed_check_step_that_passes_is_met() {
+    let file = stopped_on(3);
+    let started = start(&file, &[], &[]).unwrap();
+    let passed = WatchOutcome::Exited(0);
+    let ticked = tick(
+        &started.driving,
+        &Ended {
+            watched: Some(&passed),
+            ..ended(&file)
+        },
+    );
+    assert_eq!(ticked.next, Next::Send(STEP_4.to_string()));
+    assert_eq!(ticked.driving.progress, at(3));
+}
+
+#[test]
+fn a_resumed_judge_step_judges_first_and_a_miss_is_not_a_judge_round() {
+    let file = stopped_on(4);
+    let started = start(&file, &[], &[]).unwrap();
+    assert_eq!(started.next, Next::Judge);
+    assert_eq!(started.driving.awaiting, Awaiting::Verdict);
+    let unmet = StepResult {
+        met: false,
+        evidence: "finding 2 is open".to_string(),
+    };
+    let probed = tick(
+        &started.driving,
+        &Ended {
+            step_result: Some(&unmet),
+            ..ended(&file)
+        },
+    );
+    assert_eq!(
+        probed.next,
+        Next::Send(format!("{STEP_4}\njudge: not met: finding 2 is open"))
+    );
+    assert_eq!(probed.driving.progress, at(3));
+}
