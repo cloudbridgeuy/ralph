@@ -22,6 +22,7 @@ pub enum Command {
     SendIt,
     Fork,
     Thread,
+    Threads,
     Main,
     Config,
     View,
@@ -32,7 +33,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 18] = [
+    pub const ALL: [Command; 19] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -44,6 +45,7 @@ impl Command {
         Command::SendIt,
         Command::Fork,
         Command::Thread,
+        Command::Threads,
         Command::Main,
         Command::Config,
         Command::View,
@@ -66,6 +68,7 @@ impl Command {
             Command::SendIt => "/send-it",
             Command::Fork => "/fork",
             Command::Thread => "/thread",
+            Command::Threads => "/threads",
             Command::Main => "/main",
             Command::Config => "/config",
             Command::View => "/view",
@@ -199,6 +202,10 @@ impl Command {
             Command::Thread => &[(
                 "/thread <name>",
                 "switch this chat to thread <name> in the same terminal: the chat quits and ralph chat starts again on the thread; /thread main returns to main; an unknown name creates the thread; refused when the thread is merged, parked or open elsewhere, or while workers or watches run; scheduled tasks stay saved and do not fire while you are away; while a turn runs it waits in the queue",
+            )],
+            Command::Threads => &[(
+                "/threads",
+                "list the threads with their fork point, message count, running workers and unread reports, like ralph thread ls; works in main's chat and in a thread's chat; takes no arguments; starts no turn",
             )],
             Command::Main => &[(
                 "/main",

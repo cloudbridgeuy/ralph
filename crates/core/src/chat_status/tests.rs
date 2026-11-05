@@ -884,7 +884,6 @@ fn route_input_parses_thread_and_main_switches() {
             line: "/thread\nauth".into(),
         }
     );
-    assert_eq!(route("/threads"), Route::Send("/threads".into()));
     assert_eq!(route("/mainx"), Route::Send("/mainx".into()));
 }
 

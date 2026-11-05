@@ -154,7 +154,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
+pub(super) fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
     running_workers(&canonical_store(thread_dir(main, name)))
         .into_iter()
         .map(|worker| worker.id)

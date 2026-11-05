@@ -85,6 +85,7 @@ fn lists_hold_every_variant() {
             SendIt,
             Fork,
             Thread,
+            Threads,
             Main,
             Config,
             View,

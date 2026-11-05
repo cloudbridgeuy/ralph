@@ -38,6 +38,7 @@ mod switch;
 mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
+mod thread_cmd;
 mod turn;
 mod view;
 mod watch;
@@ -760,6 +761,16 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     },
                 ));
                 break;
+            }
+            Route::ThreadOp { op, line } => {
+                match op.and_then(|op| thread_cmd::run(&op, &store_dir)) {
+                    Ok(text) => println!("{text}"),
+                    Err(refusal) => {
+                        println!("{refusal}");
+                        restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
+                    }
+                }
+                continue;
             }
             local => {
                 run_local(local, &local_route, || {
