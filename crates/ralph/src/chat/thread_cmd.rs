@@ -1,4 +1,4 @@
-use crate::chat::schedule::read_answer;
+use crate::chat::schedule::{ask_yes_no, read_answer};
 use crate::chat::thread::{
     config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, rebase_thread,
     running_ids, thread_dir,
@@ -7,8 +7,7 @@ use crate::cli::NAP_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_thread_cmd::{merge_question, op_refusal, ThreadOp};
-use ralph_core::schedule::{parse_answer, Answer};
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
 pub(super) fn run(
@@ -65,23 +64,7 @@ pub(super) fn run(
 }
 
 pub(super) fn confirm(question: &str) -> bool {
-    ask(question, &mut read_answer, &mut io::stdout())
-}
-
-fn ask(question: &str, read: &mut impl FnMut() -> Option<String>, out: &mut impl Write) -> bool {
-    loop {
-        let _ = write!(out, "{question}");
-        let _ = out.flush();
-        let Some(line) = read() else {
-            let _ = writeln!(out);
-            return false;
-        };
-        match parse_answer(&line) {
-            Answer::Yes => return true,
-            Answer::No => return false,
-            Answer::Ask => {}
-        }
-    }
+    ask_yes_no(|| question.to_string(), &mut read_answer, &mut io::stdout())
 }
 
 #[cfg(test)]
@@ -90,31 +73,6 @@ mod tests {
     use crate::chat::memory::Store;
     use crate::chat::thread::ensure;
     use ralph_core::chat_thread::ThreadName;
-
-    fn answers(lines: &[&str]) -> impl FnMut() -> Option<String> {
-        let mut lines: Vec<String> = lines.iter().rev().map(|l| l.to_string()).collect();
-        move || lines.pop()
-    }
-
-    #[test]
-    fn y_confirms_and_n_declines() {
-        let mut out = Vec::new();
-        assert!(ask("go? ", &mut answers(&["y"]), &mut out));
-        assert!(!ask("go? ", &mut answers(&["n"]), &mut out));
-    }
-
-    #[test]
-    fn another_answer_asks_again() {
-        let mut out = Vec::new();
-        assert!(ask("go? ", &mut answers(&["maybe", "", "yes"]), &mut out));
-        assert_eq!(String::from_utf8(out).unwrap().matches("go? ").count(), 3);
-    }
-
-    #[test]
-    fn a_closed_input_declines() {
-        let mut out = Vec::new();
-        assert!(!ask("go? ", &mut answers(&[]), &mut out));
-    }
 
     #[test]
     fn the_merge_precheck_refuses_before_any_question() {

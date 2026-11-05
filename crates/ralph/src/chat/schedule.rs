@@ -72,10 +72,21 @@ fn decide(
     read: &mut impl FnMut() -> Option<String>,
     out: &mut impl Write,
 ) -> bool {
-    loop {
+    let question = || {
         let now = chrono::Utc::now();
         let offset = *chrono::Local::now().offset();
-        say_raw(out, &approval_question(task, now, offset, default_timeout));
+        approval_question(task, now, offset, default_timeout)
+    };
+    ask_yes_no(question, read, out)
+}
+
+pub(super) fn ask_yes_no(
+    question: impl Fn() -> String,
+    read: &mut impl FnMut() -> Option<String>,
+    out: &mut impl Write,
+) -> bool {
+    loop {
+        say_raw(out, &question());
         let Some(line) = read() else {
             say_raw(out, "\n");
             return false;
@@ -194,6 +205,47 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use ralph_core::schedule::TaskKind;
+
+    fn answers(lines: &[&str]) -> impl FnMut() -> Option<String> {
+        let mut lines: Vec<String> = lines.iter().rev().map(|l| l.to_string()).collect();
+        move || lines.pop()
+    }
+
+    #[test]
+    fn y_confirms_and_n_declines() {
+        let mut out = Vec::new();
+        assert!(ask_yes_no(
+            || "go? ".to_string(),
+            &mut answers(&["y"]),
+            &mut out
+        ));
+        assert!(!ask_yes_no(
+            || "go? ".to_string(),
+            &mut answers(&["n"]),
+            &mut out
+        ));
+    }
+
+    #[test]
+    fn another_answer_asks_again() {
+        let mut out = Vec::new();
+        assert!(ask_yes_no(
+            || "go? ".to_string(),
+            &mut answers(&["maybe", "", "yes"]),
+            &mut out
+        ));
+        assert_eq!(String::from_utf8(out).unwrap().matches("go? ").count(), 3);
+    }
+
+    #[test]
+    fn a_closed_input_declines() {
+        let mut out = Vec::new();
+        assert!(!ask_yes_no(
+            || "go? ".to_string(),
+            &mut answers(&[]),
+            &mut out
+        ));
+    }
 
     fn propose(store: &ScheduleStore, id: &str, minutes: i64) {
         store
