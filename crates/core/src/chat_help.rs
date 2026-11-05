@@ -197,11 +197,11 @@ impl Command {
                 ),
                 (
                     "/send-it go",
-                    "approve the plan whose hash is on screen and run it unattended; counts only when typed at the prompt; the run stops at a cap, a failure, a decision for you, or a plan change",
+                    "approve the plan whose hash is on screen and run it unattended; counts only when typed at the prompt; the run stops at a cap, a failure, a decision for you, a plan change, a tool the plan does not allow, or when you take over",
                 ),
                 (
                     "/send-it off",
-                    "delete the plan and its approval; starts no turn",
+                    "delete the plan and its approval; during a run it also stops the run; starts no turn",
                 ),
                 (
                     "/send-it save <name> [<ticket>]",

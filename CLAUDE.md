@@ -16,6 +16,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `ralph` / `ralph chat` - persistent chat with a compressed memory tree ([details](docs/context/ralph-chat.md))
 - `ralph chat history <read|zoom|recall|search> …` - print the chat memory as the model's tools see it; no model, no turn ([details](docs/context/ralph-chat.md#history-commands))
 - `ralph chat --thread <name>` / `ralph thread <ls|drop|merge [--rebase]|park|revive|pull>` / `/fork <name>` - named side chats forked from main; `/fork` opens one in a new Rex block ([details](docs/context/ralph-chat.md#threads))
+- `/send-it <instructions>` / `/send-it <status|edit|go|off|save|templates>` - in a chat, run an approved plan of steps with exit criteria and no input ([details](docs/context/send-it.md))
 - `ralph inbox post --store <DIR> --from <SOURCE> <FILE|->` - deliver a text report from an outside program to a chat inbox ([details](docs/context/ralph-chat.md#external-reports))
 - `ralph ask` - single-shot prompt; stores only a usage row ([details](docs/context/ralph-ask.md))
 - `ralph wire` - local proxy that records harness-to-provider traffic; `wire ls`/`wire show`/`wire sessions` inspect it ([details](docs/context/ralph-wire.md))
@@ -169,6 +170,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
 - [Threads Guide](docs/context/threads.md) - Task-first how-to: open, pull, merge, park, revive and drop threads, and the refusals
+- [send-it Guide](docs/context/send-it.md) - Task-first how-to: propose, review and approve a run plan, exit criteria, caps, allowed actions, stops and templates
 - [ralph wire Command](docs/context/ralph-wire.md) - Recording proxy, storage layout, live rows, `ls`/`sessions`, chat usage
 - [Release Process](docs/context/release-process.md) - `cargo xtask release`, release workflow, asset contract, `ralph upgrade`, version scheme
 - [Mutation Testing](docs/context/mutation-testing.md) - cargo-mutants setup, pure scope, local runs, survivor ledger, CI status

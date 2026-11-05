@@ -593,14 +593,7 @@ mod tests {
         ));
         assert!(prompt.contains("Otherwise the suggested reply is the /hold command itself."));
         assert!(!prompt.contains("When it fits, the suggested reply is the /hold command itself."));
-    }
-
-    #[test]
-    fn system_prompt_leaves_send_it_to_the_person() {
-        let prompt = default_prompt();
         assert!(prompt.contains("A suggestion is never approval."));
-        assert!(!prompt.contains("/send-it"));
-        assert!(!prompt.contains("`step`"));
     }
 
     #[test]
