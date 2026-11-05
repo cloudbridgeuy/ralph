@@ -14,6 +14,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::STORE_ENV;
+
 pub(super) fn resolve_store(
     flag: Option<PathBuf>,
     env: Option<PathBuf>,

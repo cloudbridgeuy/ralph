@@ -17,7 +17,6 @@ pub enum SwitchTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchArgv {
     pub store: PathBuf,
-    pub name: Option<String>,
     pub recent_history_tokens: Option<usize>,
     pub wrap_width: Option<usize>,
     pub skills: Vec<PathBuf>,
@@ -81,9 +80,6 @@ pub fn switch_argv(opts: &SwitchArgv, target: &SwitchTarget) -> Vec<OsString> {
     let mut argv: Vec<OsString> = vec!["chat".into(), "--store".into(), opts.store.clone().into()];
     if let SwitchTarget::Thread(name) = target {
         argv.extend(["--thread".into(), name.to_string().into()]);
-    }
-    if let Some(name) = &opts.name {
-        argv.extend(["--name".into(), name.into()]);
     }
     if let Some(tokens) = opts.recent_history_tokens {
         argv.extend(["--recent-history-tokens".into(), tokens.to_string().into()]);
@@ -157,7 +153,6 @@ mod tests {
     fn argv_opts() -> SwitchArgv {
         SwitchArgv {
             store: PathBuf::from("/main/store"),
-            name: None,
             recent_history_tokens: None,
             wrap_width: None,
             skills: Vec::new(),
@@ -323,7 +318,6 @@ mod tests {
     #[test]
     fn every_option_is_forwarded() {
         let opts = SwitchArgv {
-            name: Some("me".to_string()),
             recent_history_tokens: Some(500),
             wrap_width: Some(80),
             skills: vec![PathBuf::from("/s1"), PathBuf::from("/s2")],
@@ -340,8 +334,6 @@ mod tests {
                 "chat",
                 "--store",
                 "/main/store",
-                "--name",
-                "me",
                 "--recent-history-tokens",
                 "500",
                 "--wrap-width",

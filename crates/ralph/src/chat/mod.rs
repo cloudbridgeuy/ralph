@@ -752,7 +752,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     target,
                     SwitchArgv {
                         store: thread::config_root(&store_dir),
-                        name: args.name.clone(),
                         recent_history_tokens: args.recent_history_tokens,
                         wrap_width: args.wrap_width,
                         skills: args.skills.clone(),

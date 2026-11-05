@@ -35,7 +35,7 @@ The `/thread <name>` and `/main` commands switch the chat in the same terminal. 
 - A switch is refused when the target chat is open elsewhere (main included). Unsent text is saved to the prompt history first: queued lines and the draft in the prompt. If that save fails, the switch is cancelled.
 - The chat drops its model session and stops keepalive pings when it leaves. Saved schedules stay on disk and do not fire while you are away.
 - Tab after `/thread ` completes the names of threads that are not merged or parked, plus `main` when you are in a thread. The thread you are in is left out. `/main` has no arguments to complete.
-- The new `ralph chat` gets `--store <main store>` first. It gets `--thread <name>` only for a thread. It keeps the other chat options.
+- The new `ralph chat` gets `--store <main store>` first. It gets `--thread <name>` only for a thread. It keeps the other chat options but not `--name`: the new chat titles itself by the thread name.
 
 ## List threads
 
