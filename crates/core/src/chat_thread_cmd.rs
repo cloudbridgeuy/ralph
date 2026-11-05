@@ -62,10 +62,6 @@ fn parse_merge(args: &str) -> Option<ThreadOp> {
     }
 }
 
-pub fn needs_confirm(op: &ThreadOp) -> bool {
-    matches!(op, ThreadOp::Merge { rebase: false, .. })
-}
-
 pub fn merge_question(name: &ThreadName) -> String {
     format!(
         "Merge thread {name} into main? This makes one paid Haiku call, and up to 3 if the digest is refused. [y/n] "
@@ -252,15 +248,6 @@ mod tests {
                 Some("/merge runs in main's chat. Run /main, then /merge <name>.".to_string())
             );
             assert_eq!(op_refusal(false, &merge(rebase)), None);
-        }
-    }
-
-    #[test]
-    fn only_the_squash_merge_needs_a_confirmation() {
-        assert!(needs_confirm(&merge(false)));
-        assert!(!needs_confirm(&merge(true)));
-        for op in [ThreadOp::Ls, ThreadOp::Pull(auth()), ThreadOp::Park(auth())] {
-            assert!(!needs_confirm(&op), "{op:?}");
         }
     }
 

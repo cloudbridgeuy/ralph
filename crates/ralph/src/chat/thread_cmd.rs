@@ -6,7 +6,7 @@ use crate::chat::thread::{
 use crate::cli::NAP_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
-use ralph_core::chat_thread_cmd::{merge_question, needs_confirm, op_refusal, ThreadOp};
+use ralph_core::chat_thread_cmd::{merge_question, op_refusal, ThreadOp};
 use ralph_core::schedule::{parse_answer, Answer};
 use std::io::{self, Write};
 use std::path::Path;
@@ -45,7 +45,7 @@ pub(super) fn run(
         } => {
             let running = running_ids(&main, name);
             merge_precheck(&main, name, &running)?;
-            if needs_confirm(op) && !confirm(&merge_question(name)) {
+            if !confirm(&merge_question(name)) {
                 return Ok("merge cancelled.".to_string());
             }
             println!("merging {name} (one paid Haiku call)...");
