@@ -20,6 +20,73 @@ pub struct KittyImage {
     pub payload: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnimationFrame {
+    pub image: KittyImage,
+    pub delay_ms: u32,
+}
+
+pub fn prepare_animation(bytes: &[u8]) -> Option<Vec<AnimationFrame>> {
+    if !bytes.starts_with(b"GIF87a") && !bytes.starts_with(b"GIF89a") {
+        return None;
+    }
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = options.read_info(bytes).ok()?;
+    let (width, height) = (u32::from(decoder.width()), u32::from(decoder.height()));
+    let canvas_pixels = u64::from(width) * u64::from(height);
+    if canvas_pixels == 0 || canvas_pixels > 16_777_216 {
+        return None;
+    }
+    let mut canvas = vec![0; usize::try_from(canvas_pixels).ok()?.checked_mul(4)?];
+    let mut frames = Vec::new();
+    while let Some(frame) = decoder.read_next_frame().ok()? {
+        if frames.len() == 128 || canvas_pixels * (frames.len() as u64 + 1) > 16_777_216 {
+            return None;
+        }
+        let (left, top, fw, fh) = (
+            u32::from(frame.left),
+            u32::from(frame.top),
+            u32::from(frame.width),
+            u32::from(frame.height),
+        );
+        if left + fw > width || top + fh > height {
+            return None;
+        }
+        let previous = (frame.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
+        for y in 0..fh as usize {
+            for x in 0..fw as usize {
+                let src = (y * fw as usize + x) * 4;
+                let dst = ((top as usize + y) * width as usize + left as usize + x) * 4;
+                let pixel = frame.buffer.get(src..src + 4)?;
+                if pixel[3] != 0 {
+                    canvas[dst..dst + 4].copy_from_slice(pixel);
+                }
+            }
+        }
+        frames.push(AnimationFrame {
+            image: encode_pixels(Pixels {
+                width,
+                height,
+                channels: 4,
+                data: canvas.clone(),
+            })?,
+            delay_ms: (u32::from(frame.delay) * 10).max(10),
+        });
+        match frame.dispose {
+            gif::DisposalMethod::Background => {
+                for y in top..top + fh {
+                    let start = ((y * width + left) * 4) as usize;
+                    canvas[start..start + fw as usize * 4].fill(0);
+                }
+            }
+            gif::DisposalMethod::Previous => canvas = previous?,
+            _ => {}
+        }
+    }
+    (frames.len() > 1).then_some(frames)
+}
+
 struct Pixels {
     width: u32,
     height: u32,
@@ -276,6 +343,126 @@ mod tests {
         assert_eq!(image.size, (3, 3));
         assert_eq!(image.keys, "f=32,s=3,v=3,o=z,");
         assert_eq!(inflate(&image), [255, 0, 0, 255].repeat(9));
+    }
+
+    #[test]
+    fn animation_composes_disposal_and_delays() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = gif::Encoder::new(&mut bytes, 2, 1, &[255, 0, 0, 0, 0, 255]).unwrap();
+            let frame = |left, color, dispose, delay| gif::Frame {
+                left,
+                width: 1,
+                height: 1,
+                buffer: vec![color].into(),
+                dispose,
+                delay,
+                ..Default::default()
+            };
+            encoder
+                .write_frame(&frame(0, 0, gif::DisposalMethod::Keep, 0))
+                .unwrap();
+            encoder
+                .write_frame(&frame(1, 1, gif::DisposalMethod::Previous, 3))
+                .unwrap();
+            encoder
+                .write_frame(&frame(1, 0, gif::DisposalMethod::Background, 4))
+                .unwrap();
+            encoder
+                .write_frame(&frame(0, 1, gif::DisposalMethod::Keep, 5))
+                .unwrap();
+        }
+        let frames = prepare_animation(&bytes).unwrap();
+        assert_eq!(
+            frames.iter().map(|f| f.delay_ms).collect::<Vec<_>>(),
+            [10, 30, 40, 50]
+        );
+        assert_eq!(inflate(&frames[1].image), [255, 0, 0, 255, 0, 0, 255, 255]);
+        assert_eq!(inflate(&frames[2].image), [255, 0, 0, 255, 255, 0, 0, 255]);
+        assert_eq!(inflate(&frames[3].image), [0, 0, 255, 255, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn animation_frame_cap_falls_back_to_first_frame() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = gif::Encoder::new(&mut bytes, 1, 1, &[255, 0, 0, 0, 0, 0]).unwrap();
+            let frame = gif::Frame {
+                width: 1,
+                height: 1,
+                buffer: vec![0].into(),
+                ..Default::default()
+            };
+            for _ in 0..129 {
+                encoder.write_frame(&frame).unwrap();
+            }
+        }
+        assert_eq!(prepare_animation(&bytes), None);
+        assert!(prepare(&bytes).is_some());
+    }
+
+    fn sparse_gif(width: u16, height: u16, count: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder =
+                gif::Encoder::new(&mut bytes, width, height, &[255, 0, 0, 0, 0, 0]).unwrap();
+            let frame = gif::Frame {
+                width: 1,
+                height: 1,
+                buffer: vec![0].into(),
+                ..Default::default()
+            };
+            for _ in 0..count {
+                encoder.write_frame(&frame).unwrap();
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn animation_total_canvas_pixels_boundary_and_single_frame() {
+        let exact = sparse_gif(4096, 2048, 2);
+        assert_eq!(prepare_animation(&exact).unwrap().len(), 2);
+        let over = sparse_gif(4097, 2048, 2);
+        assert_eq!(prepare_animation(&over), None);
+        assert_eq!(prepare(&over).unwrap().size, (1, 1));
+        let single = sparse_gif(2, 1, 1);
+        assert_eq!(prepare_animation(&single), None);
+        assert_eq!(prepare(&single).unwrap().size, (1, 1));
+    }
+
+    #[test]
+    fn previous_disposal_restores_under_transparent_pixels() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = gif::Encoder::new(&mut bytes, 2, 1, &[255, 0, 0, 0, 0, 255]).unwrap();
+            let first = gif::Frame {
+                width: 2,
+                height: 1,
+                buffer: vec![0, 0].into(),
+                ..Default::default()
+            };
+            let second = gif::Frame {
+                width: 1,
+                height: 1,
+                buffer: vec![1].into(),
+                dispose: gif::DisposalMethod::Previous,
+                ..Default::default()
+            };
+            let third = gif::Frame {
+                width: 2,
+                height: 1,
+                buffer: vec![1, 1].into(),
+                transparent: Some(1),
+                ..Default::default()
+            };
+            for frame in [&first, &second, &third] {
+                encoder.write_frame(frame).unwrap();
+            }
+        }
+        let frames = prepare_animation(&bytes).unwrap();
+        assert_eq!(inflate(&frames[1].image), [0, 0, 255, 255, 255, 0, 0, 255]);
+        assert_eq!(inflate(&frames[2].image), [255, 0, 0, 255, 255, 0, 0, 255]);
     }
 
     #[test]

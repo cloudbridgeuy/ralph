@@ -67,7 +67,11 @@ fn apc_in_place(content: &str, render_text: impl Fn(&str) -> String) -> String {
                 let continues = control.is_some_and(|c| c.split(',').any(|key| key == "m=1"));
                 let needs_line_end = match pieces.get(index + 1) {
                     Some(Piece::Text(next)) => !next.starts_with('\n'),
-                    Some(Piece::Apc(_)) => true,
+                    Some(Piece::Apc(next)) => {
+                        let next_control = next.trim_start_matches("\x1b_G").split(';').next();
+                        !control.is_some_and(|c| c.split(',').any(|key| key == "a=d"))
+                            && next_control.is_some_and(|c| c.split(',').any(|key| key == "a=T"))
+                    }
                     None => false,
                 };
                 if !continues && needs_line_end {
@@ -271,6 +275,12 @@ mod tests {
     }
 
     const APC: &str = "\x1b_Gf=100,a=T;QQ==\x1b\\";
+
+    #[test]
+    fn animation_commands_remain_adjacent_on_replay() {
+        let content = "\x1b_Ga=d,d=I,i=1;\x1b\\\x1b_Ga=T,i=1;AA==\x1b\\\x1b_Ga=a,i=1,r=1,z=10;\x1b\\\x1b_Ga=f,i=1;AA==\x1b\\\x1b_Ga=a,i=1,s=3;\x1b\\\n";
+        assert_eq!(apc_in_place(content, str::to_string), content);
+    }
 
     fn cell_display(text: &str, images: bool) -> String {
         let (highlighter, skin) = create_test_context();
