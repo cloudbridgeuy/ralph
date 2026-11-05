@@ -713,11 +713,61 @@ fn the_watched_outcome_settles_a_check_step() {
 }
 
 #[test]
+fn a_report_turn_that_settles_its_step_adds_cost_but_no_turn() {
+    let file = approved(plan());
+    let state = driving(
+        2,
+        Awaiting::Report("watch:send-it-3".to_string()),
+        spent(1, 0.25),
+    );
+    let passed = WatchOutcome::Exited(0);
+    let ticked = tick(
+        &state,
+        &Ended {
+            watched: Some(&passed),
+            ..ended(&file)
+        },
+    );
+    assert_eq!(ticked.next, Next::Send(STEP_4.to_string()));
+    assert_eq!(ticked.driving.run, spent(1, 0.75));
+}
+
+#[test]
+fn a_settling_report_turn_one_below_the_turn_cap_still_sends() {
+    let file = approved(plan());
+    let done = [worker_report("E1", "done")];
+    let ticked = tick(
+        &driving(0, Awaiting::Report("E1".to_string()), spent(29, 0.0)),
+        &Ended {
+            drained: &done,
+            ..ended(&file)
+        },
+    );
+    assert_eq!(ticked.next, Next::Send(LINE_2.to_string()));
+    assert_eq!(ticked.driving.run, spent(29, 0.5));
+}
+
+#[test]
+fn a_report_turn_that_settles_nothing_counts() {
+    let file = approved(plan());
+    let ticked = tick(
+        &driving(
+            2,
+            Awaiting::Report("watch:send-it-3".to_string()),
+            spent(1, 0.25),
+        ),
+        &ended(&file),
+    );
+    assert_eq!(ticked.next, Next::Check("cargo xtask lint".to_string()));
+    assert_eq!(ticked.driving.run, spent(2, 0.75));
+}
+
+#[test]
 fn caps_stop_before_a_send_but_not_before_the_finish() {
     let file = approved(plan());
     let done = [worker_report("E1", "done")];
     let capped = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(29, 0.0)),
+        &driving(0, Awaiting::Report("E1".to_string()), spent(30, 0.0)),
         &Ended {
             drained: &done,
             ..ended(&file)
