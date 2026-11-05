@@ -6,13 +6,14 @@ use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_send_it::{
     approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
     plan_hash, propose_refusal, read_run, render_status, running_line, start_run, tick, write_run,
-    Driving, Ended, Limits, Next, RunFile, StopReason, Ticked,
+    Action, Driving, Ended, Limits, Next, RunFile, StopReason, Ticked,
 };
 use ralph_core::chat_status::Route;
 use serde_json::Value;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 const RUN_DIR: &str = "send-it";
 const RUN_FILE: &str = "run.toml";
@@ -24,6 +25,7 @@ const NOT_PROPOSED: &str =
 pub(crate) struct SendIt {
     path: PathBuf,
     limits: Limits,
+    refused: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,7 @@ impl SendIt {
         Self {
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
             limits,
+            refused: Arc::default(),
         }
     }
 
@@ -104,6 +107,19 @@ impl SendIt {
             .map_or(Ok(()), fs::create_dir_all)
             .and_then(|()| fs::write(&self.path, text))
             .map_err(|error| format!("Could not write {}: {error}", self.path.display()))
+    }
+
+    pub(crate) fn allowed(&self) -> Vec<Action> {
+        self.load()
+            .ok()
+            .flatten()
+            .filter(RunFile::is_approved)
+            .map(|file| file.plan.allowed)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn refuse(&self, tool: String) {
+        *locked(&self.refused) = Some(tool);
     }
 
     pub(crate) fn refusal(&self) -> Option<String> {
@@ -184,11 +200,13 @@ impl SendIt {
             .watched
             .as_ref()
             .and_then(|slot| locked(slot).clone());
+        let refused = locked(&self.refused).take();
         tick(
             &active.driving,
             &Ended {
                 file: file.as_ref(),
                 watched: watched.as_ref(),
+                refused: refused.as_deref(),
                 ..ended
             },
         )
@@ -284,6 +302,12 @@ impl SendIt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::memory::Store;
+    use crate::chat::socket::{respond, Shared};
+    use crate::chat::suggestion::SuggestionSlot;
+    use crate::workers::Workers;
+    use ralph_core::chat_memory::Trigger;
+    use ralph_core::chat_socket::SocketRequest;
     use ralph_core::watch::WatchOutcome;
     use serde_json::json;
     use std::sync::Mutex;
@@ -463,7 +487,91 @@ mod tests {
             drained: &[],
             unread: &[],
             watched: None,
+            refused: None,
         }
+    }
+
+    #[test]
+    fn only_an_approved_plan_lends_its_allowed_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = SendIt::new(dir.path(), LIMITS);
+        assert_eq!(send_it.allowed(), Vec::new());
+        let mut args = plan_args();
+        args["allowed"] = json!([{"kind": "reply"}, {"kind": "watch"}]);
+        send_it.propose(&args).unwrap();
+        assert_eq!(send_it.allowed(), Vec::new());
+        let hash = send_it.status().shown.unwrap();
+        send_it.go(Some(&hash), true);
+        assert_eq!(send_it.allowed(), vec![Action::Reply, Action::Watch]);
+    }
+
+    #[test]
+    fn a_refusal_from_the_socket_stops_the_next_tick_once_and_keeps_the_approval() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, active) = started(dir.path());
+        send_it.clone().refuse("spawn_worker codex".to_string());
+        assert_eq!(
+            send_it.tick(&active, ended()).next,
+            Next::Stop(StopReason::Refused {
+                tool: "spawn_worker codex".to_string()
+            })
+        );
+        assert_eq!(
+            send_it.tick(&active, ended()).next,
+            Next::Check("cargo xtask lint".to_string())
+        );
+        assert!(send_it.load().unwrap().unwrap().is_approved());
+    }
+
+    #[test]
+    fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = Shared {
+            store: Store::new(dir.path().to_path_buf()),
+            workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+            suggestions: SuggestionSlot::default(),
+            send_it: SendIt::new(dir.path(), LIMITS),
+        };
+        let mut args = plan_args();
+        args["allowed"] = json!([{"kind": "watch"}]);
+        shared.send_it.propose(&args).unwrap();
+        let hash = shared.send_it.status().shown.unwrap();
+        let driving = shared.send_it.go(Some(&hash), true).1.unwrap().driving;
+        let active = Active {
+            driving,
+            watched: None,
+        };
+        shared.store.set_pending_turn(Trigger::SendIt).unwrap();
+        let call = |tool: &str, args: Value| {
+            respond(
+                &shared,
+                &SocketRequest {
+                    tool: tool.to_string(),
+                    args,
+                },
+            )
+        };
+        let watched = call(
+            "watch",
+            json!({"id": "ci", "command": "c", "follow_up": "f"}),
+        );
+        assert!(!watched.is_error, "{}", watched.text);
+        let spawned = call(
+            "spawn_worker",
+            json!({"id": "A", "task": "t", "harness": "codex"}),
+        );
+        assert!(spawned.is_error);
+        assert!(
+            spawned.text.contains("`spawn_worker codex`"),
+            "{}",
+            spawned.text
+        );
+        assert_eq!(
+            shared.send_it.tick(&active, ended()).next,
+            Next::Stop(StopReason::Refused {
+                tool: "spawn_worker codex".to_string()
+            })
+        );
     }
 
     #[test]

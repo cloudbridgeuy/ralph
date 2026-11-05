@@ -27,6 +27,9 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
         StopReason::NoReply,
         StopReason::NeedsYou,
         StopReason::TookOver,
+        StopReason::Refused {
+            tool: "watch".to_string(),
+        },
     ] {
         let notice = reason.notice(&run);
         assert!(notice.starts_with("send-it stopped: "), "{notice}");
@@ -34,6 +37,17 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
         assert!(!notice.contains("send-it off"), "{notice}");
         assert!(!notice.contains("Turn it on again"), "{notice}");
     }
+}
+
+#[test]
+fn a_refused_stop_names_the_tool() {
+    let refused = StopReason::Refused {
+        tool: "spawn_worker codex".to_string(),
+    };
+    assert_eq!(
+        refused.notice(&Run::default()),
+        format!("send-it stopped: the plan does not allow `spawn_worker codex`. {RESTART}")
+    );
 }
 
 #[test]
@@ -645,6 +659,7 @@ fn ended(file: &RunFile) -> Ended<'_> {
         drained: &[],
         unread: &[],
         watched: None,
+        refused: None,
     }
 }
 
@@ -718,6 +733,7 @@ fn a_missing_unapproved_or_changed_plan_stops_the_run_first() {
             file,
             replied: false,
             unread: &flagged,
+            refused: Some("watch"),
             ..ended(&base)
         };
         assert_eq!(tick(&state, &ended).next, Next::Stop(reason));
@@ -744,6 +760,27 @@ fn a_failed_typed_asked_or_flagged_turn_stops_the_run() {
     assert_eq!(
         tick(&state, &ended).next,
         Next::Stop(StopReason::WorkerFlagged)
+    );
+}
+
+#[test]
+fn a_refused_tool_stops_the_run_before_any_other_turn_stop() {
+    let file = approved(plan());
+    let state = driving(0, Awaiting::Turn, Run::default());
+    let flagged = [worker_report("X9", "blocked")];
+    let ended = Ended {
+        replied: false,
+        typed: true,
+        asked: true,
+        unread: &flagged,
+        refused: Some("spawn_worker codex"),
+        ..ended(&file)
+    };
+    assert_eq!(
+        tick(&state, &ended).next,
+        Next::Stop(StopReason::Refused {
+            tool: "spawn_worker codex".to_string()
+        })
     );
 }
 
