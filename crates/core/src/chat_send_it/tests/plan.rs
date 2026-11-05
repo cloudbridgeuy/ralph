@@ -33,6 +33,7 @@ fn run_file(approved: Option<String>) -> RunFile {
     RunFile {
         plan: plan(),
         approved,
+        stopped: None,
     }
 }
 
@@ -44,6 +45,24 @@ fn a_run_file_round_trips_through_toml_with_its_approval() {
         assert_eq!(read_run(&text, limits()), Ok(file), "{text}");
     }
     assert!(!write_run(&run_file(None)).unwrap().contains("approved"));
+}
+
+#[test]
+fn a_run_file_round_trips_its_stopped_step_outside_the_plan_hash() {
+    let hash = plan_hash(&plan());
+    let file = RunFile {
+        stopped: Some(Stopped {
+            step: 2,
+            hash: hash.clone(),
+        }),
+        ..run_file(None)
+    };
+    let text = write_run(&file).unwrap();
+    assert!(text.contains("[stopped]"), "{text}");
+    let read = read_run(&text, limits()).unwrap();
+    assert_eq!(read, file, "{text}");
+    assert_eq!(plan_hash(&read.plan), hash);
+    assert!(!write_run(&run_file(None)).unwrap().contains("stopped"));
 }
 
 const HAND_WRITTEN: &str = r#"
@@ -124,6 +143,16 @@ fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
     )));
     let approved = approve(&file, Some(&hash), true).unwrap();
     assert!(render_status(&approved).ends_with(&format!("Plan {hash}: approved.")));
+    let stopped = RunFile {
+        stopped: Some(Stopped {
+            step: 2,
+            hash: hash.clone(),
+        }),
+        ..file
+    };
+    assert!(render_status(&stopped).ends_with(&format!(
+        "Plan {hash}: stopped at step 2/4. Type /send-it go to resume from step 2."
+    )));
 }
 
 #[test]

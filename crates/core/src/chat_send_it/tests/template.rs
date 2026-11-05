@@ -68,6 +68,11 @@ fn a_filled_template_is_the_plan_for_the_new_ticket_and_unapproved() {
         "review ABC-7, not GUZ-123 or GUZ-12-old, on worker/ABC-7"
     );
     assert_eq!(filled.approved, None);
+    let stopped = format!("{text}\n[stopped]\nstep = 2\nhash = \"abc\"\n");
+    assert_eq!(
+        fill_template(&stopped, "ABC-7", limits()).unwrap().stopped,
+        None
+    );
     for bad in ["", "a b", "x\"y", "$(id)"] {
         assert!(fill_template(&text, bad, limits()).is_err(), "{bad}");
     }

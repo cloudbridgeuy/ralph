@@ -8,7 +8,7 @@ use ralph_core::chat_send_it::template::{
 };
 use ralph_core::chat_send_it::{
     approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
-    plan_hash, propose_refusal, read_run, release, render_status, running_line, start_run, tick,
+    plan_hash, propose_refusal, read_run, render_status, running_line, start_run, stop_file, tick,
     write_run, Action, Driving, Ended, Limits, Next, RunFile, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::Route;
@@ -141,6 +141,7 @@ impl SendIt {
         self.save(&RunFile {
             plan,
             approved: None,
+            stopped: None,
         })?;
         Ok(format!(
             "Stored run plan {hash}. Stop here: ralph shows the plan and the person approves it with /send-it go."
@@ -263,29 +264,36 @@ impl SendIt {
         }
     }
 
-    fn release(&self, hash: &str) -> Result<(), String> {
-        match self.load()?.and_then(|file| release(&file, hash)) {
-            Some(released) => self.save(&released),
-            None => Ok(()),
+    fn release(&self, hash: &str, stopped_at: Option<usize>) -> Result<Option<RunFile>, String> {
+        match self
+            .load()?
+            .and_then(|file| stop_file(&file, hash, stopped_at))
+        {
+            Some(released) => self.save(&released).map(|()| Some(released)),
+            None => Ok(None),
         }
     }
 
     fn ended(&self, notice: &str, driving: &Driving) -> Driven {
         println!("{notice}");
-        if let Err(error) = self.release(&driving.hash) {
+        if let Err(error) = self.release(&driving.hash, None) {
             println!("{error}");
         }
         Driven::ended()
     }
 
     fn stopped(&self, reason: StopReason, driving: &Driving, monitor: &Monitor) -> Driven {
-        let notice = reason.notice(&driving.run);
-        let driven = self.ended(&notice, driving);
+        let kept = self.release(&driving.hash, Some(driving.progress.step + 1));
+        let notice = reason.notice(&driving.run, kept.as_ref().ok().and_then(Option::as_ref));
+        println!("{notice}");
+        if let Err(error) = kept {
+            println!("{error}");
+        }
         if let Some(alert) = blocked_alert(&notice, &monitor.alert) {
             inbox_alert::deliver(&alert);
         }
         monitor.term.send(&blocked_report(&notice));
-        driven
+        Driven::ended()
     }
 
     pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) {
@@ -455,6 +463,7 @@ mod tests {
         let draft = RunFile {
             plan,
             approved: None,
+            stopped: None,
         };
         send_it.save(&draft).unwrap();
         assert!(send_it.propose(&plan_args()).is_ok());
@@ -805,9 +814,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (send_it, active) = started(dir.path());
         let hash = active.driving.hash.clone();
-        send_it.release("000000000000").unwrap();
+        assert_eq!(send_it.release("000000000000", Some(1)), Ok(None));
         assert!(send_it.load().unwrap().unwrap().is_approved());
-        send_it.release(&hash).unwrap();
+        send_it.release(&hash, None).unwrap();
         let file = send_it.load().unwrap().unwrap();
         assert_eq!(file.approved, None);
         assert_eq!(plan_hash(&file.plan), hash);
@@ -820,9 +829,50 @@ mod tests {
             .starts_with("Template ship saved"));
         assert!(send_it.use_template("GUZ-2", "ship").shown.is_some());
         assert!(send_it.propose(&plan_args()).is_ok());
-        send_it.release(&hash).unwrap();
+        send_it.release(&hash, None).unwrap();
         send_it.off();
-        send_it.release(&hash).unwrap();
+        assert_eq!(send_it.release(&hash, Some(1)), Ok(None));
+    }
+
+    #[test]
+    fn a_stop_keeps_the_plan_until_off_and_go_resumes_at_the_stopped_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = SendIt::new(dir.path(), LIMITS);
+        let args = json!({
+            "goal": "ship GUZ-1",
+            "steps": [
+                {"do": "spawn the worker", "criterion": {"kind": "worker_done", "worker": "GUZ-1"}},
+                {"do": "run the checks", "criterion": {"kind": "check_passes", "command": "cargo xtask lint"}}
+            ]
+        });
+        send_it.propose(&args).unwrap();
+        let hash = send_it.status().shown.unwrap();
+        let first = send_it.go(Some(&hash), true).1.unwrap();
+        let stopped = send_it.release(&hash, Some(2)).unwrap().unwrap();
+        assert_eq!(stopped.approved, None);
+        assert_eq!(send_it.load().unwrap(), Some(stopped));
+        let screen = send_it.status();
+        assert!(
+            screen
+                .text
+                .ends_with("stopped at step 2/2. Type /send-it go to resume from step 2."),
+            "{}",
+            screen.text
+        );
+        let resumed = send_it.go(screen.shown.as_deref(), true).1.unwrap();
+        assert_eq!(first.driving.progress.step, 0);
+        assert_eq!(resumed.driving.progress.step, 1);
+        let Next::Send(brief) = resumed.next else {
+            panic!("{:?}", resumed.next)
+        };
+        assert!(
+            brief.ends_with("[send-it 2/2] run the checks · exit: `cargo xtask lint` exits 0"),
+            "{brief}"
+        );
+        send_it.release(&hash, None).unwrap();
+        assert_eq!(send_it.load().unwrap().unwrap().stopped, None);
+        assert_eq!(send_it.off(), "send-it off: the run plan is deleted.");
+        assert_eq!(send_it.status().text, NO_RUN);
     }
 
     #[test]
