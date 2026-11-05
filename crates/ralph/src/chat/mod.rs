@@ -55,7 +55,8 @@ use crate::chat::monitor::{
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
-    decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
+    decide, draft_with_queue, draft_with_typed, next_batch, refused_draft, unsent, unsent_texts,
+    Decision, Queue,
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
@@ -117,7 +118,7 @@ use ralph_core::program_status::{status_enabled, Phase};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
-use reedline::{EditCommand, ExternalPrinter};
+use reedline::{EditCommand, ExternalPrinter, Reedline};
 #[cfg(test)]
 use session::resolve_store;
 use session::{chat_dir, load_custom_prompt, print_history, route_queued, save_unsent, store_dir};
@@ -601,12 +602,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         editor.sync_history()?;
                         break;
                     }
-                    Err(_) => {
-                        let draft = draft_with_queue(Some(line), &std::mem::take(&mut carried));
-                        editor.run_edit_commands(&[EditCommand::InsertString(
-                            draft.unwrap_or_default(),
-                        )]);
-                    }
+                    Err(_) => restore_prompt(&mut editor, &line, std::mem::take(&mut carried)),
                 }
                 continue;
             }
@@ -724,7 +720,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 shown_plan = screen.shown;
                 continue;
             }
-            Route::Switch(parsed) => {
+            Route::Switch { parsed, line } => {
                 let leave = Leave {
                     store_dir: &store_dir,
                     current: args.thread.as_ref(),
@@ -736,12 +732,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Ok(target) => target,
                     Err(refusal) => {
                         println!("{refusal}");
+                        restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
                         continue;
                     }
                 };
                 let lost = unsent_texts(&carried, editor.current_buffer_contents());
                 if !save_unsent(&mut editor, &lost) {
                     println!("could not save the unsent text; the switch is cancelled.");
+                    restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
                     continue;
                 }
                 warn_if_err(editor.sync_history(), "Failed to save chat history");
@@ -856,6 +854,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         }
     }
     Ok(leaving.unwrap_or(ChatExit::Quit))
+}
+
+fn restore_prompt(editor: &mut Reedline, line: &str, carried: Vec<String>) {
+    let draft = refused_draft(line, &carried, editor.current_buffer_contents());
+    editor.run_edit_commands(&[EditCommand::Clear, EditCommand::InsertString(draft)]);
 }
 
 #[cfg(test)]
