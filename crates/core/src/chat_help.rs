@@ -218,7 +218,7 @@ impl Command {
             ],
             Command::Fork => &[(
                 "/fork <name>",
-                "open thread <name> in a new Rex block next to this chat, on this chat's store; main's chat only; refused when the thread is merged, parked or already open; outside Rex it prints the command to run instead; while a turn runs it waits in the queue",
+                "open thread <name> in a new Rex block next to this chat, on this chat's store; from a thread's chat it forks a sibling from main; refused when the thread is merged, parked or already open; outside Rex it prints the command to run instead; while a turn runs it waits in the queue",
             )],
             Command::Thread => &[(
                 "/thread <name>",

@@ -10,11 +10,12 @@ A thread has no separate create command. Open it by name and ralph creates it on
 
 - In a terminal: `ralph chat --thread <name>`.
 - In main's chat inside Rex: `/fork <name>`. It opens the thread in a new Rex block next to main.
+- In a thread's chat inside Rex: `/fork <name>`. It opens a new thread forked from main, next to this one.
 - In main's chat outside Rex: `/fork <name>` opens nothing. It prints a command. Run that command in another terminal.
 
 A name has 1 to 32 lowercase letters, digits or dashes. It cannot start with a dash. `main` is not a valid name.
 
-`/fork` creates nothing itself. The chat it starts creates the thread. `/fork` does not work inside a thread. Run it in main's chat.
+`/fork` creates nothing itself. The chat it starts creates the thread. Inside a thread, `/fork <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
 
 The thread starts from main's memory as it was at that moment. This point is the fork point. The thread does not see main messages that come later until you pull them.
 
