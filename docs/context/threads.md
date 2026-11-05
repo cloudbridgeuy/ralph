@@ -38,7 +38,7 @@ Type `/thread <name>` to move this chat to another thread in the same terminal. 
 - Type the switch during a turn and it waits in the queue. It runs when the turn ends.
 - A refused switch, or a failed save, puts the switch line, then the entries queued after it, then any text already in the prompt, back in the prompt. Nothing is lost and the order stays. A typed switch that is refused comes back to the prompt the same way.
 - A multi-line entry with extra words after the switch argument (`/thread auth\nfix` or `/main\nfix`) gets the usage refusal and is not sent; the refusal returns it to the prompt. A line break is whitespace, so `/thread\nauth` switches to `auth`.
-- ralph saves unsent text to the prompt history first: queued lines and the draft in the prompt. If the save fails, the switch is cancelled.
+- ralph saves unsent text to the prompt history first: queued lines and the draft in the prompt. If the save fails, the switch is cancelled. With a signal pending, ralph exits instead.
 - Saved schedules stay on disk. They do not fire while you are away.
 - The new chat does not keep `--name`. It titles itself by the thread name.
 - If another chat takes the target after the check, or the new chat cannot start, you land at the shell. Start `ralph chat` again.
