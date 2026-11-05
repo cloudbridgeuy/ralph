@@ -297,14 +297,15 @@ pub(super) fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, S
         })
 }
 
-fn fork_ready(store: &Path, name: &ThreadName) -> Result<(), String> {
-    let dir = thread_dir(&config_root(store), name);
+fn fork_ready(store: &Path, name: &ThreadName) -> Result<PathBuf, String> {
+    let main = config_root(store);
+    let dir = thread_dir(&main, name);
     if !dir.join(THREAD_FILE).is_file() {
-        return Ok(());
+        return Ok(main);
     }
     let meta = read_meta(&dir).map_err(|e| format!("thread {name}: {e}"))?;
     open_check(name, &meta)?;
-    claim_closed(&dir, name).map(drop)
+    claim_closed(&dir, name).map(|_| main)
 }
 
 pub fn fork(store: &Path, command: ForkCommand) -> String {
@@ -312,14 +313,14 @@ pub fn fork(store: &Path, command: ForkCommand) -> String {
         ForkCommand::Open(name) => name,
         ForkCommand::Usage(usage) => return usage,
     };
-    if let Err(refused) = fork_ready(store, &name) {
-        return refused;
-    }
+    let main = match fork_ready(store, &name) {
+        Ok(main) => main,
+        Err(refused) => return refused,
+    };
     let (exe, cwd) = match (std::env::current_exe(), std::env::current_dir()) {
         (Ok(exe), Ok(cwd)) => (exe, cwd),
         (Err(e), _) | (_, Err(e)) => return format!("could not fork thread {name}: {e}"),
     };
-    let main = config_root(store);
     let (exe, main, cwd) = (
         exe.to_string_lossy(),
         main.to_string_lossy(),
@@ -751,15 +752,15 @@ mod tests {
     fn fork_refuses_open_parked_merged_and_forks_a_sibling_from_inside_a_thread() {
         let (_root, main, dir) = forked();
         let auth = name("auth");
-        assert_eq!(fork_ready(&main, &name("fresh")), Ok(()));
+        assert_eq!(fork_ready(&main, &name("fresh")), Ok(main.clone()));
         assert!(!thread_dir(&main, &name("fresh")).exists());
-        assert_eq!(fork_ready(&main, &auth), Ok(()));
-        assert_eq!(fork_ready(&main, &auth), Ok(()));
+        assert_eq!(fork_ready(&main, &auth), Ok(main.clone()));
+        assert_eq!(fork_ready(&main, &auth), Ok(main.clone()));
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
         let open = fork_ready(&main, &auth).unwrap_err();
         assert!(open.starts_with("thread auth is in use"), "{open}");
         drop(held);
-        assert_eq!(fork_ready(&dir, &name("other")), Ok(()));
+        assert_eq!(fork_ready(&dir, &name("other")), Ok(main.clone()));
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
         let open = fork_ready(&dir, &auth).unwrap_err();
         assert!(open.starts_with("thread auth is in use"), "{open}");
