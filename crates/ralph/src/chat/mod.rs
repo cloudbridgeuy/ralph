@@ -748,15 +748,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Ok(target) => target,
                     Err(refusal) => {
                         println!("{refusal}");
-                        let kept = std::mem::take(&mut carried);
-                        let buffer = editor.current_buffer_contents().to_string();
-                        match refusal_action(signal::is_terminated(), &line, &kept, &buffer) {
-                            Refusal::Save(lost) => {
-                                save_unsent(&mut editor, &lost);
-                                editor.sync_history()?;
-                                break;
-                            }
-                            Refusal::Restore => restore_prompt(&mut editor, &line, kept),
+                        if refuse_or_exit(&mut editor, &line, std::mem::take(&mut carried))? {
+                            break;
                         }
                         continue;
                     }
@@ -806,7 +799,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     }
                     Err(refusal) => {
                         println!("{refusal}");
-                        restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
+                        if refuse_or_exit(&mut editor, &line, std::mem::take(&mut carried))? {
+                            break;
+                        }
                     }
                 }
                 continue;
@@ -904,6 +899,25 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         }
     }
     Ok(leaving.unwrap_or(ChatExit::Quit))
+}
+
+fn refuse_or_exit(
+    editor: &mut Reedline,
+    line: &str,
+    carried: Vec<String>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let buffer = editor.current_buffer_contents().to_string();
+    match refusal_action(signal::is_terminated(), line, &carried, &buffer) {
+        Refusal::Save(lost) => {
+            save_unsent(editor, &lost);
+            editor.sync_history()?;
+            Ok(true)
+        }
+        Refusal::Restore => {
+            restore_prompt(editor, line, carried);
+            Ok(false)
+        }
+    }
 }
 
 fn restore_prompt(editor: &mut Reedline, line: &str, carried: Vec<String>) {
