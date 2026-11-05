@@ -6,7 +6,7 @@ use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_send_it::{
     approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
     plan_hash, propose_refusal, read_run, render_status, running_line, start_run, tick, write_run,
-    Action, Driving, Ended, Limits, Next, RunFile, StopReason, Ticked,
+    Action, Driving, Ended, Limits, Next, RunFile, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::Route;
 use serde_json::Value;
@@ -26,6 +26,7 @@ pub(crate) struct SendIt {
     path: PathBuf,
     limits: Limits,
     refused: Arc<Mutex<Option<String>>>,
+    judged: Arc<Mutex<Option<StepResult>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +90,7 @@ impl SendIt {
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
             limits,
             refused: Arc::default(),
+            judged: Arc::default(),
         }
     }
 
@@ -120,6 +122,10 @@ impl SendIt {
 
     pub(crate) fn refuse(&self, tool: String) {
         *locked(&self.refused) = Some(tool);
+    }
+
+    pub(crate) fn record(&self, result: StepResult) {
+        *locked(&self.judged) = Some(result);
     }
 
     pub(crate) fn refusal(&self) -> Option<String> {
@@ -201,12 +207,14 @@ impl SendIt {
             .as_ref()
             .and_then(|slot| locked(slot).clone());
         let refused = locked(&self.refused).take();
+        let judged = locked(&self.judged).take();
         tick(
             &active.driving,
             &Ended {
                 file: file.as_ref(),
                 watched: watched.as_ref(),
                 refused: refused.as_deref(),
+                step_result: judged.as_ref(),
                 ..ended
             },
         )
@@ -483,12 +491,84 @@ mod tests {
             typed: false,
             queued: &[],
             cost_usd: 0.1,
-            reply: "",
+            step_result: None,
             drained: &[],
             unread: &[],
             watched: None,
             refused: None,
         }
+    }
+
+    fn judging(dir: &Path) -> (SendIt, Active) {
+        let send_it = SendIt::new(dir, LIMITS);
+        let mut args = plan_args();
+        args["steps"] =
+            json!([{"do": "review", "criterion": {"kind": "judge", "question": "all fixed?"}}]);
+        send_it.propose(&args).unwrap();
+        let hash = send_it.status().shown.unwrap();
+        let started = send_it.go(Some(&hash), true).1.unwrap();
+        let ticked = send_it.tick(
+            &Active {
+                driving: started.driving,
+                watched: None,
+            },
+            ended(),
+        );
+        assert_eq!(ticked.next, Next::Judge);
+        let active = Active {
+            driving: ticked.driving,
+            watched: None,
+        };
+        (send_it, active)
+    }
+
+    #[test]
+    fn the_next_tick_takes_the_recorded_step_result_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, active) = judging(dir.path());
+        send_it.record(StepResult {
+            met: true,
+            evidence: "all 3 fixed".to_string(),
+        });
+        let ticked = send_it.tick(&active, ended());
+        assert_eq!(ticked.next, Next::Done);
+        assert_eq!(
+            ticked.met.as_deref(),
+            Some("send-it: step 1/1 met (judged: all fixed?): all 3 fixed")
+        );
+        let Next::Send(line) = send_it.tick(&active, ended()).next else {
+            panic!("a second tick must not see the old result")
+        };
+        assert!(line.contains("judge: not met: "), "{line}");
+    }
+
+    #[test]
+    fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, active) = judging(dir.path());
+        let shared = Shared {
+            store: Store::new(dir.path().to_path_buf()),
+            workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+            suggestions: SuggestionSlot::default(),
+            send_it: send_it.clone(),
+        };
+        let call = |args: Value| {
+            respond(
+                &shared,
+                &SocketRequest {
+                    tool: "step_result".to_string(),
+                    args,
+                },
+            )
+        };
+        let met = json!({"met": true, "evidence": "all 3 fixed"});
+        shared.store.set_pending_turn(Trigger::User).unwrap();
+        assert!(call(met.clone()).is_error);
+        shared.store.set_pending_turn(Trigger::SendIt).unwrap();
+        assert!(call(json!({"met": true})).is_error);
+        let recorded = call(met);
+        assert!(!recorded.is_error, "{}", recorded.text);
+        assert_eq!(send_it.tick(&active, ended()).next, Next::Done);
     }
 
     #[test]

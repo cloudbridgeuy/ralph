@@ -8,6 +8,15 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
+pub const STEP_RESULT: &str = "step_result";
+pub const STEP_RESULT_MAX_CHARS: usize = 300;
+const NO_STEP_RESULT: &str = "the judge turn made no step_result call";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepResult {
+    pub met: bool,
+    pub evidence: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -408,6 +417,47 @@ pub fn propose_run_tool() -> Value {
     })
 }
 
+pub fn step_result_tool() -> Value {
+    json!({
+        "name": STEP_RESULT,
+        "description": "Judge the current /send-it judge step. Call it once, only in a send-it judge turn, from what the chat already shows. ralph moves on when met is true and sends the step again with your evidence when it is false.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "met": {"type": "boolean", "description": "true only when the step question is answered yes."},
+                "evidence": {"type": "string", "maxLength": STEP_RESULT_MAX_CHARS, "description": "One line: the fact that decides it, such as a commit, a test count or an open finding."}
+            },
+            "required": ["met", "evidence"]
+        }
+    })
+}
+
+pub fn parse_step_result(args: &Value) -> Result<StepResult, String> {
+    let met = args
+        .get("met")
+        .and_then(Value::as_bool)
+        .ok_or("Missing boolean argument 'met'.")?;
+    let evidence = args
+        .get("evidence")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .ok_or("Missing string argument 'evidence'.")?;
+    if evidence.is_empty() {
+        Err("The evidence is empty. Give the fact that decides the step.".to_string())
+    } else if evidence.chars().any(char::is_control) {
+        Err("The evidence must be one line.".to_string())
+    } else if evidence.chars().count() > STEP_RESULT_MAX_CHARS {
+        Err(format!(
+            "The evidence is longer than {STEP_RESULT_MAX_CHARS} characters."
+        ))
+    } else {
+        Ok(StepResult {
+            met,
+            evidence: evidence.to_string(),
+        })
+    }
+}
+
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
 const RESTART_HINT: &str =
     "To run it again from step 1, show the plan with /send-it status, then type /send-it go.";
@@ -438,7 +488,7 @@ pub enum StopReason {
     CostCap,
     Unmet { step: usize },
     WorkerFlagged,
-    JudgeRounds { step: usize },
+    JudgeRounds { step: usize, evidence: String },
     CheckFailed { step: usize },
     Off,
     PlanChanged,
@@ -456,9 +506,10 @@ impl StopReason {
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Unmet { step } => format!("step {step} missed its exit criterion"),
             StopReason::WorkerFlagged => "a worker asked a question or is blocked".to_string(),
-            StopReason::JudgeRounds { step } => {
-                format!("step {step} was still not met after the last judge round")
-            }
+            StopReason::JudgeRounds { step, evidence } => format!(
+                "step {step} was still not met after the last judge round: {}",
+                evidence.trim_end_matches('.')
+            ),
             StopReason::CheckFailed { step } => format!("step {step} check did not exit 0"),
             StopReason::PlanChanged => "the run plan changed or lost its approval".to_string(),
             StopReason::NoReply => "a turn ended without a reply".to_string(),
@@ -490,7 +541,7 @@ pub enum Event<'a> {
     TurnEnded(&'a Run),
     Report(&'a Report),
     Watched(&'a WatchOutcome),
-    Verdict(bool),
+    Verdict(Option<&'a StepResult>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -595,13 +646,19 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
                 )
             }
         }
-        (Event::Verdict(true), Criterion::Judge { .. }) => step_met(plan, progress),
-        (Event::Verdict(false), Criterion::Judge { .. }) => {
+        (Event::Verdict(Some(result)), Criterion::Judge { .. }) if result.met => {
+            step_met(plan, progress)
+        }
+        (Event::Verdict(result), Criterion::Judge { .. }) => {
+            let evidence = result.map_or(NO_STEP_RESULT, |result| &result.evidence);
             let judge_rounds = progress.judge_rounds + 1;
             if judge_rounds >= plan.judge_rounds {
                 (
                     progress,
-                    Next::Stop(StopReason::JudgeRounds { step: number }),
+                    Next::Stop(StopReason::JudgeRounds {
+                        step: number,
+                        evidence: evidence.to_string(),
+                    }),
                 )
             } else {
                 (
@@ -609,7 +666,10 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
                         judge_rounds,
                         ..progress
                     },
-                    Next::Send(step_line(plan, progress.step, step)),
+                    Next::Send(format!(
+                        "{}\njudge: not met: {evidence}",
+                        step_line(plan, progress.step, step)
+                    )),
                 )
             }
         }
@@ -639,7 +699,7 @@ pub struct Ended<'a> {
     pub typed: bool,
     pub queued: &'a [String],
     pub cost_usd: f64,
-    pub reply: &'a str,
+    pub step_result: Option<&'a StepResult>,
     pub drained: &'a [Report],
     pub unread: &'a [Report],
     pub watched: Option<&'a WatchOutcome>,
@@ -654,7 +714,6 @@ pub struct Ticked {
 }
 
 const CHECK_ID: &str = "send-it-";
-const VERDICT_MET: &str = "verdict: met";
 
 pub fn check_watch_id(step: usize) -> String {
     watch_id(&format!("{CHECK_ID}{}", step + 1))
@@ -736,7 +795,7 @@ fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason
 fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
     match awaiting {
         Awaiting::Turn => Vec::new(),
-        Awaiting::Verdict => vec![Event::Verdict(parse_verdict(ended.reply))],
+        Awaiting::Verdict => vec![Event::Verdict(ended.step_result)],
         Awaiting::Report(source) => ended
             .watched
             .map(Event::Watched)
@@ -785,8 +844,12 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
     };
     let plan = &file.plan;
     let (progress, decided) = fold(plan, driving.progress, &events(&driving.awaiting, ended));
+    let evidence = (driving.awaiting == Awaiting::Verdict)
+        .then_some(ended.step_result)
+        .flatten()
+        .map(|result| result.evidence.as_str());
     let met = (progress.step > driving.progress.step || decided == Next::Done)
-        .then(|| met_line(plan, driving.progress.step));
+        .then(|| met_line(plan, driving.progress.step, evidence));
     if matches!(decided, Next::Done | Next::Stop(_)) {
         return finish(progress, decided, met);
     }
@@ -798,14 +861,15 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
     finish(progress, next, met)
 }
 
-fn met_line(plan: &RunPlan, step: usize) -> String {
+fn met_line(plan: &RunPlan, step: usize, evidence: Option<&str>) -> String {
     let label = plan
         .steps
         .get(step)
         .map(|step| step.criterion.label())
         .unwrap_or_default();
+    let evidence = evidence.map_or(String::new(), |evidence| format!(": {evidence}"));
     format!(
-        "send-it: step {}/{} met ({label})",
+        "send-it: step {}/{} met ({label}){evidence}",
         step + 1,
         plan.steps.len()
     )
@@ -817,20 +881,9 @@ pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {
         return None;
     };
     Some(format!(
-        "{}\n/send-it judge: {question}\nAnswer from what this chat already shows and take no actions. End your reply with one line: `{VERDICT_MET}` or `verdict: unmet`.",
+        "{}\n/send-it judge: {question}\nAnswer from what this chat already shows and take no other actions. Call `{STEP_RESULT}` once with `met` and one line of `evidence`, then reply in one short line.",
         step_line(plan, progress.step, step)
     ))
-}
-
-pub fn parse_verdict(reply: &str) -> bool {
-    reply
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .is_some_and(|line| {
-            line.trim_matches(|c: char| c.is_whitespace() || c == '*' || c == '`')
-                .eq_ignore_ascii_case(VERDICT_MET)
-        })
 }
 
 pub fn done_notice(plan: &RunPlan, run: &Run) -> String {
