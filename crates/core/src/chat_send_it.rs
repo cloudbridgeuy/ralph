@@ -338,6 +338,13 @@ pub fn approve(
     })
 }
 
+pub fn release(file: &RunFile, hash: &str) -> Option<RunFile> {
+    (file.approved.as_deref() == Some(hash)).then(|| RunFile {
+        plan: file.plan.clone(),
+        approved: None,
+    })
+}
+
 pub fn render_status(file: &RunFile) -> String {
     let hash = plan_hash(&file.plan);
     let state = if file.is_approved() {
@@ -906,7 +913,7 @@ pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {
 pub fn done_notice(plan: &RunPlan, run: &Run) -> String {
     let steps = plan.steps.len();
     format!(
-        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}.",
+        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}. {RESTART_HINT}",
         run.turns, run.spent_usd
     )
 }

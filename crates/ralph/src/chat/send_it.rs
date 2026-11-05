@@ -8,8 +8,8 @@ use ralph_core::chat_send_it::template::{
 };
 use ralph_core::chat_send_it::{
     approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
-    plan_hash, propose_refusal, read_run, render_status, running_line, start_run, tick, write_run,
-    Action, Driving, Ended, Limits, Next, RunFile, StepResult, StopReason, Ticked,
+    plan_hash, propose_refusal, read_run, release, render_status, running_line, start_run, tick,
+    write_run, Action, Driving, Ended, Limits, Next, RunFile, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::Route;
 use serde_json::Value;
@@ -77,20 +77,6 @@ impl Driven {
             route: None,
         }
     }
-}
-
-fn stopped(reason: StopReason, driving: &Driving, monitor: &Monitor) -> Driven {
-    let notice = reason.notice(&driving.run);
-    println!("{notice}");
-    if let Some(alert) = blocked_alert(&notice, &monitor.alert) {
-        inbox_alert::deliver(&alert);
-    }
-    monitor.term.send(&blocked_report(&notice));
-    Driven::ended()
-}
-
-pub(super) fn took_over(active: &Active, monitor: &Monitor) {
-    stopped(StopReason::TookOver, &active.driving, monitor);
 }
 
 impl SendIt {
@@ -249,7 +235,7 @@ impl SendIt {
                     println!("{prompt}");
                     Driven::keep(driving, Route::Send(prompt), None)
                 }
-                None => stopped(StopReason::PlanChanged, &driving, monitor),
+                None => self.stopped(StopReason::PlanChanged, &driving, monitor),
             },
             Next::Hold(worker) => {
                 Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None)
@@ -264,19 +250,46 @@ impl SendIt {
                     Err(error) => {
                         println!("{error}");
                         let step = driving.progress.step + 1;
-                        stopped(StopReason::CheckFailed { step }, &driving, monitor)
+                        self.stopped(StopReason::CheckFailed { step }, &driving, monitor)
                     }
                 }
             }
-            Next::Stop(reason) => stopped(reason, &driving, monitor),
-            Next::Done => {
-                if let Some(plan) = &plan {
-                    println!("{}", done_notice(plan, &driving.run));
-                }
-                Driven::ended()
-            }
+            Next::Stop(reason) => self.stopped(reason, &driving, monitor),
+            Next::Done => match &plan {
+                Some(plan) => self.ended(&done_notice(plan, &driving.run), &driving),
+                None => Driven::ended(),
+            },
             Next::Wait => Driven::ended(),
         }
+    }
+
+    fn release(&self, hash: &str) -> Result<(), String> {
+        match self.load()?.and_then(|file| release(&file, hash)) {
+            Some(released) => self.save(&released),
+            None => Ok(()),
+        }
+    }
+
+    fn ended(&self, notice: &str, driving: &Driving) -> Driven {
+        println!("{notice}");
+        if let Err(error) = self.release(&driving.hash) {
+            println!("{error}");
+        }
+        Driven::ended()
+    }
+
+    fn stopped(&self, reason: StopReason, driving: &Driving, monitor: &Monitor) -> Driven {
+        let notice = reason.notice(&driving.run);
+        let driven = self.ended(&notice, driving);
+        if let Some(alert) = blocked_alert(&notice, &monitor.alert) {
+            inbox_alert::deliver(&alert);
+        }
+        monitor.term.send(&blocked_report(&notice));
+        driven
+    }
+
+    pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) {
+        self.stopped(StopReason::TookOver, &active.driving, monitor);
     }
 
     pub(crate) fn off(&self) -> String {
@@ -785,6 +798,31 @@ mod tests {
         };
         assert!(brief.ends_with(STEP_1), "{brief}");
         assert!(brief.starts_with("send-it run "), "{brief}");
+    }
+
+    #[test]
+    fn release_drops_the_run_s_approval_and_keeps_the_plan_for_save_and_reuse() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, active) = started(dir.path());
+        let hash = active.driving.hash.clone();
+        send_it.release("000000000000").unwrap();
+        assert!(send_it.load().unwrap().unwrap().is_approved());
+        send_it.release(&hash).unwrap();
+        let file = send_it.load().unwrap().unwrap();
+        assert_eq!(file.approved, None);
+        assert_eq!(plan_hash(&file.plan), hash);
+        assert!(send_it
+            .status()
+            .text
+            .ends_with("not approved. Type /send-it go to approve this plan."));
+        assert!(send_it
+            .save_template("ship", None)
+            .starts_with("Template ship saved"));
+        assert!(send_it.use_template("GUZ-2", "ship").shown.is_some());
+        assert!(send_it.propose(&plan_args()).is_ok());
+        send_it.release(&hash).unwrap();
+        send_it.off();
+        send_it.release(&hash).unwrap();
     }
 
     #[test]
