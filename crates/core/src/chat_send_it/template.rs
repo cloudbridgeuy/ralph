@@ -38,6 +38,7 @@ pub fn template_text(plan: &RunPlan, ticket: Option<&str>) -> Result<String, Str
     let text = write_run(&RunFile {
         plan: plan.clone(),
         approved: None,
+        stopped: None,
     })?;
     match ticket {
         Some(ticket) => Ok(swap_token(&text, key("Ticket", ticket)?, TICKET)),
@@ -59,6 +60,7 @@ pub fn fill_template(text: &str, ticket: &str, defaults: Limits) -> Result<RunFi
     let file = read_run(&text.replace(TICKET, key("Ticket", ticket)?), defaults)?;
     Ok(RunFile {
         approved: None,
+        stopped: None,
         ..file
     })
 }

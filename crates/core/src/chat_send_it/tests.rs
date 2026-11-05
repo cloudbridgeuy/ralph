@@ -13,8 +13,7 @@ fn limits() -> Limits {
     }
 }
 
-const RESTART: &str =
-    "To run it again from step 1, show the plan with /send-it status, then type /send-it go.";
+const RESTART: &str = "To run it again, show the plan with /send-it status, then type /send-it go.";
 
 #[test]
 fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
@@ -37,7 +36,7 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
             tool: "watch".to_string(),
         },
     ] {
-        let notice = reason.notice(&run);
+        let notice = reason.notice(&run, None);
         assert!(notice.starts_with("send-it stopped: "), "{notice}");
         assert!(notice.ends_with(RESTART), "{notice}");
         assert!(!notice.contains("send-it off"), "{notice}");
@@ -51,7 +50,7 @@ fn a_refused_stop_names_the_tool() {
         tool: "spawn_worker codex".to_string(),
     };
     assert_eq!(
-        refused.notice(&Run::default()),
+        refused.notice(&Run::default(), None),
         format!("send-it stopped: the plan does not allow `spawn_worker codex`. {RESTART}")
     );
 }
@@ -59,7 +58,7 @@ fn a_refused_stop_names_the_tool() {
 #[test]
 fn an_off_stop_says_the_plan_is_deleted() {
     assert_eq!(
-        StopReason::Off.notice(&Run::default()),
+        StopReason::Off.notice(&Run::default(), None),
         "send-it off: the run stopped and its plan is deleted."
     );
 }
@@ -469,18 +468,18 @@ fn verdicts_finish_or_retry_with_the_evidence_and_no_call_is_a_failed_round() {
 fn new_stop_notices_name_the_step() {
     let run = Run::default();
     assert_eq!(
-        StopReason::Unmet { step: 2 }.notice(&run),
+        StopReason::Unmet { step: 2 }.notice(&run, None),
         format!("send-it stopped: step 2 missed its exit criterion. {RESTART}")
     );
     assert!(StopReason::WorkerFlagged
-        .notice(&run)
+        .notice(&run, None)
         .contains("a worker asked a question"));
     assert_eq!(
         StopReason::JudgeRounds {
             step: 4,
             evidence: "finding 2 is open.".to_string()
         }
-        .notice(&run),
+        .notice(&run, None),
         format!("send-it stopped: step 4 was still not met after the last judge round: finding 2 is open. {RESTART}")
     );
     for (reason, why) in [
@@ -493,7 +492,7 @@ fn new_stop_notices_name_the_step() {
         (StopReason::NeedsYou, "a schedule waits for your approval"),
         (StopReason::TookOver, "you took over"),
     ] {
-        let notice = reason.notice(&run);
+        let notice = reason.notice(&run, None);
         assert!(
             notice.starts_with(&format!("send-it stopped: {why}")),
             "{notice}"
@@ -505,6 +504,7 @@ fn approved(plan: RunPlan) -> RunFile {
     RunFile {
         approved: Some(plan_hash(&plan)),
         plan,
+        stopped: None,
     }
 }
 
@@ -540,6 +540,7 @@ fn only_an_approved_file_starts_a_run_at_step_one() {
     let unapproved = RunFile {
         plan: plan(),
         approved: None,
+        stopped: None,
     };
     assert_eq!(start_run(&unapproved), None);
     let (state, next) = start_run(&approved(plan())).unwrap();
@@ -591,6 +592,7 @@ fn a_missing_unapproved_or_changed_plan_stops_the_run_first() {
     let unapproved = RunFile {
         plan: plan(),
         approved: None,
+        stopped: None,
     };
     let state = driving(0, Awaiting::Turn, Run::default());
     let flagged = [worker_report("E1", "question")];
@@ -856,23 +858,100 @@ fn the_done_notice_counts_steps_turns_and_cost() {
     );
 }
 
+fn stopped_at(step: usize) -> Option<Stopped> {
+    Some(Stopped {
+        step,
+        hash: plan_hash(&plan()),
+    })
+}
+
 #[test]
-fn release_drops_only_the_run_s_own_approval_and_keeps_the_plan() {
+fn stop_file_drops_only_the_run_s_own_approval_and_keeps_the_plan() {
     let file = approved(plan());
     let hash = plan_hash(&plan());
     assert_eq!(
-        release(&file, &hash),
+        stop_file(&file, &hash, None),
         Some(RunFile {
             plan: plan(),
             approved: None,
+            stopped: None,
         })
     );
-    assert_eq!(release(&file, "000000000000"), None);
+    assert_eq!(stop_file(&file, "000000000000", Some(2)), None);
     let unapproved = RunFile {
         approved: None,
         ..file
     };
-    assert_eq!(release(&unapproved, &hash), None);
+    assert_eq!(stop_file(&unapproved, &hash, Some(2)), None);
+}
+
+#[test]
+fn a_stop_keeps_the_stopped_step_and_a_finished_run_clears_it() {
+    let hash = plan_hash(&plan());
+    let stopped = stop_file(&approved(plan()), &hash, Some(2)).unwrap();
+    assert_eq!(
+        stopped,
+        RunFile {
+            plan: plan(),
+            approved: None,
+            stopped: stopped_at(2),
+        }
+    );
+    let resumed = approve(&stopped, Some(&hash), true).unwrap();
+    assert_eq!(resumed.stopped, stopped_at(2));
+    assert_eq!(stop_file(&resumed, &hash, None).unwrap().stopped, None);
+}
+
+#[test]
+fn go_resumes_at_the_stopped_step_only_for_the_same_plan() {
+    let resumed = RunFile {
+        stopped: stopped_at(2),
+        ..approved(plan())
+    };
+    let (state, next) = start_run(&resumed).unwrap();
+    assert_eq!(state, driving(1, Awaiting::Turn, Run::default()));
+    let Next::Send(brief) = next else {
+        panic!("{next:?}")
+    };
+    assert!(brief.ends_with(LINE_2), "{brief}");
+    let other = RunFile {
+        stopped: Some(Stopped {
+            step: 2,
+            hash: "000000000000".to_string(),
+        }),
+        ..approved(plan())
+    };
+    assert_eq!(start_run(&other).unwrap().0.progress, at(0));
+    let past_the_end = RunFile {
+        stopped: stopped_at(9),
+        ..approved(plan())
+    };
+    assert_eq!(start_run(&past_the_end).unwrap().0.progress, at(0));
+}
+
+#[test]
+fn a_kept_stop_names_the_step_and_how_to_resume() {
+    let kept = RunFile {
+        plan: plan(),
+        approved: None,
+        stopped: stopped_at(2),
+    };
+    assert_eq!(
+        StopReason::WorkerFlagged.notice(&Run::default(), Some(&kept)),
+        "send-it stopped at step 2/4: a worker asked a question or is blocked. The plan is kept. Fix the cause, show it with /send-it status, then type /send-it go to resume from step 2. /send-it off deletes it."
+    );
+    assert_eq!(
+        StopReason::Off.notice(&Run::default(), Some(&kept)),
+        "send-it off: the run stopped and its plan is deleted."
+    );
+    let unstopped = RunFile {
+        stopped: None,
+        ..kept
+    };
+    assert_eq!(
+        StopReason::TookOver.notice(&Run::default(), Some(&unstopped)),
+        format!("send-it stopped: you took over. {RESTART}")
+    );
 }
 
 #[test]

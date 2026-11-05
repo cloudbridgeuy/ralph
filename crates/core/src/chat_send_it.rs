@@ -275,9 +275,17 @@ pub fn parse_send_it_args(args: &str) -> SendItCommand {
 pub struct RunFile {
     pub plan: RunPlan,
     pub approved: Option<String>,
+    pub stopped: Option<Stopped>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stopped {
+    pub step: usize,
+    pub hash: String,
 }
 
 const APPROVED_KEY: &str = "approved";
+const STOPPED_KEY: &str = "stopped";
 const HASH_BYTES: usize = 6;
 
 pub fn plan_hash(plan: &RunPlan) -> String {
@@ -305,6 +313,9 @@ pub fn read_run(text: &str, defaults: Limits) -> Result<RunFile, String> {
             .get(APPROVED_KEY)
             .and_then(Value::as_str)
             .map(str::to_string),
+        stopped: value
+            .get(STOPPED_KEY)
+            .and_then(|stopped| Stopped::deserialize(stopped).ok()),
     })
 }
 
@@ -314,6 +325,9 @@ pub fn write_run(file: &RunFile) -> Result<String, String> {
         serde_json::to_value(RawPlan::from(&file.plan)).map_err(|e| unwritable(e.to_string()))?;
     if let (Some(fields), Some(hash)) = (value.as_object_mut(), &file.approved) {
         fields.insert(APPROVED_KEY.to_string(), Value::String(hash.clone()));
+    }
+    if let (Some(fields), Some(stopped)) = (value.as_object_mut(), &file.stopped) {
+        fields.insert(STOPPED_KEY.to_string(), json!(stopped));
     }
     toml::to_string(&value).map_err(|e| unwritable(e.to_string()))
 }
@@ -333,22 +347,40 @@ pub fn approve(
         ));
     }
     Ok(RunFile {
-        plan: file.plan.clone(),
         approved: Some(hash),
+        ..file.clone()
     })
 }
 
-pub fn release(file: &RunFile, hash: &str) -> Option<RunFile> {
+pub fn stop_file(file: &RunFile, hash: &str, stopped_at: Option<usize>) -> Option<RunFile> {
     (file.approved.as_deref() == Some(hash)).then(|| RunFile {
         plan: file.plan.clone(),
         approved: None,
+        stopped: stopped_at.map(|step| Stopped {
+            step,
+            hash: hash.to_string(),
+        }),
     })
+}
+
+fn resume_step(file: &RunFile) -> Option<usize> {
+    let hash = plan_hash(&file.plan);
+    file.stopped
+        .as_ref()
+        .filter(|stopped| stopped.hash == hash)
+        .map(|stopped| stopped.step)
+        .filter(|step| (1..=file.plan.steps.len()).contains(step))
 }
 
 pub fn render_status(file: &RunFile) -> String {
     let hash = plan_hash(&file.plan);
     let state = if file.is_approved() {
         format!("Plan {hash}: approved.")
+    } else if let Some(step) = resume_step(file) {
+        format!(
+            "Plan {hash}: stopped at step {step}/{}. Type /send-it go to resume from step {step}.",
+            file.plan.steps.len()
+        )
     } else {
         format!("Plan {hash}: not approved. Type /send-it go to approve this plan.")
     };
@@ -484,7 +516,7 @@ pub fn parse_step_result(args: &Value) -> Result<StepResult, String> {
 
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
 const RESTART_HINT: &str =
-    "To run it again from step 1, show the plan with /send-it status, then type /send-it go.";
+    "To run it again, show the plan with /send-it status, then type /send-it go.";
 const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -523,7 +555,7 @@ pub enum StopReason {
 }
 
 impl StopReason {
-    pub fn notice(self, run: &Run) -> String {
+    pub fn notice(self, run: &Run, kept: Option<&RunFile>) -> String {
         let why = match self {
             StopReason::Off => return OFF_NOTICE.to_string(),
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
@@ -541,7 +573,12 @@ impl StopReason {
             StopReason::TookOver => "you took over".to_string(),
             StopReason::Refused { tool } => format!("the plan does not allow `{tool}`"),
         };
-        format!("send-it stopped: {why}. {RESTART_HINT}")
+        match kept.and_then(|file| Some((resume_step(file)?, file.plan.steps.len()))) {
+            Some((step, steps)) => format!(
+                "send-it stopped at step {step}/{steps}: {why}. The plan is kept. Fix the cause, show it with /send-it status, then type /send-it go to resume from step {step}. /send-it off deletes it."
+            ),
+            None => format!("send-it stopped: {why}. {RESTART_HINT}"),
+        }
     }
 }
 
@@ -768,7 +805,11 @@ pub fn start_run(file: &RunFile) -> Option<(Driving, Next)> {
         return None;
     }
     let hash = plan_hash(&file.plan);
-    let (progress, next) = match advance(&file.plan, Progress::default(), Event::Start) {
+    let start = Progress {
+        step: resume_step(file).map_or(0, |step| step - 1),
+        judge_rounds: 0,
+    };
+    let (progress, next) = match advance(&file.plan, start, Event::Start) {
         (progress, Next::Send(line)) => (
             progress,
             Next::Send(format!(

@@ -112,15 +112,17 @@ A run stops when:
 - the model uses a tool that the plan does not allow,
 - you take over.
 
-ralph shows a notice with the reason and tells you how to run the plan again. It also posts an alert to the inbox. When all steps are met, ralph shows how many turns and how much cost the run used.
+ralph shows a notice with the reason and the step that stopped, and tells you how to resume. It also posts an alert to the inbox. When all steps are met, ralph shows how many turns and how much cost the run used.
 
-After a stop or a finished run, the plan stays in `run.toml` without its approval. You can save it as a template or propose a new plan. To run it again from step 1, show it with `/send-it status`, then type `/send-it go`.
+After a stop or a finished run, the plan stays in `run.toml` without its approval, until you type `/send-it off`. You can save it as a template or propose a new plan.
+
+To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The status line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
 
 For the exact notices, see [ralph chat: /send-it](ralph-chat.md#send-it).
 
 ## Quit during a run
 
-The run lives only in the chat process. If you quit the chat, the run ends. The next `/send-it go` starts again at step 1.
+The run lives only in the chat process. If you quit the chat, the run ends. The next `/send-it go` starts at the step of the last stop of this plan, or at step 1 if it did not stop.
 
 The plan stays approved after a quit. ralph refuses new plans until you run `/send-it off`.
 
