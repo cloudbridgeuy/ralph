@@ -364,6 +364,27 @@ fn test_cli_thread_merge_takes_view() {
 }
 
 #[test]
+fn test_cli_thread_merge_refuses_the_view_flag_and_its_alias_together() {
+    for flags in [["--view", "--rebase"], ["--view", "--view"]] {
+        let args = ["ralph", "thread", "merge", "auth", flags[0], flags[1]];
+        assert!(Cli::try_parse_from(args).is_err(), "{flags:?}");
+    }
+}
+
+#[test]
+fn test_cli_thread_merge_help_hides_the_rebase_alias() {
+    use clap::CommandFactory;
+    let mut command = Cli::command();
+    let merge = command
+        .find_subcommand_mut("thread")
+        .and_then(|thread| thread.find_subcommand_mut("merge"))
+        .unwrap();
+    let help = merge.render_long_help().to_string();
+    assert!(help.contains("--view"), "{help}");
+    assert!(!help.contains("rebase"), "{help}");
+}
+
+#[test]
 fn test_cli_thread_pull_takes_a_name() {
     let Some(Commands::Thread(thread)) = Cli::try_parse_from(["ralph", "thread", "pull", "auth"])
         .unwrap()
