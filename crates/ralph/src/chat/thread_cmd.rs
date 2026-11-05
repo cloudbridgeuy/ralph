@@ -1,8 +1,11 @@
-use crate::chat::thread::{config_root, list, running_ids};
-use ralph_core::chat_thread_cmd::ThreadOp;
+use crate::chat::thread::{config_root, list, pull_thread, running_ids};
+use ralph_core::chat_thread_cmd::{op_refusal, ThreadOp};
 use std::path::Path;
 
-pub(super) fn run(op: &ThreadOp, store_dir: &Path) -> Result<String, String> {
+pub(super) fn run(op: &ThreadOp, store_dir: &Path, in_thread: bool) -> Result<String, String> {
+    if let Some(refusal) = op_refusal(in_thread, op) {
+        return Err(refusal);
+    }
     let main = config_root(store_dir);
     match op {
         ThreadOp::Ls => {
@@ -14,5 +17,6 @@ pub(super) fn run(op: &ThreadOp, store_dir: &Path) -> Result<String, String> {
                 rows
             })
         }
+        ThreadOp::Pull(name) => pull_thread(&main, name),
     }
 }

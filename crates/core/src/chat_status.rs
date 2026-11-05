@@ -191,7 +191,7 @@ pub fn route_input(
                     parsed: parse_switch_args(args),
                     line: line.to_string(),
                 },
-                Command::Threads => Route::ThreadOp {
+                Command::Threads | Command::Pull => Route::ThreadOp {
                     op: parse_thread_op(command, args),
                     line: line.to_string(),
                 },

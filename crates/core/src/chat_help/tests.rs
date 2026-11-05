@@ -86,6 +86,7 @@ fn lists_hold_every_variant() {
             Fork,
             Thread,
             Threads,
+            Pull,
             Main,
             Config,
             View,

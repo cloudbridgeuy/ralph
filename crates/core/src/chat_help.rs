@@ -23,6 +23,7 @@ pub enum Command {
     Fork,
     Thread,
     Threads,
+    Pull,
     Main,
     Config,
     View,
@@ -33,7 +34,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 19] = [
+    pub const ALL: [Command; 20] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -46,6 +47,7 @@ impl Command {
         Command::Fork,
         Command::Thread,
         Command::Threads,
+        Command::Pull,
         Command::Main,
         Command::Config,
         Command::View,
@@ -69,6 +71,7 @@ impl Command {
             Command::Fork => "/fork",
             Command::Thread => "/thread",
             Command::Threads => "/threads",
+            Command::Pull => "/pull",
             Command::Main => "/main",
             Command::Config => "/config",
             Command::View => "/view",
@@ -206,6 +209,10 @@ impl Command {
             Command::Threads => &[(
                 "/threads",
                 "list the threads with their fork point, message count, running workers and unread reports, like ralph thread ls; works in main's chat and in a thread's chat; takes no arguments; starts no turn",
+            )],
+            Command::Pull => &[(
+                "/pull <name>",
+                "move thread <name>'s fork point to the end of main, like ralph thread pull; main's chat only, with no model call; refused when the thread's own chat is open, when the thread is merged or unknown, and inside a thread's chat (run /main first); works on a parked thread; the next ralph chat --thread <name> starts with the newer main messages; while a turn runs it waits in the queue",
             )],
             Command::Main => &[(
                 "/main",
