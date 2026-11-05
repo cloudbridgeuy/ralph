@@ -106,11 +106,16 @@ pub(super) fn unsent_texts(entries: &[String], typed: &str) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn exit_notice(count: usize) -> Option<String> {
+pub(super) fn exit_notice(count: usize, saved: bool) -> Option<String> {
+    let outcome = if saved {
+        "saved to history"
+    } else {
+        "not all saved to history"
+    };
     match count {
         0 => None,
-        1 => Some("1 queued message not sent; saved to history.".to_string()),
-        n => Some(format!("{n} queued messages not sent; saved to history.")),
+        1 => Some(format!("1 queued message not sent; {outcome}.")),
+        n => Some(format!("{n} queued messages not sent; {outcome}.")),
     }
 }
 
@@ -320,14 +325,27 @@ mod tests {
             typed: "xyz".into(),
         };
         assert_eq!(unsent(&queue), entries(&["a", "xyz"]));
-        assert_eq!(exit_notice(0), None);
+        assert_eq!(exit_notice(0, true), None);
         assert_eq!(
-            exit_notice(1),
+            exit_notice(1, true),
             Some("1 queued message not sent; saved to history.".to_string())
         );
         assert_eq!(
-            exit_notice(2),
+            exit_notice(2, true),
             Some("2 queued messages not sent; saved to history.".to_string())
+        );
+    }
+
+    #[test]
+    fn exit_notice_says_not_all_saved_when_a_save_failed() {
+        assert_eq!(exit_notice(0, false), None);
+        assert_eq!(
+            exit_notice(1, false),
+            Some("1 queued message not sent; not all saved to history.".to_string())
+        );
+        assert_eq!(
+            exit_notice(2, false),
+            Some("2 queued messages not sent; not all saved to history.".to_string())
         );
     }
 

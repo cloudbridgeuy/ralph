@@ -130,7 +130,7 @@ pub(super) fn save_unsent(editor: &mut Reedline, lost: &[String]) -> bool {
         saved &= result.is_ok();
         warn_if_err(result, "Failed to save chat history");
     }
-    if let Some(notice) = exit_notice(lost.len()) {
+    if let Some(notice) = exit_notice(lost.len(), saved) {
         eprintln!("{notice}");
     }
     saved
