@@ -848,14 +848,33 @@ fn route_input_parses_thread_and_main_switches() {
     use crate::chat_switch::SwitchTarget;
     let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     let auth = crate::chat_thread::ThreadName::parse("auth").unwrap();
+    let switch = |parsed, line: &str| Route::Switch {
+        parsed,
+        line: line.to_string(),
+    };
     assert_eq!(
         route("/thread auth"),
-        Route::Switch(Ok(SwitchTarget::Thread(auth)))
+        switch(Ok(SwitchTarget::Thread(auth)), "/thread auth")
     );
-    assert_eq!(route("/thread main"), Route::Switch(Ok(SwitchTarget::Main)));
-    assert_eq!(route("/main"), Route::Switch(Ok(SwitchTarget::Main)));
-    assert!(matches!(route("/thread"), Route::Switch(Err(_))));
-    assert!(matches!(route("/main now"), Route::Switch(Err(_))));
+    assert_eq!(
+        route("/thread main"),
+        switch(Ok(SwitchTarget::Main), "/thread main")
+    );
+    assert_eq!(route("/main"), switch(Ok(SwitchTarget::Main), "/main"));
+    assert!(matches!(
+        route("/thread"),
+        Route::Switch { parsed: Err(_), .. }
+    ));
+    let Route::Switch { parsed, line } = route("  /main now ") else {
+        panic!("not a switch");
+    };
+    assert!(parsed.is_err());
+    assert_eq!(line, "/main now");
+    let Route::Switch { parsed, line } = route("/main\nfix the test") else {
+        panic!("not a switch");
+    };
+    assert!(parsed.is_err());
+    assert_eq!(line, "/main\nfix the test");
     assert_eq!(route("/threads"), Route::Send("/threads".into()));
     assert_eq!(route("/mainx"), Route::Send("/mainx".into()));
 }
@@ -863,8 +882,12 @@ fn route_input_parses_thread_and_main_switches() {
 #[test]
 fn a_switch_waits_for_the_turn() {
     use crate::chat_switch::SwitchTarget;
-    assert!(!Route::Switch(Ok(SwitchTarget::Main)).runs_mid_turn());
-    assert!(!Route::Switch(Err("usage".into())).runs_mid_turn());
+    let switch = |parsed| Route::Switch {
+        parsed,
+        line: String::new(),
+    };
+    assert!(!switch(Ok(SwitchTarget::Main)).runs_mid_turn());
+    assert!(!switch(Err("usage".into())).runs_mid_turn());
 }
 
 #[test]

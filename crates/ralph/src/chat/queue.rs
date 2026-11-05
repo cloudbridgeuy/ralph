@@ -65,6 +65,12 @@ pub(super) fn draft_with_queue(draft: Option<String>, entries: &[String]) -> Opt
     }
 }
 
+pub(super) fn refused_draft(line: &str, carried: &[String], buffer: &str) -> String {
+    let draft = draft_with_queue(Some(line.to_string()), carried);
+    let typed = (!buffer.trim().is_empty()).then_some(buffer);
+    draft_with_typed(draft, typed.unwrap_or_default()).unwrap_or_default()
+}
+
 pub(super) fn unsent(queue: &Queue) -> Vec<String> {
     unsent_texts(&queue.entries, &queue.typed)
 }
@@ -138,6 +144,25 @@ mod tests {
             held: false,
             typed: String::new(),
         }
+    }
+
+    #[test]
+    fn refused_draft_puts_the_line_then_the_queue() {
+        assert_eq!(
+            refused_draft("/thread bad", &entries(&["fix the test", "run it"]), ""),
+            "/thread bad\n\nfix the test\n\nrun it"
+        );
+        assert_eq!(refused_draft("/main", &[], ""), "/main");
+    }
+
+    #[test]
+    fn refused_draft_keeps_the_buffer_last() {
+        assert_eq!(
+            refused_draft("/thread bad", &entries(&["fix"]), "typed"),
+            "/thread bad\n\nfix\n\ntyped"
+        );
+        assert_eq!(refused_draft("/main", &[], "typed"), "/main\n\ntyped");
+        assert_eq!(refused_draft("/main", &[], "  \n"), "/main");
     }
 
     #[test]
