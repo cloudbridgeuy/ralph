@@ -56,8 +56,8 @@ use crate::chat::monitor::{
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
-    decide, draft_with_queue, draft_with_typed, next_batch, refused_draft, unsent, unsent_texts,
-    Decision, Queue,
+    decide, draft_with_queue, draft_with_typed, next_batch, refusal_action, refused_draft, unsent,
+    unsent_texts, Decision, Queue, Refusal,
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
@@ -748,7 +748,16 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Ok(target) => target,
                     Err(refusal) => {
                         println!("{refusal}");
-                        restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
+                        let kept = std::mem::take(&mut carried);
+                        let buffer = editor.current_buffer_contents().to_string();
+                        match refusal_action(signal::is_terminated(), &line, &kept, &buffer) {
+                            Refusal::Save(lost) => {
+                                save_unsent(&mut editor, &lost);
+                                editor.sync_history()?;
+                                break;
+                            }
+                            Refusal::Restore => restore_prompt(&mut editor, &line, kept),
+                        }
                         continue;
                     }
                 };

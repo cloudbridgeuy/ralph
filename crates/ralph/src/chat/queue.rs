@@ -71,6 +71,27 @@ pub(super) fn refused_draft(line: &str, carried: &[String], buffer: &str) -> Str
     draft_with_typed(draft, typed.unwrap_or_default()).unwrap_or_default()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Refusal {
+    Save(Vec<String>),
+    Restore,
+}
+
+pub(super) fn refusal_action(
+    terminated: bool,
+    line: &str,
+    carried: &[String],
+    buffer: &str,
+) -> Refusal {
+    if !terminated {
+        return Refusal::Restore;
+    }
+    let entries: Vec<String> = std::iter::once(line.to_string())
+        .chain(carried.iter().cloned())
+        .collect();
+    Refusal::Save(unsent_texts(&entries, buffer))
+}
+
 pub(super) fn unsent(queue: &Queue) -> Vec<String> {
     unsent_texts(&queue.entries, &queue.typed)
 }
@@ -161,6 +182,38 @@ mod tests {
         );
         assert_eq!(refused_draft("/main", &[], "typed"), "/main\n\ntyped");
         assert_eq!(refused_draft("/main", &[], "  \n"), "/main");
+    }
+
+    #[test]
+    fn terminated_refusal_saves_line_then_queue() {
+        assert_eq!(
+            refusal_action(true, "/merge x", &entries(&["a", "b"]), ""),
+            Refusal::Save(entries(&["/merge x", "a", "b"]))
+        );
+    }
+
+    #[test]
+    fn terminated_refusal_saves_the_buffer_last() {
+        assert_eq!(
+            refusal_action(true, "/merge x", &entries(&["a"]), "typed"),
+            Refusal::Save(entries(&["/merge x", "a", "typed"]))
+        );
+    }
+
+    #[test]
+    fn terminated_refusal_drops_a_blank_buffer() {
+        assert_eq!(
+            refusal_action(true, "/merge x", &[], "  \n"),
+            Refusal::Save(entries(&["/merge x"]))
+        );
+    }
+
+    #[test]
+    fn live_refusal_restores_the_prompt() {
+        assert_eq!(
+            refusal_action(false, "/merge x", &entries(&["a"]), "typed"),
+            Refusal::Restore
+        );
     }
 
     #[test]
