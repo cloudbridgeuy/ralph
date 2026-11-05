@@ -25,6 +25,15 @@ Quit the thread chat. Main's chat stays open in its own terminal or Rex block. T
 - Press Ctrl-D on an empty prompt.
 - Press Ctrl-C at the prompt. It quits also when the draft has text. During a turn, Ctrl-C cancels the turn. It clears the draft only inside the queue editor.
 
+## Switching threads
+
+The `/thread <name>` and `/main` commands are not wired yet. The pure code is in `crates/core/src/chat_switch.rs`. It will leave the chat and start `ralph chat` again on the target.
+
+- `/thread <name>` takes one name. The name `main` means main. `/main` takes no arguments.
+- A switch to the thread you are in is refused. A merged or parked thread is refused. An unknown thread is allowed, and the switch creates it.
+- A switch is refused while a turn runs, or while workers or watches run. The message names them.
+- The new `ralph chat` gets `--store <main store>` first. It gets `--thread <name>` only for a thread. It keeps the other chat options.
+
 ## List threads
 
 ```bash
