@@ -89,6 +89,10 @@ pub fn merge_question(name: &ThreadName) -> String {
     )
 }
 
+pub fn merge_answer(answer: Option<bool>) -> Result<bool, String> {
+    answer.ok_or_else(|| "merge aborted; the command stays in the prompt.".to_string())
+}
+
 fn main_only(command: Command) -> String {
     let name = command.name();
     format!("{name} runs in main's chat. Run /main, then {name} <name>.")
@@ -107,6 +111,14 @@ mod tests {
     use super::*;
     use crate::chat_help::Command;
     use crate::chat_thread::ThreadName;
+
+    #[test]
+    fn only_an_answer_decides_the_merge() {
+        assert_eq!(merge_answer(Some(true)), Ok(true));
+        assert_eq!(merge_answer(Some(false)), Ok(false));
+        let aborted = merge_answer(None).unwrap_err();
+        assert!(aborted.starts_with("merge aborted"), "{aborted}");
+    }
 
     #[test]
     fn threads_without_arguments_lists() {

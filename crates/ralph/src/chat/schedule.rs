@@ -85,15 +85,23 @@ pub(super) fn ask_yes_no(
     read: &mut impl FnMut() -> Option<String>,
     out: &mut impl Write,
 ) -> bool {
+    ask_answer(question, read, out).unwrap_or(false)
+}
+
+pub(super) fn ask_answer(
+    question: impl Fn() -> String,
+    read: &mut impl FnMut() -> Option<String>,
+    out: &mut impl Write,
+) -> Option<bool> {
     loop {
         say_raw(out, &question());
         let Some(line) = read() else {
             say_raw(out, "\n");
-            return false;
+            return None;
         };
         match parse_answer(&line) {
-            Answer::Yes => return true,
-            Answer::No => return false,
+            Answer::Yes => return Some(true),
+            Answer::No => return Some(false),
             Answer::Ask => {}
         }
     }
@@ -235,6 +243,19 @@ mod tests {
             &mut out
         ));
         assert_eq!(String::from_utf8(out).unwrap().matches("go? ").count(), 3);
+    }
+
+    #[test]
+    fn a_closed_input_is_no_answer() {
+        let mut out = Vec::new();
+        assert_eq!(
+            ask_answer(|| "go? ".to_string(), &mut answers(&[]), &mut out),
+            None
+        );
+        assert_eq!(
+            ask_answer(|| "go? ".to_string(), &mut answers(&["no"]), &mut out),
+            Some(false)
+        );
     }
 
     #[test]

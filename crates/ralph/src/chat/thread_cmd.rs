@@ -1,4 +1,4 @@
-use crate::chat::schedule::{ask_yes_no, read_answer};
+use crate::chat::schedule::{ask_answer, read_answer};
 use crate::chat::thread::{
     config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, rebase_thread,
     running_ids, thread_dir,
@@ -7,7 +7,7 @@ use crate::cli::NAP_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_thread_cmd::{
-    merge_question, merging_notice, op_refusal, parked_message, ThreadOp,
+    merge_answer, merge_question, merging_notice, op_refusal, parked_message, ThreadOp,
 };
 use std::io;
 use std::path::Path;
@@ -16,7 +16,7 @@ pub(super) fn run(
     op: &ThreadOp,
     store_dir: &Path,
     in_thread: bool,
-    confirm: &mut impl FnMut(&str) -> bool,
+    confirm: &mut impl FnMut(&str) -> Option<bool>,
 ) -> Result<String, String> {
     if let Some(refusal) = op_refusal(in_thread, op) {
         return Err(refusal);
@@ -46,7 +46,7 @@ pub(super) fn run(
         } => {
             let running = running_ids(&main, name);
             merge_precheck(&main, name, &running)?;
-            if !confirm(&merge_question(name)) {
+            if !merge_answer(confirm(&merge_question(name)))? {
                 return Ok("merge cancelled.".to_string());
             }
             let running = running_ids(&main, name);
@@ -66,8 +66,8 @@ pub(super) fn run(
     }
 }
 
-pub(super) fn confirm(question: &str) -> bool {
-    ask_yes_no(|| question.to_string(), &mut read_answer, &mut io::stdout())
+pub(super) fn confirm(question: &str) -> Option<bool> {
+    ask_answer(|| question.to_string(), &mut read_answer, &mut io::stdout())
 }
 
 #[cfg(test)]
@@ -113,7 +113,7 @@ mod tests {
         let mut asked = 0;
         let mut confirm = |_: &str| {
             asked += 1;
-            false
+            Some(false)
         };
         let result = run(&merge_auth(), &main, false, &mut confirm);
         assert_eq!(result, Ok("merge cancelled.".to_string()));
@@ -121,10 +121,19 @@ mod tests {
     }
 
     #[test]
+    fn an_aborted_merge_question_is_refused_not_cancelled() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
+        let refusal = run(&merge_auth(), &main, false, &mut |_: &str| None).unwrap_err();
+        assert!(refusal.starts_with("merge aborted"), "{refusal}");
+    }
+
+    #[test]
     fn merging_an_unknown_thread_refuses_without_asking() {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("chat");
-        let mut confirm = |_: &str| -> bool { panic!("must not ask") };
+        let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
         let refusal = run(&merge_auth(), &main, false, &mut confirm).unwrap_err();
         assert!(refusal.starts_with("no thread auth"), "{refusal}");
     }
@@ -134,7 +143,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("chat");
         ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
-        let mut confirm = |_: &str| -> bool { panic!("must not ask") };
+        let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
         let refusal = run(&merge_auth(), &main, true, &mut confirm).unwrap_err();
         assert!(
             refusal.contains("Run /main, then /merge <name>."),
