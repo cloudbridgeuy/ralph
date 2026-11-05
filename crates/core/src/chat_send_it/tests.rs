@@ -802,8 +802,27 @@ fn the_judge_prompt_asks_the_step_question_for_one_step_result_call() {
 fn the_done_notice_counts_steps_turns_and_cost() {
     assert_eq!(
         done_notice(&plan(), &spent(7, 1.25)),
-        "send-it done: 4/4 steps in 7 turns, $1.25."
+        format!("send-it done: 4/4 steps in 7 turns, $1.25. {RESTART}")
     );
+}
+
+#[test]
+fn release_drops_only_the_run_s_own_approval_and_keeps_the_plan() {
+    let file = approved(plan());
+    let hash = plan_hash(&plan());
+    assert_eq!(
+        release(&file, &hash),
+        Some(RunFile {
+            plan: plan(),
+            approved: None,
+        })
+    );
+    assert_eq!(release(&file, "000000000000"), None);
+    let unapproved = RunFile {
+        approved: None,
+        ..file
+    };
+    assert_eq!(release(&unapproved, &hash), None);
 }
 
 #[test]
