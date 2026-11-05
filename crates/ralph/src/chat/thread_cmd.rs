@@ -6,7 +6,9 @@ use crate::chat::thread::{
 use crate::cli::NAP_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
-use ralph_core::chat_thread_cmd::{merge_question, op_refusal, parked_message, ThreadOp};
+use ralph_core::chat_thread_cmd::{
+    merge_question, merging_notice, op_refusal, parked_message, ThreadOp,
+};
 use std::io;
 use std::path::Path;
 
@@ -48,7 +50,7 @@ pub(super) fn run(
                 return Ok("merge cancelled.".to_string());
             }
             let running = running_ids(&main, name);
-            println!("merging {name} (one paid Haiku call)...");
+            println!("{}", merging_notice(name));
             let dir = thread_dir(&main, name);
             let curator = Curator {
                 kind: CallSite::Merge,

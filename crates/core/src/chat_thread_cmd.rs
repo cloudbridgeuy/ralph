@@ -79,6 +79,10 @@ pub fn is_cell_command(line: &str) -> bool {
     .any(|command| command.args(line).is_some())
 }
 
+pub fn merging_notice(name: &ThreadName) -> String {
+    format!("merging {name} (one paid Haiku call, up to 3 if the digest is refused)...")
+}
+
 pub fn merge_question(name: &ThreadName) -> String {
     format!(
         "Merge thread {name} into main? This makes one paid Haiku call, and up to 3 if the digest is refused. [y/n] "
@@ -353,5 +357,15 @@ mod tests {
         for line in ["/threadsx", "/merged", "hello"] {
             assert!(!is_cell_command(line), "{line}");
         }
+    }
+
+    #[test]
+    fn the_merging_notice_names_the_thread_and_the_retry_cost() {
+        let notice = merging_notice(&auth());
+        assert!(notice.contains("auth"), "{notice}");
+        assert!(
+            notice.contains("up to 3 if the digest is refused"),
+            "{notice}"
+        );
     }
 }
