@@ -56,7 +56,7 @@ ralph thread merge <name>
 ```
 
 - It makes one paid call to the Haiku model. The model writes a digest from a 200-line view of the thread.
-- The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph asks again up to 3 times when the digest is not valid. A failed merge changes nothing.
+- The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A failed merge changes nothing.
 
 Rebase merge:
 
