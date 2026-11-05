@@ -60,7 +60,7 @@ use crate::chat::queue::{
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
-use crate::chat::send_it::{took_over, Active, SendIt};
+use crate::chat::send_it::{Active, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
@@ -667,7 +667,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);
                         if let Some(active) = sending.take() {
-                            took_over(&active, &monitor);
+                            send_it.took_over(&active, &monitor);
                         }
                     }
                     Held::Quit => break,
@@ -714,6 +714,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 let (text, started) = send_it.go(shown_plan.as_deref(), typed_at_prompt);
                 println!("{text}");
                 if let Some(started) = started {
+                    shown_plan = None;
                     let driven = send_it.dispatch(started, &monitor);
                     (sending, pending) = (driven.active, driven.route);
                 }
