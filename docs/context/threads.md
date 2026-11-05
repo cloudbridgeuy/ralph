@@ -23,7 +23,7 @@ The thread starts from main's memory as it was at that moment. This point is the
 Quit the thread chat. Main's chat stays open in its own terminal or Rex block. There is no command to switch between chats.
 
 - Press Ctrl-D on an empty prompt.
-- Press Ctrl-C. It quits also when the draft has text.
+- Press Ctrl-C at the prompt. It quits also when the draft has text. While a turn runs, Ctrl-C clears the draft or cancels the turn instead.
 
 ## List threads
 
