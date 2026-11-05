@@ -120,16 +120,17 @@ pub(super) fn route_queued(text: String, editor: &mut Reedline, prompt: &ChatPro
     )
 }
 
-pub(super) fn save_unsent(editor: &mut Reedline, lost: &[String]) {
+pub(super) fn save_unsent(editor: &mut Reedline, lost: &[String]) -> bool {
+    let mut saved = true;
     for text in lost {
-        warn_if_err(
-            editor
-                .history_mut()
-                .save(HistoryItem::from_command_line(text.clone())),
-            "Failed to save chat history",
-        );
+        let result = editor
+            .history_mut()
+            .save(HistoryItem::from_command_line(text.clone()));
+        saved &= result.is_ok();
+        warn_if_err(result, "Failed to save chat history");
     }
     if let Some(notice) = exit_notice(lost.len()) {
         eprintln!("{notice}");
     }
+    saved
 }

@@ -27,12 +27,13 @@ Quit the thread chat. Main's chat stays open in its own terminal or Rex block. T
 
 ## Switching threads
 
-The `/thread <name>` and `/main` commands parse and show in `/help`. The chat does not act on them yet (the shell arm comes next). The pure code is in `crates/core/src/chat_switch.rs`. A switch will leave the chat and start `ralph chat` again on the target.
-- While a turn runs, the command waits in the queue like `/fork`.
-
+The `/thread <name>` and `/main` commands switch the chat in the same terminal. The chat leaves its loop and `chat::run` returns `ChatExit::Switch` (`crates/ralph/src/chat/switch.rs`). Only then does `execute_chat` in `main.rs` replace the process with `ralph chat` on the target (`exec`). Every Drop has run by then: the `CHAT` claim, the model session, the headless shutdown and the editor. The editor and `read_line` leave raw mode before the switch. The pure code is in `crates/core/src/chat_switch.rs`.
+- If the `exec` fails, ralph prints `could not start the new chat` and exits.
 - `/thread <name>` takes one name. The name `main` means main. `/main` takes no arguments.
 - A switch to the thread you are in is refused. A merged or parked thread is refused. An unknown thread is allowed, and the switch creates it.
-- A switch is refused while a turn runs, or while workers or watches run. The message names them.
+- A switch is refused while workers or watches run. The message names them. A switch typed during a turn waits in the queue and runs when the turn ends.
+- A switch is refused when the target chat is open elsewhere (main included). Queued text is saved to the prompt history first; if that save fails, the switch is cancelled.
+- The chat drops its model session and stops keepalive pings when it leaves. Saved schedules stay on disk and do not fire while you are away.
 - The new `ralph chat` gets `--store <main store>` first. It gets `--thread <name>` only for a thread. It keeps the other chat options.
 
 ## List threads

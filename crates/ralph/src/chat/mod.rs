@@ -34,6 +34,7 @@ mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
 mod suggestion;
+mod switch;
 mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
@@ -66,6 +67,7 @@ use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
+use crate::chat::switch::{check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
@@ -106,6 +108,7 @@ use ralph_core::chat_status::{orphan_hint, Route, Status};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
+use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::chat_thread::{open_check, ThreadName};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
@@ -123,6 +126,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+pub(crate) use switch::ChatExit;
 
 const STORE_ENV: &str = "RALPH_CHAT_STORE";
 const REX_SESSION_ENV: &str = "REX_SESSION";
@@ -131,9 +135,10 @@ pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
 pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
 
-pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     if let Some(ChatCommand::History(history)) = args.command {
-        return print_history(&chat_dir(args.store, args.thread.as_ref())?, &history);
+        print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
+        return Ok(ChatExit::Quit);
     }
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     signal::ignore_sigttou();
@@ -529,6 +534,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut sending: Option<Active> = None;
     let mut offered: Option<(String, u64)> = None;
     let mut carried: Vec<String> = Vec::new();
+    let mut leaving: Option<ChatExit> = None;
     let show_cells = |shown: &str| {
         let ctx = RenderContext::new(&agent_highlighter, color)
             .with_diff(diff_colors)
@@ -719,6 +725,47 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 shown_plan = screen.shown;
                 continue;
             }
+            Route::Switch(parsed) => {
+                let leave = Leave {
+                    store_dir: &store_dir,
+                    current: args.thread.as_ref(),
+                    monitor: &monitor,
+                };
+                let target = match parsed
+                    .and_then(|target| check_switch(&leave, &target).map(|()| target))
+                {
+                    Ok(target) => target,
+                    Err(refusal) => {
+                        println!("{refusal}");
+                        continue;
+                    }
+                };
+                let lost = std::mem::take(&mut carried);
+                if !save_unsent(&mut editor, &lost) {
+                    println!("could not save the queued text; the switch is cancelled.");
+                    carried = lost;
+                    continue;
+                }
+                warn_if_err(editor.sync_history(), "Failed to save chat history");
+                idle.store(false, Ordering::SeqCst);
+                *turn.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                leaving = Some(ChatExit::Switch(
+                    target,
+                    SwitchArgv {
+                        store: thread::config_root(&store_dir),
+                        name: args.name.clone(),
+                        recent_history_tokens: args.recent_history_tokens,
+                        wrap_width: args.wrap_width,
+                        skills: args.skills.clone(),
+                        permission_mode: args.permission_mode.clone(),
+                        worktree_dir: args.worktree_dir.clone(),
+                        no_inbox_sound: args.no_inbox_sound,
+                        no_inbox_notification: args.no_inbox_notification,
+                        skip_summary: args.skip_summary,
+                    },
+                ));
+                break;
+            }
             local => {
                 run_local(local, &local_route, || {
                     monitor.refresh(true);
@@ -811,7 +858,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Next::Nothing => {}
         }
     }
-    Ok(())
+    Ok(leaving.unwrap_or(ChatExit::Quit))
 }
 
 #[cfg(test)]

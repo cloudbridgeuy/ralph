@@ -161,7 +161,7 @@ fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
         .collect()
 }
 
-fn read_meta(dir: &Path) -> io::Result<ThreadMeta> {
+pub(super) fn read_meta(dir: &Path) -> io::Result<ThreadMeta> {
     let text = fs::read_to_string(dir.join(THREAD_FILE))?;
     serde_json::from_str(&text).map_err(io::Error::other)
 }
@@ -276,7 +276,7 @@ fn known_meta(dir: &Path, name: &ThreadName) -> Result<ThreadMeta, String> {
     read_meta(dir).map_err(|e| format!("thread {name}: {e}"))
 }
 
-fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
+pub(super) fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
     Store::new(dir.to_path_buf())
         .claim_chat()
         .map_err(|e| format!("could not claim thread {name}: {e}"))?

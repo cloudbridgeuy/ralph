@@ -96,7 +96,7 @@ fn main() -> ExitCode {
     })) {
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),
-        Commands::Chat(args) => chat::run(args),
+        Commands::Chat(args) => execute_chat(args),
         Commands::Wire(args) => wire::run(args),
         Commands::Thread(args) => chat::thread::run(args),
         Commands::Inbox(args) => inbox_post::run(args),
@@ -115,6 +115,20 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("Error: {}", e);
             ExitCode::FAILURE
+        }
+    }
+}
+
+fn execute_chat(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
+    match chat::run(args)? {
+        chat::ChatExit::Quit => Ok(()),
+        chat::ChatExit::Switch(target, opts) => {
+            use std::os::unix::process::CommandExt;
+            let exe = std::env::current_exe()?;
+            let failed = std::process::Command::new(exe)
+                .args(ralph_core::chat_switch::switch_argv(&opts, &target))
+                .exec();
+            Err(format!("could not start the new chat: {failed}").into())
         }
     }
 }
