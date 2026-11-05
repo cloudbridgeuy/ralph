@@ -766,7 +766,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 match op.and_then(|op| {
                     thread_cmd::run(&op, &store_dir, fork.is_some(), &mut thread_cmd::confirm)
                 }) {
-                    Ok(text) => println!("{text}"),
+                    Ok(text) => {
+                        println!("{text}");
+                        monitor.refresh(true);
+                    }
                     Err(refusal) => {
                         println!("{refusal}");
                         restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
