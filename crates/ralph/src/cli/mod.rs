@@ -232,7 +232,7 @@ pub enum ThreadCommand {
         name: ThreadName,
     },
     #[command(
-        about = "Squash a thread into main: one Haiku call writes a digest that reaches main's inbox; the thread stays read-only."
+        about = "Squash a thread into main: Haiku writes a digest (up to 3 calls) that reaches main's inbox; the thread stays read-only."
     )]
     Merge {
         #[arg(value_parser = ThreadName::parse)]
