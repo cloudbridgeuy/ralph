@@ -76,6 +76,7 @@ Squash merge:
 ralph thread merge <name>
 ```
 
+- In main's chat, type `/merge <name>`. It asks `[y/n]` first, because it makes a paid call. Any answer other than `y`, `yes`, `n` or `no` asks again; `n`, Ctrl-C or a closed input cancels with `merge cancelled.` After `y` it prints `merging <name> (one paid Haiku call)...` and runs in the foreground, so the prompt returns when it ends. It does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.`; the refusals of the shell command apply after the answer.
 - It makes one paid call to the Haiku model, and up to 3 if the model's digest is refused. The model writes a digest from a 200-line view of the thread.
 - The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing. If posting the digest to main's inbox fails, the thread stays merged and the error names `thread.json`, which holds the digest.
 
@@ -88,7 +89,7 @@ ralph thread merge <name> --rebase
 - It makes no model call.
 - It posts the thread's own memory view, at most 100 lines and 64 KB, with a header line. It is not a git rebase. No git command runs and no branch changes.
 - It refuses a thread with no messages. It refuses a block over 64 KB. Use the squash merge for these.
-- In main's chat, type `/merge <name> --rebase` for the same result. It asks no confirmation and makes no model call. It runs in main's chat only and does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.` The flag text is the `REBASE_FLAG` constant in `crates/core/src/chat_thread_cmd.rs`. `/merge <name>` without the flag is a usage error for now.
+- In main's chat, type `/merge <name> --rebase` for the same result. It asks no confirmation and makes no model call. It runs in main's chat only and does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.` The flag text is the `REBASE_FLAG` constant in `crates/core/src/chat_thread_cmd.rs`.
 
 Use the squash merge when you want a short digest. Use `--rebase` when you want main to see the memory view and you want no cost.
 

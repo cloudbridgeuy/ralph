@@ -763,7 +763,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 break;
             }
             Route::ThreadOp { op, line } => {
-                match op.and_then(|op| thread_cmd::run(&op, &store_dir, args.thread.is_some())) {
+                match op.and_then(|op| {
+                    thread_cmd::run(
+                        &op,
+                        &store_dir,
+                        args.thread.is_some(),
+                        &mut thread_cmd::confirm,
+                    )
+                }) {
                     Ok(text) => println!("{text}"),
                     Err(refusal) => {
                         println!("{refusal}");

@@ -1,10 +1,22 @@
+use crate::chat::schedule::read_answer;
 use crate::chat::thread::{
-    config_root, list, park_thread, pull_thread, rebase_thread, running_ids,
+    config_root, list, merge_thread, park_thread, pull_thread, rebase_thread, running_ids,
+    thread_dir,
 };
-use ralph_core::chat_thread_cmd::{op_refusal, ThreadOp};
+use crate::cli::NAP_TIMEOUT_SECS;
+use crate::{run_curator, Curator};
+use ralph_core::chat_memory::CallSite;
+use ralph_core::chat_thread_cmd::{merge_question, needs_confirm, op_refusal, ThreadOp};
+use ralph_core::schedule::{parse_answer, Answer};
+use std::io::{self, Write};
 use std::path::Path;
 
-pub(super) fn run(op: &ThreadOp, store_dir: &Path, in_thread: bool) -> Result<String, String> {
+pub(super) fn run(
+    op: &ThreadOp,
+    store_dir: &Path,
+    in_thread: bool,
+    confirm: &mut impl FnMut(&str) -> bool,
+) -> Result<String, String> {
     if let Some(refusal) = op_refusal(in_thread, op) {
         return Err(refusal);
     }
@@ -23,7 +35,82 @@ pub(super) fn run(op: &ThreadOp, store_dir: &Path, in_thread: bool) -> Result<St
         ThreadOp::Park(name) => {
             park_thread(&main, name, &running_ids(&main, name)).map(|()| format!("parked {name}"))
         }
-        ThreadOp::Rebase(name) => rebase_thread(&main, name, &running_ids(&main, name))
-            .map(|message| format!("rebased thread {name} into main's inbox\n{message}")),
+        ThreadOp::Merge { name, rebase: true } => {
+            rebase_thread(&main, name, &running_ids(&main, name))
+                .map(|message| format!("rebased thread {name} into main's inbox\n{message}"))
+        }
+        ThreadOp::Merge {
+            name,
+            rebase: false,
+        } => {
+            if needs_confirm(op) && !confirm(&merge_question(name)) {
+                return Ok("merge cancelled.".to_string());
+            }
+            println!("merging {name} (one paid Haiku call)...");
+            let dir = thread_dir(&main, name);
+            let curator = Curator {
+                kind: CallSite::Merge,
+                store: &dir,
+                run: None,
+                timeout: NAP_TIMEOUT_SECS,
+            };
+            merge_thread(
+                &main,
+                name,
+                &running_ids(&main, name),
+                &mut |prompt: &str| run_curator(prompt, &curator),
+            )
+            .map(|message| format!("merged thread {name} into main's inbox\n{message}"))
+        }
+    }
+}
+
+pub(super) fn confirm(question: &str) -> bool {
+    ask(question, &mut read_answer, &mut io::stdout())
+}
+
+fn ask(question: &str, read: &mut impl FnMut() -> Option<String>, out: &mut impl Write) -> bool {
+    loop {
+        let _ = write!(out, "{question}");
+        let _ = out.flush();
+        let Some(line) = read() else {
+            let _ = writeln!(out);
+            return false;
+        };
+        match parse_answer(&line) {
+            Answer::Yes => return true,
+            Answer::No => return false,
+            Answer::Ask => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn answers(lines: &[&str]) -> impl FnMut() -> Option<String> {
+        let mut lines: Vec<String> = lines.iter().rev().map(|l| l.to_string()).collect();
+        move || lines.pop()
+    }
+
+    #[test]
+    fn y_confirms_and_n_declines() {
+        let mut out = Vec::new();
+        assert!(ask("go? ", &mut answers(&["y"]), &mut out));
+        assert!(!ask("go? ", &mut answers(&["n"]), &mut out));
+    }
+
+    #[test]
+    fn another_answer_asks_again() {
+        let mut out = Vec::new();
+        assert!(ask("go? ", &mut answers(&["maybe", "", "yes"]), &mut out));
+        assert_eq!(String::from_utf8(out).unwrap().matches("go? ").count(), 3);
+    }
+
+    #[test]
+    fn a_closed_input_declines() {
+        let mut out = Vec::new();
+        assert!(!ask("go? ", &mut answers(&[]), &mut out));
     }
 }

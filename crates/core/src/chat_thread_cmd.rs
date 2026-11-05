@@ -13,7 +13,7 @@ pub enum ThreadOp {
     Ls,
     Pull(ThreadName),
     Park(ThreadName),
-    Rebase(ThreadName),
+    Merge { name: ThreadName, rebase: bool },
 }
 
 pub fn parse_thread_op(command: Command, args: &str) -> Result<ThreadOp, String> {
@@ -32,13 +32,13 @@ pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
         ThreadOp::Ls => None,
         ThreadOp::Pull(_) => in_thread.then(|| main_only(Command::Pull)),
         ThreadOp::Park(_) => in_thread.then(|| main_only(Command::Park)),
-        ThreadOp::Rebase(_) => in_thread.then(|| main_only(Command::Merge)),
+        ThreadOp::Merge { .. } => in_thread.then(|| main_only(Command::Merge)),
     }
 }
 
 fn merge_usage() -> String {
     format!(
-        "usage: /merge <name> {REBASE_FLAG} posts thread <name>'s memory view to main's inbox with no model call; run it in main's chat."
+        "usage: /merge <name> [{REBASE_FLAG}] merges thread <name> into main's inbox; {REBASE_FLAG} posts its memory view with no model call and no confirmation; run it in main's chat."
     )
 }
 
@@ -47,11 +47,24 @@ fn parse_merge(args: &str) -> Result<ThreadOp, String> {
         .split_whitespace()
         .partition(|word| *word == REBASE_FLAG);
     match (flags.len(), rest.as_slice()) {
-        (1, [word]) => ThreadName::parse(word)
-            .map(ThreadOp::Rebase)
+        (0 | 1, [word]) => ThreadName::parse(word)
+            .map(|name| ThreadOp::Merge {
+                name,
+                rebase: !flags.is_empty(),
+            })
             .map_err(|e| format!("{e}\n{}", merge_usage())),
         _ => Err(merge_usage()),
     }
+}
+
+pub fn needs_confirm(op: &ThreadOp) -> bool {
+    matches!(op, ThreadOp::Merge { rebase: false, .. })
+}
+
+pub fn merge_question(name: &ThreadName) -> String {
+    format!(
+        "Merge thread {name} into main? This makes one paid Haiku call, and up to 3 if the digest is refused. [y/n] "
+    )
 }
 
 fn main_only(command: Command) -> String {
@@ -175,49 +188,77 @@ mod tests {
         assert_eq!(op_refusal(false, &park), None);
     }
 
-    #[test]
-    fn merge_with_the_rebase_flag_in_either_place_rebases() {
-        let want = Ok(ThreadOp::Rebase(auth()));
-        let line = format!("auth {REBASE_FLAG}");
-        assert_eq!(parse_thread_op(Command::Merge, &line), want);
-        let line = format!("{REBASE_FLAG}  auth");
-        assert_eq!(parse_thread_op(Command::Merge, &line), want);
-    }
-
-    #[test]
-    fn merge_without_the_flag_or_a_name_or_with_extras_is_a_usage_error() {
-        let both = format!("auth other {REBASE_FLAG}");
-        let twice = format!("auth {REBASE_FLAG} {REBASE_FLAG}");
-        let only = REBASE_FLAG.to_string();
-        for args in ["auth", "", &only, &both, &twice] {
-            let err = parse_thread_op(Command::Merge, args).unwrap_err();
-            assert!(err.starts_with("usage: /merge <name> --rebase"), "{err}");
+    fn merge(rebase: bool) -> ThreadOp {
+        ThreadOp::Merge {
+            name: auth(),
+            rebase,
         }
     }
 
     #[test]
-    fn merge_usage_and_hint_use_the_flag_constant() {
+    fn merge_without_the_flag_squashes() {
+        assert_eq!(parse_thread_op(Command::Merge, " auth "), Ok(merge(false)));
+    }
+
+    #[test]
+    fn merge_with_the_rebase_flag_in_either_place_rebases() {
+        let line = format!("auth {REBASE_FLAG}");
+        assert_eq!(parse_thread_op(Command::Merge, &line), Ok(merge(true)));
+        let line = format!("{REBASE_FLAG}  auth");
+        assert_eq!(parse_thread_op(Command::Merge, &line), Ok(merge(true)));
+    }
+
+    #[test]
+    fn merge_without_a_name_or_with_extras_is_a_usage_error() {
+        let both = format!("auth other {REBASE_FLAG}");
+        let twice = format!("auth {REBASE_FLAG} {REBASE_FLAG}");
+        let only = REBASE_FLAG.to_string();
+        for args in ["", "auth other", &only, &both, &twice] {
+            let err = parse_thread_op(Command::Merge, args).unwrap_err();
+            assert!(err.starts_with("usage: /merge <name> [--rebase]"), "{err}");
+        }
+    }
+
+    #[test]
+    fn merge_usage_uses_the_flag_constant() {
         assert_eq!(REBASE_FLAG, "--rebase");
         let err = parse_thread_op(Command::Merge, "").unwrap_err();
-        assert!(err.contains(REBASE_FLAG), "{err}");
+        assert!(err.contains(&format!("[{REBASE_FLAG}]")), "{err}");
     }
 
     #[test]
     fn merge_with_a_bad_name_names_the_problem_and_the_usage() {
-        let line = format!("Bad_Name {REBASE_FLAG}");
-        let err = parse_thread_op(Command::Merge, &line).unwrap_err();
+        let err = parse_thread_op(Command::Merge, "Bad_Name").unwrap_err();
         assert!(err.contains("usage: /merge <name>"), "{err}");
         assert!(err.lines().count() > 1, "{err}");
     }
 
     #[test]
-    fn a_thread_chat_refuses_rebase_with_a_hint_and_main_allows_it() {
-        let rebase = ThreadOp::Rebase(auth());
-        assert_eq!(
-            op_refusal(true, &rebase),
-            Some("/merge runs in main's chat. Run /main, then /merge <name>.".to_string())
-        );
-        assert_eq!(op_refusal(false, &rebase), None);
+    fn a_thread_chat_refuses_both_merges_with_a_hint_and_main_allows_them() {
+        for rebase in [false, true] {
+            assert_eq!(
+                op_refusal(true, &merge(rebase)),
+                Some("/merge runs in main's chat. Run /main, then /merge <name>.".to_string())
+            );
+            assert_eq!(op_refusal(false, &merge(rebase)), None);
+        }
+    }
+
+    #[test]
+    fn only_the_squash_merge_needs_a_confirmation() {
+        assert!(needs_confirm(&merge(false)));
+        assert!(!needs_confirm(&merge(true)));
+        for op in [ThreadOp::Ls, ThreadOp::Pull(auth()), ThreadOp::Park(auth())] {
+            assert!(!needs_confirm(&op), "{op:?}");
+        }
+    }
+
+    #[test]
+    fn the_merge_question_names_the_thread_the_cost_and_the_answer_keys() {
+        let question = merge_question(&auth());
+        assert!(question.contains("auth"), "{question}");
+        assert!(question.contains("Haiku"), "{question}");
+        assert!(question.ends_with("[y/n] "), "{question}");
     }
 
     #[test]

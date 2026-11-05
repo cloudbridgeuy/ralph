@@ -224,10 +224,16 @@ impl Command {
                 "/park <name>",
                 "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /main first); the thread's saved watches and schedules wait; ralph thread revive <name> opens it again; while a turn runs it waits in the queue",
             )],
-            Command::Merge => &[(
-                "/merge <name> --rebase",
-                "post thread <name>'s memory view (at most 100 lines and 64 KB) to main's inbox and make the thread read-only, like ralph thread merge --rebase; no model call and no confirmation; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it has no messages, when it is merged or unknown, and inside a thread's chat (run /main first); while a turn runs it waits in the queue",
-            )],
+            Command::Merge => &[
+                (
+                    "/merge <name>",
+                    "squash thread <name> into a digest in main's inbox and make the thread read-only, like ralph thread merge; asks y/n first because it makes one paid Haiku call, up to 3 if the digest is refused; runs in the foreground, so the prompt returns when it ends; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it is merged or unknown, and inside a thread's chat (run /main first); while a turn runs it waits in the queue",
+                ),
+                (
+                    "/merge <name> --rebase",
+                    "post thread <name>'s memory view (at most 100 lines and 64 KB) to main's inbox and make the thread read-only; no model call and no confirmation; refused for a thread with no messages, plus the /merge <name> refusals",
+                ),
+            ],
             Command::Main => &[(
                 "/main",
                 "switch this chat to main in the same terminal, like /thread main; takes no arguments; refused in main and under the same limits as /thread",

@@ -18,7 +18,7 @@ use std::io::{self, Write};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-fn read_answer() -> Option<String> {
+pub(super) fn read_answer() -> Option<String> {
     let interrupt = signal::interrupt_flag();
     interrupt.store(false, Ordering::SeqCst);
     loop {
