@@ -27,7 +27,8 @@ Quit the thread chat. Main's chat stays open in its own terminal or Rex block. T
 
 ## Switching threads
 
-The `/thread <name>` and `/main` commands are not wired yet. The pure code is in `crates/core/src/chat_switch.rs`. It will leave the chat and start `ralph chat` again on the target.
+The `/thread <name>` and `/main` commands parse and show in `/help`. The chat does not act on them yet (the shell arm comes next). The pure code is in `crates/core/src/chat_switch.rs`. A switch will leave the chat and start `ralph chat` again on the target.
+- While a turn runs, the command waits in the queue like `/fork`.
 
 - `/thread <name>` takes one name. The name `main` means main. `/main` takes no arguments.
 - A switch to the thread you are in is refused. A merged or parked thread is refused. An unknown thread is allowed, and the switch creates it.

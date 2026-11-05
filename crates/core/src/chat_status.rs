@@ -5,6 +5,7 @@ use crate::chat_memory::{history_tool, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
+use crate::chat_switch::{parse_main_args, parse_switch_args, SwitchTarget};
 use crate::chat_thread::{parse_fork_args, ForkCommand};
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
@@ -100,6 +101,7 @@ pub enum Route {
     Nudge(NudgeCommand),
     SendIt(SendItCommand),
     Fork(ForkCommand),
+    Switch(Result<SwitchTarget, String>),
     History(Result<MemoryCall, String>),
     View(ViewArgs),
     Help,
@@ -129,6 +131,7 @@ impl Route {
             | Route::Nudge(_)
             | Route::SendIt(_)
             | Route::Fork(_)
+            | Route::Switch(_)
             | Route::View(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
@@ -175,6 +178,8 @@ pub fn route_input(
                 Command::Nudge => Route::Nudge(parse_nudge_args(args)),
                 Command::SendIt => Route::SendIt(parse_send_it_args(args)),
                 Command::Fork => Route::Fork(parse_fork_args(args)),
+                Command::Thread => Route::Switch(parse_switch_args(args)),
+                Command::Main => Route::Switch(parse_main_args(args)),
                 Command::Config => Route::Config,
                 Command::View => Route::View(parse_view_args(args)),
                 Command::Read | Command::Search => {

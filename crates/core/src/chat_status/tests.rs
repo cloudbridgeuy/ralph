@@ -844,6 +844,30 @@ fn route_input_parses_fork_and_fork_waits_for_the_turn() {
 }
 
 #[test]
+fn route_input_parses_thread_and_main_switches() {
+    use crate::chat_switch::SwitchTarget;
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    let auth = crate::chat_thread::ThreadName::parse("auth").unwrap();
+    assert_eq!(
+        route("/thread auth"),
+        Route::Switch(Ok(SwitchTarget::Thread(auth)))
+    );
+    assert_eq!(route("/thread main"), Route::Switch(Ok(SwitchTarget::Main)));
+    assert_eq!(route("/main"), Route::Switch(Ok(SwitchTarget::Main)));
+    assert!(matches!(route("/thread"), Route::Switch(Err(_))));
+    assert!(matches!(route("/main now"), Route::Switch(Err(_))));
+    assert_eq!(route("/threads"), Route::Send("/threads".into()));
+    assert_eq!(route("/mainx"), Route::Send("/mainx".into()));
+}
+
+#[test]
+fn a_switch_waits_for_the_turn() {
+    use crate::chat_switch::SwitchTarget;
+    assert!(!Route::Switch(Ok(SwitchTarget::Main)).runs_mid_turn());
+    assert!(!Route::Switch(Err("usage".into())).runs_mid_turn());
+}
+
+#[test]
 fn route_input_parses_view_commands() {
     let route = |line: &str| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     assert_eq!(route("/view"), Route::View(ViewArgs::Usage));

@@ -21,6 +21,8 @@ pub enum Command {
     Nudge,
     SendIt,
     Fork,
+    Thread,
+    Main,
     Config,
     View,
     Read,
@@ -30,7 +32,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 16] = [
+    pub const ALL: [Command; 18] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -41,6 +43,8 @@ impl Command {
         Command::Nudge,
         Command::SendIt,
         Command::Fork,
+        Command::Thread,
+        Command::Main,
         Command::Config,
         Command::View,
         Command::Read,
@@ -61,6 +65,8 @@ impl Command {
             Command::Nudge => "/nudge",
             Command::SendIt => "/send-it",
             Command::Fork => "/fork",
+            Command::Thread => "/thread",
+            Command::Main => "/main",
             Command::Config => "/config",
             Command::View => "/view",
             Command::Read => "/read",
@@ -189,6 +195,14 @@ impl Command {
             Command::Fork => &[(
                 "/fork <name>",
                 "open thread <name> in a new Rex block next to this chat, on this chat's store; main's chat only; refused when the thread is merged, parked or already open; outside Rex it prints the command to run instead; while a turn runs it waits in the queue",
+            )],
+            Command::Thread => &[(
+                "/thread <name>",
+                "switch this chat to thread <name> in the same terminal: the chat quits and ralph chat starts again on the thread; /thread main returns to main; an unknown name creates the thread; refused when the thread is merged, parked or open elsewhere, or while a turn, workers or watches run; scheduled tasks stay saved and do not fire while you are away; while a turn runs it waits in the queue",
+            )],
+            Command::Main => &[(
+                "/main",
+                "switch this chat to main in the same terminal, like /thread main; takes no arguments; refused in main and under the same limits as /thread",
             )],
             Command::Config => &[(
                 "/config",

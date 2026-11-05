@@ -84,6 +84,8 @@ fn lists_hold_every_variant() {
             Nudge,
             SendIt,
             Fork,
+            Thread,
+            Main,
             Config,
             View,
             Read,
