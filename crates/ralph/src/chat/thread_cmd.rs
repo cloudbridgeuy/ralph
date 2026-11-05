@@ -1,4 +1,6 @@
-use crate::chat::thread::{config_root, list, park_thread, pull_thread, running_ids};
+use crate::chat::thread::{
+    config_root, list, park_thread, pull_thread, rebase_thread, running_ids,
+};
 use ralph_core::chat_thread_cmd::{op_refusal, ThreadOp};
 use std::path::Path;
 
@@ -21,5 +23,7 @@ pub(super) fn run(op: &ThreadOp, store_dir: &Path, in_thread: bool) -> Result<St
         ThreadOp::Park(name) => {
             park_thread(&main, name, &running_ids(&main, name)).map(|()| format!("parked {name}"))
         }
+        ThreadOp::Rebase(name) => rebase_thread(&main, name, &running_ids(&main, name))
+            .map(|message| format!("rebased thread {name} into main's inbox\n{message}")),
     }
 }

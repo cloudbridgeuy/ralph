@@ -1,6 +1,7 @@
 use crate::chat_help::Command;
 use crate::chat_thread::ThreadName;
 
+pub const REBASE_FLAG: &str = "--rebase";
 const THREADS_USAGE: &str = "usage: /threads takes no arguments and lists the threads.";
 const PARK_USAGE: &str =
     "usage: /park <name> stops thread <name> from opening; run it in main's chat.";
@@ -12,6 +13,7 @@ pub enum ThreadOp {
     Ls,
     Pull(ThreadName),
     Park(ThreadName),
+    Rebase(ThreadName),
 }
 
 pub fn parse_thread_op(command: Command, args: &str) -> Result<ThreadOp, String> {
@@ -20,6 +22,7 @@ pub fn parse_thread_op(command: Command, args: &str) -> Result<ThreadOp, String>
         Command::Threads => Err(THREADS_USAGE.to_string()),
         Command::Pull => thread_arg(PULL_USAGE, args).map(ThreadOp::Pull),
         Command::Park => thread_arg(PARK_USAGE, args).map(ThreadOp::Park),
+        Command::Merge => parse_merge(args),
         other => Err(format!("{} is not a thread command.", other.name())),
     }
 }
@@ -29,6 +32,25 @@ pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
         ThreadOp::Ls => None,
         ThreadOp::Pull(_) => in_thread.then(|| main_only(Command::Pull)),
         ThreadOp::Park(_) => in_thread.then(|| main_only(Command::Park)),
+        ThreadOp::Rebase(_) => in_thread.then(|| main_only(Command::Merge)),
+    }
+}
+
+fn merge_usage() -> String {
+    format!(
+        "usage: /merge <name> {REBASE_FLAG} posts thread <name>'s memory view to main's inbox with no model call; run it in main's chat."
+    )
+}
+
+fn parse_merge(args: &str) -> Result<ThreadOp, String> {
+    let (flags, rest): (Vec<&str>, Vec<&str>) = args
+        .split_whitespace()
+        .partition(|word| *word == REBASE_FLAG);
+    match (flags.len(), rest.as_slice()) {
+        (1, [word]) => ThreadName::parse(word)
+            .map(ThreadOp::Rebase)
+            .map_err(|e| format!("{e}\n{}", merge_usage())),
+        _ => Err(merge_usage()),
     }
 }
 
@@ -151,6 +173,51 @@ mod tests {
             Some("/park runs in main's chat. Run /main, then /park <name>.".to_string())
         );
         assert_eq!(op_refusal(false, &park), None);
+    }
+
+    #[test]
+    fn merge_with_the_rebase_flag_in_either_place_rebases() {
+        let want = Ok(ThreadOp::Rebase(auth()));
+        let line = format!("auth {REBASE_FLAG}");
+        assert_eq!(parse_thread_op(Command::Merge, &line), want);
+        let line = format!("{REBASE_FLAG}  auth");
+        assert_eq!(parse_thread_op(Command::Merge, &line), want);
+    }
+
+    #[test]
+    fn merge_without_the_flag_or_a_name_or_with_extras_is_a_usage_error() {
+        let both = format!("auth other {REBASE_FLAG}");
+        let twice = format!("auth {REBASE_FLAG} {REBASE_FLAG}");
+        let only = REBASE_FLAG.to_string();
+        for args in ["auth", "", &only, &both, &twice] {
+            let err = parse_thread_op(Command::Merge, args).unwrap_err();
+            assert!(err.starts_with("usage: /merge <name> --rebase"), "{err}");
+        }
+    }
+
+    #[test]
+    fn merge_usage_and_hint_use_the_flag_constant() {
+        assert_eq!(REBASE_FLAG, "--rebase");
+        let err = parse_thread_op(Command::Merge, "").unwrap_err();
+        assert!(err.contains(REBASE_FLAG), "{err}");
+    }
+
+    #[test]
+    fn merge_with_a_bad_name_names_the_problem_and_the_usage() {
+        let line = format!("Bad_Name {REBASE_FLAG}");
+        let err = parse_thread_op(Command::Merge, &line).unwrap_err();
+        assert!(err.contains("usage: /merge <name>"), "{err}");
+        assert!(err.lines().count() > 1, "{err}");
+    }
+
+    #[test]
+    fn a_thread_chat_refuses_rebase_with_a_hint_and_main_allows_it() {
+        let rebase = ThreadOp::Rebase(auth());
+        assert_eq!(
+            op_refusal(true, &rebase),
+            Some("/merge runs in main's chat. Run /main, then /merge <name>.".to_string())
+        );
+        assert_eq!(op_refusal(false, &rebase), None);
     }
 
     #[test]

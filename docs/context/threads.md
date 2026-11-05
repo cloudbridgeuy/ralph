@@ -88,6 +88,7 @@ ralph thread merge <name> --rebase
 - It makes no model call.
 - It posts the thread's own memory view, at most 100 lines and 64 KB, with a header line. It is not a git rebase. No git command runs and no branch changes.
 - It refuses a thread with no messages. It refuses a block over 64 KB. Use the squash merge for these.
+- In main's chat, type `/merge <name> --rebase` for the same result. It asks no confirmation and makes no model call. It runs in main's chat only and does not leave the chat. In a thread's chat it refuses with `Run /main, then /merge <name>.` The flag text is the `REBASE_FLAG` constant in `crates/core/src/chat_thread_cmd.rs`. `/merge <name>` without the flag is a usage error for now.
 
 Use the squash merge when you want a short digest. Use `--rebase` when you want main to see the memory view and you want no cost.
 
@@ -148,7 +149,7 @@ Each message is quoted in its stable part. `<name>` is the thread. The checks ar
 | `thread <name> is merged into main` | You opened, forked, dropped, parked, revived, pulled or merged a merged thread (`merged_check`). | None. Read it with `history`. |
 | `thread <name> is parked` | You opened, forked or parked a parked thread (`open_check`). | Run `ralph thread revive <name>`. |
 | `thread <name> is not parked` | `revive` found a thread that is not parked. | None. |
-| `/pull runs in main's chat.` or `/park runs in main's chat.` | You typed `/pull` or `/park` in a thread's chat (`op_refusal` in `crates/core/src/chat_thread_cmd.rs`). | Run `/main`, then the same command with the name. |
+| `/pull runs in main's chat.`, `/park runs in main's chat.` or `/merge runs in main's chat.` | You typed `/pull`, `/park` or `/merge` in a thread's chat (`op_refusal` in `crates/core/src/chat_thread_cmd.rs`). | Run `/main`, then the same command with the name. |
 | `no thread <name>` | The name is unknown. | Run `ralph thread ls`. |
 | `#N is after this thread's fork point` | A thread read a main id newer than its fork point. | Run `ralph thread pull <name>`, then reopen the chat. |
 

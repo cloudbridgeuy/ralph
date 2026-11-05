@@ -25,6 +25,7 @@ pub enum Command {
     Threads,
     Pull,
     Park,
+    Merge,
     Main,
     Config,
     View,
@@ -35,7 +36,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 21] = [
+    pub const ALL: [Command; 22] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -50,6 +51,7 @@ impl Command {
         Command::Threads,
         Command::Pull,
         Command::Park,
+        Command::Merge,
         Command::Main,
         Command::Config,
         Command::View,
@@ -75,6 +77,7 @@ impl Command {
             Command::Threads => "/threads",
             Command::Pull => "/pull",
             Command::Park => "/park",
+            Command::Merge => "/merge",
             Command::Main => "/main",
             Command::Config => "/config",
             Command::View => "/view",
@@ -220,6 +223,10 @@ impl Command {
             Command::Park => &[(
                 "/park <name>",
                 "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /main first); the thread's saved watches and schedules wait; ralph thread revive <name> opens it again; while a turn runs it waits in the queue",
+            )],
+            Command::Merge => &[(
+                "/merge <name> --rebase",
+                "post thread <name>'s memory view (at most 100 lines and 64 KB) to main's inbox and make the thread read-only, like ralph thread merge --rebase; no model call and no confirmation; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it has no messages, when it is merged or unknown, and inside a thread's chat (run /main first); while a turn runs it waits in the queue",
             )],
             Command::Main => &[(
                 "/main",
