@@ -360,11 +360,8 @@ fn untoned(text: &str) -> String {
 }
 
 fn is_newer(status_at: &str, report_at: &str) -> bool {
-    match (
-        DateTime::parse_from_rfc3339(status_at),
-        DateTime::parse_from_rfc3339(report_at),
-    ) {
-        (Ok(status), Ok(report)) => status > report,
+    match (instant(status_at), instant(report_at)) {
+        (Some(status), Some(report)) => status > report,
         _ => false,
     }
 }
