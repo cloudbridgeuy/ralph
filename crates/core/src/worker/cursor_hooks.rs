@@ -8,6 +8,7 @@ const SHELL_EVENT: &str = "beforeShellExecution";
 const BRIDGE_ARGS: &str = " hook-bridge --socket ";
 const DENY: &str = "deny";
 pub const BRIDGE_TIMEOUT: Duration = Duration::from_secs(120);
+const CURSOR_HOOK_TIMEOUT_SECS: u64 = 150;
 
 #[cfg(test)]
 mod tests;
@@ -76,7 +77,11 @@ pub fn add_bridge_hook(existing: Option<&str>, command: &str) -> String {
         config["hooks"] = json!({});
     }
     let mut entries = without_bridge(&config["hooks"][SHELL_EVENT]);
-    entries.push(json!({ "command": command }));
+    entries.push(json!({
+        "command": command,
+        "timeout": CURSOR_HOOK_TIMEOUT_SECS,
+        "failClosed": true,
+    }));
     config["hooks"][SHELL_EVENT] = Value::Array(entries);
     config.to_string()
 }

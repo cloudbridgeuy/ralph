@@ -8,6 +8,10 @@ fn ours() -> String {
     bridge_hook_command(Path::new("/bin/ralph"), Path::new("/run/w1/hook.sock"))
 }
 
+fn entry() -> Value {
+    json!({"command": ours(), "timeout": 150, "failClosed": true})
+}
+
 fn parsed(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
 }
@@ -27,18 +31,20 @@ fn the_bridge_command_quotes_both_paths() {
 
 #[test]
 fn adding_to_no_file_builds_the_verify_hook_shape() {
-    let verify_command = parsed(CURSOR_VERIFY_HOOKS)["hooks"]["beforeShellExecution"][0]["command"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let built = parsed(&add_bridge_hook(None, &ours()));
+    assert_eq!(built["version"], parsed(CURSOR_VERIFY_HOOKS)["version"]);
     assert_eq!(
-        parsed(&add_bridge_hook(None, &verify_command)),
-        parsed(CURSOR_VERIFY_HOOKS)
+        built,
+        json!({"version": 1, "hooks": {"beforeShellExecution": [entry()]}})
     );
-    assert_eq!(
-        parsed(&add_bridge_hook(None, &ours())),
-        json!({"version": 1, "hooks": {"beforeShellExecution": [{"command": ours()}]}})
-    );
+}
+
+#[test]
+fn cursor_fails_closed_after_the_bridge_timeout() {
+    let built = shell_hooks(&add_bridge_hook(None, &ours()));
+    assert_eq!(built[0]["failClosed"], true);
+    let cursor_secs = built[0]["timeout"].as_u64().unwrap_or_default();
+    assert!(cursor_secs > BRIDGE_TIMEOUT.as_secs(), "{cursor_secs}");
 }
 
 #[test]
@@ -60,7 +66,7 @@ fn adding_keeps_other_entries_events_and_keys() {
     );
     assert_eq!(
         merged["hooks"]["beforeShellExecution"],
-        json!([{"command": "user-check.sh"}, {"command": ours()}])
+        json!([{"command": "user-check.sh"}, entry()])
     );
 }
 
@@ -77,7 +83,7 @@ fn adding_again_or_over_a_stale_bridge_keeps_one_bridge_entry() {
     );
     assert_eq!(
         shell_hooks(&add_bridge_hook(Some(&stale), &ours())),
-        json!([{"command": ours()}])
+        json!([entry()])
     );
 }
 
@@ -86,14 +92,14 @@ fn adding_replaces_an_unreadable_file() {
     for existing in ["not json", "[]", "null", r#"{"hooks": []}"#] {
         assert_eq!(
             shell_hooks(&add_bridge_hook(Some(existing), &ours())),
-            json!([{"command": ours()}]),
+            json!([entry()]),
             "{existing}"
         );
     }
     let bad_event = r#"{"version": 1, "hooks": {"beforeShellExecution": {}}}"#;
     assert_eq!(
         shell_hooks(&add_bridge_hook(Some(bad_event), &ours())),
-        json!([{"command": ours()}])
+        json!([entry()])
     );
 }
 
