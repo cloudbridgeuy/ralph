@@ -79,6 +79,8 @@ struct Tokens {
     cache_write: u64,
     write_5m: Option<u64>,
     write_1h: Option<u64>,
+    partial_5m: bool,
+    partial_1h: bool,
     reasoning: Option<u64>,
 }
 
@@ -91,6 +93,8 @@ impl Tokens {
             cache_write: line.cache_creation_input_tokens,
             write_5m: line.cache_write_5m,
             write_1h: line.cache_write_1h,
+            partial_5m: line.cache_write_5m.is_none(),
+            partial_1h: line.cache_write_1h.is_none(),
             reasoning: line.reasoning_tokens,
         }
     }
@@ -103,6 +107,8 @@ impl Tokens {
             cache_write: self.cache_write.saturating_add(other.cache_write),
             write_5m: either_sum(self.write_5m, other.write_5m),
             write_1h: either_sum(self.write_1h, other.write_1h),
+            partial_5m: self.partial_5m || other.partial_5m,
+            partial_1h: self.partial_1h || other.partial_1h,
             reasoning: either_sum(self.reasoning, other.reasoning),
         }
     }
@@ -391,6 +397,13 @@ fn maybe(n: Option<u64>) -> String {
     n.map_or(MISSING.to_string(), count)
 }
 
+fn tier(known: Option<u64>, partial: bool) -> String {
+    match (known, partial) {
+        (Some(n), true) => format!("{}+", count(n)),
+        (known, _) => maybe(known),
+    }
+}
+
 fn cells(row: &CostRow) -> [String; 12] {
     let tokens = row.tokens;
     [
@@ -401,8 +414,8 @@ fn cells(row: &CostRow) -> [String; 12] {
         count(tokens.output),
         count(tokens.cache_read),
         count(tokens.cache_write),
-        maybe(tokens.write_5m),
-        maybe(tokens.write_1h),
+        tier(tokens.write_5m, tokens.partial_5m),
+        tier(tokens.write_1h, tokens.partial_1h),
         maybe(tokens.reasoning),
         row.usd.text(),
         row.harness_usd.text(),

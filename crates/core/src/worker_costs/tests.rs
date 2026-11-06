@@ -453,7 +453,7 @@ fn table_totals_main_and_computed_worker_cost() {
     );
     assert_eq!(
         lines[4],
-        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20 | 130 | – | ~0.60 | 1.50+ |"
+        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20+ | 130 | – | ~0.60 | 1.50+ |"
     );
 }
 
@@ -530,4 +530,59 @@ fn builtin_prices_list_each_openai_model_once() {
     };
     assert_eq!(rows(ProviderId::OpenAi), 1);
     assert_eq!(rows(ProviderId::Anthropic), 1);
+}
+
+fn legacy_worker(id: &str, session: &str, model: &str) -> Value {
+    let mut row = worker(id, session, model);
+    let object = row.as_object_mut().unwrap();
+    object.remove("cache_write_5m");
+    object.remove("cache_write_1h");
+    row
+}
+
+#[test]
+fn a_group_with_no_recorded_tiers_shows_unknown_5m_and_1h() {
+    let rows = rows_of(&jsonl(&[legacy_worker("GUZ-1", "s1", "claude-opus-5-5")]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!((cells[7].as_str(), cells[8].as_str()), ("–", "–"));
+}
+
+#[test]
+fn a_group_mixing_recorded_and_unrecorded_tiers_marks_the_sum_partial() {
+    let rows = rows_of(&jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        legacy_worker("GUZ-2", "s2", "claude-opus-5-5"),
+    ]));
+    let row = find(&rows, "claude", "claude-opus-5-5");
+    let cells = cells(row);
+    assert_eq!((cells[7].as_str(), cells[8].as_str()), ("20+", "30+"));
+}
+
+#[test]
+fn a_group_with_every_tier_recorded_has_no_partial_mark() {
+    let rows = rows_of(&jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        worker("GUZ-2", "s2", "claude-opus-5-5"),
+    ]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!((cells[7].as_str(), cells[8].as_str()), ("40", "60"));
+}
+
+#[test]
+fn a_recorded_zero_tier_is_a_known_zero() {
+    let mut row = worker("GUZ-1", "s1", "claude-opus-5-5");
+    row["cache_write_5m"] = json!(0);
+    let rows = rows_of(&jsonl(&[row]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!(cells[7], "0");
+}
+
+#[test]
+fn the_total_row_marks_a_partial_tier_from_any_group() {
+    let rows = rows_of(&jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        legacy_worker("GUZ-2", "s2", "claude-sonnet-5-5"),
+    ]));
+    let total = cells(&total_row(&rows));
+    assert_eq!((total[7].as_str(), total[8].as_str()), ("20+", "30+"));
 }
