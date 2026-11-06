@@ -10,11 +10,11 @@ use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallSite, Entry, MemoryCall, Tree, ViewSplit};
 use ralph_core::chat_thread::{
-    digest_with, drop_message, fork_check, fork_launch, guard_check, label_item, ls_counts,
-    merge_prompt, merged_check, merged_report, open_check, pull_message, revive_check,
-    thread_split, view_block, view_report, ForkCommand, ForkLaunch, ForkSpawn, Guarded, Live,
-    Merged, Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
-    VIEW_BLOCK_LINES,
+    digest_with, drop_message, empty_list_message, fork_check, fork_launch, guard_check,
+    label_item, ls_counts, merge_prompt, merged_check, merged_report, open_check, pull_message,
+    revive_check, thread_split, view_block, view_report, ForkCommand, ForkLaunch, ForkSpawn,
+    Guarded, Live, Merged, Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR,
+    THREAD_FILE, VIEW_BLOCK_LINES,
 };
 use ralph_core::chat_thread_cmd::{parked_message, view_posted_message};
 use ralph_core::schedule_request::SCHEDULE_DIR;
@@ -116,7 +116,8 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         ThreadCommand::Ls => {
             let rows = list(&main, &|name| running_ids(&main, name).len())?;
-            println!("{}", if rows.is_empty() { "no threads" } else { &rows });
+            let empty = rows.is_empty().then(|| empty_list_message(&main));
+            println!("{}", empty.unwrap_or(rows));
         }
         ThreadCommand::Drop { name } => {
             println!("{}", drop_thread(&main, &name, &running_ids(&main, &name))?);

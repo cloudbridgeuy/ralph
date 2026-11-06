@@ -108,6 +108,10 @@ pub fn pull_message(name: &ThreadName, from: usize, to: usize) -> String {
     }
 }
 
+pub fn empty_list_message(store: &std::path::Path) -> String {
+    format!("no threads in {}", store.display())
+}
+
 pub fn refuse_thread_report(id: &str) -> Result<(), String> {
     if !id.starts_with(THREAD_REPORT_PREFIX) {
         return Ok(());
@@ -454,6 +458,12 @@ mod tests {
 
     fn name(s: &str) -> ThreadName {
         ThreadName::parse(s).unwrap()
+    }
+
+    #[test]
+    fn empty_list_names_the_store_it_read() {
+        let message = empty_list_message("/h/chat".as_ref());
+        assert_eq!(message, "no threads in /h/chat");
     }
 
     #[test]
