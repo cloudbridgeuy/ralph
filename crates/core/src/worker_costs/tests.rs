@@ -608,3 +608,37 @@ fn the_baseline_is_the_last_cost_before_the_window() {
     assert!(baseline(&rows[3..], since).abs() < 1e-9);
     assert!(baseline(&rows, None).abs() < 1e-9);
 }
+
+fn with_reasoning(mut row: Value, tokens: u64) -> Value {
+    row["reasoning_tokens"] = json!(tokens);
+    row
+}
+
+#[test]
+fn a_group_mixing_recorded_and_unrecorded_reasoning_marks_the_sum_partial() {
+    let rows = rows_of(&jsonl(&[
+        with_reasoning(worker("GUZ-1", "s1", "claude-opus-5-5"), 4),
+        worker("GUZ-2", "s2", "claude-opus-5-5"),
+    ]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!(cells[9], "4+");
+}
+
+#[test]
+fn reasoning_recorded_by_every_row_has_no_partial_mark() {
+    let rows = rows_of(&jsonl(&[
+        with_reasoning(worker("GUZ-1", "s1", "claude-opus-5-5"), 4),
+        with_reasoning(worker("GUZ-2", "s2", "claude-opus-5-5"), 5),
+    ]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!(cells[9], "9");
+}
+
+#[test]
+fn the_total_row_marks_partial_reasoning_from_any_group() {
+    let rows = rows_of(&jsonl(&[
+        with_reasoning(worker("GUZ-1", "s1", "claude-opus-5-5"), 4),
+        worker("GUZ-2", "s2", "claude-sonnet-5-5"),
+    ]));
+    assert_eq!(cells(&total_row(&rows))[9], "4+");
+}

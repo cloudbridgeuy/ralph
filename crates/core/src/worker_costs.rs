@@ -85,6 +85,7 @@ struct Tokens {
     write_1h: Option<u64>,
     partial_5m: bool,
     partial_1h: bool,
+    partial_reasoning: bool,
     reasoning: Option<u64>,
 }
 
@@ -99,6 +100,7 @@ impl Tokens {
             write_1h: line.cache_write_1h,
             partial_5m: line.cache_write_5m.is_none(),
             partial_1h: line.cache_write_1h.is_none(),
+            partial_reasoning: line.reasoning_tokens.is_none(),
             reasoning: line.reasoning_tokens,
         }
     }
@@ -113,6 +115,7 @@ impl Tokens {
             write_1h: either_sum(self.write_1h, other.write_1h),
             partial_5m: self.partial_5m || other.partial_5m,
             partial_1h: self.partial_1h || other.partial_1h,
+            partial_reasoning: self.partial_reasoning || other.partial_reasoning,
             reasoning: either_sum(self.reasoning, other.reasoning),
         }
     }
@@ -485,7 +488,7 @@ fn cells(row: &CostRow) -> [String; 12] {
         count(tokens.cache_write),
         tier(tokens.write_5m, tokens.partial_5m),
         tier(tokens.write_1h, tokens.partial_1h),
-        maybe(tokens.reasoning),
+        tier(tokens.reasoning, tokens.partial_reasoning),
         row.usd.text(),
         row.harness_usd.text(),
     ]

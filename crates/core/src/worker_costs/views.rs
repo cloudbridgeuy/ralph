@@ -141,7 +141,7 @@ impl Row {
                 super::count(tokens.cache_write),
                 tier(tokens.write_5m, tokens.partial_5m),
                 tier(tokens.write_1h, tokens.partial_1h),
-                super::maybe(tokens.reasoning),
+                tier(tokens.reasoning, tokens.partial_reasoning),
             ]
             .map(mark),
         );
