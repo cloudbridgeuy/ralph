@@ -171,6 +171,10 @@ impl Command {
                     "/workers costs",
                     "all-time token totals by harness and model from the global usage record, closed workers included; main is the chat process with its keepalive pings, nap the memory summaries; RUNS counts chat processes, naps or worker sessions; USD is n/a where no price is recorded and the total ends in + when part is unknown; no turn",
                 ),
+                (
+                    "/workers costs [harness|model|role|ticket] [today|7d|all]",
+                    "the same totals by harness, harness and model, role or ticket, for today (local midnight), the last 7 days or all time; ticket joins worker rows to their spawn in this store's workers log, other rows are unknown; a cursor worker with no usage row shows unknown, never 0; USD reads reported (from the harness), ~ (estimate from list prices), n/a (no price) or ends in + (part unknown); no turn",
+                ),
             ],
             Command::Hold => &[
                 (

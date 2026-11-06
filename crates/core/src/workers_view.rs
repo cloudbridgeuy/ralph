@@ -5,6 +5,7 @@ use crate::chat_memory::{Entry, Role};
 use crate::inbox::age;
 use crate::worker::{branch_name, ActivityMark, Report, StatusLine, Ticket};
 use crate::worker_check::{is_report_status, message_header};
+use crate::worker_costs::window::instant;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -230,12 +231,6 @@ fn entry_reports(text: &str, at: &str) -> Vec<(String, ReportLine)> {
         report.text = report.text.trim().to_string();
     }
     found
-}
-
-fn instant(at: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(at)
-        .ok()
-        .map(|at| at.with_timezone(&Utc))
 }
 
 pub fn group_reports(entries: &[Entry], unread: &[Report]) -> HashMap<String, Vec<ReportLine>> {

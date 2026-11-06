@@ -12,11 +12,11 @@ fn with_pricing<T>(overrides: &BTreeMap<String, PriceOverride>, f: impl Fn(&Pric
 }
 
 fn rows_of(usage: &str) -> Vec<CostRow> {
-    with_pricing(&BTreeMap::new(), |pricing| cost_rows(usage, pricing))
+    with_pricing(&BTreeMap::new(), |pricing| cost_rows(usage, None, pricing))
 }
 
 fn view_of(usage: &str) -> String {
-    with_pricing(&BTreeMap::new(), |pricing| costs_view(usage, pricing))
+    with_pricing(&BTreeMap::new(), |pricing| costs_view(usage, None, pricing))
 }
 
 fn jsonl(rows: &[Value]) -> String {
@@ -342,7 +342,7 @@ fn an_override_wins_over_the_table() {
         },
     )]);
     let usage = jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]);
-    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, None, pricing));
     assert!(close(find(&rows, "claude", "claude-opus-5-5").usd, 0.003));
 }
 
@@ -393,7 +393,7 @@ fn a_gpt_override_without_a_30m_price_keeps_the_plus() {
     let mut row = codex("gpt-6.1-sol");
     row["cache_creation_input_tokens"] = json!(10);
     let usage = jsonl(&[row]);
-    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, None, pricing));
     assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "~1.00+");
 }
 
@@ -411,7 +411,7 @@ fn an_override_wins_over_the_openai_table() {
         },
     )]);
     let usage = jsonl(&[codex("gpt-6.1-sol")]);
-    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, None, pricing));
     assert!(close(find(&rows, "codex", "gpt-6.1-sol").usd, 1.0));
 }
 
@@ -453,7 +453,7 @@ fn table_totals_main_and_computed_worker_cost() {
     );
     assert_eq!(
         lines[4],
-        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20 | 130 | – | ~0.60 | 1.50+ |"
+        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20+ | 130 | – | ~0.60 | 1.50+ |"
     );
 }
 
@@ -530,4 +530,115 @@ fn builtin_prices_list_each_openai_model_once() {
     };
     assert_eq!(rows(ProviderId::OpenAi), 1);
     assert_eq!(rows(ProviderId::Anthropic), 1);
+}
+
+fn legacy_worker(id: &str, session: &str, model: &str) -> Value {
+    let mut row = worker(id, session, model);
+    let object = row.as_object_mut().unwrap();
+    object.remove("cache_write_5m");
+    object.remove("cache_write_1h");
+    row
+}
+
+#[test]
+fn a_group_with_no_recorded_tiers_shows_unknown_5m_and_1h() {
+    let rows = rows_of(&jsonl(&[legacy_worker("GUZ-1", "s1", "claude-opus-5-5")]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!((cells[7].as_str(), cells[8].as_str()), ("–", "–"));
+}
+
+#[test]
+fn a_group_mixing_recorded_and_unrecorded_tiers_marks_the_sum_partial() {
+    let rows = rows_of(&jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        legacy_worker("GUZ-2", "s2", "claude-opus-5-5"),
+    ]));
+    let row = find(&rows, "claude", "claude-opus-5-5");
+    let cells = cells(row);
+    assert_eq!((cells[7].as_str(), cells[8].as_str()), ("20+", "30+"));
+}
+
+#[test]
+fn a_group_with_every_tier_recorded_has_no_partial_mark() {
+    let rows = rows_of(&jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        worker("GUZ-2", "s2", "claude-opus-5-5"),
+    ]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!((cells[7].as_str(), cells[8].as_str()), ("40", "60"));
+}
+
+#[test]
+fn a_recorded_zero_tier_is_a_known_zero() {
+    let mut row = worker("GUZ-1", "s1", "claude-opus-5-5");
+    row["cache_write_5m"] = json!(0);
+    let rows = rows_of(&jsonl(&[row]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!(cells[7], "0");
+}
+
+#[test]
+fn the_total_row_marks_a_partial_tier_from_any_group() {
+    let rows = rows_of(&jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        legacy_worker("GUZ-2", "s2", "claude-sonnet-5-5"),
+    ]));
+    let total = cells(&total_row(&rows));
+    assert_eq!((total[7].as_str(), total[8].as_str()), ("20+", "30+"));
+}
+
+fn costed(at: &str, cost: Option<f64>) -> UsageLine {
+    UsageLine {
+        at: at.to_string(),
+        cost_usd: cost,
+        ..UsageLine::default()
+    }
+}
+
+#[test]
+fn the_baseline_is_the_last_cost_before_the_window() {
+    let since = window::instant("2026-11-06T00:00:00Z");
+    let rows = [
+        costed("2026-11-05T10:00:00Z", Some(1.0)),
+        costed("2026-11-05T11:00:00Z", Some(2.0)),
+        costed("2026-11-05T12:00:00Z", None),
+        costed("2026-11-06T01:00:00Z", Some(3.0)),
+    ];
+    assert!((baseline(&rows, since) - 2.0).abs() < 1e-9);
+    assert!(baseline(&rows[3..], since).abs() < 1e-9);
+    assert!(baseline(&rows, None).abs() < 1e-9);
+}
+
+fn with_reasoning(mut row: Value, tokens: u64) -> Value {
+    row["reasoning_tokens"] = json!(tokens);
+    row
+}
+
+#[test]
+fn a_group_mixing_recorded_and_unrecorded_reasoning_marks_the_sum_partial() {
+    let rows = rows_of(&jsonl(&[
+        with_reasoning(worker("GUZ-1", "s1", "claude-opus-5-5"), 4),
+        worker("GUZ-2", "s2", "claude-opus-5-5"),
+    ]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!(cells[9], "4+");
+}
+
+#[test]
+fn reasoning_recorded_by_every_row_has_no_partial_mark() {
+    let rows = rows_of(&jsonl(&[
+        with_reasoning(worker("GUZ-1", "s1", "claude-opus-5-5"), 4),
+        with_reasoning(worker("GUZ-2", "s2", "claude-opus-5-5"), 5),
+    ]));
+    let cells = cells(find(&rows, "claude", "claude-opus-5-5"));
+    assert_eq!(cells[9], "9");
+}
+
+#[test]
+fn the_total_row_marks_partial_reasoning_from_any_group() {
+    let rows = rows_of(&jsonl(&[
+        with_reasoning(worker("GUZ-1", "s1", "claude-opus-5-5"), 4),
+        worker("GUZ-2", "s2", "claude-sonnet-5-5"),
+    ]));
+    assert_eq!(cells(&total_row(&rows))[9], "4+");
 }
