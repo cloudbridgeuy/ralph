@@ -43,6 +43,9 @@ pub enum Commands {
     /// Custom .tmTheme files can also be loaded by specifying a file path.
     Themes,
 
+    /// Print the licence notices of the bundled syntax grammars.
+    Licenses,
+
     /// Send a single-shot prompt to the LLM and display the response.
     ///
     /// A simplified interface for quick LLM interactions. Only a usage row is stored.

@@ -24,6 +24,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `ralph worker verify <cursor|codex|claude-headless|opencode|claude> [--live]` - check an installed worker agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))
 - `ralph upgrade [--check] [--force]` - install the latest GitHub release over the running binary ([details](docs/context/release-process.md#upgrade-an-install))
 - `ralph themes` - list syntax highlighting themes ([CLI reference](docs/cli-reference.md))
+- `ralph licenses` - print the licence notices of the bundled syntax grammars ([CLI reference](docs/cli-reference.md#ralph-licenses))
 
 ## Unnegotiables
 

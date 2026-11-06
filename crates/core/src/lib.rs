@@ -49,6 +49,7 @@ pub mod inbox_alert;
 pub mod inbox_post;
 pub mod kitty;
 pub mod kitty_image;
+pub mod licenses;
 pub mod mcp;
 pub mod mermaid_fit;
 pub mod program_status;

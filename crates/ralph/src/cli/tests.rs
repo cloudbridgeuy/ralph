@@ -525,3 +525,11 @@ fn test_cli_chat_inbox_and_thread_arguments_have_help() {
     }
     assert!(missing.is_empty(), "no help: {missing:?}");
 }
+
+#[test]
+fn parses_licenses_subcommand() {
+    let parsed = Cli::try_parse_from(["ralph", "licenses"])
+        .ok()
+        .and_then(|cli| cli.command);
+    assert!(matches!(parsed, Some(Commands::Licenses)));
+}
