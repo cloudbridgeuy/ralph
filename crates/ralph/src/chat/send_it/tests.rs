@@ -329,14 +329,14 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
 fn only_an_approved_plan_lends_its_allowed_list() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = SendIt::new(dir.path(), LIMITS);
-    assert_eq!(send_it.allowed(), Vec::new());
+    assert_eq!(send_it.allowed(), None);
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "reply"}, {"kind": "watch"}]);
     send_it.propose(&args).unwrap();
-    assert_eq!(send_it.allowed(), Vec::new());
+    assert_eq!(send_it.allowed(), None);
     let hash = send_it.status().shown.unwrap();
     go(&send_it, Some(&hash), true);
-    assert_eq!(send_it.allowed(), vec![Action::Reply, Action::Watch]);
+    assert_eq!(send_it.allowed(), Some(vec![Action::Reply, Action::Watch]));
 }
 
 #[test]
@@ -388,6 +388,44 @@ fn a_refusal_from_the_socket_stops_the_next_tick_once_and_keeps_the_approval() {
         Next::Check("cargo xtask lint".to_string())
     );
     assert!(send_it.load().unwrap().unwrap().is_approved());
+}
+
+#[test]
+fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let shared = Shared {
+        store: Store::new(dir.path().to_path_buf()),
+        workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+        suggestions: SuggestionSlot::default(),
+        send_it: SendIt::new(dir.path(), LIMITS),
+    };
+    let mut args = plan_args();
+    args["allowed"] = json!([{"kind": "watch"}]);
+    shared.send_it.propose(&args).unwrap();
+    let hash = shared.send_it.status().shown.unwrap();
+    let active = Active {
+        driving: go(&shared.send_it, Some(&hash), true).1.unwrap().driving,
+        watched: None,
+    };
+    shared.store.set_pending_turn(Trigger::Worker).unwrap();
+    let replied = respond(
+        &shared,
+        &SocketRequest {
+            tool: "reply".to_string(),
+            args: json!({"id": "E1", "text": "yes, merge it"}),
+        },
+    );
+    assert!(replied.is_error);
+    assert_eq!(
+        replied.text,
+        "The approved run does not allow `reply`. The run stops; ralph tells the person."
+    );
+    assert_eq!(
+        shared.send_it.tick(&active, ended()).next,
+        Next::Stop(StopReason::Refused {
+            tool: "reply".to_string()
+        })
+    );
 }
 
 #[test]

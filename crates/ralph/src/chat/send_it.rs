@@ -127,13 +127,12 @@ impl SendIt {
             .map_err(|error| format!("Could not write {}: {error}", self.path.display()))
     }
 
-    pub(crate) fn allowed(&self) -> Vec<Action> {
+    pub(crate) fn allowed(&self) -> Option<Vec<Action>> {
         self.load()
             .ok()
             .flatten()
             .filter(RunFile::is_approved)
             .map(|file| file.plan.allowed)
-            .unwrap_or_default()
     }
 
     pub(crate) fn refuse(&self, tool: String) {

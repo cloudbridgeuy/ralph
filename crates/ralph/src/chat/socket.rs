@@ -248,11 +248,11 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
     }
     let command = parse_command(&request.tool, &request.args)
         .ok_or_else(|| format!("Unknown tool '{}'.", request.tool))??;
-    if let Err(refusal) = command_allowed(&command, pending, &send_it.allowed()) {
-        if pending == Some(Trigger::SendIt) {
+    if let Err(refused) = command_allowed(&command, pending, send_it.allowed().as_deref()) {
+        if refused.stops_run {
             send_it.refuse(refused_tool(&command));
         }
-        return Err(refusal);
+        return Err(refused.text);
     }
     match &command {
         Command::Spawn {

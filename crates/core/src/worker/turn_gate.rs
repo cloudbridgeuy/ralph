@@ -2,23 +2,49 @@ use super::Command;
 use crate::chat_memory::Trigger;
 use crate::chat_send_it::Action;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refused {
+    pub text: String,
+    pub stops_run: bool,
+}
+
 pub fn command_allowed(
     command: &Command,
     pending: Option<Trigger>,
-    allowed: &[Action],
-) -> Result<(), String> {
+    run: Option<&[Action]>,
+) -> Result<(), Refused> {
+    let in_run = |command: &Command| {
+        run.unwrap_or_default()
+            .iter()
+            .any(|action| permits(action, command))
+    };
     match pending {
         Some(Trigger::User) => Ok(()),
-        Some(Trigger::Worker) if matches!(command, Command::Reply { .. }) => Ok(()),
-        Some(Trigger::SendIt) if allowed.iter().any(|action| permits(action, command)) => Ok(()),
-        Some(Trigger::SendIt) => Err(format!(
+        Some(Trigger::Worker) if matches!(command, Command::Reply { .. }) => {
+            if run.is_none() || in_run(command) {
+                Ok(())
+            } else {
+                Err(run_refusal(command))
+            }
+        }
+        Some(Trigger::SendIt) if in_run(command) => Ok(()),
+        Some(Trigger::SendIt) => Err(run_refusal(command)),
+        _ => Err(Refused {
+            text:
+                "Only the person can direct workers. Relay this to them and wait for their answer."
+                    .to_string(),
+            stops_run: false,
+        }),
+    }
+}
+
+fn run_refusal(command: &Command) -> Refused {
+    Refused {
+        text: format!(
             "The approved run does not allow `{}`. The run stops; ralph tells the person.",
             refused_tool(command)
-        )),
-        _ => Err(
-            "Only the person can direct workers. Relay this to them and wait for their answer."
-                .to_string(),
         ),
+        stops_run: true,
     }
 }
 
@@ -163,24 +189,51 @@ mod tests {
     }
 
     #[test]
-    fn user_turn_allows_every_command_whatever_the_list() {
+    fn user_turn_allows_every_command_in_or_out_of_a_run() {
         for command in every_command() {
-            assert!(command_allowed(&command, Some(Trigger::User), &[]).is_ok());
+            for run in [None, Some(&[][..])] {
+                assert!(command_allowed(&command, Some(Trigger::User), run).is_ok());
+            }
         }
     }
 
     #[test]
-    fn worker_turn_allows_only_reply_whatever_the_list() {
-        assert!(command_allowed(&reply(), Some(Trigger::Worker), &[]).is_ok());
+    fn worker_turn_outside_a_run_allows_only_reply() {
+        assert!(command_allowed(&reply(), Some(Trigger::Worker), None).is_ok());
+        let every = every_action();
         for command in [close(), force_close(), spawn(), watch(), schedule()] {
-            assert!(command_allowed(&command, Some(Trigger::Worker), &every_action()).is_err());
+            for run in [None, Some(every.as_slice())] {
+                let refused = command_allowed(&command, Some(Trigger::Worker), run).unwrap_err();
+                assert!(!refused.stops_run, "{command:?} with {run:?}");
+                assert!(refused.text.starts_with("Only the person"));
+            }
         }
     }
 
     #[test]
-    fn no_pending_turn_allows_nothing_whatever_the_list() {
+    fn worker_turn_in_a_run_refuses_a_reply_the_plan_does_not_list() {
+        let refused = command_allowed(&reply(), Some(Trigger::Worker), Some(&[Action::Watch][..]))
+            .unwrap_err();
+        assert!(refused.stops_run);
+        assert_eq!(
+            refused.text,
+            "The approved run does not allow `reply`. The run stops; ralph tells the person."
+        );
+    }
+
+    #[test]
+    fn worker_turn_in_a_run_allows_a_reply_the_plan_lists() {
+        assert!(
+            command_allowed(&reply(), Some(Trigger::Worker), Some(&[Action::Reply][..])).is_ok()
+        );
+    }
+
+    #[test]
+    fn no_pending_turn_allows_nothing_and_never_stops_a_run() {
         for command in every_command() {
-            assert!(command_allowed(&command, None, &every_action()).is_err());
+            let refused =
+                command_allowed(&command, None, Some(every_action().as_slice())).unwrap_err();
+            assert!(!refused.stops_run);
         }
     }
 
@@ -205,11 +258,9 @@ mod tests {
             (schedule(), every_action(), false),
         ];
         for (command, allowed, expected) in cases {
-            assert_eq!(
-                command_allowed(&command, Some(Trigger::SendIt), &allowed).is_ok(),
-                expected,
-                "{command:?} with {allowed:?}"
-            );
+            let gate = command_allowed(&command, Some(Trigger::SendIt), Some(allowed.as_slice()));
+            assert_eq!(gate.is_ok(), expected, "{command:?} with {allowed:?}");
+            assert!(gate.map_or_else(|refused| refused.stops_run, |()| true));
         }
     }
 
@@ -223,16 +274,21 @@ mod tests {
             Action::PaidRun { max_usd: 1.0 },
         ];
         for command in every_command() {
-            assert!(command_allowed(&command, Some(Trigger::SendIt), &toolless).is_err());
+            assert!(command_allowed(&command, Some(Trigger::SendIt), Some(&toolless[..])).is_err());
         }
     }
 
     #[test]
     fn a_run_refusal_names_the_tool_and_says_the_run_stops() {
-        let refusal =
-            command_allowed(&spawn_on(HarnessId::Codex), Some(Trigger::SendIt), &[]).unwrap_err();
+        let refused = command_allowed(
+            &spawn_on(HarnessId::Codex),
+            Some(Trigger::SendIt),
+            Some(&[][..]),
+        )
+        .unwrap_err();
+        assert!(refused.stops_run);
         assert_eq!(
-            refusal,
+            refused.text,
             "The approved run does not allow `spawn_worker codex`. The run stops; ralph tells the person."
         );
     }

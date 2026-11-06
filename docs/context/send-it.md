@@ -61,7 +61,7 @@ Each step has one criterion. The run goes to the next step only when the criteri
 - `check_passes { command }` and `watch_passes { command }`: ralph runs the command as a watch. The step is met when the command exits 0. Any other result stops the run.
 - `judge { question }`: the model answers the question with "met" or "not met" and one line of evidence. See [Judge steps](#judge-steps).
 
-A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it.
+A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it. If the plan does not allow `reply`, ralph refuses the model's reply, so the worker gets no answer, and the run stops.
 
 ## Judge steps
 
@@ -145,6 +145,6 @@ ralph refuses:
 - a new plan, or a template fill, while an approved plan is active,
 - a step with no exit criterion,
 - a `/send-it go` for a plan whose hash was not shown last, or a queued `/send-it go`,
-- a tool that the approved plan does not allow, during a run.
+- a tool that the approved plan does not allow, during a run. This includes a reply to a worker question in the turn that reads the report.
 
 For the exact messages, see [ralph chat: /send-it](ralph-chat.md#send-it).
