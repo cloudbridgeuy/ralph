@@ -60,6 +60,10 @@ enum InterruptPlan {
     Drop,
 }
 
+fn plan_drops(plan: &InterruptPlan) -> bool {
+    matches!(plan, InterruptPlan::Drop)
+}
+
 fn begin_start() -> TurnProc {
     TurnProc::Starting { interrupt: false }
 }
@@ -144,6 +148,7 @@ struct Shared {
     proc: Mutex<TurnProc>,
     turn_seq: AtomicU64,
     spawns: AtomicU64,
+    sigint_sent: AtomicBool,
     closing: AtomicBool,
 }
 
@@ -211,6 +216,9 @@ impl Shared {
             *state = next;
             plan
         };
+        if plan_drops(&plan) {
+            self.drive(Turns::interrupt_dropped);
+        }
         if let InterruptPlan::Send(group) = plan {
             self.send_interrupt(group);
         }
@@ -218,6 +226,7 @@ impl Shared {
 
     fn send_interrupt(self: &Arc<Self>, group: Group) {
         crate::cursor_owner::signal_group(group.pgid, "INT");
+        self.sigint_sent.store(true, Ordering::SeqCst);
         let shared = Arc::clone(self);
         thread::spawn(move || {
             thread::sleep(INTERRUPT_GRACE);
@@ -299,6 +308,7 @@ impl Shared {
             .args(args)
             .current_dir(&self.run.worktree)
             .envs([inbox_env(&self.run.store)]);
+        self.sigint_sent.store(false, Ordering::SeqCst);
         let (mut child, mut stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
             *locked(&self.proc) = on_release();
             format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
@@ -361,7 +371,7 @@ impl Shared {
             }
         }
         self.release_child(&mut child);
-        let sigint_sent = locked(&self.turns).interrupt_sent();
+        let sigint_sent = self.sigint_sent.load(Ordering::SeqCst);
         Ok((exit_outcome(result.is_some(), sigint_sent), result, spend))
     }
 
@@ -453,6 +463,7 @@ impl PrintWorker {
             snapshot: Mutex::new(None),
             proc: Mutex::new(TurnProc::Idle),
             turn_seq: AtomicU64::new(0),
+            sigint_sent: AtomicBool::new(false),
             spawns: AtomicU64::new(0),
             closing: AtomicBool::new(false),
         });
@@ -652,6 +663,13 @@ mod tests {
                 InterruptPlan::Drop
             )
         );
+    }
+
+    #[test]
+    fn only_a_dropped_plan_reports_dropped() {
+        assert!(plan_drops(&InterruptPlan::Drop));
+        assert!(!plan_drops(&InterruptPlan::Hold));
+        assert!(!plan_drops(&InterruptPlan::Send(GROUP)));
     }
 
     #[test]
