@@ -20,6 +20,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | Command | Description |
 |---------|-------------|
 | `themes` | List available syntax highlighting themes |
+| `licenses` | Print the licence notices of the bundled syntax grammars ([details](#ralph-licenses)) |
 | `ask` | Send a single-shot prompt to the LLM ([details](context/ralph-ask.md)) |
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
 | `thread` | List, pull, merge, park, revive or drop chat threads ([guide](context/threads.md), [details](context/ralph-chat.md#threads)) |
@@ -63,6 +64,22 @@ Displays all built-in themes that can be used with the `--theme` flag. Custom `.
 - `Monokai Extended`
 - `Solarized (dark)`
 - `Solarized (light)`
+
+---
+
+## ralph licenses
+
+Print the licence notices of the bundled syntax grammars.
+
+### Usage
+
+```
+ralph licenses
+```
+
+### Description
+
+ralph bundles syntax grammars curated by the [bat](https://github.com/sharkdp/bat) project through the [two-face](https://github.com/CosmicHorrorDev/two-face) crate. Many of their licences (MIT, BSD, Apache-2.0) require the notice to ship with the binary. The command prints a short header, then one block per grammar: its licence path (for example `syntaxes/02_Extra/TypeScript/LICENSE`), a blank line and the licence text. The text comes from two-face at run time, so it always matches the grammars in the binary. Output is plain text with no colour and no pager.
 
 ---
 

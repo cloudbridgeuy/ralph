@@ -155,3 +155,5 @@ cargo install --path crates/ralph --root ~/.local --force
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+The bundled syntax grammars keep their own licences. Run `ralph licenses` to print their notices.

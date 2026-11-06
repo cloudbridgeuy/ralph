@@ -27,6 +27,7 @@ mod input_theme;
 mod invoke;
 mod json_file;
 mod ledger;
+mod licenses;
 pub mod markdown;
 mod mermaid_guard;
 mod opencode_usage;
@@ -95,6 +96,7 @@ fn main() -> ExitCode {
         skip_summary: false,
     })) {
         Commands::Themes => execute_themes(),
+        Commands::Licenses => licenses::run(),
         Commands::Ask(args) => execute_ask(args),
         Commands::Chat(args) => execute_chat(args),
         Commands::Wire(args) => wire::run(args),
