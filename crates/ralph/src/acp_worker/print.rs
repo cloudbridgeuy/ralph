@@ -326,6 +326,7 @@ impl PrintWorker {
             closing: AtomicBool::new(false),
         });
         if resume.is_none() {
+            write_file(&shared.run.session, &shared.run.record.render()).ok();
             let task = task_prompt(&request.task);
             shared.drive(|turns| turns.accept(task));
         }
