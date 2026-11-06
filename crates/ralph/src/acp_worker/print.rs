@@ -192,7 +192,6 @@ impl Shared {
             workspace: &self.run.worktree,
             model: &self.run.model,
             resume: chat.as_deref(),
-            mode: PermissionMode::Yolo,
         });
         let mut command = Command::new(CURSOR_AGENT.command);
         command

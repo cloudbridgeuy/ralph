@@ -39,23 +39,19 @@ fn expected_usage() -> ModelUsage {
     }
 }
 
-fn options<'a>(resume: Option<&'a str>, mode: PermissionMode) -> PrintArgs<'a> {
+fn options(resume: Option<&str>) -> PrintArgs<'_> {
     PrintArgs {
         workspace: Path::new("/tmp/work"),
         model: VARIANT,
         resume,
-        mode,
     }
 }
 
 #[test]
-fn success_yields_session_text_and_usage() {
+fn success_yields_session_activity_and_usage() {
     let (events, outcome) = fold(SUCCESS, false);
     assert_eq!(events[0], PrintEvent::Init(SESSION.to_string()));
-    assert_eq!(
-        events[1],
-        PrintEvent::Text("Hello from the stub agent.".to_string())
-    );
+    assert_eq!(events[1], PrintEvent::Activity);
     assert_eq!(
         events[2],
         PrintEvent::Result {
@@ -120,7 +116,6 @@ fn malformed_and_unknown_lines_are_ignored() {
         "{\"type\":\"mystery\"}",
         "{\"type\":\"system\",\"subtype\":\"other\"}",
         "{\"type\":\"system\",\"subtype\":\"init\"}",
-        "{\"type\":\"assistant\",\"message\":{\"content\":[]}}",
     ] {
         assert_eq!(
             decode_print_line(line, VARIANT),
@@ -131,8 +126,8 @@ fn malformed_and_unknown_lines_are_ignored() {
 }
 
 #[test]
-fn argv_first_turn_has_no_resume_or_force() {
-    let args = print_args(&options(None, PermissionMode::Ask));
+fn argv_first_turn_has_no_resume() {
+    let args = print_args(&options(None));
     assert_eq!(
         args,
         [
@@ -144,30 +139,22 @@ fn argv_first_turn_has_no_resume_or_force() {
             "--workspace",
             "/tmp/work",
             "--model",
-            VARIANT
+            VARIANT,
+            "--force"
         ]
     );
 }
 
 #[test]
 fn argv_resume_adds_chat_id() {
-    let args = print_args(&options(Some(SESSION), PermissionMode::Ask));
+    let args = print_args(&options(Some(SESSION)));
     let at = args.iter().position(|arg| arg == "--resume").unwrap();
     assert_eq!(args[at + 1], SESSION);
-    assert!(!args.contains(&"--force".to_string()));
-}
-
-#[test]
-fn argv_force_only_for_yolo() {
-    let yolo = print_args(&options(None, PermissionMode::Yolo));
-    assert_eq!(yolo.last().map(String::as_str), Some("--force"));
-    let ask = print_args(&options(None, PermissionMode::Ask));
-    assert!(!ask.contains(&"--force".to_string()));
 }
 
 #[test]
 fn argv_never_carries_a_prompt() {
-    let args = print_args(&options(Some(SESSION), PermissionMode::Yolo));
+    let args = print_args(&options(Some(SESSION)));
     assert!(args.iter().all(|arg| arg.starts_with("--")
         || arg == "-p"
         || arg == "stream-json"
@@ -266,7 +253,6 @@ fn the_first_turn_has_no_resume_and_later_turns_resume_the_chat() {
             workspace: Path::new("/w"),
             model: "m",
             resume,
-            mode: PermissionMode::Yolo,
         })
     };
     assert!(!args(None).contains(&"--resume".to_string()));

@@ -1,5 +1,5 @@
 use super::transcript_usage::ModelUsage;
-use super::{PermissionMode, TurnEnd, SERVER_NAME};
+use super::{TurnEnd, SERVER_NAME};
 use crate::chat_memory::{worker_usage_record, CallSite, LedgerRow};
 use crate::stream::result_is_error;
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
@@ -17,7 +17,6 @@ mod tests;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrintEvent {
     Init(String),
-    Text(String),
     Activity,
     Result {
         end: TurnEnd,
@@ -38,7 +37,6 @@ pub struct PrintArgs<'a> {
     pub workspace: &'a Path,
     pub model: &'a str,
     pub resume: Option<&'a str>,
-    pub mode: PermissionMode,
 }
 
 pub fn print_args(options: &PrintArgs) -> Vec<String> {
@@ -57,9 +55,7 @@ pub fn print_args(options: &PrintArgs) -> Vec<String> {
     if let Some(chat) = options.resume {
         args.extend(["--resume".to_string(), chat.to_string()]);
     }
-    if options.mode == PermissionMode::Yolo {
-        args.push("--force".to_string());
-    }
+    args.push("--force".to_string());
     args
 }
 
@@ -72,26 +68,15 @@ pub fn decode_print_line(line: &str, model: &str) -> PrintEvent {
             .as_str()
             .filter(|id| !id.is_empty())
             .map_or(PrintEvent::Ignored, |id| PrintEvent::Init(id.to_string())),
-        (Some("assistant"), _) => {
-            assistant_text(&value).map_or(PrintEvent::Ignored, PrintEvent::Text)
+        (Some("assistant"), _) | (Some("tool_call"), Some("started" | "completed")) => {
+            PrintEvent::Activity
         }
-        (Some("tool_call"), Some("started" | "completed")) => PrintEvent::Activity,
         (Some("result"), _) => PrintEvent::Result {
             end: turn_end(line, &value),
             usage: map_print_usage(&value["usage"], model),
         },
         _ => PrintEvent::Ignored,
     }
-}
-
-fn assistant_text(assistant: &Value) -> Option<String> {
-    let text: String = assistant["message"]["content"]
-        .as_array()?
-        .iter()
-        .filter(|block| block["type"] == "text")
-        .filter_map(|block| block["text"].as_str())
-        .collect();
-    (!text.is_empty()).then_some(text)
 }
 
 fn turn_end(line: &str, result: &Value) -> TurnEnd {
