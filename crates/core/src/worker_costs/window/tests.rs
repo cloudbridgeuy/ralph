@@ -276,3 +276,12 @@ fn today_starts_at_local_midnight_on_a_fall_back_evening() {
         Some(utc(2026, 11, 1, 4, 0)),
     );
 }
+
+#[test]
+fn a_midnight_in_the_repeated_hour_starts_at_the_first_midnight() {
+    let zone = FallBack {
+        switch: utc(2026, 11, 1, 5, 0),
+    };
+    let now = utc(2026, 11, 1, 12, 0).with_timezone(&zone);
+    assert_eq!(today_start(&now), Some(utc(2026, 11, 1, 4, 0)));
+}
