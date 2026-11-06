@@ -10,9 +10,9 @@ use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::worker::{
     activity_path, base_branch, base_config_key, blocked_path, branch_name, capabilities,
     close_clear_paths, close_handoff, close_remove_paths, delivery_line, describe, interrupt_reply,
-    legacy_base_unset_warning, opencode_close_handoff, parse_interrupt_result, project_slug,
-    prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path, session_name,
-    session_owner, session_survived_kill, tagged_sessions, uptake, via_permission,
+    legacy_base_unset_warning, lost_marker_name, opencode_close_handoff, parse_interrupt_result,
+    project_slug, prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path,
+    session_name, session_owner, session_survived_kill, tagged_sessions, uptake, via_permission,
     worktree_for_branch, worktree_path, ActivityMark, Base, CloseStep, Feature, Handoff,
     HandoffFiles, HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep,
     TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_OWNER_DIR, REPLY_CONFIRM,
@@ -151,6 +151,12 @@ impl Workers {
             Watch::Pane(session) => (capture_pane(session).map(|pane| pane_busy(&pane)), None),
             Watch::Entry(entry) => (None, Some(entry.exists())),
         };
+        let lost = match watch {
+            Watch::Entry(entry) => {
+                lost_marker(entry).is_some_and(|marker| fs::remove_file(marker).is_ok())
+            }
+            Watch::Pane(_) => false,
+        };
         Probe {
             pane_busy,
             entry_pending,
@@ -159,6 +165,7 @@ impl Workers {
                 .and_then(|text| ActivityMark::parse(&text))
                 .is_some_and(|mark| mark.busy()),
             sent: sent_path(&self.store_dir, id).exists(),
+            lost,
         }
     }
 
@@ -507,6 +514,11 @@ pub fn tmux_listing() -> String {
         .unwrap_or_default()
 }
 
+fn lost_marker(entry: &Path) -> Option<PathBuf> {
+    let name = entry.file_name()?.to_string_lossy();
+    Some(entry.with_file_name(lost_marker_name(&name)))
+}
+
 fn repo_root() -> io::Result<PathBuf> {
     Ok(PathBuf::from(stdout_line(run(
         Command::new("git").args(["rev-parse", "--show-toplevel"])
@@ -788,6 +800,20 @@ mod tests {
             confirm_timeout: Duration::ZERO,
             ..Workers::new(dir.to_path_buf(), "/bin/ralph".into(), "auto".into(), None)
         }
+    }
+
+    #[test]
+    fn probe_sees_and_clears_a_lost_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        let entry = dir.path().join("0001");
+        let marker = dir
+            .path()
+            .join(ralph_core::worker::lost_marker_name("0001"));
+        write_file(&marker, "").unwrap();
+        let probe = workers.probe("A", &Watch::Entry(entry));
+        assert!(probe.lost);
+        assert!(!marker.exists());
     }
 
     #[test]

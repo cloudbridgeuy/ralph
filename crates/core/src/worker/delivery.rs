@@ -8,11 +8,12 @@ pub enum Uptake {
     Reported,
     Taken,
     Silent,
+    Lost,
 }
 
 impl Uptake {
     pub fn settled(self) -> bool {
-        matches!(self, Self::Busy | Self::Reported)
+        matches!(self, Self::Busy | Self::Reported | Self::Lost)
     }
 }
 
@@ -22,10 +23,13 @@ pub struct Probe {
     pub entry_pending: Option<bool>,
     pub running: bool,
     pub sent: bool,
+    pub lost: bool,
 }
 
 pub fn uptake(probe: &Probe) -> Uptake {
-    if !probe.sent {
+    if probe.lost {
+        Uptake::Lost
+    } else if !probe.sent {
         Uptake::Reported
     } else if probe.pane_busy == Some(true) || probe.running {
         Uptake::Busy
@@ -43,7 +47,48 @@ pub fn delivery_line(id: &str, uptake: Uptake, waited: Duration) -> String {
         Uptake::Reported => format!("Sent to worker {id}; reported."),
         Uptake::Taken => format!("Sent to worker {id}; taken, not started after {secs}s."),
         Uptake::Silent => format!("Sent to worker {id}; no reaction after {secs}s."),
+        Uptake::Lost => format!("Not delivered to worker {id}: it is not running."),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueuedWorker {
+    Absent,
+    Alive,
+    Exited,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueuedOwner {
+    Missing,
+    Mine,
+    Foreign,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueuedFacts {
+    pub worker: QueuedWorker,
+    pub starting: bool,
+    pub owner: QueuedOwner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Queued {
+    Deliver,
+    Hold,
+    Lost,
+}
+
+pub fn queued_disposition(facts: &QueuedFacts) -> Queued {
+    match (facts.worker, facts.starting, facts.owner) {
+        (QueuedWorker::Alive, _, _) => Queued::Deliver,
+        (QueuedWorker::Exited, _, _) | (_, false, QueuedOwner::Missing) => Queued::Lost,
+        _ => Queued::Hold,
+    }
+}
+
+pub fn lost_marker_name(entry: &str) -> String {
+    format!(".{entry}.lost")
 }
 
 #[cfg(test)]
@@ -55,6 +100,7 @@ mod tests {
         entry_pending: None,
         running: false,
         sent: true,
+        lost: false,
     };
 
     fn with(edit: impl FnOnce(&mut Probe)) -> Uptake {
@@ -139,5 +185,67 @@ mod tests {
         assert_eq!(line(0), "Sent to worker A; no reaction after 0s.");
         assert_eq!(line(1400), "Sent to worker A; no reaction after 1s.");
         assert_eq!(line(1500), "Sent to worker A; no reaction after 2s.");
+    }
+
+    fn facts(worker: QueuedWorker, starting: bool, owner: QueuedOwner) -> Queued {
+        queued_disposition(&QueuedFacts {
+            worker,
+            starting,
+            owner,
+        })
+    }
+
+    #[test]
+    fn a_live_worker_gets_its_queued_entry() {
+        let found = facts(QueuedWorker::Alive, false, QueuedOwner::Mine);
+        assert_eq!(found, Queued::Deliver);
+    }
+
+    #[test]
+    fn an_entry_waits_while_the_worker_starts() {
+        let found = facts(QueuedWorker::Absent, true, QueuedOwner::Missing);
+        assert_eq!(found, Queued::Hold);
+    }
+
+    #[test]
+    fn an_entry_waits_while_this_chat_owns_an_unadopted_worker() {
+        let found = facts(QueuedWorker::Absent, false, QueuedOwner::Mine);
+        assert_eq!(found, Queued::Hold);
+    }
+
+    #[test]
+    fn an_entry_another_chat_owns_is_left_alone() {
+        let found = facts(QueuedWorker::Absent, false, QueuedOwner::Foreign);
+        assert_eq!(found, Queued::Hold);
+    }
+
+    #[test]
+    fn an_entry_for_an_exited_worker_is_lost() {
+        let found = facts(QueuedWorker::Exited, false, QueuedOwner::Mine);
+        assert_eq!(found, Queued::Lost);
+    }
+
+    #[test]
+    fn an_entry_with_no_owner_is_lost() {
+        let found = facts(QueuedWorker::Absent, false, QueuedOwner::Missing);
+        assert_eq!(found, Queued::Lost);
+    }
+
+    #[test]
+    fn a_lost_entry_beats_taken_and_settles() {
+        let found = with(|p| {
+            p.lost = true;
+            p.entry_pending = Some(false);
+        });
+        assert_eq!(found, Uptake::Lost);
+        assert!(Uptake::Lost.settled());
+    }
+
+    #[test]
+    fn a_lost_delivery_line_says_not_delivered() {
+        assert_eq!(
+            delivery_line("GUZ-1", Uptake::Lost, Duration::ZERO),
+            "Not delivered to worker GUZ-1: it is not running."
+        );
     }
 }

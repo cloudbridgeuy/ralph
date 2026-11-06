@@ -675,10 +675,14 @@ impl CodexWorker {
         write_line(&self.stdin, &answer_server_request(&reply.id, &body)).map_err(Stop::message)
     }
 
-    fn interrupt(&self, text: String, entry: &str) {
+    fn interrupt(&self, text: String, entry: &str) -> Result<(), String> {
         self.replies
             .send(Inbound::Interrupt(text, entry.to_string()))
-            .ok();
+            .map_err(|_| "worker has no running codex agent".to_string())
+    }
+
+    fn exited(&self) -> bool {
+        self.exited.load(Ordering::SeqCst)
     }
 
     fn terminate(&mut self) {
@@ -803,11 +807,8 @@ impl CodexHost {
             self.deliver_queued(
                 &id,
                 |files| &files.prompt,
-                |worker, text, _| {
-                    if let Err(message) = worker.send(WorkerCommand::Prompt(text)) {
-                        warn(message);
-                    }
-                },
+                |worker, text, _| worker.send(WorkerCommand::Prompt(text)),
+                queue::mark_prompt_lost,
             );
         }
         for id in request_ids(&self.store_dir, CODEX_INTERRUPT_DIR) {
@@ -815,6 +816,7 @@ impl CodexHost {
                 &id,
                 |files| &files.interrupt,
                 |worker, text, entry| worker.interrupt(text, entry),
+                queue::report_interrupt_gone,
             );
         }
         for id in request_ids(&self.store_dir, CODEX_SPAWN_DIR) {

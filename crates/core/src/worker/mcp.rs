@@ -31,7 +31,7 @@ pub fn command_definitions() -> [Value; 5] {
         }),
         json!({
             "name": "reply",
-            "description": "Send a message to a running worker. A plain message waits up to 5 s and returns one line: busy (a turn is running), reported (the worker reported), taken, not started (headless worker took the message, no turn yet), or no reaction. Only with what the person asked in their latest message, or, when a worker asks, with an answer the person already settled in the chat.",
+            "description": "Send a message to a running worker. A plain message waits up to 5 s and returns one line: busy (a turn is running), reported (the worker reported), taken, not started (headless worker took the message, no turn yet), not delivered (the worker is not running), or no reaction. Only with what the person asked in their latest message, or, when a worker asks, with an answer the person already settled in the chat.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
