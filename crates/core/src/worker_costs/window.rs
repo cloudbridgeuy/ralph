@@ -31,5 +31,9 @@ pub fn instant(at: &str) -> Option<DateTime<Utc>> {
         .map(|at| at.with_timezone(&Utc))
 }
 
+pub fn in_window(at: &str, since: Option<DateTime<Utc>>) -> bool {
+    since.is_none_or(|since| instant(at).is_some_and(|at| at >= since))
+}
+
 #[cfg(test)]
 mod tests;

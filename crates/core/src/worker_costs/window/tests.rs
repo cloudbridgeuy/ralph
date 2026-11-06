@@ -57,3 +57,23 @@ fn today_handles_a_half_hour_offset() {
         Some(utc(2026, 11, 5, 18, 30))
     );
 }
+
+#[test]
+fn no_start_includes_every_row_even_with_an_unreadable_time() {
+    assert!(in_window("garbage", None));
+    assert!(in_window("2026-11-06T00:00:00Z", None));
+}
+
+#[test]
+fn a_start_includes_rows_at_or_after_it() {
+    let start = Some(utc(2026, 11, 6, 0, 0));
+    assert!(in_window("2026-11-06T00:00:00Z", start));
+    assert!(in_window("2026-11-06T02:00:00+02:00", start));
+    assert!(in_window("2027-01-01T00:00:00Z", start));
+    assert!(!in_window("2026-11-05T23:59:59Z", start));
+}
+
+#[test]
+fn a_start_excludes_an_unreadable_time() {
+    assert!(!in_window("garbage", Some(utc(2026, 11, 6, 0, 0))));
+}

@@ -1,13 +1,16 @@
 use super::tickets::{parse_windows, window_position, WorkerWindow, UNKNOWN_TICKET};
-use super::window::instant;
+use super::window::{in_window, instant};
 use super::{
     builtin_prices, computed_usd, costs_view, tier, Source, Tokens, Usd, MISSING, NO_USAGE, UNKNOWN,
 };
 use crate::chat_process::UsageLine;
 use crate::wire::view::Pricing;
 use crate::worker::HarnessId;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 
+const HARNESS_SOURCE: &str = "harness";
 const HEADERS: [&str; 8] = [
     "INPUT",
     "OUTPUT",
@@ -74,9 +77,20 @@ impl Role {
     }
 }
 
+#[derive(Deserialize)]
+struct CostSourceTag {
+    cost_source: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AtTag {
+    at: String,
+}
+
 struct Entry {
     line: UsageLine,
     window: Option<usize>,
+    reported: bool,
 }
 
 struct Row {
@@ -140,36 +154,66 @@ impl Row {
     }
 }
 
-fn parse_lines(usage: &str) -> Vec<UsageLine> {
+fn parse_lines(usage: &str, since: Option<DateTime<Utc>>) -> Vec<(UsageLine, bool)> {
     usage
         .lines()
-        .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
-        .filter(|line| Source::of(line).is_some())
+        .filter_map(|text| {
+            let line = serde_json::from_str::<UsageLine>(text).ok()?;
+            Source::of(&line)?;
+            let tag = serde_json::from_str::<CostSourceTag>(text).ok()?;
+            let reported = tag.cost_source.as_deref() == Some(HARNESS_SOURCE)
+                && line.cost_usd.is_some()
+                && Role::of(&line.kind) != Some(Role::Main);
+            in_window(&line.at, since).then_some((line, reported))
+        })
         .collect()
 }
 
-fn entries(lines: Vec<UsageLine>, windows: &[WorkerWindow]) -> Vec<Entry> {
+fn windowed(usage: &str, since: Option<DateTime<Utc>>) -> String {
+    if since.is_none() {
+        return usage.to_string();
+    }
+    usage
+        .lines()
+        .filter(|text| {
+            serde_json::from_str::<AtTag>(text).is_ok_and(|tag| in_window(&tag.at, since))
+        })
+        .map(|text| format!("{text}\n"))
+        .collect()
+}
+
+fn entries(lines: Vec<(UsageLine, bool)>, windows: &[WorkerWindow]) -> Vec<Entry> {
     lines
         .into_iter()
-        .map(|line| {
+        .map(|(line, reported)| {
             let window = (line.kind == "worker")
                 .then(|| {
                     let id = line.worker_id.as_deref()?;
                     window_position(windows, id, instant(&line.at)?)
                 })
                 .flatten();
-            Entry { line, window }
+            Entry {
+                line,
+                window,
+                reported,
+            }
         })
         .collect()
 }
 
-fn unmetered_cursors<'a>(windows: &'a [WorkerWindow], entries: &[Entry]) -> Vec<&'a WorkerWindow> {
+fn unmetered_cursors<'a>(
+    windows: &'a [WorkerWindow],
+    entries: &[Entry],
+    since: Option<DateTime<Utc>>,
+) -> Vec<&'a WorkerWindow> {
     let joined: HashSet<usize> = entries.iter().filter_map(|entry| entry.window).collect();
     windows
         .iter()
         .enumerate()
         .filter(|(position, window)| {
-            window.harness == HarnessId::Cursor.as_str() && !joined.contains(position)
+            window.harness == HarnessId::Cursor.as_str()
+                && !joined.contains(position)
+                && since.is_none_or(|since| window.start >= since)
         })
         .map(|(_, window)| window)
         .collect()
@@ -180,12 +224,12 @@ fn build<K: Ord>(
     unmetered: Vec<K>,
     key: impl Fn(&Entry) -> Option<K>,
     label: impl Fn(&K) -> String,
-    priced: &dyn Fn(&UsageLine) -> Usd,
+    priced: &dyn Fn(&Entry) -> Usd,
 ) -> Vec<Row> {
-    let mut groups: BTreeMap<K, (Vec<&UsageLine>, usize)> = BTreeMap::new();
+    let mut groups: BTreeMap<K, (Vec<&Entry>, usize)> = BTreeMap::new();
     for entry in entries {
         if let Some(key) = key(entry) {
-            groups.entry(key).or_default().0.push(&entry.line);
+            groups.entry(key).or_default().0.push(entry);
         }
     }
     for key in unmetered {
@@ -199,11 +243,11 @@ fn build<K: Ord>(
             unmetered,
             tokens: lines
                 .iter()
-                .map(|line| Tokens::of(line))
+                .map(|entry| Tokens::of(&entry.line))
                 .fold(Tokens::default(), Tokens::plus),
             usd: lines
                 .iter()
-                .map(|line| priced(line))
+                .map(|entry| priced(entry))
                 .fold(Usd::default(), Usd::plus),
         })
         .collect()
@@ -220,9 +264,10 @@ fn rows(
     grouping: Grouping,
     entries: &[Entry],
     windows: &[WorkerWindow],
-    priced: &dyn Fn(&UsageLine) -> Usd,
+    since: Option<DateTime<Utc>>,
+    priced: &dyn Fn(&Entry) -> Usd,
 ) -> Vec<Row> {
-    let cursors = unmetered_cursors(windows, entries);
+    let cursors = unmetered_cursors(windows, entries, since);
     match grouping {
         Grouping::Harness => build(
             entries,
@@ -283,18 +328,26 @@ fn markdown(grouping: Grouping, rows: &[Row]) -> String {
     lines.join("\n")
 }
 
-pub fn costs_by_view(view: View, inputs: &Inputs, pricing: &Pricing) -> String {
+pub fn costs_by_view(
+    view: View,
+    since: Option<DateTime<Utc>>,
+    inputs: &Inputs,
+    pricing: &Pricing,
+) -> String {
     let grouping = match view {
-        View::HarnessModel => return costs_view(inputs.usage, pricing),
+        View::HarnessModel => return costs_view(&windowed(inputs.usage, since), pricing),
         View::Harness => Grouping::Harness,
         View::Role => Grouping::Role,
         View::Ticket => Grouping::Ticket,
     };
     let windows = parse_windows(inputs.workers);
-    let entries = entries(parse_lines(inputs.usage), &windows);
+    let entries = entries(parse_lines(inputs.usage, since), &windows);
     let table = builtin_prices(pricing.provider);
-    let priced = |line: &UsageLine| computed_usd(line, pricing, &table);
-    let rows = rows(grouping, &entries, &windows, &priced);
+    let priced = |entry: &Entry| match (entry.reported, entry.line.cost_usd) {
+        (true, Some(cost)) => Usd::reported(cost),
+        _ => computed_usd(&entry.line, pricing, &table),
+    };
+    let rows = rows(grouping, &entries, &windows, since, &priced);
     if rows.is_empty() {
         return NO_USAGE.to_string();
     }

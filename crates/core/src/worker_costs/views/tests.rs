@@ -5,6 +5,15 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 fn view_of(view: View, usage: &[Value], workers: &[Value]) -> String {
+    view_since(view, None, usage, workers)
+}
+
+fn view_since(
+    view: View,
+    since: Option<DateTime<Utc>>,
+    usage: &[Value],
+    workers: &[Value],
+) -> String {
     let overrides: BTreeMap<String, PriceOverride> = BTreeMap::new();
     let provider = provider(ProviderId::Anthropic);
     let pricing = Pricing {
@@ -15,7 +24,7 @@ fn view_of(view: View, usage: &[Value], workers: &[Value]) -> String {
         usage: &jsonl(usage),
         workers: &jsonl(workers),
     };
-    costs_by_view(view, &inputs, &pricing)
+    costs_by_view(view, since, &inputs, &pricing)
 }
 
 fn jsonl(rows: &[Value]) -> String {
@@ -321,4 +330,151 @@ fn an_unpriced_model_shows_na_and_a_missing_tier_stays_unknown() {
     let worker = row(&view, "worker");
     assert_eq!(worker[5], "–");
     assert_eq!(worker[8], "n/a");
+}
+
+fn at(row: Value, when: &str) -> Value {
+    let mut row = row;
+    row["at"] = json!(when);
+    row
+}
+
+fn since(when: &str) -> Option<DateTime<Utc>> {
+    instant(when)
+}
+
+fn reported(mut row: Value) -> Value {
+    row["cost_source"] = json!("harness");
+    row
+}
+
+#[test]
+fn a_window_keeps_only_rows_at_or_after_its_start() {
+    let usage = [
+        at(with_kind("ask"), "2026-11-05T23:59:59Z"),
+        at(with_kind("ask"), "2026-11-06T00:00:00Z"),
+        at(with_kind("ask"), "2026-11-06T09:00:00Z"),
+    ];
+    let view = view_since(View::Role, since("2026-11-06T00:00:00Z"), &usage, &[]);
+    assert_eq!(row(&view, "ask")[1], "2");
+    let all = view_since(View::Role, None, &usage, &[]);
+    assert_eq!(row(&all, "ask")[1], "3");
+}
+
+#[test]
+fn a_row_with_an_unreadable_time_is_in_all_time_only() {
+    let usage = [at(with_kind("ask"), "last tuesday")];
+    for view in [View::Role, View::Harness, View::Ticket] {
+        assert_eq!(
+            view_since(view, since("2026-11-06T00:00:00Z"), &usage, &[]),
+            NO_USAGE
+        );
+        assert_ne!(view_since(view, None, &usage, &[]), NO_USAGE);
+    }
+}
+
+#[test]
+fn the_harness_and_model_view_follows_the_window() {
+    let usage = [
+        at(worker("w1", "x", "claude-opus-5-5"), "2026-11-01T10:00:00Z"),
+        at(worker("w2", "x", "claude-opus-5-5"), "2026-11-06T10:00:00Z"),
+        at(worker("w3", "x", "claude-opus-5-5"), "not a time"),
+    ];
+    let windowed = view_since(
+        View::HarnessModel,
+        since("2026-11-06T00:00:00Z"),
+        &usage,
+        &[],
+    );
+    assert_eq!(windowed.lines().count(), 4);
+    let all = view_since(View::HarnessModel, None, &usage, &[]);
+    assert!(all.contains("| claude | claude-opus-5-5 | 3 | 9 |"));
+    assert!(windowed.contains("| claude | claude-opus-5-5 | 1 | 3 |"));
+}
+
+#[test]
+fn a_window_drops_cursor_spawns_before_its_start() {
+    let workers = [
+        spawn("w5", "2026-11-01T10:00:00Z", Some("GUZ-5"), "cursor"),
+        spawn("w6", "2026-11-06T10:00:00Z", Some("GUZ-6"), "cursor"),
+    ];
+    let view = view_since(
+        View::Ticket,
+        since("2026-11-06T00:00:00Z"),
+        &[at(turn(), "2026-11-06T09:00:00Z")],
+        &workers,
+    );
+    assert_eq!(labels(&view), ["GUZ-6", "unknown", "total"]);
+}
+
+#[test]
+fn a_row_before_the_window_still_joins_its_ticket_window_for_later_rows() {
+    let usage = [at(
+        worker("w1", "x", "claude-opus-5-5"),
+        "2026-11-06T10:00:00Z",
+    )];
+    let workers = [spawn("w1", "2026-11-01T10:00:00Z", Some("GUZ-1"), "claude")];
+    let view = view_since(
+        View::Ticket,
+        since("2026-11-06T00:00:00Z"),
+        &usage,
+        &workers,
+    );
+    assert_eq!(labels(&view), ["GUZ-1", "total"]);
+}
+
+#[test]
+fn a_harness_reported_cost_is_marked_reported_and_not_estimated() {
+    let view = view_of(View::Role, &[reported(nap("claude-haiku-5-5"))], &[]);
+    assert_eq!(row(&view, "nap")[8], "0.01 reported");
+    assert_eq!(row(&view, "total")[8], "0.01 reported");
+}
+
+#[test]
+fn a_cost_with_no_harness_source_is_an_estimate() {
+    let view = view_of(View::Role, &[nap("claude-haiku-5-5")], &[]);
+    assert!(row(&view, "nap")[8].starts_with('~'));
+    assert!(!row(&view, "nap")[8].contains("reported"));
+}
+
+#[test]
+fn reported_and_estimated_rows_in_one_group_show_the_estimate_mark() {
+    let view = view_of(
+        View::Role,
+        &[
+            reported(nap("claude-haiku-5-5")),
+            worker("w1", "2026-11-01T10:00:00Z", "claude-opus-5-5"),
+            reported(with_kind("ask")),
+        ],
+        &[],
+    );
+    assert_eq!(row(&view, "ask")[8], "0.01 reported");
+    assert!(row(&view, "total")[8].starts_with('~'));
+}
+
+#[test]
+fn the_running_total_of_a_main_row_is_never_summed_as_reported() {
+    let view = view_of(View::Role, &[reported(turn())], &[]);
+    assert!(row(&view, "main")[8].starts_with('~'));
+}
+
+#[test]
+fn a_reported_group_with_an_unknown_cursor_entry_ends_in_plus() {
+    let mut worker_row = reported(worker("w1", "2026-11-01T10:30:00Z", "claude-opus-5-5"));
+    worker_row["cost_usd"] = json!(0.25);
+    let view = view_of(
+        View::Role,
+        &[worker_row],
+        &[spawn("w5", "2026-11-01T10:00:00Z", Some("GUZ-5"), "cursor")],
+    );
+    assert_eq!(row(&view, "worker")[8], "0.25+ reported");
+}
+
+#[test]
+fn an_unpriced_model_without_a_reported_cost_stays_na() {
+    let view = view_of(
+        View::Role,
+        &[worker("w1", "2026-11-01T10:30:00Z", "no-such-model")],
+        &[],
+    );
+    assert_eq!(row(&view, "worker")[8], "n/a");
 }

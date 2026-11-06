@@ -120,6 +120,7 @@ struct Usd {
     known: Option<f64>,
     missing: bool,
     estimate: bool,
+    reported: bool,
 }
 
 impl Usd {
@@ -128,6 +129,16 @@ impl Usd {
             known: cost,
             missing: cost.is_none(),
             estimate: false,
+            reported: false,
+        }
+    }
+
+    fn reported(cost: f64) -> Usd {
+        Usd {
+            known: Some(cost),
+            missing: false,
+            estimate: false,
+            reported: true,
         }
     }
 
@@ -141,15 +152,21 @@ impl Usd {
                 .or(other.known),
             missing: self.missing || other.missing,
             estimate: self.estimate || other.estimate,
+            reported: self.reported || other.reported,
         }
     }
 
     fn text(self) -> String {
         let mark = if self.estimate { "~" } else { "" };
+        let source = if self.reported && !self.estimate {
+            " reported"
+        } else {
+            ""
+        };
         match (self.known, self.missing) {
             (None, _) => NO_PRICE.to_string(),
-            (Some(usd), true) => format!("{mark}{usd:.2}+"),
-            (Some(usd), false) => format!("{mark}{usd:.2}"),
+            (Some(usd), true) => format!("{mark}{usd:.2}+{source}"),
+            (Some(usd), false) => format!("{mark}{usd:.2}{source}"),
         }
     }
 }
@@ -248,6 +265,7 @@ fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd 
         known: priced.map(|(usd, _)| usd),
         missing: priced.is_none_or(|(_, priced_tier)| untiered > 0 && !priced_tier),
         estimate: true,
+        reported: false,
     }
 }
 
@@ -271,6 +289,7 @@ fn main_runs(lines: &[UsageLine]) -> (usize, Usd) {
                     known: Some(cost.total),
                     missing: cost.missing,
                     estimate: false,
+                    reported: false,
                 },
             )
         })
