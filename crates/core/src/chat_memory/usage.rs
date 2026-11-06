@@ -45,7 +45,7 @@ pub enum CallSite {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum LedgerRole {
+enum LedgerRole {
     Main,
     Nap,
     Merge,
@@ -55,7 +55,7 @@ pub enum LedgerRole {
 }
 
 impl CallSite {
-    pub fn role(&self) -> LedgerRole {
+    fn role(&self) -> LedgerRole {
         match self {
             CallSite::Turn { .. } | CallSite::Ping => LedgerRole::Main,
             CallSite::Nap => LedgerRole::Nap,
