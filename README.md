@@ -21,7 +21,7 @@
 ---
 
 <!-- ANCHOR: intro -->
-**ralph** wraps `claude -p` with rich terminal rendering. Bare `ralph` opens one persistent chat whose memory is a compressed tree of summaries. From that chat, Claude can start background workers in their own git worktrees and watch long-running commands. `ralph ask` sends one prompt and stores nothing.
+**ralph** wraps `claude -p` with rich terminal rendering. Bare `ralph` opens one persistent chat whose memory is a compressed tree of summaries. From that chat, Claude can start background workers in their own git worktrees and watch long-running commands. `ralph ask` sends one prompt and stores only a usage row.
 <!-- ANCHOR_END: intro -->
 
 ## Table of Contents
@@ -39,11 +39,17 @@
 
 - **Persistent chat** - Bare `ralph` runs `ralph chat`. One Claude process serves the chat, started with a compressed view of the chat so far, stored under `~/.ralph/chat`.
 - **Compressed memory** - The chat log is summarized into a tree by a background nap pass. Claude opens details with the `zoom` and `recall` tools.
-- **Background workers** - Claude starts, messages, and closes workers with `spawn_worker`, `reply`, and `close_worker`. Harnesses: `claude` in tmux, `cursor`, `opencode`, and `codex` (see [Codex workers](docs/configuration.md#codex---codex-workers)). Each worker gets its own git worktree. These tools come from `ralph chat-mcp`, which talks to the running chat over a Unix socket.
+- **Background workers** - Claude starts, messages, and closes workers with `spawn_worker`, `reply`, and `close_worker`. Harnesses: `claude` in tmux, `claude-headless`, `cursor`, `opencode`, and `codex` (see [Codex workers](docs/configuration.md#codex---codex-workers)). Each worker gets its own git worktree. These tools come from `ralph chat-mcp`, which talks to the running chat over a Unix socket.
 - **Inbox and watches** - Worker reports and finished `watch` commands land in the chat inbox. Read them with `/inbox`.
-- **Status line** - Shows the chat mode (`NAP`, `INBOX`, `WORK`, `IDLE`); colors are set under `[theme.status]`.
+- **Threads** - `ralph chat --thread <name>` or `/fork <name>` opens a side chat forked from main; `ralph thread` lists, pulls, merges, parks, revives and drops threads ([guide](docs/context/threads.md)).
+- **send-it** - `/send-it <instructions>` turns a request into a plan of steps with exit criteria; after you approve it with `/send-it go`, the chat runs it with no input ([guide](docs/context/send-it.md)).
+- **Watch, schedule, hold** - `/watch` runs a command and reports when it ends, `/schedule` lists tasks the model armed, and `/hold` waits with no prompt for a matching report ([details](docs/context/ralph-chat.md#watches)).
+- **Markdown and diagrams** - `/view <file.md>` renders a local file; images and mermaid diagrams draw inline where the terminal shows images ([details](docs/context/ralph-chat.md#view)).
+- **Usage and costs** - Every chat turn, nap, worker session and `ralph ask` call that reports usage writes a usage row; `/workers costs` totals them ([details](docs/context/ralph-chat.md#usage)).
+- **Wire recording** - `ralph wire` is a local proxy that records harness-to-provider traffic; `ralph wire ls`, `show` and `diff` explain cost and cache misses ([details](docs/context/ralph-wire.md)).
+- **Status line** - Shows the chat mode (`HOLD`, `NAP`, `INBOX`, `WORK`, `IDLE`); colors are set under `[theme.status]`.
 - **Chat input** - Multi-line editor with history, `$EDITOR` drafts, clipboard images, `!` shell cells, skills, and an opt-in vi mode (`[chat] edit_mode = "vi"`).
-- **Single-shot ask** - `ralph ask` sends one prompt from an argument or stdin and stores nothing.
+- **Single-shot ask** - `ralph ask` sends one prompt from an argument or stdin and stores only a usage row, not the prompt or reply.
 - **Rich terminal output** - Syntax highlighting for code, diffs, and tool results, with built-in themes or custom `.tmTheme` files (`ralph themes`).
 
 ## Installation
@@ -118,7 +124,12 @@ See [Configuration](docs/configuration.md) for complete documentation.
 - [CLI Reference](docs/cli-reference.md) - All commands, flags, and options
 - [ralph chat](docs/context/ralph-chat.md) - Persistent chat, memory tree and nap, workers, inbox, watches, chat-mcp tools
 - [Worker leftovers](docs/context/worker-leftovers.md) - Things workers and smoke tests leave behind outside the repo
+- [Threads](docs/context/threads.md) - Open, pull, merge, park, revive and drop side chats
+- [send-it](docs/context/send-it.md) - Propose, approve and run an unattended plan
 - [ralph ask](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
+- [ralph wire](docs/context/ralph-wire.md) - Record and inspect harness-to-provider traffic
+- [Headless workers](docs/context/headless-workers.md) - Worker harnesses and `ralph worker verify`
+- [Release process](docs/context/release-process.md) - Releases and `ralph upgrade`
 - [Configuration](docs/configuration.md) - Config file format and options, including `[chat]` and `[theme.status]`
 - [Development Guide](docs/development.md) - Building and contributing
 - [Documentation site](https://cloudbridgeuy.github.io/ralph/) - These docs as a book

@@ -13,21 +13,23 @@ mod tests;
 
 pub const NAP_TIMEOUT_SECS: u64 = 600;
 
-/// Chat with Claude from the terminal: persistent memory, background workers, rich rendering.
-///
-/// Bare `ralph` runs `ralph chat`: one long-running chat whose memory is a
-/// compressed tree of summaries, kept small by a background nap pass. From
-/// chat, Claude can start workers (claude in tmux, Cursor, or opencode), each
-/// in its own git worktree, and watch long-running commands. Their reports
-/// land in the chat inbox.
-///
-/// `ralph ask` sends one prompt and stores nothing. `ralph themes` lists the
-/// syntax highlighting themes.
 #[derive(Parser, Debug)]
 #[command(author, version = crate::version::current())]
 #[command(propagate_version = true)]
+#[command(
+    about = "Chat with Claude from the terminal: persistent memory, background workers, rich rendering.",
+    long_about = "Chat with Claude from the terminal: persistent memory, background workers, rich rendering.
+
+Bare `ralph` runs `ralph chat`: one long-running chat whose memory is a compressed tree of \
+summaries, kept small by a background nap pass. From chat, Claude can start workers (claude in \
+tmux, claude-headless, cursor, codex or opencode), each in its own git worktree, and watch \
+long-running commands. Their reports land in the chat inbox.
+
+`ralph ask` sends one prompt and stores only a usage row. `ralph thread` manages side chats, `ralph wire` \
+records harness traffic, `ralph worker verify` checks a worker agent, and `ralph upgrade` \
+installs the latest release."
+)]
 pub struct Cli {
-    /// Subcommand to execute
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -43,7 +45,7 @@ pub enum Commands {
 
     /// Send a single-shot prompt to the LLM and display the response.
     ///
-    /// A simplified interface for quick LLM interactions. Nothing is stored.
+    /// A simplified interface for quick LLM interactions. Only a usage row is stored.
     Ask(AskArgs),
 
     /// Chat with a persistent, compressed memory.
@@ -63,7 +65,7 @@ harness; ralph never sets it."
     Wire(WireArgs),
 
     #[command(
-        about = "List or drop chat threads.",
+        about = "Manage chat threads: ls, drop, merge, park, revive, pull.",
         long_about = "A thread is a named side chat forked from the main chat: `ralph chat --thread <NAME>` \
 creates or opens it under <store>/threads/<NAME>. These subcommands work without starting a chat."
     )]
@@ -198,11 +200,16 @@ The text must be UTF-8, not empty, and at most 65536 bytes; ralph never truncate
 (a folder with log.jsonl or LOCK); nothing is created. A running chat shows the report as unread; a closed chat shows it at the next start."
     )]
     Post {
-        #[arg(long, value_name = "DIR")]
+        #[arg(long, value_name = "DIR", help = "Existing chat store to post to")]
         store: PathBuf,
-        #[arg(long, value_name = "SOURCE", value_parser = parse_source)]
+        #[arg(
+            long,
+            value_name = "SOURCE",
+            value_parser = parse_source,
+            help = "Sender name; the report shows as external:<SOURCE>"
+        )]
         from: String,
-        #[arg(value_name = "FILE|-")]
+        #[arg(value_name = "FILE|-", help = "Report text file, or - for stdin")]
         input: PathBuf,
     },
 }
@@ -216,7 +223,12 @@ pub struct ThreadArgs {
     #[command(subcommand)]
     pub command: ThreadCommand,
 
-    #[arg(long, value_name = "DIR", global = true)]
+    #[arg(
+        long,
+        value_name = "DIR",
+        global = true,
+        help = "Chat store directory (default: RALPH_CHAT_STORE, then ~/.ralph/chat)"
+    )]
     pub store: Option<PathBuf>,
 }
 
@@ -228,14 +240,14 @@ pub enum ThreadCommand {
         about = "Delete a thread's folder. Refuses while a chat or a worker uses it, or once it is merged."
     )]
     Drop {
-        #[arg(value_parser = ThreadName::parse)]
+        #[arg(value_parser = ThreadName::parse, help = "Thread name")]
         name: ThreadName,
     },
     #[command(
         about = "Squash a thread into main: Haiku writes a digest (up to 3 calls) that reaches main's inbox; the thread stays read-only."
     )]
     Merge {
-        #[arg(value_parser = ThreadName::parse)]
+        #[arg(value_parser = ThreadName::parse, help = "Thread name")]
         name: ThreadName,
         #[arg(
             long,
@@ -248,19 +260,19 @@ pub enum ThreadCommand {
         about = "Park a thread: it refuses to open, so its watches and schedules pause, until revive. Refuses while a chat or a worker uses it."
     )]
     Park {
-        #[arg(value_parser = ThreadName::parse)]
+        #[arg(value_parser = ThreadName::parse, help = "Thread name")]
         name: ThreadName,
     },
     #[command(about = "Revive a parked thread, so it opens again.")]
     Revive {
-        #[arg(value_parser = ThreadName::parse)]
+        #[arg(value_parser = ThreadName::parse, help = "Thread name")]
         name: ThreadName,
     },
     #[command(
         about = "Move a thread's fork point to main's current end; its next chat starts with main's newer messages. Refuses while its chat is open."
     )]
     Pull {
-        #[arg(value_parser = ThreadName::parse)]
+        #[arg(value_parser = ThreadName::parse, help = "Thread name")]
         name: ThreadName,
     },
 }
@@ -467,34 +479,69 @@ pub struct ChatArgs {
     #[command(subcommand)]
     pub command: Option<ChatCommand>,
 
-    #[arg(long, value_name = "DIR", global = true)]
+    #[arg(
+        long,
+        value_name = "DIR",
+        global = true,
+        help = "Chat store directory (default: RALPH_CHAT_STORE, then ~/.ralph/chat)"
+    )]
     pub store: Option<std::path::PathBuf>,
 
-    #[arg(long, value_name = "NAME")]
+    #[arg(
+        long,
+        value_name = "NAME",
+        help = "Session name for the status bar and terminal title; a label only, it does not separate stores"
+    )]
     pub name: Option<String>,
 
-    #[arg(long, value_name = "NAME", global = true, value_parser = ThreadName::parse)]
+    #[arg(
+        long,
+        value_name = "NAME",
+        global = true,
+        value_parser = ThreadName::parse,
+        help = "Create or open the side chat <NAME>, forked from main"
+    )]
     pub thread: Option<ThreadName>,
 
-    #[arg(long, value_name = "TOKENS")]
+    #[arg(
+        long,
+        value_name = "TOKENS",
+        help = "Token budget for the newest messages shown verbatim in the memory view; 0 turns it off"
+    )]
     pub recent_history_tokens: Option<usize>,
 
-    #[arg(long, value_name = "COLUMNS")]
+    #[arg(
+        long,
+        value_name = "COLUMNS",
+        help = "Cap the wrap width of replies, reports and the prompt; 0 means the terminal width"
+    )]
     pub wrap_width: Option<usize>,
 
-    #[arg(long = "skill", value_name = "PATH")]
+    #[arg(
+        long = "skill",
+        value_name = "PATH",
+        help = "Add a skill directory; repeatable"
+    )]
     pub skills: Vec<std::path::PathBuf>,
 
-    #[arg(long, value_name = "MODE")]
+    #[arg(
+        long,
+        value_name = "MODE",
+        help = "claude permission mode for turns and claude workers (default: auto)"
+    )]
     pub permission_mode: Option<String>,
 
-    #[arg(long, value_name = "DIR")]
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Where spawned workers get their git worktrees (default: .worktrees in the repo root)"
+    )]
     pub worktree_dir: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Play no sound when a report reaches the inbox")]
     pub no_inbox_sound: bool,
 
-    #[arg(long)]
+    #[arg(long, help = "Send no notification when a report reaches the inbox")]
     pub no_inbox_notification: bool,
 
     #[arg(long, help = "Skip the recap of the previous session at start")]

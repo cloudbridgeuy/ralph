@@ -25,13 +25,15 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `thread` | List, pull, merge, park, revive or drop chat threads ([guide](context/threads.md), [details](context/ralph-chat.md#threads)) |
 | `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
 | `inbox` | Post a report from an outside program to a chat inbox ([details](context/ralph-chat.md#external-reports)) |
-| `config` | Check `config.toml` for errors and unknown keys |
+| `config` | `check` finds errors and unknown keys in `config.toml`; `show` prints the merged config with the source of each value ([details](#ralph-config)) |
 | `worker` | Verify an installed worker agent against ralph's local spec ([details](context/headless-workers.md#verify-an-agent-version)) |
 | `upgrade` | Install the latest GitHub release over the running binary ([details](context/release-process.md#upgrade-an-install)) |
 
 `ralph chat --name <NAME>` sets the chat session name shown in the status bar and the terminal title. It overrides `[chat] name`; without both, the name is the git root or cwd folder name. The name is only a label: chats that share a store still share memory and workers, so use `--store` to separate them ([details](context/ralph-chat.md#session-name)).
 
 `ralph chat --thread <NAME>` creates or opens a thread: a side chat forked from the main chat, stored under `<store>/threads/<NAME>`. `ralph thread ls` lists threads with their running worker and unread report counts (`/threads` does the same inside a chat), `ralph thread drop <NAME>` deletes one, and `ralph thread merge <NAME>` (`/merge <NAME>` in main's chat, after a y/n) squashes one into a digest in main's inbox and makes it read-only (`--view` posts its 100-line labelled memory view instead, with no model call; `/merge <NAME> --view` does it in main's chat; `--rebase` still works as an alias), and `ralph thread park <NAME>` (`/park <NAME>` in main's chat) / `revive <NAME>` stop and allow opening it, and `ralph thread pull <NAME>` (`/pull <NAME>` in main's chat) moves its fork point to main's end. Drop, merge and park refuse while the thread has running workers, and merge also refuses its saved watches and schedules. `/fork <NAME>` opens the thread in a new Rex block (from a thread's chat it forks a sibling from main), or prints the command to run outside Rex ([guide](context/threads.md), [details](context/ralph-chat.md#threads)).
+
+`ralph chat history <read|zoom|recall|search> <WORDS>... [--cursor <C>] [--in <THREAD>]` prints the chat memory as the model's tools see it, with no model and no turn; it works while a chat runs on the store ([details](context/ralph-chat.md#history-commands)).
 
 `ralph chat --skip-summary` skips the startup recap of the previous session for one run; `[chat] resume_summary = false` turns it off for good ([details](context/ralph-chat.md#startup-recap)).
 
