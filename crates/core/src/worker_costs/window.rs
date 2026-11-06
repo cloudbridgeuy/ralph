@@ -23,7 +23,9 @@ pub fn window_start<Tz: TimeZone>(now: &DateTime<Tz>, window: Window) -> Option<
 
 /// Start of the local day of `now`. A midnight that does not exist moves to the
 /// first valid local time after the gap, found in 15-minute steps up to 4 hours.
-pub fn today_start<Tz: TimeZone>(now: &DateTime<Tz>) -> Option<DateTime<Utc>> {
+/// `None` means no valid time within 4 hours: the window has no start, so
+/// `Today` behaves like `All`.
+fn today_start<Tz: TimeZone>(now: &DateTime<Tz>) -> Option<DateTime<Utc>> {
     let zone = now.timezone();
     let midnight = now.date_naive().and_time(NaiveTime::MIN);
     (0..=GAP_STEPS)
