@@ -238,6 +238,7 @@ impl Shared {
         self.spawn_in_flight.store(true, Ordering::SeqCst);
         let (mut child, mut stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
             self.spawn_in_flight.store(false, Ordering::SeqCst);
+            self.interrupt_pending.store(false, Ordering::SeqCst);
             format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
         })?;
         self.group.store(child.id(), Ordering::SeqCst);
