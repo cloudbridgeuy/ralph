@@ -23,13 +23,6 @@ mod diff_theme;
 pub mod formatting;
 mod frame;
 pub mod highlight;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the cursor print worker starts HookSocket in GUZ-1495 commit 4"
-    )
-)]
 mod hook_bridge;
 mod inbox_alert;
 mod inbox_post;

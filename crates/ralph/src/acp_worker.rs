@@ -53,6 +53,7 @@ mod cursor_worker;
 mod model;
 mod permissions;
 mod print;
+mod print_hooks;
 mod turns;
 mod verify;
 
@@ -766,7 +767,8 @@ impl CursorHost {
         };
         let started = match cursor_permissions() {
             PermissionMode::Yolo => {
-                PrintWorker::start(id, &request, &files, None).map(CursorWorker::Print)
+                PrintWorker::start(id, &request, &files, None, PermissionMode::Yolo)
+                    .map(CursorWorker::Print)
             }
             PermissionMode::Ask => self
                 .launch(id, &request, launch)
@@ -864,7 +866,8 @@ impl CursorHost {
             model: record.model.clone(),
         };
         let started = if record.permissions == Some(PermissionMode::Yolo) {
-            PrintWorker::start(id, &request, &files, Some(&record)).map(CursorWorker::Print)
+            PrintWorker::start(id, &request, &files, Some(&record), PermissionMode::Yolo)
+                .map(CursorWorker::Print)
         } else {
             let launch = Launch::Resume {
                 record,

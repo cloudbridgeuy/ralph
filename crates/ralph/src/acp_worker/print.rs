@@ -1,3 +1,4 @@
+use super::print_hooks::PrintHooks;
 use super::{agent_version_warning, SHUTDOWN_GRACE};
 use crate::acp_log::{drain_stderr, CappedLog};
 use crate::cursor_owner::{claim_owner, report_start_warning, write_file, write_interrupt_result};
@@ -15,8 +16,8 @@ use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
     exit_outcome, inbox_env, next_chat, print_args, print_model, prompt_failure_report, reduce,
     task_prompt, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome, HandoffFiles,
-    HarnessId, HeadlessState, ModelUsage, PermissionMode, PrintArgs, PrintEvent, Scope,
-    SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerEvent, WorkerMarkers,
+    HarnessId, HeadlessState, ModelUsage, PermissionAnswer, PermissionMode, PrintArgs, PrintEvent,
+    Scope, SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerEvent, WorkerMarkers,
     CURSOR_AGENT, SERVER_NAME,
 };
 use std::fs;
@@ -392,6 +393,7 @@ pub(super) struct PrintWorker {
     owner: PathBuf,
     state: HeadlessState,
     stopped: bool,
+    hooks: Option<PrintHooks>,
 }
 
 impl PrintWorker {
@@ -400,6 +402,7 @@ impl PrintWorker {
         request: &SpawnRequest,
         files: &HandoffFiles,
         resume: Option<&SessionRecord>,
+        mode: PermissionMode,
     ) -> Result<Self, String> {
         if let Some(warning) = agent_version_warning(&CURSOR_AGENT, &request.inbox) {
             report_start_warning(warning, Some(&files.warning));
@@ -407,6 +410,11 @@ impl PrintWorker {
         let store = request.inbox.parent().ok_or("worker inbox has no store")?;
         let store = fs::canonicalize(store).map_err(|e| e.to_string())?;
         write_mcp_config(id, request, files)?;
+        let events = Events::default();
+        let hooks = match mode {
+            PermissionMode::Ask => Some(PrintHooks::start(id, request, &store, &events)?),
+            PermissionMode::Yolo => None,
+        };
         claim_owner(&files.owner)
             .map_err(|e| format!("could not write the {} owner file: {e}", CURSOR_AGENT.name))?;
         let markers = WorkerMarkers::new(&store, id);
@@ -438,12 +446,12 @@ impl PrintWorker {
                     store: Some(store.clone()),
                     model: request.model.clone(),
                     effort: None,
-                    permissions: Some(PermissionMode::Yolo),
+                    permissions: Some(mode),
                 },
                 store,
             },
             turns: Mutex::new(Turns::default()),
-            events: Events::default(),
+            events,
             heartbeat,
             markers,
             inbox: Inbox::new(request.inbox.clone()),
@@ -466,6 +474,7 @@ impl PrintWorker {
             owner: files.owner.clone(),
             state: HeadlessState::default(),
             stopped: false,
+            hooks,
         })
     }
 
@@ -488,6 +497,18 @@ impl PrintWorker {
         }
     }
 
+    pub(super) fn answer(&self, answer: &PermissionAnswer) -> Result<(), String> {
+        let hooks = self.hooks.as_ref().ok_or_else(|| {
+            format!(
+                "{} -p workers run with --force and ask no permission",
+                CURSOR_AGENT.command
+            )
+        })?;
+        hooks.answer(answer)?;
+        self.shared.heartbeat.touch();
+        Ok(())
+    }
+
     pub(super) fn closed(&self) {
         push_event(&self.shared.events, WorkerEvent::Closed);
     }
@@ -506,6 +527,7 @@ impl PrintWorker {
         if let Some(group) = group {
             stop_groups(&[group], SHUTDOWN_GRACE, || true);
         }
+        self.hooks = None;
         fs::remove_file(&self.owner).ok();
         if let Some(home) = dirs::home_dir() {
             let real = fs::canonicalize(&self.shared.run.worktree)

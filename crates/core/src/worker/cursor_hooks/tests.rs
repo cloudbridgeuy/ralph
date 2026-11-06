@@ -1,4 +1,5 @@
 use super::*;
+use crate::chat_socket::{check_socket_path, runtime_dir_pid, runtime_root};
 use crate::worker::CURSOR_VERIFY_HOOKS;
 use serde_json::{json, Value};
 
@@ -275,4 +276,45 @@ fn the_ask_round_trips_as_one_line() {
     let line = crate::chat_socket::encode_line(&ask);
     assert_eq!(line.matches('\n').count(), 1);
     assert_eq!(serde_json::from_str::<BridgeAsk>(&line).unwrap(), ask);
+}
+
+#[test]
+fn the_worker_gives_up_at_the_bridge_timeout_or_when_the_hook_leaves() {
+    let just_before = BRIDGE_TIMEOUT - Duration::from_millis(1);
+    assert_eq!(bridge_wait(Duration::ZERO, true), BridgeWait::Wait);
+    assert_eq!(bridge_wait(just_before, true), BridgeWait::Wait);
+    assert_eq!(bridge_wait(BRIDGE_TIMEOUT, true), BridgeWait::GiveUp);
+    assert_eq!(bridge_wait(Duration::ZERO, false), BridgeWait::GiveUp);
+}
+
+#[test]
+fn a_hook_ask_is_a_shell_permission_request() {
+    let ask = BridgeAsk {
+        tool_use_id: "t1".to_string(),
+        command: "rm -rf build".to_string(),
+    };
+    assert_eq!(
+        hook_content("t1", &ask),
+        BlockedContent {
+            request_id: "t1".to_string(),
+            tool: "shell".to_string(),
+            summary: "rm -rf build".to_string(),
+            options: hook_options(),
+            pending: Vec::new(),
+        }
+    );
+}
+
+#[test]
+fn the_hook_socket_fits_the_unix_limit_for_a_long_store() {
+    let store = PathBuf::from(format!("/{}", "deep/".repeat(60)));
+    let key = StoreKey::of(&store);
+    let root = runtime_root(u32::MAX);
+    let name = hook_socket_name(&key, u32::MAX, u64::MAX);
+    let path = root.join(&name);
+    assert!(path.as_os_str().len() < 104, "{}", path.display());
+    assert_eq!(check_socket_path(&root, &path), Ok(()));
+    assert!(name.ends_with(".sock"), "{name}");
+    assert_ne!(hook_socket_name(&key, 7, 1), hook_socket_name(&key, 7, 2));
+    assert_eq!(runtime_dir_pid(&key, &name), None);
 }

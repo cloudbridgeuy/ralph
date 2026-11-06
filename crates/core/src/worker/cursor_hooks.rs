@@ -1,4 +1,5 @@
-use super::{shell_quote, PermissionOption, ALLOW_ONCE};
+use super::{shell_quote, BlockedContent, PermissionOption, ALLOW_ONCE};
+use crate::chat_socket::{runtime_dir_name, StoreKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io;
@@ -193,4 +194,32 @@ pub fn read_outcome(read: io::Result<String>) -> HookOutcome {
         }
         Err(e) => HookOutcome::BridgeGone(e.to_string()),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeWait {
+    Wait,
+    GiveUp,
+}
+
+pub fn bridge_wait(elapsed: Duration, hook_connected: bool) -> BridgeWait {
+    if hook_connected && elapsed < BRIDGE_TIMEOUT {
+        BridgeWait::Wait
+    } else {
+        BridgeWait::GiveUp
+    }
+}
+
+pub fn hook_content(request_id: &str, ask: &BridgeAsk) -> BlockedContent {
+    BlockedContent {
+        request_id: request_id.to_string(),
+        tool: "shell".to_string(),
+        summary: ask.command.clone(),
+        options: hook_options(),
+        pending: Vec::new(),
+    }
+}
+
+pub fn hook_socket_name(key: &StoreKey, pid: u32, serial: u64) -> String {
+    format!("{}-hook-{serial}.sock", runtime_dir_name(key, pid))
 }
