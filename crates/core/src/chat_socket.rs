@@ -1,6 +1,8 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 const SOCKET_TOOLS: [&str; 9] = [
@@ -15,6 +17,8 @@ const SOCKET_TOOLS: [&str; 9] = [
     "step_result",
 ];
 const SOCKET_PREFIX: &str = "chat-";
+const RUNTIME_ROOT_PREFIX: &str = "/tmp/ralph-";
+const STORE_KEY_HEX_CHARS: usize = 12;
 const SOCKET_FILE: &str = "chat.sock";
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const SYSTEM_PROMPT_FILE: &str = "system-prompt.md";
@@ -45,8 +49,36 @@ pub fn decode_line<T: DeserializeOwned>(line: &str) -> Result<T, String> {
     serde_json::from_str(line.trim()).map_err(|e| format!("Malformed chat socket message: {e}"))
 }
 
-pub fn dir_name(pid: u32) -> String {
-    format!("{SOCKET_PREFIX}{pid}")
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreKey(String);
+
+impl StoreKey {
+    pub fn of(canonical_store: &Path) -> Self {
+        let digest = Sha256::digest(canonical_store.as_os_str().as_bytes());
+        Self(
+            digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()[..STORE_KEY_HEX_CHARS]
+                .to_string(),
+        )
+    }
+}
+
+pub fn runtime_root(uid: u32) -> PathBuf {
+    PathBuf::from(format!("{RUNTIME_ROOT_PREFIX}{uid}"))
+}
+
+pub fn runtime_dir_name(key: &StoreKey, pid: u32) -> String {
+    format!("{}-{pid}", key.0)
+}
+
+pub fn runtime_dir_pid(key: &StoreKey, file_name: &str) -> Option<u32> {
+    file_name
+        .strip_prefix(&key.0)?
+        .strip_prefix('-')?
+        .parse()
+        .ok()
 }
 
 pub fn socket_file_name() -> &'static str {
@@ -65,10 +97,6 @@ pub fn sidecar_name(pid: u32) -> String {
     format!("{SOCKET_PREFIX}{pid}{SIDECAR_SUFFIX}")
 }
 
-pub fn dir_pid(file_name: &str) -> Option<u32> {
-    file_name.strip_prefix(SOCKET_PREFIX)?.parse().ok()
-}
-
 pub fn sidecar_pid(file_name: &str) -> Option<u32> {
     file_name
         .strip_prefix(SOCKET_PREFIX)?
@@ -77,12 +105,13 @@ pub fn sidecar_pid(file_name: &str) -> Option<u32> {
         .ok()
 }
 
-pub fn check_socket_path(path: &Path) -> Result<(), String> {
+pub fn check_socket_path(root: &Path, path: &Path) -> Result<(), String> {
     let len = path.as_os_str().len();
     if len > MAX_SOCKET_PATH_BYTES {
         return Err(format!(
-            "Chat socket path is {len} bytes, over the {MAX_SOCKET_PATH_BYTES} byte Unix socket limit: {}. Use a shorter --store path.",
-            path.display()
+            "Chat socket path is {len} bytes, over the {MAX_SOCKET_PATH_BYTES} byte Unix socket limit: {}. The runtime root {} is too long.",
+            path.display(),
+            root.display()
         ));
     }
     Ok(())
@@ -210,13 +239,12 @@ mod tests {
 
     #[test]
     fn names_round_trip_the_pid() {
-        assert_eq!(dir_name(42), "chat-42");
+        let key = StoreKey::of(Path::new("/s"));
         assert_eq!(socket_file_name(), "chat.sock");
         assert_eq!(sidecar_name(42), "chat-42.owner");
-        assert_eq!(dir_pid("chat-42"), Some(42));
-        assert_eq!(dir_pid("chat-42.owner"), None);
-        assert_eq!(dir_pid("chat-x"), None);
-        assert_eq!(dir_pid("mcp.json"), None);
+        assert_eq!(runtime_dir_pid(&key, &runtime_dir_name(&key, 42)), Some(42));
+        assert_eq!(runtime_dir_pid(&key, "chat-42"), None);
+        assert_eq!(runtime_dir_pid(&key, "mcp.json"), None);
         assert_eq!(sidecar_pid("chat-42.owner"), Some(42));
         assert_eq!(sidecar_pid("chat-42"), None);
         assert_eq!(sidecar_pid("chat-x.owner"), None);
@@ -224,14 +252,65 @@ mod tests {
     }
 
     #[test]
+    fn runtime_root_is_a_per_user_dir_in_tmp() {
+        assert_eq!(runtime_root(501), PathBuf::from("/tmp/ralph-501"));
+        assert_ne!(runtime_root(501), runtime_root(502));
+    }
+
+    #[test]
+    fn store_key_is_twelve_hex_chars_and_stable_per_store() {
+        let key = StoreKey::of(Path::new("/s"));
+        let name = runtime_dir_name(&key, 1);
+        let (hex, pid) = name.split_once('-').unwrap();
+        assert_eq!(pid, "1");
+        assert_eq!(hex.len(), 12);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(key, StoreKey::of(Path::new("/s")));
+        assert_ne!(key, StoreKey::of(Path::new("/s/threads/viewer")));
+    }
+
+    #[test]
+    fn runtime_dir_differs_per_store_and_pid() {
+        let main = StoreKey::of(Path::new("/s"));
+        let thread = StoreKey::of(Path::new("/s/threads/viewer"));
+        assert_ne!(runtime_dir_name(&main, 1), runtime_dir_name(&main, 2));
+        assert_ne!(runtime_dir_name(&main, 1), runtime_dir_name(&thread, 1));
+    }
+
+    #[test]
+    fn runtime_dir_pid_reads_only_this_stores_dirs() {
+        let main = StoreKey::of(Path::new("/s"));
+        let thread = StoreKey::of(Path::new("/s/threads/viewer"));
+        assert_eq!(runtime_dir_pid(&main, &runtime_dir_name(&thread, 7)), None);
+        assert_eq!(runtime_dir_pid(&main, &runtime_dir_name(&main, 7)), Some(7));
+        let bad = format!("{}x", runtime_dir_name(&main, 7));
+        assert_eq!(runtime_dir_pid(&main, &bad), None);
+    }
+
+    #[test]
+    fn deep_thread_store_socket_fits_the_limit() {
+        let store = Path::new(
+            "/Users/guzmanmonne/Projects/Vntana/vntana-model-ops/branches/main/.claude/memory/threads/viewer",
+        );
+        let root = runtime_root(u32::MAX);
+        let socket = root
+            .join(runtime_dir_name(&StoreKey::of(store), u32::MAX))
+            .join(socket_file_name());
+        assert!(socket.starts_with("/tmp/ralph-4294967295"));
+        assert_eq!(check_socket_path(&root, &socket), Ok(()));
+    }
+
+    #[test]
     fn socket_path_limit_is_enforced() {
-        assert!(check_socket_path(Path::new("/s/chat-1/chat.sock")).is_ok());
+        let root = Path::new("/tmp/ralph-501");
+        assert!(check_socket_path(root, Path::new("/s/chat-1/chat.sock")).is_ok());
         let exact = PathBuf::from("a".repeat(MAX_SOCKET_PATH_BYTES));
-        assert!(check_socket_path(&exact).is_ok());
+        assert!(check_socket_path(root, &exact).is_ok());
         let long = PathBuf::from("a".repeat(MAX_SOCKET_PATH_BYTES + 1));
-        let message = check_socket_path(&long).unwrap_err();
+        let message = check_socket_path(root, &long).unwrap_err();
         assert!(message.contains("103"));
-        assert!(message.contains("--store"));
+        assert!(message.contains("/tmp/ralph-501"));
+        assert!(!message.contains("--store"));
     }
 
     #[test]

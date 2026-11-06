@@ -1,6 +1,6 @@
 mod proxy;
 mod shutdown;
-mod store;
+pub(crate) mod store;
 
 use crate::cli::{
     WireArgs, WireCommand, WireDiffArgs, WireLsArgs, WireProvider, WireSessionsArgs, WireShowArgs,
