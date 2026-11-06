@@ -174,7 +174,7 @@ impl SendIt {
     pub(crate) fn status(&self) -> Screen {
         match self.load() {
             Ok(Some(file)) => Screen {
-                text: render_status(&file),
+                text: render_status(&file, super::prompt::screen_columns()),
                 shown: Some(plan_hash(&file.plan)),
             },
             Ok(None) => Screen::text(NO_RUN),
