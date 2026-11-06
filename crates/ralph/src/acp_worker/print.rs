@@ -24,11 +24,28 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
+const RESULT_GRACE: Duration = Duration::from_millis(1500);
+
+#[derive(Debug, PartialEq)]
+enum ReadPlan {
+    Block,
+    Wait(Duration),
+    Stop,
+}
+
+fn read_plan(since_result: Option<Duration>, grace: Duration) -> ReadPlan {
+    match since_result {
+        None => ReadPlan::Block,
+        Some(elapsed) if elapsed < grace => ReadPlan::Wait(grace - elapsed),
+        Some(_) => ReadPlan::Stop,
+    }
+}
 
 type TurnRun = (ExitOutcome, Option<TurnEnd>, Option<ModelUsage>);
 
@@ -216,16 +233,33 @@ impl Shared {
             ));
         }
         drop(stdin);
+        let (lines, incoming) = mpsc::channel();
+        thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if lines.send(line).is_err() {
+                    break;
+                }
+            }
+        });
         let mut result = None;
         let mut spend = None;
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        let mut result_at: Option<Instant> = None;
+        loop {
+            let next = match read_plan(result_at.map(|at| at.elapsed()), RESULT_GRACE) {
+                ReadPlan::Block => incoming.recv().ok(),
+                ReadPlan::Wait(left) => incoming.recv_timeout(left).ok(),
+                ReadPlan::Stop => None,
+            };
+            let Some(line) = next else { break };
             self.heartbeat.touch();
             let event = decode_print_line(&line, &self.run.model);
             self.remember_chat(&event);
             if let PrintEvent::Result { end, usage } = event {
-                result = Some(end);
-                spend = usage;
-                break;
+                if result.is_none() {
+                    result = Some(end);
+                    spend = usage;
+                    result_at = Some(Instant::now());
+                }
             }
         }
         self.release_child(&mut child);
@@ -403,4 +437,37 @@ fn write_mcp_config(id: &str, request: &SpawnRequest, files: &HandoffFiles) -> R
     let entry = &claude_mcp_config(&server)["mcpServers"][SERVER_NAME];
     write_file(&path, &cursor_mcp_json(existing.as_deref(), entry))
         .map_err(|e| format!("could not write {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GRACE: Duration = Duration::from_millis(1500);
+
+    #[test]
+    fn read_plan_blocks_before_a_result() {
+        assert_eq!(read_plan(None, GRACE), ReadPlan::Block);
+    }
+
+    #[test]
+    fn read_plan_waits_the_rest_of_the_grace_after_a_result() {
+        assert_eq!(
+            read_plan(Some(Duration::ZERO), GRACE),
+            ReadPlan::Wait(GRACE)
+        );
+        assert_eq!(
+            read_plan(Some(Duration::from_millis(500)), GRACE),
+            ReadPlan::Wait(Duration::from_millis(1000))
+        );
+    }
+
+    #[test]
+    fn read_plan_stops_when_the_grace_is_spent() {
+        assert_eq!(read_plan(Some(GRACE), GRACE), ReadPlan::Stop);
+        assert_eq!(
+            read_plan(Some(Duration::from_secs(9)), GRACE),
+            ReadPlan::Stop
+        );
+    }
 }
