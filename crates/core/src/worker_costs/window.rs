@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, FixedOffset, NaiveTime, Utc};
+use chrono::{DateTime, Duration, FixedOffset, NaiveTime, Offset, TimeZone, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Window {
@@ -23,6 +23,14 @@ pub fn window_start(
             .and_utc()
             .checked_sub_signed(Duration::seconds(i64::from(offset.local_minus_utc()))),
     }
+}
+
+pub fn midnight_offset<Tz: TimeZone>(now: &DateTime<Tz>) -> FixedOffset {
+    let current = now.offset().fix();
+    now.timezone()
+        .from_local_datetime(&now.date_naive().and_time(NaiveTime::MIN))
+        .earliest()
+        .map_or(current, |midnight| midnight.offset().fix())
 }
 
 pub(crate) fn instant(at: &str) -> Option<DateTime<Utc>> {
