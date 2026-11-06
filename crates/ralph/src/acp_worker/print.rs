@@ -30,6 +30,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
+const NO_SIGINT: u64 = u64::MAX;
 const RESULT_GRACE: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, PartialEq)]
@@ -58,6 +59,10 @@ enum InterruptPlan {
     Send(Group),
     Hold,
     Drop,
+}
+
+fn sigint_hit_turn(signalled: u64, turn: u64) -> bool {
+    signalled == turn
 }
 
 fn begin_start() -> TurnProc {
@@ -144,6 +149,7 @@ struct Shared {
     proc: Mutex<TurnProc>,
     turn_seq: AtomicU64,
     spawns: AtomicU64,
+    sigint_turn: AtomicU64,
     closing: AtomicBool,
 }
 
@@ -211,12 +217,15 @@ impl Shared {
             *state = next;
             plan
         };
-        if let InterruptPlan::Send(group) = plan {
-            self.send_interrupt(group);
+        match plan {
+            InterruptPlan::Drop => self.drive(Turns::interrupt_dropped),
+            InterruptPlan::Send(group) => self.send_interrupt(group),
+            InterruptPlan::Hold => {}
         }
     }
 
     fn send_interrupt(self: &Arc<Self>, group: Group) {
+        self.sigint_turn.store(group.turn, Ordering::SeqCst);
         crate::cursor_owner::signal_group(group.pgid, "INT");
         let shared = Arc::clone(self);
         thread::spawn(move || {
@@ -303,9 +312,9 @@ impl Shared {
             *locked(&self.proc) = on_release();
             format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
         })?;
+        let turn = self.spawns.fetch_add(1, Ordering::SeqCst);
         let held = {
             let mut state = locked(&self.proc);
-            let turn = self.spawns.fetch_add(1, Ordering::SeqCst);
             let group = Group {
                 pgid: child.id(),
                 turn,
@@ -361,7 +370,7 @@ impl Shared {
             }
         }
         self.release_child(&mut child);
-        let sigint_sent = locked(&self.turns).interrupt_sent();
+        let sigint_sent = sigint_hit_turn(self.sigint_turn.load(Ordering::SeqCst), turn);
         Ok((exit_outcome(result.is_some(), sigint_sent), result, spend))
     }
 
@@ -453,6 +462,7 @@ impl PrintWorker {
             snapshot: Mutex::new(None),
             proc: Mutex::new(TurnProc::Idle),
             turn_seq: AtomicU64::new(0),
+            sigint_turn: AtomicU64::new(NO_SIGINT),
             spawns: AtomicU64::new(0),
             closing: AtomicBool::new(false),
         });
@@ -652,6 +662,14 @@ mod tests {
                 InterruptPlan::Drop
             )
         );
+    }
+
+    #[test]
+    fn a_signal_counts_only_for_the_turn_it_hit() {
+        assert!(sigint_hit_turn(4, 4));
+        assert!(!sigint_hit_turn(3, 4));
+        assert!(!sigint_hit_turn(NO_SIGINT, 0));
+        assert!(!sigint_hit_turn(NO_SIGINT, u64::MAX - 1));
     }
 
     #[test]
