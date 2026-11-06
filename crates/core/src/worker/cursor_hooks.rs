@@ -1,10 +1,13 @@
-use super::shell_quote;
+use super::{shell_quote, PermissionOption, ALLOW_ONCE};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const SHELL_EVENT: &str = "beforeShellExecution";
 const BRIDGE_ARGS: &str = " hook-bridge --socket ";
+const DENY: &str = "deny";
+pub const BRIDGE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[cfg(test)]
 mod tests;
@@ -99,4 +102,50 @@ pub fn remove_bridge_hook(existing: &str) -> String {
 
 pub fn parse_hook_input(text: &str) -> Result<HookInput, String> {
     serde_json::from_str(text).map_err(|e| format!("unreadable cursor hook input: {e}"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookOutcome {
+    Answered(String),
+    TimedOut,
+    BridgeGone(String),
+    BadInput(String),
+}
+
+pub fn hook_options() -> Vec<PermissionOption> {
+    let option = |id: &str, name: &str, kind: &str| PermissionOption {
+        option_id: id.to_string(),
+        name: name.to_string(),
+        kind: kind.to_string(),
+    };
+    vec![
+        option(ALLOW_ONCE, "Allow once", "allow_once"),
+        option(DENY, "Deny", "reject_once"),
+    ]
+}
+
+fn deny_reason(outcome: &HookOutcome) -> Option<String> {
+    match outcome {
+        HookOutcome::Answered(option) if option == ALLOW_ONCE => None,
+        HookOutcome::Answered(_) => Some("the person denied it".to_string()),
+        HookOutcome::TimedOut => Some(format!("no answer within {} s", BRIDGE_TIMEOUT.as_secs())),
+        HookOutcome::BridgeGone(error) => {
+            Some(format!("the ralph permission bridge failed: {error}"))
+        }
+        HookOutcome::BadInput(error) => Some(format!("unreadable hook input: {error}")),
+    }
+}
+
+pub fn hook_output(outcome: &HookOutcome) -> String {
+    match deny_reason(outcome) {
+        None => json!({ "permission": "allow" }),
+        Some(reason) => json!({
+            "permission": DENY,
+            "user_message": format!("ralph denied this shell command: {reason}."),
+            "agent_message": format!(
+                "ralph denied this shell command: {reason}. Do not retry it; say in your reply what you needed it for."
+            ),
+        }),
+    }
+    .to_string()
 }

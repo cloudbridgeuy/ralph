@@ -118,6 +118,7 @@ Cursor hook core (`crates/core/src/worker/cursor_hooks.rs`, pure; GUZ-1495). The
 - `add_bridge_hook(existing, command)` merges ralph's `beforeShellExecution` entry into `.cursor/hooks.json` in the `CURSOR_VERIFY_HOOKS` shape (`{"version":1,"hooks":{…}}`). Other entries, events and keys stay; an older ralph entry (another socket) is replaced, so adding again keeps one. An unreadable file is replaced, as `cursor_mcp_json` does.
 - `remove_bridge_hook(existing)` takes out ralph's entries only and drops `beforeShellExecution` when it ends up empty. A file with no ralph entry, or one that does not parse, comes back unchanged.
 - `parse_hook_input(stdin)` gives a `HookInput`. Only `beforeShellExecution` parses; unknown fields are ignored; missing `command` or `hook_event_name`, another event or bad JSON is an error.
+- `hook_options()` offers `allow_once` (kind `allow_once`) and `deny` (kind `reject_once`), the claude-headless option ids. `hook_output(&HookOutcome)` is the hook's stdout: `Answered("allow_once")` prints `{"permission":"allow"}`; any other answer, `TimedOut` (after `BRIDGE_TIMEOUT`, 120 s), `BridgeGone` (no socket, refused or dropped connection) and `BadInput` print an explicit `{"permission":"deny","user_message":…,"agent_message":…}` naming the reason. The bridge never relies on its exit code. The deny shape is measured; the allow shape is not yet tested against a live `agent`.
 
 ## Cursor print mode (yolo)
 

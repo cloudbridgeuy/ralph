@@ -170,3 +170,54 @@ fn unusable_stdin_is_an_error() {
         assert!(parse_hook_input(text).is_err(), "{text}");
     }
 }
+
+fn output(outcome: HookOutcome) -> Value {
+    parsed(&hook_output(&outcome))
+}
+
+#[test]
+fn the_hook_offers_allow_once_and_deny() {
+    let ids: Vec<(String, String)> = hook_options()
+        .into_iter()
+        .map(|option| (option.option_id, option.kind))
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            ("allow_once".to_string(), "allow_once".to_string()),
+            ("deny".to_string(), "reject_once".to_string())
+        ]
+    );
+}
+
+#[test]
+fn allow_once_allows() {
+    assert_eq!(
+        output(HookOutcome::Answered(ALLOW_ONCE.to_string())),
+        json!({"permission": "allow"})
+    );
+}
+
+#[test]
+fn every_other_outcome_is_an_explicit_deny() {
+    let outcomes = [
+        (HookOutcome::Answered("deny".into()), "the person denied"),
+        (HookOutcome::Answered("other".into()), "the person denied"),
+        (HookOutcome::TimedOut, "no answer within 120 s"),
+        (HookOutcome::BridgeGone("no socket".into()), "no socket"),
+        (HookOutcome::BadInput("bad json".into()), "bad json"),
+    ];
+    for (outcome, reason) in outcomes {
+        let value = output(outcome.clone());
+        assert_eq!(value["permission"], "deny", "{outcome:?}");
+        for key in ["user_message", "agent_message"] {
+            let message = value[key].as_str().unwrap_or_default();
+            assert!(message.contains(reason), "{outcome:?} {key}: {message}");
+        }
+    }
+}
+
+#[test]
+fn the_bridge_waits_two_minutes() {
+    assert_eq!(BRIDGE_TIMEOUT, Duration::from_secs(120));
+}
