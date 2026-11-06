@@ -6,9 +6,11 @@ use crate::cursor_usage::{record_cursor_usage, CursorTurn};
 use crate::subprocess::unregister_group;
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
+use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::Heartbeat;
+use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
     exit_outcome, inbox_env, next_chat, print_args, print_model, prompt_failure_report, reduce,
@@ -52,6 +54,8 @@ struct Shared {
     inbox: Inbox,
     results: PathBuf,
     chat: Mutex<Option<String>>,
+    changes: Option<WorkerChanges>,
+    snapshot: Mutex<Option<u64>>,
     group: AtomicU32,
     interrupt_pending: AtomicBool,
     turn_seq: AtomicU64,
@@ -103,7 +107,13 @@ impl Shared {
                 Action::InterruptResult { entry, outcome } => {
                     write_interrupt_result(&self.results, &entry, outcome);
                 }
-                Action::Snapshot => {}
+                Action::Snapshot => {
+                    let turn = self
+                        .changes
+                        .as_ref()
+                        .and_then(WorkerChanges::snapshot_turn_or_warn);
+                    *locked(&self.snapshot) = turn;
+                }
             }
         }
     }
@@ -125,26 +135,28 @@ impl Shared {
     }
 
     fn run_turn(self: Arc<Self>, text: &str) {
-        let (end, gone) = match self.execute(text) {
-            Ok((outcome, result, usage)) => {
-                if let Some(usage) = &usage {
-                    self.record_usage(usage);
-                }
-                (
-                    turn_end_for(outcome, result),
-                    outcome == ExitOutcome::ProcessGone,
-                )
-            }
+        let (end, gone, usage) = match self.execute(text) {
+            Ok((outcome, result, usage)) => (
+                turn_end_for(outcome, result),
+                outcome == ExitOutcome::ProcessGone,
+                usage,
+            ),
             Err(message) => (
                 TurnEnd::Failed {
                     message,
                     transient: false,
                 },
                 false,
+                None,
             ),
         };
         let closing = self.closing.load(Ordering::SeqCst);
+        *locked(&self.snapshot) = None;
         self.drive(|turns| turns.signal(ThreadSignal::TurnEnded(end.clone()), closing));
+        if let Some(usage) = &usage {
+            let turn_id = locked(&self.snapshot).take();
+            self.record_usage(usage, turn_id);
+        }
         if gone && !closing {
             let reason = format!("{} -p exited without a result", CURSOR_AGENT.command);
             self.heartbeat.gone(&Scope::Worker, &reason);
@@ -158,14 +170,14 @@ impl Shared {
         }
     }
 
-    fn record_usage(&self, usage: &ModelUsage) {
+    fn record_usage(&self, usage: &ModelUsage, turn_id: Option<u64>) {
         let chat = locked(&self.chat).clone();
         record_cursor_usage(
             &CursorTurn {
                 worker: &self.id,
                 chat: chat.as_deref(),
                 store: Some(&self.run.store),
-                turn_id: None,
+                turn_id,
             },
             usage,
         );
@@ -267,6 +279,16 @@ impl PrintWorker {
         let chat = resume
             .map(|record| record.session_id.clone())
             .filter(|chat| !chat.is_empty());
+        let changes = request
+            .snapshots
+            .then(|| {
+                WorkerChanges::open(&WorkerSite {
+                    store: store.clone(),
+                    id: id.to_string(),
+                    worktree: request.worktree.clone(),
+                })
+            })
+            .flatten();
         let shared = Arc::new(Shared {
             id: id.to_string(),
             run: Run {
@@ -291,6 +313,8 @@ impl PrintWorker {
             inbox: Inbox::new(request.inbox.clone()),
             results: files.interrupt_result.clone(),
             chat: Mutex::new(chat),
+            changes,
+            snapshot: Mutex::new(None),
             group: AtomicU32::new(0),
             interrupt_pending: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
