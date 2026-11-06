@@ -1,9 +1,9 @@
 use super::transcript_usage::ModelUsage;
-use super::{PermissionMode, TurnEnd};
+use super::{PermissionMode, TurnEnd, SERVER_NAME};
 use crate::stream::result_is_error;
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
 use crate::worker_costs::long_prompt_call;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::Path;
 
 #[cfg(test)]
@@ -137,4 +137,38 @@ pub fn map_print_usage(usage: &Value, model: &str) -> Option<ModelUsage> {
         long_prompt: long_prompt_call(model, &usage),
         usage,
     })
+}
+
+pub fn turn_end_for(outcome: ExitOutcome, result: Option<TurnEnd>) -> TurnEnd {
+    match (outcome, result) {
+        (ExitOutcome::Interrupted, _) => TurnEnd::Interrupted,
+        (_, Some(end)) => end,
+        (_, None) => TurnEnd::Failed {
+            message: "the cursor agent exited without a result".to_string(),
+            transient: false,
+        },
+    }
+}
+
+pub fn next_chat(current: Option<&str>, event: &PrintEvent) -> Option<String> {
+    match (current, event) {
+        (None, PrintEvent::Init(chat)) => Some(chat.clone()),
+        (current, _) => current.map(str::to_string),
+    }
+}
+
+pub fn print_model(model: Option<&str>) -> &str {
+    model.unwrap_or("auto")
+}
+
+pub fn cursor_mcp_json(existing: Option<&str>, server: &Value) -> String {
+    let mut config = existing
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    if !config["mcpServers"].is_object() {
+        config["mcpServers"] = json!({});
+    }
+    config["mcpServers"][SERVER_NAME] = server.clone();
+    config.to_string()
 }

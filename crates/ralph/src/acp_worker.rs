@@ -49,13 +49,17 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod cursor_worker;
 mod model;
 mod permissions;
+mod print;
 mod turns;
 mod verify;
 
 use crate::permission_queue::{host_process_token, PermissionQueue};
+use cursor_worker::CursorWorker;
 use permissions::Permissions;
+use print::PrintWorker;
 use turns::{run_turns, Turns};
 use verify::agent_version_probe;
 pub(crate) use verify::verify;
@@ -569,7 +573,7 @@ async fn authenticate(
 
 pub struct CursorHost {
     store_dir: PathBuf,
-    workers: Mutex<HashMap<String, AcpWorker>>,
+    workers: Mutex<HashMap<String, CursorWorker>>,
     starting: Mutex<HashMap<String, u32>>,
     closed: AtomicBool,
 }
@@ -591,7 +595,7 @@ impl CursorHost {
         })
     }
 
-    fn workers(&self) -> MutexGuard<'_, HashMap<String, AcpWorker>> {
+    fn workers(&self) -> MutexGuard<'_, HashMap<String, CursorWorker>> {
         locked(&self.workers)
     }
 
@@ -639,7 +643,7 @@ impl CursorHost {
 
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        let mut drained: Vec<(String, AcpWorker)> = self.workers().drain().collect();
+        let mut drained: Vec<(String, CursorWorker)> = self.workers().drain().collect();
         for (_, worker) in &mut drained {
             worker.begin_stop();
         }
@@ -671,10 +675,7 @@ impl CursorHost {
     }
 
     pub fn cancel_pending(&self, id: &str) {
-        let permissions = self
-            .workers()
-            .get(id)
-            .map(|worker| Arc::clone(&worker.permissions));
+        let permissions = self.workers().get(id).and_then(CursorWorker::permissions);
         if let Some(permissions) = permissions {
             permissions.cancel_all();
         }
@@ -695,7 +696,7 @@ impl CursorHost {
         &self,
         id: &str,
         dir: fn(&HandoffFiles) -> &PathBuf,
-        deliver: fn(&mut AcpWorker, &str, &str),
+        deliver: fn(&mut CursorWorker, &str, &str),
     ) {
         let files = self.files(id);
         let starting = locked(&self.starting).contains_key(id);
@@ -763,7 +764,15 @@ impl CursorHost {
                 permissions: None,
             },
         };
-        match self.launch(id, &request, launch) {
+        let started = match cursor_permissions() {
+            PermissionMode::Yolo => {
+                PrintWorker::start(id, &request, &files, None).map(CursorWorker::Print)
+            }
+            PermissionMode::Ask => self
+                .launch(id, &request, launch)
+                .map(|worker| CursorWorker::Acp(Box::new(worker))),
+        };
+        match started {
             Ok(worker) => self.adopt(id, worker),
             Err(message) => {
                 fs::remove_file(&files.session).ok();
@@ -854,11 +863,17 @@ impl CursorHost {
             ),
             model: record.model.clone(),
         };
-        let launch = Launch::Resume {
-            record,
-            store: self.store_dir.clone(),
+        let started = if record.permissions == Some(PermissionMode::Yolo) {
+            PrintWorker::start(id, &request, &files, Some(&record)).map(CursorWorker::Print)
+        } else {
+            let launch = Launch::Resume {
+                record,
+                store: self.store_dir.clone(),
+            };
+            self.launch(id, &request, launch)
+                .map(|worker| CursorWorker::Acp(Box::new(worker)))
         };
-        match self.launch(id, &request, launch) {
+        match started {
             Ok(worker) => self.adopt_resumed(id, worker),
             Err(message) => {
                 warn(message.clone());
@@ -867,7 +882,7 @@ impl CursorHost {
         }
     }
 
-    fn adopt_resumed(&self, id: &str, worker: AcpWorker) {
+    fn adopt_resumed(&self, id: &str, worker: CursorWorker) {
         let ready = ready_path(&self.store_dir, id);
         if !self.closed.load(Ordering::SeqCst) && write_file(&ready, "").is_ok() {
             self.workers().insert(id.to_string(), worker);
@@ -877,7 +892,7 @@ impl CursorHost {
         }
     }
 
-    fn adopt(&self, id: &str, worker: AcpWorker) {
+    fn adopt(&self, id: &str, worker: CursorWorker) {
         let files = self.files(id);
         let claimed = !self.closed.load(Ordering::SeqCst)
             && fs::remove_file(&files.spawn).is_ok()

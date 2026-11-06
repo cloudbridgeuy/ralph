@@ -366,8 +366,10 @@ pub fn exclude_lines(harness: HarnessId, repo: &Path, worktree_dir: &Path) -> Ve
         .map(|inside| format!("/{}/", inside.to_string_lossy()))
         .into_iter()
         .collect();
-    if harness == HarnessId::Opencode {
-        lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
+    match harness {
+        HarnessId::Opencode => lines.push(format!("/{OPENCODE_CONFIG_FILE}")),
+        HarnessId::Cursor => lines.push("/.cursor/".to_string()),
+        _ => {}
     }
     lines
 }
@@ -574,6 +576,10 @@ mod tests {
         assert_eq!(
             exclude_lines(HarnessId::Opencode, repo, &dir),
             ["/.worktrees/", "/opencode.json"]
+        );
+        assert_eq!(
+            exclude_lines(HarnessId::Cursor, repo, &dir),
+            ["/.worktrees/", "/.cursor/"]
         );
     }
 

@@ -9,7 +9,7 @@ Worker hosting and chat-owned lifetimes are separate from the selected agent. Fo
 | Harness | Name | Hosting |
 | --- | --- | --- |
 | `Claude` | `claude` (default) | One tmux session per worker |
-| `Cursor` | `cursor` | One `agent acp` child per worker, owned by `CursorHost` |
+| `Cursor` | `cursor` | `[cursor] permissions = "ask"`: one `agent acp` child per worker. `"yolo"`: one `agent -p` child per turn. Both owned by `CursorHost` |
 | `Opencode` | `opencode` | One session per worker on the chat's shared `opencode serve`, owned by `OpencodeHost` |
 | `Codex` | `codex` | One `codex app-server --listen stdio://` child per worker, owned by `CodexHost` (`crates/ralph/src/codex_worker.rs`) |
 | `ClaudeHeadless` | `claude-headless` | One `claude -p` stream-json child per worker, owned by `ClaudeHeadlessHost` (`crates/ralph/src/claude_headless_worker.rs`) |
@@ -102,13 +102,26 @@ Claude headless permissions (GUZ-1112): `--permission-prompt-tool stdio` makes c
 
 `stub-agent.sh` replays a fixture for manual host runs and the paid verify, never for cargo tests. Pass the scenario as the first argument or set `STUB_AGENT_SCENARIO` (default `success`). It discards stdin to EOF, prints the fixture, then `interrupted` waits for a signal and exits 130 and `crash` exits 1.
 
-Print-mode core (`crates/core/src/worker/cursor_print.rs`, pure, no shell caller yet; GUZ-1325):
+Print-mode core (`crates/core/src/worker/cursor_print.rs`, pure; GUZ-1325):
 
 - `print_args(&PrintArgs { workspace, model, resume, mode })` builds `-p --output-format stream-json --trust --approve-mcps --workspace <wt> --model <variant>`, then `--resume <chatId>` when `resume` is set (the first turn has none), then `--force` only for `PermissionMode::Yolo`. The prompt goes on stdin, never in argv.
 - `decode_print_line(line, model)` gives a `PrintEvent`: `Init(chat id)` from `system/init` `session_id`, `Text` from `assistant` text blocks, `Activity` from `tool_call` `started` and `completed`, `Result { end, usage }` from `result` (`TurnEnd::Succeeded`, or `Failed` when `is_error` is true), and `Ignored` for a malformed, unknown or id-less line. It never panics.
 - `exit_outcome(saw_result, sigint_sent)` gives `ExitOutcome`: a `result` line means `Ended`; no `result` after ralph sent SIGINT means `Interrupted` (exit 130); no `result` otherwise means `ProcessGone`.
 - `map_print_usage(&result["usage"], model)` maps `inputTokens` (already non-cached) to `input_uncached`, `cacheReadTokens` to `cache_read`, `cacheWriteTokens` to one `CacheTier::Unspecified` write (none when 0), and `outputTokens` to `output`, as a `ModelUsage`. The model is the configured variant, not the `init` model. A missing or non-numeric key gives `None`, not zeros.
 - An interrupted turn writes no `result` line, so its tokens are lost (the same class as an opencode close).
+- `turn_end_for(outcome, result)` gives the `TurnEnd`: `Interrupted` after an interrupted exit, else the `result` end, else `Failed` for an exit with no result. `next_chat(current, event)` keeps the first `Init` chat id. `print_model(model)` falls back to `auto`. `cursor_mcp_json(existing, entry)` merges the `ralph-worker` entry into `.cursor/mcp.json` and keeps other servers.
+
+## Cursor print mode (yolo)
+
+`CursorHost` picks the path when a worker starts. `[cursor] permissions = "yolo"` runs the print-mode host (`crates/ralph/src/acp_worker/print.rs`, `PrintWorker`). `"ask"` keeps the `agent acp` path and its permission flow unchanged. A resumed worker uses the path its session record names: a record with `permissions = "yolo"` is print mode.
+
+- Per-turn process: no child lives between turns (the worker is idle, not dead). Each turn spawns `agent -p --output-format stream-json --force ...` in its own process group with the worktree as cwd, writes the prompt to stdin, closes stdin and reads stdout lines through `decode_print_line`. Expect a cold start of about 3 to 5 s per turn.
+- The turn order is the shared `Turns` machine (queued prompts, interrupt, reminder), as for claude-headless. Every decoded line refreshes `activity/<id>`. A `result` line ends the turn; an exit with no result fails the turn and writes `gone/<id>` with a `ProcessGone` event, which the next turn clears.
+- Chat id: the first `system/init` `session_id` is written to the session record (`cursor-session/<id>`, `permissions = "yolo"`). Later turns pass `--resume <chatId>`. The first turn passes none.
+- MCP: before the first spawn ralph merges the `ralph-worker` server into `<worktree>/.cursor/mcp.json` (other servers stay). Spawn adds `/.cursor/` to the repo's `.git/info/exclude`.
+- Interrupt: SIGINT to the child's process group, then TERM and KILL after a 3 s grace. The turn ends `Interrupted`. Close and chat exit stop a running child group.
+- Stderr goes to the capped log `acp-logs/<id>.log`. The spawn version gate is the ACP one (`agent --version`).
+- Permission requests do not exist in this mode: a permission answer for a print worker is refused. Usage rows for print turns are not written yet.
 
 ## Verify an agent version
 

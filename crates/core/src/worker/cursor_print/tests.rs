@@ -204,3 +204,115 @@ fn missing_usage_keys_give_none() {
         assert_eq!(map_print_usage(&usage, VARIANT), None, "{usage}");
     }
 }
+
+#[test]
+fn a_result_decides_the_turn_end_whatever_the_exit() {
+    let failed = TurnEnd::Failed {
+        message: "boom".to_string(),
+        transient: false,
+    };
+    assert_eq!(
+        turn_end_for(ExitOutcome::Ended, Some(failed.clone())),
+        failed
+    );
+    assert_eq!(
+        turn_end_for(ExitOutcome::Ended, Some(TurnEnd::Succeeded)),
+        TurnEnd::Succeeded
+    );
+}
+
+#[test]
+fn an_interrupted_exit_ends_the_turn_interrupted() {
+    assert_eq!(
+        turn_end_for(ExitOutcome::Interrupted, None),
+        TurnEnd::Interrupted
+    );
+}
+
+#[test]
+fn an_exit_without_a_result_fails_the_turn() {
+    let (events, outcome) = fold(CRASH, false);
+    assert!(matches!(
+        turn_end_for(outcome, result_end(&events)),
+        TurnEnd::Failed { .. }
+    ));
+}
+
+#[test]
+fn the_interrupted_fixture_ends_interrupted() {
+    let (events, outcome) = fold(INTERRUPTED, true);
+    assert_eq!(
+        turn_end_for(outcome, result_end(&events)),
+        TurnEnd::Interrupted
+    );
+}
+
+#[test]
+fn the_first_init_names_the_chat_and_later_ones_never_replace_it() {
+    let init = |id: &str| PrintEvent::Init(id.to_string());
+    assert_eq!(next_chat(None, &init("a")), Some("a".to_string()));
+    assert_eq!(next_chat(Some("a"), &init("b")), Some("a".to_string()));
+    assert_eq!(next_chat(None, &PrintEvent::Activity), None);
+    assert_eq!(
+        next_chat(Some("a"), &PrintEvent::Activity),
+        Some("a".to_string())
+    );
+}
+
+#[test]
+fn the_first_turn_has_no_resume_and_later_turns_resume_the_chat() {
+    let args = |resume| {
+        print_args(&PrintArgs {
+            workspace: Path::new("/w"),
+            model: "m",
+            resume,
+            mode: PermissionMode::Yolo,
+        })
+    };
+    assert!(!args(None).contains(&"--resume".to_string()));
+    let later = args(Some(SESSION));
+    let at = later.iter().position(|arg| arg == "--resume").unwrap();
+    assert_eq!(later[at + 1], SESSION);
+}
+
+#[test]
+fn the_model_falls_back_to_auto() {
+    assert_eq!(print_model(Some("composer-2")), "composer-2");
+    assert_eq!(print_model(None), "auto");
+}
+
+#[test]
+fn mcp_json_adds_the_server_to_an_empty_file() {
+    let server = json!({"command": "ralph", "args": ["worker-mcp"]});
+    let text = cursor_mcp_json(None, &server);
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed["mcpServers"]["ralph-worker"], server);
+}
+
+#[test]
+fn mcp_json_keeps_other_servers_and_replaces_ours() {
+    let server = json!({"command": "ralph", "args": ["worker-mcp"]});
+    let existing = r#"{"extra": 1, "mcpServers": {"other": {"command": "x"}, "ralph-worker": {"command": "old"}}}"#;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&cursor_mcp_json(Some(existing), &server)).unwrap();
+    assert_eq!(parsed["extra"], 1);
+    assert_eq!(parsed["mcpServers"]["other"], json!({"command": "x"}));
+    assert_eq!(parsed["mcpServers"]["ralph-worker"], server);
+}
+
+#[test]
+fn mcp_json_replaces_an_unreadable_file() {
+    let server = json!({"command": "ralph", "args": []});
+    for existing in ["not json", "[]", "null"] {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&cursor_mcp_json(Some(existing), &server)).unwrap();
+        assert_eq!(parsed["mcpServers"]["ralph-worker"], server, "{existing}");
+    }
+}
+
+fn result_end(events: &[PrintEvent]) -> Option<TurnEnd> {
+    events.iter().find_map(|event| match event {
+        PrintEvent::Result { end, .. } => Some(end.clone()),
+        _ => None,
+    })
+}
