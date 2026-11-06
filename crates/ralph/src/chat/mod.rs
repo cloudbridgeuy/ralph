@@ -30,6 +30,7 @@ mod skills;
 mod stall;
 pub(crate) use skills::{read_claude_config, SKILLS_ENV};
 mod send_it;
+mod sent;
 mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
@@ -407,8 +408,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     ) {
         println!("{hint}");
     }
+    let sent_style = sent::SentStyle::new(
+        color.then(|| crate::input_theme::to_reedline(theme_config.ui().ask_header)),
+    );
     if chat_config.resume_summary && !args.skip_summary {
-        recap::print_recap(&store, running.len());
+        recap::print_recap(&store, running.len(), sent_style);
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
@@ -441,6 +445,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let printer = ExternalPrinter::new(PROMPT_ROWS);
     let prompt_sink = printer.sender();
     let mut editor = build_editor(&store_dir, edit_mode, highlighter, Arc::clone(&monitor))?
+        .with_submit_highlighter(Box::new(sent_style))
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
         .with_external_printer(printer);
     let repaint = editor.repaint_signal();
@@ -498,6 +503,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         notice: RefCell::new(None),
         editor: editor_cmd,
         empty_submit,
+        sent_style,
     };
     let inbox_display = |color| Display {
         ctx: RenderContext::new(&agent_highlighter, color)

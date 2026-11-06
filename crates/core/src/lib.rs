@@ -15,6 +15,7 @@ pub mod changes;
 pub mod chat;
 pub mod chat_cell;
 pub mod chat_cell_stream;
+pub mod chat_command;
 pub mod chat_draft;
 pub mod chat_edit_mode;
 pub mod chat_help;

@@ -1,6 +1,7 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat::editor::{edit_draft, OPEN_EDITOR};
 use crate::chat::monitor::Monitor;
+use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
@@ -28,6 +29,7 @@ pub(super) struct ChatPrompt {
     pub(super) notice: RefCell<Option<String>>,
     pub(super) editor: Vec<String>,
     pub(super) empty_submit: EmptySubmit,
+    pub(super) sent_style: SentStyle,
 }
 
 impl ChatPrompt {
@@ -57,6 +59,7 @@ impl ChatPrompt {
             indicator_for(PromptEditMode::Default),
             DEFAULT_MULTILINE_INDICATOR,
             text,
+            self.sent_style,
         )
     }
 }
@@ -70,7 +73,14 @@ fn indicator_for(edit_mode: PromptEditMode) -> &'static str {
     prompt_indicator(mode)
 }
 
-pub(super) fn sent_echo(bar: &str, indicator: &str, continuation: &str, text: &str) -> String {
+pub(super) fn sent_echo(
+    bar: &str,
+    indicator: &str,
+    continuation: &str,
+    text: &str,
+    style: SentStyle,
+) -> String {
+    let text = style.paint(text);
     let body = text
         .split('\n')
         .enumerate()
@@ -213,9 +223,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sent_command_echo_styles_only_the_leading_name() {
+        let style = crate::chat::sent::SentStyle::new(Some(reedline::Color::Magenta));
+        assert_eq!(
+            sent_echo("bar\n", ">>> ", "::: ", " /hold GUZ-1457\n/merge", style),
+            format!(
+                "bar\n>>>  {} GUZ-1457\n::: /merge\n",
+                reedline::Color::Magenta.bold().paint("/hold")
+            )
+        );
+    }
+
+    #[test]
+    fn sent_command_echo_without_color_keeps_the_text() {
+        assert_eq!(
+            sent_echo(
+                "bar\n",
+                ">>> ",
+                "::: ",
+                "/fork name",
+                crate::chat::sent::SentStyle::new(None)
+            ),
+            "bar\n>>> /fork name\n"
+        );
+    }
+
+    #[test]
     fn echo_of_one_line_shows_bar_indicator_and_text() {
         assert_eq!(
-            sent_echo("bar\n", ">>> ", "::: ", "hello"),
+            sent_echo("bar\n", ">>> ", "::: ", "hello", SentStyle::new(None)),
             "bar\n>>> hello\n"
         );
     }
@@ -223,7 +259,7 @@ mod tests {
     #[test]
     fn echo_of_many_lines_marks_each_continuation() {
         assert_eq!(
-            sent_echo("bar\n", ">>> ", "::: ", "a\n\nb"),
+            sent_echo("bar\n", ">>> ", "::: ", "a\n\nb", SentStyle::new(None)),
             "bar\n>>> a\n::: \n::: b\n"
         );
     }

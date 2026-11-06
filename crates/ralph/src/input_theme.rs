@@ -35,7 +35,7 @@ impl InputTheme {
     }
 }
 
-fn to_reedline(color: Color) -> Nu {
+pub(crate) fn to_reedline(color: Color) -> Nu {
     match color {
         Color::Reset => Nu::Default,
         Color::Black => Nu::Black,

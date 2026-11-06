@@ -176,6 +176,7 @@ pub struct Reedline {
 
     // Highlight the edit buffer
     highlighter: Box<dyn Highlighter>,
+    submit_highlighter: Option<Box<dyn Highlighter>>,
 
     // Style used for visual selection
     visual_selection_style: Style,
@@ -460,6 +461,7 @@ impl Reedline {
             persistent_menus: false,
             deferred_menu_completion: None,
             highlighter: buffer_highlighter,
+            submit_highlighter: None,
             visual_selection_style,
             visual_selection_cursor_style: None,
             hinter,
@@ -737,6 +739,15 @@ impl Reedline {
     #[must_use]
     pub fn with_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
         self.highlighter = highlighter;
+        self
+    }
+
+    #[allow(
+        missing_docs,
+        reason = "The builder names its submit-only highlighting scope."
+    )]
+    pub fn with_submit_highlighter(mut self, highlighter: Box<dyn Highlighter>) -> Self {
+        self.submit_highlighter = Some(highlighter);
         self
     }
 
@@ -2527,7 +2538,7 @@ impl Reedline {
         if self.input_mode == InputMode::HistorySearch {
             self.history_search_paint(prompt)
         } else {
-            self.buffer_paint(prompt)
+            self.buffer_paint(prompt, false)
         }
     }
 
@@ -2863,17 +2874,19 @@ impl Reedline {
         Ok(())
     }
 
-    /// Triggers a full repaint including the prompt parts
-    ///
-    /// Includes the highlighting and hinting calls.
-    fn buffer_paint(&mut self, prompt: &dyn Prompt) -> Result<()> {
+    fn buffer_paint(&mut self, prompt: &dyn Prompt, submitted: bool) -> Result<()> {
         let use_ansi_coloring = self.effective_ansi_coloring();
         let cursor_position_in_buffer = self.editor.insertion_point();
         let buffer_to_paint = self.editor.get_buffer();
 
-        let mut styled_text = self
-            .highlighter
-            .highlight(buffer_to_paint, cursor_position_in_buffer);
+        let highlighter = if submitted {
+            self.submit_highlighter
+                .as_deref()
+                .unwrap_or(self.highlighter.as_ref())
+        } else {
+            self.highlighter.as_ref()
+        };
+        let mut styled_text = highlighter.highlight(buffer_to_paint, cursor_position_in_buffer);
         if let Some((from, to)) = self.editor.get_selection() {
             // With a cursor-cell style configured, the head cell gets it and
             // the selection style covers the rest of the range.
@@ -3146,17 +3159,14 @@ impl Reedline {
     }
 
     fn submit_buffer(&mut self, prompt: &dyn Prompt) -> io::Result<EventStatus> {
-        // A menu that let the submit through (no suggestions to accept) must
-        // not stay active into the next line's editing.
         self.deactivate_menus();
         let buffer = self.editor.get_buffer().to_string();
         self.hide_hints = true;
-        // Additional repaint to show the content without hints etc.
         if let Some(transient_prompt) = self.transient_prompt.take() {
-            self.repaint(transient_prompt.as_ref())?;
+            self.buffer_paint(transient_prompt.as_ref(), true)?;
             self.transient_prompt = Some(transient_prompt);
         } else {
-            self.repaint(prompt)?;
+            self.buffer_paint(prompt, true)?;
         }
         if !buffer.is_empty() {
             let mut entry = HistoryItem::from_command_line(&buffer);
@@ -3223,6 +3233,84 @@ mod tests {
     use rstest::rstest;
     use std::path::Path;
 
+    #[rstest]
+    #[case::normal(false)]
+    #[case::transient(true)]
+    fn submit_highlighter_runs_only_for_the_final_paint(#[case] transient: bool) {
+        use std::sync::{Arc, Mutex};
+        struct RecordingHighlighter(Arc<Mutex<Vec<String>>>);
+        impl Highlighter for RecordingHighlighter {
+            fn highlight(&self, line: &str, _: usize) -> crate::StyledText {
+                self.0.lock().unwrap().push(line.to_string());
+                let mut styled = crate::StyledText::new();
+                styled.push((crate::Color::Magenta.bold(), line.to_string()));
+                styled
+            }
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_submit_highlighter(Box::new(RecordingHighlighter(seen.clone())));
+        if transient {
+            rl = rl.with_transient_prompt(Box::new(DefaultPrompt::default()));
+        }
+        drive(&mut rl, &[ch('/'), ch('x')]);
+        assert!(seen.lock().unwrap().is_empty());
+        drive(&mut rl, &[KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)]);
+        let signal = drive_until_signal(
+            &mut rl,
+            &[KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)],
+        );
+        assert!(matches!(signal, Some(Signal::Success(line)) if line == "/x"));
+        assert_eq!(*seen.lock().unwrap(), ["/x"]);
+        let painted = rl.painter.exit_after_cursor_for_test().unwrap();
+        assert!(
+            painted
+                .replace("\r\n", "")
+                .contains(&crate::Color::Magenta.bold().paint("/x").to_string()),
+            "{painted:?}"
+        );
+        drive(&mut rl, &[ch('y')]);
+        assert_eq!(*seen.lock().unwrap(), ["/x"]);
+    }
+
+    #[rstest]
+    #[case::up(false)]
+    #[case::reverse_search(true)]
+    fn history_resubmission_uses_the_submit_highlighter(#[case] search: bool) {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_submit_highlighter(Box::new(SimpleMatchHighlighter::new("/x".into())));
+        rl.history
+            .save(HistoryItem::from_command_line("/x"))
+            .unwrap();
+        if search {
+            drive(
+                &mut rl,
+                &[
+                    KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+                    ch('x'),
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                ],
+            );
+        } else {
+            drive(&mut rl, &[KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)]);
+        }
+        assert_eq!(rl.editor.get_buffer(), "/x");
+        drive(&mut rl, &[KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)]);
+        let signal = drive_until_signal(
+            &mut rl,
+            &[KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)],
+        );
+        assert!(matches!(signal, Some(Signal::Success(line)) if line == "/x"));
+        let painted = rl
+            .painter
+            .exit_after_cursor_for_test()
+            .unwrap()
+            .replace("\r\n", "");
+        let expected = SimpleMatchHighlighter::new("/x".into())
+            .highlight("/x", 0)
+            .render_simple();
+        assert!(painted.contains(&expected), "{painted:?}");
+    }
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
         let mut rl = Reedline::create().with_edit_mode(edit_mode);
         rl.painter.force_prompt_anchored_for_test(0);
