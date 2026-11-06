@@ -136,13 +136,13 @@ fn an_edited_plan_loses_its_approval() {
 fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
     let file = run_file(None);
     let hash = plan_hash(&file.plan);
-    let status = render_status(&file);
+    let status = render_status(&file, WIDE);
     assert!(status.starts_with(&render_run(&file.plan)), "{status}");
     assert!(status.ends_with(&format!(
         "Plan {hash}: not approved. Type /send-it go to approve this plan."
     )));
     let approved = approve(&file, Some(&hash), true).unwrap();
-    assert!(render_status(&approved).ends_with(&format!("Plan {hash}: approved.")));
+    assert!(render_status(&approved, WIDE).ends_with(&format!("Plan {hash}: approved.")));
     let stopped = RunFile {
         stopped: Some(Stopped {
             step: 2,
@@ -150,7 +150,7 @@ fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
         }),
         ..file
     };
-    assert!(render_status(&stopped).ends_with(&format!(
+    assert!(render_status(&stopped, WIDE).ends_with(&format!(
         "Plan {hash}: stopped at step 2/4. Type /send-it go to resume from step 2."
     )));
 }
@@ -187,5 +187,87 @@ fn the_propose_run_tool_requires_a_criterion_on_every_step() {
     assert_eq!(
         schema["properties"]["steps"]["items"]["required"],
         serde_json::json!(["do", "criterion"])
+    );
+}
+
+const WIDE: usize = 1000;
+const NARROW: usize = 40;
+
+fn long_file() -> RunFile {
+    let plan = parse_run(
+        &serde_json::json!({
+            "goal": "ship GUZ-1 with every review finding resolved and the release notes updated",
+            "steps": [
+                {"do": "collect evidence about the failing wrap in the send-it status screen", "criterion": {"kind": "judge", "question": "does every line of the plan fit inside a forty column terminal?"}}
+            ],
+            "allowed": [],
+            "grants": []
+        }),
+        limits(),
+    )
+    .unwrap();
+    RunFile {
+        plan,
+        approved: None,
+        stopped: None,
+    }
+}
+
+fn continuations<'a>(status: &'a str, first: &str) -> Vec<&'a str> {
+    status
+        .lines()
+        .skip_while(|line| !line.starts_with(first))
+        .skip(1)
+        .take_while(|line| line.starts_with("  ") && !line.trim_start().starts_with("exit:"))
+        .collect()
+}
+
+#[test]
+fn status_wraps_long_steps_at_word_boundaries() {
+    let file = long_file();
+    let status = render_status(&file, NARROW);
+    assert!(
+        status.lines().all(|line| line.chars().count() <= NARROW),
+        "{status}"
+    );
+    let words = |text: &str| {
+        text.split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    let wide = render_status(&file, WIDE);
+    assert_eq!(words(&status), words(&wide), "{status}");
+}
+
+#[test]
+fn a_wrapped_step_continues_under_its_text() {
+    let status = render_status(&long_file(), NARROW);
+    let rest = continuations(&status, "  1. ");
+    assert!(!rest.is_empty(), "{status}");
+    for line in rest {
+        assert_eq!(line.len() - line.trim_start().len(), 5, "{status}");
+    }
+}
+
+#[test]
+fn a_wrapped_exit_continues_under_its_criterion() {
+    let status = render_status(&long_file(), NARROW);
+    let rest = continuations(&status, "     exit: ");
+    assert!(!rest.is_empty(), "{status}");
+    for line in rest {
+        assert_eq!(line.len() - line.trim_start().len(), 11, "{status}");
+    }
+}
+
+#[test]
+fn a_wide_screen_shows_the_plan_unchanged() {
+    let file = long_file();
+    let hash = plan_hash(&file.plan);
+    assert_eq!(
+        render_status(&file, WIDE),
+        format!(
+            "{}\nPlan {hash}: not approved. Type /send-it go to approve this plan.",
+            render_run(&file.plan)
+        )
     );
 }

@@ -1,4 +1,4 @@
-use crate::chat_help::Command;
+use crate::chat_help::{wrap, Command};
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{watch_id, WatchKind, WatchOutcome, WatchSpec};
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use unicode_width::UnicodeWidthStr;
 
 mod drive;
 pub mod template;
@@ -376,7 +377,28 @@ fn resume_step(file: &RunFile) -> Option<usize> {
         .filter(|step| (1..=file.plan.steps.len()).contains(step))
 }
 
-pub fn render_status(file: &RunFile) -> String {
+fn hang_wrapped(line: &str, width: usize) -> String {
+    let body = line.trim_start();
+    let lead = &line[..line.len() - body.len()];
+    match body.split_once(' ') {
+        Some((marker, text)) if line.width() > width => {
+            let hang = lead.width() + marker.width() + 1;
+            let pad = " ".repeat(hang);
+            wrap(text, width.saturating_sub(hang))
+                .iter()
+                .enumerate()
+                .map(|(index, part)| match index {
+                    0 => format!("{lead}{marker} {part}"),
+                    _ => format!("{pad}{part}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => line.to_string(),
+    }
+}
+
+pub fn render_status(file: &RunFile, width: usize) -> String {
     let hash = plan_hash(&file.plan);
     let state = if file.is_approved() {
         format!("Plan {hash}: approved.")
@@ -389,6 +411,10 @@ pub fn render_status(file: &RunFile) -> String {
         format!("Plan {hash}: not approved. Type /send-it go to approve this plan.")
     };
     format!("{}\n{state}", render_run(&file.plan))
+        .lines()
+        .map(|line| hang_wrapped(line, width))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn propose_refusal(existing: Option<&RunFile>) -> Option<String> {
