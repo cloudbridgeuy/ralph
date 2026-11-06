@@ -23,7 +23,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -39,18 +39,53 @@ enum ReadPlan {
     Stop,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TurnProc {
+    Idle,
+    Starting { interrupt: bool },
+    Running { pgid: u32 },
+    Grace { pgid: u32 },
+}
+
 #[derive(Debug, PartialEq)]
 enum InterruptPlan {
     Send(u32),
-    HoldPending,
+    Hold,
     Drop,
 }
 
-fn interrupt_plan(group: u32, spawn_in_flight: bool) -> InterruptPlan {
-    match (group, spawn_in_flight) {
-        (0, true) => InterruptPlan::HoldPending,
-        (0, false) => InterruptPlan::Drop,
-        (group, _) => InterruptPlan::Send(group),
+fn begin_start() -> TurnProc {
+    TurnProc::Starting { interrupt: false }
+}
+
+fn on_interrupt(state: TurnProc) -> (TurnProc, InterruptPlan) {
+    match state {
+        TurnProc::Starting { .. } => (TurnProc::Starting { interrupt: true }, InterruptPlan::Hold),
+        TurnProc::Running { pgid } => (state, InterruptPlan::Send(pgid)),
+        TurnProc::Grace { .. } | TurnProc::Idle => (state, InterruptPlan::Drop),
+    }
+}
+
+fn on_spawned(state: TurnProc, pgid: u32) -> (TurnProc, Option<u32>) {
+    let held = matches!(state, TurnProc::Starting { interrupt: true });
+    (TurnProc::Running { pgid }, held.then_some(pgid))
+}
+
+fn on_result(state: TurnProc) -> TurnProc {
+    match state {
+        TurnProc::Running { pgid } => TurnProc::Grace { pgid },
+        other => other,
+    }
+}
+
+fn on_release() -> TurnProc {
+    TurnProc::Idle
+}
+
+fn live_group(state: TurnProc) -> Option<u32> {
+    match state {
+        TurnProc::Running { pgid } | TurnProc::Grace { pgid } => Some(pgid),
+        TurnProc::Idle | TurnProc::Starting { .. } => None,
     }
 }
 
@@ -88,9 +123,7 @@ struct Shared {
     chat: Mutex<Option<String>>,
     changes: Option<WorkerChanges>,
     snapshot: Mutex<Option<u64>>,
-    group: AtomicU32,
-    interrupt_pending: AtomicBool,
-    spawn_in_flight: AtomicBool,
+    proc: Mutex<TurnProc>,
     turn_seq: AtomicU64,
     closing: AtomicBool,
 }
@@ -110,6 +143,7 @@ impl Shared {
             match action {
                 Action::Start(text) => {
                     fs::remove_file(&self.markers.gone).ok();
+                    *locked(&self.proc) = begin_start();
                     let turn = Arc::clone(self);
                     thread::spawn(move || turn.run_turn(&text));
                 }
@@ -152,20 +186,23 @@ impl Shared {
     }
 
     fn interrupt_group(self: &Arc<Self>) {
-        let spawning = self.spawn_in_flight.load(Ordering::SeqCst);
-        let group = match interrupt_plan(self.group.load(Ordering::SeqCst), spawning) {
-            InterruptPlan::Send(group) => group,
-            InterruptPlan::HoldPending => {
-                self.interrupt_pending.store(true, Ordering::SeqCst);
-                return;
-            }
-            InterruptPlan::Drop => return,
+        let plan = {
+            let mut state = locked(&self.proc);
+            let (next, plan) = on_interrupt(*state);
+            *state = next;
+            plan
         };
+        if let InterruptPlan::Send(group) = plan {
+            self.send_interrupt(group);
+        }
+    }
+
+    fn send_interrupt(self: &Arc<Self>, group: u32) {
         crate::cursor_owner::signal_group(group, "INT");
         let shared = Arc::clone(self);
         thread::spawn(move || {
             thread::sleep(INTERRUPT_GRACE);
-            if shared.group.load(Ordering::SeqCst) == group {
+            if live_group(*locked(&shared.proc)) == Some(group) {
                 stop_groups(&[group], SHUTDOWN_GRACE, || true);
             }
         });
@@ -222,6 +259,7 @@ impl Shared {
 
     fn execute(self: &Arc<Self>, text: &str) -> Result<TurnRun, String> {
         if self.closing.load(Ordering::SeqCst) {
+            *locked(&self.proc) = on_release();
             return Ok(closed_turn());
         }
         let chat = locked(&self.chat).clone();
@@ -235,20 +273,22 @@ impl Shared {
             .args(args)
             .current_dir(&self.run.worktree)
             .envs([inbox_env(&self.run.store)]);
-        self.spawn_in_flight.store(true, Ordering::SeqCst);
         let (mut child, mut stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
-            self.spawn_in_flight.store(false, Ordering::SeqCst);
-            self.interrupt_pending.store(false, Ordering::SeqCst);
+            *locked(&self.proc) = on_release();
             format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
         })?;
-        self.group.store(child.id(), Ordering::SeqCst);
-        self.spawn_in_flight.store(false, Ordering::SeqCst);
+        let held = {
+            let mut state = locked(&self.proc);
+            let (next, held) = on_spawned(*state, child.id());
+            *state = next;
+            held
+        };
         if self.closing.load(Ordering::SeqCst) {
             self.release_child(&mut child);
             return Ok(closed_turn());
         }
-        if self.interrupt_pending.swap(false, Ordering::SeqCst) {
-            self.interrupt_group();
+        if let Some(group) = held {
+            self.send_interrupt(group);
         }
         drain_stderr(stderr, CappedLog::new(Some(&self.run.store), &self.id));
         if let Err(e) = stdin.write_all(text.as_bytes()) {
@@ -284,6 +324,8 @@ impl Shared {
                     result = Some(end);
                     spend = usage;
                     result_at = Some(Instant::now());
+                    let mut state = locked(&self.proc);
+                    *state = on_result(*state);
                 }
             }
         }
@@ -295,8 +337,7 @@ impl Shared {
     fn release_child(&self, child: &mut Child) {
         stop_child(child);
         unregister_group(child.id());
-        self.group.store(0, Ordering::SeqCst);
-        self.interrupt_pending.store(false, Ordering::SeqCst);
+        *locked(&self.proc) = on_release();
     }
 
     fn remember_chat(&self, event: &PrintEvent) {
@@ -379,9 +420,7 @@ impl PrintWorker {
             chat: Mutex::new(chat),
             changes,
             snapshot: Mutex::new(None),
-            group: AtomicU32::new(0),
-            interrupt_pending: AtomicBool::new(false),
-            spawn_in_flight: AtomicBool::new(false),
+            proc: Mutex::new(TurnProc::Idle),
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
         });
@@ -431,8 +470,8 @@ impl PrintWorker {
             return;
         }
         self.stopped = true;
-        let group = self.shared.group.load(Ordering::SeqCst);
-        if group != 0 {
+        let group = live_group(*locked(&self.shared.proc));
+        if let Some(group) = group {
             stop_groups(&[group], SHUTDOWN_GRACE, || true);
         }
         fs::remove_file(&self.owner).ok();
@@ -497,19 +536,100 @@ mod tests {
         );
     }
 
+    const PGID: u32 = 42;
+
     #[test]
-    fn interrupt_plan_signals_a_live_group() {
-        assert_eq!(interrupt_plan(42, false), InterruptPlan::Send(42));
-        assert_eq!(interrupt_plan(42, true), InterruptPlan::Send(42));
+    fn begin_start_holds_no_interrupt() {
+        assert_eq!(begin_start(), TurnProc::Starting { interrupt: false });
     }
 
     #[test]
-    fn interrupt_plan_holds_only_while_a_spawn_is_in_flight() {
-        assert_eq!(interrupt_plan(0, true), InterruptPlan::HoldPending);
+    fn interrupt_in_starting_is_held() {
+        assert_eq!(
+            on_interrupt(TurnProc::Starting { interrupt: false }),
+            (TurnProc::Starting { interrupt: true }, InterruptPlan::Hold)
+        );
+        assert_eq!(
+            on_interrupt(TurnProc::Starting { interrupt: true }),
+            (TurnProc::Starting { interrupt: true }, InterruptPlan::Hold)
+        );
     }
 
     #[test]
-    fn interrupt_plan_drops_when_nothing_runs_or_spawns() {
-        assert_eq!(interrupt_plan(0, false), InterruptPlan::Drop);
+    fn held_interrupt_is_delivered_when_the_child_exists() {
+        assert_eq!(
+            on_spawned(TurnProc::Starting { interrupt: true }, PGID),
+            (TurnProc::Running { pgid: PGID }, Some(PGID))
+        );
+    }
+
+    #[test]
+    fn spawn_without_a_held_interrupt_sends_nothing() {
+        assert_eq!(
+            on_spawned(TurnProc::Starting { interrupt: false }, PGID),
+            (TurnProc::Running { pgid: PGID }, None)
+        );
+    }
+
+    #[test]
+    fn interrupt_in_running_sends_to_the_group() {
+        assert_eq!(
+            on_interrupt(TurnProc::Running { pgid: PGID }),
+            (TurnProc::Running { pgid: PGID }, InterruptPlan::Send(PGID))
+        );
+    }
+
+    #[test]
+    fn interrupt_in_grace_is_dropped() {
+        assert_eq!(
+            on_interrupt(TurnProc::Grace { pgid: PGID }),
+            (TurnProc::Grace { pgid: PGID }, InterruptPlan::Drop)
+        );
+    }
+
+    #[test]
+    fn interrupt_in_idle_is_dropped() {
+        assert_eq!(
+            on_interrupt(TurnProc::Idle),
+            (TurnProc::Idle, InterruptPlan::Drop)
+        );
+    }
+
+    #[test]
+    fn release_returns_to_idle_and_drops_the_held_interrupt() {
+        assert_eq!(on_release(), TurnProc::Idle);
+        assert_eq!(
+            on_interrupt(on_release()),
+            (TurnProc::Idle, InterruptPlan::Drop)
+        );
+    }
+
+    #[test]
+    fn first_result_moves_running_to_grace() {
+        assert_eq!(
+            on_result(TurnProc::Running { pgid: PGID }),
+            TurnProc::Grace { pgid: PGID }
+        );
+    }
+
+    #[test]
+    fn result_changes_no_other_state() {
+        assert_eq!(on_result(TurnProc::Idle), TurnProc::Idle);
+        assert_eq!(
+            on_result(TurnProc::Starting { interrupt: true }),
+            TurnProc::Starting { interrupt: true }
+        );
+        assert_eq!(
+            on_result(TurnProc::Grace { pgid: PGID }),
+            TurnProc::Grace { pgid: PGID }
+        );
+    }
+
+    #[test]
+    fn live_group_exists_only_with_a_child() {
+        assert_eq!(live_group(TurnProc::Idle), None);
+        assert_eq!(live_group(TurnProc::Starting { interrupt: true }), None);
+        assert_eq!(live_group(TurnProc::Running { pgid: PGID }), Some(PGID));
+        assert_eq!(live_group(TurnProc::Grace { pgid: PGID }), Some(PGID));
     }
 }
