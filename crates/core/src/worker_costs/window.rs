@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, FixedOffset, NaiveTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveTime, TimeZone, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Window {
@@ -8,29 +8,30 @@ pub enum Window {
     All,
 }
 
-pub fn window_start(
-    now: DateTime<Utc>,
-    offset: FixedOffset,
-    window: Window,
-) -> Option<DateTime<Utc>> {
+const GAP_STEP_MINUTES: i64 = 15;
+const GAP_STEPS: i64 = 16;
+
+pub fn window_start<Tz: TimeZone>(now: &DateTime<Tz>, window: Window) -> Option<DateTime<Utc>> {
     match window {
         Window::All => None,
-        Window::Week => now.checked_sub_signed(Duration::days(7)),
-        Window::Today => now
-            .with_timezone(&offset)
-            .date_naive()
-            .and_time(NaiveTime::MIN)
-            .and_utc()
-            .checked_sub_signed(Duration::seconds(i64::from(offset.local_minus_utc()))),
+        Window::Week => now
+            .with_timezone(&Utc)
+            .checked_sub_signed(Duration::days(7)),
+        Window::Today => today_start(now),
     }
 }
 
-pub fn midnight_offset<Tz: TimeZone>(now: &DateTime<Tz>) -> FixedOffset {
-    let current = now.offset().fix();
-    now.timezone()
-        .from_local_datetime(&now.date_naive().and_time(NaiveTime::MIN))
-        .earliest()
-        .map_or(current, |midnight| midnight.offset().fix())
+/// Start of the local day of `now`. A midnight that does not exist moves to the
+/// first valid local time after the gap, found in 15-minute steps up to 4 hours.
+pub fn today_start<Tz: TimeZone>(now: &DateTime<Tz>) -> Option<DateTime<Utc>> {
+    let zone = now.timezone();
+    let midnight = now.date_naive().and_time(NaiveTime::MIN);
+    (0..=GAP_STEPS)
+        .find_map(|step| {
+            let local = midnight.checked_add_signed(Duration::minutes(step * GAP_STEP_MINUTES))?;
+            zone.from_local_datetime(&local).earliest()
+        })
+        .map(|start| start.with_timezone(&Utc))
 }
 
 pub(crate) fn instant(at: &str) -> Option<DateTime<Utc>> {

@@ -21,7 +21,7 @@ use ralph_core::worker::{
 };
 use ralph_core::worker_costs::args::CostsArgs;
 use ralph_core::worker_costs::views::{costs_by_view, Inputs};
-use ralph_core::worker_costs::window::{midnight_offset, window_start};
+use ralph_core::worker_costs::window::window_start;
 use ralph_core::workers_view::{
     count_untracked, detail_view, group_reports, lines_text, not_live, parse_head, parse_numstat,
     workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
@@ -337,11 +337,7 @@ pub(super) fn costs(
     let usage = load_usage(&usage_path());
     let workers = read_optional(&workers_log_path(store))
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-    let since = window_start(
-        chrono::Utc::now(),
-        midnight_offset(&chrono::Local::now()),
-        args.window,
-    );
+    let since = window_start(&chrono::Local::now(), args.window);
     match (usage, workers) {
         (Ok(usage), Ok(workers)) => print!(
             "{}",
