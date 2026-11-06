@@ -478,3 +478,32 @@ fn a_turn_end_leaves_close_free_to_record_later_messages() {
     release_owner(&run.shared, &owner);
     assert_eq!(rows(&usage).len(), 2);
 }
+
+#[test]
+fn a_prompt_with_no_owner_leaves_a_lost_marker() {
+    let dir = TempDir::new().unwrap();
+    let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
+    let files = host.files("w");
+    write_file(&files.prompt.join("e1"), "hello").unwrap();
+    host.poll();
+    assert!(!files.prompt.join("e1").exists());
+    assert!(files
+        .prompt
+        .join(ralph_core::worker::lost_marker_name("e1"))
+        .exists());
+}
+
+#[test]
+fn a_prompt_this_chat_owns_but_has_not_adopted_stays_queued() {
+    let dir = TempDir::new().unwrap();
+    let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
+    let files = host.files("w");
+    crate::cursor_owner::claim_owner(&files.owner).unwrap();
+    write_file(&files.prompt.join("e1"), "hello").unwrap();
+    host.poll();
+    assert!(files.prompt.join("e1").exists());
+    assert!(!files
+        .prompt
+        .join(ralph_core::worker::lost_marker_name("e1"))
+        .exists());
+}

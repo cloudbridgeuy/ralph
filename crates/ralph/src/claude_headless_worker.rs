@@ -6,8 +6,8 @@ use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
-    now_secs, queued_entries, report_start_warning, request_ids, sweep_owner, take_answer,
-    write_file, write_interrupt_result, write_owner_record,
+    now_secs, report_start_warning, request_ids, sweep_owner, take_answer, write_file,
+    write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::private_file::write_worker_config;
@@ -17,7 +17,9 @@ use crate::watches::locked;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::worker_usage::{record_session_or_warn, UsageSession, UsageTarget};
-use crate::workers::headless::{HeadlessHost, Heartbeat};
+use crate::workers::headless::{
+    drain_queued, mark_prompt_lost, queued_owner, report_interrupt_gone, HeadlessHost, Heartbeat,
+};
 use ralph_core::claude_leftovers::{
     claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
 };
@@ -29,8 +31,8 @@ use ralph_core::worker::{
     prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
     start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
     usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs,
-    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
-    InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
+    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
+    PermissionAnswer, PermissionMode, QueuedFacts, QueuedWorker, SessionRecord, ShutdownStep,
     SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
     ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
     CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
@@ -618,30 +620,39 @@ impl ClaudeHeadlessHost {
         HandoffFiles::claude_headless(&self.store_dir, id)
     }
 
+    fn queued_facts(&self, id: &str) -> QueuedFacts {
+        let worker = match locked(&self.workers).get(id) {
+            None => QueuedWorker::Absent,
+            Some(worker) if worker.shared.exited.load(Ordering::SeqCst) => QueuedWorker::Exited,
+            Some(_) => QueuedWorker::Alive,
+        };
+        QueuedFacts {
+            worker,
+            starting: locked(&self.starting).contains_key(id),
+            owner: queued_owner(&self.files(id).owner),
+        }
+    }
+
     fn deliver_queued(
         &self,
         id: &str,
         dir: fn(&HandoffFiles) -> &PathBuf,
         deliver: fn(&Shared, String, String),
-        orphan: fn(&HandoffFiles, &str),
+        lost: fn(&HandoffFiles, &Path),
     ) {
-        if locked(&self.starting).contains_key(id) && !locked(&self.workers).contains_key(id) {
-            return;
-        }
         let files = self.files(id);
-        for entry in queued_entries(dir(&files)) {
-            let name = entry
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let worker = locked(&self.workers).get(id).map(|w| Arc::clone(&w.shared));
-            match (fs::read_to_string(&entry), worker) {
-                (Ok(text), Some(shared)) => deliver(&shared, text, name),
-                (_, None) => orphan(&files, &name),
-                (Err(_), Some(_)) => {}
-            }
-            fs::remove_file(&entry).ok();
-        }
+        drain_queued(
+            dir(&files),
+            || self.queued_facts(id),
+            |text, name| {
+                let worker = locked(&self.workers).get(id).map(|w| Arc::clone(&w.shared));
+                if let Some(shared) = worker {
+                    deliver(&shared, text, name.to_string());
+                }
+                Ok(())
+            },
+            |entry| lost(&files, entry),
+        );
     }
 
     fn answer(&self, id: &str) {
@@ -783,7 +794,7 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 &id,
                 |files| &files.prompt,
                 |shared, text, _| shared.accept(text),
-                |_, _| {},
+                |_, entry| mark_prompt_lost(entry),
             );
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_INTERRUPT_DIR) {
@@ -791,9 +802,7 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 &id,
                 |files| &files.interrupt,
                 |shared, text, entry| shared.interrupt(text, entry),
-                |files, entry| {
-                    write_interrupt_result(&files.interrupt_result, entry, InterruptOutcome::Gone);
-                },
+                |files, entry| report_interrupt_gone(&files.interrupt_result, entry),
             );
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_SPAWN_DIR) {
