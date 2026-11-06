@@ -457,3 +457,71 @@ fn test_cli_inbox_post_rejects_a_bad_source() {
         );
     }
 }
+
+fn subcommand(path: &[&str]) -> clap::Command {
+    use clap::CommandFactory;
+    path.iter().fold(Cli::command(), |command, name| {
+        command
+            .find_subcommand(name)
+            .unwrap_or_else(|| panic!("no subcommand {name}"))
+            .clone()
+    })
+}
+
+fn long_about(command: &clap::Command) -> String {
+    command
+        .get_long_about()
+        .or(command.get_about())
+        .map(ToString::to_string)
+        .unwrap_or_default()
+}
+
+#[test]
+fn test_cli_top_level_help_names_every_worker_agent() {
+    let text = long_about(&subcommand(&[]));
+    for agent in ["claude", "cursor", "codex", "claude-headless", "opencode"] {
+        assert!(text.contains(agent), "{agent} missing from: {text}");
+    }
+}
+
+#[test]
+fn test_cli_thread_about_names_every_subcommand() {
+    let about = subcommand(&["thread"])
+        .get_about()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    for name in ["ls", "drop", "merge", "park", "revive", "pull"] {
+        assert!(about.contains(name), "{name} missing from: {about}");
+    }
+}
+
+#[test]
+fn test_cli_chat_inbox_and_thread_arguments_have_help() {
+    let paths: [&[&str]; 9] = [
+        &["chat"],
+        &["chat", "history"],
+        &["inbox", "post"],
+        &["thread"],
+        &["thread", "drop"],
+        &["thread", "merge"],
+        &["thread", "park"],
+        &["thread", "revive"],
+        &["thread", "pull"],
+    ];
+    let mut missing = Vec::new();
+    for path in paths {
+        let mut command = subcommand(path);
+        command.build();
+        for arg in command.get_arguments() {
+            let id = arg.get_id().as_str();
+            if matches!(id, "help" | "version") {
+                continue;
+            }
+            let help = arg.get_help().or(arg.get_long_help());
+            if help.is_none_or(|text| text.to_string().trim().is_empty()) {
+                missing.push(format!("{} {id}", path.join(" ")));
+            }
+        }
+    }
+    assert!(missing.is_empty(), "no help: {missing:?}");
+}

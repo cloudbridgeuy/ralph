@@ -519,7 +519,7 @@ Unknown keys are an error. Speed and geography factors from the recorded usage s
 
 ## Chat Store
 
-`ralph ask` stores nothing. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
+`ralph ask` stores only a usage row, not the prompt or reply. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
 
 ## Verbose Tools Configuration
 
