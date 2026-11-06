@@ -111,6 +111,14 @@ Print-mode core (`crates/core/src/worker/cursor_print.rs`, pure; GUZ-1325):
 - An interrupted turn writes no `result` line, so its tokens are lost (the same class as an opencode close).
 - `turn_end_for(outcome, result)` gives the `TurnEnd`: `Interrupted` after an interrupted exit, else the `result` end, else `Failed` for an exit with no result. `next_chat(current, event)` takes the latest `Init` chat id. `print_model(model)` falls back to `auto`. `cursor_mcp_json(existing, entry)` merges the `ralph-worker` entry into `.cursor/mcp.json` and keeps other servers.
 
+Cursor hook core (`crates/core/src/worker/cursor_hooks.rs`, pure; GUZ-1495). The bridge that uses it is not wired yet: print workers still refuse `ask`.
+
+- Measured on Cursor 2026.10.22 (GUZ-1495 hook check, one `agent -p --force` turn): `agent -p` loads `<cwd>/.cursor/hooks.json` and runs its `beforeShellExecution` hook before a shell command, even under `--force`. A hook that prints `{"permission":"deny","user_message":…,"agent_message":…}` blocks the command: the `shellToolCall` result is `rejected` and its reason quotes `user_message`. The hook gets one JSON object on stdin with `hook_event_name`, `command`, `cwd` (empty in that run), `session_id`, `conversation_id`, `generation_id`, `tool_use_id`, `workspace_roots`, `model`, `cursor_version`, `sandbox`, `user_email` and `transcript_path`, and inherits the agent's environment plus `CURSOR_PROJECT_DIR`, `CURSOR_TRANSCRIPT_PATH` and `CURSOR_VERSION`. No hook timeout field was seen. `fixtures/before_shell.json` is that stdin with the email and home path replaced.
+- `bridge_hook_command(exe, socket)` builds `'<exe>' hook-bridge --socket '<socket>'`. An entry whose command contains ` hook-bridge --socket ` is ralph's.
+- `add_bridge_hook(existing, command)` merges ralph's `beforeShellExecution` entry into `.cursor/hooks.json` in the `CURSOR_VERIFY_HOOKS` shape (`{"version":1,"hooks":{…}}`). Other entries, events and keys stay; an older ralph entry (another socket) is replaced, so adding again keeps one. An unreadable file is replaced, as `cursor_mcp_json` does.
+- `remove_bridge_hook(existing)` takes out ralph's entries only and drops `beforeShellExecution` when it ends up empty. A file with no ralph entry, or one that does not parse, comes back unchanged.
+- `parse_hook_input(stdin)` gives a `HookInput`. Only `beforeShellExecution` parses; unknown fields are ignored; missing `command` or `hook_event_name`, another event or bad JSON is an error.
+
 ## Cursor print mode (yolo)
 
 `CursorHost` picks the path when a worker starts. `[cursor] permissions = "yolo"` runs the print-mode host (`crates/ralph/src/acp_worker/print.rs`, `PrintWorker`). `"ask"` keeps the `agent acp` path and its permission flow unchanged. A resumed worker uses the path its session record names: a record with `permissions = "yolo"` is print mode.
