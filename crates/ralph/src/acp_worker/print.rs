@@ -22,7 +22,7 @@ use ralph_core::worker::{
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -203,18 +203,19 @@ impl Shared {
             .map_err(|e| format!("could not start `{} -p`: {e}", CURSOR_AGENT.command))?;
         self.group.store(child.id(), Ordering::SeqCst);
         if self.closing.load(Ordering::SeqCst) {
-            stop_child(&mut child);
-            unregister_group(child.id());
-            self.group.store(0, Ordering::SeqCst);
+            self.release_child(&mut child);
             return Ok(closed_turn());
         }
         if self.interrupt_pending.swap(false, Ordering::SeqCst) {
             self.interrupt_group();
         }
         drain_stderr(stderr, CappedLog::new(Some(&self.run.store), &self.id));
-        stdin
-            .write_all(text.as_bytes())
-            .map_err(|e| format!("could not write the prompt to the cursor agent: {e}"))?;
+        if let Err(e) = stdin.write_all(text.as_bytes()) {
+            self.release_child(&mut child);
+            return Err(format!(
+                "could not write the prompt to the cursor agent: {e}"
+            ));
+        }
         drop(stdin);
         let mut result = None;
         let mut spend = None;
@@ -225,14 +226,19 @@ impl Shared {
             if let PrintEvent::Result { end, usage } = event {
                 result = Some(end);
                 spend = usage;
+                break;
             }
         }
-        stop_child(&mut child);
+        self.release_child(&mut child);
+        let sigint_sent = locked(&self.turns).interrupt_sent();
+        Ok((exit_outcome(result.is_some(), sigint_sent), result, spend))
+    }
+
+    fn release_child(&self, child: &mut Child) {
+        stop_child(child);
         unregister_group(child.id());
         self.group.store(0, Ordering::SeqCst);
         self.interrupt_pending.store(false, Ordering::SeqCst);
-        let sigint_sent = locked(&self.turns).interrupt_sent();
-        Ok((exit_outcome(result.is_some(), sigint_sent), result, spend))
     }
 
     fn remember_chat(&self, event: &PrintEvent) {
