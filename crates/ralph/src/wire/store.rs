@@ -74,7 +74,7 @@ fn create_root(root: &Path) -> io::Result<()> {
     }
 }
 
-fn current_uid() -> u32 {
+pub(crate) fn current_uid() -> u32 {
     // SAFETY: geteuid only reads the process credential and cannot fail.
     unsafe { libc::geteuid() }
 }

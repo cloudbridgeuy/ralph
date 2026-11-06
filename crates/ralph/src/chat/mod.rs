@@ -89,6 +89,7 @@ use crate::signal;
 use crate::subprocess::OutputGate;
 use crate::warn::{print_above_prompt, warn, warn_if_err};
 use crate::watches::Watches;
+use crate::wire::store::current_uid;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, usage_store, Workers};
@@ -107,7 +108,7 @@ use ralph_core::chat_send_it::{
     propose_prompt, usage as send_it_usage, Ended, Seen, SendItCommand,
 };
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
-use ralph_core::chat_socket::system_prompt_path;
+use ralph_core::chat_socket::{runtime_root, system_prompt_path};
 use ralph_core::chat_status::{orphan_hint, Route, Status};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
@@ -200,7 +201,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         chat_config.cell_output_bytes,
     )?;
     sweep_stale_server_records();
-    let chat_socket = ChatSocket::bind(&store_dir)?;
+    let chat_socket = ChatSocket::bind(&store_dir, &runtime_root(current_uid()))?;
     let suggestions = SuggestionSlot::default();
     let shown = SuggestionSlot::default();
     let socket_files = chat_socket.files().clone();
