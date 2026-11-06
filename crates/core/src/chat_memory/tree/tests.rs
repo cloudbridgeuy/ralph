@@ -1,6 +1,6 @@
 use super::*;
 use crate::chat_memory::fixtures::{entry, n, texted};
-use crate::chat_memory::FALLBACK_MARK;
+use crate::chat_memory::{Role, FALLBACK_MARK};
 
 fn mixed(count: usize) -> Vec<Entry> {
     (0..count)
@@ -861,4 +861,21 @@ fn an_entry_is_long_only_above_the_summary_size() {
     let at = |len: usize| texted(1, |_| "a".repeat(len)).remove(0);
     assert!(!is_long(&at(SUMMARY_BYTES)));
     assert!(is_long(&at(SUMMARY_BYTES + 1)));
+}
+
+#[test]
+fn consecutive_user_entries_need_no_assistant_pair() {
+    let mut entries = mixed(4);
+    for text in ["@w1 first", "@w1 second"] {
+        let mut e = entry(0, 0);
+        e.text = text.to_string();
+        entries.push(e);
+    }
+    assert_eq!(entries[4].role, Role::User);
+    assert_eq!(entries[5].role, Role::User);
+    let tree = summarized(&entries);
+    assert!(pending(&entries, &tree).is_empty());
+    let lines = view(&entries, &tree, 100_000);
+    assert!(lines.iter().any(|l| l.contains("@w1 first")));
+    assert!(lines.iter().any(|l| l.contains("@w1 second")));
 }

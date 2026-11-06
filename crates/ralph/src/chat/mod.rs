@@ -7,6 +7,7 @@ mod config;
 #[cfg(test)]
 mod corrupt_tests;
 mod diff;
+mod direct;
 mod editor;
 mod hold;
 mod hold_progress;

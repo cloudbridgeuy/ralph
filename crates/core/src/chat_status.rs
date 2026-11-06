@@ -1,4 +1,5 @@
 use crate::chat_cell::{bang, Bang};
+use crate::chat_direct::{parse_direct, Direct, DirectLine};
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
 use crate::chat_memory::{history_tool, MemoryCall};
@@ -101,6 +102,7 @@ pub enum Route {
     WorkerCosts(CostsArgs),
     Hold(HoldFilter),
     Nudge(NudgeCommand),
+    Direct(Direct),
     SendIt(SendItCommand),
     Fork(ForkCommand),
     Switch {
@@ -138,6 +140,7 @@ impl Route {
             | Route::DropInbox(_)
             | Route::Hold(_)
             | Route::Nudge(_)
+            | Route::Direct(_)
             | Route::SendIt(_)
             | Route::Fork(_)
             | Route::Switch { .. }
@@ -217,10 +220,14 @@ pub fn route_input(
             };
         }
     }
-    match line {
-        "" => empty_route(unread, empty),
-        message if matches!(bang(message), Bang::Local(_)) => Route::Shell(message.to_string()),
-        message => Route::Send(message.to_string()),
+    match (line, parse_direct(line)) {
+        (_, Some(DirectLine::Message(direct))) => Route::Direct(direct),
+        (_, Some(DirectLine::Escaped(rest))) => Route::Send(rest),
+        ("", _) => empty_route(unread, empty),
+        (message, _) if matches!(bang(message), Bang::Local(_)) => {
+            Route::Shell(message.to_string())
+        }
+        (message, _) => Route::Send(message.to_string()),
     }
 }
 

@@ -17,6 +17,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `ralph chat history <read|zoom|recall|search> …` - print the chat memory as the model's tools see it; no model, no turn ([details](docs/context/ralph-chat.md#history-commands))
 - `ralph chat --thread <name>` / `ralph thread <ls|drop|merge [--view]|park|revive|pull>` / `/fork <name>` - named side chats forked from main; `/fork` opens one in a new Rex block ([details](docs/context/ralph-chat.md#threads))
 - `/send-it <instructions>` / `/send-it <status|edit|go|off|save|templates>` - in a chat, run an approved plan of steps with exit criteria and no input ([details](docs/context/send-it.md))
+- `@<id> <text>` - in a chat, send `<text>` to worker `<id>` as written, with no model turn and no cost ([details](docs/context/ralph-chat.md#id-text))
 - `ralph inbox post --store <DIR> --from <SOURCE> <FILE|->` - deliver a text report from an outside program to a chat inbox ([details](docs/context/ralph-chat.md#external-reports))
 - `ralph ask` - single-shot prompt; stores only a usage row ([details](docs/context/ralph-ask.md))
 - `ralph wire` - local proxy that records harness-to-provider traffic; `wire ls`/`wire show`/`wire diff`/`wire sessions` inspect it ([details](docs/context/ralph-wire.md))

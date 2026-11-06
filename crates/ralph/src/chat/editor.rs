@@ -5,6 +5,7 @@ use crate::chat::thread::{fork_of, open_names};
 use crate::clipboard::PASTE_IMAGE;
 use crate::render::image::resolve;
 use crate::signal::default_sigttou_in;
+use ralph_core::chat_direct::direct_completions;
 use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
 use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
 use ralph_core::chat_hold::{hold_completions, HoldCompletion};
@@ -42,6 +43,7 @@ impl Completer for HoldCompleter {
         let status = self.monitor.status();
         let suggestions: Vec<Suggestion> = hold_completions(line, pos, &status)
             .or_else(|| nudge_completions(line, pos, &status))
+            .or_else(|| direct_completions(line, pos, &status))
             .or_else(|| view_completions(line, pos))
             .or_else(|| self.thread_completions(line, pos))
             .map(|completion| {

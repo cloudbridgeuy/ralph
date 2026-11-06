@@ -105,7 +105,7 @@ The system prompt tells the model that the message starts with the compressed ch
 
 Ctrl-Q during a turn, or typing text, pauses the display of the turn output and opens a queue editor. Typed text seeds the editor, so no typing is lost. The turn keeps running and the output is held.
 
-- Enter with text adds the text as a queue entry, except a read-only command (`/help`, `/config`, `/workers`, `/workers costs`, `/inbox list`, `/inbox peek N`, `/watch list`, a bare `/watch`, `/schedule` and `/schedule list`, and the usage or unclosed-quote replies of `/inbox`, `/watch`, `/schedule` and `/diff`): it runs at once, prints before the held output returns, and is not queued. The turn is not cancelled. Other commands (`/inbox`, `/inbox drop N`, `/hold`, `/nudge`, `/watch start`, `/watch stop`, `/schedule cancel`, `/diff` with a target) stay queued. Empty Enter or Ctrl-D adds nothing.
+- Enter with text adds the text as a queue entry, except a read-only command (`/help`, `/config`, `/workers`, `/workers costs`, `/inbox list`, `/inbox peek N`, `/watch list`, a bare `/watch`, `/schedule` and `/schedule list`, and the usage or unclosed-quote replies of `/inbox`, `/watch`, `/schedule` and `/diff`): it runs at once, prints before the held output returns, and is not queued. The turn is not cancelled. Other commands (`/inbox`, `/inbox drop N`, `/hold`, `/nudge`, `@<id> <text>`, `/watch start`, `/watch stop`, `/schedule cancel`, `/diff` with a target) stay queued. Empty Enter or Ctrl-D adds nothing.
 - Ctrl-Q in the editor backs out: a non-blank draft is added as the last entry, and the queue is held. The turn is not cancelled. At turn end ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. Ctrl-Q during the same turn opens the editor again; the queue stays held.
 - Each of these closes the editor, prints the held output, and resumes live output.
 - Ctrl-C in the editor (a host command, `queue_ctrl_c`) clears a non-empty draft and the turn keeps running; on an empty draft it cancels the turn and holds the queue.
@@ -212,6 +212,18 @@ Usage string: `Usage: /inbox [next | N | list | peek N | drop N]`. `/inboxfoo` i
 - An unknown or closed id, or a failed send, prints `/nudge: <error>`.
 - Records: `/nudge` writes no record of its own and never writes the auto-continue record (`auto-continued/<id>`, `auto-continue.jsonl`). Its `sent/<id>` mark is a go-ahead like any reply, so it resets a stall record and the next failed turn gets its one auto-continue again (see [Auto-continue](#auto-continue)).
 - Tab after `/nudge ` completes this chat's worker ids only (no watches or schedules), for the id word only; the menu, filtering and source are the same as `/hold`. Pure logic: `ralph_core::chat_nudge` (`parse_nudge_args`, `resolve_nudge`, `nudge_completions`, `blocked_refusal`, `failure_line`); the shell is `crates/ralph/src/chat/nudge.rs`, dispatched from `run_local`.
+
+### @<id> <text>
+
+A typed line that starts with `@<id>` followed by whitespace or the end of the line sends `<text>` to worker `<id>` as written. It starts no model turn, so it costs $0 and `usage.jsonl` gets no main row. It is not a read-only command, so during a turn it is queued like `/nudge`.
+
+- Only a leading `@` counts. The id is the characters up to the first whitespace; the text is everything after it, newlines kept (a multiline paste works), trimmed at both edges. `@` in the middle of a line, an email address, a bare `@` and `@ text` are normal messages.
+- `@@text` is a normal message with exactly one leading `@` removed: `@@GUZ-1 hi` sends `@GUZ-1 hi` to the model.
+- The send is `Workers::reply(id, text, false, None)`, the path `/nudge` uses, so ralph prints the same line, for example `Sent to worker GUZ-1; busy.` There is no interrupt form and no permission answer. A worker of a scheduled task is refused with the same line the `reply` tool gives.
+- Refusals print `@<id>: <reason>` and record nothing: empty text; a merged thread's digest id (`thread:<name>`); an id that is not one of this chat's workers (the line lists the running ids and names `@@`); a worker with `blocked/<id>` (it waits on a permission request; answer by request id). A failed send prints `@<id>: <error>`.
+- Memory: a sent line appends one `user` entry, `@<id> <text>`, a newline, then `Result: <reply line>`. It sets no pending-turn marker and writes no usage row or ledger entry. The model finds it with `search` and `read` like any user entry; it is never a `worker` entry, so the worker-check ignores it.
+- During a `/send-it` run the line is queued, and the run loop takes the queued line as a takeover, as for any typed line (see [/send-it](#send-it)).
+- Tab after a leading `@` completes this chat's worker ids. Pure logic: `ralph_core::chat_direct` (`parse_direct`, `resolve_direct`, `direct_completions`, `memory_line`, `failure_line`); the shell is `crates/ralph/src/chat/direct.rs`, dispatched from `run_local`. `/help` does not list it yet.
 
 ### /send-it
 

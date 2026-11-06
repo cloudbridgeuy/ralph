@@ -1,5 +1,6 @@
 use crate::chat::config;
 use crate::chat::diff::{self, DiffContext};
+use crate::chat::direct;
 use crate::chat::inbox::{self, Display};
 use crate::chat::monitor::Monitor;
 use crate::chat::nudge;
@@ -63,6 +64,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::Nudge(command) => nudge::run(command, ctx.monitor),
+        Route::Direct(direct) => direct::run(direct, ctx),
         Route::WorkerCosts(args) => workers::costs(ctx.display, ctx.prices, ctx.store, args),
         Route::Fork(command) => println!("{}", thread::fork(ctx.store, command)),
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),

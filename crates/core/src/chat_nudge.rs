@@ -45,7 +45,7 @@ pub fn resolve_nudge(
     };
     refuse_thread_report(&id)?;
     if blocked(&id) {
-        return Err(blocked_refusal(&id));
+        return Err(failure_line(&blocked_refusal(&id)));
     }
     Ok((id, text))
 }
@@ -60,7 +60,7 @@ pub fn nudge_completions(line: &str, cursor: usize, status: &Status) -> Option<H
 }
 
 pub fn blocked_refusal(id: &str) -> String {
-    format!("{NUDGE}: worker {id} waits on a permission request; answer it by request id.")
+    format!("worker {id} waits on a permission request; answer it by request id.")
 }
 
 pub fn failure_line(error: &str) -> String {

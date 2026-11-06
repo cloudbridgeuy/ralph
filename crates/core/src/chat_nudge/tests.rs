@@ -123,7 +123,7 @@ fn a_given_id_is_kept_and_never_auto_selected() {
 #[test]
 fn a_blocked_worker_is_refused_when_auto_selected_or_named() {
     let blocked = |id: &str| id == "GUZ-1";
-    let refusal = Err(blocked_refusal("GUZ-1"));
+    let refusal = Err(failure_line(&blocked_refusal("GUZ-1")));
     assert_eq!(
         resolve_nudge(NudgeCommand::Bare, &ids(&["GUZ-1"]), blocked),
         refusal
@@ -167,7 +167,7 @@ fn completion_stops_after_the_id() {
 #[test]
 fn refusal_and_failure_lines_name_the_command() {
     assert_eq!(
-        blocked_refusal("GUZ-1"),
+        failure_line(&blocked_refusal("GUZ-1")),
         "/nudge: worker GUZ-1 waits on a permission request; answer it by request id."
     );
     assert_eq!(
