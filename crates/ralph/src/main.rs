@@ -424,6 +424,31 @@ pub(crate) struct Curator<'a> {
     pub timeout: u64,
 }
 
+struct CuratorRows {
+    kind: ralph_core::chat_memory::CallSite,
+    run: Option<String>,
+    store: String,
+    at: String,
+}
+
+fn curator_rows(
+    rows: &CuratorRows,
+    done: &subprocess::StreamingSubprocessResult,
+) -> Vec<ralph_core::chat_memory::LedgerRow> {
+    let costs = &done.stream_result.costs;
+    let metadata = &done.stream_result.metadata;
+    ralph_core::chat_memory::usage_record(rows.kind.clone(), rows.at.clone(), costs, metadata)
+        .into_iter()
+        .chain(ralph_core::chat_memory::subagent_records(
+            &rows.at, costs, metadata,
+        ))
+        .map(|row| {
+            row.with_run(rows.run.clone())
+                .with_store(Some(rows.store.clone()))
+        })
+        .collect()
+}
+
 pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     let config_dir = config::AppConfig::load()
@@ -432,7 +457,7 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
         .config_dir;
     let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
     let stdin = invoke::prompt_stdin(prompt);
-    let result = backoff::retry_on_outage(
+    let outcome = backoff::retry_on_outage(
         "chat memory curator",
         || {
             backoff::attempt_from(subprocess::invoke_subprocess_silent(
@@ -452,37 +477,20 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
             ))
         },
         |delay| backoff::wait_unless(signal::is_terminated, delay),
-    )
-    .map_err(|e| e.to_string())?;
-    let at = chrono::Utc::now().to_rfc3339();
-    if let Some(record) = ralph_core::chat_memory::usage_record(
-        curator.kind.clone(),
-        at.clone(),
-        &result.stream_result.costs,
-        &result.stream_result.metadata,
-    ) {
-        let record = record
-            .with_run(curator.run.clone())
-            .with_store(Some(workers::usage_store(curator.store)));
+    );
+    if let Some(done) = subprocess::recorded(&outcome) {
+        let rows = CuratorRows {
+            kind: curator.kind.clone(),
+            run: curator.run.clone(),
+            store: workers::usage_store(curator.store),
+            at: chrono::Utc::now().to_rfc3339(),
+        };
         warn_if_err(
-            ledger::record(&chat::memory::usage_path(), &record),
+            ledger::record_all(&chat::memory::usage_path(), curator_rows(&rows, done)),
             "Failed to record chat usage",
         );
     }
-    let subagents = ralph_core::chat_memory::subagent_records(
-        &at,
-        &result.stream_result.costs,
-        &result.stream_result.metadata,
-    )
-    .into_iter()
-    .map(|row| {
-        row.with_run(curator.run.clone())
-            .with_store(Some(workers::usage_store(curator.store)))
-    });
-    warn_if_err(
-        ledger::record_all(&chat::memory::usage_path(), subagents),
-        "Failed to record chat subagent usage",
-    );
+    let result = outcome.map_err(|e| e.to_string())?;
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
     ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
 }
