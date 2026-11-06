@@ -225,8 +225,8 @@ impl Shared {
     }
 
     fn send_interrupt(self: &Arc<Self>, group: Group) {
-        crate::cursor_owner::signal_group(group.pgid, "INT");
         self.sigint_sent.store(true, Ordering::SeqCst);
+        crate::cursor_owner::signal_group(group.pgid, "INT");
         let shared = Arc::clone(self);
         thread::spawn(move || {
             thread::sleep(INTERRUPT_GRACE);
