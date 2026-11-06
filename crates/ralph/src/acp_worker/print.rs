@@ -30,6 +30,10 @@ const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
 
 type TurnRun = (ExitOutcome, Option<TurnEnd>, Option<ModelUsage>);
 
+fn closed_turn() -> TurnRun {
+    (ExitOutcome::Interrupted, None, None)
+}
+
 struct Run {
     store: PathBuf,
     worktree: PathBuf,
@@ -166,6 +170,9 @@ impl Shared {
     }
 
     fn execute(&self, text: &str) -> Result<TurnRun, String> {
+        if self.closing.load(Ordering::SeqCst) {
+            return Ok(closed_turn());
+        }
         let chat = locked(&self.chat).clone();
         let args = print_args(&PrintArgs {
             workspace: &self.run.worktree,
@@ -181,6 +188,12 @@ impl Shared {
         let (mut child, mut stdin, stdout, stderr) = spawn_piped(command)
             .map_err(|e| format!("could not start `{} -p`: {e}", CURSOR_AGENT.command))?;
         self.group.store(child.id(), Ordering::SeqCst);
+        if self.closing.load(Ordering::SeqCst) {
+            stop_child(&mut child);
+            unregister_group(child.id());
+            self.group.store(0, Ordering::SeqCst);
+            return Ok(closed_turn());
+        }
         drain_stderr(stderr, CappedLog::new(Some(&self.run.store), &self.id));
         stdin
             .write_all(text.as_bytes())
