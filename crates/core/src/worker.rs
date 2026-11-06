@@ -14,7 +14,6 @@ mod claude_launch;
 mod claude_verify;
 mod codex;
 mod cursor_model;
-#[cfg(test)]
 mod cursor_print;
 mod cursor_reclaim;
 mod daily_drift;
@@ -58,6 +57,7 @@ pub use cursor_model::{
     restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,
     CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
 };
+pub use cursor_print::*;
 pub use cursor_reclaim::cursor_group_reclaimable;
 pub use daily_drift::*;
 pub use delivery::*;
