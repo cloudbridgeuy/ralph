@@ -64,6 +64,10 @@ pub fn project_dirs(projects_base: &Path, real_worktree: &str) -> Vec<PathBuf> {
     dirs
 }
 
+pub fn chats_dir(chats_base: &Path, real_worktree: &str) -> PathBuf {
+    chats_base.join(format!("{:x}", md5::compute(real_worktree.as_bytes())))
+}
+
 pub fn session_cwd(meta_json: &str) -> Option<String> {
     serde_json::from_str::<SessionMeta>(meta_json)
         .ok()
@@ -235,5 +239,13 @@ mod tests {
     fn unparsable_meta_never_matches() {
         assert!(!session_names_worktree("{nope", "/a/wt", "/a/wt"));
         assert!(!session_names_worktree("{}", "/a/wt", "/a/wt"));
+    }
+
+    #[test]
+    fn chats_dir_is_the_md5_of_the_real_path() {
+        assert_eq!(
+            chats_dir(Path::new("/h/.cursor/chats"), "/private/tmp/x/wt"),
+            Path::new("/h/.cursor/chats/6b1747bb9ec88ec64347eb82e2970860")
+        );
     }
 }

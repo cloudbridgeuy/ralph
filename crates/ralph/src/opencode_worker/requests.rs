@@ -1,7 +1,7 @@
 use super::{post_prompt, record_usage, OpencodeHost, Session, Target};
-use crate::acp_worker::Events;
 use crate::cursor_owner::{now_secs, take_answer, write_file};
 use crate::warn::warn;
+use crate::worker_events::Events;
 use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{

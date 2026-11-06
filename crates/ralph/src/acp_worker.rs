@@ -2,14 +2,15 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
-    now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_file_atomic,
-    write_interrupt_result, write_owner_record,
+    now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_interrupt_result,
+    write_owner_record,
 };
 use crate::subprocess::{exited_unreaped, signal_group, unregister_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
+use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
@@ -31,10 +32,10 @@ use ralph_core::worker::{
     check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
     probed_version, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
     session_error, session_saved, stop_problem, sweeps_permissions, task_prompt, turn_outcome,
-    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect,
-    HeadlessState, HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue,
-    Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand,
-    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE,
+    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessState,
+    HeadlessWorker, Inbound, PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope,
+    SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent,
+    WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE,
     CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
     CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
@@ -48,43 +49,20 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod cursor_worker;
 mod model;
 mod permissions;
+mod print;
 mod turns;
 mod verify;
 
 use crate::permission_queue::{host_process_token, PermissionQueue};
+use cursor_worker::CursorWorker;
 use permissions::Permissions;
+use print::PrintWorker;
 use turns::{run_turns, Turns};
 use verify::agent_version_probe;
 pub(crate) use verify::verify;
-
-pub(crate) type Events = Arc<Mutex<Vec<WorkerEvent>>>;
-
-pub(crate) fn push_event(events: &Events, event: WorkerEvent) {
-    locked(events).push(event);
-}
-
-pub(crate) fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
-    let path = |marker| match marker {
-        Marker::Ready => &markers.ready,
-        Marker::Reported => &markers.reported,
-        Marker::Blocked => &markers.blocked,
-        Marker::Waiting => &markers.waiting,
-    };
-    match effect {
-        HeadlessEffect::Set(marker) => {
-            write_file(path(*marker), "").ok();
-        }
-        HeadlessEffect::Clear(marker) => {
-            fs::remove_file(path(*marker)).ok();
-        }
-        HeadlessEffect::Publish(content) => {
-            write_file_atomic(&markers.blocked, &content.render()).ok();
-        }
-        HeadlessEffect::ReplyText(_) => {}
-    }
-}
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
@@ -595,7 +573,7 @@ async fn authenticate(
 
 pub struct CursorHost {
     store_dir: PathBuf,
-    workers: Mutex<HashMap<String, AcpWorker>>,
+    workers: Mutex<HashMap<String, CursorWorker>>,
     starting: Mutex<HashMap<String, u32>>,
     closed: AtomicBool,
 }
@@ -617,7 +595,7 @@ impl CursorHost {
         })
     }
 
-    fn workers(&self) -> MutexGuard<'_, HashMap<String, AcpWorker>> {
+    fn workers(&self) -> MutexGuard<'_, HashMap<String, CursorWorker>> {
         locked(&self.workers)
     }
 
@@ -665,7 +643,7 @@ impl CursorHost {
 
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        let mut drained: Vec<(String, AcpWorker)> = self.workers().drain().collect();
+        let mut drained: Vec<(String, CursorWorker)> = self.workers().drain().collect();
         for (_, worker) in &mut drained {
             worker.begin_stop();
         }
@@ -697,10 +675,7 @@ impl CursorHost {
     }
 
     pub fn cancel_pending(&self, id: &str) {
-        let permissions = self
-            .workers()
-            .get(id)
-            .map(|worker| Arc::clone(&worker.permissions));
+        let permissions = self.workers().get(id).and_then(CursorWorker::permissions);
         if let Some(permissions) = permissions {
             permissions.cancel_all();
         }
@@ -721,7 +696,7 @@ impl CursorHost {
         &self,
         id: &str,
         dir: fn(&HandoffFiles) -> &PathBuf,
-        deliver: fn(&mut AcpWorker, &str, &str),
+        deliver: fn(&mut CursorWorker, &str, &str),
     ) {
         let files = self.files(id);
         let starting = locked(&self.starting).contains_key(id);
@@ -789,7 +764,15 @@ impl CursorHost {
                 permissions: None,
             },
         };
-        match self.launch(id, &request, launch) {
+        let started = match cursor_permissions() {
+            PermissionMode::Yolo => {
+                PrintWorker::start(id, &request, &files, None).map(CursorWorker::Print)
+            }
+            PermissionMode::Ask => self
+                .launch(id, &request, launch)
+                .map(|worker| CursorWorker::Acp(Box::new(worker))),
+        };
+        match started {
             Ok(worker) => self.adopt(id, worker),
             Err(message) => {
                 fs::remove_file(&files.session).ok();
@@ -880,11 +863,17 @@ impl CursorHost {
             ),
             model: record.model.clone(),
         };
-        let launch = Launch::Resume {
-            record,
-            store: self.store_dir.clone(),
+        let started = if record.permissions == Some(PermissionMode::Yolo) {
+            PrintWorker::start(id, &request, &files, Some(&record)).map(CursorWorker::Print)
+        } else {
+            let launch = Launch::Resume {
+                record,
+                store: self.store_dir.clone(),
+            };
+            self.launch(id, &request, launch)
+                .map(|worker| CursorWorker::Acp(Box::new(worker)))
         };
-        match self.launch(id, &request, launch) {
+        match started {
             Ok(worker) => self.adopt_resumed(id, worker),
             Err(message) => {
                 warn(message.clone());
@@ -893,7 +882,7 @@ impl CursorHost {
         }
     }
 
-    fn adopt_resumed(&self, id: &str, worker: AcpWorker) {
+    fn adopt_resumed(&self, id: &str, worker: CursorWorker) {
         let ready = ready_path(&self.store_dir, id);
         if !self.closed.load(Ordering::SeqCst) && write_file(&ready, "").is_ok() {
             self.workers().insert(id.to_string(), worker);
@@ -903,7 +892,7 @@ impl CursorHost {
         }
     }
 
-    fn adopt(&self, id: &str, worker: AcpWorker) {
+    fn adopt(&self, id: &str, worker: CursorWorker) {
         let files = self.files(id);
         let claimed = !self.closed.load(Ordering::SeqCst)
             && fs::remove_file(&files.spawn).is_ok()

@@ -1,5 +1,5 @@
 use ralph_core::cursor_leftovers::{
-    project_dirs, session_cwd, session_names_worktree, slug_owner_conflict,
+    chats_dir, project_dirs, session_cwd, session_names_worktree, slug_owner_conflict,
 };
 use ralph_core::worker::worktree_paths;
 use std::fs;
@@ -69,6 +69,7 @@ pub fn cleanup_cursor_leftovers(
             }
         }
     }
+    remove_dir(&chats_dir(&cursor.join("chats"), &real), &mut messages);
     for (dir, meta) in &sessions {
         if session_names_worktree(meta, &worktree, &real) {
             remove_dir(dir, &mut messages);
@@ -97,6 +98,11 @@ mod tests {
         fs::create_dir_all(&other_project).unwrap();
         let mine = session(home.path(), "s1", "{\"cwd\":\"/w/wt\"}");
         let canonical = session(home.path(), "s2", "{\"cwd\":\"/p/wt\"}");
+        let chats = home.path().join(".cursor/chats");
+        let mine_chat = ralph_core::cursor_leftovers::chats_dir(&chats, "/p/wt");
+        let other_chat = ralph_core::cursor_leftovers::chats_dir(&chats, "/p/wt2");
+        fs::create_dir_all(&mine_chat).unwrap();
+        fs::create_dir_all(&other_chat).unwrap();
         let other = session(home.path(), "s3", "{\"cwd\":\"/w/wt2\"}");
         let broken = session(home.path(), "s4", "{nope");
         let messages = cleanup_cursor_leftovers(
@@ -105,7 +111,8 @@ mod tests {
             Path::new("/p/wt"),
             Some(""),
         );
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 4);
+        assert!(!mine_chat.exists() && other_chat.exists());
         assert!(messages.contains(&format!("Removed {}.", project.display())));
         assert!(!project.exists() && !mine.exists() && !canonical.exists());
         assert!(other.exists() && broken.exists() && other_project.exists());

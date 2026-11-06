@@ -14,6 +14,8 @@ mod claude_launch;
 mod claude_verify;
 mod codex;
 mod cursor_model;
+mod cursor_print;
+mod cursor_reclaim;
 mod daily_drift;
 mod delivery;
 mod drift_run;
@@ -54,6 +56,10 @@ pub use cursor_model::{
     cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,
     restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,
     CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
+};
+pub use cursor_print::*;
+pub use cursor_reclaim::{
+    cursor_group_reclaimable, is_worker_server, lsof_socket_paths, worker_server_groups, ServerRow,
 };
 pub use daily_drift::*;
 pub use delivery::*;
@@ -362,8 +368,10 @@ pub fn exclude_lines(harness: HarnessId, repo: &Path, worktree_dir: &Path) -> Ve
         .map(|inside| format!("/{}/", inside.to_string_lossy()))
         .into_iter()
         .collect();
-    if harness == HarnessId::Opencode {
-        lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
+    match harness {
+        HarnessId::Opencode => lines.push(format!("/{OPENCODE_CONFIG_FILE}")),
+        HarnessId::Cursor => lines.push("/.cursor/".to_string()),
+        _ => {}
     }
     lines
 }
@@ -570,6 +578,10 @@ mod tests {
         assert_eq!(
             exclude_lines(HarnessId::Opencode, repo, &dir),
             ["/.worktrees/", "/opencode.json"]
+        );
+        assert_eq!(
+            exclude_lines(HarnessId::Cursor, repo, &dir),
+            ["/.worktrees/", "/.cursor/"]
         );
     }
 

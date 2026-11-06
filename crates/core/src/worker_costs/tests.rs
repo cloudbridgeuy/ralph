@@ -642,3 +642,22 @@ fn the_total_row_marks_partial_reasoning_from_any_group() {
     ]));
     assert_eq!(cells(&total_row(&rows))[9], "4+");
 }
+
+#[test]
+fn a_cursor_row_with_an_unpriced_model_shows_unknown_cost_not_zero() {
+    let mut line = worker(
+        "GUZ-1",
+        "s1",
+        "grok-4.7[context=256k,reasoning_effort=high]",
+    );
+    line["harness"] = json!("cursor");
+    let rows = rows_of(&jsonl(&[line]));
+    let usd = find(
+        &rows,
+        "cursor",
+        "grok-4.7[context=256k,reasoning_effort=high]",
+    )
+    .usd;
+    assert_eq!(usd.text(), "n/a");
+    assert_eq!(usd.known, None);
+}
