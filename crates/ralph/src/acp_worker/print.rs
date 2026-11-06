@@ -43,13 +43,19 @@ enum ReadPlan {
 enum TurnProc {
     Idle,
     Starting { interrupt: bool },
-    Running { pgid: u32 },
-    Grace { pgid: u32 },
+    Running { pgid: u32, turn: u64 },
+    Grace { pgid: u32, turn: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Group {
+    pgid: u32,
+    turn: u64,
 }
 
 #[derive(Debug, PartialEq)]
 enum InterruptPlan {
-    Send(u32),
+    Send(Group),
     Hold,
     Drop,
 }
@@ -61,19 +67,20 @@ fn begin_start() -> TurnProc {
 fn on_interrupt(state: TurnProc) -> (TurnProc, InterruptPlan) {
     match state {
         TurnProc::Starting { .. } => (TurnProc::Starting { interrupt: true }, InterruptPlan::Hold),
-        TurnProc::Running { pgid } => (state, InterruptPlan::Send(pgid)),
+        TurnProc::Running { pgid, turn } => (state, InterruptPlan::Send(Group { pgid, turn })),
         TurnProc::Grace { .. } | TurnProc::Idle => (state, InterruptPlan::Drop),
     }
 }
 
-fn on_spawned(state: TurnProc, pgid: u32) -> (TurnProc, Option<u32>) {
+fn on_spawned(state: TurnProc, group: Group) -> (TurnProc, Option<Group>) {
     let held = matches!(state, TurnProc::Starting { interrupt: true });
-    (TurnProc::Running { pgid }, held.then_some(pgid))
+    let Group { pgid, turn } = group;
+    (TurnProc::Running { pgid, turn }, held.then_some(group))
 }
 
 fn on_result(state: TurnProc) -> TurnProc {
     match state {
-        TurnProc::Running { pgid } => TurnProc::Grace { pgid },
+        TurnProc::Running { pgid, turn } => TurnProc::Grace { pgid, turn },
         other => other,
     }
 }
@@ -84,14 +91,14 @@ fn on_release() -> TurnProc {
 
 fn live_group(state: TurnProc) -> Option<u32> {
     match state {
-        TurnProc::Running { pgid } | TurnProc::Grace { pgid } => Some(pgid),
+        TurnProc::Running { pgid, .. } | TurnProc::Grace { pgid, .. } => Some(pgid),
         TurnProc::Idle | TurnProc::Starting { .. } => None,
     }
 }
 
-fn escalation_target(state: TurnProc, group: u32) -> Option<u32> {
+fn escalation_target(state: TurnProc, group: Group) -> Option<u32> {
     match state {
-        TurnProc::Running { pgid } if pgid == group => Some(pgid),
+        TurnProc::Running { pgid, turn } if Group { pgid, turn } == group => Some(pgid),
         _ => None,
     }
 }
@@ -132,6 +139,7 @@ struct Shared {
     snapshot: Mutex<Option<u64>>,
     proc: Mutex<TurnProc>,
     turn_seq: AtomicU64,
+    spawns: AtomicU64,
     closing: AtomicBool,
 }
 
@@ -204,14 +212,14 @@ impl Shared {
         }
     }
 
-    fn send_interrupt(self: &Arc<Self>, group: u32) {
-        crate::cursor_owner::signal_group(group, "INT");
+    fn send_interrupt(self: &Arc<Self>, group: Group) {
+        crate::cursor_owner::signal_group(group.pgid, "INT");
         let shared = Arc::clone(self);
         thread::spawn(move || {
             thread::sleep(INTERRUPT_GRACE);
             let target = escalation_target(*locked(&shared.proc), group);
-            if let Some(group) = target {
-                stop_groups(&[group], SHUTDOWN_GRACE, || true);
+            if let Some(pgid) = target {
+                stop_groups(&[pgid], SHUTDOWN_GRACE, || true);
             }
         });
     }
@@ -287,7 +295,12 @@ impl Shared {
         })?;
         let held = {
             let mut state = locked(&self.proc);
-            let (next, held) = on_spawned(*state, child.id());
+            let turn = self.spawns.fetch_add(1, Ordering::SeqCst);
+            let group = Group {
+                pgid: child.id(),
+                turn,
+            };
+            let (next, held) = on_spawned(*state, group);
             *state = next;
             held
         };
@@ -430,6 +443,7 @@ impl PrintWorker {
             snapshot: Mutex::new(None),
             proc: Mutex::new(TurnProc::Idle),
             turn_seq: AtomicU64::new(0),
+            spawns: AtomicU64::new(0),
             closing: AtomicBool::new(false),
         });
         if resume.is_none() {
@@ -545,6 +559,11 @@ mod tests {
     }
 
     const PGID: u32 = 42;
+    const TURN: u64 = 7;
+    const GROUP: Group = Group {
+        pgid: PGID,
+        turn: TURN,
+    };
 
     #[test]
     fn begin_start_holds_no_interrupt() {
@@ -566,32 +585,62 @@ mod tests {
     #[test]
     fn held_interrupt_is_delivered_when_the_child_exists() {
         assert_eq!(
-            on_spawned(TurnProc::Starting { interrupt: true }, PGID),
-            (TurnProc::Running { pgid: PGID }, Some(PGID))
+            on_spawned(TurnProc::Starting { interrupt: true }, GROUP),
+            (
+                TurnProc::Running {
+                    pgid: PGID,
+                    turn: TURN
+                },
+                Some(GROUP)
+            )
         );
     }
 
     #[test]
     fn spawn_without_a_held_interrupt_sends_nothing() {
         assert_eq!(
-            on_spawned(TurnProc::Starting { interrupt: false }, PGID),
-            (TurnProc::Running { pgid: PGID }, None)
+            on_spawned(TurnProc::Starting { interrupt: false }, GROUP),
+            (
+                TurnProc::Running {
+                    pgid: PGID,
+                    turn: TURN
+                },
+                None
+            )
         );
     }
 
     #[test]
     fn interrupt_in_running_sends_to_the_group() {
         assert_eq!(
-            on_interrupt(TurnProc::Running { pgid: PGID }),
-            (TurnProc::Running { pgid: PGID }, InterruptPlan::Send(PGID))
+            on_interrupt(TurnProc::Running {
+                pgid: PGID,
+                turn: TURN
+            }),
+            (
+                TurnProc::Running {
+                    pgid: PGID,
+                    turn: TURN
+                },
+                InterruptPlan::Send(GROUP)
+            )
         );
     }
 
     #[test]
     fn interrupt_in_grace_is_dropped() {
         assert_eq!(
-            on_interrupt(TurnProc::Grace { pgid: PGID }),
-            (TurnProc::Grace { pgid: PGID }, InterruptPlan::Drop)
+            on_interrupt(TurnProc::Grace {
+                pgid: PGID,
+                turn: TURN
+            }),
+            (
+                TurnProc::Grace {
+                    pgid: PGID,
+                    turn: TURN
+                },
+                InterruptPlan::Drop
+            )
         );
     }
 
@@ -615,8 +664,14 @@ mod tests {
     #[test]
     fn first_result_moves_running_to_grace() {
         assert_eq!(
-            on_result(TurnProc::Running { pgid: PGID }),
-            TurnProc::Grace { pgid: PGID }
+            on_result(TurnProc::Running {
+                pgid: PGID,
+                turn: TURN
+            }),
+            TurnProc::Grace {
+                pgid: PGID,
+                turn: TURN
+            }
         );
     }
 
@@ -628,8 +683,14 @@ mod tests {
             TurnProc::Starting { interrupt: true }
         );
         assert_eq!(
-            on_result(TurnProc::Grace { pgid: PGID }),
-            TurnProc::Grace { pgid: PGID }
+            on_result(TurnProc::Grace {
+                pgid: PGID,
+                turn: TURN
+            }),
+            TurnProc::Grace {
+                pgid: PGID,
+                turn: TURN
+            }
         );
     }
 
@@ -637,27 +698,71 @@ mod tests {
     fn live_group_exists_only_with_a_child() {
         assert_eq!(live_group(TurnProc::Idle), None);
         assert_eq!(live_group(TurnProc::Starting { interrupt: true }), None);
-        assert_eq!(live_group(TurnProc::Running { pgid: PGID }), Some(PGID));
-        assert_eq!(live_group(TurnProc::Grace { pgid: PGID }), Some(PGID));
-    }
-
-    #[test]
-    fn escalation_targets_only_the_running_group() {
         assert_eq!(
-            escalation_target(TurnProc::Running { pgid: PGID }, PGID),
+            live_group(TurnProc::Running {
+                pgid: PGID,
+                turn: TURN
+            }),
             Some(PGID)
         );
         assert_eq!(
-            escalation_target(TurnProc::Grace { pgid: PGID }, PGID),
+            live_group(TurnProc::Grace {
+                pgid: PGID,
+                turn: TURN
+            }),
+            Some(PGID)
+        );
+    }
+
+    #[test]
+    fn escalation_targets_only_the_same_running_turn() {
+        assert_eq!(
+            escalation_target(
+                TurnProc::Running {
+                    pgid: PGID,
+                    turn: TURN
+                },
+                GROUP
+            ),
+            Some(PGID)
+        );
+        assert_eq!(
+            escalation_target(
+                TurnProc::Grace {
+                    pgid: PGID,
+                    turn: TURN
+                },
+                GROUP
+            ),
             None
         );
-        assert_eq!(escalation_target(TurnProc::Idle, PGID), None);
+        assert_eq!(escalation_target(TurnProc::Idle, GROUP), None);
         assert_eq!(
-            escalation_target(TurnProc::Starting { interrupt: true }, PGID),
+            escalation_target(TurnProc::Starting { interrupt: true }, GROUP),
             None
         );
         assert_eq!(
-            escalation_target(TurnProc::Running { pgid: PGID + 1 }, PGID),
+            escalation_target(
+                TurnProc::Running {
+                    pgid: PGID + 1,
+                    turn: TURN
+                },
+                GROUP
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_reused_pid_in_a_newer_turn_is_not_escalated() {
+        assert_eq!(
+            escalation_target(
+                TurnProc::Running {
+                    pgid: PGID,
+                    turn: TURN + 1
+                },
+                GROUP
+            ),
             None
         );
     }
