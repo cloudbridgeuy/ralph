@@ -923,6 +923,45 @@ mod tests {
         assert!(parts[2].starts_with("\x1bPtmux;\x1b\x1b_Gi=7,m=0;"));
     }
 
+    fn frame(payload: &[u8], delay_ms: u32) -> crate::kitty_image::AnimationFrame {
+        crate::kitty_image::AnimationFrame {
+            image: png(payload),
+            delay_ms,
+        }
+    }
+
+    fn animation_commands(place: &str) -> [String; 5] {
+        [
+            "\x1b_Ga=d,d=I,i=7,q=2;\x1b\\".to_string(),
+            format!("\x1b_Ga=T,i=7,{place},f=100,c=3,r=2,q=2,m=0;YWJj\x1b\\"),
+            "\x1b_Ga=a,i=7,r=1,z=40,q=2;\x1b\\".to_string(),
+            "\x1b_Ga=f,i=7,f=100,z=60,q=2,m=0;ZGU=\x1b\\".to_string(),
+            "\x1b_Ga=a,i=7,s=3,v=1,q=2;\x1b\\".to_string(),
+        ]
+    }
+
+    #[test]
+    fn direct_animation_places_the_root_and_appends_frames() {
+        let frames = [frame(b"abc", 40), frame(b"de", 60)];
+        assert_eq!(
+            encode_animation(&frames, 7, 3, 2, Placement::Direct),
+            animation_commands("C=1").concat()
+        );
+    }
+
+    #[test]
+    fn tmux_animation_wraps_each_command_and_uses_a_virtual_placement() {
+        let frames = [frame(b"abc", 40), frame(b"de", 60)];
+        let expected: String = animation_commands("U=1")
+            .iter()
+            .map(|command| tmux_wrap(command))
+            .collect();
+        assert_eq!(
+            encode_animation(&frames, 7, 3, 2, Placement::Tmux),
+            expected
+        );
+    }
+
     #[test]
     fn placeholder_rows_have_exact_bytes() {
         let row0 = "\x1b[38;5;7m\u{10EEEE}\u{305}\u{305}\u{10EEEE}\x1b[39m\n";
