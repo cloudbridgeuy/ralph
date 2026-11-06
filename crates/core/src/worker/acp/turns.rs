@@ -88,6 +88,7 @@ pub enum InterruptOutcome {
     Cancelled,
     Sent,
     Gone,
+    Dropped,
 }
 
 impl From<bool> for InterruptOutcome {
@@ -105,6 +106,7 @@ pub fn interrupt_result_text(outcome: InterruptOutcome) -> &'static str {
         InterruptOutcome::Cancelled => "cancelled",
         InterruptOutcome::Sent => "sent",
         InterruptOutcome::Gone => "gone",
+        InterruptOutcome::Dropped => "dropped",
     }
 }
 
@@ -113,6 +115,7 @@ pub fn parse_interrupt_result(text: &str) -> Option<InterruptOutcome> {
         "cancelled" => Some(InterruptOutcome::Cancelled),
         "sent" => Some(InterruptOutcome::Sent),
         "gone" => Some(InterruptOutcome::Gone),
+        "dropped" => Some(InterruptOutcome::Dropped),
         _ => None,
     }
 }
@@ -128,6 +131,9 @@ pub fn interrupt_reply(id: &str, outcome: Option<InterruptOutcome>) -> String {
         Some(InterruptOutcome::Gone) => {
             format!("Worker {id} exited: its turn ended and this message was not delivered.")
         }
+        Some(InterruptOutcome::Dropped) => format!(
+            "Worker {id} was finishing its turn: the interrupt was not sent and this message runs next."
+        ),
         None => format!(
             "Interrupt queued for worker {id}, but ralph chat did not confirm within 30 s: outcome unknown."
         ),
@@ -346,6 +352,10 @@ mod tests {
             "Worker GUZ-1 exited: its turn ended and this message was not delivered."
         );
         assert_eq!(
+            interrupt_reply("GUZ-1", Some(InterruptOutcome::Dropped)),
+            "Worker GUZ-1 was finishing its turn: the interrupt was not sent and this message runs next."
+        );
+        assert_eq!(
             interrupt_reply("GUZ-1", None),
             "Interrupt queued for worker GUZ-1, but ralph chat did not confirm within 30 s: outcome unknown."
         );
@@ -366,6 +376,7 @@ mod tests {
             InterruptOutcome::Cancelled,
             InterruptOutcome::Sent,
             InterruptOutcome::Gone,
+            InterruptOutcome::Dropped,
         ] {
             assert_eq!(
                 parse_interrupt_result(interrupt_result_text(outcome)),
