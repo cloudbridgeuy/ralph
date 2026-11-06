@@ -39,6 +39,21 @@ enum ReadPlan {
     Stop,
 }
 
+#[derive(Debug, PartialEq)]
+enum InterruptPlan {
+    Send(u32),
+    HoldPending,
+    Drop,
+}
+
+fn interrupt_plan(group: u32, spawn_in_flight: bool) -> InterruptPlan {
+    match (group, spawn_in_flight) {
+        (0, true) => InterruptPlan::HoldPending,
+        (0, false) => InterruptPlan::Drop,
+        (group, _) => InterruptPlan::Send(group),
+    }
+}
+
 fn read_plan(since_result: Option<Duration>, grace: Duration) -> ReadPlan {
     match since_result {
         None => ReadPlan::Block,
@@ -75,6 +90,7 @@ struct Shared {
     snapshot: Mutex<Option<u64>>,
     group: AtomicU32,
     interrupt_pending: AtomicBool,
+    spawn_in_flight: AtomicBool,
     turn_seq: AtomicU64,
     closing: AtomicBool,
 }
@@ -136,11 +152,15 @@ impl Shared {
     }
 
     fn interrupt_group(self: &Arc<Self>) {
-        let group = self.group.load(Ordering::SeqCst);
-        if group == 0 {
-            self.interrupt_pending.store(true, Ordering::SeqCst);
-            return;
-        }
+        let spawning = self.spawn_in_flight.load(Ordering::SeqCst);
+        let group = match interrupt_plan(self.group.load(Ordering::SeqCst), spawning) {
+            InterruptPlan::Send(group) => group,
+            InterruptPlan::HoldPending => {
+                self.interrupt_pending.store(true, Ordering::SeqCst);
+                return;
+            }
+            InterruptPlan::Drop => return,
+        };
         crate::cursor_owner::signal_group(group, "INT");
         let shared = Arc::clone(self);
         thread::spawn(move || {
@@ -215,9 +235,13 @@ impl Shared {
             .args(args)
             .current_dir(&self.run.worktree)
             .envs([inbox_env(&self.run.store)]);
-        let (mut child, mut stdin, stdout, stderr) = spawn_piped(command)
-            .map_err(|e| format!("could not start `{} -p`: {e}", CURSOR_AGENT.command))?;
+        self.spawn_in_flight.store(true, Ordering::SeqCst);
+        let (mut child, mut stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
+            self.spawn_in_flight.store(false, Ordering::SeqCst);
+            format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
+        })?;
         self.group.store(child.id(), Ordering::SeqCst);
+        self.spawn_in_flight.store(false, Ordering::SeqCst);
         if self.closing.load(Ordering::SeqCst) {
             self.release_child(&mut child);
             return Ok(closed_turn());
@@ -356,6 +380,7 @@ impl PrintWorker {
             snapshot: Mutex::new(None),
             group: AtomicU32::new(0),
             interrupt_pending: AtomicBool::new(false),
+            spawn_in_flight: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
         });
@@ -469,5 +494,21 @@ mod tests {
             read_plan(Some(Duration::from_secs(9)), GRACE),
             ReadPlan::Stop
         );
+    }
+
+    #[test]
+    fn interrupt_plan_signals_a_live_group() {
+        assert_eq!(interrupt_plan(42, false), InterruptPlan::Send(42));
+        assert_eq!(interrupt_plan(42, true), InterruptPlan::Send(42));
+    }
+
+    #[test]
+    fn interrupt_plan_holds_only_while_a_spawn_is_in_flight() {
+        assert_eq!(interrupt_plan(0, true), InterruptPlan::HoldPending);
+    }
+
+    #[test]
+    fn interrupt_plan_drops_when_nothing_runs_or_spawns() {
+        assert_eq!(interrupt_plan(0, false), InterruptPlan::Drop);
     }
 }
