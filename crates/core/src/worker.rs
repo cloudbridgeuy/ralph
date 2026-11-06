@@ -14,6 +14,8 @@ mod claude_launch;
 mod claude_verify;
 mod codex;
 mod cursor_model;
+#[cfg(test)]
+mod cursor_print;
 mod daily_drift;
 mod delivery;
 mod drift_run;
