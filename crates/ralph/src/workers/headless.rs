@@ -2,12 +2,16 @@ use crate::acp_worker::CursorHost;
 use crate::chat::socket::SocketFiles;
 use crate::claude_headless_worker::ClaudeHeadlessHost;
 use crate::codex_worker::CodexHost;
-use crate::cursor_owner::{now_secs, write_file};
+use crate::cursor_owner::{now_secs, queued_entries, write_file, write_interrupt_result};
 use crate::opencode_worker::OpencodeHost;
+use crate::warn::warn;
 use crate::watches::Watches;
-use ralph_core::worker::{render_gone, ActivityMark, ActivityState, Scope};
+use ralph_core::worker::{
+    lost_marker_name, queued_disposition, render_gone, ActivityMark, ActivityState,
+    InterruptOutcome, OwnerRecord, Queued, QueuedFacts, QueuedOwner, Scope,
+};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// A chat's host, not an individual worker. One host may own many workers.
@@ -81,6 +85,63 @@ impl Heartbeat {
         if next != *last {
             write_file(&self.activity, &next.render()).ok();
             *last = next;
+        }
+    }
+}
+
+pub(crate) fn queued_owner(owner: &Path) -> QueuedOwner {
+    match fs::read_to_string(owner) {
+        Err(_) => QueuedOwner::Missing,
+        Ok(text) => match OwnerRecord::parse(&text) {
+            Some(record) if record.chat_pid == std::process::id() => QueuedOwner::Mine,
+            _ => QueuedOwner::Foreign,
+        },
+    }
+}
+
+pub(crate) fn mark_prompt_lost(entry: &Path) {
+    if let Some(name) = entry.file_name() {
+        let marker = entry.with_file_name(lost_marker_name(&name.to_string_lossy()));
+        fs::rename(entry, marker).ok();
+    }
+}
+
+pub(crate) fn report_interrupt_gone(results: &Path, entry: &Path) {
+    if let Some(name) = entry.file_name() {
+        write_interrupt_result(results, &name.to_string_lossy(), InterruptOutcome::Gone);
+    }
+    fs::remove_file(entry).ok();
+}
+
+pub(crate) fn drain_queued(
+    dir: &Path,
+    facts: impl Fn() -> QueuedFacts,
+    mut deliver: impl FnMut(String, &str) -> Result<(), String>,
+    lost: impl Fn(&Path),
+) {
+    for entry in queued_entries(dir) {
+        let name = entry
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let delivered = match queued_disposition(&facts()) {
+            Queued::Hold => continue,
+            Queued::Lost => Err(None),
+            Queued::Deliver => match fs::read_to_string(&entry) {
+                Ok(text) => deliver(text, &name).map_err(Some),
+                Err(_) => Ok(()),
+            },
+        };
+        match delivered {
+            Ok(()) => {
+                fs::remove_file(&entry).ok();
+            }
+            Err(message) => {
+                if let Some(message) = message {
+                    warn(message);
+                }
+                lost(&entry);
+            }
         }
     }
 }
@@ -189,6 +250,26 @@ mod tests {
             assert_eq!(host.shutdowns.load(Ordering::SeqCst), 1);
             assert!(!host.poll());
         }
+    }
+
+    #[test]
+    fn a_failed_delivery_leaves_a_lost_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("0001");
+        write_file(&entry, "hello").unwrap();
+        let alive = || QueuedFacts {
+            worker: ralph_core::worker::QueuedWorker::Alive,
+            starting: false,
+            owner: QueuedOwner::Mine,
+        };
+        drain_queued(
+            dir.path(),
+            alive,
+            |_, _| Err("closed".to_string()),
+            mark_prompt_lost,
+        );
+        assert!(!entry.exists());
+        assert!(dir.path().join(lost_marker_name("0001")).exists());
     }
 
     #[test]

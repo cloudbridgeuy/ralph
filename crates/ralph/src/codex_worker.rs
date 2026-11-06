@@ -2,8 +2,8 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::codex_usage::CodexUsage;
 use crate::config::{configured_codex, configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
-    claim_owner, now_secs, queued_entries, report_start_warning, request_ids, sweep_owner,
-    take_answer, write_file, write_interrupt_result, write_owner_record,
+    claim_owner, now_secs, report_start_warning, request_ids, sweep_owner, take_answer, write_file,
+    write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
@@ -13,7 +13,7 @@ use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
-use crate::workers::headless::{HeadlessHost, Heartbeat};
+use crate::workers::headless::{mark_prompt_lost, report_interrupt_gone, HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, answer_server_request, check_effort, check_login, check_model,
@@ -808,7 +808,7 @@ impl CodexHost {
                 &id,
                 |files| &files.prompt,
                 |worker, text, _| worker.send(WorkerCommand::Prompt(text)),
-                queue::mark_prompt_lost,
+                |_, entry| mark_prompt_lost(entry),
             );
         }
         for id in request_ids(&self.store_dir, CODEX_INTERRUPT_DIR) {
@@ -816,7 +816,7 @@ impl CodexHost {
                 &id,
                 |files| &files.interrupt,
                 |worker, text, entry| worker.interrupt(text, entry),
-                queue::report_interrupt_gone,
+                |files, entry| report_interrupt_gone(&files.interrupt_result, entry),
             );
         }
         for id in request_ids(&self.store_dir, CODEX_SPAWN_DIR) {
