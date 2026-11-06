@@ -132,6 +132,11 @@ impl Turns {
         self.interrupt_sent
     }
 
+    pub fn interrupt_dropped(&mut self) -> Vec<Action> {
+        self.interrupt_sent = false;
+        self.resolve_interrupts(InterruptOutcome::Dropped)
+    }
+
     pub fn process_gone(&mut self) -> Vec<Action> {
         self.gone = true;
         self.resolve_interrupts(InterruptOutcome::Gone)
@@ -521,6 +526,25 @@ mod tests {
             results(&turns.interrupt_failed(NO_ACTIVE_TURN)),
             [("e1", InterruptOutcome::Sent)]
         );
+    }
+
+    #[test]
+    fn a_dropped_interrupt_reports_dropped_clears_the_sent_flag_and_keeps_the_text_queued() {
+        let mut turns = running("task", "u1");
+        turns.interrupt("now".into(), "e1".into());
+        assert!(turns.interrupt_sent());
+        let dropped = turns.interrupt_dropped();
+        assert_eq!(results(&dropped), [("e1", InterruptOutcome::Dropped)]);
+        assert!(!turns.interrupt_sent());
+        let ended = turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
+        assert!(results(&ended).is_empty());
+        assert_eq!(starts(&ended), ["now"]);
+    }
+
+    #[test]
+    fn a_dropped_interrupt_with_nothing_pending_reports_nothing() {
+        let mut turns = running("task", "u1");
+        assert!(turns.interrupt_dropped().is_empty());
     }
 
     #[test]
