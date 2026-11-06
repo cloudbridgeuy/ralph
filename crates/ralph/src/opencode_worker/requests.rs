@@ -1,18 +1,18 @@
 use super::{post_prompt, record_usage, OpencodeHost, Session, Target};
-use crate::cursor_owner::{now_secs, take_answer, write_file};
+use crate::cursor_owner::{now_secs, take_answer, write_file, write_interrupt_result};
 use crate::warn::warn;
 use crate::worker_events::Events;
-use crate::workers::headless::Heartbeat;
+use crate::workers::headless::{drain_queued, mark_prompt_lost, report_interrupt_gone, Heartbeat};
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
-    create_session_body, interrupt_result_text, keeps_interrupt_request, opencode_session_id,
-    request_stale, task_prompt, ActivityState, HandoffFiles, HeadlessState, HeadlessWorker,
-    OpencodeRecord, OpencodeSpawn, OpencodeTurnUsage, PermissionAnswer, TurnState, WorkerCommand,
-    WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR,
-    OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
+    create_session_body, keeps_interrupt_request, opencode_session_id, request_stale, task_prompt,
+    ActivityState, HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord, OpencodeSpawn,
+    OpencodeTurnUsage, PermissionAnswer, QueuedFacts, QueuedOwner, QueuedWorker, TurnState,
+    WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR,
+    OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
 };
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 pub(crate) fn entry_ids(store_dir: &Path, dir: &str) -> Vec<String> {
@@ -27,20 +27,6 @@ pub(crate) fn entry_ids(store_dir: &Path, dir: &str) -> Vec<String> {
         .unwrap_or_default();
     ids.sort();
     ids
-}
-
-fn queued(dir: &Path) -> Vec<PathBuf> {
-    let mut entries: Vec<PathBuf> = fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-                .map(|entry| entry.path())
-                .collect()
-        })
-        .unwrap_or_default();
-    entries.sort();
-    entries
 }
 
 impl OpencodeHost {
@@ -170,6 +156,18 @@ impl OpencodeHost {
             .map_err(|e| format!("could not write the worker markers: {e}"))
     }
 
+    fn queued_facts(&self, id: &str) -> QueuedFacts {
+        let worker = match self.find(id) {
+            Some(_) => QueuedWorker::Alive,
+            None => QueuedWorker::Absent,
+        };
+        QueuedFacts {
+            worker,
+            starting: false,
+            owner: QueuedOwner::Missing,
+        }
+    }
+
     fn deliver(&self, id: &str, interrupt: bool) {
         let files = self.files(id);
         let dir = if interrupt {
@@ -177,10 +175,13 @@ impl OpencodeHost {
         } else {
             &files.prompt
         };
-        for entry in queued(dir) {
-            if let (Ok(text), Some((session_id, target))) =
-                (fs::read_to_string(&entry), self.find(id))
-            {
+        drain_queued(
+            dir,
+            || self.queued_facts(id),
+            |text, name| {
+                let Some((session_id, target)) = self.find(id) else {
+                    return Ok(());
+                };
                 if interrupt {
                     let was_in_flight = self
                         .sessions()
@@ -191,16 +192,25 @@ impl OpencodeHost {
                     if !keeps_interrupt_request(outcome, was_in_flight) {
                         self.request_interrupt(&session_id, false);
                     }
-                    self.write_interrupt_result(id, &entry, outcome);
+                    if let Some(cancelled) = outcome {
+                        write_interrupt_result(&files.interrupt_result, name, cancelled.into());
+                    }
                 }
                 if let Some(session) = self.sessions().get_mut(&session_id) {
                     session.turn.prompted(&text);
                     session.heartbeat.set_state(ActivityState::Running);
                 }
                 self.send(&session_id, &target, &text);
-            }
-            fs::remove_file(&entry).ok();
-        }
+                Ok(())
+            },
+            |entry| {
+                if interrupt {
+                    report_interrupt_gone(&files.interrupt_result, entry);
+                } else {
+                    mark_prompt_lost(entry);
+                }
+            },
+        );
     }
 
     fn request_interrupt(&self, session_id: &str, requested: bool) {
@@ -219,17 +229,6 @@ impl OpencodeHost {
                 WorkerEvent::Interrupted { outcome, .. } => outcome,
                 _ => None,
             })
-    }
-
-    fn write_interrupt_result(&self, id: &str, entry: &Path, outcome: Option<bool>) {
-        let (Some(cancelled), Some(name)) = (outcome, entry.file_name()) else {
-            return;
-        };
-        let results = self.files(id).interrupt_result;
-        let pending = results.join(format!(".{}", name.to_string_lossy()));
-        if write_file(&pending, interrupt_result_text(cancelled.into())).is_ok() {
-            fs::rename(&pending, results.join(name)).ok();
-        }
     }
 
     fn answer(&self, id: &str) {
@@ -337,16 +336,53 @@ mod tests {
         assert!(entry_ids(store.path(), "missing").is_empty());
     }
 
+    fn host_with_prompt(dir: &Path, owner: bool) -> (Arc<OpencodeHost>, HandoffFiles) {
+        let host = OpencodeHost::new(dir.to_path_buf());
+        let files = host.files("A");
+        if owner {
+            write_file(&files.owner, "").unwrap();
+        }
+        write_file(&files.prompt.join("0001"), "hello").unwrap();
+        (host, files)
+    }
+
     #[test]
-    fn queued_skips_hidden_entries_and_sorts() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("2"), "").unwrap();
-        fs::write(dir.path().join("1"), "").unwrap();
-        fs::write(dir.path().join(".3"), "").unwrap();
-        let names: Vec<String> = queued(dir.path())
-            .iter()
-            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(names, vec!["1", "2"]);
+    fn a_prompt_with_no_session_leaves_a_lost_marker() {
+        let store = tempfile::tempdir().unwrap();
+        let (host, files) = host_with_prompt(store.path(), false);
+        host.poll();
+        assert!(!files.prompt.join("0001").exists());
+        assert!(files
+            .prompt
+            .join(ralph_core::worker::lost_marker_name("0001"))
+            .exists());
+    }
+
+    #[test]
+    fn a_prompt_with_an_owner_but_no_session_leaves_a_lost_marker() {
+        let store = tempfile::tempdir().unwrap();
+        let (host, files) = host_with_prompt(store.path(), true);
+        host.poll();
+        assert!(!files.prompt.join("0001").exists());
+        assert!(files
+            .prompt
+            .join(ralph_core::worker::lost_marker_name("0001"))
+            .exists());
+    }
+
+    #[test]
+    fn an_interrupt_with_no_session_reports_gone() {
+        let store = tempfile::tempdir().unwrap();
+        let host = OpencodeHost::new(store.path().to_path_buf());
+        let files = host.files("A");
+        write_file(&files.interrupt.join("0001"), "stop").unwrap();
+        host.poll();
+        assert!(!files.interrupt.join("0001").exists());
+        assert_eq!(
+            fs::read_to_string(files.interrupt_result.join("0001"))
+                .ok()
+                .as_deref(),
+            Some("gone")
+        );
     }
 }
