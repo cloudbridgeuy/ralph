@@ -13,8 +13,8 @@ use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
-    spawn_detached, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
-    SubprocessError,
+    recorded, spawn_detached, OutputGate, Session, SpinnerSubprocessConfig,
+    StreamingSubprocessResult, SubprocessError,
 };
 use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
@@ -278,7 +278,7 @@ impl Turn<'_> {
             held.clone()
         };
         let at = chrono::Utc::now().to_rfc3339();
-        if let Some((turn, mut record)) = recorded_turn(&result).and_then(|turn| {
+        if let Some((turn, mut record)) = recorded(&result).and_then(|turn| {
             usage_record(
                 CallSite::Turn { trigger },
                 at.clone(),
@@ -502,21 +502,8 @@ fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
         )
 }
 
-fn recorded_turn(
-    result: &Result<StreamingSubprocessResult, SubprocessError>,
-) -> Option<&StreamingSubprocessResult> {
-    match result {
-        Ok(done) => Some(done),
-        Err(
-            SubprocessError::Timeout { partial_result, .. }
-            | SubprocessError::Interrupted { partial_result },
-        ) => Some(partial_result),
-        Err(_) => None,
-    }
-}
-
 fn turn_metadata(result: &Result<StreamingSubprocessResult, SubprocessError>) -> IterationMetadata {
-    recorded_turn(result).map_or_else(IterationMetadata::new, |turn| {
+    recorded(result).map_or_else(IterationMetadata::new, |turn| {
         turn.stream_result.metadata.clone()
     })
 }
@@ -617,7 +604,7 @@ mod tests {
     fn recorded_cache_writes(
         result: &Result<StreamingSubprocessResult, SubprocessError>,
     ) -> Option<u64> {
-        recorded_turn(result)
+        recorded(result)
             .and_then(|turn| turn.stream_result.costs.usage.as_ref())
             .and_then(|usage| usage.cache_creation_input_tokens)
     }

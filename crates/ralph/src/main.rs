@@ -212,7 +212,31 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         startup::display_prompt(&prompt_display, &ui);
     }
 
-    let result = invoke::invoke(config)?;
+    let outcome = invoke::invoke(config);
+    if let Some(done) = subprocess::recorded(&outcome) {
+        record_ask(done);
+    }
+    let result = outcome?;
+    let costs = &result.stream_result.costs;
+    startup::display_ask_summary(
+        &startup::AskSummary {
+            success: result.exit_code == 0,
+            cost_usd: costs.cost_usd,
+            duration_ms: costs.duration_ms,
+            input_tokens: costs.usage.as_ref().map(|u| u.input_tokens),
+            output_tokens: costs.usage.as_ref().map(|u| u.output_tokens),
+        },
+        &ui,
+    );
+
+    if result.exit_code != 0 {
+        return Err(format!("LLM subprocess exited with code {}", result.exit_code).into());
+    }
+
+    Ok(())
+}
+
+fn record_ask(result: &subprocess::StreamingSubprocessResult) {
     let costs = &result.stream_result.costs;
     let at = chrono::Utc::now().to_rfc3339();
     if let Some(record) = ralph_core::chat_memory::usage_record(
@@ -236,22 +260,6 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         ),
         "Failed to record ask subagent usage",
     );
-    startup::display_ask_summary(
-        &startup::AskSummary {
-            success: result.exit_code == 0,
-            cost_usd: costs.cost_usd,
-            duration_ms: costs.duration_ms,
-            input_tokens: costs.usage.as_ref().map(|u| u.input_tokens),
-            output_tokens: costs.usage.as_ref().map(|u| u.output_tokens),
-        },
-        &ui,
-    );
-
-    if result.exit_code != 0 {
-        return Err(format!("LLM subprocess exited with code {}", result.exit_code).into());
-    }
-
-    Ok(())
 }
 
 fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn std::error::Error>> {

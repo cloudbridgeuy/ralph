@@ -16,7 +16,7 @@ This document provides comprehensive documentation for the `ralph ask` command, 
 
 ## Purpose
 
-The `ralph ask` command provides a streamlined interface for quick LLM interactions. `ask` sends a single prompt and displays the response. It keeps no session, history, or log on disk; each call is independent. Each call appends one usage row (`kind` and `role` `ask`) to `<config_dir>/usage.jsonl` through `ledger::record`, with the harness, model, session id, token counts and harness `cost_usd`, as a chat turn row does. The row has no `store`, no `run` and no prompt text. A call that gives no usage (for example a failed spawn) writes no row. `/workers costs` shows these rows as `ask` ([ralph chat](ralph-chat.md#workers-costs)). Use [ralph chat](ralph-chat.md) for a conversation that persists.
+The `ralph ask` command provides a streamlined interface for quick LLM interactions. `ask` sends a single prompt and displays the response. It keeps no session, history, or log on disk; each call is independent. Each call that reports usage appends one usage row (`kind` and `role` `ask`) to `<config_dir>/usage.jsonl` through `ledger::record`, with the harness, model, session id, token counts and harness `cost_usd`, as a chat turn row does. The row has no `store`, no `run` and no prompt text. A call that times out or stops on an interrupt still writes its row, when the result event arrived before the stop. A call that gives no usage (for example a failed spawn, or a stop before the result event) writes no row. `/workers costs` shows these rows as `ask` ([ralph chat](ralph-chat.md#workers-costs)). Use [ralph chat](ralph-chat.md) for a conversation that persists.
 
 ## CLI Flags
 
