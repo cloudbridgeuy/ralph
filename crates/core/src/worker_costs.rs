@@ -1,3 +1,5 @@
+pub mod window;
+
 use crate::chat_memory::MAIN_HARNESS;
 use crate::chat_process::{processes, session_cost, UsageLine};
 use crate::wire::price::{long_prompt, prompt_tokens, resolve_price, usd, PriceTable};
