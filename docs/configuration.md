@@ -87,6 +87,8 @@ name = "Solarized (dark)"
 
 Controls how code blocks and diffs are displayed in the terminal.
 
+Code fences use syntect's default syntaxes plus the extra set from `two-face` (bat's syntaxes, for example TypeScript, TSX, TOML, Dockerfile, Kotlin and Terraform). The fence tags `shell`, `jsx` and `jsonc` are read as `sh`, `tsx` and `json`. A fence with an unknown tag prints as plain text.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `name` | string | `"base16-ocean.dark"` | Theme name or path to `.tmTheme` file |

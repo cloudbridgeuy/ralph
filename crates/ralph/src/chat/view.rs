@@ -96,4 +96,22 @@ mod tests {
         assert!(rust.contains("\x1b[38;"), "{rust:?}");
         assert!(!rust.contains("fn main() {}"), "{rust:?}");
     }
+
+    #[test]
+    fn toml_and_ts_fences_highlight_in_view() {
+        let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::terminal(&highlighter),
+            theme: &theme,
+            color: true,
+            ui: UiColors::default(),
+        };
+        let text = "```toml\nname = \"ralph\"\n```\n\n```ts\nconst n: number = 1;\n```\n";
+        let walked = render(&display, text);
+        assert_eq!(walked, render_markdown(&display.ctx, text, &theme));
+        let (toml, ts) = walked.split_once("```ts").unwrap();
+        assert!(!toml.contains("name = \"ralph\""), "{toml:?}");
+        assert!(!ts.contains("const n: number = 1;"), "{ts:?}");
+    }
 }
