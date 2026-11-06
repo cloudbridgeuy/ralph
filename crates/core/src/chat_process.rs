@@ -1,4 +1,5 @@
 use crate::chat::ResetLimits;
+use crate::worker_costs::window::instant;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -85,12 +86,6 @@ pub struct ProcessCell {
     pub reset: Option<ResetReason>,
     pub shift: Option<usize>,
     pub cost: Option<SessionCost>,
-}
-
-fn parse_time(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|time| time.with_timezone(&Utc))
 }
 
 pub fn run_id(pid: u32, started: DateTime<Utc>) -> String {
@@ -258,7 +253,7 @@ pub fn process_usage(rows: &[UsageLine]) -> Option<ProcessUsage> {
             last.cache_creation_input_tokens,
             last.cache_read_input_tokens,
         ),
-        request_at: last.request_at.as_deref().and_then(parse_time),
+        request_at: last.request_at.as_deref().and_then(instant),
         reset: last.reset,
         cost: session_cost(rows),
     })
