@@ -9,8 +9,10 @@ use crate::wire::price::{long_prompt, prompt_tokens, resolve_price, usd, PriceTa
 use crate::wire::provider::{provider, Provider, ProviderId};
 use crate::wire::usage::{CacheWrite, Usage, FIVE_MIN, ONE_HOUR};
 use crate::wire::view::Pricing;
+use chrono::{DateTime, Utc};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
+use window::{in_window, instant};
 
 use crate::wire::provider::openai::price as openai_price;
 
@@ -274,20 +276,34 @@ fn summed(lines: &[UsageLine], priced: &dyn Fn(&UsageLine) -> Usd) -> Usd {
     lines.iter().map(priced).fold(Usd::default(), Usd::plus)
 }
 
-fn main_runs(lines: &[UsageLine]) -> (usize, Usd) {
-    let mut runs: BTreeMap<Option<&str>, Vec<UsageLine>> = BTreeMap::new();
-    for line in lines {
-        runs.entry(line.run.as_deref())
-            .or_default()
-            .push(line.clone());
-    }
-    let usd = runs
-        .values()
-        .map(|rows| {
-            session_cost(rows).map_or_else(
+struct MainProcess {
+    run: Option<String>,
+    rows: Vec<UsageLine>,
+    baseline: f64,
+}
+
+fn baseline(rows: &[UsageLine], since: Option<DateTime<Utc>>) -> f64 {
+    since
+        .and_then(|since| {
+            rows.iter()
+                .rev()
+                .find_map(|row| instant(&row.at).filter(|at| *at < since).and(row.cost_usd))
+        })
+        .unwrap_or(0.0)
+}
+
+fn main_runs(processes: &[MainProcess]) -> (usize, Usd) {
+    let runs: BTreeSet<_> = processes
+        .iter()
+        .map(|process| process.run.as_deref())
+        .collect();
+    let usd = processes
+        .iter()
+        .map(|process| {
+            session_cost(&process.rows).map_or_else(
                 || Usd::of(None),
                 |cost| Usd {
-                    known: Some(cost.total),
+                    known: Some((cost.total - process.baseline).max(0.0)),
                     missing: cost.missing,
                     estimate: false,
                     reported: false,
@@ -310,12 +326,13 @@ fn cost_row(
     source: &Source,
     model: String,
     lines: &[UsageLine],
+    main: &[MainProcess],
     priced: &dyn Fn(&UsageLine) -> Usd,
 ) -> CostRow {
     let harness = |line: &UsageLine| Usd::of(line.cost_usd);
     let (runs, usd, harness_usd) = match source {
         Source::Main => {
-            let (runs, harness_usd) = main_runs(lines);
+            let (runs, harness_usd) = main_runs(main);
             (runs, summed(lines, priced), harness_usd)
         }
         Source::Nap | Source::Ask | Source::Subagent => {
@@ -340,25 +357,44 @@ fn cost_row(
     }
 }
 
-fn process_labeled(lines: Vec<UsageLine>) -> Vec<(String, UsageLine)> {
+fn main_processes(
+    lines: Vec<UsageLine>,
+    since: Option<DateTime<Utc>>,
+) -> Vec<(String, MainProcess)> {
     let mut runs: BTreeMap<Option<String>, Vec<UsageLine>> = BTreeMap::new();
     for line in lines {
         runs.entry(line.run.clone()).or_default().push(line);
     }
-    runs.values()
-        .flat_map(|rows| processes(rows))
-        .flat_map(|process| {
-            let model = process
-                .iter()
-                .rev()
-                .find_map(|row| row.model.clone())
-                .unwrap_or_else(|| UNKNOWN.to_string());
-            process.iter().map(move |row| (model.clone(), row.clone()))
+    runs.iter()
+        .flat_map(|(run, rows)| {
+            processes(rows).into_iter().filter_map(|process| {
+                let within: Vec<UsageLine> = process
+                    .iter()
+                    .filter(|row| in_window(&row.at, since))
+                    .cloned()
+                    .collect();
+                if within.is_empty() {
+                    return None;
+                }
+                let model = within
+                    .iter()
+                    .rev()
+                    .find_map(|row| row.model.clone())
+                    .unwrap_or_else(|| UNKNOWN.to_string());
+                Some((
+                    model,
+                    MainProcess {
+                        run: run.clone(),
+                        baseline: baseline(process, since),
+                        rows: within,
+                    },
+                ))
+            })
         })
         .collect()
 }
 
-fn cost_rows(usage_jsonl: &str, pricing: &Pricing) -> Vec<CostRow> {
+fn cost_rows(usage_jsonl: &str, since: Option<DateTime<Utc>>, pricing: &Pricing) -> Vec<CostRow> {
     let table = builtin_prices(pricing.provider);
     let priced = |line: &UsageLine| computed_usd(line, pricing, &table);
     let mut groups: BTreeMap<(Source, String), Vec<UsageLine>> = BTreeMap::new();
@@ -366,6 +402,7 @@ fn cost_rows(usage_jsonl: &str, pricing: &Pricing) -> Vec<CostRow> {
     for line in usage_jsonl
         .lines()
         .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
+        .filter(|line| in_window(&line.at, since) || Source::of(line) == Some(Source::Main))
     {
         match Source::of(&line) {
             Some(Source::Main) => main.push(line),
@@ -376,12 +413,23 @@ fn cost_rows(usage_jsonl: &str, pricing: &Pricing) -> Vec<CostRow> {
             None => {}
         }
     }
-    for (model, line) in process_labeled(main) {
-        groups.entry((Source::Main, model)).or_default().push(line);
+    let mut processes: BTreeMap<String, Vec<MainProcess>> = BTreeMap::new();
+    for (model, process) in main_processes(main, since) {
+        groups
+            .entry((Source::Main, model.clone()))
+            .or_default()
+            .extend(process.rows.iter().cloned());
+        processes.entry(model).or_default().push(process);
     }
     groups
         .into_iter()
-        .map(|((source, model), lines)| cost_row(&source, model, &lines, &priced))
+        .map(|((source, model), lines)| {
+            let own = match source {
+                Source::Main => processes.get(&model).map_or(&[][..], Vec::as_slice),
+                _ => &[],
+            };
+            cost_row(&source, model, &lines, own, &priced)
+        })
         .collect()
 }
 
@@ -443,8 +491,8 @@ fn cells(row: &CostRow) -> [String; 12] {
     ]
 }
 
-pub fn costs_view(usage_jsonl: &str, pricing: &Pricing) -> String {
-    let mut rows = cost_rows(usage_jsonl, pricing);
+pub fn costs_view(usage_jsonl: &str, since: Option<DateTime<Utc>>, pricing: &Pricing) -> String {
+    let mut rows = cost_rows(usage_jsonl, since, pricing);
     if rows.is_empty() {
         return NO_USAGE.to_string();
     }

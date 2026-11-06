@@ -12,11 +12,11 @@ fn with_pricing<T>(overrides: &BTreeMap<String, PriceOverride>, f: impl Fn(&Pric
 }
 
 fn rows_of(usage: &str) -> Vec<CostRow> {
-    with_pricing(&BTreeMap::new(), |pricing| cost_rows(usage, pricing))
+    with_pricing(&BTreeMap::new(), |pricing| cost_rows(usage, None, pricing))
 }
 
 fn view_of(usage: &str) -> String {
-    with_pricing(&BTreeMap::new(), |pricing| costs_view(usage, pricing))
+    with_pricing(&BTreeMap::new(), |pricing| costs_view(usage, None, pricing))
 }
 
 fn jsonl(rows: &[Value]) -> String {
@@ -342,7 +342,7 @@ fn an_override_wins_over_the_table() {
         },
     )]);
     let usage = jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]);
-    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, None, pricing));
     assert!(close(find(&rows, "claude", "claude-opus-5-5").usd, 0.003));
 }
 
@@ -393,7 +393,7 @@ fn a_gpt_override_without_a_30m_price_keeps_the_plus() {
     let mut row = codex("gpt-6.1-sol");
     row["cache_creation_input_tokens"] = json!(10);
     let usage = jsonl(&[row]);
-    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, None, pricing));
     assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "~1.00+");
 }
 
@@ -411,7 +411,7 @@ fn an_override_wins_over_the_openai_table() {
         },
     )]);
     let usage = jsonl(&[codex("gpt-6.1-sol")]);
-    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, None, pricing));
     assert!(close(find(&rows, "codex", "gpt-6.1-sol").usd, 1.0));
 }
 
@@ -585,4 +585,26 @@ fn the_total_row_marks_a_partial_tier_from_any_group() {
     ]));
     let total = cells(&total_row(&rows));
     assert_eq!((total[7].as_str(), total[8].as_str()), ("20+", "30+"));
+}
+
+fn costed(at: &str, cost: Option<f64>) -> UsageLine {
+    UsageLine {
+        at: at.to_string(),
+        cost_usd: cost,
+        ..UsageLine::default()
+    }
+}
+
+#[test]
+fn the_baseline_is_the_last_cost_before_the_window() {
+    let since = window::instant("2026-11-06T00:00:00Z");
+    let rows = [
+        costed("2026-11-05T10:00:00Z", Some(1.0)),
+        costed("2026-11-05T11:00:00Z", Some(2.0)),
+        costed("2026-11-05T12:00:00Z", None),
+        costed("2026-11-06T01:00:00Z", Some(3.0)),
+    ];
+    assert!((baseline(&rows, since) - 2.0).abs() < 1e-9);
+    assert!(baseline(&rows[3..], since).abs() < 1e-9);
+    assert!(baseline(&rows, None).abs() < 1e-9);
 }

@@ -83,11 +83,6 @@ struct CostSourceTag {
     cost_source: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct AtTag {
-    at: String,
-}
-
 struct Entry {
     line: UsageLine,
     window: Option<usize>,
@@ -167,19 +162,6 @@ fn parse_lines(usage: &str, since: Option<DateTime<Utc>>) -> Vec<(UsageLine, boo
                 && Role::of(&line.kind) != Some(Role::Main);
             in_window(&line.at, since).then_some((line, reported))
         })
-        .collect()
-}
-
-fn windowed(usage: &str, since: Option<DateTime<Utc>>) -> String {
-    if since.is_none() {
-        return usage.to_string();
-    }
-    usage
-        .lines()
-        .filter(|text| {
-            serde_json::from_str::<AtTag>(text).is_ok_and(|tag| in_window(&tag.at, since))
-        })
-        .map(|text| format!("{text}\n"))
         .collect()
 }
 
@@ -336,7 +318,7 @@ pub fn costs_by_view(
     pricing: &Pricing,
 ) -> String {
     let grouping = match view {
-        View::HarnessModel => return costs_view(&windowed(inputs.usage, since), pricing),
+        View::HarnessModel => return costs_view(inputs.usage, since, pricing),
         View::Harness => Grouping::Harness,
         View::Role => Grouping::Role,
         View::Ticket => Grouping::Ticket,

@@ -478,3 +478,53 @@ fn an_unpriced_model_without_a_reported_cost_stays_na() {
     );
     assert_eq!(row(&view, "worker")[8], "n/a");
 }
+
+fn main_turn(at_time: &str, process_turn: u64, cost: f64) -> Value {
+    let mut row = at(turn(), at_time);
+    row["process_turn"] = json!(process_turn);
+    row["cost_usd"] = json!(cost);
+    row
+}
+
+fn main_harness_usd(view: &str) -> String {
+    view.lines()
+        .find(|line| line.starts_with("| main |"))
+        .and_then(|line| line.trim_end_matches(" |").rsplit(" | ").next())
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn a_window_subtracts_the_cost_a_process_had_before_it() {
+    let usage = [
+        main_turn("2026-11-05T22:00:00Z", 1, 1.0),
+        main_turn("2026-11-05T23:00:00Z", 2, 1.25),
+        main_turn("2026-11-06T09:00:00Z", 3, 1.75),
+        main_turn("2026-11-06T10:00:00Z", 4, 2.0),
+    ];
+    let view = view_since(
+        View::HarnessModel,
+        since("2026-11-06T00:00:00Z"),
+        &usage,
+        &[],
+    );
+    assert_eq!(main_harness_usd(&view), "0.75");
+    let all = view_since(View::HarnessModel, None, &usage, &[]);
+    assert_eq!(main_harness_usd(&all), "2.00");
+}
+
+#[test]
+fn a_process_that_starts_inside_the_window_loses_nothing() {
+    let usage = [
+        main_turn("2026-11-05T22:00:00Z", 1, 1.0),
+        main_turn("2026-11-06T09:00:00Z", 1, 0.5),
+        main_turn("2026-11-06T10:00:00Z", 2, 0.75),
+    ];
+    let view = view_since(
+        View::HarnessModel,
+        since("2026-11-06T00:00:00Z"),
+        &usage,
+        &[],
+    );
+    assert_eq!(main_harness_usd(&view), "0.75");
+}
