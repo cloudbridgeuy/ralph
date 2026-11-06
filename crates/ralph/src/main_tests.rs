@@ -109,13 +109,13 @@ fn curator_row_kinds(
 }
 
 #[test]
-fn a_timed_out_curator_call_with_a_result_gives_a_nap_row() {
+fn a_timed_out_curator_call_with_a_result_gives_a_nap_and_a_subagent_row() {
     let outcome = curator_outcome(Some(CURATOR_RESULT), timed_out);
     assert_eq!(curator_row_kinds(&outcome), vec!["nap", "subagent"]);
 }
 
 #[test]
-fn an_interrupted_curator_call_with_a_result_gives_a_nap_row() {
+fn an_interrupted_curator_call_with_a_result_gives_a_nap_and_a_subagent_row() {
     let outcome = curator_outcome(Some(CURATOR_RESULT), interrupted);
     assert_eq!(curator_row_kinds(&outcome), vec!["nap", "subagent"]);
 }
