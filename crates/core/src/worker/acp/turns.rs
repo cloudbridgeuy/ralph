@@ -132,7 +132,7 @@ pub fn interrupt_reply(id: &str, outcome: Option<InterruptOutcome>) -> String {
             format!("Worker {id} exited: its turn ended and this message was not delivered.")
         }
         Some(InterruptOutcome::Dropped) => format!(
-            "Worker {id} was finishing its turn: the interrupt was not sent and this message runs next."
+            "Worker {id}: the interrupt was not sent and this message runs next."
         ),
         None => format!(
             "Interrupt queued for worker {id}, but ralph chat did not confirm within 30 s: outcome unknown."
@@ -353,7 +353,7 @@ mod tests {
         );
         assert_eq!(
             interrupt_reply("GUZ-1", Some(InterruptOutcome::Dropped)),
-            "Worker GUZ-1 was finishing its turn: the interrupt was not sent and this message runs next."
+            "Worker GUZ-1: the interrupt was not sent and this message runs next."
         );
         assert_eq!(
             interrupt_reply("GUZ-1", None),
