@@ -103,6 +103,10 @@ fn escalation_target(state: TurnProc, group: Group) -> Option<u32> {
     }
 }
 
+fn kill_after_term(state: TurnProc, group: Group) -> bool {
+    escalation_target(state, group).is_some()
+}
+
 fn read_plan(since_result: Option<Duration>, grace: Duration) -> ReadPlan {
     match since_result {
         None => ReadPlan::Block,
@@ -219,7 +223,13 @@ impl Shared {
             thread::sleep(INTERRUPT_GRACE);
             let target = escalation_target(*locked(&shared.proc), group);
             if let Some(pgid) = target {
-                stop_groups(&[pgid], SHUTDOWN_GRACE, || true);
+                crate::cursor_owner::signal_group(pgid, "TERM");
+                thread::sleep(SHUTDOWN_GRACE);
+                let state = *locked(&shared.proc);
+                if kill_after_term(state, group) {
+                    crate::cursor_owner::signal_group(pgid, "KILL");
+                    unregister_group(pgid);
+                }
             }
         });
     }
@@ -765,5 +775,29 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn kill_follows_term_only_while_the_same_turn_runs() {
+        let running = TurnProc::Running {
+            pgid: PGID,
+            turn: TURN,
+        };
+        assert!(kill_after_term(running, GROUP));
+        assert!(!kill_after_term(
+            TurnProc::Grace {
+                pgid: PGID,
+                turn: TURN
+            },
+            GROUP
+        ));
+        assert!(!kill_after_term(TurnProc::Idle, GROUP));
+        assert!(!kill_after_term(
+            TurnProc::Running {
+                pgid: PGID,
+                turn: TURN + 1
+            },
+            GROUP
+        ));
     }
 }
