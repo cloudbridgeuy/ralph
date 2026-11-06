@@ -22,8 +22,9 @@ const HEADERS: [&str; 8] = [
     "USD",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
+    #[default]
     HarnessModel,
     Harness,
     Role,

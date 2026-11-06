@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- /workers costs [harness|model|role|ticket] [today|7d|all]: token views by harness, role or ticket over today, 7 days or all time (GUZ-1313)
+
 ## v0.4.0 - 2026-11-04
 
 This release adds threaded work (fork, squash and rebase merge, park and revive), a reworked `/send-it` with a planning driver, and chat commands for nudging workers, holding progress, running local shell commands with `!!`, and rendering markdown with `/view`. It also adds a usage ledger that prices every agent call at list rates by token kind, `ralph worker verify` for all five harnesses, hardens external inbox reports against control and bidi characters, and fixes several worker, snapshot, and upgrade bugs, including musl hosts downloading the glibc asset.

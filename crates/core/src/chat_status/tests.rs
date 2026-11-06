@@ -1,6 +1,9 @@
 use super::*;
 use crate::changes::{ScopeQuery, TurnWindow};
 use crate::diff_command::{DiffArgs, DiffTarget, WINDOW_USAGE};
+use crate::worker_costs::args::CostsArgs;
+use crate::worker_costs::views::View;
+use crate::worker_costs::window::Window;
 
 #[test]
 fn fit_truncates_wide_chars_by_display_width() {
@@ -190,12 +193,47 @@ fn route_input_parses_workers_commands() {
         route(" /workers   GUZ-1 "),
         Route::Workers(Some("GUZ-1".into()))
     );
-    assert_eq!(route("/workers costs"), Route::WorkerCosts);
+    assert_eq!(
+        route("/workers costs"),
+        Route::WorkerCosts(CostsArgs::default())
+    );
     assert_eq!(
         route("/workers costs x"),
         Route::Send("/workers costs x".into())
     );
-    assert!(Route::WorkerCosts.runs_mid_turn());
+    assert!(Route::WorkerCosts(CostsArgs::default()).runs_mid_turn());
+}
+
+#[test]
+fn workers_costs_takes_a_view_and_a_window() {
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    let costs = |view, window| Route::WorkerCosts(CostsArgs { view, window });
+    assert_eq!(route("/workers costs role"), costs(View::Role, Window::All));
+    assert_eq!(
+        route("/workers costs today"),
+        costs(View::HarnessModel, Window::Today)
+    );
+    assert_eq!(
+        route("  /workers   costs  ticket   7d "),
+        costs(View::Ticket, Window::Week)
+    );
+    assert_eq!(
+        route("/workers costs harness all"),
+        costs(View::Harness, Window::All)
+    );
+}
+
+#[test]
+fn workers_costs_with_bad_arguments_goes_to_the_model() {
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    for line in [
+        "/workers costs 30d",
+        "/workers costs today role",
+        "/workers costs role today more",
+        "/workers costs Role",
+    ] {
+        assert_eq!(route(line), Route::Send(line.into()));
+    }
 }
 
 #[test]

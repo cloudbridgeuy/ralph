@@ -63,7 +63,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::Nudge(command) => nudge::run(command, ctx.monitor),
-        Route::WorkerCosts => workers::costs(ctx.display, ctx.prices),
+        Route::WorkerCosts(args) => workers::costs(ctx.display, ctx.prices, ctx.store, args),
         Route::Fork(command) => println!("{}", thread::fork(ctx.store, command)),
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),

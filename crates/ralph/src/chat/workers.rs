@@ -1,6 +1,6 @@
 use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::chat::inbox::Display;
-use crate::chat::memory::{load_usage, usage_path, Store};
+use crate::chat::memory::{load_usage, read_optional, usage_path, Store};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
@@ -16,9 +16,12 @@ use ralph_core::wire::view::Pricing;
 use ralph_core::worker::{
     activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, decode_statuses,
     gone_path, pending_requests, sent_path, spawn_record_path, status_path, unreported_path,
-    waiting_path, worktree_for_branch, ActivityMark, HarnessId, Report, StatusLine, Ticket,
+    waiting_path, workers_log_path, worktree_for_branch, ActivityMark, HarnessId, Report,
+    StatusLine, Ticket,
 };
-use ralph_core::worker_costs::costs_view;
+use ralph_core::worker_costs::args::CostsArgs;
+use ralph_core::worker_costs::views::{costs_by_view, Inputs};
+use ralph_core::worker_costs::window::window_start;
 use ralph_core::workers_view::{
     count_untracked, detail_view, group_reports, lines_text, not_live, parse_head, parse_numstat,
     workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
@@ -320,22 +323,44 @@ fn shown(view: &View, display: &Display) -> String {
     }
 }
 
-pub(super) fn costs(display: &Display, prices: &BTreeMap<String, PriceOverride>) {
+pub(super) fn costs(
+    display: &Display,
+    prices: &BTreeMap<String, PriceOverride>,
+    store: &Path,
+    args: CostsArgs,
+) {
     let provider = provider(ProviderId::Anthropic);
     let pricing = Pricing {
         provider: provider.as_ref(),
         overrides: prices,
     };
-    match load_usage(&usage_path()) {
-        Ok(usage) => print!(
+    let usage = load_usage(&usage_path());
+    let workers = read_optional(&workers_log_path(store))
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    let since = window_start(
+        chrono::Utc::now(),
+        *chrono::Local::now().offset(),
+        args.window,
+    );
+    match (usage, workers) {
+        (Ok(usage), Ok(workers)) => print!(
             "{}",
             render_markdown(
                 &display.ctx,
-                &costs_view(&usage, &pricing),
+                &costs_by_view(
+                    args.view,
+                    since,
+                    &Inputs {
+                        usage: &usage,
+                        workers: &workers,
+                    },
+                    &pricing,
+                ),
                 &table_theme(display.theme)
             )
         ),
-        Err(error) => println!("Could not read the usage record: {error}"),
+        (Err(error), _) => println!("Could not read the usage record: {error}"),
+        (_, Err(error)) => println!("Could not read the workers record: {error}"),
     }
 }
 

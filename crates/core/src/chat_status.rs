@@ -19,6 +19,7 @@ use crate::watch_store::SavedWatch;
 use crate::worker::{
     opencode_session_id, same_store, tagged_sessions, HarnessId, Report, ReportStatus,
 };
+use crate::worker_costs::args::{parse_costs_args, CostsArgs};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -97,7 +98,7 @@ pub enum Route {
     Schedule(ScheduleCommand),
     Diff(DiffArgs),
     Workers(Option<String>),
-    WorkerCosts,
+    WorkerCosts(CostsArgs),
     Hold(HoldFilter),
     Nudge(NudgeCommand),
     SendIt(SendItCommand),
@@ -121,7 +122,7 @@ impl Route {
     pub fn runs_mid_turn(&self) -> bool {
         match self {
             Route::Workers(_)
-            | Route::WorkerCosts
+            | Route::WorkerCosts(_)
             | Route::PeekInbox(_)
             | Route::ListInbox
             | Route::Help
@@ -239,11 +240,13 @@ fn split_cursor(args: &str) -> (&str, Option<&str>) {
 pub(crate) const WORKER_COSTS: &str = "costs";
 
 fn workers_route(args: &str, line: &str) -> Route {
-    let mut tokens = args.split_whitespace();
-    match (tokens.next(), tokens.next()) {
-        (None, _) => Route::Workers(None),
-        (Some(WORKER_COSTS), None) => Route::WorkerCosts,
-        (Some(id), None) => Route::Workers(Some(scheduled_worker_id(id))),
+    let words: Vec<&str> = args.split_whitespace().collect();
+    match words.as_slice() {
+        [] => Route::Workers(None),
+        [WORKER_COSTS, rest @ ..] => {
+            parse_costs_args(rest).map_or_else(|| Route::Send(line.to_string()), Route::WorkerCosts)
+        }
+        [id] => Route::Workers(Some(scheduled_worker_id(id))),
         _ => Route::Send(line.to_string()),
     }
 }
