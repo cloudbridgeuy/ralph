@@ -235,10 +235,11 @@ fn the_interrupted_fixture_ends_interrupted() {
 }
 
 #[test]
-fn the_first_init_names_the_chat_and_later_ones_never_replace_it() {
+fn an_init_names_the_chat_and_a_different_one_replaces_it() {
     let init = |id: &str| PrintEvent::Init(id.to_string());
     assert_eq!(next_chat(None, &init("a")), Some("a".to_string()));
-    assert_eq!(next_chat(Some("a"), &init("b")), Some("a".to_string()));
+    assert_eq!(next_chat(Some("a"), &init("b")), Some("b".to_string()));
+    assert_eq!(next_chat(Some("a"), &init("a")), Some("a".to_string()));
     assert_eq!(next_chat(None, &PrintEvent::Activity), None);
     assert_eq!(
         next_chat(Some("a"), &PrintEvent::Activity),

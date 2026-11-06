@@ -109,7 +109,7 @@ Print-mode core (`crates/core/src/worker/cursor_print.rs`, pure; GUZ-1325):
 - `exit_outcome(saw_result, sigint_sent)` gives `ExitOutcome`: a `result` line means `Ended`; no `result` after ralph sent SIGINT means `Interrupted` (exit 130); no `result` otherwise means `ProcessGone`.
 - `map_print_usage(&result["usage"], model)` maps `inputTokens` (already non-cached) to `input_uncached`, `cacheReadTokens` to `cache_read`, `cacheWriteTokens` to one `CacheTier::Unspecified` write (none when 0), and `outputTokens` to `output`, as a `ModelUsage`. The model is the configured variant, not the `init` model. A missing or non-numeric key gives `None`, not zeros.
 - An interrupted turn writes no `result` line, so its tokens are lost (the same class as an opencode close).
-- `turn_end_for(outcome, result)` gives the `TurnEnd`: `Interrupted` after an interrupted exit, else the `result` end, else `Failed` for an exit with no result. `next_chat(current, event)` keeps the first `Init` chat id. `print_model(model)` falls back to `auto`. `cursor_mcp_json(existing, entry)` merges the `ralph-worker` entry into `.cursor/mcp.json` and keeps other servers.
+- `turn_end_for(outcome, result)` gives the `TurnEnd`: `Interrupted` after an interrupted exit, else the `result` end, else `Failed` for an exit with no result. `next_chat(current, event)` takes the latest `Init` chat id. `print_model(model)` falls back to `auto`. `cursor_mcp_json(existing, entry)` merges the `ralph-worker` entry into `.cursor/mcp.json` and keeps other servers.
 
 ## Cursor print mode (yolo)
 
@@ -118,7 +118,7 @@ Print-mode core (`crates/core/src/worker/cursor_print.rs`, pure; GUZ-1325):
 - Per-turn process: no child lives between turns (the worker is idle, not dead). Each turn spawns `agent -p --output-format stream-json --force ...` in its own process group with the worktree as cwd, writes the prompt to stdin, closes stdin and reads stdout lines through `decode_print_line`. Expect a cold start of about 3 to 5 s per turn.
 - The turn order is the shared `Turns` machine (queued prompts, interrupt, reminder), as for claude-headless. Every decoded line refreshes `activity/<id>`. A `result` line ends the turn; an exit with no result fails the turn and writes `gone/<id>` with a `ProcessGone` event, which the next turn clears.
 - Snapshots: when the spawn has snapshots, each turn that ends while the worker is not closing takes a worker snapshot turn, as for the ACP worker.
-- Chat id: the first `system/init` `session_id` is written to the session record (`cursor-session/<id>`, `permissions = "yolo"`). Later turns pass `--resume <chatId>`. The first turn passes none.
+- Chat id: the latest `system/init` `session_id` is written to the session record (`cursor-session/<id>`, `permissions = "yolo"`). Later turns pass `--resume <chatId>`. The first turn passes none.
 - MCP: before the first spawn ralph merges the `ralph-worker` server into `<worktree>/.cursor/mcp.json` (other servers stay). Spawn adds `/.cursor/` to the repo's `.git/info/exclude`.
 - Interrupt: SIGINT to the child's process group, then TERM and KILL after a 3 s grace. The turn ends `Interrupted`. Close and chat exit stop a running child group.
 - Stderr goes to the capped log `acp-logs/<id>.log`. The spawn version gate is the ACP one (`agent --version`).

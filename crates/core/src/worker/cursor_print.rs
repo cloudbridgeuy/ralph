@@ -154,7 +154,7 @@ pub fn turn_end_for(outcome: ExitOutcome, result: Option<TurnEnd>) -> TurnEnd {
 
 pub fn next_chat(current: Option<&str>, event: &PrintEvent) -> Option<String> {
     match (current, event) {
-        (None, PrintEvent::Init(chat)) => Some(chat.clone()),
+        (_, PrintEvent::Init(chat)) => Some(chat.clone()),
         (current, _) => current.map(str::to_string),
     }
 }
