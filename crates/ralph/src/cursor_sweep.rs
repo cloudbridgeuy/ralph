@@ -37,17 +37,18 @@ pub(crate) fn sweep_worker_server(projects_base: &Path, real_worktree: &Path) ->
     else {
         return Vec::new();
     };
-    let rows: Vec<ServerRow> = group_table()
-        .into_iter()
+    let table = group_table();
+    let rows: Vec<ServerRow> = table
+        .iter()
         .filter(|row| is_worker_server(&row.command))
         .map(|row| ServerRow {
             pid: row.pid,
             pgid: row.pgid,
-            command: row.command,
+            command: row.command.clone(),
             sockets: held_sockets(row.pid),
         })
         .collect();
-    let groups = worker_server_groups(&rows, &socket_dir);
+    let groups = worker_server_groups(&rows, &table, &socket_dir);
     for group in &groups {
         stop_group(*group);
     }

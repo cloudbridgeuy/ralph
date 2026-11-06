@@ -17,7 +17,7 @@ pub fn is_worker_server(command: &str) -> bool {
     command.contains(CURSOR_INSTALL_MARK) && command.trim_end().ends_with(WORKER_SERVER_SUFFIX)
 }
 
-pub fn worker_server_groups(rows: &[ServerRow], socket_dir: &Path) -> Vec<u32> {
+pub fn worker_server_groups(rows: &[ServerRow], table: &[GroupRow], socket_dir: &Path) -> Vec<u32> {
     let mut groups: Vec<u32> = Vec::new();
     for row in rows {
         let holds_socket = row.sockets.iter().any(|socket| {
@@ -29,6 +29,7 @@ pub fn worker_server_groups(rows: &[ServerRow], socket_dir: &Path) -> Vec<u32> {
         if row.pgid > 1
             && is_worker_server(&row.command)
             && holds_socket
+            && cursor_group_reclaimable(table, row.pgid)
             && !groups.contains(&row.pgid)
         {
             groups.push(row.pgid);
@@ -139,8 +140,27 @@ mod tests {
         }
     }
 
+    fn table_of(rows: &[ServerRow]) -> Vec<GroupRow> {
+        rows.iter()
+            .map(|server| row(server.pid, 1, server.pgid, &server.command))
+            .collect()
+    }
+
     fn selected(rows: &[ServerRow]) -> Vec<u32> {
-        worker_server_groups(rows, Path::new(SOCKET_DIR))
+        worker_server_groups(rows, &table_of(rows), Path::new(SOCKET_DIR))
+    }
+
+    #[test]
+    fn group_shared_with_a_foreign_root_is_not_selected() {
+        let socket = ["/h/.cursor/projects/p-wt/worker.sock"];
+        let rows = [server(45373, 44233, CURSOR_NODE, &socket)];
+        let mut table = table_of(&rows);
+        table.push(row(46000, 1, 44233, "/usr/bin/vim"));
+        assert!(worker_server_groups(&rows, &table, Path::new(SOCKET_DIR)).is_empty());
+        assert_eq!(
+            worker_server_groups(&rows, &table_of(&rows), Path::new(SOCKET_DIR)),
+            [44233]
+        );
     }
 
     #[test]
