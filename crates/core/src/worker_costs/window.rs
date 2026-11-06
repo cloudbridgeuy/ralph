@@ -25,5 +25,11 @@ pub fn window_start(
     }
 }
 
+pub fn instant(at: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(at)
+        .ok()
+        .map(|at| at.with_timezone(&Utc))
+}
+
 #[cfg(test)]
 mod tests;

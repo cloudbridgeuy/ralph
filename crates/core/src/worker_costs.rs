@@ -1,3 +1,4 @@
+pub mod tickets;
 pub mod window;
 
 use crate::chat_memory::MAIN_HARNESS;
