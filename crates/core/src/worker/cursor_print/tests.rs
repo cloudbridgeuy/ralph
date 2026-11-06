@@ -316,3 +316,30 @@ fn result_end(events: &[PrintEvent]) -> Option<TurnEnd> {
         _ => None,
     })
 }
+
+#[test]
+fn a_result_usage_becomes_a_cursor_worker_ledger_row() {
+    let usage =
+        json!({"inputTokens":8680,"outputTokens":36,"cacheReadTokens":6016,"cacheWriteTokens":0});
+    let mapped = map_print_usage(&usage, VARIANT).unwrap();
+    let row = print_usage_record(
+        "w1",
+        Some(4),
+        "2026-01-01T00:00:00Z".to_string(),
+        Some(SESSION.to_string()),
+        &mapped,
+    );
+    let value = serde_json::to_value(&row).unwrap();
+    assert_eq!(value["input_tokens"], 8680);
+    assert_eq!(value["cache_read_input_tokens"], 6016);
+    assert_eq!(value["cache_creation_input_tokens"], 0);
+    assert_eq!(value["output_tokens"], 36);
+    assert_eq!(value["role"], "worker");
+    assert_eq!(value["kind"], "worker");
+    assert_eq!(value["worker_id"], "w1");
+    assert_eq!(value["turn_id"], 4);
+    assert_eq!(value["harness"], "cursor");
+    assert_eq!(value["model"], VARIANT);
+    assert_eq!(value["session_id"], SESSION);
+    assert!(value["cost_usd"].is_null());
+}

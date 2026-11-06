@@ -1,10 +1,13 @@
 use super::transcript_usage::ModelUsage;
 use super::{PermissionMode, TurnEnd, SERVER_NAME};
+use crate::chat_memory::{worker_usage_record, CallSite, LedgerRow};
 use crate::stream::result_is_error;
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
 use crate::worker_costs::long_prompt_call;
 use serde_json::{json, Value};
 use std::path::Path;
+
+const HARNESS: &str = "cursor";
 
 #[cfg(test)]
 mod fixtures_tests;
@@ -137,6 +140,20 @@ pub fn map_print_usage(usage: &Value, model: &str) -> Option<ModelUsage> {
         long_prompt: long_prompt_call(model, &usage),
         usage,
     })
+}
+
+pub fn print_usage_record(
+    worker_id: &str,
+    turn_id: Option<u64>,
+    at: String,
+    chat: Option<String>,
+    usage: &ModelUsage,
+) -> LedgerRow {
+    let kind = CallSite::Worker {
+        worker_id: worker_id.to_string(),
+        turn_id,
+    };
+    worker_usage_record(kind, at, chat, HARNESS, usage)
 }
 
 pub fn turn_end_for(outcome: ExitOutcome, result: Option<TurnEnd>) -> TurnEnd {

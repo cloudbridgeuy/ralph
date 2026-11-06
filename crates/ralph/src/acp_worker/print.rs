@@ -1,6 +1,7 @@
 use super::{agent_version_warning, SHUTDOWN_GRACE};
 use crate::acp_log::{drain_stderr, CappedLog};
 use crate::cursor_owner::{claim_owner, report_start_warning, write_file, write_interrupt_result};
+use crate::cursor_usage::{record_cursor_usage, CursorTurn};
 use crate::subprocess::unregister_group;
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
@@ -11,9 +12,9 @@ use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
     exit_outcome, inbox_env, next_chat, print_args, print_model, prompt_failure_report, reduce,
     task_prompt, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome, HandoffFiles,
-    HarnessId, HeadlessState, PermissionMode, PrintArgs, PrintEvent, Scope, SessionRecord,
-    SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
-    SERVER_NAME,
+    HarnessId, HeadlessState, ModelUsage, PermissionMode, PrintArgs, PrintEvent, Scope,
+    SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerEvent, WorkerMarkers,
+    CURSOR_AGENT, SERVER_NAME,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -25,6 +26,8 @@ use std::thread;
 use std::time::Duration;
 
 const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
+
+type TurnRun = (ExitOutcome, Option<TurnEnd>, Option<ModelUsage>);
 
 struct Run {
     store: PathBuf,
@@ -116,10 +119,15 @@ impl Shared {
 
     fn run_turn(self: Arc<Self>, text: &str) {
         let (end, gone) = match self.execute(text) {
-            Ok((outcome, result)) => (
-                turn_end_for(outcome, result),
-                outcome == ExitOutcome::ProcessGone,
-            ),
+            Ok((outcome, result, usage)) => {
+                if let Some(usage) = &usage {
+                    self.record_usage(usage);
+                }
+                (
+                    turn_end_for(outcome, result),
+                    outcome == ExitOutcome::ProcessGone,
+                )
+            }
             Err(message) => (
                 TurnEnd::Failed {
                     message,
@@ -143,7 +151,20 @@ impl Shared {
         }
     }
 
-    fn execute(&self, text: &str) -> Result<(ExitOutcome, Option<TurnEnd>), String> {
+    fn record_usage(&self, usage: &ModelUsage) {
+        let chat = locked(&self.chat).clone();
+        record_cursor_usage(
+            &CursorTurn {
+                worker: &self.id,
+                chat: chat.as_deref(),
+                store: Some(&self.run.store),
+                turn_id: None,
+            },
+            usage,
+        );
+    }
+
+    fn execute(&self, text: &str) -> Result<TurnRun, String> {
         let chat = locked(&self.chat).clone();
         let args = print_args(&PrintArgs {
             workspace: &self.run.worktree,
@@ -165,19 +186,21 @@ impl Shared {
             .map_err(|e| format!("could not write the prompt to the cursor agent: {e}"))?;
         drop(stdin);
         let mut result = None;
+        let mut spend = None;
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             self.heartbeat.touch();
             let event = decode_print_line(&line, &self.run.model);
             self.remember_chat(&event);
-            if let PrintEvent::Result { end, .. } = event {
+            if let PrintEvent::Result { end, usage } = event {
                 result = Some(end);
+                spend = usage;
             }
         }
         stop_child(&mut child);
         unregister_group(child.id());
         self.group.store(0, Ordering::SeqCst);
         let sigint_sent = locked(&self.turns).interrupt_sent();
-        Ok((exit_outcome(result.is_some(), sigint_sent), result))
+        Ok((exit_outcome(result.is_some(), sigint_sent), result, spend))
     }
 
     fn remember_chat(&self, event: &PrintEvent) {

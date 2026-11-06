@@ -121,7 +121,8 @@ Print-mode core (`crates/core/src/worker/cursor_print.rs`, pure; GUZ-1325):
 - MCP: before the first spawn ralph merges the `ralph-worker` server into `<worktree>/.cursor/mcp.json` (other servers stay). Spawn adds `/.cursor/` to the repo's `.git/info/exclude`.
 - Interrupt: SIGINT to the child's process group, then TERM and KILL after a 3 s grace. The turn ends `Interrupted`. Close and chat exit stop a running child group.
 - Stderr goes to the capped log `acp-logs/<id>.log`. The spawn version gate is the ACP one (`agent --version`).
-- Permission requests do not exist in this mode: a permission answer for a print worker is refused. Usage rows for print turns are not written yet.
+- Permission requests do not exist in this mode: a permission answer for a print worker is refused.
+- Usage: a `result` line with usable `usage` appends one worker usage row (see ralph-chat.md) through the shared ledger (`crates/ralph/src/cursor_usage.rs`, pure builder `print_usage_record`), with `harness` `cursor`, `model` the configured variant, `session_id` the chat id, `turn_id` absent (print mode takes no snapshots) and `cost_usd` null. The four counters map as in `map_print_usage`. A failed write only warns. `/workers costs` prices the row from its tokens, so the cost shows `n/a` (never 0) until `[wire.prices]` has an entry keyed on the exact Cursor model id. An interrupted or crashed turn writes no `result` line, so no row is written and its tokens are lost. The shell glue has no automated test; check it by hand.
 
 ## Verify an agent version
 
