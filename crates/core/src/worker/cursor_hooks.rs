@@ -1,6 +1,7 @@
 use super::{shell_quote, PermissionOption, ALLOW_ONCE};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -153,4 +154,43 @@ pub fn hook_output(outcome: &HookOutcome) -> String {
         }),
     }
     .to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeAsk {
+    pub tool_use_id: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeAnswer {
+    pub option_id: String,
+}
+
+pub fn hook_request_id(tool_use_id: &str, counter: u64) -> String {
+    match tool_use_id.trim() {
+        "" => format!("hook-{counter}"),
+        id => id.to_string(),
+    }
+}
+
+pub fn read_outcome(read: io::Result<String>) -> HookOutcome {
+    match read {
+        Ok(line) if line.trim().is_empty() => {
+            HookOutcome::BridgeGone("the worker closed the bridge without an answer".to_string())
+        }
+        Ok(line) => serde_json::from_str::<BridgeAnswer>(line.trim()).map_or_else(
+            |e| HookOutcome::BridgeGone(format!("unreadable bridge answer: {e}")),
+            |answer| HookOutcome::Answered(answer.option_id),
+        ),
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) =>
+        {
+            HookOutcome::TimedOut
+        }
+        Err(e) => HookOutcome::BridgeGone(e.to_string()),
+    }
 }

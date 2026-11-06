@@ -227,3 +227,52 @@ fn every_other_outcome_is_an_explicit_deny() {
 fn the_bridge_waits_two_minutes() {
     assert_eq!(BRIDGE_TIMEOUT, Duration::from_secs(120));
 }
+
+#[test]
+fn the_request_id_is_the_tool_use_id_or_a_counter() {
+    assert_eq!(hook_request_id("fa1e5238", 7), "fa1e5238");
+    assert_eq!(hook_request_id("", 7), "hook-7");
+    assert_eq!(hook_request_id("  ", 8), "hook-8");
+}
+
+#[test]
+fn an_answer_line_is_the_chosen_option() {
+    let line = crate::chat_socket::encode_line(&BridgeAnswer {
+        option_id: ALLOW_ONCE.to_string(),
+    });
+    assert_eq!(
+        read_outcome(Ok(line)),
+        HookOutcome::Answered(ALLOW_ONCE.to_string())
+    );
+}
+
+#[test]
+fn a_read_timeout_is_timed_out() {
+    for kind in [io::ErrorKind::WouldBlock, io::ErrorKind::TimedOut] {
+        assert_eq!(
+            read_outcome(Err(io::Error::from(kind))),
+            HookOutcome::TimedOut,
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn a_closed_refused_or_garbled_bridge_is_gone() {
+    let gone = |read: io::Result<String>| matches!(read_outcome(read), HookOutcome::BridgeGone(_));
+    assert!(gone(Ok(String::new())));
+    assert!(gone(Ok("not json\n".to_string())));
+    assert!(gone(Err(io::Error::from(io::ErrorKind::NotFound))));
+    assert!(gone(Err(io::Error::from(io::ErrorKind::ConnectionRefused))));
+}
+
+#[test]
+fn the_ask_round_trips_as_one_line() {
+    let ask = BridgeAsk {
+        tool_use_id: "t1".to_string(),
+        command: "echo hi".to_string(),
+    };
+    let line = crate::chat_socket::encode_line(&ask);
+    assert_eq!(line.matches('\n').count(), 1);
+    assert_eq!(serde_json::from_str::<BridgeAsk>(&line).unwrap(), ask);
+}
