@@ -1,6 +1,7 @@
 use super::{agent_version_warning, SHUTDOWN_GRACE};
 use crate::acp_log::{drain_stderr, CappedLog};
 use crate::cursor_owner::{claim_owner, report_start_warning, write_file, write_interrupt_result};
+use crate::cursor_sweep::sweep_worker_server;
 use crate::cursor_usage::{record_cursor_usage, CursorTurn};
 use crate::subprocess::unregister_group;
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
@@ -325,6 +326,11 @@ impl PrintWorker {
             stop_groups(&[group], SHUTDOWN_GRACE, || true);
         }
         fs::remove_file(&self.owner).ok();
+        if let Some(home) = dirs::home_dir() {
+            let real = fs::canonicalize(&self.shared.run.worktree)
+                .unwrap_or_else(|_| self.shared.run.worktree.clone());
+            sweep_worker_server(&home.join(".cursor/projects"), &real);
+        }
     }
 }
 

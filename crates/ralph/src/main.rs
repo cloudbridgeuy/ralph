@@ -16,6 +16,7 @@ mod codex_worker;
 pub mod config;
 mod cursor_cleanup;
 mod cursor_owner;
+mod cursor_sweep;
 mod cursor_usage;
 pub mod diff_highlight;
 mod diff_theme;

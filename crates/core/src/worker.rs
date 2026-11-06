@@ -58,7 +58,9 @@ pub use cursor_model::{
     CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
 };
 pub use cursor_print::*;
-pub use cursor_reclaim::cursor_group_reclaimable;
+pub use cursor_reclaim::{
+    cursor_group_reclaimable, is_worker_server, lsof_socket_paths, worker_server_groups, ServerRow,
+};
 pub use daily_drift::*;
 pub use delivery::*;
 pub use drift_run::*;

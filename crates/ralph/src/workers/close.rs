@@ -5,6 +5,7 @@ use super::{
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
+use crate::cursor_sweep::sweep_worker_server;
 use crate::outcome_log;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
@@ -180,6 +181,7 @@ impl Workers {
             .map(|listing| String::from_utf8_lossy(&listing.stdout).into_owned());
             dirs::home_dir()
                 .map(|home| {
+                    sweep_worker_server(&home.join(".cursor/projects"), &real_worktree);
                     cleanup_cursor_leftovers(&home, &worktree, &real_worktree, porcelain.as_deref())
                 })
                 .unwrap_or_default()
