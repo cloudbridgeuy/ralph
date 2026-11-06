@@ -35,7 +35,7 @@
 use std::io::IsTerminal;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
-use syntect::parsing::SyntaxSet;
+use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
 use crate::diff_theme::DiffColors;
@@ -104,7 +104,6 @@ pub struct ThemeConfig {
 }
 
 impl ThemeConfig {
-    /// Create a new theme configuration with defaults.
     pub fn new() -> Self {
         Self::default()
     }
@@ -277,69 +276,33 @@ impl Highlighter {
         &self.theme
     }
 
-    /// Create a new highlighter with default syntax definitions and themes.
-    ///
-    /// This loads the bundled syntect defaults which include support for
-    /// many common languages like Rust, Python, JavaScript, Go, etc.
-    /// Uses the default theme (base16-ocean.dark).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ralph::highlight::Highlighter;
-    ///
-    /// let highlighter = Highlighter::new();
-    /// ```
     pub fn new() -> Self {
         let theme_set = ThemeSet::load_defaults();
         let theme = theme_set.themes[DEFAULT_THEME].clone();
         Self {
-            syntax_set: SyntaxSet::load_defaults_newlines(),
+            syntax_set: two_face::syntax::extra_newlines(),
             theme,
             use_background: true,
         }
     }
 
-    /// Create a highlighter with custom theme configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Theme configuration specifying theme name/path and background option
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Highlighter)` - Successfully configured highlighter
-    /// * `Err(ThemeError)` - If the theme was not found or failed to load
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ralph::highlight::{Highlighter, ThemeConfig};
-    ///
-    /// let config = ThemeConfig::new().with_theme("Monokai Extended");
-    /// let highlighter = Highlighter::with_config(config).unwrap();
-    /// ```
     pub fn with_config(config: ThemeConfig) -> Result<Self, ThemeError> {
         let theme_set = ThemeSet::load_defaults();
-        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let syntax_set = two_face::syntax::extra_newlines();
 
         let theme = match config.theme() {
             Some(theme_name) if config.is_theme_file() => {
-                // Load from file
                 ThemeSet::get_theme(theme_name).map_err(|e| ThemeError::LoadThemeFile {
                     path: theme_name.to_string(),
                     source: e,
                 })?
             }
-            Some(theme_name) => {
-                // Look up built-in theme
-                theme_set.themes.get(theme_name).cloned().ok_or_else(|| {
-                    ThemeError::ThemeNotFound {
-                        name: theme_name.to_string(),
-                        available: Self::format_available_themes(&theme_set),
-                    }
-                })?
-            }
+            Some(theme_name) => theme_set.themes.get(theme_name).cloned().ok_or_else(|| {
+                ThemeError::ThemeNotFound {
+                    name: theme_name.to_string(),
+                    available: Self::format_available_themes(&theme_set),
+                }
+            })?,
             None => theme_set.themes[DEFAULT_THEME].clone(),
         };
 
@@ -393,42 +356,8 @@ impl Highlighter {
             .join(", ")
     }
 
-    /// Highlight code with optional language hint.
-    ///
-    /// Returns the highlighted code as a string with ANSI escape sequences
-    /// for terminal output. If the language is unknown or highlighting fails,
-    /// returns the original code unchanged.
-    ///
-    /// # Arguments
-    ///
-    /// * `code` - The source code to highlight
-    /// * `language` - Optional language hint (e.g., "rust", "python", "js")
-    ///
-    /// # Returns
-    ///
-    /// A string containing the code with ANSI color codes.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ralph::highlight::Highlighter;
-    ///
-    /// let highlighter = Highlighter::new();
-    /// let highlighted = highlighter.highlight("fn main() {}", Some("rust"));
-    /// // highlighted contains ANSI escape sequences
-    /// ```
     pub fn highlight(&self, code: &str, language: Option<&str>) -> String {
-        // Try to find syntax for the language
-        let syntax = match language {
-            Some(lang) => self
-                .syntax_set
-                .find_syntax_by_token(lang)
-                .or_else(|| self.syntax_set.find_syntax_by_extension(lang)),
-            None => None,
-        };
-
-        // If no syntax found, return code as-is
-        let Some(syntax) = syntax else {
+        let Some(syntax) = language.and_then(|lang| self.find_syntax(lang)) else {
             return code.to_string();
         };
 
@@ -442,13 +371,11 @@ impl Highlighter {
                     output.push_str(&escaped);
                 }
                 Err(_) => {
-                    // If highlighting fails for a line, include it as-is
                     output.push_str(line);
                 }
             }
         }
 
-        // Reset terminal colors at the end
         output.push_str(crate::ansi::RESET);
 
         output
@@ -476,27 +403,20 @@ impl Highlighter {
             .collect()
     }
 
-    /// Check if a language is supported for highlighting.
-    ///
-    /// # Arguments
-    ///
-    /// * `language` - The language token to check (e.g., "rust", "py", "js")
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ralph::highlight::Highlighter;
-    ///
-    /// let highlighter = Highlighter::new();
-    /// assert!(highlighter.is_language_supported("rust"));
-    /// assert!(highlighter.is_language_supported("python"));
-    /// assert!(!highlighter.is_language_supported("made_up_language"));
-    /// ```
     pub fn is_language_supported(&self, language: &str) -> bool {
+        self.find_syntax(language).is_some()
+    }
+
+    fn find_syntax(&self, language: &str) -> Option<&SyntaxReference> {
+        let token = match language {
+            "shell" => "sh",
+            "jsx" => "tsx",
+            "jsonc" => "json",
+            other => other,
+        };
         self.syntax_set
-            .find_syntax_by_token(language)
-            .or_else(|| self.syntax_set.find_syntax_by_extension(language))
-            .is_some()
+            .find_syntax_by_token(token)
+            .or_else(|| self.syntax_set.find_syntax_by_extension(token))
     }
 }
 
@@ -705,6 +625,30 @@ mod tests {
                 "{} should be supported",
                 lang
             );
+        }
+    }
+
+    #[test]
+    fn extra_fence_languages_are_supported() {
+        let highlighter = Highlighter::new();
+        for lang in ["ts", "tsx", "toml", "dockerfile", "kotlin", "hcl"] {
+            assert!(
+                highlighter.is_language_supported(lang),
+                "{lang} should be supported"
+            );
+        }
+    }
+
+    #[test]
+    fn fence_aliases_highlight() {
+        let highlighter = Highlighter::new();
+        for (lang, code) in [
+            ("shell", "echo \"hi\" | grep h\n"),
+            ("jsx", "const a = <div className=\"x\">hi</div>;\n"),
+            ("jsonc", "{\"a\": 1}\n"),
+        ] {
+            let highlighted = highlighter.highlight(code, Some(lang));
+            assert!(highlighted.contains("\x1b[38;"), "{lang}: {highlighted:?}");
         }
     }
 
