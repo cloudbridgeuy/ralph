@@ -61,10 +61,6 @@ enum InterruptPlan {
     Drop,
 }
 
-fn plan_drops(plan: &InterruptPlan) -> bool {
-    matches!(plan, InterruptPlan::Drop)
-}
-
 fn sigint_hit_turn(signalled: u64, turn: u64) -> bool {
     signalled == turn
 }
@@ -221,11 +217,10 @@ impl Shared {
             *state = next;
             plan
         };
-        if plan_drops(&plan) {
-            self.drive(Turns::interrupt_dropped);
-        }
-        if let InterruptPlan::Send(group) = plan {
-            self.send_interrupt(group);
+        match plan {
+            InterruptPlan::Drop => self.drive(Turns::interrupt_dropped),
+            InterruptPlan::Send(group) => self.send_interrupt(group),
+            InterruptPlan::Hold => {}
         }
     }
 
@@ -675,13 +670,6 @@ mod tests {
         assert!(!sigint_hit_turn(3, 4));
         assert!(!sigint_hit_turn(NO_SIGINT, 0));
         assert!(!sigint_hit_turn(NO_SIGINT, u64::MAX - 1));
-    }
-
-    #[test]
-    fn only_a_dropped_plan_reports_dropped() {
-        assert!(plan_drops(&InterruptPlan::Drop));
-        assert!(!plan_drops(&InterruptPlan::Hold));
-        assert!(!plan_drops(&InterruptPlan::Send(GROUP)));
     }
 
     #[test]
