@@ -53,6 +53,7 @@ struct Shared {
     results: PathBuf,
     chat: Mutex<Option<String>>,
     group: AtomicU32,
+    interrupt_pending: AtomicBool,
     turn_seq: AtomicU64,
     closing: AtomicBool,
 }
@@ -110,6 +111,7 @@ impl Shared {
     fn interrupt_group(self: &Arc<Self>) {
         let group = self.group.load(Ordering::SeqCst);
         if group == 0 {
+            self.interrupt_pending.store(true, Ordering::SeqCst);
             return;
         }
         crate::cursor_owner::signal_group(group, "INT");
@@ -169,7 +171,7 @@ impl Shared {
         );
     }
 
-    fn execute(&self, text: &str) -> Result<TurnRun, String> {
+    fn execute(self: &Arc<Self>, text: &str) -> Result<TurnRun, String> {
         if self.closing.load(Ordering::SeqCst) {
             return Ok(closed_turn());
         }
@@ -194,6 +196,9 @@ impl Shared {
             self.group.store(0, Ordering::SeqCst);
             return Ok(closed_turn());
         }
+        if self.interrupt_pending.swap(false, Ordering::SeqCst) {
+            self.interrupt_group();
+        }
         drain_stderr(stderr, CappedLog::new(Some(&self.run.store), &self.id));
         stdin
             .write_all(text.as_bytes())
@@ -213,6 +218,7 @@ impl Shared {
         stop_child(&mut child);
         unregister_group(child.id());
         self.group.store(0, Ordering::SeqCst);
+        self.interrupt_pending.store(false, Ordering::SeqCst);
         let sigint_sent = locked(&self.turns).interrupt_sent();
         Ok((exit_outcome(result.is_some(), sigint_sent), result, spend))
     }
@@ -286,6 +292,7 @@ impl PrintWorker {
             results: files.interrupt_result.clone(),
             chat: Mutex::new(chat),
             group: AtomicU32::new(0),
+            interrupt_pending: AtomicBool::new(false),
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
         });
