@@ -24,7 +24,7 @@ fn jsonl(events: &[Value]) -> String {
 }
 
 fn ticket_at(windows: &[WorkerWindow], id: &str, when: &str) -> Option<Option<String>> {
-    window_of(windows, id, at(when)).map(|window| window.ticket.clone())
+    window_position(windows, id, at(when)).map(|position| windows[position].ticket.clone())
 }
 
 #[test]
@@ -39,7 +39,6 @@ fn a_spawn_and_close_make_one_closed_window() {
             worker_id: "w1".into(),
             ticket: Some("GUZ-1".into()),
             harness: "claude".into(),
-            model: Some("claude-opus-5-5".into()),
             start: at("2026-11-01T10:00:00Z"),
             end: Some(at("2026-11-01T11:00:00Z")),
         }]
