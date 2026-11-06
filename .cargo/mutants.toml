@@ -62,7 +62,7 @@ exclude_re = [
   'sse\.rs:23:34: replace < with <= in SseDecoder::push$',
   'sse\.rs:23:46: replace && with \|\| in SseDecoder::push$',
   'tree\.rs:15:28: replace > with >= in cover_at$',
-  'shell_format\.rs:356:25: replace > with >= in Layout::statement$',
+  'shell_format\.rs:368:25: replace > with >= in Layout::statement$',
   'secret_headers -> .* with Vec::leak\(Vec::new\(\)\)$',
   'render/wrap\.rs:[0-9]+:[0-9]+: replace cap_wrap_width with \(\)$',
   'render/wrap\.rs:[0-9]+:[0-9]+: replace wrap_width -> usize with [01]$',
