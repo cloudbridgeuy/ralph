@@ -14,8 +14,6 @@ pub(super) struct Turns {
     pub(super) changes: Option<WorkerChanges>,
     pub(super) heartbeat: Arc<Heartbeat>,
     pub(super) events: Events,
-    pub(super) updated: Arc<AtomicBool>,
-    pub(super) pending: Option<(PathBuf, SessionRecord)>,
 }
 
 fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) {
@@ -58,7 +56,6 @@ pub(super) async fn run_turns(
 ) {
     let mut inbound = inbound.fuse();
     let mut queue = PromptQueue::default();
-    let mut pending = turns.pending.clone();
     let mut stopping = false;
     loop {
         let Some(text) = queue.start() else {
@@ -73,7 +70,6 @@ pub(super) async fn run_turns(
         push_event(&turns.events, WorkerEvent::TurnStarted);
         turns.heartbeat.set_state(ActivityState::Running);
         turns.reported.store(false, Ordering::SeqCst);
-        turns.updated.store(false, Ordering::SeqCst);
         let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
             return;
         };
@@ -114,14 +110,6 @@ pub(super) async fn run_turns(
                 .and_then(|value| value.as_str().map(str::to_string))
                 .unwrap_or_default()
         });
-        if session_saved(
-            reason.as_deref().map_err(|e| e.message.as_str()),
-            turns.updated.load(Ordering::SeqCst),
-        ) {
-            if let Some((path, record)) = pending.take() {
-                save_record(turns, &path, &record);
-            }
-        }
         push_event(&turns.events, WorkerEvent::TurnEnded(end));
         let stop = reason.as_deref().map_err(|e| e.message.as_str());
         let outcome = turn_outcome(
@@ -149,15 +137,6 @@ pub(super) async fn run_turns(
         if stopping {
             return;
         }
-    }
-}
-
-fn save_record(turns: &Turns, path: &Path, record: &SessionRecord) {
-    if let Err(e) = write_file(path, &record.render()) {
-        warn(format!(
-            "could not write the {} session record: {e}",
-            turns.agent.name
-        ));
     }
 }
 
