@@ -89,6 +89,13 @@ fn live_group(state: TurnProc) -> Option<u32> {
     }
 }
 
+fn escalation_target(state: TurnProc, group: u32) -> Option<u32> {
+    match state {
+        TurnProc::Running { pgid } if pgid == group => Some(pgid),
+        _ => None,
+    }
+}
+
 fn read_plan(since_result: Option<Duration>, grace: Duration) -> ReadPlan {
     match since_result {
         None => ReadPlan::Block,
@@ -202,7 +209,8 @@ impl Shared {
         let shared = Arc::clone(self);
         thread::spawn(move || {
             thread::sleep(INTERRUPT_GRACE);
-            if live_group(*locked(&shared.proc)) == Some(group) {
+            let target = escalation_target(*locked(&shared.proc), group);
+            if let Some(group) = target {
                 stop_groups(&[group], SHUTDOWN_GRACE, || true);
             }
         });
@@ -631,5 +639,26 @@ mod tests {
         assert_eq!(live_group(TurnProc::Starting { interrupt: true }), None);
         assert_eq!(live_group(TurnProc::Running { pgid: PGID }), Some(PGID));
         assert_eq!(live_group(TurnProc::Grace { pgid: PGID }), Some(PGID));
+    }
+
+    #[test]
+    fn escalation_targets_only_the_running_group() {
+        assert_eq!(
+            escalation_target(TurnProc::Running { pgid: PGID }, PGID),
+            Some(PGID)
+        );
+        assert_eq!(
+            escalation_target(TurnProc::Grace { pgid: PGID }, PGID),
+            None
+        );
+        assert_eq!(escalation_target(TurnProc::Idle, PGID), None);
+        assert_eq!(
+            escalation_target(TurnProc::Starting { interrupt: true }, PGID),
+            None
+        );
+        assert_eq!(
+            escalation_target(TurnProc::Running { pgid: PGID + 1 }, PGID),
+            None
+        );
     }
 }
