@@ -2,14 +2,15 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
-    now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_file_atomic,
-    write_interrupt_result, write_owner_record,
+    now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_interrupt_result,
+    write_owner_record,
 };
 use crate::subprocess::{exited_unreaped, signal_group, unregister_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
+use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
@@ -31,10 +32,10 @@ use ralph_core::worker::{
     check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
     probed_version, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
     session_error, session_saved, stop_problem, sweeps_permissions, task_prompt, turn_outcome,
-    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect,
-    HeadlessState, HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue,
-    Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand,
-    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE,
+    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessState,
+    HeadlessWorker, Inbound, PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope,
+    SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent,
+    WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE,
     CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
     CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
@@ -58,33 +59,6 @@ use permissions::Permissions;
 use turns::{run_turns, Turns};
 use verify::agent_version_probe;
 pub(crate) use verify::verify;
-
-pub(crate) type Events = Arc<Mutex<Vec<WorkerEvent>>>;
-
-pub(crate) fn push_event(events: &Events, event: WorkerEvent) {
-    locked(events).push(event);
-}
-
-pub(crate) fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
-    let path = |marker| match marker {
-        Marker::Ready => &markers.ready,
-        Marker::Reported => &markers.reported,
-        Marker::Blocked => &markers.blocked,
-        Marker::Waiting => &markers.waiting,
-    };
-    match effect {
-        HeadlessEffect::Set(marker) => {
-            write_file(path(*marker), "").ok();
-        }
-        HeadlessEffect::Clear(marker) => {
-            fs::remove_file(path(*marker)).ok();
-        }
-        HeadlessEffect::Publish(content) => {
-            write_file_atomic(&markers.blocked, &content.render()).ok();
-        }
-        HeadlessEffect::ReplyText(_) => {}
-    }
-}
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);

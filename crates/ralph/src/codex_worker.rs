@@ -1,5 +1,4 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
-use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::codex_usage::CodexUsage;
 use crate::config::{configured_codex, configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
@@ -12,6 +11,7 @@ use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::{notice, warn};
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
+use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};

@@ -61,6 +61,7 @@ mod watch_store;
 mod watches;
 mod wire;
 mod worker_changes;
+mod worker_events;
 mod worker_mcp;
 mod worker_usage;
 mod worker_verify;

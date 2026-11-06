@@ -1,5 +1,4 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
-use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::chat::memory::usage_path;
 use crate::chat::read_claude_config;
 use crate::codex_worker::pipes::pipe_lines;
@@ -15,6 +14,7 @@ use crate::private_file::write_worker_config;
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
+use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::worker_usage::{record_session_or_warn, UsageSession, UsageTarget};
 use crate::workers::headless::{HeadlessHost, Heartbeat};

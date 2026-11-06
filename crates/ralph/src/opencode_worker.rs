@@ -1,4 +1,3 @@
-use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, request_ids, write_file};
 use crate::opencode_usage::{record_opencode_usage, OpencodeTurn};
@@ -7,6 +6,7 @@ use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
+use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};

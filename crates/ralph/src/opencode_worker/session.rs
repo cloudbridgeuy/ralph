@@ -1,7 +1,7 @@
 use super::post_prompt;
-use crate::acp_worker::{push_event, Events};
 use crate::transport::http::HttpSse;
 use crate::warn::warn;
+use crate::worker_events::{push_event, Events};
 use ralph_core::worker::{
     answer_decision, capabilities, decide, describe, parse_interrupted, permission_reply_body,
     permission_reply_path, session_missing, Capabilities, HarnessId, HeadlessWorker,
