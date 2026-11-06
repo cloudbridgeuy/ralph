@@ -178,3 +178,24 @@ fn instant_parses_rfc3339_with_an_offset_and_rejects_text() {
     );
     assert_eq!(instant("not a time"), None);
 }
+
+#[test]
+fn window_position_names_the_index_of_the_joined_window() {
+    let windows = parse_windows(&jsonl(&[
+        spawn("w1", "2026-11-01T10:00:00Z", Some("GUZ-1")),
+        close("w1", "2026-11-01T11:00:00Z"),
+        spawn("w1", "2026-11-02T10:00:00Z", Some("GUZ-2")),
+    ]));
+    assert_eq!(
+        window_position(&windows, "w1", at("2026-11-02T10:30:00Z")),
+        Some(1)
+    );
+    assert_eq!(
+        window_position(&windows, "w1", at("2026-11-01T10:30:00Z")),
+        Some(0)
+    );
+    assert_eq!(
+        window_position(&windows, "w1", at("2026-10-31T00:00:00Z")),
+        None
+    );
+}

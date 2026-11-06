@@ -67,15 +67,25 @@ pub fn parse_windows(workers_jsonl: &str) -> Vec<WorkerWindow> {
     windows
 }
 
+pub fn window_position(
+    windows: &[WorkerWindow],
+    worker_id: &str,
+    at: DateTime<Utc>,
+) -> Option<usize> {
+    windows
+        .iter()
+        .enumerate()
+        .filter(|(_, window)| window.worker_id == worker_id && window.covers(at))
+        .max_by_key(|(_, window)| window.start)
+        .map(|(position, _)| position)
+}
+
 pub fn window_of<'a>(
     windows: &'a [WorkerWindow],
     worker_id: &str,
     at: DateTime<Utc>,
 ) -> Option<&'a WorkerWindow> {
-    windows
-        .iter()
-        .filter(|window| window.worker_id == worker_id && window.covers(at))
-        .max_by_key(|window| window.start)
+    window_position(windows, worker_id, at).map(|position| &windows[position])
 }
 
 #[cfg(test)]
