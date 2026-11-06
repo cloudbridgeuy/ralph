@@ -28,7 +28,7 @@ pub use spinner::{
     invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,
 };
 pub(crate) use timed::{timed_output, TimedOutput};
-pub use types::{StreamingSubprocessResult, SubprocessError};
+pub use types::{recorded, StreamingSubprocessResult, SubprocessError};
 
 /// Kill a subprocess and its entire process group.
 ///
