@@ -93,8 +93,12 @@ fn turn_end(line: &str, result: &Value) -> TurnEnd {
     }
 }
 
-pub fn print_turn_signals(_reported: bool, end: TurnEnd) -> Vec<ThreadSignal> {
-    vec![ThreadSignal::TurnEnded(end)]
+pub fn print_turn_signals(reported: bool, end: TurnEnd) -> Vec<ThreadSignal> {
+    reported
+        .then_some(ThreadSignal::Reported)
+        .into_iter()
+        .chain([ThreadSignal::TurnEnded(end)])
+        .collect()
 }
 
 pub fn exit_outcome(saw_result: bool, sigint_sent: bool) -> ExitOutcome {

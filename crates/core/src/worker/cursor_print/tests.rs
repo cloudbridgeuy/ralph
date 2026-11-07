@@ -1,5 +1,6 @@
 use super::*;
 use crate::wire::usage::{CacheTier, CacheWrite};
+use crate::worker::{Action, Turns, REPORT_REMINDER};
 use serde_json::json;
 use std::path::Path;
 
@@ -329,4 +330,39 @@ fn a_result_usage_becomes_a_cursor_worker_ledger_row() {
     assert_eq!(value["model"], VARIANT);
     assert_eq!(value["session_id"], SESSION);
     assert!(value["cost_usd"].is_null());
+}
+
+#[test]
+fn a_turn_without_a_report_marker_signals_only_its_end() {
+    assert_eq!(
+        print_turn_signals(false, TurnEnd::Succeeded),
+        [ThreadSignal::TurnEnded(TurnEnd::Succeeded)]
+    );
+}
+
+#[test]
+fn a_report_marker_signals_reported_before_the_turn_end() {
+    assert_eq!(
+        print_turn_signals(true, TurnEnd::Succeeded),
+        [
+            ThreadSignal::Reported,
+            ThreadSignal::TurnEnded(TurnEnd::Succeeded)
+        ]
+    );
+}
+
+#[test]
+fn a_reported_print_turn_gets_no_reminder_and_no_unreported_marker() {
+    let mut turns = Turns::default();
+    turns.accept("task".to_string());
+    let actions: Vec<Action> = print_turn_signals(true, TurnEnd::Succeeded)
+        .into_iter()
+        .flat_map(|signal| turns.signal(signal, false))
+        .collect();
+    assert!(!actions
+        .iter()
+        .any(|action| matches!(action, Action::Start(text) if text == REPORT_REMINDER)));
+    assert!(!actions
+        .iter()
+        .any(|action| matches!(action, Action::MarkUnreported)));
 }

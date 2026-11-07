@@ -124,7 +124,11 @@ fn read_plan(since_result: Option<Duration>, grace: Duration) -> ReadPlan {
 type TurnRun = (ExitOutcome, Option<TurnEnd>, Option<ModelUsage>);
 
 fn take_reported(marker: &Path) -> bool {
-    marker.exists()
+    fs::remove_file(marker).is_ok()
+}
+
+fn performed(action: &Action) -> bool {
+    !matches!(action, Action::Emit(WorkerEvent::Reported))
 }
 
 fn closed_turn() -> TurnRun {
@@ -169,7 +173,7 @@ impl Shared {
     }
 
     fn perform(self: &Arc<Self>, actions: Vec<Action>) {
-        for action in actions {
+        for action in actions.into_iter().filter(performed) {
             match action {
                 Action::Start(text) => {
                     fs::remove_file(&self.markers.gone).ok();
@@ -582,7 +586,59 @@ fn write_mcp_config(id: &str, request: &SpawnRequest, files: &HandoffFiles) -> R
 mod tests {
     use super::*;
 
+    use ralph_core::worker::Report;
+    use ralph_core::worker_check::last_reports;
+
     const GRACE: Duration = Duration::from_millis(1500);
+
+    #[test]
+    fn a_report_marker_counts_for_one_turn_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("reported").join("A");
+        assert!(!take_reported(&marker));
+        write_file(&marker, "").unwrap();
+        assert!(take_reported(&marker));
+        assert!(!take_reported(&marker));
+    }
+
+    #[test]
+    fn a_reported_turn_keeps_the_report_and_writes_no_marker_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let markers = WorkerMarkers::new(dir.path(), "A");
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let report = Report {
+            worker: "A".to_string(),
+            at: "2026-11-07T00:00:00Z".to_string(),
+            status: "done".to_string(),
+            text: "ok".to_string(),
+        };
+        inbox.post(&report, 0).unwrap();
+        write_file(&markers.reported, "").unwrap();
+        let mut turns = Turns::default();
+        turns.accept("task".to_string());
+        let actions: Vec<Action> =
+            print_turn_signals(take_reported(&markers.reported), TurnEnd::Succeeded)
+                .into_iter()
+                .flat_map(|signal| turns.signal(signal, false))
+                .filter(performed)
+                .collect();
+        let mut state = HeadlessState::default();
+        for action in &actions {
+            assert!(!matches!(action, Action::MarkUnreported));
+            if let Action::Emit(event) = action {
+                let (next, effects) = reduce(&state, event);
+                state = next;
+                for effect in &effects {
+                    apply_effect(&markers, effect);
+                }
+            }
+        }
+        assert!(!markers.reported.exists());
+        assert!(!markers.unreported.exists());
+        assert!(!markers.waiting.exists());
+        assert!(!markers.sent.exists());
+        assert!(last_reports(&inbox.peek().unwrap()).contains_key("A"));
+    }
 
     #[test]
     fn read_plan_blocks_before_a_result() {
