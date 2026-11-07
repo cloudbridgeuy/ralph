@@ -1,5 +1,5 @@
 use super::transcript_usage::ModelUsage;
-use super::{TurnEnd, SERVER_NAME};
+use super::{ThreadSignal, TurnEnd, SERVER_NAME};
 use crate::chat_memory::{worker_usage_record, CallSite, LedgerRow};
 use crate::stream::result_is_error;
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
@@ -91,6 +91,10 @@ fn turn_end(line: &str, result: &Value) -> TurnEnd {
         message: message.to_string(),
         transient: false,
     }
+}
+
+pub fn print_turn_signals(_reported: bool, end: TurnEnd) -> Vec<ThreadSignal> {
+    vec![ThreadSignal::TurnEnded(end)]
 }
 
 pub fn exit_outcome(saw_result: bool, sigint_sent: bool) -> ExitOutcome {

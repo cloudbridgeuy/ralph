@@ -14,15 +14,15 @@ use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
-    exit_outcome, inbox_env, next_chat, print_args, print_model, prompt_failure_report, reduce,
-    task_prompt, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome, HandoffFiles,
-    HarnessId, HeadlessState, ModelUsage, PermissionAnswer, PermissionMode, PrintArgs, PrintEvent,
-    Scope, SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerEvent, WorkerMarkers,
-    CURSOR_AGENT, SERVER_NAME,
+    exit_outcome, inbox_env, next_chat, print_args, print_model, print_turn_signals,
+    prompt_failure_report, reduce, task_prompt, turn_end_activity, turn_end_for, Action,
+    ActivityState, ExitOutcome, HandoffFiles, HarnessId, HeadlessState, ModelUsage,
+    PermissionAnswer, PermissionMode, PrintArgs, PrintEvent, Scope, SessionRecord, SpawnRequest,
+    TurnEnd, Turns, WorkerEvent, WorkerMarkers, CURSOR_AGENT, SERVER_NAME,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -122,6 +122,10 @@ fn read_plan(since_result: Option<Duration>, grace: Duration) -> ReadPlan {
 }
 
 type TurnRun = (ExitOutcome, Option<TurnEnd>, Option<ModelUsage>);
+
+fn take_reported(marker: &Path) -> bool {
+    marker.exists()
+}
 
 fn closed_turn() -> TurnRun {
     (ExitOutcome::Interrupted, None, None)
@@ -262,7 +266,13 @@ impl Shared {
         };
         let closing = self.closing.load(Ordering::SeqCst);
         *locked(&self.snapshot) = None;
-        self.drive(|turns| turns.signal(ThreadSignal::TurnEnded(end.clone()), closing));
+        let reported = take_reported(&self.markers.reported);
+        self.drive(|turns| {
+            print_turn_signals(reported, end)
+                .into_iter()
+                .flat_map(|signal| turns.signal(signal, closing))
+                .collect()
+        });
         if let Some(usage) = &usage {
             let turn_id = locked(&self.snapshot).take();
             self.record_usage(usage, turn_id);
