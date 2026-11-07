@@ -533,3 +533,14 @@ fn parses_licenses_subcommand() {
         .and_then(|cli| cli.command);
     assert!(matches!(parsed, Some(Commands::Licenses)));
 }
+
+#[test]
+fn test_cli_hook_bridge_takes_the_socket_in_argv() {
+    let cli =
+        Cli::try_parse_from(["ralph", "hook-bridge", "--socket", "/run/w1/hook.sock"]).unwrap();
+    let Some(Commands::HookBridge(args)) = cli.command else {
+        panic!("not hook-bridge");
+    };
+    assert_eq!(args.socket, std::path::PathBuf::from("/run/w1/hook.sock"));
+    assert!(Cli::try_parse_from(["ralph", "hook-bridge"]).is_err());
+}

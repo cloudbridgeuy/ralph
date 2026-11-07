@@ -114,6 +114,9 @@ from source) unless --force. Running chats and workers keep the old build until 
 
     #[command(hide = true)]
     WorkerStopHook(WorkerStopHookArgs),
+
+    #[command(hide = true)]
+    HookBridge(HookBridgeArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -630,6 +633,12 @@ pub struct WorkerMcpArgs {
 
     #[arg(long, value_name = "DIR")]
     pub worktree: Option<std::path::PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct HookBridgeArgs {
+    #[arg(long, value_name = "PATH")]
+    pub socket: std::path::PathBuf,
 }
 
 #[derive(clap::Args, Debug)]

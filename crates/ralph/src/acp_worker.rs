@@ -31,13 +31,13 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
     check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
     probed_version, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
-    session_error, session_saved, stop_problem, sweeps_permissions, task_prompt, turn_outcome,
-    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessState,
-    HeadlessWorker, Inbound, PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope,
-    SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent,
-    WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE,
-    CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
-    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    session_error, stop_problem, sweeps_permissions, turn_outcome, AcpAgent, AcpCall,
+    BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
+    PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
+    Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
+    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
+    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
+    CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -53,6 +53,7 @@ mod cursor_worker;
 mod model;
 mod permissions;
 mod print;
+mod print_hooks;
 mod turns;
 mod verify;
 
@@ -72,10 +73,6 @@ fn cursor_permissions() -> PermissionMode {
 }
 
 pub enum Launch {
-    Fresh {
-        path: PathBuf,
-        template: SessionRecord,
-    },
     Resume {
         record: SessionRecord,
         store: PathBuf,
@@ -89,7 +86,6 @@ pub struct Slot<'a> {
     pub results: &'a Path,
     pub markers: WorkerMarkers,
     pub starting: &'a Mutex<HashMap<String, u32>>,
-    pub warning: Option<&'a Path>,
 }
 
 struct Opening {
@@ -108,24 +104,6 @@ async fn open_session(
     loads_session: bool,
 ) -> Result<SessionId, String> {
     match &opening.launch {
-        Launch::Fresh { .. } => {
-            let created = connection
-                .send_request(
-                    NewSessionRequest::new(opening.cwd.clone())
-                        .mcp_servers(vec![opening.server.clone()]),
-                )
-                .block_task()
-                .await
-                .map_err(|e| session_error(&opening.agent, i32::from(e.code), &e.message))?;
-            model::apply_model(
-                connection,
-                opening,
-                &created.session_id,
-                created.config_options.as_deref(),
-            )
-            .await?;
-            Ok(created.session_id)
-        }
         Launch::Resume { record, store } => {
             if let Resume::Skip(message) = resume_decision(
                 &opening.agent,
@@ -189,10 +167,9 @@ impl AcpWorker {
             results,
             markers,
             starting,
-            warning: warning_file,
         } = slot;
         if let Some(warning) = agent_version_warning(&agent, &request.inbox) {
-            report_start_warning(warning, warning_file);
+            report_start_warning(warning, None);
         }
         let mut command = Command::new(agent.command);
         let store = request.inbox.parent().ok_or("worker inbox has no store")?;
@@ -250,11 +227,8 @@ impl AcpWorker {
         let (stop_tx, stop_rx) = oneshot::channel();
         worker.stop = Some(stop_tx);
         let cwd = request.worktree.clone();
-        let prompt = task_prompt(&request.task);
         let loading = Arc::new(AtomicBool::new(false));
         let replaying = Arc::clone(&loading);
-        let updated = Arc::new(AtomicBool::new(false));
-        let touched = Arc::clone(&updated);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
         let changes = request
@@ -310,9 +284,6 @@ impl AcpWorker {
                     )
                     .on_receive_notification(
                         async move |notification: SessionNotification, _cx| {
-                            if !replaying.load(Ordering::SeqCst) {
-                                touched.store(true, Ordering::SeqCst);
-                            }
                             let update =
                                 serde_json::to_value(&notification.update).unwrap_or_default();
                             for event in decode_update(&update, now_secs()) {
@@ -354,19 +325,6 @@ impl AcpWorker {
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
                             Ok(session) => {
-                                let pending = match &opening.launch {
-                                    Launch::Fresh { path, template } => {
-                                        prompts.unbounded_send(Inbound::Prompt(prompt)).ok();
-                                        Some((
-                                            path.clone(),
-                                            SessionRecord {
-                                                session_id: session.to_string(),
-                                                ..template.clone()
-                                            },
-                                        ))
-                                    }
-                                    Launch::Resume { .. } => None,
-                                };
                                 opened.store(true, Ordering::SeqCst);
                                 ready_tx.send(Ok(())).ok();
                                 let turns = Turns {
@@ -382,8 +340,6 @@ impl AcpWorker {
                                     changes,
                                     heartbeat: in_turns,
                                     events,
-                                    updated,
-                                    pending,
                                 };
                                 run_turns(&connection, &turns, prompt_rx, stop_rx).await;
                             }
@@ -752,26 +708,8 @@ impl CursorHost {
             self.fail(id, "worker is already running");
             return;
         }
-        let launch = Launch::Fresh {
-            path: files.session.clone(),
-            template: SessionRecord {
-                session_id: String::new(),
-                cwd: request.worktree.clone(),
-                inbox: request.inbox.clone(),
-                store: Some(self.store_dir.clone()),
-                model: request.model.clone(),
-                effort: None,
-                permissions: None,
-            },
-        };
-        let started = match cursor_permissions() {
-            PermissionMode::Yolo => {
-                PrintWorker::start(id, &request, &files, None).map(CursorWorker::Print)
-            }
-            PermissionMode::Ask => self
-                .launch(id, &request, launch)
-                .map(|worker| CursorWorker::Acp(Box::new(worker))),
-        };
+        let started = PrintWorker::start(id, &request, &files, None, cursor_permissions())
+            .map(CursorWorker::Print);
         match started {
             Ok(worker) => self.adopt(id, worker),
             Err(message) => {
@@ -787,8 +725,6 @@ impl CursorHost {
         request: &SpawnRequest,
         launch: Launch,
     ) -> Result<AcpWorker, String> {
-        let files = self.files(id);
-        let warning = matches!(launch, Launch::Fresh { .. }).then_some(files.warning.as_path());
         let started = AcpWorker::start(
             request,
             launch,
@@ -799,7 +735,6 @@ impl CursorHost {
                 results: &self.files(id).interrupt_result,
                 markers: WorkerMarkers::new(&self.store_dir, id),
                 starting: &self.starting,
-                warning,
             },
         );
         locked(&self.starting).remove(id);
@@ -863,8 +798,8 @@ impl CursorHost {
             ),
             model: record.model.clone(),
         };
-        let started = if record.permissions == Some(PermissionMode::Yolo) {
-            PrintWorker::start(id, &request, &files, Some(&record)).map(CursorWorker::Print)
+        let started = if let Some(mode) = record.permissions {
+            PrintWorker::start(id, &request, &files, Some(&record), mode).map(CursorWorker::Print)
         } else {
             let launch = Launch::Resume {
                 record,

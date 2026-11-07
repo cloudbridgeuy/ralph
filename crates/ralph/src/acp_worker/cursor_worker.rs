@@ -64,6 +64,9 @@ impl CursorWorker {
                 worker.closed();
                 Ok(())
             }
+            (Self::Print(worker), WorkerCommand::AnswerPermission(answer)) => {
+                worker.answer(&answer)
+            }
             (Self::Print(_), _) => Err(format!(
                 "{} -p workers run with --force and ask no permission",
                 CURSOR_AGENT.command

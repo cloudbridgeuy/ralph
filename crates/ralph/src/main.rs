@@ -23,6 +23,7 @@ mod diff_theme;
 pub mod formatting;
 mod frame;
 pub mod highlight;
+mod hook_bridge;
 mod inbox_alert;
 mod inbox_post;
 mod input_theme;
@@ -113,6 +114,7 @@ fn main() -> ExitCode {
         Commands::Mermaid(args) => execute_mermaid(args),
         Commands::WorkerMcp(args) => execute_worker_mcp(args),
         Commands::WorkerStopHook(args) => execute_worker_stop_hook(args),
+        Commands::HookBridge(args) => hook_bridge::execute_hook_bridge(args),
     };
 
     match result {

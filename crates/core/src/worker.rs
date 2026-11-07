@@ -13,6 +13,7 @@ mod claude_headless_verify;
 mod claude_launch;
 mod claude_verify;
 mod codex;
+mod cursor_hooks;
 mod cursor_model;
 mod cursor_print;
 mod cursor_reclaim;
@@ -52,6 +53,7 @@ pub use claude_headless_verify::*;
 pub use claude_launch::*;
 pub use claude_verify::*;
 pub use codex::*;
+pub use cursor_hooks::*;
 pub use cursor_model::{
     cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,
     restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,
