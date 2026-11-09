@@ -50,7 +50,7 @@ impl Source {
     fn of(line: &UsageLine) -> Option<Source> {
         match line.kind.as_str() {
             "turn" | "ping" => Some(Source::Main),
-            "nap" | "merge" => Some(Source::Nap),
+            "nap" | "merge" | "tag" => Some(Source::Nap),
             "ask" => Some(Source::Ask),
             "subagent" => Some(Source::Subagent),
             "worker" => Some(Source::Worker(

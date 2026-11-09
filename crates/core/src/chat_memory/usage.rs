@@ -33,6 +33,7 @@ pub enum CallSite {
         trigger: Trigger,
     },
     Nap,
+    Tag,
     Worker {
         worker_id: String,
         turn_id: Option<u64>,
@@ -48,6 +49,7 @@ pub enum CallSite {
 enum LedgerRole {
     Main,
     Nap,
+    Tag,
     Merge,
     Worker,
     Ask,
@@ -59,6 +61,7 @@ impl CallSite {
         match self {
             CallSite::Turn { .. } | CallSite::Ping => LedgerRole::Main,
             CallSite::Nap => LedgerRole::Nap,
+            CallSite::Tag => LedgerRole::Tag,
             CallSite::Merge => LedgerRole::Merge,
             CallSite::Worker { .. } => LedgerRole::Worker,
             CallSite::Ask => LedgerRole::Ask,

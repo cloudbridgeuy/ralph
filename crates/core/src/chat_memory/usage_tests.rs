@@ -474,6 +474,7 @@ fn every_call_site_serializes_its_role() {
         (CallSite::Ping, "ping", "main"),
         (CallSite::Nap, "nap", "nap"),
         (CallSite::Merge, "merge", "merge"),
+        (CallSite::Tag, "tag", "tag"),
         (worker, "worker", "worker"),
         (CallSite::Ask, "ask", "ask"),
     ];
