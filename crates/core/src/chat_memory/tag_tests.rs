@@ -274,3 +274,16 @@ fn entry_numbers_in_a_partial_reply_are_not_an_outage() {
     );
     assert_eq!(kind(true, "", r#"[{"n":503}]"#), FailureKind::Timeout);
 }
+
+#[test]
+fn an_api_error_line_after_a_text_block_is_an_outage() {
+    let kind = |response: &str| tag_failure_kind(false, 1, "", response);
+    let joined = "[{\"n\":503,\"rule\":true}]\n\nAPI Error: 529 overloaded";
+    assert_eq!(kind(joined), FailureKind::Outage);
+    assert_eq!(
+        kind("done\n\n  api error: 503 unavailable"),
+        FailureKind::Outage
+    );
+    assert_eq!(kind("[{\"n\":503}]"), FailureKind::Refusal);
+    assert_eq!(kind("see the API Error: 529 note"), FailureKind::Refusal);
+}

@@ -230,22 +230,19 @@ pub fn retake(len_now: usize, seen: usize) -> bool {
 
 /// Classifies a failed tag call. The shared classifier reads bare codes such as
 /// "503" anywhere in its text, and a tag reply is full of entry numbers, so
-/// the reply text counts only when it is itself an API error message.
+/// the reply text counts only through its lines that are API error messages.
 pub fn tag_failure_kind(
     timed_out: bool,
     exit_code: i32,
     stderr: &str,
     response: &str,
 ) -> FailureKind {
-    let from_response = response
-        .trim_start()
-        .to_lowercase()
-        .starts_with("api error");
-    let text = if from_response {
-        format!("{stderr}\n{response}")
-    } else {
-        stderr.to_string()
-    };
+    let errors: Vec<&str> = response
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.to_lowercase().starts_with("api error"))
+        .collect();
+    let text = format!("{stderr}\n{}", errors.join("\n"));
     classify(&FailureInput {
         timed_out,
         exit_code,
