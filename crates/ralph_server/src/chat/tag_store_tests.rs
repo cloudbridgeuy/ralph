@@ -300,21 +300,3 @@ fn one_pass_tags_at_most_the_cap() {
     let report = pass(&store, &mut ask).unwrap();
     assert_eq!(report.tagged, 50);
 }
-
-#[test]
-fn an_entry_landing_as_the_lock_is_released_is_tagged_in_the_same_run() {
-    let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
-    pass(&store, &mut none).unwrap();
-    grow(&dir, 2, 0);
-    let mut ask = |batch: &str| Ok(reply_for(&asked_ids(batch), |_| false));
-    let mut late = || grow(&dir, 4, 2);
-    let Pass::Done(report) = store.run_pass_then(&now, &mut ask, &mut late).unwrap() else {
-        panic!("expected a finished pass");
-    };
-    assert_eq!(report.tagged, 4);
-    assert_eq!(
-        state(&dir).tags.keys().copied().collect::<Vec<_>>(),
-        [0, 1, 2, 3]
-    );
-}

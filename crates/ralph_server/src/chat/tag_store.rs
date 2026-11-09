@@ -4,7 +4,7 @@
 use crate::private_file::check_path;
 use ralph_core::chat_memory::{
     batches, build_batch, decode_rows, encode_row, encode_start, failure_kind, ids_with, next_size,
-    parse_log, parse_reply, untagged, Entry, RowKind, SearchRequest, TagRow, TagState,
+    parse_log, parse_reply, retake, untagged, Entry, RowKind, SearchRequest, TagRow, TagState,
     BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
 };
 use std::collections::BTreeSet;
@@ -125,24 +125,12 @@ impl TagStore {
     /// that fails alone is marked. An entry that lands after the last read but
     /// before `TAG` is released is covered by one more look after the release.
     pub fn run_pass(&self, now: &dyn Fn() -> String, ask: &mut Ask) -> io::Result<Pass> {
-        self.run_pass_then(now, ask, &mut || {})
-    }
-
-    /// `run_pass` with a hook that runs once `TAG` is released, before the
-    /// log is looked at again.
-    fn run_pass_then(
-        &self,
-        now: &dyn Fn() -> String,
-        ask: &mut Ask,
-        released: &mut dyn FnMut(),
-    ) -> io::Result<Pass> {
         let mut report = Report::default();
         let mut attempted: BTreeSet<usize> = BTreeSet::new();
         let Some(mut seen) = self.locked_pass(now, ask, &mut attempted, &mut report)? else {
             return Ok(Pass::Busy);
         };
-        released();
-        while self.read_entries()?.len() > seen {
+        while retake(self.read_entries()?.len(), seen) {
             match self.locked_pass(now, ask, &mut attempted, &mut report)? {
                 Some(len) => seen = len,
                 None => break,

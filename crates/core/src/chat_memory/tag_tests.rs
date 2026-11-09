@@ -241,3 +241,10 @@ fn an_outage_or_a_stop_is_an_error_and_other_failures_are_empty_replies() {
     assert_eq!(reply(None, false, 0), Ok("[]".to_string()));
     assert_eq!(tag_reply(None, false, 0, None), Ok(String::new()));
 }
+
+#[test]
+fn a_pass_retakes_the_lock_only_when_the_log_grew_after_its_last_read() {
+    assert!(retake(5, 4));
+    assert!(!retake(4, 4));
+    assert!(!retake(3, 4));
+}

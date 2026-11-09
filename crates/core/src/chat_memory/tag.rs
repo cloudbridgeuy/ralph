@@ -222,6 +222,12 @@ fn reply_text(exit_code: i32, response: Option<&str>) -> String {
     }
 }
 
+/// Whether a pass that last read `seen` entries must take `TAG` again: the
+/// log grew after that read and before the lock was released.
+pub fn retake(len_now: usize, seen: usize) -> bool {
+    len_now > seen
+}
+
 /// The reply of a finished call, or an error when the call did not really
 /// finish. `failure` is how the final attempt was classified; an outage that
 /// outlasted the backoff, or a process told to stop, ends the pass with no
