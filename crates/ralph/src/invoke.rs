@@ -101,14 +101,15 @@ pub fn build_memory_command(home: Option<&Path>, config_dir: Option<&Path>) -> S
     memory_command("haiku", "", home, config_dir)
 }
 
-/// The tag pass: Haiku 5.5 with the labelling prompt as the whole system prompt.
+/// The tag pass: `model` with the labelling prompt as the whole system prompt.
 pub fn build_tag_command(
+    model: &str,
     system_prompt: &str,
     home: Option<&Path>,
     config_dir: Option<&Path>,
 ) -> String {
     let system = format!("--system-prompt {} ", shell_quote(system_prompt));
-    memory_command("claude-haiku-5-5", &system, home, config_dir)
+    memory_command(model, &system, home, config_dir)
 }
 
 fn memory_command(
@@ -227,7 +228,12 @@ mod tests {
 
     #[test]
     fn tagger_is_haiku_5_5_with_the_prompt_as_the_system_prompt_and_no_tools() {
-        let cmd = build_tag_command("Label 'x'.", Some(Path::new("/home/u")), None);
+        let cmd = build_tag_command(
+            "claude-haiku-5-5",
+            "Label 'x'.",
+            Some(Path::new("/home/u")),
+            None,
+        );
         assert!(cmd.contains("--model claude-haiku-5-5 "), "{cmd}");
         assert!(
             cmd.contains(r#"--system-prompt 'Label '"'"'x'"'"'.'"#),
@@ -238,6 +244,13 @@ mod tests {
         assert!(cmd.contains("--mcp-config '{\"mcpServers\":{}}' --strict-mcp-config"));
         assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
         assert!(!cmd.contains("--resume"));
+    }
+
+    #[test]
+    fn tagger_uses_the_model_it_is_given() {
+        let cmd = build_tag_command("model-x", "p", None, None);
+        assert!(cmd.contains("--model model-x "), "{cmd}");
+        assert!(!cmd.contains("haiku"), "{cmd}");
     }
 
     #[test]

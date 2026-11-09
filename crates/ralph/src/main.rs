@@ -450,6 +450,7 @@ fn tag_command() -> String {
         .claude
         .config_dir;
     invoke::build_tag_command(
+        ralph_core::chat_memory::TAG_MODEL,
         ralph_core::chat_memory::TAG_PROMPT,
         dirs::home_dir().as_deref(),
         config_dir.as_deref(),
