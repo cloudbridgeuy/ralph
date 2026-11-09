@@ -17,6 +17,13 @@ impl CursorWorker {
         }
     }
 
+    pub(super) fn exited(&self) -> bool {
+        match self {
+            Self::Acp(worker) => worker.exit_seen,
+            Self::Print(_) => false,
+        }
+    }
+
     pub(super) fn apply_events(&mut self) {
         match self {
             Self::Acp(worker) => worker.apply_events(),

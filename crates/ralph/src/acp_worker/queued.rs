@@ -2,6 +2,14 @@ use super::*;
 use crate::workers::headless::drain_queued;
 use ralph_core::worker::{QueuedFacts, QueuedOwner, QueuedWorker};
 
+fn queued_worker(exited: Option<bool>) -> QueuedWorker {
+    match exited {
+        None => QueuedWorker::Absent,
+        Some(true) => QueuedWorker::Exited,
+        Some(false) => QueuedWorker::Alive,
+    }
+}
+
 fn deliver_to(
     worker: Option<&mut CursorWorker>,
     deliver: fn(&mut CursorWorker, String, &str) -> Result<(), String>,
@@ -17,10 +25,7 @@ fn deliver_to(
 impl CursorHost {
     fn queued_facts(&self, id: &str) -> QueuedFacts {
         QueuedFacts {
-            worker: match self.workers().get(id) {
-                None => QueuedWorker::Absent,
-                Some(_) => QueuedWorker::Alive,
-            },
+            worker: queued_worker(self.workers().get(id).map(CursorWorker::exited)),
             starting: locked(&self.starting).contains_key(id),
             owner: QueuedOwner::Missing,
         }
@@ -66,6 +71,13 @@ mod tests {
     #[test]
     fn a_worker_gone_at_delivery_is_an_error() {
         assert!(deliver_to(None, |_, _, _| Ok(()), "hello".to_string(), "0001").is_err());
+    }
+
+    #[test]
+    fn an_exited_worker_is_queued_as_exited() {
+        assert_eq!(queued_worker(Some(true)), QueuedWorker::Exited);
+        assert_eq!(queued_worker(Some(false)), QueuedWorker::Alive);
+        assert_eq!(queued_worker(None), QueuedWorker::Absent);
     }
 
     #[test]
