@@ -191,7 +191,7 @@ The splitting happens in `event_handler.rs` at both streaming sites (line proces
 
 ## Shared Markdown Skin
 
-`markdown.rs` owns terminal markdown styling. A `Palette` holds every color for one role (assistant or agent); `RoleTheme::palette` resolves it purely from the role default plus `[theme.<role>]` overrides and returns warnings. `MarkdownTheme` pairs the `Palette` with its `MadSkin` (`markdown_skin`). `StreamProcessor` builds the assistant `MarkdownTheme` from `ThemeConfig::palette()`; the chat shell builds the agent one for `/inbox`. `render_text_block` and `render_markdown` take a `MarkdownTheme`.
+`markdown.rs` owns terminal markdown styling. A `Palette` holds every color for one role (assistant or agent); the `RolePalette` trait's `palette` method on `RoleTheme` resolves it purely from the role default plus `[theme.<role>]` overrides and returns warnings. `MarkdownTheme` pairs the `Palette` with its `MadSkin` (`markdown_skin`). `StreamProcessor` builds the assistant `MarkdownTheme` from `ThemeConfig::palette()`; the chat shell builds the agent one for `/inbox`. `render_text_block` and `render_markdown` take a `MarkdownTheme`.
 
 ## Table Enhancement
 

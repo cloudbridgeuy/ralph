@@ -7,12 +7,12 @@ This document provides comprehensive documentation for the `ralph ask` command, 
 | Component | File | Description |
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | AskArgs struct definition |
-| Permission mode | `crates/ralph/src/invoke.rs`, `crates/ralph/src/config.rs` | resolve_permission_mode(), AppConfig::ask_permission_mode() |
+| Permission mode | `crates/ralph_server/src/config/permissions.rs`, `crates/ralph_server/src/config.rs` | resolve_permission_mode(), AppConfig::ask_permission_mode() |
 | Shared engine | `crates/ralph/src/invoke.rs` | InvocationConfig, invoke(), command building |
 | Prompt source | `crates/ralph/src/prompt_source.rs` | classify_prompt_source(), read_from_source() |
 | Execution | `crates/ralph/src/main.rs` | execute_ask(), build_invocation_config(), resolve_ask_prompt() |
 | Summary | `crates/ralph/src/startup/display.rs` | display_ask_summary() |
-| Config | `crates/ralph/src/config.rs` | AppConfig with AskSection |
+| Config | `crates/ralph_server/src/config.rs` | AppConfig with AskSection |
 
 ## Purpose
 
