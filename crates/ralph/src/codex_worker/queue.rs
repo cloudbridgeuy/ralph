@@ -1,5 +1,5 @@
 use super::*;
-use crate::workers::headless::{drain_queued, queued_owner};
+use crate::workers::headless::{deliver_to_worker, drain_queued, queued_owner};
 use ralph_core::worker::{QueuedFacts, QueuedWorker};
 
 impl CodexHost {
@@ -27,9 +27,10 @@ impl CodexHost {
         drain_queued(
             dir(&files),
             || self.queued_facts(id),
-            |text, name| match locked(&self.workers).get_mut(id) {
-                Some(worker) => deliver(worker, text, name),
-                None => Ok(()),
+            |text, name| {
+                deliver_to_worker(locked(&self.workers).get_mut(id), "codex", |worker| {
+                    deliver(worker, text, name)
+                })
             },
             |entry| lost(&files, entry),
         );

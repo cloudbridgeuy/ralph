@@ -2,7 +2,9 @@ use super::{post_prompt, record_usage, OpencodeHost, Session, Target};
 use crate::cursor_owner::{now_secs, take_answer, write_file, write_interrupt_result};
 use crate::warn::warn;
 use crate::worker_events::Events;
-use crate::workers::headless::{drain_queued, mark_prompt_lost, report_interrupt_gone, Heartbeat};
+use crate::workers::headless::{
+    deliver_to_worker, drain_queued, mark_prompt_lost, report_interrupt_gone, Heartbeat,
+};
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     create_session_body, keeps_interrupt_request, opencode_session_id, request_stale, task_prompt,
@@ -27,6 +29,13 @@ pub(crate) fn entry_ids(store_dir: &Path, dir: &str) -> Vec<String> {
         .unwrap_or_default();
     ids.sort();
     ids
+}
+
+fn session_gone_at_send(reported_outcome: Option<bool>) -> Result<(), String> {
+    match reported_outcome {
+        Some(_) => Ok(()),
+        None => Err("worker has no running opencode session".to_string()),
+    }
 }
 
 impl OpencodeHost {
@@ -179,29 +188,32 @@ impl OpencodeHost {
             dir,
             || self.queued_facts(id),
             |text, name| {
-                let Some((session_id, target)) = self.find(id) else {
-                    return Ok(());
-                };
-                if interrupt {
-                    let was_in_flight = self
-                        .sessions()
-                        .get(&session_id)
-                        .is_some_and(|session| session.turn.in_flight);
-                    self.request_interrupt(&session_id, true);
-                    let outcome = self.interrupt(id, &session_id, &text);
-                    if !keeps_interrupt_request(outcome, was_in_flight) {
-                        self.request_interrupt(&session_id, false);
+                deliver_to_worker(self.find(id), "opencode", |(session_id, target)| {
+                    let mut outcome = None;
+                    if interrupt {
+                        let was_in_flight = self
+                            .sessions()
+                            .get(&session_id)
+                            .is_some_and(|session| session.turn.in_flight);
+                        self.request_interrupt(&session_id, true);
+                        outcome = self.interrupt(id, &session_id, &text);
+                        if !keeps_interrupt_request(outcome, was_in_flight) {
+                            self.request_interrupt(&session_id, false);
+                        }
+                        if let Some(cancelled) = outcome {
+                            write_interrupt_result(&files.interrupt_result, name, cancelled.into());
+                        }
                     }
-                    if let Some(cancelled) = outcome {
-                        write_interrupt_result(&files.interrupt_result, name, cancelled.into());
+                    let prompted = self.sessions().get_mut(&session_id).map(|session| {
+                        session.turn.prompted(&text);
+                        session.heartbeat.set_state(ActivityState::Running);
+                    });
+                    if prompted.is_none() {
+                        return session_gone_at_send(outcome);
                     }
-                }
-                if let Some(session) = self.sessions().get_mut(&session_id) {
-                    session.turn.prompted(&text);
-                    session.heartbeat.set_state(ActivityState::Running);
-                }
-                self.send(&session_id, &target, &text);
-                Ok(())
+                    self.send(&session_id, &target, &text);
+                    Ok(())
+                })
             },
             |entry| {
                 if interrupt {
@@ -323,6 +335,20 @@ impl OpencodeHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_gone_at_send_with_no_reported_outcome_is_an_error() {
+        assert_eq!(
+            session_gone_at_send(None),
+            Err("worker has no running opencode session".to_string())
+        );
+    }
+
+    #[test]
+    fn a_session_gone_at_send_keeps_a_reported_interrupt_outcome() {
+        assert_eq!(session_gone_at_send(Some(true)), Ok(()));
+        assert_eq!(session_gone_at_send(Some(false)), Ok(()));
+    }
 
     #[test]
     fn entry_ids_list_sorted_visible_entries() {

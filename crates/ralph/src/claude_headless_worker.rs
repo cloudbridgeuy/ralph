@@ -18,7 +18,8 @@ use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::worker_usage::{record_session_or_warn, UsageSession, UsageTarget};
 use crate::workers::headless::{
-    drain_queued, mark_prompt_lost, queued_owner, report_interrupt_gone, HeadlessHost, Heartbeat,
+    deliver_to_worker, drain_queued, mark_prompt_lost, queued_owner, report_interrupt_gone,
+    HeadlessHost, Heartbeat,
 };
 use ralph_core::claude_leftovers::{
     claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
@@ -646,10 +647,10 @@ impl ClaudeHeadlessHost {
             || self.queued_facts(id),
             |text, name| {
                 let worker = locked(&self.workers).get(id).map(|w| Arc::clone(&w.shared));
-                if let Some(shared) = worker {
+                deliver_to_worker(worker, "claude", |shared| {
                     deliver(&shared, text, name.to_string());
-                }
-                Ok(())
+                    Ok(())
+                })
             },
             |entry| lost(&files, entry),
         );
