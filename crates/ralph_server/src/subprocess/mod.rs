@@ -1,4 +1,5 @@
 use std::io;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 
@@ -40,4 +41,15 @@ pub fn spawn_detached(command: &mut Command) -> io::Result<()> {
         .spawn()?;
     thread::spawn(move || child.wait().ok());
     Ok(())
+}
+
+pub fn detach_from_terminal(command: &mut Command) {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 }

@@ -7,6 +7,7 @@ use ralph_core::chat_cell::{
     shell_stdin, strip_shell_preamble, Bang, Cell, CellLimits, CellRun, SavedState, ShellKind,
 };
 use ralph_core::chat_cell_stream::{ends_at_line_start, PreambleGate, Sanitizer};
+use ralph_server::subprocess::detach_from_terminal;
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -176,17 +177,6 @@ fn spawn_read(
     echo: Option<Echo>,
 ) -> thread::JoinHandle<Vec<u8>> {
     thread::spawn(move || read_all(source, echo))
-}
-
-pub(crate) fn detach_from_terminal(command: &mut Command) {
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
 }
 
 fn route_to_snapshot_fd(command: &mut Command, write_fd: i32) {

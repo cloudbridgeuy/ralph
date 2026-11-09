@@ -2,7 +2,6 @@ use super::{
     branch_exists, check, clear_marker, exclude, git_value, guard, locate_worktree, repo_root,
     resolve_base_branch, run, Workers,
 };
-use crate::chat::cell::detach_from_terminal;
 use crate::chat::memory::usage_path;
 use crate::chat::read_claude_config;
 use crate::config::AppConfig;
@@ -30,6 +29,7 @@ use ralph_core::worker::{
     FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
     WORKERS_DIR,
 };
+use ralph_server::subprocess::detach_from_terminal;
 use serde_json::{Map, Value};
 use std::fs;
 use std::io;
