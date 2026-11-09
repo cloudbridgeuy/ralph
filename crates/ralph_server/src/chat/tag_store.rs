@@ -120,23 +120,58 @@ impl TagStore {
     }
 
     /// One pass: write the start row on first use, then tag the untagged entries
-    /// (at most `MAX_PER_PASS`), re-reading the log between rounds. A call that never finished ends the pass and writes
-    /// no failure row; only an entry that fails alone is marked.
+    /// (at most `MAX_PER_PASS`), re-reading the log between rounds. A call that
+    /// never finished ends the pass and writes no failure row; only an entry
+    /// that fails alone is marked. An entry that lands after the last read but
+    /// before `TAG` is released is covered by one more look after the release.
     pub fn run_pass(&self, now: &dyn Fn() -> String, ask: &mut Ask) -> io::Result<Pass> {
+        self.run_pass_then(now, ask, &mut || {})
+    }
+
+    /// `run_pass` with a hook that runs once `TAG` is released, before the
+    /// log is looked at again.
+    fn run_pass_then(
+        &self,
+        now: &dyn Fn() -> String,
+        ask: &mut Ask,
+        released: &mut dyn FnMut(),
+    ) -> io::Result<Pass> {
+        let mut report = Report::default();
+        let mut attempted: BTreeSet<usize> = BTreeSet::new();
+        let Some(mut seen) = self.locked_pass(now, ask, &mut attempted, &mut report)? else {
+            return Ok(Pass::Busy);
+        };
+        released();
+        while self.read_entries()?.len() > seen {
+            match self.locked_pass(now, ask, &mut attempted, &mut report)? {
+                Some(len) => seen = len,
+                None => break,
+            }
+        }
+        Ok(Pass::Done(report))
+    }
+
+    /// Holds `TAG` for the rounds. Returns the log length of the last read, or
+    /// `None` when another pass holds the lock.
+    fn locked_pass(
+        &self,
+        now: &dyn Fn() -> String,
+        ask: &mut Ask,
+        attempted: &mut BTreeSet<usize>,
+        report: &mut Report,
+    ) -> io::Result<Option<usize>> {
         let lock = self.open_lock("TAG")?;
         match lock.try_lock() {
             Ok(()) => {}
-            Err(TryLockError::WouldBlock) => return Ok(Pass::Busy),
+            Err(TryLockError::WouldBlock) => return Ok(None),
             Err(TryLockError::Error(e)) => return Err(e),
         }
-        let mut report = Report::default();
-        let mut attempted: BTreeSet<usize> = BTreeSet::new();
         loop {
             let entries = self.read_entries()?;
             let state = self.read_state()?;
             if state.start.is_none() {
                 self.append(&encode_start(entries.len(), &now()).map_err(io::Error::other)?)?;
-                return Ok(Pass::Done(report));
+                return Ok(Some(entries.len()));
             }
             let room = MAX_PER_PASS.saturating_sub(attempted.len());
             let todo: Vec<usize> = untagged(&entries, &state)
@@ -145,7 +180,7 @@ impl TagStore {
                 .take(BATCH_LADDER[0].min(room))
                 .collect();
             if todo.is_empty() {
-                return Ok(Pass::Done(report));
+                return Ok(Some(entries.len()));
             }
             attempted.extend(&todo);
             let round = Round {
@@ -154,7 +189,7 @@ impl TagStore {
                 state: &state,
                 now,
             };
-            let failed = round.resolve(&todo, BATCH_LADDER[0], ask, &mut report)?;
+            let failed = round.resolve(&todo, BATCH_LADDER[0], ask, report)?;
             if !failed.is_empty() {
                 round.mark_failed(&failed)?;
                 report.failed += failed.len();
@@ -230,7 +265,7 @@ impl Round<'_> {
 
 /// Adds the tagged ids to a search request that filters by tag. Other
 /// requests pass through without reading `tags.jsonl`.
-pub(crate) fn with_tags(dir: &Path, request: &SearchRequest) -> io::Result<SearchRequest> {
+pub fn with_tags(dir: &Path, request: &SearchRequest) -> io::Result<SearchRequest> {
     match request.tag() {
         Some(label) => {
             let state = TagStore::new(dir.to_path_buf()).read_state()?;
