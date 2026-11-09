@@ -1,6 +1,6 @@
 mod proxy;
 mod shutdown;
-pub(crate) mod store;
+pub(crate) use ralph_server::wire::store;
 
 use crate::cli::{
     WireArgs, WireCommand, WireDiffArgs, WireLsArgs, WireProvider, WireSessionsArgs, WireShowArgs,

@@ -12,17 +12,15 @@ pub enum ToStore {
     Stop,
 }
 
-/// Facts from `symlink_metadata`, so a symlink is not reported as a directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StoreRootFacts {
+struct StoreRootFacts {
     pub is_symlink: bool,
     pub is_dir: bool,
     pub uid: u32,
     pub mode: u32,
 }
 
-/// `None` when this user owns a non-symlink directory whose mode is `0700`.
-pub fn store_root_error(path: &Path, facts: &StoreRootFacts, uid: u32) -> Option<String> {
+fn store_root_error(path: &Path, facts: &StoreRootFacts, uid: u32) -> Option<String> {
     let path = path.display().to_string();
     if facts.is_symlink {
         return Some(format!(
@@ -74,8 +72,7 @@ fn create_root(root: &Path) -> io::Result<()> {
     }
 }
 
-pub(crate) fn current_uid() -> u32 {
-    // SAFETY: geteuid only reads the process credential and cannot fail.
+pub fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 

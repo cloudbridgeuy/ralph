@@ -1654,6 +1654,7 @@ dependencies = [
 name = "ralph_server"
 version = "0.4.0"
 dependencies = [
+ "chrono",
  "dirs",
  "libc",
  "ralph_core",
