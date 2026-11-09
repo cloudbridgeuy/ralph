@@ -9,15 +9,13 @@ use std::time::{Duration, Instant};
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum TimedOutput {
+pub enum TimedOutput {
     Finished { success: bool, stdout: Vec<u8> },
     TimedOut,
     Failed(String),
 }
 
-/// Runs the command in its own process group with null stdin and stderr and
-/// kills the group when it does not finish within the limit.
-pub(crate) fn timed_output(command: &mut Command, limit: Duration) -> TimedOutput {
+pub fn timed_output(command: &mut Command, limit: Duration) -> TimedOutput {
     let deadline = Instant::now() + limit;
     let spawned = command
         .stdin(Stdio::null())

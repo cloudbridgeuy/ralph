@@ -5,4 +5,5 @@
 pub mod ledger;
 pub mod paths;
 pub mod private_file;
+pub mod subprocess;
 pub mod wire;

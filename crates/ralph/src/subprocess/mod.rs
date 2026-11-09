@@ -13,43 +13,22 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 
 mod gate;
-mod groups;
 mod session;
 mod spinner;
-mod timed;
 mod timeout;
 mod types;
 
 // Re-export public API
 pub use gate::OutputGate;
-pub(crate) use groups::{kill_registered_groups, register_group, unregister_group, Registered};
+pub(crate) use ralph_server::subprocess::{
+    kill_process_group, kill_registered_groups, register_group, signal_group, timed_output,
+    unregister_group, TimedOutput,
+};
 pub use session::Session;
 pub use spinner::{
     invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,
 };
-pub(crate) use timed::{timed_output, TimedOutput};
 pub use types::{recorded, StreamingSubprocessResult, SubprocessError};
-
-/// Kill a subprocess and its entire process group.
-///
-/// Uses `libc::killpg` to send SIGKILL to the process group,
-/// ensuring grandchild processes (e.g., `claude` spawned by `sh -c`)
-/// are also terminated.
-pub(crate) fn kill_process_group(child: &mut Child) {
-    signal_group(child);
-    // Wait to clean up zombie
-    let _ = child.wait();
-}
-
-/// Sends SIGKILL to the child's process group. Call it only before the child
-/// is reaped: until then the child (or its zombie) holds the pid, so the
-/// group id cannot belong to another process.
-pub(crate) fn signal_group(child: &Child) {
-    let pid = child.id() as libc::pid_t;
-    // Safety: killpg sends a signal to a process group. The pid is valid
-    // because we just obtained it from the child process.
-    unsafe { libc::killpg(pid, libc::SIGKILL) };
-}
 
 /// Reports whether the child has exited, without reaping it. An error also
 /// counts as exited, so callers stop waiting and reap.

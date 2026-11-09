@@ -28,18 +28,16 @@ fn with_groups<T>(apply: impl FnOnce(&mut GroupSet) -> T) -> T {
     apply(&mut GROUPS.lock().unwrap_or_else(PoisonError::into_inner))
 }
 
-pub(crate) fn register_group(group: u32) {
+pub fn register_group(group: u32) {
     with_groups(|groups| groups.register(group));
 }
 
-pub(crate) fn unregister_group(group: u32) {
+pub fn unregister_group(group: u32) {
     with_groups(|groups| groups.unregister(group));
 }
 
-pub(crate) fn kill_registered_groups() {
+pub fn kill_registered_groups() {
     for group in with_groups(|groups| groups.snapshot()) {
-        // Safety: killpg only sends a signal to the registered process group.
-        // A group that already ended makes it fail with ESRCH, which is ignored.
         unsafe { libc::killpg(group as libc::pid_t, libc::SIGKILL) };
     }
 }
