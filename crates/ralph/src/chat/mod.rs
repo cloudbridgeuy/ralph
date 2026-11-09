@@ -1,7 +1,7 @@
 mod bounded;
 pub(crate) mod cell;
 mod changes;
-mod check;
+pub(crate) use ralph_server::chat::check;
 pub(crate) use ralph_server::chat::claim;
 mod config;
 #[cfg(test)]
@@ -19,7 +19,7 @@ mod keys;
 pub(crate) mod mcp;
 pub(crate) use ralph_server::chat::memory;
 mod monitor;
-mod name;
+pub(crate) use ralph_server::chat::name;
 mod nudge;
 mod prompt;
 mod queue;
@@ -28,7 +28,7 @@ mod route;
 mod schedule;
 mod schedule_worker;
 mod session;
-mod skills;
+pub(crate) use ralph_server::chat::skills;
 mod stall;
 pub(crate) use skills::{read_claude_config, SKILLS_ENV};
 mod send_it;

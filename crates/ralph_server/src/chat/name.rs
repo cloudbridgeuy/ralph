@@ -1,12 +1,12 @@
 use ralph_core::chat_name::{git_root_candidates, resolve_name, NameSources};
 use std::path::{Path, PathBuf};
 
-pub(super) fn resolved_home() -> Option<PathBuf> {
+pub fn resolved_home() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     Some(home.canonicalize().unwrap_or(home))
 }
 
-pub(super) fn session_name(
+pub fn session_name(
     flag: Option<&str>,
     config: Option<&str>,
     cwd: &Path,

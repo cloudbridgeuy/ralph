@@ -7,9 +7,9 @@ use ralph_core::claude_leftovers::claude_json;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
-pub(crate) const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
+pub const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 
-pub(super) fn write_mcp_config(
+pub fn write_mcp_config(
     store_dir: &Path,
     socket: &Path,
     exe: &Path,
@@ -25,7 +25,7 @@ pub(super) fn write_mcp_config(
     Ok(build_mcp_args(&path, &config))
 }
 
-pub(super) fn env_skills() -> Vec<PathBuf> {
+pub fn env_skills() -> Vec<PathBuf> {
     std::env::var_os(SKILLS_ENV)
         .map(|value| {
             std::env::split_paths(&value)
@@ -35,7 +35,7 @@ pub(super) fn env_skills() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-pub(super) fn usable_skills(dirs: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
+pub fn usable_skills(dirs: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
     dirs.into_iter()
         .filter_map(|dir| {
             let dir = std::path::absolute(&dir).unwrap_or(dir);
@@ -53,7 +53,7 @@ pub(super) fn usable_skills(dirs: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
         .collect()
 }
 
-pub(super) fn link_skills(found: Vec<(PathBuf, String)>) -> Vec<ChatSkill> {
+pub fn link_skills(found: Vec<(PathBuf, String)>) -> Vec<ChatSkill> {
     let dirs: Vec<PathBuf> = found.iter().map(|(dir, _)| dir.clone()).collect();
     let plan = plan_links(&dirs);
     for dir in &plan.dropped {
@@ -79,7 +79,7 @@ pub(super) fn link_skills(found: Vec<(PathBuf, String)>) -> Vec<ChatSkill> {
         .collect()
 }
 
-pub(super) fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<tempfile::TempDir>> {
+pub fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<tempfile::TempDir>> {
     if skills.is_empty() {
         return Ok(None);
     }
@@ -98,7 +98,7 @@ pub(super) fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<temp
     Ok(Some(plugin))
 }
 
-pub(crate) fn read_claude_config(config_dir: Option<&Path>) -> serde_json::Value {
+pub fn read_claude_config(config_dir: Option<&Path>) -> serde_json::Value {
     let Some(path) = dirs::home_dir().map(|home| claude_json(config_dir, &home)) else {
         return serde_json::json!({});
     };
