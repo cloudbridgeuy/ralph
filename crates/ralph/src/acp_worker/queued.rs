@@ -1,5 +1,5 @@
 use super::*;
-use crate::workers::headless::drain_queued;
+use crate::workers::headless::{deliver_to_worker, drain_queued};
 use ralph_core::worker::{QueuedFacts, QueuedOwner, QueuedWorker};
 
 fn queued_worker(exited: Option<bool>) -> QueuedWorker {
@@ -7,18 +7,6 @@ fn queued_worker(exited: Option<bool>) -> QueuedWorker {
         None => QueuedWorker::Absent,
         Some(true) => QueuedWorker::Exited,
         Some(false) => QueuedWorker::Alive,
-    }
-}
-
-fn deliver_to(
-    worker: Option<&mut CursorWorker>,
-    deliver: fn(&mut CursorWorker, String, &str) -> Result<(), String>,
-    text: String,
-    name: &str,
-) -> Result<(), String> {
-    match worker {
-        Some(worker) => deliver(worker, text, name),
-        None => Err(format!("worker has no running {} agent", CURSOR_AGENT.name)),
     }
 }
 
@@ -42,7 +30,11 @@ impl CursorHost {
         drain_queued(
             dir(&files),
             || self.queued_facts(id),
-            |text, name| deliver_to(self.workers().get_mut(id), deliver, text, name),
+            |text, name| {
+                deliver_to_worker(self.workers().get_mut(id), CURSOR_AGENT.name, |worker| {
+                    deliver(worker, text, name)
+                })
+            },
             |entry| lost(&files, entry),
         );
     }
@@ -66,11 +58,6 @@ mod tests {
     fn queued(dir: &Path, name: &str) -> PathBuf {
         write_file(&dir.join(name), "hello").unwrap();
         dir.join(name)
-    }
-
-    #[test]
-    fn a_worker_gone_at_delivery_is_an_error() {
-        assert!(deliver_to(None, |_, _, _| Ok(()), "hello".to_string(), "0001").is_err());
     }
 
     #[test]

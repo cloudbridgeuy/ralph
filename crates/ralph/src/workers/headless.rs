@@ -113,6 +113,17 @@ pub(crate) fn report_interrupt_gone(results: &Path, entry: &Path) {
     fs::remove_file(entry).ok();
 }
 
+pub(crate) fn deliver_to_worker<W>(
+    worker: Option<W>,
+    agent: &str,
+    deliver: impl FnOnce(W) -> Result<(), String>,
+) -> Result<(), String> {
+    worker.map_or_else(
+        || Err(format!("worker has no running {agent} agent")),
+        deliver,
+    )
+}
+
 pub(crate) fn drain_queued(
     dir: &Path,
     facts: impl Fn() -> QueuedFacts,
@@ -270,6 +281,62 @@ mod tests {
         );
         assert!(!entry.exists());
         assert!(dir.path().join(lost_marker_name("0001")).exists());
+    }
+
+    fn alive() -> QueuedFacts {
+        QueuedFacts {
+            worker: ralph_core::worker::QueuedWorker::Alive,
+            starting: false,
+            owner: QueuedOwner::Mine,
+        }
+    }
+
+    fn no_worker() -> Result<(), String> {
+        deliver_to_worker(None::<()>, "codex", |()| Ok(()))
+    }
+
+    #[test]
+    fn a_missing_worker_is_an_error() {
+        assert_eq!(
+            no_worker(),
+            Err("worker has no running codex agent".to_string())
+        );
+    }
+
+    #[test]
+    fn a_present_worker_returns_what_delivery_returned() {
+        let failed = deliver_to_worker(Some(()), "codex", |()| Err("closed".to_string()));
+        assert_eq!(failed, Err("closed".to_string()));
+    }
+
+    #[test]
+    fn a_prompt_whose_worker_is_gone_at_delivery_leaves_a_lost_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().join("0001");
+        write_file(&entry, "hello").unwrap();
+        drain_queued(dir.path(), alive, |_, _| no_worker(), mark_prompt_lost);
+        assert!(!entry.exists());
+        assert!(dir.path().join(lost_marker_name("0001")).exists());
+    }
+
+    #[test]
+    fn an_interrupt_whose_worker_is_gone_at_delivery_reports_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = dir.path().join("interrupt");
+        let results = dir.path().join("result");
+        let entry = queue.join("0001");
+        write_file(&entry, "stop").unwrap();
+        drain_queued(
+            &queue,
+            alive,
+            |_, _| no_worker(),
+            |entry| report_interrupt_gone(&results, entry),
+        );
+        assert!(!entry.exists());
+        assert_eq!(
+            fs::read_to_string(results.join("0001")).ok().as_deref(),
+            Some("gone")
+        );
     }
 
     #[test]
