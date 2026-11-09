@@ -211,6 +211,16 @@ pub struct Parsed {
     pub missing: Vec<usize>,
 }
 
+/// The text to parse from a finished call. A non-zero exit or an empty reply is
+/// an empty reply, so its entries count as missing and the ladder handles them;
+/// only a call that never finished (outage, timeout) is an error.
+pub fn reply_text(exit_code: i32, response: Option<&str>) -> String {
+    match response.map(str::trim) {
+        Some(text) if exit_code == 0 => text.to_string(),
+        _ => String::new(),
+    }
+}
+
 /// Keeps each asked entry's first complete row; anything else is missing.
 pub fn parse_reply(reply: &str, asked: &[usize]) -> Parsed {
     let rows: Vec<Value> = reply

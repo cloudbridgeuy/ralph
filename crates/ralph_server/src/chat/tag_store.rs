@@ -120,7 +120,7 @@ impl TagStore {
     }
 
     /// One pass: write the start row on first use, then tag the untagged entries
-    /// (at most `MAX_PER_PASS`), re-reading the log between rounds. A model error ends the pass and writes
+    /// (at most `MAX_PER_PASS`), re-reading the log between rounds. A call that never finished ends the pass and writes
     /// no failure row; only an entry that fails alone is marked.
     pub fn run_pass(&self, now: &dyn Fn() -> String, ask: &mut Ask) -> io::Result<Pass> {
         let lock = self.open_lock("TAG")?;

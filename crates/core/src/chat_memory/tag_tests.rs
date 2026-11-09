@@ -217,3 +217,11 @@ fn a_later_start_row_moves_the_start_point() {
     let text = [encode_start(2, "t").unwrap(), encode_start(9, "t").unwrap()].concat();
     assert_eq!(state(&text).start, Some(9));
 }
+
+#[test]
+fn a_finished_call_gives_its_reply_and_a_failed_one_gives_nothing() {
+    assert_eq!(reply_text(0, Some("  [{\"n\":1}]\n")), "[{\"n\":1}]");
+    assert_eq!(reply_text(0, None), "");
+    assert_eq!(reply_text(0, Some("   ")), "");
+    assert_eq!(reply_text(1, Some("[{\"n\":1}]")), "");
+}

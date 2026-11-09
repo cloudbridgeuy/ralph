@@ -430,7 +430,8 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
     };
     let command = tag_command();
     let pass = store.run_pass(&now, &mut |batch| {
-        run_memory_command(&command, batch, &curator)
+        let (code, text) = run_memory_command(&command, batch, &curator)?;
+        Ok(ralph_core::chat_memory::reply_text(code, text.as_deref()))
     })?;
     if let chat::tag_store::Pass::Done(report) = pass {
         if report.failed > 0 {
@@ -493,10 +494,17 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
         .claude
         .config_dir;
     let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
-    run_memory_command(&command, prompt, curator)
+    let (code, response) = run_memory_command(&command, prompt, curator)?;
+    ralph_core::chat_memory::nap_summary(code, response.as_deref())
 }
 
-fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<String, String> {
+/// Runs one memory call. An error means the call never finished (outage or
+/// timeout); the exit code and reply text are left to the caller.
+fn run_memory_command(
+    command: &str,
+    prompt: &str,
+    curator: &Curator,
+) -> Result<(i32, Option<String>), String> {
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     let stdin = invoke::prompt_stdin(prompt);
     let outcome = backoff::retry_on_outage(
@@ -534,7 +542,7 @@ fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<
     }
     let result = outcome.map_err(|e| e.to_string())?;
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
-    ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
+    Ok((result.exit_code, response))
 }
 
 #[cfg(test)]
