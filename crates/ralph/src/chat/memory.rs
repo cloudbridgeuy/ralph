@@ -2,7 +2,6 @@ use crate::chat::claim::ChatClaim;
 use crate::chat::index_files::{
     open_archive, save_stale, sweep_index_temps, update_index, FileSource,
 };
-use crate::chat::thread::Reach;
 use crate::private_file::check_path;
 use crate::warn::warn;
 use ralph_core::chat_memory::{
@@ -13,7 +12,7 @@ use ralph_core::chat_memory::{
 };
 use ralph_core::chat_process::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::chat_suggestion::SuggestionRecord;
-use ralph_core::chat_thread::{label_item, label_lines};
+use ralph_core::chat_thread::{label_item, label_lines, ThreadName};
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -68,6 +67,12 @@ pub fn read_usage_since(path: &Path, tail: UsageTail, run: &str) -> io::Result<U
 pub fn load_usage(path: &Path) -> io::Result<String> {
     let bytes = read_optional(path)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Reach<'a> {
+    pub limit: Option<usize>,
+    pub label: Option<&'a ThreadName>,
 }
 
 pub struct Store {

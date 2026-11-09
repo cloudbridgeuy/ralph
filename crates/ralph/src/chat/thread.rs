@@ -26,11 +26,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Reach<'a> {
-    pub limit: Option<usize>,
-    pub label: Option<&'a ThreadName>,
-}
+pub use crate::chat::memory::Reach;
 
 pub struct Fork {
     pub main: Store,
