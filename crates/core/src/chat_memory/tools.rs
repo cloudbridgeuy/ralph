@@ -107,7 +107,7 @@ fn memory_tool_definitions() -> Value {
                 "properties": {
                     "query": {"type": "string", "description": "Words, \"quoted phrases\", and identifiers. A message needs every phrase and at least one word or phrase."},
                     "role": {"type": "string", "enum": ["user", "assistant", "worker"], "description": "Only messages from this role."},
-                    "tag": {"type": "string", "enum": ["rule", "decision", "approval"], "description": "Only messages tagged this way. Tags exist only for messages written after tagging began."},
+                    "tag": {"type": "string", "enum": ["rule", "approval"], "description": "Only messages tagged this way. Tags exist only for messages written after tagging began."},
                     "since": {"type": "string", "description": "Earliest time: an RFC 3339 timestamp or a date like 2026-10-20."},
                     "until": {"type": "string", "description": "Latest time: an RFC 3339 timestamp or a date like 2026-10-20 (the whole day counts)."},
                     "limit": {"type": "integer", "description": "Hits per page, 1 to 50. Default 20."},

@@ -22,15 +22,13 @@ const SKIP_AFTER_FAILURES: u32 = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Flags {
     pub rule: bool,
-    pub decision: bool,
     pub approval: bool,
 }
 
-/// One of the three labels a search can filter on.
+/// One of the two labels a search can filter on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Label {
     Rule,
-    Decision,
     Approval,
 }
 
@@ -38,18 +36,14 @@ impl Label {
     pub fn parse(s: &str) -> Result<Label, String> {
         match s.trim() {
             "rule" => Ok(Label::Rule),
-            "decision" => Ok(Label::Decision),
             "approval" => Ok(Label::Approval),
-            other => Err(format!(
-                "'{other}' is not a tag. Use rule, decision, or approval."
-            )),
+            other => Err(format!("'{other}' is not a tag. Use rule or approval.")),
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Label::Rule => "rule",
-            Label::Decision => "decision",
             Label::Approval => "approval",
         }
     }
@@ -57,7 +51,6 @@ impl Label {
     fn set_in(self, flags: Flags) -> bool {
         match self {
             Label::Rule => flags.rule,
-            Label::Decision => flags.decision,
             Label::Approval => flags.approval,
         }
     }
@@ -107,7 +100,6 @@ pub fn encode_row(row: &TagRow) -> Result<String, String> {
     let mut value = json!({"v": ROW_VERSION, "n": row.n});
     if let (Some(map), RowKind::Tagged(flags)) = (value.as_object_mut(), &row.kind) {
         map.insert("rule".into(), flags.rule.into());
-        map.insert("decision".into(), flags.decision.into());
         map.insert("approval".into(), flags.approval.into());
     }
     if let Some(map) = value.as_object_mut() {
@@ -160,7 +152,6 @@ fn flags_of(value: &Value) -> Option<Flags> {
     let flag = |key: &str| value.get(key).and_then(Value::as_bool);
     Some(Flags {
         rule: flag("rule")?,
-        decision: flag("decision")?,
         approval: flag("approval")?,
     })
 }

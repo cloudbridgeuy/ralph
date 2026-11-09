@@ -503,23 +503,23 @@ fn tag_filter_keeps_only_entries_with_the_tag() {
 #[test]
 fn tag_filter_without_tagged_entries_finds_nothing() {
     let entries = [user(0, "ship it")];
-    let out = run_tagged(&entries, json!({"query": "ship", "tag": "decision"}), &[]).unwrap();
+    let out = run_tagged(&entries, json!({"query": "ship", "tag": "approval"}), &[]).unwrap();
     assert!(out.starts_with("no hits"), "{out}");
 }
 
 #[test]
 fn tag_must_be_a_known_label() {
     let err = parse_search_args(&json!({"query": "ship", "tag": "risk"})).unwrap_err();
-    assert!(err.contains("rule, decision"), "{err}");
+    assert!(err.contains("rule or approval"), "{err}");
 }
 
 #[test]
 fn a_tag_changes_the_cursor_fingerprint() {
     let plain = parse_search_args(&json!({"query": "ship"})).unwrap();
     let rule = parse_search_args(&json!({"query": "ship", "tag": "rule"})).unwrap();
-    let decision = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap();
+    let approval = parse_search_args(&json!({"query": "ship", "tag": "approval"})).unwrap();
     assert_ne!(plain.fingerprint, rule.fingerprint);
-    assert_ne!(rule.fingerprint, decision.fingerprint);
+    assert_ne!(rule.fingerprint, approval.fingerprint);
 }
 
 #[test]
@@ -535,4 +535,10 @@ fn history_search_passes_the_tag_and_other_tools_refuse_it() {
     assert_eq!(call.tool, crate::chat_memory::Tool::Search(want));
     let err = crate::chat_memory::history_tool("read", "3", None, Some("rule")).unwrap_err();
     assert!(err.contains("Only search"), "{err}");
+}
+
+#[test]
+fn decision_is_not_a_tag_filter() {
+    let err = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap_err();
+    assert!(err.contains("rule or approval"), "{err}");
 }

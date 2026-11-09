@@ -5,12 +5,8 @@ use crate::retry::FailureKind;
 
 const MODEL: &str = "claude-haiku-5-5";
 
-fn flags(rule: bool, decision: bool, approval: bool) -> Flags {
-    Flags {
-        rule,
-        decision,
-        approval,
-    }
+fn flags(rule: bool, approval: bool) -> Flags {
+    Flags { rule, approval }
 }
 
 fn state(text: &str) -> TagState {
@@ -40,19 +36,16 @@ fn start_row_is_the_first_row_and_decodes() {
 
 #[test]
 fn tagged_row_round_trips() {
-    let line = row(3, &RowKind::Tagged(flags(true, false, true)));
+    let line = row(3, &RowKind::Tagged(flags(true, true)));
     assert!(line.ends_with('\n'));
     let value: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(value["v"], 1);
     assert_eq!(value["n"], 3);
     assert_eq!(value["rule"], true);
-    assert_eq!(value["decision"], false);
+    assert_eq!(value["approval"], true);
     assert_eq!(value["model"], MODEL);
     assert_eq!(value["prompt"], PROMPT_VERSION);
-    assert_eq!(
-        state(&line).tags.get(&3).copied(),
-        Some(flags(true, false, true))
-    );
+    assert_eq!(state(&line).tags.get(&3).copied(), Some(flags(true, true)));
 }
 
 #[test]
@@ -72,11 +65,11 @@ fn torn_and_unknown_lines_are_ignored_and_the_last_tag_wins() {
     let text = format!(
         "{}{}{}garbage\n{{\"v\":1,\"n\":9,\"rule\":tr",
         encode_start(0, "t").unwrap(),
-        row(1, &RowKind::Tagged(flags(false, false, false))),
-        row(1, &RowKind::Tagged(flags(false, true, false))),
+        row(1, &RowKind::Tagged(flags(false, false))),
+        row(1, &RowKind::Tagged(flags(false, true))),
     );
     let s = state(&text);
-    assert_eq!(s.tags.get(&1).copied(), Some(flags(false, true, false)));
+    assert_eq!(s.tags.get(&1).copied(), Some(flags(false, true)));
     assert_eq!(s.tags.len(), 1);
 }
 
@@ -87,7 +80,7 @@ fn untagged_covers_start_to_end_and_skips_done_and_corrupt() {
     let s = state(&format!(
         "{}{}{}",
         encode_start(2, "t").unwrap(),
-        row(3, &RowKind::Tagged(flags(false, false, false))),
+        row(3, &RowKind::Tagged(flags(false, false))),
         row(4, &RowKind::Skipped),
     ));
     assert_eq!(untagged(&entries, &s), vec![2, 5, 7]);
@@ -121,23 +114,20 @@ fn first_entry_has_no_context() {
 
 #[test]
 fn reply_parses_with_fences_and_prose_around_the_array() {
-    let reply = "Here:\n```json\n[{\"n\":4,\"rule\":true,\"decision\":false,\"approval\":false},{\"n\":5,\"rule\":false,\"decision\":false,\"approval\":true}]\n```";
+    let reply = "Here:\n```json\n[{\"n\":4,\"rule\":true,\"approval\":false},{\"n\":5,\"rule\":false,\"approval\":true}]\n```";
     let parsed = parse_reply(reply, &[4, 5]);
     assert_eq!(
         parsed.tagged,
-        vec![
-            (4, flags(true, false, false)),
-            (5, flags(false, false, true))
-        ]
+        vec![(4, flags(true, false)), (5, flags(false, true))]
     );
     assert!(parsed.missing.is_empty());
 }
 
 #[test]
 fn reply_keeps_valid_rows_and_reports_missing_wrong_and_malformed_ones() {
-    let reply = "[{\"n\":4,\"rule\":true,\"decision\":false,\"approval\":false},{\"n\":5,\"rule\":true},{\"n\":99,\"rule\":true,\"decision\":true,\"approval\":true}]";
+    let reply = "[{\"n\":4,\"rule\":true,\"approval\":false},{\"n\":5,\"rule\":true},{\"n\":99,\"rule\":true,\"approval\":true}]";
     let parsed = parse_reply(reply, &[4, 5, 6]);
-    assert_eq!(parsed.tagged, vec![(4, flags(true, false, false))]);
+    assert_eq!(parsed.tagged, vec![(4, flags(true, false))]);
     assert_eq!(parsed.missing, vec![5, 6]);
 }
 
@@ -150,7 +140,7 @@ fn reply_that_is_not_an_array_misses_every_entry() {
 
 #[test]
 fn duplicate_reply_rows_count_once() {
-    let one = "{\"n\":4,\"rule\":true,\"decision\":false,\"approval\":false}";
+    let one = "{\"n\":4,\"rule\":true,\"approval\":false}";
     let parsed = parse_reply(&format!("[{one},{one}]"), &[4]);
     assert_eq!(parsed.tagged.len(), 1);
 }
@@ -189,8 +179,8 @@ fn failures_never_count_as_tags() {
 }
 
 #[test]
-fn prompt_asks_three_labels_only() {
-    assert!(TAG_PROMPT.contains("{\"n\":<id>,\"rule\":bool,\"decision\":bool,\"approval\":bool}"));
+fn prompt_asks_two_labels_only() {
+    assert!(TAG_PROMPT.contains("{\"n\":<id>,\"rule\":bool,\"approval\":bool}"));
     assert!(!TAG_PROMPT.contains("risk:") && !TAG_PROMPT.contains("topic_break"));
 }
 
@@ -198,18 +188,19 @@ fn prompt_asks_three_labels_only() {
 fn labels_parse_and_select_flagged_ids() {
     assert_eq!(Label::parse("rule"), Ok(Label::Rule));
     assert_eq!(Label::parse(" approval "), Ok(Label::Approval));
-    assert!(Label::parse("risk").unwrap_err().contains("rule, decision"));
+    assert!(Label::parse("risk")
+        .unwrap_err()
+        .contains("rule or approval"));
     let text = [
-        row(3, &RowKind::Tagged(flags(true, false, false))),
-        row(4, &RowKind::Tagged(flags(false, true, true))),
-        row(5, &RowKind::Tagged(flags(false, false, false))),
+        row(3, &RowKind::Tagged(flags(true, false))),
+        row(4, &RowKind::Tagged(flags(false, true))),
+        row(5, &RowKind::Tagged(flags(false, false))),
         row(6, &RowKind::Failed),
     ]
     .concat();
     let state = state(&text);
     let ids = |label| ids_with(&state, label).into_iter().collect::<Vec<_>>();
     assert_eq!(ids(Label::Rule), vec![3]);
-    assert_eq!(ids(Label::Decision), vec![4]);
     assert_eq!(ids(Label::Approval), vec![4]);
 }
 
@@ -286,4 +277,22 @@ fn an_api_error_line_after_a_text_block_is_an_outage() {
     );
     assert_eq!(kind("[{\"n\":503}]"), FailureKind::Refusal);
     assert_eq!(kind("see the API Error: 529 note"), FailureKind::Refusal);
+}
+
+#[test]
+fn decision_is_not_a_label() {
+    assert!(Label::parse("decision").is_err());
+    assert!(!TAG_PROMPT.contains("decision"));
+    let line = row(3, &RowKind::Tagged(flags(true, true)));
+    assert!(!line.contains("decision"), "{line}");
+}
+
+#[test]
+fn reply_with_only_rule_and_approval_parses_and_a_decision_key_is_ignored() {
+    let reply = "[{\"n\":4,\"rule\":true,\"approval\":false},{\"n\":5,\"rule\":false,\"decision\":true,\"approval\":true}]";
+    let parsed = parse_reply(reply, &[4, 5]);
+    assert_eq!(parsed.tagged.len(), 2);
+    assert!(parsed.tagged[0].1.rule && !parsed.tagged[0].1.approval);
+    assert!(!parsed.tagged[1].1.rule && parsed.tagged[1].1.approval);
+    assert!(parsed.missing.is_empty());
 }

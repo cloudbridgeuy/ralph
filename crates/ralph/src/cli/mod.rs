@@ -578,7 +578,7 @@ pub struct HistoryArgs {
     #[arg(
         long,
         value_name = "LABEL",
-        help = "Search only messages tagged rule, decision or approval"
+        help = "Search only messages tagged rule or approval"
     )]
     pub tag: Option<String>,
 

@@ -46,12 +46,7 @@ fn asked_ids(batch: &str) -> Vec<usize> {
 fn reply_for(ids: &[usize], rule: impl Fn(usize) -> bool) -> String {
     let rows: Vec<String> = ids
         .iter()
-        .map(|n| {
-            format!(
-                "{{\"n\":{n},\"rule\":{},\"decision\":false,\"approval\":false}}",
-                rule(*n)
-            )
-        })
+        .map(|n| format!("{{\"n\":{n},\"rule\":{},\"approval\":false}}", rule(*n)))
         .collect();
     format!("[{}]", rows.join(","))
 }
@@ -251,7 +246,7 @@ fn roles_in_the_batch_come_from_the_log() {
 #[test]
 fn with_tags_reads_the_ids_for_a_tagged_request_only() {
     let dir = tempfile::tempdir().unwrap();
-    let row = r#"{"v":1,"n":4,"rule":true,"decision":false,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
+    let row = r#"{"v":1,"n":4,"rule":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
     fs::write(dir.path().join(TAGS_FILE), format!("{row}\n")).unwrap();
     let tagged = ralph_core::chat_memory::parse_search_args(
         &serde_json::json!({"query": "x", "tag": "rule"}),
