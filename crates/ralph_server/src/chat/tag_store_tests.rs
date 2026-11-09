@@ -247,3 +247,19 @@ fn roles_in_the_batch_come_from_the_log() {
     let entries = store.read_entries().unwrap();
     assert_eq!(entries[0].role, Role::User);
 }
+
+#[test]
+fn with_tags_reads_the_ids_for_a_tagged_request_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let row = r#"{"v":1,"n":4,"rule":true,"decision":false,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
+    fs::write(dir.path().join(TAGS_FILE), format!("{row}\n")).unwrap();
+    let tagged = ralph_core::chat_memory::parse_search_args(
+        &serde_json::json!({"query": "x", "tag": "rule"}),
+    )
+    .unwrap();
+    let expected = tagged.clone().with_tag_ids(BTreeSet::from([4]));
+    assert_eq!(with_tags(dir.path(), &tagged).unwrap(), expected);
+    let plain =
+        ralph_core::chat_memory::parse_search_args(&serde_json::json!({"query": "x"})).unwrap();
+    assert_eq!(with_tags(dir.path(), &plain).unwrap(), plain);
+}

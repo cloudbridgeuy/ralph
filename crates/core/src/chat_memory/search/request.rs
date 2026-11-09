@@ -1,9 +1,10 @@
 use super::query::Query;
 use crate::chat_memory::index::fnv1a;
-use crate::chat_memory::{Entry, Role};
+use crate::chat_memory::{Entry, Label, Role};
 use crate::mcp::string_arg;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 pub const DEFAULT_LIMIT: usize = 20;
 pub const MAX_LIMIT: usize = 50;
@@ -13,6 +14,19 @@ pub struct SearchCursor {
     pub(super) offset: usize,
     pub(super) count: usize,
     pub(super) fingerprint: u64,
+}
+
+impl SearchRequest {
+    /// Gives a tagged request the ids that carry its tag. Until then a tagged
+    /// request matches nothing.
+    pub fn with_tag_ids(mut self, ids: BTreeSet<usize>) -> SearchRequest {
+        self.tag_ids = Some(ids);
+        self
+    }
+
+    pub fn tag(&self) -> Option<Label> {
+        self.tag
+    }
 }
 
 impl SearchCursor {
@@ -45,6 +59,8 @@ pub struct SearchRequest {
     pub(super) text: String,
     pub(super) query: Query,
     role: Option<Role>,
+    tag: Option<Label>,
+    tag_ids: Option<BTreeSet<usize>>,
     since: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
     pub(super) limit: usize,
@@ -113,9 +129,11 @@ fn parse_limit(args: &Value) -> Result<usize, String> {
 fn fingerprint(query: &Query, request: &SearchRequest) -> u64 {
     let part = |bound: Option<DateTime<Utc>>| bound.map(|b| b.to_rfc3339()).unwrap_or_default();
     let role = request.role.map_or("", Role::as_str);
+    let tag = request.tag.map_or("", Label::as_str);
     let key = [
         query.normalized(),
         role.to_string(),
+        tag.to_string(),
         part(request.since),
         part(request.before),
         request.limit.to_string(),
@@ -131,6 +149,8 @@ pub fn parse_search_args(args: &Value) -> Result<SearchRequest, String> {
         text,
         query,
         role: optional_str(args, "role")?.map(parse_role).transpose()?,
+        tag: optional_str(args, "tag")?.map(Label::parse).transpose()?,
+        tag_ids: None,
         since: optional_str(args, "since")?
             .map(|s| parse_edge(s, Edge::Since))
             .transpose()?,
@@ -170,8 +190,16 @@ pub(super) fn check_fingerprint(request: &SearchRequest) -> Result<(), String> {
     }
 }
 
-pub(super) fn passes(request: &SearchRequest, entry: &Entry) -> bool {
+pub(super) fn passes(request: &SearchRequest, id: usize, entry: &Entry) -> bool {
     if request.role.is_some_and(|role| role != entry.role) {
+        return false;
+    }
+    if request.tag.is_some()
+        && !request
+            .tag_ids
+            .as_ref()
+            .is_some_and(|ids| ids.contains(&id))
+    {
         return false;
     }
     if request.since.is_none() && request.before.is_none() {

@@ -3,14 +3,14 @@
 
 use crate::private_file::check_path;
 use ralph_core::chat_memory::{
-    batches, build_batch, decode_rows, encode_row, encode_start, failure_kind, next_size,
-    parse_log, parse_reply, untagged, Entry, RowKind, TagRow, TagState, BATCH_LADDER,
-    PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
+    batches, build_batch, decode_rows, encode_row, encode_start, failure_kind, ids_with, next_size,
+    parse_log, parse_reply, untagged, Entry, RowKind, SearchRequest, TagRow, TagState,
+    BATCH_LADDER, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct TagStore {
     dir: PathBuf,
@@ -208,6 +208,18 @@ impl Round<'_> {
             .collect::<Result<String, String>>()
             .map_err(io::Error::other)?;
         self.store.append(&rows)
+    }
+}
+
+/// Adds the tagged ids to a search request that filters by tag. Other
+/// requests pass through without reading `tags.jsonl`.
+pub(crate) fn with_tags(dir: &Path, request: &SearchRequest) -> io::Result<SearchRequest> {
+    match request.tag() {
+        Some(label) => {
+            let state = TagStore::new(dir.to_path_buf()).read_state()?;
+            Ok(request.clone().with_tag_ids(ids_with(&state, label)))
+        }
+        None => Ok(request.clone()),
     }
 }
 

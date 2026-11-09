@@ -192,3 +192,22 @@ fn prompt_asks_three_labels_only() {
     assert!(TAG_PROMPT.contains("{\"n\":<id>,\"rule\":bool,\"decision\":bool,\"approval\":bool}"));
     assert!(!TAG_PROMPT.contains("risk:") && !TAG_PROMPT.contains("topic_break"));
 }
+
+#[test]
+fn labels_parse_and_select_flagged_ids() {
+    assert_eq!(Label::parse("rule"), Ok(Label::Rule));
+    assert_eq!(Label::parse(" approval "), Ok(Label::Approval));
+    assert!(Label::parse("risk").unwrap_err().contains("rule, decision"));
+    let text = [
+        row(3, &RowKind::Tagged(flags(true, false, false))),
+        row(4, &RowKind::Tagged(flags(false, true, true))),
+        row(5, &RowKind::Tagged(flags(false, false, false))),
+        row(6, &RowKind::Failed),
+    ]
+    .concat();
+    let state = state(&text);
+    let ids = |label| ids_with(&state, label).into_iter().collect::<Vec<_>>();
+    assert_eq!(ids(Label::Rule), vec![3]);
+    assert_eq!(ids(Label::Decision), vec![4]);
+    assert_eq!(ids(Label::Approval), vec![4]);
+}

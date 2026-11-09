@@ -576,6 +576,13 @@ pub struct HistoryArgs {
     pub cursor: Option<String>,
 
     #[arg(
+        long,
+        value_name = "LABEL",
+        help = "Search only messages tagged rule, decision or approval"
+    )]
+    pub tag: Option<String>,
+
+    #[arg(
         long = "in",
         value_name = "THREAD",
         help = "Recall or search in main or a named thread instead of this chat"

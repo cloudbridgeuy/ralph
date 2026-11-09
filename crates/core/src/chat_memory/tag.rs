@@ -23,6 +23,53 @@ pub struct Flags {
     pub approval: bool,
 }
 
+/// One of the three labels a search can filter on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Label {
+    Rule,
+    Decision,
+    Approval,
+}
+
+impl Label {
+    pub fn parse(s: &str) -> Result<Label, String> {
+        match s.trim() {
+            "rule" => Ok(Label::Rule),
+            "decision" => Ok(Label::Decision),
+            "approval" => Ok(Label::Approval),
+            other => Err(format!(
+                "'{other}' is not a tag. Use rule, decision, or approval."
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Label::Rule => "rule",
+            Label::Decision => "decision",
+            Label::Approval => "approval",
+        }
+    }
+
+    fn set_in(self, flags: Flags) -> bool {
+        match self {
+            Label::Rule => flags.rule,
+            Label::Decision => flags.decision,
+            Label::Approval => flags.approval,
+        }
+    }
+}
+
+/// Ids of the entries whose latest tag row carries `label`.
+pub fn ids_with(state: &TagState, label: Label) -> BTreeSet<usize> {
+    state
+        .tags
+        .iter()
+        .filter(|(_, flags)| label.set_in(**flags))
+        .map(|(id, _)| *id)
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowKind {
     Tagged(Flags),

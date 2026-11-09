@@ -51,6 +51,11 @@ fn run(entries: &[Entry], args: Value) -> Result<String, String> {
     search(&mut archive(entries), &request).unwrap()
 }
 
+fn run_tagged(entries: &[Entry], args: Value, tagged: &[usize]) -> Result<String, String> {
+    let request = parse_search_args(&args)?.with_tag_ids(tagged.iter().copied().collect());
+    search(&mut archive(entries), &request).unwrap()
+}
+
 fn ids(output: &str) -> Vec<usize> {
     output
         .lines()
@@ -480,4 +485,54 @@ fn evidence_recall_at_5_is_perfect_on_the_labeled_corpus() {
         })
         .count();
     assert_eq!(hits, labeled.len(), "recall@5 = {hits}/{}", labeled.len());
+}
+
+#[test]
+fn tag_filter_keeps_only_entries_with_the_tag() {
+    let entries = [
+        user(0, "ship it"),
+        user(1, "ship that"),
+        user(2, "ship both"),
+    ];
+    let out = run_tagged(&entries, json!({"query": "ship", "tag": "rule"}), &[0, 2]).unwrap();
+    let mut found = ids(&out);
+    found.sort();
+    assert_eq!(found, vec![0, 2]);
+}
+
+#[test]
+fn tag_filter_without_tagged_entries_finds_nothing() {
+    let entries = [user(0, "ship it")];
+    let out = run_tagged(&entries, json!({"query": "ship", "tag": "decision"}), &[]).unwrap();
+    assert!(out.starts_with("no hits"), "{out}");
+}
+
+#[test]
+fn tag_must_be_a_known_label() {
+    let err = parse_search_args(&json!({"query": "ship", "tag": "risk"})).unwrap_err();
+    assert!(err.contains("rule, decision"), "{err}");
+}
+
+#[test]
+fn a_tag_changes_the_cursor_fingerprint() {
+    let plain = parse_search_args(&json!({"query": "ship"})).unwrap();
+    let rule = parse_search_args(&json!({"query": "ship", "tag": "rule"})).unwrap();
+    let decision = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap();
+    assert_ne!(plain.fingerprint, rule.fingerprint);
+    assert_ne!(rule.fingerprint, decision.fingerprint);
+}
+
+#[test]
+fn the_search_schema_declares_the_tag_filter() {
+    let defs = crate::chat_memory::tool_definitions().to_string();
+    assert!(defs.contains("\"tag\""), "{defs}");
+}
+
+#[test]
+fn history_search_passes_the_tag_and_other_tools_refuse_it() {
+    let call = crate::chat_memory::history_tool("search", "ship", None, Some("rule")).unwrap();
+    let want = parse_search_args(&json!({"query": "ship", "tag": "rule"})).unwrap();
+    assert_eq!(call.tool, crate::chat_memory::Tool::Search(want));
+    let err = crate::chat_memory::history_tool("read", "3", None, Some("rule")).unwrap_err();
+    assert!(err.contains("Only search"), "{err}");
 }

@@ -574,3 +574,18 @@ fn test_cli_hook_bridge_takes_the_socket_in_argv() {
     assert_eq!(args.socket, std::path::PathBuf::from("/run/w1/hook.sock"));
     assert!(Cli::try_parse_from(["ralph", "hook-bridge"]).is_err());
 }
+
+#[test]
+fn test_cli_chat_history_search_takes_a_tag() {
+    let cli = Cli::try_parse_from([
+        "ralph", "chat", "history", "search", "ship", "--tag", "rule",
+    ])
+    .unwrap();
+    let Some(Commands::Chat(chat)) = cli.command else {
+        panic!("expected chat");
+    };
+    let Some(ChatCommand::History(history)) = chat.command else {
+        panic!("expected chat history");
+    };
+    assert_eq!(history.tag.as_deref(), Some("rule"));
+}
