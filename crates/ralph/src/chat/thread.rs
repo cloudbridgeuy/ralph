@@ -9,6 +9,8 @@ use crate::workers::{canonical_store, running_workers};
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallSite, Entry, MemoryCall, Tree, ViewSplit};
+pub use ralph_core::chat_thread::config_root;
+pub(super) use ralph_core::chat_thread::fork_of;
 use ralph_core::chat_thread::{
     digest_with, drop_message, empty_list_message, fork_check, fork_launch, guard_check,
     label_item, ls_counts, merge_prompt, merged_check, merged_report, open_check, pull_message,
@@ -83,15 +85,6 @@ impl Memory {
     }
 }
 
-pub(super) fn fork_of(store: &Path) -> Option<(PathBuf, ThreadName)> {
-    let threads = store.parent()?;
-    if threads.file_name()? != THREADS_DIR {
-        return None;
-    }
-    let name = ThreadName::parse(store.file_name()?.to_str()?).ok()?;
-    Some((threads.parent()?.to_path_buf(), name))
-}
-
 pub fn open_fork(store: &Path) -> Result<Option<Fork>, String> {
     let Some((main, name)) = fork_of(store) else {
         return Ok(None);
@@ -163,10 +156,6 @@ pub(super) fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
 pub(super) fn read_meta(dir: &Path) -> io::Result<ThreadMeta> {
     let text = fs::read_to_string(dir.join(THREAD_FILE))?;
     serde_json::from_str(&text).map_err(io::Error::other)
-}
-
-pub fn config_root(store: &Path) -> PathBuf {
-    fork_of(store).map_or_else(|| store.to_path_buf(), |(main, _)| main)
 }
 
 pub fn store_config_path(written: &Path) -> PathBuf {

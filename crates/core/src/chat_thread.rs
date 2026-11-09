@@ -1,4 +1,5 @@
 use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
+pub use crate::chat_thread_root::{config_root, fork_of};
 use crate::worker::{shell_quote, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
