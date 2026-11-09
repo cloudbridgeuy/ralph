@@ -1,6 +1,5 @@
-use crate::theme_slots::resolve_slots;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use crate::theme_slots::{resolve_slots, ResolveColors};
+pub use ralph_server::config::theme::DiffTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.diff";
@@ -72,14 +71,10 @@ pub(crate) fn test_colors() -> DiffColors {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct DiffTheme {
-    #[serde(flatten)]
-    pub colors: BTreeMap<String, String>,
-}
+impl ResolveColors for DiffTheme {
+    type Colors = DiffColors;
 
-impl DiffTheme {
-    pub fn resolve(&self) -> (DiffColors, Vec<String>) {
+    fn resolve(&self) -> (DiffColors, Vec<String>) {
         let (slots, warnings) = resolve_slots(SECTION, &DEFAULTS, &self.colors);
         (DiffColors::from_slots(&slots).unwrap_or_default(), warnings)
     }

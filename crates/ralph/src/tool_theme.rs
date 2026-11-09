@@ -1,7 +1,6 @@
 use crate::ansi::fg;
-use crate::theme_slots::resolve_slots;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use crate::theme_slots::{resolve_slots, ResolveColors};
+pub use ralph_server::config::theme::ToolTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.tools";
@@ -115,14 +114,10 @@ pub(crate) fn test_colors() -> ToolColors {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ToolTheme {
-    #[serde(flatten)]
-    pub colors: BTreeMap<String, String>,
-}
+impl ResolveColors for ToolTheme {
+    type Colors = ToolColors;
 
-impl ToolTheme {
-    pub fn resolve(&self) -> (ToolColors, Vec<String>) {
+    fn resolve(&self) -> (ToolColors, Vec<String>) {
         let (slots, warnings) = resolve_slots(SECTION, &DEFAULTS, &self.colors);
         (ToolColors::from_slots(&slots).unwrap_or_default(), warnings)
     }

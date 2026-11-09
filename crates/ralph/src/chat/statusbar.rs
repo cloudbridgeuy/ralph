@@ -1,6 +1,7 @@
 use crate::ansi::{bg, fg, BOLD, RESET};
 use crate::config::ChatSection;
 use crate::status_theme::{StatusColors, StatusTheme};
+use crate::theme_slots::ResolveColors;
 use ralph_core::chat_status::Status;
 use ralph_core::status_segments::{bar, Context, Separator, Span};
 

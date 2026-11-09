@@ -4,6 +4,12 @@ use termimad::crossterm::style::Color;
 
 pub type SlotTable = [(&'static str, Color)];
 
+pub trait ResolveColors {
+    type Colors;
+
+    fn resolve(&self) -> (Self::Colors, Vec<String>);
+}
+
 pub fn resolve_slots(
     section: &str,
     defaults: &SlotTable,

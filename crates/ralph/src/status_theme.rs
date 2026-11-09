@@ -1,7 +1,6 @@
-use crate::theme_slots::resolve_slots;
+use crate::theme_slots::{resolve_slots, ResolveColors};
 use ralph_core::status_segments::Shade;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+pub use ralph_server::config::theme::StatusTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.status";
@@ -64,14 +63,10 @@ impl StatusColors {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct StatusTheme {
-    #[serde(flatten)]
-    pub colors: BTreeMap<String, String>,
-}
+impl ResolveColors for StatusTheme {
+    type Colors = StatusColors;
 
-impl StatusTheme {
-    pub fn resolve(&self) -> (StatusColors, Vec<String>) {
+    fn resolve(&self) -> (StatusColors, Vec<String>) {
         let (colors, warnings) = resolve_slots(SECTION, &DEFAULTS, &self.colors);
         (StatusColors { colors }, warnings)
     }

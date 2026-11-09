@@ -5,9 +5,10 @@ use crate::input_theme::InputTheme;
 use crate::invoke::{
     resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
 };
-use crate::markdown::{RoleTheme, ThemeRole};
+use crate::markdown::{RolePalette, RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
+use crate::theme_slots::ResolveColors;
 use crate::tool_theme::ToolTheme;
 use crate::ui_theme::UiTheme;
 use crate::warn::warn_once;

@@ -22,8 +22,7 @@
 //! let rendered = renderer.render("# Hello\n\nThis is **bold** text.");
 //! ```
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+pub use ralph_server::config::theme::RoleTheme;
 use termimad::crossterm::style::{Attribute, Color};
 #[cfg(test)]
 use termimad::{CompoundStyle, FmtComposite, FmtLine};
@@ -154,16 +153,12 @@ pub fn parse_color(value: &str) -> Option<Color> {
     })
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct RoleTheme {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(flatten)]
-    pub colors: BTreeMap<String, String>,
+pub trait RolePalette {
+    fn palette(&self, role: ThemeRole) -> (Palette, Vec<String>);
 }
 
-impl RoleTheme {
-    pub fn palette(&self, role: ThemeRole) -> (Palette, Vec<String>) {
+impl RolePalette for RoleTheme {
+    fn palette(&self, role: ThemeRole) -> (Palette, Vec<String>) {
         let mut palette = role.base();
         let mut warnings = Vec::new();
         for (key, value) in &self.colors {

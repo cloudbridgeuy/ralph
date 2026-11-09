@@ -17,6 +17,7 @@ path = "src/lib.rs"
 dirs = { workspace = true }
 libc = { workspace = true }
 ralph_core = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

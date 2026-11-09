@@ -39,7 +39,8 @@ use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
 use crate::diff_theme::DiffColors;
-use crate::markdown::{Palette, ThemeRole};
+use crate::markdown::{Palette, RolePalette, ThemeRole};
+use crate::theme_slots::ResolveColors;
 use crate::tool_theme::ToolColors;
 use crate::ui_theme::UiColors;
 

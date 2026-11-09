@@ -1658,6 +1658,7 @@ dependencies = [
  "dirs",
  "libc",
  "ralph_core",
+ "serde",
  "serde_json",
  "tempfile",
 ]

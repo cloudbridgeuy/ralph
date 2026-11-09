@@ -1,7 +1,6 @@
-use crate::theme_slots::resolve_slots;
+use crate::theme_slots::{resolve_slots, ResolveColors};
+pub use ralph_server::config::theme::InputTheme;
 use reedline::Color as Nu;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.input";
@@ -21,14 +20,10 @@ impl Default for InputColors {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct InputTheme {
-    #[serde(flatten)]
-    pub colors: BTreeMap<String, String>,
-}
+impl ResolveColors for InputTheme {
+    type Colors = InputColors;
 
-impl InputTheme {
-    pub fn resolve(&self) -> (InputColors, Vec<String>) {
+    fn resolve(&self) -> (InputColors, Vec<String>) {
         let (colors, warnings) = resolve_slots(SECTION, &DEFAULTS, &self.colors);
         let suggestion = colors.first().copied().unwrap_or(SUGGESTION_DEFAULT);
         (InputColors { suggestion }, warnings)

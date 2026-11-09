@@ -1,6 +1,5 @@
-use crate::theme_slots::resolve_slots;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use crate::theme_slots::{resolve_slots, ResolveColors};
+pub use ralph_server::config::theme::UiTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.ui";
@@ -66,14 +65,10 @@ impl UiColors {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct UiTheme {
-    #[serde(flatten)]
-    pub colors: BTreeMap<String, String>,
-}
+impl ResolveColors for UiTheme {
+    type Colors = UiColors;
 
-impl UiTheme {
-    pub fn resolve(&self) -> (UiColors, Vec<String>) {
+    fn resolve(&self) -> (UiColors, Vec<String>) {
         let (slots, warnings) = resolve_slots(SECTION, &DEFAULTS, &self.colors);
         (UiColors::from_slots(&slots).unwrap_or_default(), warnings)
     }
