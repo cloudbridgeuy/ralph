@@ -14,18 +14,16 @@ name = "ralph_server"
 path = "src/lib.rs"
 
 [dependencies]
+chrono = { workspace = true }
 dirs = { workspace = true }
 libc = { workspace = true }
 ralph_core = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-chrono = { workspace = true }
-tempfile = { workspace = true }

@@ -2,6 +2,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
+pub mod chat;
 pub mod config;
 pub mod ledger;
 pub mod paths;

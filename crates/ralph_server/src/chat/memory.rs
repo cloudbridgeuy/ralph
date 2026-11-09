@@ -79,7 +79,7 @@ pub struct Store {
     dir: PathBuf,
 }
 
-pub(super) fn read_optional(path: &Path) -> io::Result<Vec<u8>> {
+pub fn read_optional(path: &Path) -> io::Result<Vec<u8>> {
     check_path(path)?;
     match fs::read(path) {
         Ok(bytes) => Ok(bytes),

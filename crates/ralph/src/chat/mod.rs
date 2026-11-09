@@ -2,7 +2,7 @@ mod bounded;
 pub(crate) mod cell;
 mod changes;
 mod check;
-mod claim;
+pub(crate) use ralph_server::chat::claim;
 mod config;
 #[cfg(test)]
 mod corrupt_tests;
@@ -12,11 +12,12 @@ mod editor;
 mod hold;
 mod hold_progress;
 mod inbox;
-mod index_files;
+#[cfg(test)]
+pub(crate) use ralph_server::chat::index_files;
 mod keepalive;
 mod keys;
 pub(crate) mod mcp;
-pub(crate) mod memory;
+pub(crate) use ralph_server::chat::memory;
 mod monitor;
 mod name;
 mod nudge;
