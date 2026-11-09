@@ -49,8 +49,8 @@ mod wire;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, MermaidArgs, VerifyAgent,
-    WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, ChatTagArgs, Cli, Commands, MermaidArgs,
+    VerifyAgent, WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
 use invoke::InvocationConfig;
 use ralph_core::worker::HarnessId;
@@ -90,6 +90,7 @@ fn main() -> ExitCode {
         Commands::Upgrade(args) => upgrade::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
+        Commands::ChatTag(args) => execute_chat_tag(args),
         Commands::Mermaid(args) => execute_mermaid(args),
         Commands::WorkerMcp(args) => execute_worker_mcp(args),
         Commands::WorkerStopHook(args) => execute_worker_stop_hook(args),
@@ -409,6 +410,50 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>> {
+    config::set_store_layer(&args.store);
+    if !config::AppConfig::load()
+        .unwrap_or_default()
+        .chat
+        .tag_entries
+    {
+        return Ok(());
+    }
+    let curator = Curator {
+        kind: ralph_core::chat_memory::CallSite::Tag,
+        store: &args.store,
+        run: args.run.clone(),
+        timeout: args.timeout,
+    };
+    let command = tag_command();
+    let store = chat::tag_store::TagStore::new(args.store.clone());
+    let now = || chrono::Utc::now().to_rfc3339();
+    let pass = store.run_pass(&now, &mut |batch| {
+        run_memory_command(&command, batch, &curator)
+    })?;
+    if let chat::tag_store::Pass::Done(report) = pass {
+        if report.failed > 0 {
+            warn::warn(format!(
+                "chat tagging could not tag {} entries this pass",
+                report.failed
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn tag_command() -> String {
+    let config_dir = config::AppConfig::load()
+        .unwrap_or_default()
+        .claude
+        .config_dir;
+    invoke::build_tag_command(
+        ralph_core::chat_memory::TAG_PROMPT,
+        dirs::home_dir().as_deref(),
+        config_dir.as_deref(),
+    )
+}
+
 pub(crate) struct Curator<'a> {
     pub kind: ralph_core::chat_memory::CallSite,
     pub store: &'a std::path::Path,
@@ -442,19 +487,23 @@ fn curator_rows(
 }
 
 pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {
-    let theme_config = highlight::ThemeConfig::from_config_and_env();
     let config_dir = config::AppConfig::load()
         .unwrap_or_default()
         .claude
         .config_dir;
     let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
+    run_memory_command(&command, prompt, curator)
+}
+
+fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<String, String> {
+    let theme_config = highlight::ThemeConfig::from_config_and_env();
     let stdin = invoke::prompt_stdin(prompt);
     let outcome = backoff::retry_on_outage(
         "chat memory curator",
         || {
             backoff::attempt_from(subprocess::invoke_subprocess_silent(
                 &subprocess::SpinnerSubprocessConfig {
-                    command: command.clone(),
+                    command: command.to_string(),
                     timeout_secs: Some(curator.timeout),
                     theme_config: theme_config.clone(),
                     session_elapsed_ms: 0,

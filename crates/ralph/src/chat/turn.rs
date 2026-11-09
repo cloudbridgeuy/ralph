@@ -21,8 +21,9 @@ use crate::warn::warning_line;
 use crate::watches::locked;
 use crate::workers::usage_store;
 use ralph_core::chat::{
-    build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_reason,
-    turn_prompt, turn_system_prompt, CustomPrompt, ReplyImages, ResetLimits, VIEW_LINES,
+    build_agents_args, build_attachments_args, build_nap_args, build_tag_args, hit_blocking_limit,
+    reset_reason, turn_prompt, turn_system_prompt, CustomPrompt, ReplyImages, ResetLimits,
+    VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
@@ -59,6 +60,16 @@ pub(super) fn spawn_nap(store: &Path, run: &str) -> io::Result<()> {
     spawn_detached(
         Command::new(std::env::current_exe()?)
             .args(build_nap_args(store, run))
+            .envs([ralph_core::worker::inbox_env(&std::fs::canonicalize(
+                store,
+            )?)]),
+    )
+}
+
+pub(super) fn spawn_tag(store: &Path, run: &str) -> io::Result<()> {
+    spawn_detached(
+        Command::new(std::env::current_exe()?)
+            .args(build_tag_args(store, run))
             .envs([ralph_core::worker::inbox_env(&std::fs::canonicalize(
                 store,
             )?)]),
@@ -352,6 +363,10 @@ impl Turn<'_> {
                 self.warn_if_err(
                     spawn_nap(self.store_dir, self.run),
                     "Failed to start chat memory nap",
+                );
+                self.warn_if_err(
+                    spawn_tag(self.store_dir, self.run),
+                    "Failed to start chat entry tagging",
                 );
                 if let Some(reason) = reset_reason(&self.reset_limits, process_turns, costs) {
                     if locked(&self.session).take().is_some() {

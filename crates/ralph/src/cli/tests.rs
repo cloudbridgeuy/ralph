@@ -21,6 +21,36 @@ fn test_cli_version_flags_render_the_current_version() {
 }
 
 #[test]
+fn test_cli_chat_tag_takes_store_run_and_timeout() {
+    let Some(Commands::ChatTag(tag)) = Cli::try_parse_from([
+        "ralph",
+        "chat-tag",
+        "--store",
+        "X",
+        "--run",
+        "R",
+        "--timeout",
+        "9",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected chat-tag");
+    };
+    assert_eq!(tag.store, std::path::PathBuf::from("X"));
+    assert_eq!(tag.run.as_deref(), Some("R"));
+    assert_eq!(tag.timeout, 9);
+}
+
+#[test]
+fn test_cli_chat_tag_is_hidden() {
+    use clap::CommandFactory;
+    let cli = Cli::command();
+    let tag = cli.find_subcommand("chat-tag").unwrap();
+    assert!(tag.is_hide_set());
+}
+
+#[test]
 fn test_cli_chat_nap_takes_store_and_run() {
     let Some(Commands::ChatNap(nap)) =
         Cli::try_parse_from(["ralph", "chat-nap", "--store", "X", "--run", "R"])

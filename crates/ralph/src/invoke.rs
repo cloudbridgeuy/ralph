@@ -98,12 +98,31 @@ pub fn prompt_stdin(prompt: &str) -> String {
 }
 
 pub fn build_memory_command(home: Option<&Path>, config_dir: Option<&Path>) -> String {
+    memory_command("haiku", "", home, config_dir)
+}
+
+/// The tag pass: Haiku 5.5 with the labelling prompt as the whole system prompt.
+pub fn build_tag_command(
+    system_prompt: &str,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+) -> String {
+    let system = format!("--system-prompt {} ", shell_quote(system_prompt));
+    memory_command("claude-haiku-5-5", &system, home, config_dir)
+}
+
+fn memory_command(
+    model: &str,
+    system: &str,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+) -> String {
     let isolation = Isolation {
         config_dir: config_dir.map(Path::to_path_buf),
         ..Isolation::default()
     };
     format!(
-        "{}claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
+        "{}claude --verbose --model {model} {system}{} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
         config_dir_env(config_dir, home),
         isolation_args(home, false, &isolation),
     )
@@ -204,6 +223,21 @@ mod tests {
         assert!(!cmd.contains("--agent"));
         assert!(!cmd.contains("--append-system-prompt"));
         assert!(!cmd.contains("--setting-sources"));
+    }
+
+    #[test]
+    fn tagger_is_haiku_5_5_with_the_prompt_as_the_system_prompt_and_no_tools() {
+        let cmd = build_tag_command("Label 'x'.", Some(Path::new("/home/u")), None);
+        assert!(cmd.contains("--model claude-haiku-5-5 "), "{cmd}");
+        assert!(
+            cmd.contains(r#"--system-prompt 'Label '"'"'x'"'"'.'"#),
+            "{cmd}"
+        );
+        assert!(cmd.contains("--setting-sources project,local"));
+        assert!(cmd.contains("--tools ''"));
+        assert!(cmd.contains("--mcp-config '{\"mcpServers\":{}}' --strict-mcp-config"));
+        assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
+        assert!(!cmd.contains("--resume"));
     }
 
     #[test]

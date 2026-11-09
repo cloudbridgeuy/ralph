@@ -30,6 +30,7 @@ mod schedule_worker;
 mod session;
 pub(crate) use ralph_server::chat::skills;
 mod stall;
+pub(crate) use ralph_server::chat::tag_store;
 pub(crate) use skills::{read_claude_config, SKILLS_ENV};
 mod send_it;
 mod sent;

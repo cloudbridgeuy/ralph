@@ -250,6 +250,8 @@ pub struct ChatSection {
     pub user_settings: bool,
     #[serde(default)]
     pub user_claude_md: bool,
+    #[serde(default = "default_true")]
+    pub tag_entries: bool,
     #[serde(default)]
     pub recent_history_tokens: Option<usize>,
     #[serde(default)]
@@ -345,6 +347,7 @@ impl Default for ChatSection {
             project_claude_md: true,
             user_settings: false,
             user_claude_md: false,
+            tag_entries: true,
             recent_history_tokens: None,
             worker_check_secs: None,
             keepalive_hours: None,

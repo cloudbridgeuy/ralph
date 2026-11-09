@@ -239,6 +239,16 @@ pub fn build_nap_args(store: &Path, run: &str) -> Vec<OsString> {
     ]
 }
 
+pub fn build_tag_args(store: &Path, run: &str) -> Vec<OsString> {
+    vec![
+        "chat-tag".into(),
+        "--store".into(),
+        store.as_os_str().to_owned(),
+        "--run".into(),
+        run.into(),
+    ]
+}
+
 pub fn build_attachments_args(store_dir: &Path) -> Vec<String> {
     vec![
         "--add-dir".to_string(),
@@ -718,6 +728,14 @@ mod tests {
         assert_eq!(
             build_nap_args(Path::new("/chat store"), "42-t"),
             ["chat-nap", "--store", "/chat store", "--run", "42-t"].map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn build_tag_args_passes_the_store_and_run() {
+        assert_eq!(
+            build_tag_args(Path::new("/chat store"), "42-t"),
+            ["chat-tag", "--store", "/chat store", "--run", "42-t"].map(OsString::from)
         );
     }
 
