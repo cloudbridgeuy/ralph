@@ -9,6 +9,7 @@ mod nap;
 mod notice;
 mod range;
 mod search;
+mod tag;
 mod tools;
 mod tree;
 mod usage;
@@ -33,6 +34,11 @@ pub use nap::{
 };
 pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search, SearchRequest};
+pub use tag::{
+    batches, build_batch, decode_rows, encode_row, encode_start, failure_kind, next_size,
+    parse_reply, untagged, Flags, Parsed, RowKind, TagRow, TagState, BATCH_LADDER, PROMPT_VERSION,
+    TAGS_FILE, TAG_MODEL, TAG_PROMPT,
+};
 pub use tools::{
     finish_call, handle_request, history_tool, parse_tool_call, tool_definitions, MemoryCall,
     Outcome, Tool,
