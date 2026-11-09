@@ -8,7 +8,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn check_path(path: &Path) -> io::Result<()> {
+pub fn check_path(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::other(format!(
             "path is a symlink: {}",
@@ -32,7 +32,7 @@ fn open_private(path: &Path) -> io::Result<fs::File> {
     options.open(path)
 }
 
-pub(crate) fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> {
+pub fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> {
     check_path(&path)?;
     let mut file = open_private(&path)?;
     file.write_all(bytes)?;
@@ -44,7 +44,7 @@ pub(crate) fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> 
     Ok(path)
 }
 
-pub(crate) fn write_worker_config(
+pub fn write_worker_config(
     store: &Path,
     id: &str,
     imported: &Map<String, Value>,

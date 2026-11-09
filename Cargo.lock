@@ -1608,6 +1608,7 @@ dependencies = [
  "libc",
  "mermaid-text",
  "ralph_core",
+ "ralph_server",
  "reedline",
  "regex",
  "resvg",
@@ -1647,6 +1648,17 @@ dependencies = [
  "unicode-width 0.2.2",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "ralph_server"
+version = "0.4.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "ralph_core",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

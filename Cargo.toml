@@ -78,6 +78,7 @@ log = "0.4"
 libc = "0.2"
 prettytable = "0.10"
 ralph_core = { path = "crates/core" }
+ralph_server = { path = "crates/ralph_server" }
 
 # Random number generation
 
