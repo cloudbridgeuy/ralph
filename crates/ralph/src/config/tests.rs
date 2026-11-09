@@ -481,33 +481,6 @@ fn tickets_parse_and_default_to_empty() {
 }
 
 #[test]
-fn test_save_and_load() {
-    let temp_dir = TempDir::new().unwrap();
-    let path = temp_dir.path().join("subdir").join("config.toml");
-
-    let config = AppConfig {
-        theme: ThemeSection {
-            name: Some("Monokai Extended".to_string()),
-            no_background: true,
-            assistant: RoleTheme::default(),
-            agent: None,
-            status: StatusTheme::default(),
-            input: InputTheme::default(),
-            diff: DiffTheme::default(),
-            tools: ToolTheme::default(),
-            ui: UiTheme::default(),
-        },
-        ..AppConfig::new()
-    };
-
-    config.save_to(&path).unwrap();
-
-    let loaded = AppConfig::load_layers(&path, None).unwrap();
-    assert_eq!(loaded.theme.name, Some("Monokai Extended".to_string()));
-    assert!(loaded.theme.no_background);
-}
-
-#[test]
 fn test_parse_error() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");

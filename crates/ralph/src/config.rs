@@ -144,14 +144,6 @@ pub enum ConfigError {
     #[error("Failed to serialize config: {0}")]
     SerializeConfig(#[from] toml::ser::Error),
 
-    /// Failed to write configuration file.
-    #[error("Failed to write config file at {path}: {source}")]
-    WriteConfig {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
     /// A `[wire.prices]` value is below zero.
     #[error("Invalid config at {path}: {message}")]
     InvalidWirePrice { path: String, message: String },
@@ -607,33 +599,6 @@ impl AppConfig {
     fn validated(self, path: &str) -> Result<Self, ConfigError> {
         self.check_values(path)?;
         Ok(self)
-    }
-
-    /// Save configuration to the default config file path.
-    ///
-    /// Creates the parent directory if it doesn't exist.
-    pub fn save(&self) -> Result<(), ConfigError> {
-        let path = config_path();
-        self.save_to(&path)
-    }
-
-    /// Save configuration to a specific path.
-    ///
-    /// Creates the parent directory if it doesn't exist.
-    pub fn save_to(&self, path: &PathBuf) -> Result<(), ConfigError> {
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| ConfigError::WriteConfig {
-                path: path.display().to_string(),
-                source: e,
-            })?;
-        }
-
-        let content = toml::to_string_pretty(self)?;
-        fs::write(path, content).map_err(|e| ConfigError::WriteConfig {
-            path: path.display().to_string(),
-            source: e,
-        })
     }
 }
 
