@@ -12,7 +12,7 @@ pub const TAGS_FILE: &str = "tags.jsonl";
 /// Most entries one pass tags: a backstop against a huge backlog.
 pub const MAX_PER_PASS: usize = 100;
 pub const BATCH_LADDER: [usize; 3] = [20, 5, 1];
-pub const TARGET_CHARS: usize = 1200;
+const TARGET_CHARS: usize = 1200;
 const CONTEXT_CHARS: usize = 350;
 const CONTEXT_ENTRIES: usize = 3;
 const ROW_VERSION: u32 = 1;
