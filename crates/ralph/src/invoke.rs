@@ -9,26 +9,15 @@ use crate::subprocess::{
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::worker::inbox_env;
+pub use ralph_server::config::{
+    resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
+};
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
 pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
-pub const ASK_DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
 pub const ASK_PERMISSION_MODE_ENV: &str = "RALPH_ASK_PERMISSION_MODE";
 const CHAT_DISABLE_BACKGROUND_TASKS_ENV: &str = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1";
-
-pub fn resolve_permission_mode(
-    flag: Option<&str>,
-    env: Option<&str>,
-    config: Option<&str>,
-    default: &str,
-) -> String {
-    flag.or(env.filter(|value| !value.is_empty()))
-        .or(config)
-        .unwrap_or(default)
-        .to_string()
-}
 
 #[derive(Debug, Clone)]
 pub struct InvocationConfig {
