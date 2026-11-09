@@ -1,7 +1,7 @@
 use crate::stream_processor::extract_response_text;
 use crate::subprocess::{StreamingSubprocessResult, SubprocessError};
 use crate::warn::warn;
-use ralph_core::retry::{classify, retry_delay, FailureInput, OUTAGE_BACKOFF_SECS};
+use ralph_core::retry::{classify, retry_delay, FailureInput, FailureKind, OUTAGE_BACKOFF_SECS};
 use std::time::{Duration, Instant};
 
 const WAIT_SLICE: Duration = Duration::from_millis(100);
@@ -19,8 +19,8 @@ pub struct FailureText {
 
 pub type SubprocessOutcome = Result<StreamingSubprocessResult, SubprocessError>;
 
-pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
-    let failure = match &result {
+fn failure_of(result: &SubprocessOutcome) -> Option<FailureText> {
+    match result {
         Ok(done) if done.exit_code != 0 => Some(FailureText {
             timed_out: false,
             exit_code: done.exit_code,
@@ -32,11 +32,25 @@ pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
             text: failure_text(partial_result),
         }),
         _ => None,
-    };
-    match failure {
+    }
+}
+
+pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
+    match failure_of(&result) {
         Some(failure) => Attempt::Failed(result, failure),
         None => Attempt::Done(result),
     }
+}
+
+/// How the last attempt of a retried call failed, or `None` if it did not.
+pub fn final_failure_kind(result: &SubprocessOutcome) -> Option<FailureKind> {
+    failure_of(result).map(|failure| {
+        classify(&FailureInput {
+            timed_out: failure.timed_out,
+            exit_code: failure.exit_code,
+            text: &failure.text,
+        })
+    })
 }
 
 fn failure_text(result: &StreamingSubprocessResult) -> String {

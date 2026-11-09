@@ -2,6 +2,7 @@
 //! `tags.jsonl` rows. The shell appends the rows and runs the model.
 
 use super::Entry;
+use crate::retry::FailureKind;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -214,11 +215,30 @@ pub struct Parsed {
 /// The text to parse from a finished call. A non-zero exit or an empty reply is
 /// an empty reply, so its entries count as missing and the ladder handles them;
 /// only a call that never finished (outage, timeout) is an error.
-pub fn reply_text(exit_code: i32, response: Option<&str>) -> String {
+fn reply_text(exit_code: i32, response: Option<&str>) -> String {
     match response.map(str::trim) {
         Some(text) if exit_code == 0 => text.to_string(),
         _ => String::new(),
     }
+}
+
+/// The reply of a finished call, or an error when the call did not really
+/// finish. `failure` is how the final attempt was classified; an outage that
+/// outlasted the backoff, or a process told to stop, ends the pass with no
+/// rows. Only a finished non-outage failure or an empty reply reaches the ladder.
+pub fn tag_reply(
+    failure: Option<FailureKind>,
+    terminated: bool,
+    exit_code: i32,
+    response: Option<&str>,
+) -> Result<String, String> {
+    if terminated {
+        return Err("tagging was interrupted".to_string());
+    }
+    if failure == Some(FailureKind::Outage) {
+        return Err("the model is out; tagging stops until the next reply".to_string());
+    }
+    Ok(reply_text(exit_code, response))
 }
 
 /// Keeps each asked entry's first complete row; anything else is missing.

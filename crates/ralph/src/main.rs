@@ -430,8 +430,13 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
     };
     let command = tag_command();
     let pass = store.run_pass(&now, &mut |batch| {
-        let (code, text) = run_memory_command(&command, batch, &curator)?;
-        Ok(ralph_core::chat_memory::reply_text(code, text.as_deref()))
+        let run = run_memory_command(&command, batch, &curator)?;
+        ralph_core::chat_memory::tag_reply(
+            run.failure,
+            signal::is_terminated(),
+            run.code,
+            run.text.as_deref(),
+        )
     })?;
     if let chat::tag_store::Pass::Done(report) = pass {
         if report.failed > 0 {
@@ -495,17 +500,22 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
         .claude
         .config_dir;
     let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
-    let (code, response) = run_memory_command(&command, prompt, curator)?;
-    ralph_core::chat_memory::nap_summary(code, response.as_deref())
+    let run = run_memory_command(&command, prompt, curator)?;
+    ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref())
 }
 
-/// Runs one memory call. An error means the call never finished (outage or
-/// timeout); the exit code and reply text are left to the caller.
-fn run_memory_command(
-    command: &str,
-    prompt: &str,
-    curator: &Curator,
-) -> Result<(i32, Option<String>), String> {
+/// What a finished memory call left behind. `failure` is how the final
+/// attempt was classified, so a caller can tell an outage that ran out of
+/// retries from an ordinary failure.
+struct MemoryRun {
+    code: i32,
+    text: Option<String>,
+    failure: Option<ralph_core::retry::FailureKind>,
+}
+
+/// Runs one memory call. An error means the call never finished (timeout or a
+/// spawn error); the exit code and reply text are left to the caller.
+fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<MemoryRun, String> {
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     let stdin = invoke::prompt_stdin(prompt);
     let outcome = backoff::retry_on_outage(
@@ -541,9 +551,14 @@ fn run_memory_command(
             "Failed to record chat usage",
         );
     }
+    let failure = backoff::final_failure_kind(&outcome);
     let result = outcome.map_err(|e| e.to_string())?;
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
-    Ok((result.exit_code, response))
+    Ok(MemoryRun {
+        code: result.exit_code,
+        text: response,
+        failure,
+    })
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use super::*;
 use crate::chat_memory::fixtures::texted;
 use crate::chat_memory::Entry;
+use crate::retry::FailureKind;
 
 const MODEL: &str = "claude-haiku-5-5";
 
@@ -224,4 +225,19 @@ fn a_finished_call_gives_its_reply_and_a_failed_one_gives_nothing() {
     assert_eq!(reply_text(0, None), "");
     assert_eq!(reply_text(0, Some("   ")), "");
     assert_eq!(reply_text(1, Some("[{\"n\":1}]")), "");
+}
+
+#[test]
+fn an_outage_or_a_stop_is_an_error_and_other_failures_are_empty_replies() {
+    let reply = |failure, terminated, code| tag_reply(failure, terminated, code, Some("[]"));
+    assert!(reply(Some(FailureKind::Outage), false, 1).is_err());
+    assert!(reply(None, true, 0).is_err());
+    assert!(reply(None, true, 1).is_err());
+    assert_eq!(
+        reply(Some(FailureKind::Refusal), false, 1),
+        Ok(String::new())
+    );
+    assert_eq!(reply(None, false, 1), Ok(String::new()));
+    assert_eq!(reply(None, false, 0), Ok("[]".to_string()));
+    assert_eq!(tag_reply(None, false, 0, None), Ok(String::new()));
 }
