@@ -2,7 +2,6 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
-mod acp_log;
 mod acp_worker;
 pub mod ansi;
 mod backoff;
@@ -12,7 +11,6 @@ mod cli;
 mod clipboard;
 mod codex_worker;
 pub mod config;
-mod cursor_sweep;
 pub mod diff_highlight;
 mod diff_theme;
 pub mod formatting;
@@ -30,9 +28,9 @@ mod opencode_worker;
 mod outcome_log;
 mod permission_queue;
 pub use ralph_server::{
-    claude_cleanup, codex_usage, cursor_cleanup, cursor_owner, cursor_usage, json_file, ledger,
-    opencode_usage, paths, private_file, process_tree, snapshot, transport, watch_store,
-    worker_changes, worker_usage,
+    acp_log, claude_cleanup, codex_usage, cursor_cleanup, cursor_owner, cursor_sweep, cursor_usage,
+    json_file, ledger, opencode_usage, paths, private_file, process_tree, snapshot, transport,
+    verified_agents, watch_store, worker_changes, worker_usage,
 };
 pub mod prompt_source;
 pub mod render;
@@ -48,7 +46,6 @@ mod upgrade;
 
 pub mod stream_processor;
 pub mod subprocess;
-mod verified_agents;
 mod version;
 mod version_drift;
 pub mod warn;
