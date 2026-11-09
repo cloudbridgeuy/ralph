@@ -81,6 +81,7 @@ use version_drift::DriftRun;
 use warn::{warn, warn_if_err};
 
 fn main() -> ExitCode {
+    ralph_server::warn::register_sink(warn::print_warning);
     let cli = Cli::parse();
 
     let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {

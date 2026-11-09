@@ -1,7 +1,8 @@
 use crate::ansi::{fg, BOLD, CLEAR_EOL, CR, RESET};
 use crate::frame::frame;
 use crate::ui_theme::{DEFAULT_NOTICE_COLOR, DEFAULT_WARNING_COLOR};
-use std::collections::BTreeSet;
+use ralph_server::warn::WARNING_PREFIX;
+pub use ralph_server::warn::{warn, warn_if_err, warn_once};
 use std::fmt::Display;
 use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc::SyncSender;
@@ -63,7 +64,7 @@ static NOTICE_COLOR: OnceLock<Color> = OnceLock::new();
 
 const WARNING: Style = Style {
     symbol: SYMBOL,
-    plain: "Warning:",
+    plain: WARNING_PREFIX,
     color: &WARNING_COLOR,
     default: DEFAULT_WARNING_COLOR,
 };
@@ -166,34 +167,12 @@ fn print_boxed(style: &Style, message: impl Display) {
     deliver(&text, color, sink.as_ref(), &mut io::stderr()).ok();
 }
 
-pub fn warn(message: impl Display) {
+pub fn print_warning(message: &str) {
     print_boxed(&WARNING, message);
 }
 
 pub fn notice(message: impl Display) {
     print_boxed(&NOTICE, message);
-}
-
-static SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
-
-fn first_sighting(seen: &mut BTreeSet<String>, key: &str) -> bool {
-    seen.insert(key.to_string())
-}
-
-pub fn warn_once(key: &str, message: impl Display) {
-    let fresh = match SEEN.lock() {
-        Ok(mut seen) => first_sighting(&mut seen, key),
-        Err(_) => true,
-    };
-    if fresh {
-        warn(message);
-    }
-}
-
-pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
-    if let Err(e) = result {
-        warn(format!("{context}: {e}"));
-    }
 }
 
 #[cfg(test)]
@@ -203,7 +182,6 @@ mod tests {
     use crate::frame::strip_ansi;
     use crate::ui_theme::UiColors;
     use reedline::ExternalPrinter;
-    use std::io;
     use termimad::crossterm::style::Color;
 
     const BOX: &str = "\u{256d}\u{2500}\u{256e}\n\u{2502}x\u{2502}\n\u{2570}\u{2500}\u{256f}";
@@ -352,26 +330,5 @@ mod tests {
     #[test]
     fn notice_color_defaults_to_ask_ok() {
         assert_eq!(NOTICE.default, UiColors::default().ask_ok);
-    }
-
-    #[test]
-    fn first_sighting_is_true_once_per_key() {
-        let mut seen = BTreeSet::new();
-        assert!(first_sighting(&mut seen, "a"));
-        assert!(!first_sighting(&mut seen, "a"));
-        assert!(first_sighting(&mut seen, "b"));
-    }
-
-    #[test]
-    fn test_warn_if_err_with_ok_does_not_panic() {
-        let result: Result<i32, io::Error> = Ok(42);
-        warn_if_err(result, "This should not print");
-    }
-
-    #[test]
-    fn test_warn_if_err_with_err_does_not_panic() {
-        let result: Result<i32, io::Error> =
-            Err(io::Error::new(io::ErrorKind::NotFound, "test error"));
-        warn_if_err(result, "Test context");
     }
 }
