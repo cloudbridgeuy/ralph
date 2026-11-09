@@ -10,7 +10,7 @@ const STREAM_LIFETIME: Duration = Duration::from_secs(900);
 const RETRY_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Clone)]
-pub(crate) struct HttpSse {
+pub struct HttpSse {
     agent: Agent,
     stream: Agent,
     base: String,
@@ -18,7 +18,7 @@ pub(crate) struct HttpSse {
 }
 
 impl HttpSse {
-    pub(crate) fn new(port: u16, password: &str) -> Self {
+    pub fn new(port: u16, password: &str) -> Self {
         let plain = Agent::config_builder()
             .http_status_as_error(false)
             .timeout_global(Some(REQUEST_TIMEOUT))
@@ -53,7 +53,7 @@ impl HttpSse {
         }
     }
 
-    pub(crate) fn get(&self, path: &str) -> Result<String, String> {
+    pub fn get(&self, path: &str) -> Result<String, String> {
         let response = self
             .agent
             .get(self.url(path))
@@ -63,7 +63,7 @@ impl HttpSse {
         Self::read(response)
     }
 
-    pub(crate) fn post(&self, path: &str, body: &str) -> Result<String, String> {
+    pub fn post(&self, path: &str, body: &str) -> Result<String, String> {
         let response = self
             .agent
             .post(self.url(path))
@@ -74,7 +74,7 @@ impl HttpSse {
         Self::read(response)
     }
 
-    pub(crate) fn post_retrying(&self, path: &str, body: &str) -> Result<String, String> {
+    pub fn post_retrying(&self, path: &str, body: &str) -> Result<String, String> {
         let mut attempt = 0;
         loop {
             match self.post(path, body) {
@@ -89,7 +89,7 @@ impl HttpSse {
         }
     }
 
-    pub(crate) fn evict_location(&self, directory: &str) -> Result<String, String> {
+    pub fn evict_location(&self, directory: &str) -> Result<String, String> {
         let response = self
             .agent
             .delete(self.url("/api/debug/location"))
@@ -100,7 +100,7 @@ impl HttpSse {
         Self::read(response)
     }
 
-    pub(crate) fn delete(&self, path: &str) -> Result<String, String> {
+    pub fn delete(&self, path: &str) -> Result<String, String> {
         let response = self
             .agent
             .delete(self.url(path))
@@ -110,7 +110,7 @@ impl HttpSse {
         Self::read(response)
     }
 
-    pub(crate) fn events(&self, path: &str) -> Result<impl Read + Send, String> {
+    pub fn events(&self, path: &str) -> Result<impl Read + Send, String> {
         let response = self
             .stream
             .get(self.url(path))

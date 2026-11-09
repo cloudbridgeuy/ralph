@@ -6,7 +6,7 @@ use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub(crate) fn spawn_piped(
+pub fn spawn_piped(
     mut command: Command,
 ) -> Result<(Child, ChildStdin, ChildStdout, ChildStderr), io::Error> {
     let mut child = command
@@ -30,7 +30,7 @@ pub(crate) fn spawn_piped(
     }
 }
 
-pub(crate) fn stop_groups(groups: &[u32], grace: Duration, mut alive: impl FnMut() -> bool) {
+pub fn stop_groups(groups: &[u32], grace: Duration, mut alive: impl FnMut() -> bool) {
     for group in groups {
         signal_group(*group, "TERM");
     }
@@ -48,7 +48,7 @@ pub(crate) fn stop_group(group: u32, alive: impl FnMut() -> bool) {
     stop_groups(&[group], TERM_GRACE, alive);
 }
 
-pub(crate) fn stop_child(child: &mut Child) {
+pub fn stop_child(child: &mut Child) {
     let group = child.id();
     stop_group(group, || matches!(child.try_wait(), Ok(None)));
     child.wait().ok();

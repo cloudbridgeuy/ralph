@@ -12,7 +12,6 @@ mod cli;
 mod clipboard;
 mod codex_worker;
 pub mod config;
-mod cursor_owner;
 mod cursor_sweep;
 pub mod diff_highlight;
 mod diff_theme;
@@ -31,10 +30,10 @@ mod opencode_worker;
 mod outcome_log;
 mod permission_queue;
 pub use ralph_server::{
-    claude_cleanup, codex_usage, cursor_cleanup, cursor_usage, json_file, ledger, opencode_usage,
-    paths, private_file, snapshot, watch_store, worker_changes, worker_usage,
+    claude_cleanup, codex_usage, cursor_cleanup, cursor_owner, cursor_usage, json_file, ledger,
+    opencode_usage, paths, private_file, process_tree, snapshot, transport, watch_store,
+    worker_changes, worker_usage,
 };
-mod process_tree;
 pub mod prompt_source;
 pub mod render;
 mod schedule_store;
@@ -49,7 +48,6 @@ mod upgrade;
 
 pub mod stream_processor;
 pub mod subprocess;
-mod transport;
 mod verified_agents;
 mod version;
 mod version_drift;
