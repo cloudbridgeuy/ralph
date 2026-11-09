@@ -5,9 +5,6 @@ fn default_changes_pager() -> String {
     "git".to_string()
 }
 
-/// `[changes]` pager for `/diff`. An unknown `pager` string does not fail
-/// parsing: [`ChangesSection::warnings`] reports it and [`ChangesSection::pager`]
-/// falls back to git.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangesSection {
     #[serde(default = "default_changes_pager")]

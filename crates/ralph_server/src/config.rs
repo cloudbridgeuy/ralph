@@ -1,7 +1,577 @@
-pub mod mermaid_style;
-mod permissions;
-pub mod theme;
+use crate::paths;
+use crate::warn::warn_once;
+use ralph_core::chat::WORKER_QUIET_SECS;
+use ralph_core::chat_thread::config_root;
+use ralph_core::inbox_alert::UnknownFocus;
+use ralph_core::worker::TicketKeys;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use theme::{DiffTheme, InputTheme, RoleTheme, StatusTheme, ToolTheme, UiTheme};
+use toml::Table;
 
+mod changes;
+mod chat_settings;
+mod claude;
+mod codex;
+mod cursor;
+mod empty_submit;
+#[cfg(test)]
+mod hold_progress_tests;
+mod layers;
+mod mermaid_style;
+mod opencode;
+mod permissions;
+#[cfg(test)]
+mod recent_history_tests;
+#[cfg(test)]
+mod reset_limits_tests;
+#[cfg(test)]
+mod resume_summary_tests;
+pub mod theme;
+mod wire;
+mod workers;
+pub use changes::ChangesSection;
+pub use chat_settings::PromptFiles;
+pub use claude::ClaudeSection;
+pub use codex::{configured_codex, CodexSection};
+pub use cursor::CursorSection;
+pub use layers::{leaf_sources, Row, Source};
+pub use mermaid_style::MermaidStyle;
+pub use opencode::OpencodeSection;
 pub use permissions::{
-    resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
+    configured_permission_mode, resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE,
+    CHAT_DEFAULT_PERMISSION_MODE,
 };
+pub use wire::WireSection;
+pub use workers::{PrProvider, WorkersSection};
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub key: String,
+    pub message: String,
+}
+
+const STORE_FALLBACK_KEY: &str = "store-fallback:";
+
+impl Notice {
+    pub fn is_store_fallback(&self) -> bool {
+        self.key.starts_with(STORE_FALLBACK_KEY)
+    }
+}
+
+fn security_notices(store: &Path) -> Vec<Notice> {
+    let Ok(table) = read_layer(store) else {
+        return Vec::new();
+    };
+    layers::security_keys(&table)
+        .into_iter()
+        .map(|key| Notice {
+            key: format!("security:{key}"),
+            message: format!(
+                "store config {} sets {key}; check it before you trust this store",
+                store.display()
+            ),
+        })
+        .collect()
+}
+
+static STORE_LAYER: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_store_layer(store: &Path) {
+    let _ = STORE_LAYER.set(config_root(store));
+}
+
+fn parse_error(path: &Path, source: toml::de::Error) -> ConfigError {
+    ConfigError::ParseConfig {
+        path: path.display().to_string(),
+        source,
+    }
+}
+
+pub fn read_layer(path: &Path) -> Result<Table, ConfigError> {
+    if !path.exists() {
+        return Ok(Table::new());
+    }
+    let content = fs::read_to_string(path).map_err(|e| ConfigError::ReadConfig {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+    let table = content
+        .parse::<Table>()
+        .map_err(|source| parse_error(path, source))?;
+    Ok(match path.parent() {
+        Some(dir) => layers::anchor_claude_paths(layers::anchor_chat_paths(table, dir), dir),
+        None => table,
+    })
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("Failed to read config file at {path}: {source}")]
+    ReadConfig {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("Failed to parse config file at {path}: {source}")]
+    ParseConfig {
+        path: String,
+        #[source]
+        source: toml::de::Error,
+    },
+
+    #[error("Failed to serialize config: {0}")]
+    SerializeConfig(#[from] toml::ser::Error),
+
+    #[error("Invalid config at {path}: {message}")]
+    InvalidWirePrice { path: String, message: String },
+
+    #[error("Invalid config at {path}: {message}")]
+    InvalidWorkers { path: String, message: String },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppConfig {
+    #[serde(default)]
+    pub theme: ThemeSection,
+
+    #[serde(default)]
+    pub ask: AskSection,
+
+    #[serde(default)]
+    pub chat: ChatSection,
+
+    #[serde(default)]
+    pub mermaid: MermaidSection,
+
+    #[serde(default)]
+    pub cursor: CursorSection,
+
+    #[serde(default)]
+    pub codex: CodexSection,
+
+    #[serde(default)]
+    pub claude: ClaudeSection,
+
+    #[serde(default)]
+    pub opencode: OpencodeSection,
+
+    #[serde(default)]
+    pub changes: ChangesSection,
+
+    #[serde(default)]
+    pub wire: WireSection,
+
+    #[serde(default)]
+    pub tickets: TicketKeys,
+
+    #[serde(default)]
+    pub workers: WorkersSection,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MermaidSection {
+    #[serde(default = "default_mermaid_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_mermaid_max_rss_mb")]
+    pub max_rss_mb: u64,
+    #[serde(default = "default_mermaid_max_input_bytes")]
+    pub max_input_bytes: usize,
+    #[serde(default = "default_mermaid_max_flowchart_edges")]
+    pub max_flowchart_edges: usize,
+    #[serde(default = "default_mermaid_max_class_relations")]
+    pub max_class_relations: usize,
+    #[serde(default = "default_mermaid_picture_timeout_ms")]
+    pub picture_timeout_ms: u64,
+    #[serde(default)]
+    pub style: MermaidStyle,
+}
+
+fn default_mermaid_timeout_ms() -> u64 {
+    500
+}
+
+fn default_mermaid_max_rss_mb() -> u64 {
+    256
+}
+
+fn default_mermaid_max_input_bytes() -> usize {
+    1_048_576
+}
+
+fn default_mermaid_max_flowchart_edges() -> usize {
+    50
+}
+
+fn default_mermaid_max_class_relations() -> usize {
+    400
+}
+
+fn default_mermaid_picture_timeout_ms() -> u64 {
+    3000
+}
+
+impl Default for MermaidSection {
+    fn default() -> Self {
+        Self {
+            timeout_ms: default_mermaid_timeout_ms(),
+            max_rss_mb: default_mermaid_max_rss_mb(),
+            max_input_bytes: default_mermaid_max_input_bytes(),
+            max_flowchart_edges: default_mermaid_max_flowchart_edges(),
+            max_class_relations: default_mermaid_max_class_relations(),
+            picture_timeout_ms: default_mermaid_picture_timeout_ms(),
+            style: MermaidStyle::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AskSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSection {
+    #[serde(default = "default_mcp_servers")]
+    pub mcp_servers: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<PathBuf>,
+    #[serde(default)]
+    pub prompt_file: Option<PathBuf>,
+    #[serde(default)]
+    pub append_prompt_files: Vec<PathBuf>,
+    #[serde(default = "default_true")]
+    pub project_claude_md: bool,
+    #[serde(default)]
+    pub user_settings: bool,
+    #[serde(default)]
+    pub user_claude_md: bool,
+    #[serde(default)]
+    pub recent_history_tokens: Option<usize>,
+    #[serde(default)]
+    pub worker_check_secs: Option<u64>,
+    #[serde(default)]
+    pub keepalive_hours: Option<u64>,
+    #[serde(default)]
+    pub worker_quiet_secs: Option<toml::Value>,
+    #[serde(default)]
+    pub reset_turns: Option<toml::Value>,
+    #[serde(default)]
+    pub reset_tokens: Option<toml::Value>,
+    #[serde(default)]
+    pub watch_timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub wrap_width: Option<usize>,
+    #[serde(default)]
+    pub cell_output_limit: Option<usize>,
+    #[serde(default)]
+    pub cell_output_bytes: Option<usize>,
+    #[serde(default)]
+    pub worker_base: Option<String>,
+    #[serde(default)]
+    pub worktree_dir: Option<String>,
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    #[serde(default = "default_true")]
+    pub inbox_alert_sound: bool,
+    #[serde(default)]
+    pub inbox_alert_notification: bool,
+    #[serde(default)]
+    pub inbox_alert_unknown_focus: UnknownFocus,
+    #[serde(default)]
+    pub status_powerline: bool,
+    #[serde(default = "default_true")]
+    pub terminal_status: bool,
+    #[serde(default = "default_true")]
+    pub terminal_title: bool,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default = "default_true")]
+    pub auto_hold: bool,
+    #[serde(default = "default_true")]
+    pub auto_continue: bool,
+    #[serde(default = "default_true")]
+    pub hold_progress: bool,
+    #[serde(default = "default_true")]
+    pub resume_summary: bool,
+    #[serde(default = "default_send_it_max_turns")]
+    pub send_it_max_turns: u32,
+    #[serde(default = "default_send_it_max_usd")]
+    pub send_it_max_usd: f64,
+    #[serde(default)]
+    pub editor: Option<EditorSetting>,
+    #[serde(default)]
+    pub edit_mode: Option<String>,
+    #[serde(default)]
+    pub empty_submit: Option<String>,
+    #[serde(default)]
+    pub empty_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EditorSetting {
+    Argv(Vec<String>),
+    Invalid(toml::Value),
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_send_it_max_turns() -> u32 {
+    15
+}
+
+fn default_send_it_max_usd() -> f64 {
+    5.0
+}
+
+fn default_mcp_servers() -> Vec<String> {
+    vec!["mcptools".to_string()]
+}
+
+impl Default for ChatSection {
+    fn default() -> Self {
+        Self {
+            mcp_servers: default_mcp_servers(),
+            skills: Vec::new(),
+            prompt_file: None,
+            append_prompt_files: Vec::new(),
+            project_claude_md: true,
+            user_settings: false,
+            user_claude_md: false,
+            recent_history_tokens: None,
+            worker_check_secs: None,
+            keepalive_hours: None,
+            worker_quiet_secs: None,
+            reset_turns: None,
+            reset_tokens: None,
+            watch_timeout_secs: None,
+            wrap_width: None,
+            cell_output_limit: None,
+            cell_output_bytes: None,
+            worker_base: None,
+            worktree_dir: None,
+            permission_mode: None,
+            inbox_alert_sound: true,
+            inbox_alert_notification: false,
+            inbox_alert_unknown_focus: UnknownFocus::Alert,
+            status_powerline: false,
+            terminal_status: true,
+            terminal_title: true,
+            name: None,
+            auto_hold: true,
+            auto_continue: true,
+            hold_progress: true,
+            resume_summary: true,
+            send_it_max_turns: default_send_it_max_turns(),
+            send_it_max_usd: default_send_it_max_usd(),
+            editor: None,
+            edit_mode: None,
+            empty_submit: None,
+            empty_prompt: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThemeSection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    #[serde(default)]
+    pub no_background: bool,
+
+    #[serde(default)]
+    pub assistant: RoleTheme,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentTheme>,
+
+    #[serde(default)]
+    pub status: StatusTheme,
+
+    #[serde(default)]
+    pub input: InputTheme,
+
+    #[serde(default)]
+    pub diff: DiffTheme,
+
+    #[serde(default)]
+    pub tools: ToolTheme,
+
+    #[serde(default)]
+    pub ui: UiTheme,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AgentTheme {
+    Legacy(String),
+    Role(RoleTheme),
+}
+
+impl ThemeSection {
+    pub fn agent(&self) -> RoleTheme {
+        match &self.agent {
+            None => RoleTheme::default(),
+            Some(AgentTheme::Legacy(code)) => RoleTheme {
+                code: Some(code.clone()),
+                ..RoleTheme::default()
+            },
+            Some(AgentTheme::Role(role)) => role.clone(),
+        }
+    }
+
+    pub fn deprecations(&self) -> Vec<String> {
+        match &self.agent {
+            Some(AgentTheme::Legacy(code)) => vec![format!(
+                "[theme] agent = \"{code}\" is deprecated; move it to [theme.agent] code = \"{code}\""
+            )],
+            _ => Vec::new(),
+        }
+    }
+}
+
+impl AppConfig {
+    pub fn chat_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+        resolve_permission_mode(
+            flag,
+            env,
+            self.chat.permission_mode.as_deref(),
+            CHAT_DEFAULT_PERMISSION_MODE,
+        )
+    }
+
+    pub fn ask_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+        resolve_permission_mode(
+            flag,
+            env,
+            self.ask.permission_mode.as_deref(),
+            ASK_DEFAULT_PERMISSION_MODE,
+        )
+    }
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn load() -> Result<Self, ConfigError> {
+        let store_file = STORE_LAYER.get().map(|dir| dir.join("config.toml"));
+        let (result, notices) = Self::load_from(&config_path(), store_file.as_deref());
+        for notice in &notices {
+            warn_once(&notice.key, &notice.message);
+        }
+        result
+    }
+
+    pub fn load_from(
+        global: &Path,
+        store: Option<&Path>,
+    ) -> (Result<Self, ConfigError>, Vec<Notice>) {
+        match (Self::load_layers(global, store), store) {
+            (Err(store_error), Some(store_path)) => match Self::load_layers(global, None) {
+                Ok(config) => {
+                    let notice = Notice {
+                        key: format!("{STORE_FALLBACK_KEY}{}", store_path.display()),
+                        message: format!(
+                            "ignoring store config {}: {store_error}; using the global config only",
+                            store_path.display()
+                        ),
+                    };
+                    (Ok(config), vec![notice])
+                }
+                Err(global_error) => (Err(global_error), Vec::new()),
+            },
+            (Ok(config), Some(store_path)) => (Ok(config), security_notices(store_path)),
+            (result, _) => (result, Vec::new()),
+        }
+    }
+
+    pub fn load_layers(global: &Path, store: Option<&Path>) -> Result<Self, ConfigError> {
+        let layers = [Some(global), store]
+            .into_iter()
+            .flatten()
+            .map(|path| read_layer(path).map(|table| (path, table)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let merged = layers
+            .iter()
+            .cloned()
+            .fold(Table::new(), |merged, (_, layer)| {
+                layers::merge_tables(merged, layer)
+            });
+        let config = merged.try_into::<Self>().map_err(|source| {
+            let culprit = layers.iter().find_map(|(path, layer)| {
+                layer.clone().try_into::<Self>().err().map(|e| (*path, e))
+            });
+            match culprit {
+                Some((path, source)) => parse_error(path, source),
+                None => {
+                    let last = layers.last().map_or(global, |(path, _)| *path);
+                    parse_error(last, source)
+                }
+            }
+        })?;
+        config.check_values("").or_else(|merged_error| {
+            let culprit =
+                layers::culprit_path(&layers, global, &merged_error.to_string(), |layer| {
+                    let alone = layer.clone().try_into::<Self>().ok()?;
+                    alone.check_values("").err().map(|e| e.to_string())
+                });
+            config.check_values(&culprit.display().to_string())
+        })?;
+        Ok(config)
+    }
+
+    pub fn parse_reporting_unknown(
+        content: &str,
+        path: &str,
+    ) -> Result<(Self, Vec<String>), ConfigError> {
+        let parse_error = |source| ConfigError::ParseConfig {
+            path: path.to_string(),
+            source,
+        };
+        let mut unknown = Vec::new();
+        let deserializer = toml::de::Deserializer::parse(content).map_err(parse_error)?;
+        let config: Self =
+            serde_ignored::deserialize(deserializer, |key| unknown.push(key.to_string()))
+                .map_err(parse_error)?;
+        Ok((config.validated(path)?, unknown))
+    }
+
+    fn check_values(&self, path: &str) -> Result<(), ConfigError> {
+        ralph_core::wire::price::validate_price_overrides(&self.wire.prices).map_err(
+            |message| ConfigError::InvalidWirePrice {
+                path: path.to_string(),
+                message,
+            },
+        )?;
+        self.workers
+            .validate()
+            .map_err(|message| ConfigError::InvalidWorkers {
+                path: path.to_string(),
+                message,
+            })
+    }
+
+    fn validated(self, path: &str) -> Result<Self, ConfigError> {
+        self.check_values(path)?;
+        Ok(self)
+    }
+}
+
+pub fn config_path() -> PathBuf {
+    paths::config_path()
+}
+
+pub fn config_dir() -> PathBuf {
+    paths::config_dir()
+}
+
+#[cfg(test)]
+mod tests;

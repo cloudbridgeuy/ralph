@@ -77,7 +77,7 @@ use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::{ChatArgs, ChatCommand};
-use crate::config::{load_for_chat, ConfigSnapshot, FileState, MermaidStyleExt};
+use crate::config::{load_for_chat, ConfigSnapshot, FileState, MermaidStyleExt, ThemeWarnings};
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;

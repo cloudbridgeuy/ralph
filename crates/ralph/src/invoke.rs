@@ -9,9 +9,6 @@ use crate::subprocess::{
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::worker::inbox_env;
-pub use ralph_server::config::{
-    resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
-};
 use std::io;
 use std::path::{Path, PathBuf};
 

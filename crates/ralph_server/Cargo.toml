@@ -18,7 +18,9 @@ dirs = { workspace = true }
 libc = { workspace = true }
 ralph_core = { workspace = true }
 serde = { workspace = true }
+serde_ignored = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 toml = { workspace = true }
 
 [lints]

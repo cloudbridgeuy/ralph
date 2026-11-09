@@ -1613,7 +1613,6 @@ dependencies = [
  "regex",
  "resvg",
  "serde",
- "serde_ignored",
  "serde_json",
  "signal-hook 0.4.5",
  "similar",
@@ -1659,8 +1658,10 @@ dependencies = [
  "libc",
  "ralph_core",
  "serde",
+ "serde_ignored",
  "serde_json",
  "tempfile",
+ "thiserror",
  "toml",
 ]
 
