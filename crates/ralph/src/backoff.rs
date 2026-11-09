@@ -20,20 +20,22 @@ pub struct FailureText {
 
 pub type SubprocessOutcome = Result<StreamingSubprocessResult, SubprocessError>;
 
-fn failure_of(result: &SubprocessOutcome) -> Option<FailureText> {
+/// The finished run behind a failed call, and whether it timed out. `None`
+/// for a success or an error that has no run (spawn failure, interrupt).
+fn failed_run(result: &SubprocessOutcome) -> Option<(bool, &StreamingSubprocessResult)> {
     match result {
-        Ok(done) if done.exit_code != 0 => Some(FailureText {
-            timed_out: false,
-            exit_code: done.exit_code,
-            text: failure_text(done),
-        }),
-        Err(SubprocessError::Timeout { partial_result, .. }) => Some(FailureText {
-            timed_out: true,
-            exit_code: partial_result.exit_code,
-            text: failure_text(partial_result),
-        }),
+        Ok(done) if done.exit_code != 0 => Some((false, done)),
+        Err(SubprocessError::Timeout { partial_result, .. }) => Some((true, partial_result)),
         _ => None,
     }
+}
+
+fn failure_of(result: &SubprocessOutcome) -> Option<FailureText> {
+    failed_run(result).map(|(timed_out, done)| FailureText {
+        timed_out,
+        exit_code: done.exit_code,
+        text: failure_text(done),
+    })
 }
 
 pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
@@ -47,11 +49,7 @@ pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
 /// the retry loop, it keeps the model's reply out of the outage check (see
 /// `tag_failure_kind`).
 pub fn final_tag_failure_kind(result: &SubprocessOutcome) -> Option<FailureKind> {
-    let (timed_out, done) = match result {
-        Ok(done) if done.exit_code != 0 => (false, done),
-        Err(SubprocessError::Timeout { partial_result, .. }) => (true, partial_result.as_ref()),
-        _ => return None,
-    };
+    let (timed_out, done) = failed_run(result)?;
     let response = extract_response_text(&done.stream_result.output_blocks).unwrap_or_default();
     Some(tag_failure_kind(
         timed_out,
@@ -161,6 +159,49 @@ mod tests {
             },
         );
         (value, waits.into_inner())
+    }
+
+    fn finished(exit_code: i32, stderr: &str) -> StreamingSubprocessResult {
+        StreamingSubprocessResult {
+            exit_code,
+            stderr: stderr.to_string(),
+            stream_result: Default::default(),
+            request_at: None,
+        }
+    }
+
+    fn timed_out() -> SubprocessOutcome {
+        Err(SubprocessError::Timeout {
+            timeout_secs: 1,
+            partial_result: Box::new(finished(137, "")),
+        })
+    }
+
+    #[test]
+    fn retry_loop_and_tag_check_agree_on_what_failed() {
+        let cases: Vec<(SubprocessOutcome, Option<FailureKind>)> = vec![
+            (Ok(finished(0, "")), None),
+            (Ok(finished(1, "")), Some(FailureKind::Refusal)),
+            (
+                Ok(finished(1, "API Error: 529 overloaded")),
+                Some(FailureKind::Outage),
+            ),
+            (timed_out(), Some(FailureKind::Timeout)),
+        ];
+        for (outcome, kind) in cases {
+            assert_eq!(final_tag_failure_kind(&outcome), kind);
+            assert_eq!(failure_of(&outcome).is_some(), kind.is_some());
+        }
+    }
+
+    #[test]
+    fn retry_loop_marks_a_timeout_and_keeps_stderr() {
+        let failure = failure_of(&timed_out()).unwrap();
+        assert!(failure.timed_out);
+        assert_eq!(failure.exit_code, 137);
+        let failure = failure_of(&Ok(finished(2, "boom"))).unwrap();
+        assert!(!failure.timed_out);
+        assert!(failure.text.starts_with("boom"));
     }
 
     #[test]
