@@ -3,11 +3,20 @@
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
 pub mod chat;
+pub mod claude_cleanup;
+pub mod codex_usage;
 pub mod config;
+pub mod cursor_cleanup;
+pub mod cursor_usage;
+pub mod json_file;
 pub mod ledger;
+pub mod opencode_usage;
 pub mod paths;
 pub mod private_file;
 pub mod snapshot;
 pub mod subprocess;
 pub mod warn;
+pub mod watch_store;
 pub mod wire;
+pub mod worker_changes;
+pub mod worker_usage;
