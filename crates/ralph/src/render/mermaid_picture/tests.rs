@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::MermaidStyle;
+use crate::config::{MermaidStyle, MermaidStyleExt};
 use resvg::tiny_skia::Pixmap;
 use serde_json::json;
 use syntect::highlighting::ThemeSet;

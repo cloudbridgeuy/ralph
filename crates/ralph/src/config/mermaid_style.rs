@@ -1,40 +1,10 @@
 use crate::render::mermaid_picture::{PictureColors, PictureStyle, Rgba};
 use crate::ui_theme::UiColors;
-use serde::{Deserialize, Serialize};
+pub use ralph_server::config::mermaid_style::MermaidStyle;
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
 use syntect::highlighting::{Color, Highlighter, Theme};
 use syntect::parsing::Scope;
 use termimad::crossterm::style::Color as TermColor;
-use toml::Table;
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct MermaidStyle {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub palette: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub background: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub colors: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub series: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub font_family: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub font_family_mono: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub font_size: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub padding: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub curve: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_direction: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_text_ratio: Option<f64>,
-    #[serde(default, skip_serializing_if = "Table::is_empty")]
-    pub config: Table,
-}
 
 const FONT_FAMILY: [&str; 4] = ["Arial", "Liberation Sans", "Helvetica Neue", "Helvetica"];
 const FONT_FAMILY_MONO: [&str; 3] = ["SF Mono", "Menlo", "DejaVu Sans Mono"];
@@ -283,10 +253,15 @@ fn names(list: &[&str]) -> Vec<String> {
     list.iter().map(|name| name.to_string()).collect()
 }
 
-impl MermaidStyle {
-    pub fn resolve(&self, theme: &Theme, ui: &UiColors) -> (PictureStyle, Vec<String>) {
+pub trait MermaidStyleExt {
+    fn resolve(&self, theme: &Theme, ui: &UiColors) -> (PictureStyle, Vec<String>);
+    fn warnings(&self) -> Vec<String>;
+}
+
+impl MermaidStyleExt for MermaidStyle {
+    fn resolve(&self, theme: &Theme, ui: &UiColors) -> (PictureStyle, Vec<String>) {
         let mut warnings = Vec::new();
-        let colors = self.colors(theme, ui, &mut warnings);
+        let colors = style_colors(self, theme, ui, &mut warnings);
         let background = match self.background.as_deref() {
             None | Some("theme") => Some(colors.bg),
             Some("transparent") => None,
@@ -328,7 +303,7 @@ impl MermaidStyle {
             })
                 },
             );
-        let config = self.site_config(&mut warnings);
+        let config = site_config(self, &mut warnings);
         let style = PictureStyle {
             colors,
             background,
@@ -343,68 +318,73 @@ impl MermaidStyle {
         (style, warnings)
     }
 
-    pub fn warnings(&self) -> Vec<String> {
+    fn warnings(&self) -> Vec<String> {
         self.resolve(&Theme::default(), &UiColors::default()).1
     }
+}
 
-    fn colors(&self, theme: &Theme, ui: &UiColors, warnings: &mut Vec<String>) -> PictureColors {
-        let mut colors = match self.palette.as_deref() {
-            None | Some("ui") => ui_colors(ui),
-            Some("code") => theme_colors(theme),
-            Some("light") => LIGHT,
-            Some("dark") => DARK,
-            Some(other) => {
-                warnings.push(format!(
-                    "[mermaid.style] palette = \"{other}\" is not ui, code, light or dark; using ui"
-                ));
-                ui_colors(ui)
-            }
-        };
-        for (key, value) in &self.colors {
-            match (color_slot(&mut colors, key), parse_hex(value)) {
-                (Some(slot), Some(color)) => *slot = color,
-                (Some(_), None) => warnings.push(format!(
-                    "[mermaid.style.colors] {key} = \"{value}\" is not a #rrggbb color; using the default"
-                )),
-                (None, _) => warnings.push(format!(
-                    "[mermaid.style.colors] unknown key \"{key}\"; ignored"
-                )),
-            }
+fn style_colors(
+    style: &MermaidStyle,
+    theme: &Theme,
+    ui: &UiColors,
+    warnings: &mut Vec<String>,
+) -> PictureColors {
+    let mut colors = match style.palette.as_deref() {
+        None | Some("ui") => ui_colors(ui),
+        Some("code") => theme_colors(theme),
+        Some("light") => LIGHT,
+        Some("dark") => DARK,
+        Some(other) => {
+            warnings.push(format!(
+                "[mermaid.style] palette = \"{other}\" is not ui, code, light or dark; using ui"
+            ));
+            ui_colors(ui)
         }
-        let wanted = self.series.iter().flatten();
-        for (slot, value) in colors.series.iter_mut().zip(wanted) {
-            match parse_hex(value) {
-                Some(color) => *slot = color,
-                None => warnings.push(format!(
-                    "[mermaid.style] series = \"{value}\" is not a #rrggbb color; using the default"
-                )),
-            }
-        }
-        colors
-    }
-
-    fn site_config(&self, warnings: &mut Vec<String>) -> Map<String, Value> {
-        let mut config = Map::new();
-        match self.curve.as_deref() {
-            None | Some("rounded") => {}
-            Some(curve @ ("linear" | "step")) => {
-                config.insert(
-                    "flowchart".to_string(),
-                    Value::Object(Map::from_iter([("curve".to_string(), Value::from(curve))])),
-                );
-            }
-            Some(other) => warnings.push(format!(
-                "[mermaid.style] curve = \"{other}\" is not rounded, linear or step; using rounded"
+    };
+    for (key, value) in &style.colors {
+        match (color_slot(&mut colors, key), parse_hex(value)) {
+            (Some(slot), Some(color)) => *slot = color,
+            (Some(_), None) => warnings.push(format!(
+                "[mermaid.style.colors] {key} = \"{value}\" is not a #rrggbb color; using the default"
+            )),
+            (None, _) => warnings.push(format!(
+                "[mermaid.style.colors] unknown key \"{key}\"; ignored"
             )),
         }
-        match serde_json::to_value(&self.config) {
-            Ok(Value::Object(user)) => bezel::config::merge(&mut config, &user),
-            Ok(_) | Err(_) => {
-                warnings.push("[mermaid.style] config is not a table; ignored".to_string())
-            }
-        }
-        config
     }
+    let wanted = style.series.iter().flatten();
+    for (slot, value) in colors.series.iter_mut().zip(wanted) {
+        match parse_hex(value) {
+            Some(color) => *slot = color,
+            None => warnings.push(format!(
+                "[mermaid.style] series = \"{value}\" is not a #rrggbb color; using the default"
+            )),
+        }
+    }
+    colors
+}
+
+fn site_config(style: &MermaidStyle, warnings: &mut Vec<String>) -> Map<String, Value> {
+    let mut config = Map::new();
+    match style.curve.as_deref() {
+        None | Some("rounded") => {}
+        Some(curve @ ("linear" | "step")) => {
+            config.insert(
+                "flowchart".to_string(),
+                Value::Object(Map::from_iter([("curve".to_string(), Value::from(curve))])),
+            );
+        }
+        Some(other) => warnings.push(format!(
+            "[mermaid.style] curve = \"{other}\" is not rounded, linear or step; using rounded"
+        )),
+    }
+    match serde_json::to_value(&style.config) {
+        Ok(Value::Object(user)) => bezel::config::merge(&mut config, &user),
+        Ok(_) | Err(_) => {
+            warnings.push("[mermaid.style] config is not a table; ignored".to_string())
+        }
+    }
+    config
 }
 
 fn families(

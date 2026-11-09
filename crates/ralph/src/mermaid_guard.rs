@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, MermaidSection};
+use crate::config::{AppConfig, MermaidSection, MermaidStyleExt};
 use crate::render::mermaid::{fits_width, mermaid_precheck};
 use crate::render::mermaid_picture::PictureRequest;
 use crate::ui_theme::UiColors;

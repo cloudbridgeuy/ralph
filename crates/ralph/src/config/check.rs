@@ -1,4 +1,4 @@
-use super::{AppConfig, ConfigError};
+use super::{AppConfig, ConfigError, MermaidStyleExt};
 use ralph_core::chat::resolve_watch_timeout;
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_edit_mode::resolve_edit_mode;

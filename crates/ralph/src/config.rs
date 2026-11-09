@@ -52,7 +52,7 @@ pub use codex::{configured_codex, CodexSection};
 pub use command::{run_check, run_show};
 pub use cursor::CursorSection;
 pub use layers::{leaf_sources, Row, Source};
-pub use mermaid_style::MermaidStyle;
+pub use mermaid_style::{MermaidStyle, MermaidStyleExt};
 pub use opencode::OpencodeSection;
 pub use permissions::configured_permission_mode;
 pub use view::{
