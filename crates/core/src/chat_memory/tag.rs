@@ -2,7 +2,7 @@
 //! `tags.jsonl` rows. The shell appends the rows and runs the model.
 
 use super::Entry;
-use crate::retry::FailureKind;
+use crate::retry::{classify, FailureInput, FailureKind};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -226,6 +226,31 @@ fn reply_text(exit_code: i32, response: Option<&str>) -> String {
 /// log grew after that read and before the lock was released.
 pub fn retake(len_now: usize, seen: usize) -> bool {
     len_now > seen
+}
+
+/// Classifies a failed tag call. The shared classifier reads bare codes such as
+/// "503" anywhere in its text, and a tag reply is full of entry numbers, so
+/// the reply text counts only when it is itself an API error message.
+pub fn tag_failure_kind(
+    timed_out: bool,
+    exit_code: i32,
+    stderr: &str,
+    response: &str,
+) -> FailureKind {
+    let from_response = response
+        .trim_start()
+        .to_lowercase()
+        .starts_with("api error");
+    let text = if from_response {
+        format!("{stderr}\n{response}")
+    } else {
+        stderr.to_string()
+    };
+    classify(&FailureInput {
+        timed_out,
+        exit_code,
+        text: &text,
+    })
 }
 
 /// The reply of a finished call, or an error when the call did not really

@@ -248,3 +248,29 @@ fn a_pass_retakes_the_lock_only_when_the_log_grew_after_its_last_read() {
     assert!(!retake(4, 4));
     assert!(!retake(3, 4));
 }
+
+#[test]
+fn entry_numbers_in_a_partial_reply_are_not_an_outage() {
+    let kind =
+        |timed_out, stderr: &str, response: &str| tag_failure_kind(timed_out, 1, stderr, response);
+    assert_eq!(
+        kind(false, "", r#"[{"n":503,"rule":true}]"#),
+        FailureKind::Refusal
+    );
+    assert_eq!(kind(false, "", r#"[{"n":1529}]"#), FailureKind::Refusal);
+    assert_eq!(kind(false, "", ""), FailureKind::Refusal);
+    assert_eq!(
+        kind(false, "API Error: 529 overloaded", ""),
+        FailureKind::Outage
+    );
+    assert_eq!(kind(false, "read ECONNRESET", "[]"), FailureKind::Outage);
+    assert_eq!(
+        kind(false, "", "API Error: 503 Service Unavailable"),
+        FailureKind::Outage
+    );
+    assert_eq!(
+        kind(false, "", " api error: 529 overloaded"),
+        FailureKind::Outage
+    );
+    assert_eq!(kind(true, "", r#"[{"n":503}]"#), FailureKind::Timeout);
+}

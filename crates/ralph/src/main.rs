@@ -551,7 +551,7 @@ fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<
             "Failed to record chat usage",
         );
     }
-    let failure = backoff::final_failure_kind(&outcome);
+    let failure = backoff::final_tag_failure_kind(&outcome);
     let result = outcome.map_err(|e| e.to_string())?;
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
     Ok(MemoryRun {

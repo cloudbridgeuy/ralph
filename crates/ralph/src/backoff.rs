@@ -1,6 +1,7 @@
 use crate::stream_processor::extract_response_text;
 use crate::subprocess::{StreamingSubprocessResult, SubprocessError};
 use crate::warn::warn;
+use ralph_core::chat_memory::tag_failure_kind;
 use ralph_core::retry::{classify, retry_delay, FailureInput, FailureKind, OUTAGE_BACKOFF_SECS};
 use std::time::{Duration, Instant};
 
@@ -42,15 +43,22 @@ pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
     }
 }
 
-/// How the last attempt of a retried call failed, or `None` if it did not.
-pub fn final_failure_kind(result: &SubprocessOutcome) -> Option<FailureKind> {
-    failure_of(result).map(|failure| {
-        classify(&FailureInput {
-            timed_out: failure.timed_out,
-            exit_code: failure.exit_code,
-            text: &failure.text,
-        })
-    })
+/// How the last attempt of a tag call failed, or `None` if it did not. Unlike
+/// the retry loop, it keeps the model's reply out of the outage check (see
+/// `tag_failure_kind`).
+pub fn final_tag_failure_kind(result: &SubprocessOutcome) -> Option<FailureKind> {
+    let (timed_out, done) = match result {
+        Ok(done) if done.exit_code != 0 => (false, done),
+        Err(SubprocessError::Timeout { partial_result, .. }) => (true, partial_result.as_ref()),
+        _ => return None,
+    };
+    let response = extract_response_text(&done.stream_result.output_blocks).unwrap_or_default();
+    Some(tag_failure_kind(
+        timed_out,
+        done.exit_code,
+        &done.stderr,
+        &response,
+    ))
 }
 
 fn failure_text(result: &StreamingSubprocessResult) -> String {
