@@ -50,9 +50,9 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 - `crates/ralph/src/chat/turn.rs`: turn shell and nap spawn.
 - `crates/ralph/src/chat/editor.rs`, `prompt.rs`: reedline input and prompt.
 - `crates/ralph/src/chat/monitor.rs`: status, watch and stdin monitors.
-- `crates/ralph/src/chat/skills.rs`: MCP config and skill plugin setup.
-- `crates/ralph/src/chat/memory.rs`: `Store` (files, `LOCK`, `NAP`, `CHAT`, append, nap loop and commit, indexed `read` and `zoom`).
-- `crates/ralph/src/chat/index_files.rs`: `FileSource`, `open_archive`, and the `log.idx` and `tree.idx` writes (`update_index` for writers, `save_stale` for readers).
+- `crates/ralph_server/src/chat/skills.rs`: MCP config and skill plugin setup.
+- `crates/ralph_server/src/chat/memory.rs`: `Store` (files, `LOCK`, `NAP`, `CHAT`, append, nap loop and commit, indexed `read` and `zoom`).
+- `crates/ralph_server/src/chat/index_files.rs`: `FileSource`, `open_archive`, and the `log.idx` and `tree.idx` writes (`update_index` for writers, `save_stale` for readers).
 - `crates/ralph/src/chat/mcp.rs`: `chat-mcp` stdio loop; answers `zoom`, `recall`, `search`, `read`, `changes` and `help`, forwards socket tools to the chat socket.
 - `crates/ralph/src/chat/socket.rs`: chat socket bind, sweep, server and `forward` client.
 - `crates/core/src/retry.rs`: pure retry rules: `classify`, `FailureKind`, `OUTAGE_MARKERS`, `OUTAGE_BACKOFF_SECS`, `backoff`, `retry_delay`.
@@ -64,7 +64,7 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 
 ## Single instance
 
-`chat::run` calls `Store::claim_chat` right after `Store::new`: an exclusive `try_lock` on `<store>/CHAT`, held for the life of the chat, with the pid written inside. A second chat on the same store exits with `store <path> is in use by pid <N>; use --store <DIR> or RALPH_CHAT_STORE for a second chat` (the pid part is left out when the file is unreadable). The pure `holder_pid` and `store_in_use_message` live in `chat_memory/claim.rs`. The claim is a `ChatClaim` (`chat/claim.rs`) that unlocks on drop: a child spawned at the same moment shares the open file description until exec, so closing the fd alone can leave the flock held and a reclaim in the same process fails with its own pid (GUZ-1248). The OS releases the lock when the process dies, so a crash leaves no stale claim. flock is per inode, so `/tmp` and `/private/tmp` give the same lock. `CHAT` is a separate file from `LOCK` and `NAP`, so `chat-nap`, `chat-mcp`, worker writes and chats on other `--store` dirs are not blocked. Parallel chats need separate stores (GUZ-436).
+`chat::run` calls `Store::claim_chat` right after `Store::new`: an exclusive `try_lock` on `<store>/CHAT`, held for the life of the chat, with the pid written inside. A second chat on the same store exits with `store <path> is in use by pid <N>; use --store <DIR> or RALPH_CHAT_STORE for a second chat` (the pid part is left out when the file is unreadable). The pure `holder_pid` and `store_in_use_message` live in `chat_memory/claim.rs`. The claim is a `ChatClaim` (`crates/ralph_server/src/chat/claim.rs`) that unlocks on drop: a child spawned at the same moment shares the open file description until exec, so closing the fd alone can leave the flock held and a reclaim in the same process fails with its own pid (GUZ-1248). The OS releases the lock when the process dies, so a crash leaves no stale claim. flock is per inode, so `/tmp` and `/private/tmp` give the same lock. `CHAT` is a separate file from `LOCK` and `NAP`, so `chat-nap`, `chat-mcp`, worker writes and chats on other `--store` dirs are not blocked. Parallel chats need separate stores (GUZ-436).
 
 ## Threads
 
@@ -252,7 +252,7 @@ The session name is a label for the chat. It shows in the status bar, and in the
 4. The folder name of the cwd. ralph uses the resolved directory path (`std::env::current_dir`), so a symlinked directory names the chat after its target
 5. `ralph`
 
-`chat_name::sanitise_name` trims the text, removes control characters and Unicode format characters (general category Cf), keeps at most 32 characters (counted as characters, not bytes), and trims again. A source that is empty after that falls through to the next one. `chat/name.rs` finds the git root and builds the sources.
+`chat_name::sanitise_name` trims the text, removes control characters and Unicode format characters (general category Cf), keeps at most 32 characters (counted as characters, not bytes), and trims again. A source that is empty after that falls through to the next one. `crates/ralph_server/src/chat/name.rs` finds the git root and builds the sources.
 
 The name is a label only. Two chats that share a store still share the memory, the inbox and the workers; use `--store` to separate them. The name does not change the store path or any worker name.
 
@@ -486,7 +486,7 @@ Unless `[changes] enabled = false`, every turn (user and worker-report turns) sn
 - Index lock: each tree write holds a flock on `<index>.ralph-lock` (`snapshot_lock_path`), so one index has one writer across chat, worker hooks and the worker MCP server. While it is held, a git `<index>.lock` (`index_lock_path`) is stale because no live ralph snapshot holds it, which includes a git that outlived its ralph parent, so ralph deletes it before `read-tree`. The wait is bounded (`SNAPSHOT_LOCK_WAIT`, 5 s, polled every `SNAPSHOT_LOCK_POLL`); past it the snapshot is skipped with a warning that names the lock, so a hung git cannot stall a Stop hook.
 - Message: the ref name, then trailers `Ralph-Head: <sha>` (HEAD at snapshot time) and `Ralph-Base: <sha>` (merge-base of HEAD and the default branch, left out when it cannot be resolved; same default-branch rule as the worker base). Older snapshots have no trailers. Built by `snapshot_message`, read by `parse_snapshot_base`.
 - Pruning: after each turn the last 20 turns stay; older start and end refs are deleted, then `git gc --auto --prune=1.hour.ago` reclaims objects.
-- Code: pure logic in `crates/core/src/snapshot.rs`; git calls in `crates/ralph/src/snapshot.rs`; the turn hook in `crates/ralph/src/chat/snapshots.rs`.
+- Code: pure logic in `crates/core/src/snapshot.rs`; git calls in `crates/ralph_server/src/snapshot.rs`; the turn hook in `crates/ralph_server/src/chat/snapshots.rs`.
 
 ### Worker snapshots and report diffstats
 
@@ -507,7 +507,7 @@ The `changes` tool of `chat-mcp` lets the main thread read a diff without leavin
 - Cap: output keeps whole lines from the start while the body fits in `max_bytes` (default 32768), never splits a UTF-8 character, and ends with `… <B> bytes omitted (<F> files not shown); narrow with paths or format=stat`. Body and footer together stay within `max_bytes`, except when `max_bytes` is smaller than the footer: then only the footer shows. The label line is not counted. Worker report diffstats stay uncapped.
 - `[changes] enabled = false` makes the tool return an error that says snapshots are off. A chat outside a git repo, or with no snapshots yet, returns `no snapshots`.
 - Limit: changes after the latest snapshot are not shown; a running turn has no end snapshot until it finishes.
-- Code: pure parsing and range resolution in `crates/core/src/changes.rs`, the cap in `crates/core/src/changes/cap.rs`; rebase handling in `crates/core/src/changes/rebase.rs`; the tool call in `crates/ralph/src/chat/changes.rs`; `render_diff` and the git helpers in `crates/ralph/src/snapshot.rs`.
+- Code: pure parsing and range resolution in `crates/core/src/changes.rs`, the cap in `crates/core/src/changes/cap.rs`; rebase handling in `crates/core/src/changes/rebase.rs`; the tool call in `crates/ralph_server/src/chat/changes.rs`; `render_diff` and the git helpers in `crates/ralph_server/src/snapshot.rs`.
 
 ## Executable cells
 
