@@ -3,10 +3,10 @@ use crate::warn::{warn, warn_if_err};
 use ralph_core::snapshot::{chat_ref, Edge, CHAT_OWNER};
 use std::path::Path;
 
-pub(super) struct TurnSnapshots(Option<Snapshotter>);
+pub struct TurnSnapshots(Option<Snapshotter>);
 
 impl TurnSnapshots {
-    pub(super) fn open(enabled: bool, store: &Path, cwd: &Path) -> Self {
+    pub fn open(enabled: bool, store: &Path, cwd: &Path) -> Self {
         Self(
             enabled
                 .then(|| Snapshotter::open(store, cwd, CHAT_OWNER))
@@ -14,7 +14,7 @@ impl TurnSnapshots {
         )
     }
 
-    pub(super) fn around<T>(&self, run: impl FnOnce() -> T) -> T {
+    pub fn around<T>(&self, run: impl FnOnce() -> T) -> T {
         let Some(snapshotter) = &self.0 else {
             return run();
         };

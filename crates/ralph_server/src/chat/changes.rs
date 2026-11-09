@@ -43,7 +43,7 @@ fn to_base(snapshotter: &Snapshotter, range: &SnapshotRange) -> Option<SnapshotB
         .and_then(|to| snapshotter.snapshot_base(to))
 }
 
-pub(super) fn run_changes(
+pub fn run_changes(
     store: &Path,
     cwd: &Path,
     request: &ChangeRequest<ScopeQuery>,
@@ -56,7 +56,7 @@ pub(super) fn run_changes(
 }
 
 /// Resolve a chat or worker scope to a rebase-adjusted snapshot range for `/diff`.
-pub(super) fn resolve_diff(
+pub fn resolve_diff(
     store: &Path,
     cwd: &Path,
     scope: ScopeQuery,

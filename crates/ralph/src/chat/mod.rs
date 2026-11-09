@@ -1,6 +1,6 @@
 mod bounded;
 pub(crate) mod cell;
-mod changes;
+pub(crate) use ralph_server::chat::changes;
 pub(crate) use ralph_server::chat::check;
 pub(crate) use ralph_server::chat::claim;
 mod config;
@@ -33,7 +33,7 @@ mod stall;
 pub(crate) use skills::{read_claude_config, SKILLS_ENV};
 mod send_it;
 mod sent;
-mod snapshots;
+pub(crate) use ralph_server::chat::snapshots;
 pub(crate) mod socket;
 mod statusbar;
 mod suggestion;
