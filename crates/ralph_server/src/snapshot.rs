@@ -1,10 +1,10 @@
-use crate::chat::thread::config_root;
 use crate::config::AppConfig;
 use crate::warn::warn_once;
 use ralph_core::changes::{
     diff_args, diff_base, merge_tree_args, merged_tree, render_changes, with_note, ChangeRequest,
     DiffBase, SnapshotRange, UPSTREAM_NOTE,
 };
+use ralph_core::chat_thread::config_root;
 use ralph_core::snapshot::{
     append_lexically, check_ignore_payload, commit_tree_args, delete_payload, delete_refs_args,
     exclude_base, gc_args, identity_env, index_env, index_lock_path, index_path, index_steps,
@@ -36,7 +36,7 @@ fn git(args: &[OsString]) -> Command {
     command
 }
 
-pub(crate) fn stdout_of(command: &mut Command) -> io::Result<String> {
+pub fn stdout_of(command: &mut Command) -> io::Result<String> {
     let output = command.output()?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -47,10 +47,7 @@ pub(crate) fn stdout_of(command: &mut Command) -> io::Result<String> {
     }
 }
 
-pub(crate) fn run_diff(
-    args: &[String],
-    configure: impl FnOnce(&mut Command),
-) -> io::Result<String> {
+pub fn run_diff(args: &[String], configure: impl FnOnce(&mut Command)) -> io::Result<String> {
     let (program, rest) = args
         .split_first()
         .ok_or_else(|| io::Error::other("empty diff command"))?;
@@ -80,9 +77,9 @@ pub(crate) fn git_line(worktree: &Path, args: &[&str]) -> Option<String> {
     .filter(|line| !line.is_empty())
 }
 
-pub(crate) const ORIGIN_HEAD_ARGS: [&str; 3] = ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"];
+pub const ORIGIN_HEAD_ARGS: [&str; 3] = ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"];
 
-pub(crate) fn base_with(config: &Result<AppConfig, String>, origin_head: Option<&str>) -> String {
+pub fn base_with(config: &Result<AppConfig, String>, origin_head: Option<&str>) -> String {
     base_branch(
         config
             .as_ref()
@@ -93,7 +90,7 @@ pub(crate) fn base_with(config: &Result<AppConfig, String>, origin_head: Option<
     .branch
 }
 
-pub(crate) fn base_of(worktree: &Path) -> String {
+pub fn base_of(worktree: &Path) -> String {
     let config = AppConfig::load().map_err(|e| e.to_string());
     base_with(&config, git_line(worktree, &ORIGIN_HEAD_ARGS).as_deref())
 }
@@ -355,7 +352,7 @@ impl Snapshotter {
         parse_snapshot_base(&text)
     }
 
-    pub(crate) fn side_env(&self, command: &mut Command) {
+    pub fn side_env(&self, command: &mut Command) {
         command.env("GIT_DIR", &self.side).current_dir(&self.side);
         if let Some(common) = rev_parse(&self.repo, "--git-common-dir") {
             command.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", common.join("objects"));
