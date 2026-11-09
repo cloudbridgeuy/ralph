@@ -263,3 +263,40 @@ fn with_tags_reads_the_ids_for_a_tagged_request_only() {
         ralph_core::chat_memory::parse_search_args(&serde_json::json!({"query": "x"})).unwrap();
     assert_eq!(with_tags(dir.path(), &plain).unwrap(), plain);
 }
+
+#[test]
+fn skip_ahead_moves_the_start_so_a_later_pass_asks_nothing() {
+    let (dir, store) = store_with(3);
+    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    pass(&store, &mut none).unwrap();
+    grow(&dir, 10, 3);
+    store.skip_ahead(&now).unwrap();
+    assert_eq!(state(&dir).start, Some(10));
+    let mut ask = |_: &str| -> Result<String, String> { panic!("no call expected") };
+    pass(&store, &mut ask).unwrap();
+    store.skip_ahead(&now).unwrap();
+    let rows = fs::read_to_string(dir.path().join(TAGS_FILE)).unwrap();
+    assert_eq!(rows.lines().count(), 2, "a second skip adds no row: {rows}");
+}
+
+#[test]
+fn skip_ahead_without_a_start_row_writes_one_at_the_end() {
+    let (dir, store) = store_with(5);
+    store.skip_ahead(&now).unwrap();
+    assert_eq!(state(&dir).start, Some(5));
+}
+
+#[test]
+fn one_pass_tags_at_most_the_cap() {
+    let (dir, store) = store_with(0);
+    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    pass(&store, &mut none).unwrap();
+    grow(&dir, 250, 0);
+    let mut ask = |batch: &str| Ok(reply_for(&asked_ids(batch), |_| false));
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!(report.tagged, ralph_core::chat_memory::MAX_PER_PASS);
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!(report.tagged, ralph_core::chat_memory::MAX_PER_PASS);
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!(report.tagged, 50);
+}

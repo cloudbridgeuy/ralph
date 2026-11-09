@@ -412,11 +412,14 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
 
 fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>> {
     config::set_store_layer(&args.store);
+    let store = chat::tag_store::TagStore::new(args.store.clone());
+    let now = || chrono::Utc::now().to_rfc3339();
     if !config::AppConfig::load()
         .unwrap_or_default()
         .chat
         .tag_entries
     {
+        store.skip_ahead(&now)?;
         return Ok(());
     }
     let curator = Curator {
@@ -426,8 +429,6 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
         timeout: args.timeout,
     };
     let command = tag_command();
-    let store = chat::tag_store::TagStore::new(args.store.clone());
-    let now = || chrono::Utc::now().to_rfc3339();
     let pass = store.run_pass(&now, &mut |batch| {
         run_memory_command(&command, batch, &curator)
     })?;

@@ -37,7 +37,7 @@ pub use search::{parse_search_args, search, SearchRequest};
 pub use tag::{
     batches, build_batch, decode_rows, encode_row, encode_start, failure_kind, ids_with, next_size,
     parse_reply, untagged, Flags, Label, Parsed, RowKind, TagRow, TagState, BATCH_LADDER,
-    PROMPT_VERSION, TAGS_FILE, TAG_MODEL, TAG_PROMPT,
+    MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL, TAG_PROMPT,
 };
 pub use tools::{
     finish_call, handle_request, history_tool, parse_tool_call, tool_definitions, MemoryCall,

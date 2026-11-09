@@ -211,3 +211,9 @@ fn labels_parse_and_select_flagged_ids() {
     assert_eq!(ids(Label::Decision), vec![4]);
     assert_eq!(ids(Label::Approval), vec![4]);
 }
+
+#[test]
+fn a_later_start_row_moves_the_start_point() {
+    let text = [encode_start(2, "t").unwrap(), encode_start(9, "t").unwrap()].concat();
+    assert_eq!(state(&text).start, Some(9));
+}

@@ -5,7 +5,7 @@ use crate::private_file::check_path;
 use ralph_core::chat_memory::{
     batches, build_batch, decode_rows, encode_row, encode_start, failure_kind, ids_with, next_size,
     parse_log, parse_reply, untagged, Entry, RowKind, SearchRequest, TagRow, TagState,
-    BATCH_LADDER, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
+    BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -103,8 +103,24 @@ impl TagStore {
         file.sync_data()
     }
 
-    /// One pass: write the start row on first use, then tag every untagged entry,
-    /// re-reading the log between rounds. A model error ends the pass and writes
+    /// Moves the start point to the end of the log without tagging, for a
+    /// chat whose tagging is off, so turning it on never backfills.
+    pub fn skip_ahead(&self, now: &dyn Fn() -> String) -> io::Result<()> {
+        let lock = self.open_lock("TAG")?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Ok(()),
+            Err(TryLockError::Error(e)) => return Err(e),
+        }
+        let end = self.read_entries()?.len();
+        if self.read_state()?.start != Some(end) {
+            self.append(&encode_start(end, &now()).map_err(io::Error::other)?)?;
+        }
+        Ok(())
+    }
+
+    /// One pass: write the start row on first use, then tag the untagged entries
+    /// (at most `MAX_PER_PASS`), re-reading the log between rounds. A model error ends the pass and writes
     /// no failure row; only an entry that fails alone is marked.
     pub fn run_pass(&self, now: &dyn Fn() -> String, ask: &mut Ask) -> io::Result<Pass> {
         let lock = self.open_lock("TAG")?;
@@ -122,10 +138,11 @@ impl TagStore {
                 self.append(&encode_start(entries.len(), &now()).map_err(io::Error::other)?)?;
                 return Ok(Pass::Done(report));
             }
+            let room = MAX_PER_PASS.saturating_sub(attempted.len());
             let todo: Vec<usize> = untagged(&entries, &state)
                 .into_iter()
                 .filter(|id| !attempted.contains(id))
-                .take(BATCH_LADDER[0])
+                .take(BATCH_LADDER[0].min(room))
                 .collect();
             if todo.is_empty() {
                 return Ok(Pass::Done(report));

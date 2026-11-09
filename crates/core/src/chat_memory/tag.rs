@@ -9,6 +9,8 @@ pub const TAG_PROMPT: &str = include_str!("tag_prompt.txt");
 pub const PROMPT_VERSION: &str = "v1";
 pub const TAG_MODEL: &str = "claude-haiku-5-5";
 pub const TAGS_FILE: &str = "tags.jsonl";
+/// Most entries one pass tags: a backstop against a huge backlog.
+pub const MAX_PER_PASS: usize = 100;
 pub const BATCH_LADDER: [usize; 3] = [20, 5, 1];
 pub const TARGET_CHARS: usize = 1200;
 const CONTEXT_CHARS: usize = 350;
@@ -136,7 +138,7 @@ pub fn decode_rows(data: &[u8]) -> TagState {
             continue;
         };
         if let Some(start) = value.get("start").and_then(Value::as_u64) {
-            state.start.get_or_insert(start as usize);
+            state.start = Some(start as usize);
             continue;
         }
         let Some(n) = value.get("n").and_then(Value::as_u64).map(|n| n as usize) else {
