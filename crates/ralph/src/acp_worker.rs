@@ -12,7 +12,7 @@ use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
-use crate::workers::headless::{HeadlessHost, Heartbeat};
+use crate::workers::headless::{mark_prompt_lost, report_interrupt_gone, HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
     AuthenticateRequest, CancelNotification, InitializeRequest, InitializeResponse,
     LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
@@ -54,6 +54,7 @@ mod model;
 mod permissions;
 mod print;
 mod print_hooks;
+mod queued;
 mod turns;
 mod verify;
 
@@ -575,21 +576,22 @@ impl CursorHost {
             self.answer(&id);
         }
         for id in request_ids(&self.store_dir, CURSOR_PROMPT_DIR) {
-            self.prompt(
+            self.deliver_queued(
                 &id,
                 |files| &files.prompt,
-                |worker, text, _| {
-                    if let Err(message) = worker.send(WorkerCommand::Prompt(text.to_string())) {
-                        warn(message);
-                    }
-                },
+                |worker, text, _| worker.send(WorkerCommand::Prompt(text)),
+                |_, entry| mark_prompt_lost(entry),
             );
         }
         for id in request_ids(&self.store_dir, CURSOR_INTERRUPT_DIR) {
-            self.prompt(
+            self.deliver_queued(
                 &id,
                 |files| &files.interrupt,
-                |worker, text, entry| worker.interrupt(text, entry),
+                |worker, text, entry| {
+                    worker.interrupt(&text, entry);
+                    Ok(())
+                },
+                |files, entry| report_interrupt_gone(&files.interrupt_result, entry),
             );
         }
         for id in request_ids(&self.store_dir, CURSOR_SPAWN_DIR) {
@@ -646,40 +648,6 @@ impl CursorHost {
                     .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
             })
         });
-    }
-
-    fn prompt(
-        &self,
-        id: &str,
-        dir: fn(&HandoffFiles) -> &PathBuf,
-        deliver: fn(&mut CursorWorker, &str, &str),
-    ) {
-        let files = self.files(id);
-        let starting = locked(&self.starting).contains_key(id);
-        if starting && !self.workers().contains_key(id) {
-            return;
-        }
-        let mut entries: Vec<PathBuf> = fs::read_dir(dir(&files))
-            .map(|dir| {
-                dir.filter_map(Result::ok)
-                    .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-                    .map(|entry| entry.path())
-                    .collect()
-            })
-            .unwrap_or_default();
-        entries.sort();
-        for entry in entries {
-            let name = entry
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if let (Ok(text), Some(worker)) =
-                (fs::read_to_string(&entry), self.workers().get_mut(id))
-            {
-                deliver(worker, &text, &name);
-            }
-            fs::remove_file(&entry).ok();
-        }
     }
 
     fn close(&self, id: &str) {
