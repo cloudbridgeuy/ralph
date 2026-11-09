@@ -1,4 +1,3 @@
-use crate::cli::VerifyAgent;
 use crate::config::AppConfig;
 use crate::subprocess::TimedOutput;
 use crate::version_drift::{record_manual, DriftRun};
@@ -9,7 +8,7 @@ use crate::{
 use ralph_core::worker::{
     claude_required_checks, finish_plan, finished_probe, limit_failure, render_check,
     render_summary, required_failure, resolve_claude_model, resolve_opencode_model, spec_passed,
-    verified_entry, verify_limit, CheckResult, Verdict, VerifiedAgent, VersionProbe,
+    verified_entry, verify_limit, CheckResult, HarnessId, Verdict, VerifiedAgent, VersionProbe,
     CLAUDE_HEADLESS_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
     DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
 };
@@ -91,19 +90,19 @@ pub(crate) fn version_probe(output: TimedOutput) -> VersionProbe {
 }
 
 fn resolved_model(
-    agent: VerifyAgent,
+    agent: HarnessId,
     config: &Result<AppConfig, String>,
 ) -> (Option<String>, Option<String>) {
     match agent {
-        VerifyAgent::Cursor | VerifyAgent::Codex => (None, None),
-        VerifyAgent::Claude | VerifyAgent::ClaudeHeadless => resolve_claude_model(
+        HarnessId::Cursor | HarnessId::Codex => (None, None),
+        HarnessId::Claude | HarnessId::ClaudeHeadless => resolve_claude_model(
             None,
             config
                 .as_ref()
                 .map(|config| config.claude.model.as_deref())
                 .map_err(String::as_str),
         ),
-        VerifyAgent::Opencode => {
+        HarnessId::Opencode => {
             let (model, warning) = resolve_opencode_model(
                 None,
                 config
@@ -116,13 +115,13 @@ fn resolved_model(
     }
 }
 
-fn model_label(agent: VerifyAgent, model: Option<&str>) -> Option<String> {
+fn model_label(agent: HarnessId, model: Option<&str>) -> Option<String> {
     match agent {
-        VerifyAgent::Cursor | VerifyAgent::Codex => None,
-        VerifyAgent::Claude | VerifyAgent::ClaudeHeadless => {
+        HarnessId::Cursor | HarnessId::Codex => None,
+        HarnessId::Claude | HarnessId::ClaudeHeadless => {
             Some(model.unwrap_or("claude's default model").to_string())
         }
-        VerifyAgent::Opencode => model.map(str::to_string),
+        HarnessId::Opencode => model.map(str::to_string),
     }
 }
 
@@ -165,12 +164,12 @@ fn conclude(
 }
 
 pub(crate) fn run(
-    agent: VerifyAgent,
+    agent: HarnessId,
     live: bool,
     drift: Option<DriftRun>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let name = agent.name();
+    let name = agent.as_str();
     let drift = match drift {
         Some(drift) => match drift.claim(name) {
             Some(claimed) => Some(claimed),
@@ -189,19 +188,19 @@ pub(crate) fn run(
         checks.add(CheckResult::advisory("model", Verdict::Unknown, warning));
     }
     let (version, required) = match agent {
-        VerifyAgent::Cursor => (
+        HarnessId::Cursor => (
             acp_worker::verify(live, dir.path(), &checks),
             CURSOR_REQUIRED_CHECKS,
         ),
-        VerifyAgent::Codex => (
+        HarnessId::Codex => (
             codex_worker::verify(live, dir.path(), &checks),
             CODEX_REQUIRED_CHECKS,
         ),
-        VerifyAgent::ClaudeHeadless => (
+        HarnessId::ClaudeHeadless => (
             claude_headless_worker::verify(live, dir.path(), &checks, &config, model.as_deref()),
             CLAUDE_HEADLESS_REQUIRED_CHECKS,
         ),
-        VerifyAgent::Opencode => (
+        HarnessId::Opencode => (
             opencode_worker::verify(
                 live,
                 dir.path(),
@@ -210,7 +209,7 @@ pub(crate) fn run(
             ),
             OPENCODE_REQUIRED_CHECKS,
         ),
-        VerifyAgent::Claude => (
+        HarnessId::Claude => (
             workers::verify(live, dir.path(), &checks, &config, model.as_deref()),
             claude_required_checks(live),
         ),
@@ -259,8 +258,6 @@ pub(crate) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::Cli;
-    use clap::Parser;
 
     fn passed(version: Option<&str>) -> Outcome<'_> {
         Outcome {
@@ -321,7 +318,7 @@ mod tests {
 
     #[test]
     fn claude_kinds_resolve_the_configured_model_like_spawn() {
-        for agent in [VerifyAgent::Claude, VerifyAgent::ClaudeHeadless] {
+        for agent in [HarnessId::Claude, HarnessId::ClaudeHeadless] {
             let config = config_with(Some("claude-haiku-5-5"), None);
             assert_eq!(
                 resolved_model(agent, &config),
@@ -338,13 +335,13 @@ mod tests {
     fn opencode_resolves_the_configured_model_or_the_default() {
         assert_eq!(
             resolved_model(
-                VerifyAgent::Opencode,
+                HarnessId::Opencode,
                 &config_with(None, Some("anthropic/claude-haiku-5-5"))
             ),
             (Some("anthropic/claude-haiku-5-5".to_string()), None)
         );
         assert_eq!(
-            resolved_model(VerifyAgent::Opencode, &config_with(None, None)),
+            resolved_model(HarnessId::Opencode, &config_with(None, None)),
             (Some(DEFAULT_OPENCODE_MODEL.to_string()), None)
         );
     }
@@ -352,7 +349,7 @@ mod tests {
     #[test]
     fn a_bad_configured_model_warns_and_falls_back() {
         let (model, warning) =
-            resolved_model(VerifyAgent::Claude, &config_with(Some("two words"), None));
+            resolved_model(HarnessId::Claude, &config_with(Some("two words"), None));
         assert_eq!(model, None);
         assert!(warning.is_some());
     }
@@ -367,38 +364,15 @@ mod tests {
         assert!(line(named(Some("claude-haiku-5-5")))
             .starts_with("PASS: cursor 2.1.316 with model claude-haiku-5-5 ("));
         assert!(line(named(None)).starts_with("PASS: cursor 2.1.316 ("));
-        assert_eq!(model_label(VerifyAgent::Cursor, None), None);
-        assert_eq!(model_label(VerifyAgent::Codex, Some("x")), None);
+        assert_eq!(model_label(HarnessId::Cursor, None), None);
+        assert_eq!(model_label(HarnessId::Codex, Some("x")), None);
         assert_eq!(
-            model_label(VerifyAgent::Claude, None).as_deref(),
+            model_label(HarnessId::Claude, None).as_deref(),
             Some("claude's default model")
         );
         assert_eq!(
-            model_label(VerifyAgent::ClaudeHeadless, Some("m")).as_deref(),
+            model_label(HarnessId::ClaudeHeadless, Some("m")).as_deref(),
             Some("m")
         );
-    }
-
-    #[test]
-    fn the_cli_accepts_claude_as_a_verify_agent() {
-        for agent in ["cursor", "codex", "claude-headless", "opencode", "claude"] {
-            assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_ok());
-        }
-        assert!(Cli::try_parse_from(["ralph", "worker", "verify", "tmux"]).is_err());
-    }
-
-    #[test]
-    fn the_hidden_drift_flags_come_as_a_pair_and_never_with_live() {
-        let parse = |extra: &[&str]| {
-            let mut args = vec!["ralph", "worker", "verify", "codex"];
-            args.extend_from_slice(extra);
-            Cli::try_parse_from(args).is_ok()
-        };
-        assert!(parse(&["--drift", "0.170.0", "--inbox", "/s/inbox"]));
-        assert!(!parse(&["--drift", "0.170.0"]));
-        assert!(!parse(&["--inbox", "/s/inbox"]));
-        assert!(!parse(&[
-            "--live", "--drift", "0.170.0", "--inbox", "/s/inbox"
-        ]));
     }
 }

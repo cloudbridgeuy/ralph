@@ -70,10 +70,11 @@ mod workers;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, MermaidArgs, WorkerArgs,
-    WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, MermaidArgs, VerifyAgent,
+    WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
 use invoke::InvocationConfig;
+use ralph_core::worker::HarnessId;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
 use version_drift::DriftRun;
@@ -146,7 +147,13 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
             drift,
             inbox,
         } => worker_verify::run(
-            agent,
+            match agent {
+                VerifyAgent::Cursor => HarnessId::Cursor,
+                VerifyAgent::Codex => HarnessId::Codex,
+                VerifyAgent::ClaudeHeadless => HarnessId::ClaudeHeadless,
+                VerifyAgent::Opencode => HarnessId::Opencode,
+                VerifyAgent::Claude => HarnessId::Claude,
+            },
             live,
             drift
                 .zip(inbox)

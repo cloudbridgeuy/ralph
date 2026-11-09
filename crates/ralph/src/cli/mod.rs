@@ -145,18 +145,6 @@ pub enum VerifyAgent {
     Claude,
 }
 
-impl VerifyAgent {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Cursor => "cursor",
-            Self::Codex => "codex",
-            Self::ClaudeHeadless => "claude-headless",
-            Self::Opencode => "opencode",
-            Self::Claude => "claude",
-        }
-    }
-}
-
 #[derive(Subcommand, Debug)]
 pub enum WorkerCommand {
     #[command(

@@ -137,3 +137,26 @@ fn every_curator_row_carries_the_run_and_the_store() {
     });
     assert_eq!(rows[1]["model"], "claude-sonnet-5-5");
 }
+
+#[test]
+fn the_cli_accepts_claude_as_a_verify_agent() {
+    for agent in ["cursor", "codex", "claude-headless", "opencode", "claude"] {
+        assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_ok());
+    }
+    assert!(Cli::try_parse_from(["ralph", "worker", "verify", "tmux"]).is_err());
+}
+
+#[test]
+fn the_hidden_drift_flags_come_as_a_pair_and_never_with_live() {
+    let parse = |extra: &[&str]| {
+        let mut args = vec!["ralph", "worker", "verify", "codex"];
+        args.extend_from_slice(extra);
+        Cli::try_parse_from(args).is_ok()
+    };
+    assert!(parse(&["--drift", "0.170.0", "--inbox", "/s/inbox"]));
+    assert!(!parse(&["--drift", "0.170.0"]));
+    assert!(!parse(&["--inbox", "/s/inbox"]));
+    assert!(!parse(&[
+        "--live", "--drift", "0.170.0", "--inbox", "/s/inbox"
+    ]));
+}
