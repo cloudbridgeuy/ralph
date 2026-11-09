@@ -11,9 +11,8 @@ use chrono::{Local, Utc};
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{parse_step_result, STEP_RESULT};
 use ralph_core::chat_socket::{
-    check_socket_path, decode_line, encode_line, orphan_sidecar_fate, runtime_dir_name,
-    runtime_dir_pid, sidecar_name, sidecar_pid, socket_fate, socket_file_name, SocketFacts,
-    SocketFate, SocketOwner, SocketRequest, SocketResponse, StoreKey,
+    check_socket_path, decode_line, encode_line, orphan_sidecar_fate, runtime_dir_pid, sidecar_pid,
+    socket_fate, SocketFacts, SocketFate, SocketOwner, SocketRequest, SocketResponse, StoreKey,
 };
 use ralph_core::chat_suggestion::parse_suggestion;
 use ralph_core::schedule_request::{
@@ -22,13 +21,14 @@ use ralph_core::schedule_request::{
 use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command};
+use ralph_server::chat::socket::{SocketFiles, SocketPlace};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process;
 use std::sync::Arc;
 use std::thread;
@@ -47,35 +47,6 @@ pub(crate) struct Shared {
     pub(crate) workers: Workers,
     pub(crate) suggestions: SuggestionSlot,
     pub(crate) send_it: SendIt,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SocketFiles {
-    dir: PathBuf,
-    socket: PathBuf,
-    sidecar: PathBuf,
-}
-
-struct SocketPlace<'a> {
-    store: &'a Path,
-    root: &'a Path,
-    key: StoreKey,
-}
-
-impl SocketFiles {
-    fn new(place: &SocketPlace, pid: u32) -> Self {
-        let private = place.root.join(runtime_dir_name(&place.key, pid));
-        Self {
-            socket: private.join(socket_file_name()),
-            dir: private,
-            sidecar: place.store.join(sidecar_name(pid)),
-        }
-    }
-
-    pub(crate) fn remove(&self) {
-        fs::remove_dir_all(&self.dir).ok();
-        fs::remove_file(&self.sidecar).ok();
-    }
 }
 
 pub(crate) struct SocketGuard(pub(crate) SocketFiles);
@@ -386,7 +357,9 @@ pub(crate) fn forward(socket: &Path, request: &SocketRequest) -> Result<SocketRe
 mod tests {
     use super::*;
     use ralph_core::chat_send_it::Limits;
+    use ralph_core::chat_socket::sidecar_name;
     use serde_json::{json, Value};
+    use std::path::PathBuf;
 
     fn workers() -> Workers {
         Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None)

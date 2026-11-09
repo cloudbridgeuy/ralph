@@ -1,5 +1,4 @@
 use crate::acp_worker::CursorHost;
-use crate::chat::socket::SocketFiles;
 use crate::claude_headless_worker::ClaudeHeadlessHost;
 use crate::codex_worker::CodexHost;
 use crate::cursor_owner::{now_secs, queued_entries, write_file, write_interrupt_result};
@@ -10,6 +9,7 @@ use ralph_core::worker::{
     lost_marker_name, queued_disposition, render_gone, ActivityMark, ActivityState,
     InterruptOutcome, OwnerRecord, Queued, QueuedFacts, QueuedOwner, Scope,
 };
+use ralph_server::chat::socket::SocketFiles;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};

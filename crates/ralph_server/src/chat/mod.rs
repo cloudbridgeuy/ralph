@@ -6,3 +6,4 @@ pub mod memory;
 pub mod name;
 pub mod skills;
 pub mod snapshots;
+pub mod socket;
