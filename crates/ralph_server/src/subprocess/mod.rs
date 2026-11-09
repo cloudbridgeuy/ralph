@@ -1,4 +1,6 @@
-use std::process::Child;
+use std::io;
+use std::process::{Child, Command, Stdio};
+use std::thread;
 
 mod groups;
 mod timed;
@@ -15,4 +17,27 @@ pub fn kill_process_group(child: &mut Child) {
 pub fn signal_group(child: &Child) {
     let pid = child.id() as libc::pid_t;
     unsafe { libc::killpg(pid, libc::SIGKILL) };
+}
+
+pub fn exited_unreaped(child: &Child) -> bool {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let found = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    found != 0 || info.si_signo != 0
+}
+
+pub fn spawn_detached(command: &mut Command) -> io::Result<()> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    thread::spawn(move || child.wait().ok());
+    Ok(())
 }
