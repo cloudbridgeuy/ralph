@@ -8,15 +8,15 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 pub const CLAUDE_COMMAND: &str = "claude";
-pub const CLAUDE_HEADLESS_SPAWN_DIR: &str = "claude-headless-spawn";
-pub const CLAUDE_HEADLESS_CLOSE_DIR: &str = "claude-headless-close";
-pub const CLAUDE_HEADLESS_ERROR_DIR: &str = "claude-headless-error";
-pub const CLAUDE_HEADLESS_OWNER_DIR: &str = "claude-headless";
-pub const CLAUDE_HEADLESS_ANSWER_DIR: &str = "claude-headless-answer";
-pub const CLAUDE_HEADLESS_PROMPT_DIR: &str = "claude-headless-prompt";
-pub const CLAUDE_HEADLESS_INTERRUPT_DIR: &str = "claude-headless-interrupt";
-pub const CLAUDE_HEADLESS_INTERRUPT_RESULT_DIR: &str = "claude-headless-interrupt-result";
-pub const CLAUDE_HEADLESS_SESSION_DIR: &str = "claude-headless-session";
+pub const CLAUDE_HEADLESS_SPAWN_DIR: &str = "claude-spawn";
+pub const CLAUDE_HEADLESS_CLOSE_DIR: &str = "claude-close";
+pub const CLAUDE_HEADLESS_ERROR_DIR: &str = "claude-error";
+pub const CLAUDE_HEADLESS_OWNER_DIR: &str = "claude";
+pub const CLAUDE_HEADLESS_ANSWER_DIR: &str = "claude-answer";
+pub const CLAUDE_HEADLESS_PROMPT_DIR: &str = "claude-prompt";
+pub const CLAUDE_HEADLESS_INTERRUPT_DIR: &str = "claude-interrupt";
+pub const CLAUDE_HEADLESS_INTERRUPT_RESULT_DIR: &str = "claude-interrupt-result";
+pub const CLAUDE_HEADLESS_SESSION_DIR: &str = "claude-session";
 
 pub const ALLOW_ONCE: &str = "allow_once";
 const DENY: &str = "deny";
