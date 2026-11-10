@@ -184,3 +184,12 @@ fn a_reprint_pairs_the_header_with_the_stripped_markdown() {
         "/rerender: no reply 3; the chat has 2 assistant replies."
     );
 }
+
+#[test]
+fn one_reply_is_singular_in_the_refusal() {
+    let entries = [entry(Role::Assistant, "only")];
+    assert_eq!(
+        nth_last_assistant(&entries, 2).unwrap_err(),
+        "/rerender: no reply 2; the chat has 1 assistant reply."
+    );
+}

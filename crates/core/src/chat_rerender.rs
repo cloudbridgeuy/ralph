@@ -28,7 +28,10 @@ pub fn nth_last_assistant(entries: &[Entry], n: usize) -> Result<&Entry, String>
     count
         .checked_sub(n)
         .and_then(|index| replies.get(index).copied())
-        .ok_or_else(|| format!("/rerender: no reply {n}; the chat has {count} assistant replies."))
+        .ok_or_else(|| {
+            let noun = if count == 1 { "reply" } else { "replies" };
+            format!("/rerender: no reply {n}; the chat has {count} assistant {noun}.")
+        })
 }
 
 pub fn rerender_header(n: usize) -> String {
