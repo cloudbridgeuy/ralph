@@ -219,14 +219,14 @@ fn an_exit_zero_call_gives_its_trimmed_reply() {
 
 #[test]
 fn an_outage_a_stop_or_a_non_zero_exit_is_an_error_and_an_empty_exit_zero_reply_is_not() {
-    let reply = |failure, terminated, code| tag_reply(failure, terminated, code, Some("[]"));
+    let reply = |failure, terminated, code| tag_reply(failure, terminated, code, "", Some("[]"));
     assert!(reply(Some(FailureKind::Outage), false, 1).is_err());
     assert!(reply(None, true, 0).is_err());
     assert!(reply(None, true, 1).is_err());
     assert!(reply(Some(FailureKind::Refusal), false, 1).is_err());
     assert!(reply(None, false, 1).is_err());
     assert_eq!(reply(None, false, 0), Ok("[]".to_string()));
-    assert_eq!(tag_reply(None, false, 0, None), Ok(String::new()));
+    assert_eq!(tag_reply(None, false, 0, "", None), Ok(String::new()));
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn a_non_zero_exit_stops_the_pass_and_only_an_exit_zero_reply_can_miss_entries()
     for response in [None, Some(""), Some("not json"), Some("[{\"n\":1}]")] {
         for failure in [None, Some(FailureKind::Refusal)] {
             assert!(
-                tag_reply(failure, false, 1, response).is_err(),
+                tag_reply(failure, false, 1, "", response).is_err(),
                 "{failure:?} {response:?}"
             );
         }
@@ -314,8 +314,34 @@ fn a_non_zero_exit_stops_the_pass_and_only_an_exit_zero_reply_can_miss_entries()
         None,
         false,
         0,
+        "",
         Some("[{\"n\":1,\"rule\":true,\"approval\":false}]"),
     );
     let parsed = parse_reply(&reply.unwrap(), &[1, 2]);
     assert_eq!(parsed.missing, vec![2]);
+}
+
+#[test]
+fn a_non_zero_exit_with_an_entry_level_error_goes_to_the_ladder() {
+    let ladder = |response| tag_reply(Some(FailureKind::Refusal), false, 1, "", Some(response));
+    assert_eq!(
+        ladder("API Error: 400 invalid_request_error"),
+        Ok(String::new())
+    );
+    assert_eq!(ladder("  api error: 400 bad"), Ok(String::new()));
+    assert_eq!(
+        ladder("ok\n\nAPI Error: Output blocked by content filtering policy"),
+        Ok(String::new())
+    );
+    assert_eq!(
+        ladder("API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy"),
+        Ok(String::new())
+    );
+    assert!(ladder("API Error: 401 invalid x-api-key").is_err());
+    assert!(ladder("API Error: 404 model not found").is_err());
+    assert!(ladder("Please run /login").is_err());
+    assert!(ladder("[{\"n\":400,\"rule\":true}]").is_err());
+    let from_stderr = |stderr| tag_reply(None, false, 1, stderr, None);
+    assert_eq!(from_stderr("API Error: 400 bad"), Ok(String::new()));
+    assert!(from_stderr("API Error: 403 forbidden").is_err());
 }

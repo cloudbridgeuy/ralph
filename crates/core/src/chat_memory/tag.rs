@@ -237,15 +237,30 @@ pub fn tag_failure_kind(
     })
 }
 
+/// Whether a failed call blames its entries, not the account: an "API Error: 400"
+/// line, or an "API Error" / "Output blocked" line about content filtering or
+/// the Usage Policy, in stderr or the reply (lines trimmed, any case). Such a
+/// call goes to the ladder so the bad entry is isolated.
+fn entry_level_error(stderr: &str, response: &str) -> bool {
+    stderr.lines().chain(response.lines()).any(|line| {
+        let line = line.trim().to_lowercase();
+        let message = line.starts_with("api error") || line.starts_with("output blocked");
+        line.starts_with("api error: 400")
+            || (message && (line.contains("content filtering") || line.contains("usage policy")))
+    })
+}
+
 /// The reply of an exit-0 call, or an error when the call did not give one.
-/// An outage that outlasted the backoff, a process told to stop, and any
-/// non-zero exit (expired login, 401/403, a missing model) end the pass with no
-/// rows, so the entries stay untagged and the next pass retries them. Only an
-/// exit-0 reply, even an empty one, reaches the ladder and can mark entries failed.
+/// An outage that outlasted the backoff, a process told to stop, and a
+/// non-zero exit that is not entry-level (expired login, 401/403/404, a missing
+/// model, anything unknown) end the pass with no rows, so the entries stay
+/// untagged and the next pass retries them. An exit-0 reply, even an empty one,
+/// and an entry-level error reach the ladder and can mark entries failed.
 pub fn tag_reply(
     failure: Option<FailureKind>,
     terminated: bool,
     exit_code: i32,
+    stderr: &str,
     response: Option<&str>,
 ) -> Result<String, String> {
     if terminated {
@@ -255,6 +270,9 @@ pub fn tag_reply(
         return Err("the model is out; tagging stops until the next reply".to_string());
     }
     if exit_code != 0 {
+        if entry_level_error(stderr, response.unwrap_or_default()) {
+            return Ok(String::new());
+        }
         return Err(format!(
             "the tag call failed (exit {exit_code}); tagging stops until the next reply"
         ));

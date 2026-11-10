@@ -435,6 +435,7 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
             run.failure,
             signal::is_terminated(),
             run.code,
+            &run.stderr,
             run.text.as_deref(),
         )
     })?;
@@ -509,6 +510,7 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
 /// retries from an ordinary failure.
 struct MemoryRun {
     code: i32,
+    stderr: String,
     text: Option<String>,
     failure: Option<ralph_core::retry::FailureKind>,
 }
@@ -556,6 +558,7 @@ fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
     Ok(MemoryRun {
         code: result.exit_code,
+        stderr: result.stderr.clone(),
         text: response,
         failure,
     })
