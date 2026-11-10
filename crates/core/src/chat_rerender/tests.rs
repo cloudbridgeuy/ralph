@@ -93,3 +93,43 @@ fn the_selector_borrows_the_stored_entry() {
     let picked: &Entry = nth_last_assistant(&entries, 1).unwrap();
     assert!(std::ptr::eq(picked, &entries[7]));
 }
+
+#[test]
+fn directive_tags_go_and_their_content_stays() {
+    let wrapped = "<ralph-ask to=\"reviewer\">Please review.</ralph-ask>";
+    assert_eq!(strip_directive_tags(wrapped), "Please review.");
+    let two = "<ralph-tell to=\"a\">Hi\nthere</ralph-tell>\n\nplain\n\n<ralph-comment to=\"b\">Go</ralph-comment>";
+    assert_eq!(strip_directive_tags(two), "Hi\nthere\n\nplain\n\nGo");
+}
+
+#[test]
+fn text_without_directive_tags_is_unchanged() {
+    for text in [
+        "",
+        "plain **bold** text",
+        "a < b and c > d",
+        "<div>html</div>",
+        "<ralph-ask>no target</ralph-ask>",
+        "<ralph- to=\"x\">no verb",
+        "<ralph-ask to=\"x",
+        "naïve — ünïcode <é>",
+        "```\n<ralph\n```",
+    ] {
+        let expected = text.replace("</ralph-ask>", "");
+        assert_eq!(strip_directive_tags(text), expected, "{text}");
+    }
+}
+
+#[test]
+fn an_unclosed_open_tag_loses_only_the_tag() {
+    assert_eq!(
+        strip_directive_tags("see <ralph-ask to=\"a\">half"),
+        "see half"
+    );
+}
+
+#[test]
+fn the_header_names_the_reply_number() {
+    assert_eq!(rerender_header(1), "reprint of reply 1");
+    assert_eq!(rerender_header(12), "reprint of reply 12");
+}
