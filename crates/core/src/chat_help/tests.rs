@@ -93,6 +93,7 @@ fn lists_hold_every_variant() {
             Main,
             Config,
             View,
+            Rerender,
             Read,
             Zoom,
             Recall,

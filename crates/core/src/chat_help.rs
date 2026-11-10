@@ -29,6 +29,7 @@ pub enum Command {
     Main,
     Config,
     View,
+    Rerender,
     Read,
     Zoom,
     Recall,
@@ -36,7 +37,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 22] = [
+    pub const ALL: [Command; 23] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -55,6 +56,7 @@ impl Command {
         Command::Main,
         Command::Config,
         Command::View,
+        Command::Rerender,
         Command::Read,
         Command::Zoom,
         Command::Recall,
@@ -81,6 +83,7 @@ impl Command {
             Command::Main => "/main",
             Command::Config => "/config",
             Command::View => "/view",
+            Command::Rerender => "/rerender",
             Command::Read => "/read",
             Command::Zoom => "/zoom",
             Command::Recall => "/recall",
@@ -265,6 +268,10 @@ impl Command {
             Command::View => &[(
                 "/view <file.md>",
                 "print a local markdown file with the chat renderer; relative image paths resolve from the file's directory and draw inline where the terminal shows images; mermaid blocks draw as pictures where the terminal shows images and the text stays readable, else as text diagrams; refuses a missing file, a directory, a file that is not .md or .markdown, and a file over 2 MB; Tab completes the path from directories and .md or .markdown files; starts no turn",
+            )],
+            Command::Rerender => &[(
+                "/rerender [N]",
+                "print the Nth-last assistant reply again from its stored markdown, with the chat renderer at the current terminal width and [chat] wrap_width; N is 1 or more and defaults to 1, the last reply; counts only assistant replies; directive tags and their text are left out; replies saved by older ralph versions reprint code, diff and mermaid blocks as plain text, and replies saved by this version redraw them as in /view; relative image paths resolve from the directory the chat was started in; works in main and in threads; starts no turn, calls no model and adds nothing to the log; refuses a chat with no reply and an N past the first reply",
             )],
             Command::Read => &[(
                 "/read <id> [raw|summary] [--cursor <c>]",

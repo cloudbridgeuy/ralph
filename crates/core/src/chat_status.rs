@@ -5,6 +5,7 @@ use crate::chat_hold::HoldFilter;
 use crate::chat_memory::{history_tool, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
+use crate::chat_rerender::parse_rerender_args;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
 use crate::chat_switch::{parse_main_args, parse_switch_args, SwitchTarget};
 use crate::chat_thread::{parse_fork_args, ForkCommand};
@@ -115,6 +116,7 @@ pub enum Route {
     },
     History(Result<MemoryCall, String>),
     View(ViewArgs),
+    Rerender(Result<usize, String>),
     Help,
     Config,
     Ignore,
@@ -146,6 +148,7 @@ impl Route {
             | Route::Switch { .. }
             | Route::ThreadOp { .. }
             | Route::View(_)
+            | Route::Rerender(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
             | Route::Diff(DiffArgs::Target(_))
@@ -210,6 +213,7 @@ pub fn route_input(
                 },
                 Command::Config => Route::Config,
                 Command::View => Route::View(parse_view_args(args)),
+                Command::Rerender => Route::Rerender(parse_rerender_args(args)),
                 Command::Read | Command::Search => {
                     let (words, cursor) = split_cursor(args);
                     Route::History(history_tool(&command.name()[1..], words, cursor, None))
@@ -479,5 +483,7 @@ pub fn footer(unread: usize, width: usize) -> String {
     format!("{}\n", fit(candidates, width))
 }
 
+#[cfg(test)]
+mod rerender_tests;
 #[cfg(test)]
 mod tests;
