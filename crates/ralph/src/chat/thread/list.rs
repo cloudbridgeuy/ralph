@@ -2,7 +2,6 @@
 
 use super::{read_meta, thread_dir};
 use crate::chat::inbox::Display;
-use crate::chat::prompt::screen_columns;
 use crate::chat::workers::shown;
 use crate::highlight::Highlighter;
 use crate::markdown::MarkdownTheme;
@@ -70,7 +69,7 @@ pub(in crate::chat) fn listing(
     }
 }
 
-pub(in crate::chat) fn default_listing(rows: &[ThreadRow], empty: &str) -> String {
+pub(in crate::chat) fn default_listing(rows: &[ThreadRow], width: usize, empty: &str) -> String {
     let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let highlighter = Highlighter::new();
     let theme = MarkdownTheme::default();
@@ -80,7 +79,7 @@ pub(in crate::chat) fn default_listing(rows: &[ThreadRow], empty: &str) -> Strin
         color,
         ui: UiColors::default(),
     };
-    listing(rows, &display, screen_columns(), empty)
+    listing(rows, &display, width, empty)
 }
 
 fn log_mtime(dir: &Path) -> Option<String> {

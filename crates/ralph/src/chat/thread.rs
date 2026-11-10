@@ -1,3 +1,4 @@
+use crate::chat::prompt::screen_columns;
 use crate::cli::{ThreadArgs, ThreadCommand, MERGE_TIMEOUT_SECS};
 use crate::schedule_store::ScheduleStore;
 use crate::{run_curator, Curator};
@@ -109,7 +110,8 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         ThreadCommand::Ls => {
             let rows = rows(&main, &|name| running_ids(&main, name).len())?;
-            println!("{}", default_listing(&rows, &empty_list_message(&main)));
+            let empty = empty_list_message(&main);
+            println!("{}", default_listing(&rows, screen_columns(), &empty));
         }
         ThreadCommand::Drop { name } => {
             println!("{}", drop_thread(&main, &name, &running_ids(&main, &name))?);

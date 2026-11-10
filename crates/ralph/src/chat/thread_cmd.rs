@@ -38,7 +38,7 @@ pub(super) fn run(
                 .map_err(|e| format!("could not list threads: {e}"))?;
             Ok(match env.display {
                 Some(display) => listing(&listed, display, env.width, "no threads"),
-                None => default_listing(&listed, "no threads"),
+                None => default_listing(&listed, env.width, "no threads"),
             })
         }
         ThreadOp::Pull(name) => pull_thread(&main, name),
