@@ -5,6 +5,7 @@ use std::io::BufRead;
 mod colour;
 pub mod error;
 mod hooks;
+mod install;
 
 /// Code quality checks and git hooks management
 #[derive(Debug, clap::Parser)]
@@ -132,6 +133,10 @@ async fn run_lint_checks(command: &LintCommand, global: &crate::Global) -> Resul
     }
 
     if !colour::run_raw_colour_check(global).await? {
+        all_passed = false;
+    }
+
+    if !install::run_install_lock_check(global).await? {
         all_passed = false;
     }
 
