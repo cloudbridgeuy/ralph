@@ -41,7 +41,7 @@ Type `/thread <name>` to move this chat to another thread in the same terminal. 
 - A multi-line entry with extra words after the switch argument (`/thread auth\nfix` or `/main\nfix`) gets the usage refusal and is not sent; the refusal returns it to the prompt. A line break is whitespace, so `/thread\nauth` switches to `auth`.
 - ralph saves unsent text to the prompt history first: queued lines and the draft in the prompt. If the save fails, the switch is cancelled. With a signal pending, ralph exits instead.
 - Saved schedules stay on disk. They do not fire while you are away.
-- The new chat does not keep `--name`. It titles itself by the thread name.
+- The new chat does not keep `--name`. Its session name comes from `[chat] name`, the git root or the cwd; its status bar shows the thread in its own cell and its title reads `<name> · <thread>`.
 - If another chat takes the target after the check, or the new chat cannot start, you land at the shell. Start `ralph chat` again.
 
 ## List threads
