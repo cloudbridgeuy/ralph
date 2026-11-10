@@ -331,3 +331,17 @@ fn note_rows_sit_in_the_label_column_like_names() {
     assert_eq!(attr(&note, "text-anchor"), "end", "{svg}");
     assert_eq!(attr(&name, "x"), attr(&note, "x"), "{svg}");
 }
+
+#[test]
+fn daily_labels_all_carry_cents_and_thousands_separators() {
+    let days = [
+        day("2026-11-05", Some(145.0), None),
+        day("2026-11-06", Some(0.14), None),
+        day("2026-11-07", Some(1234.0), None),
+        partial("2026-11-08", Some(87.26), None),
+    ];
+    let svg = daily_svg(&days, &HEADING);
+    for label in [">$145.00<", ">$0.14<", ">$1,234.00<", ">$87.26*<"] {
+        assert!(svg.contains(label), "{label} in {svg}");
+    }
+}

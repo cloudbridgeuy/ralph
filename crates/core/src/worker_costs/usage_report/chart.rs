@@ -69,7 +69,7 @@ fn grouped(usd: f64, decimals: usize) -> String {
 }
 
 fn money(usd: f64) -> String {
-    grouped(usd, if usd < 100.0 { 2 } else { 0 })
+    grouped(usd, 2)
 }
 
 fn tick_text(usd: f64, step: f64) -> String {
@@ -246,15 +246,14 @@ fn value_text(group: &Group, grand: f64) -> String {
     } else {
         0.0
     };
-    let exact = |usd: f64| grouped(usd, 2);
     let amount = match (reported(group) > 0.0, computed(group) > 0.0) {
         (true, true) => format!(
             "{} + {} {EST}",
-            exact(reported(group)),
-            exact(computed(group))
+            money(reported(group)),
+            money(computed(group))
         ),
-        (false, true) => format!("{} {EST}", exact(computed(group))),
-        _ => exact(reported(group)),
+        (false, true) => format!("{} {EST}", money(computed(group))),
+        _ => money(reported(group)),
     };
     let amount = if group.partly_priced() {
         format!("{amount} + {NO_PRICE}")
