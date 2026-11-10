@@ -1,7 +1,7 @@
 use crate::chat::schedule::{ask_answer, read_answer};
 use crate::chat::thread::{
-    config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, thread_dir,
-    view_thread,
+    config_root, default_listing, merge_precheck, merge_thread, park_thread, pull_thread, rows,
+    thread_dir, view_thread,
 };
 use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
@@ -27,13 +27,9 @@ pub(super) fn run(
     let main = config_root(store_dir);
     match op {
         ThreadOp::Ls => {
-            let rows = list(&main, &|name| running_of(name).len())
+            let listed = rows(&main, &|name| running_of(name).len())
                 .map_err(|e| format!("could not list threads: {e}"))?;
-            Ok(if rows.is_empty() {
-                "no threads".to_string()
-            } else {
-                rows
-            })
+            Ok(default_listing(&listed, "no threads"))
         }
         ThreadOp::Pull(name) => pull_thread(&main, name),
         ThreadOp::Park(name) => {

@@ -310,7 +310,7 @@ fn paint_tones(rendered: &str, palette: &Palette) -> String {
     out
 }
 
-fn shown(view: &View, display: &Display) -> String {
+pub(super) fn shown(view: &View, display: &Display) -> String {
     match view {
         View::Table(markdown) => paint_tones(
             &render_markdown(&display.ctx, markdown, &table_theme(display.theme)),

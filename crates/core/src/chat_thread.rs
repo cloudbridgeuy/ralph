@@ -379,17 +379,6 @@ pub fn fork_launch(spawn: ForkSpawn) -> ForkLaunch {
     }
 }
 
-pub fn ls_counts(workers: usize, unread: usize) -> String {
-    let mut counts = String::new();
-    if workers > 0 {
-        counts.push_str(&format!("  {}", counted(workers, "worker", "workers")));
-    }
-    if unread > 0 {
-        counts.push_str(&format!("  {unread} unread"));
-    }
-    counts
-}
-
 fn saved_records(count: usize) -> String {
     counted(
         count,
@@ -780,14 +769,6 @@ mod tests {
             guard_check(&auth, Guarded::Merge, saved(2)).unwrap_err(),
             "thread auth has 2 saved watches or schedules; stop them from thread auth's chat before merging."
         );
-    }
-
-    #[test]
-    fn ls_counts_show_workers_and_unread_only_when_present() {
-        assert_eq!(ls_counts(0, 0), "");
-        assert_eq!(ls_counts(1, 0), "  1 worker");
-        assert_eq!(ls_counts(0, 1), "  1 unread");
-        assert_eq!(ls_counts(2, 3), "  2 workers  3 unread");
     }
 
     #[test]
