@@ -1,5 +1,6 @@
 use super::*;
-use crate::config::{MermaidStyle, MermaidStyleExt};
+use crate::config::MermaidStyleExt;
+use ralph_server::config::MermaidStyle;
 use resvg::tiny_skia::Pixmap;
 use serde_json::json;
 use syntect::highlighting::ThemeSet;

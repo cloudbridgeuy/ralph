@@ -1,6 +1,6 @@
 use super::*;
-use crate::config::AppConfig;
 use crate::ui_theme::UiColors;
+use ralph_server::config::AppConfig;
 use serde_json::json;
 use std::fs;
 use syntect::highlighting::ThemeSet;

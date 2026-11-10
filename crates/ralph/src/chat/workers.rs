@@ -4,7 +4,6 @@ use crate::chat::memory::{load_usage, read_optional, usage_path, Store};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
-use crate::config::{AppConfig, WorkersSection};
 use crate::markdown::{MarkdownTheme, Palette};
 use crate::render::{render_markdown, COLOR_OFF};
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
@@ -27,6 +26,7 @@ use ralph_core::workers_view::{
     workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
     WorkerRow, TONE_ACTIVE, TONE_BLOCKED, TONE_DONE, TONE_END, TONE_WAITING,
 };
+use ralph_server::config::{AppConfig, WorkersSection};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::{Command, Stdio};

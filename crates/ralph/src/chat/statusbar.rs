@@ -1,10 +1,10 @@
 use crate::ansi::{bg, fg, BOLD, RESET};
-use crate::config::ChatSection;
 use crate::status_theme::StatusColors;
 use crate::theme_slots::ResolveColors;
 use ralph_core::chat_status::Status;
 use ralph_core::status_segments::{bar, Context, Separator, Span};
 use ralph_server::config::theme::StatusTheme;
+use ralph_server::config::ChatSection;
 
 pub struct StatusBar {
     colors: StatusColors,

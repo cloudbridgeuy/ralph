@@ -1,7 +1,6 @@
 use super::view::{env_settings, merged_rows};
-use super::{
-    config_path, hard_errors, leaf_sources, missing_config_dir, read_layer, AppConfig, ConfigError,
-};
+use super::{hard_errors, missing_config_dir};
+use ralph_server::config::{config_path, leaf_sources, read_layer, AppConfig, ConfigError};
 use std::path::{Path, PathBuf};
 use toml::Table;
 

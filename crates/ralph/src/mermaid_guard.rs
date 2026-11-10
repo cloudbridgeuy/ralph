@@ -1,8 +1,9 @@
-use crate::config::{AppConfig, MermaidSection, MermaidStyleExt};
+use crate::config::MermaidStyleExt;
 use crate::render::mermaid::{fits_width, mermaid_precheck};
 use crate::render::mermaid_picture::PictureRequest;
 use crate::ui_theme::UiColors;
 use ralph_core::mermaid_fit::Room;
+use ralph_server::config::{AppConfig, MermaidSection};
 use ralph_server::warn::warn;
 use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};

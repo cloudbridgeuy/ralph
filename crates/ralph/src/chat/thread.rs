@@ -26,7 +26,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub use ralph_server::chat::memory::Reach;
+use ralph_server::chat::memory::Reach;
 
 pub struct Fork {
     pub main: Store,

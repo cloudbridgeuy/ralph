@@ -1,6 +1,6 @@
 use crate::markdown::{RolePalette, ThemeRole};
 use crate::theme_slots::ResolveColors;
-pub use ralph_server::config::*;
+use ralph_server::config::ThemeSection;
 
 mod check;
 pub use check::{check, hard_errors, missing_config_dir};
@@ -10,7 +10,7 @@ mod mermaid_style;
 mod theme_tests;
 mod view;
 pub use command::{run_check, run_show};
-pub use mermaid_style::{MermaidStyle, MermaidStyleExt};
+pub use mermaid_style::MermaidStyleExt;
 pub use view::{
     config_view, effective_now, env_settings, load_for_chat, ConfigSnapshot, FileState, Origin,
     Setting,

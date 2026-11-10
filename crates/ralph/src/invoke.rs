@@ -1,4 +1,3 @@
-use crate::config::ChatSection;
 use crate::highlight::ThemeConfig;
 use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
@@ -9,6 +8,7 @@ use crate::subprocess::{
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::worker::inbox_env;
+use ralph_server::config::ChatSection;
 use std::io;
 use std::path::{Path, PathBuf};
 

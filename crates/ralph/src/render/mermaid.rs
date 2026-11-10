@@ -1,4 +1,4 @@
-use crate::config::MermaidSection;
+use ralph_server::config::MermaidSection;
 use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
 

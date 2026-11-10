@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use super::shutdown::INTERRUPTED;
-use super::store::ToStore;
+use ralph_server::wire::store::ToStore;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CHUNK_SIZE: usize = 8192;

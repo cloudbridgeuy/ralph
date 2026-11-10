@@ -1,11 +1,10 @@
 mod proxy;
 mod shutdown;
-pub(crate) use ralph_server::wire::store;
+use ralph_server::wire::store;
 
 use crate::cli::{
     WireArgs, WireCommand, WireDiffArgs, WireLsArgs, WireProvider, WireSessionsArgs, WireShowArgs,
 };
-use crate::config::AppConfig;
 use chrono::Utc;
 use ralph_core::wire::diff::{check_pair, diff_table, diff_view, pick_base, DiffInput};
 use ralph_core::wire::provider::{provider, ProviderId};
@@ -15,6 +14,7 @@ use ralph_core::wire::session::session_id;
 use ralph_core::wire::view::{
     ls_table, ls_view, session_rows, sessions_table, show_table, show_view, Pricing,
 };
+use ralph_server::config::AppConfig;
 use std::collections::hash_map::RandomState;
 use std::error::Error;
 use std::hash::{BuildHasher, Hasher};

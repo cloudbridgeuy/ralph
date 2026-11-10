@@ -1,6 +1,6 @@
 use crate::render::mermaid_picture::{PictureColors, PictureStyle, Rgba};
 use crate::ui_theme::UiColors;
-pub use ralph_server::config::MermaidStyle;
+use ralph_server::config::MermaidStyle;
 use serde_json::{Map, Value};
 use syntect::highlighting::{Color, Highlighter, Theme};
 use syntect::parsing::Scope;

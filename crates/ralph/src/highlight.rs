@@ -133,7 +133,7 @@ impl ThemeConfig {
     }
 
     pub fn from_config_and_env() -> Self {
-        let app_config = crate::config::AppConfig::load().ok();
+        let app_config = ralph_server::config::AppConfig::load().ok();
 
         let config_theme = app_config.as_ref().and_then(|c| {
             c.theme

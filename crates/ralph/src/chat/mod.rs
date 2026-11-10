@@ -92,7 +92,6 @@ use crate::subprocess::OutputGate;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
 use crate::watches::Watches;
-use crate::wire::store::current_uid;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, usage_store, Workers};
@@ -126,6 +125,7 @@ use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use ralph_server::warn::{warn, warn_if_err};
+use ralph_server::wire::store::current_uid;
 use reedline::{EditCommand, ExternalPrinter, Reedline};
 #[cfg(test)]
 use session::resolve_store;
@@ -158,7 +158,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let store_dir = chat_dir(args.store, args.thread.as_ref())?;
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store_root = canonical_store(store_dir.clone());
-    crate::config::set_store_layer(&store_dir);
+    ralph_server::config::set_store_layer(&store_dir);
     let store = Store::new(store_dir.clone());
     let _chat = store
         .claim_chat()?

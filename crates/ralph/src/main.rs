@@ -261,7 +261,7 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
     for warning in verbose_tools.warnings() {
         warn(warning);
     }
-    let app_config = config::AppConfig::load().unwrap_or_default();
+    let app_config = ralph_server::config::AppConfig::load().unwrap_or_default();
     warn::set_warning_color(theme_config.ui().warning);
     Ok(InvocationConfig {
         prompt: resolve_ask_prompt(args.prompt.as_deref())?,
@@ -321,7 +321,7 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 }
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
-    config::set_store_layer(&args.store);
+    ralph_server::config::set_store_layer(&args.store);
     let memory = chat::thread::Memory::open(&args.store)?;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -354,7 +354,7 @@ fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Err
 
 fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(store) = args.layer_store() {
-        config::set_store_layer(store);
+        ralph_server::config::set_store_layer(store);
     }
     let store = args.store.clone();
     let usage_file = args.usage;
@@ -393,7 +393,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 }
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
-    config::set_store_layer(&args.store);
+    ralph_server::config::set_store_layer(&args.store);
     let store = chat::memory::Store::new(args.store.clone());
     store.nap(|prompt| {
         run_curator(
@@ -443,7 +443,7 @@ fn curator_rows(
 
 pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {
     let theme_config = highlight::ThemeConfig::from_config_and_env();
-    let config_dir = config::AppConfig::load()
+    let config_dir = ralph_server::config::AppConfig::load()
         .unwrap_or_default()
         .claude
         .config_dir;

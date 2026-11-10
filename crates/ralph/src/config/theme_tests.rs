@@ -1,4 +1,5 @@
 use super::*;
+use ralph_server::config::AppConfig;
 
 #[test]
 fn theme_status_table_loads_and_reports_warnings() {

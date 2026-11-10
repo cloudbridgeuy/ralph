@@ -1,8 +1,9 @@
-use super::{AppConfig, ConfigError, MermaidStyleExt, ThemeWarnings};
+use super::{MermaidStyleExt, ThemeWarnings};
 use ralph_core::chat::resolve_watch_timeout;
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::claude_leftovers::configured_dir;
+use ralph_server::config::{AppConfig, ConfigError};
 use std::path::Path;
 
 #[derive(Debug, Default, PartialEq, Eq)]

@@ -43,7 +43,7 @@ pub fn run_stdio_server(
             Outcome::ConfigHelp { id, section } => finish_call(
                 id,
                 config_help(
-                    &crate::config::config_path(),
+                    &ralph_server::config::config_path(),
                     Some(&config_root(memory.dir())),
                     section.as_deref(),
                 ),
@@ -65,7 +65,7 @@ pub fn run_stdio_server(
 mod tests {
     use super::*;
     use crate::chat::memory::Store;
-    use crate::chat::thread::Reach;
+    use ralph_server::chat::memory::Reach;
 
     fn run(store: &Store, socket: &Path, input: &str) -> Vec<Value> {
         let mut out = Vec::new();

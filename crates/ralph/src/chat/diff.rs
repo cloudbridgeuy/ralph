@@ -1,8 +1,8 @@
 use crate::chat::changes::resolve_diff;
-use crate::config::ChangesSection;
 use crate::signal;
 use ralph_core::changes::NO_CHANGES;
 use ralph_core::diff_command::{diff_command, diff_quiet_command, range_is_empty, DiffTarget};
+use ralph_server::config::ChangesSection;
 use ralph_server::warn::warn;
 use std::path::Path;
 use std::process::{Command, Stdio};
