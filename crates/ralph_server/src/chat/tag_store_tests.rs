@@ -1,5 +1,5 @@
 use super::*;
-use ralph_core::chat_memory::{decode_rows, Role};
+use ralph_core::chat_memory::{decode_rows, CallReply, Role};
 use std::cell::RefCell;
 
 fn store_with(entries: usize) -> (tempfile::TempDir, TagStore) {
@@ -51,6 +51,20 @@ fn reply_for(ids: &[usize], rule: impl Fn(usize) -> bool) -> String {
     format!("[{}]", rows.join(","))
 }
 
+fn ok(text: String) -> Result<CallReply, String> {
+    Ok(CallReply {
+        text,
+        exited_ok: true,
+    })
+}
+
+fn bad() -> Result<CallReply, String> {
+    Ok(CallReply {
+        text: String::new(),
+        exited_ok: false,
+    })
+}
+
 fn now() -> String {
     "2026-11-09T00:00:00Z".to_string()
 }
@@ -70,7 +84,7 @@ fn pass(store: &TagStore, ask: &mut Ask) -> io::Result<Report> {
 #[test]
 fn the_first_pass_only_writes_the_start_row_and_asks_nothing() {
     let (dir, store) = store_with(4);
-    let mut ask = |_: &str| -> Result<String, String> { panic!("no call expected") };
+    let mut ask = |_: &str| -> Result<CallReply, String> { panic!("no call expected") };
     pass(&store, &mut ask).unwrap();
     let text = fs::read_to_string(dir.path().join(TAGS_FILE)).unwrap();
     assert_eq!(
@@ -82,10 +96,10 @@ fn the_first_pass_only_writes_the_start_row_and_asks_nothing() {
 #[test]
 fn new_entries_are_tagged_and_old_ones_never_are() {
     let (dir, store) = store_with(4);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 7, 4);
-    let mut ask = |batch: &str| Ok(reply_for(&asked_ids(batch), |n| n == 5));
+    let mut ask = |batch: &str| ok(reply_for(&asked_ids(batch), |n| n == 5));
     let report = pass(&store, &mut ask).unwrap();
     assert_eq!((report.tagged, report.failed), (3, 0));
     let s = state(&dir);
@@ -96,7 +110,7 @@ fn new_entries_are_tagged_and_old_ones_never_are() {
 #[test]
 fn a_bad_reply_walks_the_ladder_twenty_five_one() {
     let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 6, 0);
     let sizes = RefCell::new(Vec::new());
@@ -104,9 +118,9 @@ fn a_bad_reply_walks_the_ladder_twenty_five_one() {
         let ids = asked_ids(batch);
         sizes.borrow_mut().push(ids.len());
         if ids.len() > 1 {
-            Ok("not json".to_string())
+            ok("not json".to_string())
         } else {
-            Ok(reply_for(&ids, |_| false))
+            ok(reply_for(&ids, |_| false))
         }
     };
     pass(&store, &mut ask).unwrap();
@@ -117,7 +131,7 @@ fn a_bad_reply_walks_the_ladder_twenty_five_one() {
 #[test]
 fn valid_rows_of_a_partial_reply_are_kept_and_only_the_rest_drops_a_rung() {
     let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 3, 0);
     let calls = RefCell::new(Vec::new());
@@ -125,7 +139,7 @@ fn valid_rows_of_a_partial_reply_are_kept_and_only_the_rest_drops_a_rung() {
         let ids = asked_ids(batch);
         calls.borrow_mut().push(ids.clone());
         let answered: Vec<usize> = ids.iter().copied().filter(|n| *n != 1).collect();
-        Ok(reply_for(&answered, |_| false))
+        ok(reply_for(&answered, |_| false))
     };
     pass(&store, &mut ask).unwrap();
     assert_eq!(*calls.borrow(), [vec![0, 1, 2], vec![1]]);
@@ -134,12 +148,12 @@ fn valid_rows_of_a_partial_reply_are_kept_and_only_the_rest_drops_a_rung() {
 #[test]
 fn an_entry_failing_alone_gets_a_failed_row_then_a_skipped_row_then_is_left_alone() {
     let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 2, 0);
     let mut ask = |batch: &str| {
         let ids: Vec<usize> = asked_ids(batch).into_iter().filter(|n| *n != 1).collect();
-        Ok(reply_for(&ids, |_| false))
+        ok(reply_for(&ids, |_| false))
     };
     let first = pass(&store, &mut ask).unwrap();
     assert_eq!(first.failed, 1);
@@ -149,17 +163,17 @@ fn an_entry_failing_alone_gets_a_failed_row_then_a_skipped_row_then_is_left_alon
     pass(&store, &mut ask).unwrap();
     let s = state(&dir);
     assert!(s.skipped.contains(&1) && !s.tags.contains_key(&1));
-    let mut never = |_: &str| -> Result<String, String> { panic!("no call expected") };
+    let mut never = |_: &str| -> Result<CallReply, String> { panic!("no call expected") };
     pass(&store, &mut never).unwrap();
 }
 
 #[test]
 fn a_model_error_ends_the_pass_and_writes_no_failure_rows() {
     let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 3, 0);
-    let mut down = |_: &str| -> Result<String, String> { Err("exit 1".into()) };
+    let mut down = |_: &str| -> Result<CallReply, String> { Err("exit 1".into()) };
     assert!(pass(&store, &mut down).is_err());
     let s = state(&dir);
     assert!(s.failures.is_empty() && s.tags.is_empty());
@@ -168,7 +182,7 @@ fn a_model_error_ends_the_pass_and_writes_no_failure_rows() {
 #[test]
 fn corrupt_entries_are_never_asked() {
     let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 1, 0);
     let mut file = OpenOptions::new()
@@ -180,7 +194,7 @@ fn corrupt_entries_are_never_asked() {
     let asked = RefCell::new(Vec::new());
     let mut ask = |batch: &str| {
         asked.borrow_mut().extend(asked_ids(batch));
-        Ok(reply_for(&asked_ids(batch), |_| false))
+        ok(reply_for(&asked_ids(batch), |_| false))
     };
     pass(&store, &mut ask).unwrap();
     assert_eq!(*asked.borrow(), [0, 2]);
@@ -196,7 +210,7 @@ fn a_held_tag_lock_makes_the_pass_exit_busy_without_a_call() {
         .open(dir.path().join("TAG"))
         .unwrap();
     lock.lock().unwrap();
-    let mut never = |_: &str| -> Result<String, String> { panic!("no call expected") };
+    let mut never = |_: &str| -> Result<CallReply, String> { panic!("no call expected") };
     assert!(matches!(store.run_pass(&now, &mut never), Ok(Pass::Busy)));
     assert!(!dir.path().join(TAGS_FILE).exists());
 }
@@ -204,7 +218,7 @@ fn a_held_tag_lock_makes_the_pass_exit_busy_without_a_call() {
 #[test]
 fn a_torn_last_row_is_cut_off_by_the_next_append() {
     let (dir, store) = store_with(1);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     let mut file = OpenOptions::new()
         .append(true)
@@ -212,7 +226,7 @@ fn a_torn_last_row_is_cut_off_by_the_next_append() {
         .unwrap();
     write!(file, "{{\"v\":1,\"n\":9,\"ru").unwrap();
     grow(&dir, 2, 1);
-    let mut ask = |batch: &str| Ok(reply_for(&asked_ids(batch), |_| true));
+    let mut ask = |batch: &str| ok(reply_for(&asked_ids(batch), |_| true));
     pass(&store, &mut ask).unwrap();
     let s = state(&dir);
     assert_eq!(s.tags.keys().copied().collect::<Vec<_>>(), [1]);
@@ -222,7 +236,7 @@ fn a_torn_last_row_is_cut_off_by_the_next_append() {
 #[test]
 fn entries_appended_during_a_pass_are_picked_up_by_the_same_pass() {
     let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 2, 0);
     let grown = RefCell::new(false);
@@ -230,7 +244,7 @@ fn entries_appended_during_a_pass_are_picked_up_by_the_same_pass() {
         if !grown.replace(true) {
             grow(&dir, 3, 2);
         }
-        Ok(reply_for(&asked_ids(batch), |_| false))
+        ok(reply_for(&asked_ids(batch), |_| false))
     };
     pass(&store, &mut ask).unwrap();
     assert_eq!(state(&dir).tags.len(), 3);
@@ -262,12 +276,12 @@ fn with_tags_reads_the_ids_for_a_tagged_request_only() {
 #[test]
 fn skip_ahead_moves_the_start_so_a_later_pass_asks_nothing() {
     let (dir, store) = store_with(3);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 10, 3);
     store.skip_ahead(&now).unwrap();
     assert_eq!(state(&dir).start, Some(10));
-    let mut ask = |_: &str| -> Result<String, String> { panic!("no call expected") };
+    let mut ask = |_: &str| -> Result<CallReply, String> { panic!("no call expected") };
     pass(&store, &mut ask).unwrap();
     store.skip_ahead(&now).unwrap();
     let rows = fs::read_to_string(dir.path().join(TAGS_FILE)).unwrap();
@@ -284,14 +298,86 @@ fn skip_ahead_without_a_start_row_writes_one_at_the_end() {
 #[test]
 fn one_pass_tags_at_most_the_cap() {
     let (dir, store) = store_with(0);
-    let mut none = |_: &str| -> Result<String, String> { Err("unused".into()) };
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
     pass(&store, &mut none).unwrap();
     grow(&dir, 250, 0);
-    let mut ask = |batch: &str| Ok(reply_for(&asked_ids(batch), |_| false));
+    let mut ask = |batch: &str| ok(reply_for(&asked_ids(batch), |_| false));
     let report = pass(&store, &mut ask).unwrap();
     assert_eq!(report.tagged, ralph_core::chat_memory::MAX_PER_PASS);
     let report = pass(&store, &mut ask).unwrap();
     assert_eq!(report.tagged, ralph_core::chat_memory::MAX_PER_PASS);
     let report = pass(&store, &mut ask).unwrap();
     assert_eq!(report.tagged, 50);
+}
+
+fn started(entries: usize) -> (tempfile::TempDir, TagStore) {
+    let (dir, store) = store_with(0);
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
+    pass(&store, &mut none).unwrap();
+    grow(&dir, entries, 0);
+    (dir, store)
+}
+
+#[test]
+fn a_global_error_stops_the_pass_after_four_calls_and_writes_no_rows() {
+    let (dir, store) = started(30);
+    let calls = RefCell::new(0);
+    let mut ask = |_: &str| {
+        *calls.borrow_mut() += 1;
+        bad()
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!(*calls.borrow(), 4);
+    assert_eq!((report.tagged, report.failed), (0, 0));
+    let s = state(&dir);
+    assert!(s.tags.is_empty() && s.failures.is_empty() && s.skipped.is_empty());
+}
+
+#[test]
+fn one_bad_entry_is_isolated_then_marked_failed_once_a_later_call_succeeds() {
+    let (dir, store) = started(4);
+    let mut ask = |batch: &str| {
+        let ids = asked_ids(batch);
+        if ids.contains(&0) {
+            return bad();
+        }
+        ok(reply_for(&ids, |_| false))
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!((report.tagged, report.failed), (3, 1));
+    let s = state(&dir);
+    assert_eq!(s.failures.get(&0), Some(&1));
+    assert_eq!(s.tags.keys().copied().collect::<Vec<_>>(), [1, 2, 3]);
+}
+
+#[test]
+fn a_pass_with_no_exit_zero_writes_no_failed_rows() {
+    let (dir, store) = started(1);
+    let calls = RefCell::new(0);
+    let mut ask = |_: &str| {
+        *calls.borrow_mut() += 1;
+        bad()
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!(*calls.borrow(), 1);
+    assert_eq!((report.tagged, report.failed), (0, 0));
+    assert!(state(&dir).failures.is_empty());
+}
+
+#[test]
+fn two_bad_entries_at_the_front_look_global_and_stall_the_pass() {
+    let (dir, store) = started(6);
+    let calls = RefCell::new(0);
+    let mut ask = |batch: &str| {
+        *calls.borrow_mut() += 1;
+        let ids = asked_ids(batch);
+        if ids.iter().any(|n| *n < 2) {
+            return bad();
+        }
+        ok(reply_for(&ids, |_| false))
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!(*calls.borrow(), 4);
+    assert_eq!((report.tagged, report.failed), (0, 0));
+    assert!(state(&dir).tags.is_empty());
 }

@@ -215,69 +215,92 @@ pub fn retake(len_now: usize, seen: usize) -> bool {
     len_now > seen
 }
 
-/// Classifies a failed tag call. The shared classifier reads bare codes such as
-/// "503" anywhere in its text, and a tag reply is full of entry numbers, so
-/// the reply text counts only through its lines that are API error messages.
-pub fn tag_failure_kind(
-    timed_out: bool,
-    exit_code: i32,
-    stderr: &str,
-    response: &str,
-) -> FailureKind {
-    let errors: Vec<&str> = response
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.to_lowercase().starts_with("api error"))
-        .collect();
-    let text = format!("{stderr}\n{}", errors.join("\n"));
+/// Classifies a failed tag call from its exit and stderr only. The model's
+/// reply never counts: it can quote an error (this chat does), and a tag reply
+/// is full of entry numbers that the shared classifier reads as codes.
+pub fn tag_failure_kind(timed_out: bool, exit_code: i32, stderr: &str) -> FailureKind {
     classify(&FailureInput {
         timed_out,
         exit_code,
-        text: &text,
+        text: stderr,
     })
 }
 
-/// Whether a failed call blames its entries, not the account: an "API Error: 400"
-/// line, or an "API Error" / "Output blocked" line about content filtering or
-/// the Usage Policy, in stderr or the reply (lines trimmed, any case). Such a
-/// call goes to the ladder so the bad entry is isolated.
-fn entry_level_error(stderr: &str, response: &str) -> bool {
-    stderr.lines().chain(response.lines()).any(|line| {
-        let line = line.trim().to_lowercase();
-        let message = line.starts_with("api error") || line.starts_with("output blocked");
-        line.starts_with("api error: 400")
-            || (message && (line.contains("content filtering") || line.contains("usage policy")))
-    })
+/// What a finished tag call gives the pass: the reply text, and whether the
+/// process exited 0. A non-zero exit has no text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallReply {
+    pub text: String,
+    pub exited_ok: bool,
 }
 
-/// The reply of an exit-0 call, or an error when the call did not give one.
-/// An outage that outlasted the backoff, a process told to stop, and a
-/// non-zero exit that is not entry-level (expired login, 401/403/404, a missing
-/// model, anything unknown) end the pass with no rows, so the entries stay
-/// untagged and the next pass retries them. An exit-0 reply, even an empty one,
-/// and an entry-level error reach the ladder and can mark entries failed.
+/// How many calls in a row may exit non-zero, before any call of the pass has
+/// exited 0, before the pass reads the failure as global and stops.
+pub const MAX_BAD_STREAK: u32 = 4;
+
+/// What a pass has seen of its own calls.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PassHealth {
+    exited_ok: bool,
+    bad_streak: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Go,
+    Stop,
+}
+
+/// Folds one finished call into the pass health. A global fault (a bad login,
+/// credit, a flag) makes every call fail, which text cannot tell from one bad
+/// entry; so the pass stops when `MAX_BAD_STREAK` calls in a row exit non-zero
+/// before any call exited 0.
+pub fn after_call(health: PassHealth, exited_ok: bool) -> (PassHealth, Verdict) {
+    if exited_ok {
+        let health = PassHealth {
+            exited_ok: true,
+            bad_streak: 0,
+        };
+        return (health, Verdict::Go);
+    }
+    let health = PassHealth {
+        bad_streak: health.bad_streak + 1,
+        ..health
+    };
+    let global = !health.exited_ok && health.bad_streak >= MAX_BAD_STREAK;
+    (health, if global { Verdict::Stop } else { Verdict::Go })
+}
+
+/// Whether the pass may write `failed` rows: only once a call of the same pass
+/// exited 0, which shows the model and the account work.
+pub fn may_mark_failed(health: PassHealth) -> bool {
+    health.exited_ok
+}
+
+/// The reply of a finished call, or an error when the call did not finish. An
+/// outage that outlasted the backoff and a process told to stop end the pass
+/// with no rows. A non-zero exit gives no text, so the ladder isolates the
+/// entries; `after_call` and `may_mark_failed` keep a global fault from marking
+/// them.
 pub fn tag_reply(
     failure: Option<FailureKind>,
     terminated: bool,
     exit_code: i32,
-    stderr: &str,
     response: Option<&str>,
-) -> Result<String, String> {
+) -> Result<CallReply, String> {
     if terminated {
         return Err("tagging was interrupted".to_string());
     }
     if failure == Some(FailureKind::Outage) {
         return Err("the model is out; tagging stops until the next reply".to_string());
     }
-    if exit_code != 0 {
-        if entry_level_error(stderr, response.unwrap_or_default()) {
-            return Ok(String::new());
-        }
-        return Err(format!(
-            "the tag call failed (exit {exit_code}); tagging stops until the next reply"
-        ));
-    }
-    Ok(reply_text(response))
+    let exited_ok = exit_code == 0;
+    let text = if exited_ok {
+        reply_text(response)
+    } else {
+        String::new()
+    };
+    Ok(CallReply { text, exited_ok })
 }
 
 /// Keeps each asked entry's first complete row; anything else is missing.

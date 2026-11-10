@@ -218,15 +218,23 @@ fn an_exit_zero_call_gives_its_trimmed_reply() {
 }
 
 #[test]
-fn an_outage_a_stop_or_a_non_zero_exit_is_an_error_and_an_empty_exit_zero_reply_is_not() {
-    let reply = |failure, terminated, code| tag_reply(failure, terminated, code, "", Some("[]"));
+fn an_outage_or_a_stop_is_an_error_and_any_other_exit_gives_a_reply() {
+    let reply = |failure, terminated, code| tag_reply(failure, terminated, code, Some("[]"));
     assert!(reply(Some(FailureKind::Outage), false, 1).is_err());
     assert!(reply(None, true, 0).is_err());
     assert!(reply(None, true, 1).is_err());
-    assert!(reply(Some(FailureKind::Refusal), false, 1).is_err());
-    assert!(reply(None, false, 1).is_err());
-    assert_eq!(reply(None, false, 0), Ok("[]".to_string()));
-    assert_eq!(tag_reply(None, false, 0, "", None), Ok(String::new()));
+    let ok = |text: &str| CallReply {
+        text: text.to_string(),
+        exited_ok: true,
+    };
+    let bad = CallReply {
+        text: String::new(),
+        exited_ok: false,
+    };
+    assert_eq!(reply(Some(FailureKind::Refusal), false, 1), Ok(bad.clone()));
+    assert_eq!(reply(None, false, 1), Ok(bad));
+    assert_eq!(reply(None, false, 0), Ok(ok("[]")));
+    assert_eq!(tag_reply(None, false, 0, None), Ok(ok("")));
 }
 
 #[test]
@@ -237,42 +245,57 @@ fn a_pass_retakes_the_lock_only_when_the_log_grew_after_its_last_read() {
 }
 
 #[test]
-fn entry_numbers_in_a_partial_reply_are_not_an_outage() {
-    let kind =
-        |timed_out, stderr: &str, response: &str| tag_failure_kind(timed_out, 1, stderr, response);
+fn only_stderr_decides_the_failure_kind() {
     assert_eq!(
-        kind(false, "", r#"[{"n":503,"rule":true}]"#),
-        FailureKind::Refusal
-    );
-    assert_eq!(kind(false, "", r#"[{"n":1529}]"#), FailureKind::Refusal);
-    assert_eq!(kind(false, "", ""), FailureKind::Refusal);
-    assert_eq!(
-        kind(false, "API Error: 529 overloaded", ""),
-        FailureKind::Outage
-    );
-    assert_eq!(kind(false, "read ECONNRESET", "[]"), FailureKind::Outage);
-    assert_eq!(
-        kind(false, "", "API Error: 503 Service Unavailable"),
+        tag_failure_kind(false, 1, "API Error: 529 overloaded"),
         FailureKind::Outage
     );
     assert_eq!(
-        kind(false, "", " api error: 529 overloaded"),
+        tag_failure_kind(false, 1, "read ECONNRESET"),
         FailureKind::Outage
     );
-    assert_eq!(kind(true, "", r#"[{"n":503}]"#), FailureKind::Timeout);
+    assert_eq!(tag_failure_kind(false, 1, ""), FailureKind::Refusal);
+    assert_eq!(tag_failure_kind(true, 1, ""), FailureKind::Timeout);
+}
+
+fn feed(calls: &[bool]) -> (PassHealth, Vec<Verdict>) {
+    calls
+        .iter()
+        .fold((PassHealth::default(), vec![]), |(health, mut seen), ok| {
+            let (health, verdict) = after_call(health, *ok);
+            seen.push(verdict);
+            (health, seen)
+        })
 }
 
 #[test]
-fn an_api_error_line_after_a_text_block_is_an_outage() {
-    let kind = |response: &str| tag_failure_kind(false, 1, "", response);
-    let joined = "[{\"n\":503,\"rule\":true}]\n\nAPI Error: 529 overloaded";
-    assert_eq!(kind(joined), FailureKind::Outage);
+fn four_bad_calls_in_a_row_before_any_good_one_stop_the_pass() {
+    let (_, verdicts) = feed(&[false; 4]);
     assert_eq!(
-        kind("done\n\n  api error: 503 unavailable"),
-        FailureKind::Outage
+        verdicts,
+        vec![Verdict::Go, Verdict::Go, Verdict::Go, Verdict::Stop]
     );
-    assert_eq!(kind("[{\"n\":503}]"), FailureKind::Refusal);
-    assert_eq!(kind("see the API Error: 529 note"), FailureKind::Refusal);
+}
+
+#[test]
+fn a_good_call_ends_the_streak_for_the_whole_pass() {
+    let (health, verdicts) = feed(&[false, false, true, false, false, false, false, false]);
+    assert!(verdicts.iter().all(|v| *v == Verdict::Go));
+    assert!(may_mark_failed(health));
+}
+
+#[test]
+fn a_bad_streak_below_the_limit_does_not_stop_the_pass() {
+    let (health, verdicts) = feed(&[false, false, false]);
+    assert!(verdicts.iter().all(|v| *v == Verdict::Go));
+    assert!(!may_mark_failed(health));
+}
+
+#[test]
+fn no_failed_rows_until_a_call_exits_zero() {
+    assert!(!may_mark_failed(PassHealth::default()));
+    assert!(!may_mark_failed(feed(&[false, false]).0));
+    assert!(may_mark_failed(feed(&[false, true]).0));
 }
 
 #[test]
@@ -298,50 +321,4 @@ fn an_old_row_with_a_decision_key_decodes_without_it() {
     let old = r#"{"v":1,"n":4,"rule":true,"decision":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
     let s = state(&format!("{old}\n"));
     assert_eq!(s.tags.get(&4).copied(), Some(flags(true, false)));
-}
-
-#[test]
-fn a_non_zero_exit_stops_the_pass_and_only_an_exit_zero_reply_can_miss_entries() {
-    for response in [None, Some(""), Some("not json"), Some("[{\"n\":1}]")] {
-        for failure in [None, Some(FailureKind::Refusal)] {
-            assert!(
-                tag_reply(failure, false, 1, "", response).is_err(),
-                "{failure:?} {response:?}"
-            );
-        }
-    }
-    let reply = tag_reply(
-        None,
-        false,
-        0,
-        "",
-        Some("[{\"n\":1,\"rule\":true,\"approval\":false}]"),
-    );
-    let parsed = parse_reply(&reply.unwrap(), &[1, 2]);
-    assert_eq!(parsed.missing, vec![2]);
-}
-
-#[test]
-fn a_non_zero_exit_with_an_entry_level_error_goes_to_the_ladder() {
-    let ladder = |response| tag_reply(Some(FailureKind::Refusal), false, 1, "", Some(response));
-    assert_eq!(
-        ladder("API Error: 400 invalid_request_error"),
-        Ok(String::new())
-    );
-    assert_eq!(ladder("  api error: 400 bad"), Ok(String::new()));
-    assert_eq!(
-        ladder("ok\n\nAPI Error: Output blocked by content filtering policy"),
-        Ok(String::new())
-    );
-    assert_eq!(
-        ladder("API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy"),
-        Ok(String::new())
-    );
-    assert!(ladder("API Error: 401 invalid x-api-key").is_err());
-    assert!(ladder("API Error: 404 model not found").is_err());
-    assert!(ladder("Please run /login").is_err());
-    assert!(ladder("[{\"n\":400,\"rule\":true}]").is_err());
-    let from_stderr = |stderr| tag_reply(None, false, 1, stderr, None);
-    assert_eq!(from_stderr("API Error: 400 bad"), Ok(String::new()));
-    assert!(from_stderr("API Error: 403 forbidden").is_err());
 }

@@ -50,13 +50,7 @@ pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
 /// `tag_failure_kind`).
 pub fn final_tag_failure_kind(result: &SubprocessOutcome) -> Option<FailureKind> {
     let (timed_out, done) = failed_run(result)?;
-    let response = extract_response_text(&done.stream_result.output_blocks).unwrap_or_default();
-    Some(tag_failure_kind(
-        timed_out,
-        done.exit_code,
-        &done.stderr,
-        &response,
-    ))
+    Some(tag_failure_kind(timed_out, done.exit_code, &done.stderr))
 }
 
 fn failure_text(result: &StreamingSubprocessResult) -> String {

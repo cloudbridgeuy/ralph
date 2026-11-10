@@ -3,9 +3,10 @@
 
 use crate::private_file::check_path;
 use ralph_core::chat_memory::{
-    batches, build_batch, decode_rows, encode_row, encode_start, failure_kind, ids_with, next_size,
-    parse_log, parse_reply, retake, untagged, Entry, RowKind, SearchRequest, TagRow, TagState,
-    BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
+    after_call, batches, build_batch, decode_rows, encode_row, encode_start, failure_kind,
+    ids_with, may_mark_failed, next_size, parse_log, parse_reply, retake, untagged, CallReply,
+    Entry, PassHealth, RowKind, SearchRequest, TagRow, TagState, Verdict, BATCH_LADDER,
+    MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -29,8 +30,18 @@ pub enum Pass {
     Done(Report),
 }
 
-/// Asks the model one batch and returns its reply text.
-pub type Ask<'a> = dyn FnMut(&str) -> Result<String, String> + 'a;
+/// What one pass has done so far: the entries it asked, the rows it wrote, how
+/// its calls fared, and whether the health guard ended it.
+#[derive(Default)]
+struct Progress {
+    attempted: BTreeSet<usize>,
+    report: Report,
+    health: PassHealth,
+    stopped: bool,
+}
+
+/// Asks the model one batch and returns what the call gave.
+pub type Ask<'a> = dyn FnMut(&str) -> Result<CallReply, String> + 'a;
 
 impl TagStore {
     pub fn new(dir: PathBuf) -> Self {
@@ -121,22 +132,22 @@ impl TagStore {
 
     /// One pass: write the start row on first use, then tag the untagged entries
     /// (at most `MAX_PER_PASS`), re-reading the log between rounds. A call that
-    /// never finished ends the pass and writes no failure row; only an entry
-    /// that fails alone is marked. An entry that lands after the last read but
+    /// never finished, or a run of failed calls with no good one (see
+    /// `after_call`), ends the pass; only an entry that fails alone is marked,
+    /// and only once a call of the pass exited 0. An entry that lands after the last read but
     /// before `TAG` is released is covered by one more look after the release.
     pub fn run_pass(&self, now: &dyn Fn() -> String, ask: &mut Ask) -> io::Result<Pass> {
-        let mut report = Report::default();
-        let mut attempted: BTreeSet<usize> = BTreeSet::new();
-        let Some(mut seen) = self.locked_pass(now, ask, &mut attempted, &mut report)? else {
+        let mut progress = Progress::default();
+        let Some(mut seen) = self.locked_pass(now, ask, &mut progress)? else {
             return Ok(Pass::Busy);
         };
-        while retake(self.read_entries()?.len(), seen) {
-            match self.locked_pass(now, ask, &mut attempted, &mut report)? {
+        while !progress.stopped && retake(self.read_entries()?.len(), seen) {
+            match self.locked_pass(now, ask, &mut progress)? {
                 Some(len) => seen = len,
                 None => break,
             }
         }
-        Ok(Pass::Done(report))
+        Ok(Pass::Done(progress.report))
     }
 
     /// Holds `TAG` for the rounds. Returns the log length of the last read, or
@@ -145,8 +156,7 @@ impl TagStore {
         &self,
         now: &dyn Fn() -> String,
         ask: &mut Ask,
-        attempted: &mut BTreeSet<usize>,
-        report: &mut Report,
+        progress: &mut Progress,
     ) -> io::Result<Option<usize>> {
         let lock = self.open_lock("TAG")?;
         match lock.try_lock() {
@@ -161,26 +171,33 @@ impl TagStore {
                 self.append(&encode_start(entries.len(), &now()).map_err(io::Error::other)?)?;
                 return Ok(Some(entries.len()));
             }
-            let room = MAX_PER_PASS.saturating_sub(attempted.len());
+            let room = MAX_PER_PASS.saturating_sub(progress.attempted.len());
             let todo: Vec<usize> = untagged(&entries, &state)
                 .into_iter()
-                .filter(|id| !attempted.contains(id))
+                .filter(|id| !progress.attempted.contains(id))
                 .take(BATCH_LADDER[0].min(room))
                 .collect();
             if todo.is_empty() {
                 return Ok(Some(entries.len()));
             }
-            attempted.extend(&todo);
+            progress.attempted.extend(&todo);
             let round = Round {
                 store: self,
                 entries: &entries,
                 state: &state,
                 now,
             };
-            let failed = round.resolve(&todo, BATCH_LADDER[0], ask, report)?;
+            let failed = round.resolve(&todo, BATCH_LADDER[0], ask, progress)?;
+            if progress.stopped {
+                return Ok(Some(entries.len()));
+            }
             if !failed.is_empty() {
+                if !may_mark_failed(progress.health) {
+                    progress.stopped = true;
+                    return Ok(Some(entries.len()));
+                }
                 round.mark_failed(&failed)?;
-                report.failed += failed.len();
+                progress.report.failed += failed.len();
             }
         }
     }
@@ -211,11 +228,17 @@ impl Round<'_> {
         ids: &[usize],
         size: usize,
         ask: &mut Ask,
-        report: &mut Report,
+        progress: &mut Progress,
     ) -> io::Result<Vec<usize>> {
         let size = if ids.len() == 1 { 1 } else { size };
         let reply = ask(&build_batch(self.entries, ids)).map_err(io::Error::other)?;
-        let parsed = parse_reply(&reply, ids);
+        let (health, verdict) = after_call(progress.health, reply.exited_ok);
+        progress.health = health;
+        if verdict == Verdict::Stop {
+            progress.stopped = true;
+            return Ok(Vec::new());
+        }
+        let parsed = parse_reply(&reply.text, ids);
         let rows = parsed
             .tagged
             .iter()
@@ -224,7 +247,7 @@ impl Round<'_> {
             .map_err(io::Error::other)?;
         if !rows.is_empty() {
             self.store.append(&rows)?;
-            report.tagged += parsed.tagged.len();
+            progress.report.tagged += parsed.tagged.len();
         }
         let Some(next) = next_size(size) else {
             return Ok(parsed.missing);
@@ -232,7 +255,10 @@ impl Round<'_> {
         let mut failed = Vec::new();
         if !parsed.missing.is_empty() {
             for chunk in batches(&parsed.missing, next) {
-                failed.extend(self.resolve(&chunk, next, ask, report)?);
+                failed.extend(self.resolve(&chunk, next, ask, progress)?);
+                if progress.stopped {
+                    return Ok(Vec::new());
+                }
             }
         }
         Ok(failed)
