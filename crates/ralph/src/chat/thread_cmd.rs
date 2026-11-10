@@ -1,8 +1,8 @@
 use crate::chat::inbox::Display;
 use crate::chat::schedule::{ask_answer, read_answer};
 use crate::chat::thread::{
-    config_root, default_listing, listing, merge_precheck, merge_thread, park_thread, pull_thread,
-    rows, thread_dir, view_thread,
+    config_root, listing, merge_precheck, merge_thread, park_thread, pull_thread, rows, thread_dir,
+    view_thread,
 };
 use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
@@ -19,7 +19,7 @@ pub(super) struct ThreadEnv<'a> {
     pub store_dir: &'a Path,
     pub in_thread: bool,
     pub width: usize,
-    pub display: Option<&'a Display<'a>>,
+    pub display: &'a Display<'a>,
 }
 
 pub(super) fn run(
@@ -36,10 +36,7 @@ pub(super) fn run(
         ThreadOp::Ls => {
             let listed = rows(&main, &|name| running_of(name).len())
                 .map_err(|e| format!("could not list threads: {e}"))?;
-            Ok(match env.display {
-                Some(display) => listing(&listed, display, env.width, "no threads"),
-                None => default_listing(&listed, env.width, "no threads"),
-            })
+            Ok(listing(&listed, env.display, env.width, "no threads"))
         }
         ThreadOp::Pull(name) => pull_thread(&main, name),
         ThreadOp::Park(name) => {
@@ -110,13 +107,21 @@ mod tests {
         assert_eq!(merge_precheck(&main, &auth, &[]), Ok(()));
     }
 
-    fn env(main: &Path, in_thread: bool) -> ThreadEnv<'_> {
-        ThreadEnv {
+    fn with_env<R>(main: &Path, in_thread: bool, check: impl FnOnce(&ThreadEnv) -> R) -> R {
+        let highlighter = Highlighter::new();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::new(&highlighter, true),
+            theme: &theme,
+            color: true,
+            ui: UiColors::default(),
+        };
+        check(&ThreadEnv {
             store_dir: main,
             in_thread,
             width: 200,
-            display: None,
-        }
+            display: &display,
+        })
     }
 
     #[test]
@@ -133,8 +138,10 @@ mod tests {
             ui: UiColors::default(),
         };
         let env = ThreadEnv {
-            display: Some(&display),
-            ..env(&main, false)
+            store_dir: &main,
+            in_thread: false,
+            width: 200,
+            display: &display,
         };
         let text = run(&ThreadOp::Ls, &env, &mut |_: &str| None, &idle).unwrap();
         // The in-chat prose wraps to the terminal's own width, so check only the border.
@@ -181,7 +188,9 @@ mod tests {
             asked += 1;
             Some(false)
         };
-        let result = run(&merge_auth(), &env(&main, false), &mut confirm, &idle);
+        let result = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut confirm, &idle)
+        });
         assert_eq!(result, Ok("merge cancelled.".to_string()));
         assert_eq!(asked, 1);
     }
@@ -191,12 +200,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("chat");
         ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
-        let refusal = run(
-            &merge_auth(),
-            &env(&main, false),
-            &mut |_: &str| None,
-            &idle,
-        )
+        let refusal = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut |_: &str| None, &idle)
+        })
         .unwrap_err();
         assert!(refusal.starts_with("merge aborted"), "{refusal}");
     }
@@ -206,7 +212,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("chat");
         let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
-        let refusal = run(&merge_auth(), &env(&main, false), &mut confirm, &idle).unwrap_err();
+        let refusal = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut confirm, &idle)
+        })
+        .unwrap_err();
         assert!(refusal.starts_with("no thread auth"), "{refusal}");
     }
 
@@ -216,7 +225,10 @@ mod tests {
         let main = root.path().join("chat");
         ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
         let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
-        let refusal = run(&merge_auth(), &env(&main, true), &mut confirm, &idle).unwrap_err();
+        let refusal = with_env(&main, true, |env| {
+            run(&merge_auth(), env, &mut confirm, &idle)
+        })
+        .unwrap_err();
         assert!(
             refusal.contains("Run /main, then /merge <name>."),
             "{refusal}"
@@ -237,12 +249,9 @@ mod tests {
                 vec!["w1".to_string()]
             }
         };
-        let refusal = run(
-            &merge_auth(),
-            &env(&main, false),
-            &mut |_: &str| Some(true),
-            &running_of,
-        )
+        let refusal = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut |_: &str| Some(true), &running_of)
+        })
         .unwrap_err();
         assert!(refusal.contains("running workers (w1)"), "{refusal}");
         assert_eq!(lookups.get(), 2);
