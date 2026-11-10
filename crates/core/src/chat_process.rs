@@ -42,6 +42,7 @@ pub struct UsageLine {
     pub run: Option<String>,
     pub worker_id: Option<String>,
     pub session_id: Option<String>,
+    pub store: Option<String>,
     pub harness: Option<String>,
     pub model: Option<String>,
     pub reasoning_tokens: Option<u64>,

@@ -1,4 +1,5 @@
 use super::tickets::{parse_windows, window_position, WorkerWindow, UNKNOWN_TICKET};
+use super::usage_report::Role;
 use super::window::{in_window, instant};
 use super::{
     builtin_prices, computed_usd, costs_view, tier, Source, Tokens, Usd, MISSING, NO_USAGE, UNKNOWN,
@@ -41,41 +42,6 @@ enum Grouping {
 pub struct Inputs<'a> {
     pub usage: &'a str,
     pub workers: &'a str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Role {
-    Main,
-    Nap,
-    Merge,
-    Ask,
-    Subagent,
-    Worker,
-}
-
-impl Role {
-    fn of(kind: &str) -> Option<Role> {
-        match kind {
-            "turn" | "ping" => Some(Role::Main),
-            "nap" | "tag" => Some(Role::Nap),
-            "merge" => Some(Role::Merge),
-            "ask" => Some(Role::Ask),
-            "subagent" => Some(Role::Subagent),
-            "worker" => Some(Role::Worker),
-            _ => None,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Role::Main => "main",
-            Role::Nap => "nap",
-            Role::Merge => "merge",
-            Role::Ask => "ask",
-            Role::Subagent => "subagent",
-            Role::Worker => "worker",
-        }
-    }
 }
 
 #[derive(Deserialize)]

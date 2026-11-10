@@ -1,5 +1,6 @@
 pub mod args;
 pub mod tickets;
+pub mod usage_report;
 pub mod views;
 pub mod window;
 
@@ -38,7 +39,7 @@ const HEADERS: [&str; 12] = [
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Source {
+pub enum Source {
     Main,
     Nap,
     Ask,
@@ -76,7 +77,7 @@ fn either_sum(a: Option<u64>, b: Option<u64>) -> Option<u64> {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct Tokens {
+pub struct Tokens {
     input: u64,
     output: u64,
     cache_read: u64,
@@ -122,7 +123,7 @@ impl Tokens {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-struct Usd {
+pub struct Usd {
     known: Option<f64>,
     missing: bool,
     estimate: bool,
