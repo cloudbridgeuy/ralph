@@ -211,24 +211,20 @@ fn a_later_start_row_moves_the_start_point() {
 }
 
 #[test]
-fn a_finished_call_gives_its_reply_and_a_failed_one_gives_nothing() {
-    assert_eq!(reply_text(0, Some("  [{\"n\":1}]\n")), "[{\"n\":1}]");
-    assert_eq!(reply_text(0, None), "");
-    assert_eq!(reply_text(0, Some("   ")), "");
-    assert_eq!(reply_text(1, Some("[{\"n\":1}]")), "");
+fn an_exit_zero_call_gives_its_trimmed_reply() {
+    assert_eq!(reply_text(Some("  [{\"n\":1}]\n")), "[{\"n\":1}]");
+    assert_eq!(reply_text(None), "");
+    assert_eq!(reply_text(Some("   ")), "");
 }
 
 #[test]
-fn an_outage_or_a_stop_is_an_error_and_other_failures_are_empty_replies() {
+fn an_outage_a_stop_or_a_non_zero_exit_is_an_error_and_an_empty_exit_zero_reply_is_not() {
     let reply = |failure, terminated, code| tag_reply(failure, terminated, code, Some("[]"));
     assert!(reply(Some(FailureKind::Outage), false, 1).is_err());
     assert!(reply(None, true, 0).is_err());
     assert!(reply(None, true, 1).is_err());
-    assert_eq!(
-        reply(Some(FailureKind::Refusal), false, 1),
-        Ok(String::new())
-    );
-    assert_eq!(reply(None, false, 1), Ok(String::new()));
+    assert!(reply(Some(FailureKind::Refusal), false, 1).is_err());
+    assert!(reply(None, false, 1).is_err());
     assert_eq!(reply(None, false, 0), Ok("[]".to_string()));
     assert_eq!(tag_reply(None, false, 0, None), Ok(String::new()));
 }
@@ -302,4 +298,24 @@ fn an_old_row_with_a_decision_key_decodes_without_it() {
     let old = r#"{"v":1,"n":4,"rule":true,"decision":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
     let s = state(&format!("{old}\n"));
     assert_eq!(s.tags.get(&4).copied(), Some(flags(true, false)));
+}
+
+#[test]
+fn a_non_zero_exit_stops_the_pass_and_only_an_exit_zero_reply_can_miss_entries() {
+    for response in [None, Some(""), Some("not json"), Some("[{\"n\":1}]")] {
+        for failure in [None, Some(FailureKind::Refusal)] {
+            assert!(
+                tag_reply(failure, false, 1, response).is_err(),
+                "{failure:?} {response:?}"
+            );
+        }
+    }
+    let reply = tag_reply(
+        None,
+        false,
+        0,
+        Some("[{\"n\":1,\"rule\":true,\"approval\":false}]"),
+    );
+    let parsed = parse_reply(&reply.unwrap(), &[1, 2]);
+    assert_eq!(parsed.missing, vec![2]);
 }

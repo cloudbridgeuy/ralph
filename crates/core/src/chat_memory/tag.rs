@@ -203,14 +203,10 @@ pub struct Parsed {
     pub missing: Vec<usize>,
 }
 
-/// The text to parse from a finished call. A non-zero exit or an empty reply is
-/// an empty reply, so its entries count as missing and the ladder handles them;
-/// only a call that never finished (outage, timeout) is an error.
-fn reply_text(exit_code: i32, response: Option<&str>) -> String {
-    match response.map(str::trim) {
-        Some(text) if exit_code == 0 => text.to_string(),
-        _ => String::new(),
-    }
+/// The text to parse from an exit-0 call. An empty reply is an empty string,
+/// so its entries count as missing and the ladder handles them.
+fn reply_text(response: Option<&str>) -> String {
+    response.map(str::trim).unwrap_or_default().to_string()
 }
 
 /// Whether a pass that last read `seen` entries must take `TAG` again: the
@@ -241,10 +237,11 @@ pub fn tag_failure_kind(
     })
 }
 
-/// The reply of a finished call, or an error when the call did not really
-/// finish. `failure` is how the final attempt was classified; an outage that
-/// outlasted the backoff, or a process told to stop, ends the pass with no
-/// rows. Only a finished non-outage failure or an empty reply reaches the ladder.
+/// The reply of an exit-0 call, or an error when the call did not give one.
+/// An outage that outlasted the backoff, a process told to stop, and any
+/// non-zero exit (expired login, 401/403, a missing model) end the pass with no
+/// rows, so the entries stay untagged and the next pass retries them. Only an
+/// exit-0 reply, even an empty one, reaches the ladder and can mark entries failed.
 pub fn tag_reply(
     failure: Option<FailureKind>,
     terminated: bool,
@@ -257,7 +254,12 @@ pub fn tag_reply(
     if failure == Some(FailureKind::Outage) {
         return Err("the model is out; tagging stops until the next reply".to_string());
     }
-    Ok(reply_text(exit_code, response))
+    if exit_code != 0 {
+        return Err(format!(
+            "the tag call failed (exit {exit_code}); tagging stops until the next reply"
+        ));
+    }
+    Ok(reply_text(response))
 }
 
 /// Keeps each asked entry's first complete row; anything else is missing.
