@@ -43,3 +43,16 @@ fn help_has_a_rerender_topic_with_its_row() {
     assert!(text.starts_with("/rerender\n"), "{text}");
     assert!(text.contains("/rerender [N]"), "{text}");
 }
+
+#[test]
+fn rerender_help_states_the_fence_cutoff_and_the_image_directory() {
+    let text = crate::chat_help::help_topic(Some("rerender")).unwrap();
+    let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for phrase in [
+        "saved before the fence fix reprint code, diff and mermaid blocks as plain text",
+        "saved after it redraw them as in /view",
+        "relative image paths resolve from the directory the chat was started in",
+    ] {
+        assert!(words.contains(phrase), "{phrase}\n{words}");
+    }
+}

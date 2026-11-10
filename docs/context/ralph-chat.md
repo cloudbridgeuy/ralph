@@ -372,10 +372,12 @@ The chat sets the store config layer to the canonical store path, so its store w
 
 `/rerender [N]` reprints the Nth-last assistant reply from its stored markdown, with the chat renderer at the current terminal width and `[chat] wrap_width` (width is the smaller of the cap and the terminal). It is local: no turn, no model call, no `usage.jsonl` row, and nothing is added to the chat log. It waits in the queue while a turn runs (`runs_mid_turn` is false). It works the same in main and in a thread, and reads the log of the chat it runs in. It has no Tab completion.
 
-- `N` counts assistant replies only, from 1 (the last reply, the default). Worker and corrupt entries do not count.
-- Output is one dim line, `reprint of reply N`, then the reply. Directive tags (`<ralph-ask to="x">...</ralph-ask>`) are removed and their text stays.
-- Refusals: `/rerender: no assistant reply yet.`, `/rerender: no reply N; the chat has K assistant replies.`, and `Usage: /rerender [N] (N is 1 or more; 1 is the last reply)` for 0, a non-number or extra arguments.
-- Pure logic: `ralph_core::chat_rerender::{parse_rerender_args, nth_last_assistant, strip_directive_tags, reprint}`. The shell is `crates/ralph/src/chat/rerender.rs`; it renders through `view::render`, so images and mermaid blocks draw as in `/view`.
+- `N` counts assistant replies only, from 1 (the last reply, the default). Worker and corrupt entries do not count. A number too big for `usize` counts as a number past the first reply.
+- Output is one dim line, `reprint of reply N`, then the reply. Each directive (`<ralph-ask to="x">...</ralph-ask>`) is dropped with its text, as in the live reply. Only a matched open and close pair is dropped, and text inside a fenced code block is never touched.
+- Refusals: `/rerender: no assistant reply yet.`, `/rerender: no reply N; the chat has K assistant replies.` (`1 assistant reply` when K is 1), and `Usage: /rerender [N] (N is 1 or more; 1 is the last reply)` for 0, a non-number or extra arguments.
+- Fences: the stored reply keeps code, diff and mermaid blocks with their ```` ```lang ```` fences (`extract_response_text`), so `/read`, `/recall` and the nap see the fences too. Replies saved before this change have no fences and reprint those blocks as plain markdown text; there is no migration. Only replies saved after the change redraw code, diff and mermaid blocks as in `/view`.
+- Images: relative image paths in a reply resolve from the directory the chat was started in.
+- Pure logic: `ralph_core::chat_rerender::{parse_rerender_args, nth_last_assistant, strip_directive_tags, reprint}`. The shell is `crates/ralph/src/chat/rerender.rs`; it renders through `view::render`, so images draw as in `/view`.
 
 ## /view
 

@@ -271,7 +271,7 @@ impl Command {
             )],
             Command::Rerender => &[(
                 "/rerender [N]",
-                "print the Nth-last assistant reply again from its stored markdown, with the chat renderer at the current terminal width and [chat] wrap_width; N is 1 or more and defaults to 1, the last reply; counts only assistant replies; works in main and in threads; starts no turn, calls no model and adds nothing to the log; refuses a chat with no reply and an N past the first reply",
+                "print the Nth-last assistant reply again from its stored markdown, with the chat renderer at the current terminal width and [chat] wrap_width; N is 1 or more and defaults to 1, the last reply; counts only assistant replies; directive tags and their text are left out; replies saved before the fence fix reprint code, diff and mermaid blocks as plain text, and replies saved after it redraw them as in /view; relative image paths resolve from the directory the chat was started in; works in main and in threads; starts no turn, calls no model and adds nothing to the log; refuses a chat with no reply and an N past the first reply",
             )],
             Command::Read => &[(
                 "/read <id> [raw|summary] [--cursor <c>]",
