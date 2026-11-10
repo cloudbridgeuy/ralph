@@ -81,7 +81,24 @@ pub fn remove_queued(store_dir: &Path, id: &str) -> io::Result<()> {
         timeout_secs: None,
     }
     .file_name();
-    fs::remove_file(requests_dir(store_dir).join(name))
+    let claimed = claim(&requests_dir(store_dir).join(name))?;
+    warn_if_err(
+        fs::remove_file(&claimed),
+        format!("removing {}", claimed.display()),
+    );
+    Ok(())
+}
+
+/// Moves a request file to a private name. Only the caller whose rename
+/// succeeds owns the request; the other side sees `NotFound`.
+fn claim(path: &Path) -> io::Result<PathBuf> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let claimed = path.with_file_name(format!(".{name}.claimed"));
+    fs::rename(path, &claimed)?;
+    Ok(claimed)
 }
 
 pub fn stop_text(
@@ -119,12 +136,13 @@ fn is_request(path: &Path) -> bool {
 }
 
 fn take(path: &Path) -> Option<WatchRequest> {
-    let parsed = fs::read(path)
+    let claimed = claim(path).ok()?;
+    let parsed = fs::read(&claimed)
         .map_err(|e| e.to_string())
         .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()));
     warn_if_err(
-        fs::remove_file(path),
-        format!("removing {}", path.display()),
+        fs::remove_file(&claimed),
+        format!("removing {}", claimed.display()),
     );
     match parsed {
         Ok(request) => Some(request),
@@ -259,6 +277,27 @@ mod tests {
             stop_text(&watches, dir.path(), &StopTarget::All, Utc::now()),
             "No active watches."
         );
+    }
+
+    #[test]
+    fn a_take_and_a_remove_never_both_win_the_same_request() {
+        for round in 0..2000 {
+            let dir = tempfile::tempdir().unwrap();
+            queue(dir.path(), &request("watch:a")).unwrap();
+            let gate = std::sync::Barrier::new(2);
+            let (taken, removed) = std::thread::scope(|scope| {
+                let take_side = scope.spawn(|| {
+                    gate.wait();
+                    take_all(dir.path()).len()
+                });
+                let remove_side = scope.spawn(|| {
+                    gate.wait();
+                    usize::from(remove_queued(dir.path(), "watch:a").is_ok())
+                });
+                (take_side.join().unwrap(), remove_side.join().unwrap())
+            });
+            assert_eq!(taken + removed, 1, "round {round}");
+        }
     }
 
     #[test]
