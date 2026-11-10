@@ -30,7 +30,7 @@ fn append(store: &Path, event: &LifecycleEvent) -> io::Result<()> {
     open_log(&path)?.write_all(line.as_bytes())
 }
 
-fn open_log(path: &Path) -> io::Result<fs::File> {
+pub(crate) fn open_log(path: &Path) -> io::Result<fs::File> {
     let mut options = OpenOptions::new();
     options
         .create(true)
