@@ -235,6 +235,19 @@ fn unknown_model_shows_no_price() {
 }
 
 #[test]
+fn an_openai_prefixed_opencode_row_with_no_cost_gets_the_listed_price() {
+    let mut line = worker("GUZ-1", "s1", "openai/gpt-6.1-sol");
+    line["harness"] = json!("opencode");
+    line["cache_creation_input_tokens"] = json!(0);
+    line["cache_write_5m"] = json!(0);
+    line["cache_write_1h"] = json!(0);
+    let rows = rows_of(&jsonl(&[line]));
+    let usd = find(&rows, "opencode", "openai/gpt-6.1-sol").usd;
+    assert!(usd.known.is_some());
+    assert_ne!(usd.text(), "n/a");
+}
+
+#[test]
 fn a_provider_prefixed_opencode_row_with_no_cost_shows_no_price() {
     let mut line = worker("GUZ-1", "s1", "github-copilot/gpt-6.1-sol");
     line["harness"] = json!("opencode");

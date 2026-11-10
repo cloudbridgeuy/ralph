@@ -49,6 +49,7 @@ pub struct PriceOverride {
 }
 
 pub fn normalize_model(model: &str) -> &str {
+    let model = model.strip_prefix("openai/").unwrap_or(model);
     model.split('[').next().unwrap_or(model)
 }
 
@@ -415,6 +416,18 @@ mod tests {
         assert!(t.lookup("claude-haiku-5-5-latest", 1).is_none());
         assert!(t.lookup("claude-haiku-50", 1).is_none());
         assert!(t.lookup("gpt-4", 1).is_none());
+    }
+
+    #[test]
+    fn lookup_strips_only_a_leading_openai_prefix() {
+        let table = PriceTable {
+            as_of: "2026-10-28",
+            entries: vec![entry("gpt-6.1-sol", None, 2.0)],
+        };
+        assert_eq!(table.lookup("gpt-6.1-sol", 1).unwrap().input, 2.0);
+        assert_eq!(table.lookup("openai/gpt-6.1-sol", 1).unwrap().input, 2.0);
+        assert!(table.lookup("github-copilot/gpt-6.1-sol", 1).is_none());
+        assert!(table.lookup("openai/openai/gpt-6.1-sol", 1).is_none());
     }
 
     #[test]
