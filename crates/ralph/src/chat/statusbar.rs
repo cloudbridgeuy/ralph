@@ -46,6 +46,7 @@ impl StatusBar {
             colors: theme.resolve().0,
             context: Context {
                 name: name.to_string(),
+                thread: None,
             },
             separator: separator_for(color, chat.status_powerline),
             color,

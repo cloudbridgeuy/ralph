@@ -447,6 +447,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
         ),
         Kind::Mail(_) => ("📬 N unread", "worker reports waiting; /inbox sends them"),
         Kind::Name => ("name", "the chat session name"),
+        Kind::Thread => ("thread <name>", "the thread this chat is"),
         Kind::Workers => ("workers", "each worker and its state"),
         Kind::Watches => ("watch <id> <left>", "running watches and their time left"),
         Kind::Schedule => (

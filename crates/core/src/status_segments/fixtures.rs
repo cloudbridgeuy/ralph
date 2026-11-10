@@ -83,6 +83,14 @@ pub(super) fn context() -> Context {
 pub(super) fn named_context() -> Context {
     Context {
         name: "ralph-chat".into(),
+        ..Context::default()
+    }
+}
+
+pub(super) fn threaded_context() -> Context {
+    Context {
+        thread: Some("t1".into()),
+        ..named_context()
     }
 }
 

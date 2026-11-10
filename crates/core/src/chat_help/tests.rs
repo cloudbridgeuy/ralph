@@ -248,7 +248,13 @@ fn wrapping_keeps_every_word() {
 
 #[test]
 fn every_built_segment_has_a_legend() {
-    let built = segments(&full_status(), &Context { name: "a/b".into() });
+    let built = segments(
+        &full_status(),
+        &Context {
+            name: "a/b".into(),
+            ..Context::default()
+        },
+    );
     for segment in built {
         assert!(
             SEGMENTS

@@ -264,6 +264,53 @@ mod tests {
         assert!(!shown.contains(".ralph"));
     }
 
+    fn threaded_texts(width: usize) -> String {
+        text(&bar(
+            &with_process(),
+            &threaded_context(),
+            width,
+            Separator::Block,
+        ))
+    }
+
+    #[test]
+    fn thread_cell_shows_long_then_compact_and_never_wraps() {
+        assert!(threaded_texts(200).contains("thread t1"));
+        let compact_only = (12..200)
+            .map(threaded_texts)
+            .any(|shown| shown.contains("⑂ t1") && !shown.contains("thread t1"));
+        assert!(compact_only);
+        for width in 0..200 {
+            assert!(threaded_texts(width).width() <= width, "{width}");
+        }
+        for width in 12..200 {
+            assert_eq!(threaded_texts(width).width(), width, "{width}");
+        }
+    }
+
+    #[test]
+    fn thread_cell_is_the_last_segment_dropped_before_the_name() {
+        let status = everything();
+        let kinds = |width| {
+            let all = segments(&status, &threaded_context());
+            layout(&all, width, Separator::Block)
+                .iter()
+                .map(|p| all[p.segment].kind)
+                .collect::<Vec<Kind>>()
+        };
+        let mut dropped: Vec<Kind> = Vec::new();
+        let mut present = kinds(300);
+        for width in (0..300).rev() {
+            let now = kinds(width);
+            dropped.extend(present.iter().filter(|kind| !now.contains(kind)));
+            present = now;
+        }
+        assert_eq!(
+            &dropped[dropped.len() - 3..],
+            [Kind::Queue(Mode::Inbox), Kind::Thread, Kind::Name]
+        );
+    }
+
     fn everything() -> Status {
         Status {
             watches: with_watches().watches,
@@ -409,8 +456,16 @@ mod tests {
     #[test]
     fn middle_blocks_keep_the_base_background_and_their_own_text() {
         assert_eq!(
-            [Kind::Name, Kind::Workers, Kind::Watches, Kind::Schedule].map(|k| (k.bg(), k.fg())),
             [
+                Kind::Name,
+                Kind::Thread,
+                Kind::Workers,
+                Kind::Watches,
+                Kind::Schedule
+            ]
+            .map(|k| (k.bg(), k.fg())),
+            [
+                (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::WorkersFg),
                 (Shade::BaseBg, Shade::WatchesFg),
