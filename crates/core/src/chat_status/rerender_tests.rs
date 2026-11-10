@@ -49,8 +49,8 @@ fn rerender_help_states_the_fence_cutoff_and_the_image_directory() {
     let text = crate::chat_help::help_topic(Some("rerender")).unwrap();
     let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
     for phrase in [
-        "saved before the fence fix reprint code, diff and mermaid blocks as plain text",
-        "saved after it redraw them as in /view",
+        "replies saved by older ralph versions reprint code, diff and mermaid blocks as plain text",
+        "replies saved by this version redraw them as in /view",
         "relative image paths resolve from the directory the chat was started in",
     ] {
         assert!(words.contains(phrase), "{phrase}\n{words}");
