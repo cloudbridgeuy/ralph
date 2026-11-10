@@ -111,4 +111,71 @@ mod tests {
         assert_eq!(row["turn_id"], 3);
         assert!(usage.bound.lock().unwrap().turn.take().is_empty());
     }
+
+    fn usage_params(thread: &str, input: u64, total: u64) -> Value {
+        serde_json::json!({"threadId": thread, "turnId": "child-turn", "tokenUsage": {"last": {"inputTokens": input}, "total": {"inputTokens": total}}})
+    }
+
+    fn started(thread: &str, parent: &str) -> Value {
+        serde_json::json!({"thread": {"id": thread, "parentThreadId": parent}})
+    }
+
+    fn counted(usage: &CodexUsage) -> Vec<u64> {
+        let rows = usage.bound.lock().unwrap().turn.take();
+        rows.iter().map(|row| row.usage.input_uncached).collect()
+    }
+
+    #[test]
+    fn child_thread_usage_counts_in_the_active_turn() {
+        let usage = CodexUsage::new("w1", None);
+        usage.bind("parent", Some("gpt".into()));
+        usage.start_turn();
+        usage.observe("thread/started", &started("child", "parent"), false);
+        usage.observe("thread/started", &started("grand", "child"), false);
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("parent", 100, 100),
+            true,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("child", 5, 5),
+            false,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("grand", 3, 3),
+            false,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("parent", 10, 110),
+            true,
+        );
+        assert_eq!(counted(&usage), [118]);
+    }
+
+    #[test]
+    fn unrelated_thread_usage_and_child_usage_between_turns_are_not_counted() {
+        let usage = CodexUsage::new("w1", None);
+        usage.bind("parent", Some("gpt".into()));
+        usage.observe("thread/started", &started("child", "parent"), false);
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("child", 5, 5),
+            false,
+        );
+        usage.start_turn();
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("other", 9, 9),
+            false,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("child", 2, 7),
+            false,
+        );
+        assert_eq!(counted(&usage), [2]);
+    }
 }
