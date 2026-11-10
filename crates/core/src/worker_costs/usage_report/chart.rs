@@ -271,7 +271,7 @@ fn value_text(group: &Group, grand: f64) -> String {
     } else {
         amount
     };
-    format!("{amount} ({share:.0}%)")
+    format!("{} ({share:.0}%)", group.with_excluded(amount))
 }
 
 pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {

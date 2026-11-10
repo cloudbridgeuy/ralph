@@ -200,6 +200,48 @@ fn a_missing_model_is_labelled_in_the_group_line() {
 }
 
 #[test]
+fn an_openai_prefixed_opencode_row_is_an_estimate_never_reported() {
+    let rows = [with(
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!("opencode"),
+        ),
+        "model",
+        json!("openai/gpt-6.1-sol"),
+    )];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    let group = &report.groups[0];
+    assert_eq!(group.key, "gpt-6.1-sol");
+    assert!(known(group.est).is_some());
+    assert_eq!(known(group.reported), None);
+    assert!(
+        group.cost_label().ends_with("est."),
+        "{}",
+        group.cost_label()
+    );
+}
+
+#[test]
+fn a_codex_gpt_6_1_sol_row_stays_excluded_from_dollars() {
+    let rows = [with(
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!("codex"),
+        ),
+        "model",
+        json!("gpt-6.1-sol"),
+    )];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    let group = &report.groups[0];
+    assert_eq!(group.excluded, 1);
+    assert_eq!(known(group.est), None);
+    assert_eq!(known(group.reported), None);
+    assert_eq!(group.line(), "gpt-6.1-sol: excluded");
+}
+
+#[test]
 fn a_cursor_with_no_rows_shows_no_data_never_zero() {
     let workers = [spawn("c1", "2026-11-05T09:00:00Z", "GUZ-2", "cursor")];
     let report = grouped(Dim::Harness, &[], &workers, &Filter::default());
@@ -316,4 +358,74 @@ fn text_that_is_not_a_day_has_no_weekday() {
     assert_eq!(weekday("total"), None);
     assert_eq!(weekday("2026-13-40"), None);
     assert_eq!(weekday(""), None);
+}
+
+fn model_row(harness: &str, model: &str) -> Value {
+    with(
+        with(
+            row("ask", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!(harness),
+        ),
+        "model",
+        json!(model),
+    )
+}
+
+fn sol_rows() -> [Value; 2] {
+    [
+        model_row("opencode", "openai/gpt-6.1-sol"),
+        model_row("codex", "gpt-6.1-sol"),
+    ]
+}
+
+#[test]
+fn an_openai_prefixed_model_and_its_bare_id_share_one_model_group() {
+    let report = grouped(Dim::Model, &sol_rows(), &[], &Filter::default());
+    assert_eq!(keys(&report), ["gpt-6.1-sol"]);
+    let group = &report.groups[0];
+    assert_eq!((group.metered, group.excluded), (2, 1));
+    assert!(known(group.est).is_some());
+}
+
+#[test]
+fn a_merged_model_group_shows_the_estimate_and_the_excluded_part() {
+    let report = grouped(Dim::Model, &sol_rows(), &[], &Filter::default());
+    let line = report.groups[0].line();
+    assert!(
+        line.starts_with("gpt-6.1-sol ") && line.contains("est.") && line.ends_with("+ excluded"),
+        "{line}"
+    );
+}
+
+#[test]
+fn the_model_filter_matches_the_prefixed_and_the_bare_id_alike() {
+    for wanted in ["gpt-6.1-sol", "openai/gpt-6.1-sol"] {
+        let filter = Filter {
+            model: Some(wanted.into()),
+            ..Filter::default()
+        };
+        let report = grouped(Dim::Model, &sol_rows(), &[], &filter);
+        assert_eq!(report.total.metered, 2, "{wanted}");
+    }
+}
+
+#[test]
+fn other_provider_prefixes_stay_separate_model_groups() {
+    let rows = [
+        model_row("opencode", "github-copilot/gpt-6.1-sol"),
+        model_row("codex", "gpt-6.1-sol"),
+    ];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["github-copilot/gpt-6.1-sol", "gpt-6.1-sol"]);
+}
+
+#[test]
+fn a_bracketed_model_variant_stays_apart_from_its_bare_id() {
+    let rows = [
+        model_row("claude", "claude-opus-5-5[1m]"),
+        model_row("claude", "claude-opus-5-5"),
+    ];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["claude-opus-5-5", "claude-opus-5-5[1m]"]);
 }
