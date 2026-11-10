@@ -71,6 +71,7 @@ mod tests;
 
 // Re-export public types
 pub use batch::parse_chunks;
+pub(crate) use fence::{is_fence_close, parse_fence_open};
 pub use heuristics::{is_unfenced_diff, parse_chunks_with_heuristics};
 pub use streaming::{
     split_lines_preserve_trailing, StreamingChunkBuffer, DEFAULT_PROSE_BUFFER_THRESHOLD,

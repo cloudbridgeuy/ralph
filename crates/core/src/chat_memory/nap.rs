@@ -1,5 +1,6 @@
 use super::tree::{entry_line, node_line};
 use super::{Entry, Node, Tree, SUMMARY_BYTES};
+use crate::chunk::{is_fence_close, parse_fence_open};
 
 const META_OPENERS: [&str; 14] = [
     "i'm ",
@@ -155,12 +156,32 @@ pub fn commit_decision(committed: &Tree, node: Node) -> Commit {
     }
 }
 
+fn unwrap_outer_fence(text: &str) -> &str {
+    let lines: Vec<&str> = text.lines().collect();
+    let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
+        return text;
+    };
+    let closes_early = lines
+        .iter()
+        .take(lines.len().saturating_sub(1))
+        .skip(1)
+        .any(|line| is_fence_close(line));
+    if lines.len() < 3 || parse_fence_open(first).is_none() || !is_fence_close(last) || closes_early
+    {
+        return text;
+    }
+    let inner_start = first.len() + 1;
+    let inner_end = text.len() - last.len();
+    text.get(inner_start..inner_end).unwrap_or(text).trim()
+}
+
 pub fn nap_summary(exit_code: i32, response: Option<&str>) -> Result<String, String> {
     if exit_code != 0 {
         return Err(format!("memory curator exited with code {exit_code}"));
     }
     response
         .map(str::trim)
+        .map(unwrap_outer_fence)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .ok_or_else(|| "memory curator returned an empty summary".into())
@@ -309,6 +330,39 @@ mod tests {
         let parent = nap_source(&entries, &tree, n(0, 2)).unwrap();
         assert_eq!(parent.lines().count(), 2);
         assert!(nap_source(&entries, &tree, n(2, 3)).is_err());
+    }
+
+    #[test]
+    fn nap_summary_unwraps_one_outer_fence() {
+        let wrapped = "```markdown\n# Title\n\n- a\n- b\n```";
+        assert_eq!(
+            nap_summary(0, Some(wrapped)).unwrap(),
+            "# Title\n\n- a\n- b"
+        );
+        assert_eq!(
+            nap_summary(0, Some("  ```\nplain\n```\n ")).unwrap(),
+            "plain"
+        );
+        let inner = "```markdown\nsee:\n```rust\nfn x() {}\n```\nmore\n```";
+        assert_eq!(
+            nap_summary(0, Some(inner)).unwrap(),
+            "```markdown\nsee:\n```rust\nfn x() {}\n```\nmore\n```"
+        );
+    }
+
+    #[test]
+    fn nap_summary_keeps_fences_that_do_not_wrap_the_whole_reply() {
+        for text in [
+            "intro\n```rust\nfn x() {}\n```",
+            "```rust\nfn x() {}\n```\noutro",
+            "```rust\nfn x() {}\n```\n\n```sh\nls\n```",
+            "```rust\nunclosed",
+            "```",
+            "``` ```",
+            "```\n```",
+        ] {
+            assert_eq!(nap_summary(0, Some(text)).unwrap(), text.trim(), "{text}");
+        }
     }
 
     #[test]
