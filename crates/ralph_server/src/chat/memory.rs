@@ -18,6 +18,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 mod nap;
 
@@ -94,6 +95,28 @@ fn must_wait(attempt: Result<(), TryLockError>) -> io::Result<bool> {
         Ok(()) => Ok(false),
         Err(TryLockError::WouldBlock) => Ok(true),
         Err(TryLockError::Error(e)) => Err(e),
+    }
+}
+
+pub const NAP_WAIT_LIMIT: Duration = Duration::from_secs(10);
+const NAP_POLL: Duration = Duration::from_millis(100);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NapWait {
+    Settled,
+    Capped,
+}
+
+fn wait_for_nap(nap: &File, deadline: Instant) -> io::Result<NapWait> {
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(NapWait::Capped);
+        }
+        std::thread::sleep(left.min(NAP_POLL));
+        if !must_wait(nap.try_lock_shared())? {
+            return Ok(NapWait::Settled);
+        }
     }
 }
 
@@ -274,13 +297,20 @@ impl Store {
         self.load()
     }
 
-    pub fn load_after_nap<W>(&self, on_wait: impl FnOnce() -> W) -> io::Result<(Vec<Entry>, Tree)> {
+    pub fn load_after_nap<W>(
+        &self,
+        limit: Duration,
+        on_wait: impl FnOnce() -> W,
+    ) -> io::Result<(Vec<Entry>, Tree, NapWait)> {
         let nap = self.open_nap_lock()?;
-        if must_wait(nap.try_lock_shared())? {
+        let wait = if must_wait(nap.try_lock_shared())? {
             let _waiting = on_wait();
-            nap.lock_shared()?;
-        }
-        self.load_settled(|| ())
+            wait_for_nap(&nap, Instant::now() + limit)?
+        } else {
+            NapWait::Settled
+        };
+        let (entries, tree) = self.load_settled(|| ())?;
+        Ok((entries, tree, wait))
     }
 
     /// Shared try-lock probe on `NAP`: reports true while a nap runs, so another
@@ -482,18 +512,24 @@ mod tests {
         let store = Store::new(dir.path().join("s"));
         store.append(Role::User, "hi").unwrap();
         let mut waited = false;
-        let (entries, _) = store.load_after_nap(|| waited = true).unwrap();
+        let (entries, _, wait) = store
+            .load_after_nap(NAP_WAIT_LIMIT, || waited = true)
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert!(!waited);
+        assert_eq!(wait, NapWait::Settled);
         let held = store.open_nap_lock().unwrap();
         held.lock().unwrap();
         let release = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
             drop(held);
         });
-        store.load_after_nap(|| waited = true).unwrap();
+        let (_, _, wait) = store
+            .load_after_nap(NAP_WAIT_LIMIT, || waited = true)
+            .unwrap();
         release.join().unwrap();
         assert!(waited);
+        assert_eq!(wait, NapWait::Settled);
     }
 
     #[test]

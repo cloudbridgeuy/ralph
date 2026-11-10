@@ -122,9 +122,11 @@ fn summarize<C: FnMut(&str) -> Result<String, CuratorError>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::memory::NapWait;
     use ralph_core::chat_memory::timing_path;
     use serde_json::Value;
     use std::fs;
+    use std::time::Duration;
 
     fn seeded(total: usize) -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
@@ -205,5 +207,40 @@ mod tests {
         assert_eq!(outcomes, ["rejected", "ok"]);
         assert_eq!(rows[1]["attempt"], 2);
         assert_eq!(rows[2]["calls"], 2);
+    }
+
+    #[test]
+    fn load_after_nap_stops_waiting_at_the_limit() {
+        let (dir, store) = seeded(1);
+        let held = store.open_nap_lock().unwrap();
+        held.lock().unwrap();
+        let (done, finished) = std::sync::mpsc::channel();
+        let dir_path = dir.path().to_path_buf();
+        std::thread::spawn(move || {
+            let loaded = Store::new(dir_path).load_after_nap(Duration::from_millis(200), || ());
+            done.send(loaded.map(|(entries, _, _)| entries.len()))
+                .unwrap();
+        });
+        let len = finished
+            .recv_timeout(Duration::from_secs(3))
+            .expect("load_after_nap still blocked after 3 s")
+            .unwrap();
+        assert_eq!(len, 1);
+        drop(held);
+    }
+
+    #[test]
+    fn load_after_nap_reports_a_capped_wait() {
+        let (_dir, store) = seeded(1);
+        let held = store.open_nap_lock().unwrap();
+        held.lock().unwrap();
+        let mut waited = false;
+        let started = Instant::now();
+        let (_, _, wait) = store
+            .load_after_nap(Duration::from_millis(200), || waited = true)
+            .unwrap();
+        assert!(waited);
+        assert_eq!(wait, NapWait::Capped);
+        assert!(started.elapsed() >= Duration::from_millis(200));
     }
 }
