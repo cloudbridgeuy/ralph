@@ -301,12 +301,8 @@ impl Round<'_> {
 pub fn with_tags(dir: &Path, request: &SearchRequest) -> io::Result<SearchRequest> {
     match request.tag() {
         Some(label) => {
-            let store = TagStore::new(dir.to_path_buf());
-            let state = store.read_state()?;
-            let entries = store.read_entries()?;
-            Ok(request
-                .clone()
-                .with_tag_ids(ids_with(&state, &entries, label)))
+            let state = TagStore::new(dir.to_path_buf()).read_state()?;
+            Ok(request.clone().with_tag_ids(ids_with(&state, label)))
         }
         None => Ok(request.clone()),
     }

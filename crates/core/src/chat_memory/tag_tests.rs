@@ -242,13 +242,7 @@ fn labels_parse_and_select_flagged_ids() {
     ]
     .concat();
     let state = state(&text);
-    let mut entries = texted(8, |i| format!("m{i}"));
-    entries[7].role = Role::User;
-    let ids = |label| {
-        ids_with(&state, &entries, label)
-            .into_iter()
-            .collect::<Vec<_>>()
-    };
+    let ids = |label| ids_with(&state, label).into_iter().collect::<Vec<_>>();
     assert_eq!(ids(Label::Rule), vec![3]);
     assert_eq!(ids(Label::Approval), vec![4]);
     assert_eq!(ids(Label::Decision), vec![7]);
@@ -430,27 +424,6 @@ fn an_old_row_with_a_decision_key_keeps_it() {
     let old = r#"{"v":1,"n":4,"rule":true,"decision":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
     let s = state(&format!("{old}\n"));
     assert_eq!(s.tags.get(&4).copied(), Some(decided(true, true, false)));
-}
-
-#[test]
-fn a_stored_decision_matches_only_on_a_user_entry() {
-    let mut entries = texted(4, |i| format!("m{i}"));
-    entries[0].role = Role::User;
-    entries[1].role = Role::User;
-    entries[2].role = Role::Assistant;
-    entries[3].role = Role::Worker;
-    let text: String = (0..4)
-        .map(|n| row(n, &RowKind::Tagged(decided(true, true, false))))
-        .collect();
-    let state = state(&text);
-    let ids = |label| {
-        ids_with(&state, &entries, label)
-            .into_iter()
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(ids(Label::Decision), vec![0, 1]);
-    assert_eq!(ids(Label::Rule), vec![0, 1, 2, 3]);
-    assert_eq!(ids_with(&state, &entries[..1], Label::Decision).len(), 1);
 }
 
 #[test]

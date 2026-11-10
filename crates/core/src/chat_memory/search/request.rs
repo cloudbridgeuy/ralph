@@ -194,6 +194,9 @@ pub(super) fn passes(request: &SearchRequest, id: usize, entry: &Entry) -> bool 
     if request.role.is_some_and(|role| role != entry.role) {
         return false;
     }
+    if request.tag == Some(Label::Decision) && entry.role != Role::User {
+        return false;
+    }
     if request.tag.is_some()
         && !request
             .tag_ids
