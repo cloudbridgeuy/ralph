@@ -3,6 +3,7 @@ use ralph_core::watch_command::{stop_message, StopResult};
 use ralph_core::watch_request::{
     already_queued_message, plan_queued, start_failure_report, WatchRequest, WATCH_REQUESTS_DIR,
 };
+use ralph_core::watch_store::file_name;
 use ralph_core::watch_tools::{
     dequeued_message, format_rows, merge_rows, plan_stop, skipped_message, stop_report, StopStep,
     StopTarget,
@@ -73,15 +74,7 @@ pub fn list_text(watches: &Watches, store_dir: &Path, now: DateTime<Utc>) -> Str
 }
 
 pub fn remove_queued(store_dir: &Path, id: &str) -> io::Result<()> {
-    let name = WatchRequest {
-        id: id.to_string(),
-        command: String::new(),
-        follow_up: String::new(),
-        persistent: false,
-        timeout_secs: None,
-    }
-    .file_name();
-    let claimed = claim(&requests_dir(store_dir).join(name))?;
+    let claimed = claim(&requests_dir(store_dir).join(file_name(id)))?;
     warn_if_err(
         fs::remove_file(&claimed),
         format!("removing {}", claimed.display()),
