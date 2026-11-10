@@ -176,7 +176,18 @@ fn cut(text: &str, chars: usize) -> String {
     text.chars().take(chars).collect()
 }
 
-/// The batch text. Entries in `exclude` (ones that failed alone in this pass)
+/// Entries whose text must stay out of batch context: those with a stored
+/// `failed` row or a `skipped` row, which failed alone in an earlier pass.
+pub fn context_exclusions(state: &TagState) -> BTreeSet<usize> {
+    state
+        .failures
+        .keys()
+        .chain(state.skipped.iter())
+        .copied()
+        .collect()
+}
+
+/// The batch text. Entries in `exclude` (ones that failed alone, see `context_exclusions`)
 /// never ride along as context, or their text would fail the calls of the
 /// entries after them.
 pub fn build_batch(entries: &[Entry], ids: &[usize], exclude: &BTreeSet<usize>) -> String {

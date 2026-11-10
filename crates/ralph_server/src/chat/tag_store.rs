@@ -3,10 +3,10 @@
 
 use crate::private_file::check_path;
 use ralph_core::chat_memory::{
-    after_call, batches, build_batch, decode_rows, encode_row, encode_start, failure_kind,
-    ids_with, isolated, next_size, parse_log, parse_reply, retake, take_confirmed, untagged,
-    CallReply, Entry, PassHealth, RowKind, SearchRequest, TagRow, TagState, Verdict, BATCH_LADDER,
-    MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
+    after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
+    failure_kind, ids_with, isolated, next_size, parse_log, parse_reply, retake, take_confirmed,
+    untagged, CallReply, Entry, PassHealth, RowKind, SearchRequest, TagRow, TagState, Verdict,
+    BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -37,8 +37,8 @@ struct Progress {
     attempted: BTreeSet<usize>,
     report: Report,
     health: PassHealth,
-    /// Entries that failed alone in this pass; their text stays out of the
-    /// context of later batches.
+    /// Entries that failed alone, in this pass or an earlier one; their text
+    /// stays out of the context of later batches.
     excluded: BTreeSet<usize>,
     stopped: bool,
 }
@@ -170,6 +170,7 @@ impl TagStore {
         loop {
             let entries = self.read_entries()?;
             let state = self.read_state()?;
+            progress.excluded.extend(context_exclusions(&state));
             if state.start.is_none() {
                 self.append(&encode_start(entries.len(), &now()).map_err(io::Error::other)?)?;
                 return Ok(Some(entries.len()));

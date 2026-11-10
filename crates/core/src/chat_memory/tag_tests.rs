@@ -328,6 +328,19 @@ fn a_stop_drops_the_entries_still_pending() {
 }
 
 #[test]
+fn stored_failures_and_skips_are_excluded_from_context() {
+    let state = state(
+        &[
+            row(2, &RowKind::Failed),
+            row(4, &RowKind::Skipped),
+            row(5, &RowKind::Tagged(flags(true, false))),
+        ]
+        .concat(),
+    );
+    assert_eq!(context_exclusions(&state), BTreeSet::from([2, 4]));
+}
+
+#[test]
 fn excluded_entries_never_ride_as_context() {
     let entries = texted(6, |i| format!("m{i}"));
     let batch = build_batch(&entries, &[5], &BTreeSet::from([3]));

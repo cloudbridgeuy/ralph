@@ -35,8 +35,8 @@ pub use nap::{
 pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search, SearchRequest};
 pub use tag::{
-    after_call, batches, build_batch, decode_rows, encode_row, encode_start, failure_kind,
-    ids_with, isolated, next_size, parse_reply, retake, tag_failure_kind, tag_reply,
+    after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
+    failure_kind, ids_with, isolated, next_size, parse_reply, retake, tag_failure_kind, tag_reply,
     take_confirmed, untagged, CallReply, Label, PassHealth, RowKind, TagRow, TagState, Verdict,
     BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL, TAG_PROMPT,
 };

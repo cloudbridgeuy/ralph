@@ -370,7 +370,7 @@ fn a_pass_with_no_exit_zero_writes_no_failed_rows() {
 
 #[test]
 fn two_bad_entries_at_the_front_look_global_and_stall_the_pass() {
-    let (dir, store) = started(5);
+    let (dir, store) = started(25);
     let calls = RefCell::new(0);
     let mut ask = |batch: &str| {
         *calls.borrow_mut() += 1;
@@ -433,4 +433,25 @@ fn a_pending_entry_with_no_later_exit_zero_gets_no_row() {
     assert_eq!((report.tagged, report.failed), (2, 0));
     let s = state(&dir);
     assert!(s.failures.is_empty() && !s.tags.contains_key(&2));
+}
+
+#[test]
+fn an_entry_skipped_in_an_earlier_pass_never_rides_as_context_in_a_later_one() {
+    let (dir, store) = started(1);
+    let mut leave_out = |_: &str| ok("[]".to_string());
+    pass(&store, &mut leave_out).unwrap();
+    pass(&store, &mut leave_out).unwrap();
+    assert!(state(&dir).skipped.contains(&0));
+    grow(&dir, 5, 1);
+    let mut ask = |batch: &str| {
+        if mentions(batch, 0) {
+            return bad();
+        }
+        ok(reply_for(&asked_ids(batch), |_| false))
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!((report.tagged, report.failed), (4, 0));
+    let s = state(&dir);
+    assert_eq!(s.tags.keys().copied().collect::<Vec<_>>(), [1, 2, 3, 4]);
+    assert!(!s.failures.contains_key(&1));
 }
