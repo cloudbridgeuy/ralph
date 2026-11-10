@@ -23,7 +23,7 @@ mod schedule_worker;
 pub(crate) use ralph_server::chat::tag_store;
 mod send_it;
 mod sent;
-mod session;
+pub(crate) mod session;
 pub(crate) mod socket;
 mod stall;
 mod statusbar;

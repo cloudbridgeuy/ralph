@@ -1,4 +1,4 @@
-use super::{Group, EST, EXCLUDED};
+use super::{Group, EST, NO_DATA};
 use crate::worker_costs::NO_USAGE;
 use chrono::{Duration, NaiveDate};
 
@@ -21,7 +21,6 @@ const BAR_START_X: f64 = 230.0;
 const VALUE_GAP: f64 = 6.0;
 const VALUE_SIZE: u8 = 11;
 const RIGHT_MARGIN: f64 = 20.0;
-const NO_PRICE: &str = "no price";
 const BAR_ROW: f64 = 28.0;
 const BAR_TOP: f64 = 75.0;
 const BAR_THICKNESS: f64 = 18.0;
@@ -159,14 +158,10 @@ fn x_label(key: &str) -> &str {
 }
 
 fn day_label(day: &Group) -> Option<String> {
-    if day.metered == 0 {
-        None
-    } else if day.all_excluded() {
-        Some(EXCLUDED.to_string())
-    } else if day.usd().known.is_none() {
-        Some(NO_PRICE.to_string())
-    } else {
-        Some(money(total(day)))
+    match day.state() {
+        Some(NO_DATA) => None,
+        Some(state) => Some(state.to_string()),
+        None => Some(money(total(day))),
     }
 }
 
@@ -244,18 +239,6 @@ fn value_text(group: &Group, grand: f64) -> String {
     format!("{amount} ({share:.0}%)")
 }
 
-fn unpriced(group: &Group) -> bool {
-    group.usd().known.is_none()
-}
-
-fn plain_line(group: &Group) -> String {
-    if unpriced(group) && group.metered > 0 && !group.all_excluded() {
-        format!("{}: {NO_PRICE}", group.key)
-    } else {
-        group.line()
-    }
-}
-
 pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {
     let height = BAR_TOP + BAR_ROW * groups.len() as f64 + 20.0;
     if groups.is_empty() {
@@ -265,7 +248,7 @@ pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {
     let peak = groups.iter().map(total).fold(0.0, f64::max);
     let widest_value = groups
         .iter()
-        .filter(|group| !unpriced(group))
+        .filter(|group| group.state().is_none())
         .map(|group| text_width(&value_text(group, grand), VALUE_SIZE))
         .fold(0.0, f64::max);
     let bar_room = WIDTH - RIGHT_MARGIN - BAR_START_X - VALUE_GAP - widest_value;
@@ -273,12 +256,12 @@ pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {
     for (index, group) in groups.iter().enumerate() {
         let y = BAR_TOP + BAR_ROW * index as f64;
         let baseline = y + BAR_THICKNESS - 4.0;
-        if group.metered == 0 || group.all_excluded() || unpriced(group) {
+        if group.state().is_some() {
             svg += &text(
                 BAR_START_X,
                 baseline,
                 Style(MUTED, 12, "start"),
-                &plain_line(group),
+                &group.line(),
             );
             continue;
         }

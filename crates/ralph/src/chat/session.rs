@@ -30,7 +30,7 @@ pub(super) fn resolve_store(
     }
 }
 
-pub(super) fn store_dir(flag: Option<PathBuf>) -> io::Result<PathBuf> {
+pub(crate) fn store_dir(flag: Option<PathBuf>) -> io::Result<PathBuf> {
     resolve_store(
         flag,
         std::env::var_os(STORE_ENV).map(PathBuf::from),

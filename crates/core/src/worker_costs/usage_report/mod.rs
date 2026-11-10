@@ -1,20 +1,23 @@
 pub mod chart;
 pub mod model_view;
+pub mod text;
 
 use super::tickets::{window_position, WorkerWindow};
 use super::window::instant;
-use super::{builtin_prices, computed_usd, Source, Tokens, Usd, NO_PRICE, UNKNOWN};
+use super::{builtin_prices, computed_usd, Source, Tokens, Usd, UNKNOWN};
 use crate::chat_process::UsageLine;
 use crate::wire::price::PriceTable;
 use crate::wire::view::Pricing;
 use crate::worker::HarnessId;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 
 pub const MODEL_MISSING: &str = "(model missing)";
 pub const EST: &str = "est.";
 pub const EXCLUDED: &str = "excluded";
+pub const NO_DATA: &str = "no data";
+pub const NO_PRICE: &str = "no price";
 const HARNESS_COST_SOURCE: &str = "harness";
 const TOTAL: &str = "total";
 
@@ -122,6 +125,18 @@ struct CostSourceTag {
     cost_source: Option<String>,
 }
 
+pub fn parse_bound<Tz: TimeZone>(text: &str, zone: &Tz) -> Option<DateTime<Utc>> {
+    if let Some(at) = instant(text) {
+        return Some(at);
+    }
+    let midnight = NaiveDate::parse_from_str(text, "%Y-%m-%d")
+        .ok()?
+        .and_time(NaiveTime::MIN);
+    zone.from_local_datetime(&midnight)
+        .earliest()
+        .map(|at| at.with_timezone(&Utc))
+}
+
 pub fn is_excluded(line: &UsageLine) -> bool {
     line.harness.as_deref() == Some(HarnessId::Codex.as_str())
 }
@@ -158,14 +173,27 @@ impl Group {
         (prompt > 0.0).then(|| tokens.cache_read as f64 / prompt)
     }
 
-    pub fn line(&self) -> String {
+    pub fn state(&self) -> Option<&'static str> {
         if self.metered == 0 {
-            return format!("{}: no data", self.key);
+            Some(NO_DATA)
+        } else if self.all_excluded() {
+            Some(EXCLUDED)
+        } else if self.usd().known.is_none() {
+            Some(NO_PRICE)
+        } else {
+            None
         }
-        if self.all_excluded() {
-            return format!("{}: {EXCLUDED}", self.key);
+    }
+
+    pub fn line(&self) -> String {
+        match self.state() {
+            Some(state) => format!("{}: {state}", self.key),
+            None => format!("{} {}", self.key, self.cost_label()),
         }
-        format!("{} {}", self.key, self.with_excluded(self.cost_text()))
+    }
+
+    pub fn cost_label(&self) -> String {
+        self.with_excluded(self.cost_text())
     }
 
     pub fn all_excluded(&self) -> bool {
@@ -179,13 +207,13 @@ impl Group {
     fn cost_text(&self) -> String {
         let amount = |usd: Usd| {
             usd.known
-                .map(|known| format!("{known:.2}{}", if usd.missing { "+" } else { "" }))
+                .map(|known| format!("${known:.2}{}", if usd.missing { "+" } else { "" }))
         };
         match (amount(self.reported), amount(self.est)) {
             (Some(reported), Some(est)) => format!("{reported} + {est} {EST}"),
             (Some(reported), None) => reported,
             (None, Some(est)) => format!("{est} {EST}"),
-            (None, None) => NO_PRICE.to_string(),
+            (None, None) => String::new(),
         }
     }
 

@@ -8,6 +8,9 @@ use ralph_core::chat_thread::ThreadName;
 use ralph_core::inbox_post::validate_source;
 use std::path::PathBuf;
 
+mod usage;
+pub use usage::{UsageArgs, UsageCommand};
+
 #[cfg(test)]
 mod tests;
 
@@ -99,6 +102,12 @@ verifies its .sha256, and atomically replaces the running binary. Refuses on a d
 from source) unless --force. Running chats and workers keep the old build until they restart."
     )]
     Upgrade(UpgradeArgs),
+
+    #[command(
+        about = "Report what ralph spent: daily, by kind, store, harness, model, ticket or run, and cache hits.",
+        long_about = "Reads the global usage ledger (read-only) and prints a text report. Bare `ralph usage` is the daily view."
+    )]
+    Usage(UsageArgs),
 
     #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
