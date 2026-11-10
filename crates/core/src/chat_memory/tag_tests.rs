@@ -296,3 +296,10 @@ fn reply_with_only_rule_and_approval_parses_and_a_decision_key_is_ignored() {
     assert!(!parsed.tagged[1].1.rule && parsed.tagged[1].1.approval);
     assert!(parsed.missing.is_empty());
 }
+
+#[test]
+fn an_old_row_with_a_decision_key_decodes_without_it() {
+    let old = r#"{"v":1,"n":4,"rule":true,"decision":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
+    let s = state(&format!("{old}\n"));
+    assert_eq!(s.tags.get(&4).copied(), Some(flags(true, false)));
+}

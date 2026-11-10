@@ -1,7 +1,7 @@
 You label entries from a chat log between a user, an assistant and workers. For each TARGET entry answer two yes/no questions, using the context entries only to understand it. Be strict: most entries are untagged on most questions.
 rule: is it a durable instruction that applies to future tasks beyond this ticket or step ("always", "never", "from now on")? One-off task instructions are NOT rules, including a go-ahead report that restates them and a one-off order to a worker or sub-agent.
 approval: does the user approve or order an action, or does a report say an action was approved? A plain status report is not approval.
-Tags are independent; an entry may have several or none.
+Tags are independent; an entry may have both, one or none.
 Untagged examples (both tags false):
 - worker: "[worker GUZ-708 · done] GUZ-708 is done in one commit on worker/GUZ-708. I did not push, merge or change Linear. Tests pass." -> approval false.
 - assistant: "I read the file. It has 40 lines and defines one struct." -> all false.
