@@ -806,6 +806,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     let env = thread_cmd::ThreadEnv {
                         store_dir: &store_dir,
                         in_thread: fork.is_some(),
+                        width: prompt::screen_columns(),
                         display: Some(&display),
                     };
                     thread_cmd::run(&op, &env, &mut thread_cmd::confirm, &|name| {

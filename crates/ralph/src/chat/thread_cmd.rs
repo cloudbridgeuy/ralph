@@ -18,6 +18,7 @@ use std::path::Path;
 pub(super) struct ThreadEnv<'a> {
     pub store_dir: &'a Path,
     pub in_thread: bool,
+    pub width: usize,
     pub display: Option<&'a Display<'a>>,
 }
 
@@ -36,7 +37,7 @@ pub(super) fn run(
             let listed = rows(&main, &|name| running_of(name).len())
                 .map_err(|e| format!("could not list threads: {e}"))?;
             Ok(match env.display {
-                Some(display) => listing(&listed, display, "no threads"),
+                Some(display) => listing(&listed, display, env.width, "no threads"),
                 None => default_listing(&listed, "no threads"),
             })
         }
@@ -108,6 +109,7 @@ mod tests {
         ThreadEnv {
             store_dir: main,
             in_thread,
+            width: 200,
             display: None,
         }
     }

@@ -52,10 +52,15 @@ pub fn rows(main: &Path, workers: &dyn Fn(&ThreadName) -> usize) -> io::Result<V
     Ok(rows)
 }
 
-pub(in crate::chat) fn listing(rows: &[ThreadRow], display: &Display, empty: &str) -> String {
+pub(in crate::chat) fn listing(
+    rows: &[ThreadRow],
+    display: &Display,
+    width: usize,
+    empty: &str,
+) -> String {
     let opts = ThreadTableOpts {
         now: chrono::Utc::now(),
-        width: screen_columns(),
+        width,
         styled: display.color,
     };
     match threads_view(rows, &opts) {
@@ -74,7 +79,7 @@ pub(in crate::chat) fn default_listing(rows: &[ThreadRow], empty: &str) -> Strin
         color,
         ui: UiColors::default(),
     };
-    listing(rows, &display, empty)
+    listing(rows, &display, screen_columns(), empty)
 }
 
 fn log_mtime(dir: &Path) -> Option<String> {
@@ -128,10 +133,10 @@ mod tests {
             ui: UiColors::default(),
         };
         let listed = rows(&main, &|_| 0).unwrap();
-        let text = listing(&listed, &display, "none");
+        let text = listing(&listed, &display, 200, "none");
         assert!(text.starts_with("| NAME | STATE | FORK |"), "{text}");
         assert!(text.contains("| auth | open | #2 |"), "{text}");
         assert!(!text.ends_with('\n'));
-        assert_eq!(listing(&[], &display, "none"), "none");
+        assert_eq!(listing(&[], &display, 200, "none"), "none");
     }
 }
