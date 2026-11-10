@@ -41,11 +41,18 @@ fn render_spans(colors: &StatusColors, spans: &[Span], color: bool) -> String {
 }
 
 impl StatusBar {
-    pub fn new(theme: &StatusTheme, name: &str, chat: &ChatSection, color: bool) -> Self {
+    pub fn new(
+        theme: &StatusTheme,
+        name: &str,
+        thread: Option<&str>,
+        chat: &ChatSection,
+        color: bool,
+    ) -> Self {
         Self {
             colors: theme.resolve().0,
             context: Context {
                 name: name.to_string(),
+                thread: thread.map(str::to_string),
             },
             separator: separator_for(color, chat.status_powerline),
             color,
@@ -80,7 +87,7 @@ mod tests {
             status_powerline: powerline,
             ..ChatSection::default()
         };
-        StatusBar::new(&StatusTheme::default(), "ralph-chat", &chat, color)
+        StatusBar::new(&StatusTheme::default(), "ralph-chat", None, &chat, color)
     }
 
     #[test]
@@ -111,7 +118,7 @@ mod tests {
             colors: [("mode_inbox_bg".to_string(), "red".to_string())].into(),
         };
         let chat = ChatSection::default();
-        let bar = StatusBar::new(&theme, "s", &chat, true);
+        let bar = StatusBar::new(&theme, "s", None, &chat, true);
         assert!(bar.line(&status(), 40).starts_with("\x1b[101m"));
     }
 
@@ -121,6 +128,22 @@ mod tests {
         assert!(!shown.contains('\x1b'));
         assert!(!shown.ends_with(' '));
         assert!(shown.starts_with(" INBOX │ ralph-chat │ 📬 1 unread"));
+    }
+
+    #[test]
+    fn a_thread_chat_shows_the_session_name_then_the_thread() {
+        let bar = StatusBar::new(
+            &StatusTheme::default(),
+            "ralph-chat",
+            Some("t1"),
+            &ChatSection::default(),
+            false,
+        );
+        let shown = bar.line(&status(), 80);
+        assert!(
+            shown.starts_with(" INBOX │ ralph-chat │ thread t1 │ 📬 1 unread"),
+            "{shown}"
+        );
     }
 
     #[test]

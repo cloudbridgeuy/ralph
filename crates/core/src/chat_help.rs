@@ -419,12 +419,13 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
 ];
 
 /// Status bar segments in the order they are explained.
-pub const SEGMENTS: [Kind; 10] = [
+pub const SEGMENTS: [Kind; 11] = [
     Kind::Mode(Mode::Idle),
     Kind::Hold(Mode::Idle),
     Kind::Queue(Mode::Idle),
     Kind::Mail(Mode::Idle),
     Kind::Name,
+    Kind::Thread,
     Kind::Workers,
     Kind::Watches,
     Kind::Schedule,
@@ -454,6 +455,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
         ),
         Kind::Mail(_) => ("📬 N unread", "worker reports waiting; /inbox sends them"),
         Kind::Name => ("name", "the chat session name"),
+        Kind::Thread => ("thread <name>", "the thread this chat is"),
         Kind::Workers => ("workers", "each worker and its state"),
         Kind::Watches => ("watch <id> <left>", "running watches and their time left"),
         Kind::Schedule => (

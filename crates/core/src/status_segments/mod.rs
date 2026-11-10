@@ -24,6 +24,7 @@ pub enum Kind {
     Hold(Mode),
     Mail(Mode),
     Name,
+    Thread,
     Workers,
     Watches,
     Schedule,
@@ -81,6 +82,7 @@ pub struct Placed {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Context {
     pub name: String,
+    pub thread: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +120,9 @@ impl Kind {
             | Kind::Mail(mode)
             | Kind::Process(mode)
             | Kind::Cost(mode) => mode_bg(mode),
-            Kind::Name | Kind::Workers | Kind::Watches | Kind::Schedule => Shade::BaseBg,
+            Kind::Name | Kind::Thread | Kind::Workers | Kind::Watches | Kind::Schedule => {
+                Shade::BaseBg
+            }
         }
     }
 
@@ -130,7 +134,7 @@ impl Kind {
             | Kind::Mail(mode)
             | Kind::Process(mode)
             | Kind::Cost(mode) => mode_fg(mode),
-            Kind::Name => Shade::StoreFg,
+            Kind::Name | Kind::Thread => Shade::StoreFg,
             Kind::Workers => Shade::WorkersFg,
             Kind::Watches | Kind::Schedule => Shade::WatchesFg,
         }

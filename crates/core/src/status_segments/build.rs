@@ -4,13 +4,14 @@ use crate::chat_status::ScheduleState;
 
 pub(super) const MODE_PRIORITY: u8 = 0;
 const NAME_PRIORITY: u8 = 1;
-const QUEUE_PRIORITY: u8 = 2;
-const MAIL_PRIORITY: u8 = 3;
-const PROCESS_PRIORITY: u8 = 4;
-const COST_PRIORITY: u8 = 5;
-const WORKERS_PRIORITY: u8 = 6;
-const WATCHES_PRIORITY: u8 = 7;
-const SCHEDULE_PRIORITY: u8 = 8;
+const THREAD_PRIORITY: u8 = 2;
+const QUEUE_PRIORITY: u8 = 3;
+const MAIL_PRIORITY: u8 = 4;
+const PROCESS_PRIORITY: u8 = 5;
+const COST_PRIORITY: u8 = 6;
+const WORKERS_PRIORITY: u8 = 7;
+const WATCHES_PRIORITY: u8 = 8;
+const SCHEDULE_PRIORITY: u8 = 9;
 
 fn workers_variants(status: &Status) -> Vec<String> {
     let count = status.workers.len();
@@ -111,6 +112,14 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             vec![context.name.clone()],
         )
     });
+    let thread = context.thread.as_ref().map(|thread| {
+        Segment::new(
+            Side::Left,
+            Kind::Thread,
+            THREAD_PRIORITY,
+            vec![format!("thread {thread}"), format!("⑂ {thread}")],
+        )
+    });
     let workers = (!status.workers.is_empty()).then(|| {
         Segment::new(
             Side::Right,
@@ -158,6 +167,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
     [
         Some(mode),
         name,
+        thread,
         queue,
         hold,
         mail,
@@ -386,11 +396,45 @@ mod tests {
             &status(),
             &Context {
                 name: "chat".into(),
+                ..Context::default()
             },
         );
         let name = all.iter().find(|s| s.kind == Kind::Name).unwrap();
         assert_eq!(name.variants, ["chat"]);
         assert_eq!(name.priority, 1);
+    }
+
+    #[test]
+    fn main_chat_has_no_thread_segment() {
+        let all = segments(&status(), &named_context());
+        assert!(all.iter().all(|s| s.kind != Kind::Thread));
+    }
+
+    #[test]
+    fn thread_has_a_long_and_a_compact_form() {
+        let all = segments(&status(), &threaded_context());
+        let thread = all.iter().find(|s| s.kind == Kind::Thread).unwrap();
+        assert_eq!(thread.variants, ["thread t1", "⑂ t1"]);
+        assert_eq!(thread.side, Side::Left);
+    }
+
+    #[test]
+    fn thread_sits_right_after_the_name_and_drops_just_before_it() {
+        let all = segments(&with_process(), &threaded_context());
+        let at = |kind| all.iter().position(|s| s.kind == kind).unwrap();
+        assert_eq!(at(Kind::Thread), at(Kind::Name) + 1);
+        let priority = |kind| all[at(kind)].priority;
+        assert!(priority(Kind::Name) < priority(Kind::Thread));
+        assert!(priority(Kind::Thread) < priority(Kind::Mail(Mode::Inbox)));
+    }
+
+    #[test]
+    fn thread_keeps_priorities_distinct() {
+        let all = segments(&with_schedule(1), &threaded_context());
+        let mut priorities: Vec<u8> = all.iter().map(|s| s.priority).collect();
+        priorities.sort_unstable();
+        priorities.dedup();
+        assert_eq!(priorities.len(), all.len());
     }
 
     #[test]
