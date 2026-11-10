@@ -175,6 +175,9 @@ pub fn start_queued(watches: &Watches, inbox: &Inbox, store_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::watch::WatchKind;
+    use ralph_core::watch_store::{SavedWatch, WATCHES_DIR};
+    use ralph_server::watch_store::WatchStore;
 
     fn request(id: &str) -> WatchRequest {
         WatchRequest {
@@ -272,6 +275,59 @@ mod tests {
             stop_text(&watches, dir.path(), &StopTarget::All, Utc::now()),
             "No active watches."
         );
+    }
+
+    fn saved(id: &str, kind: WatchKind) -> SavedWatch {
+        SavedWatch {
+            id: id.to_string(),
+            command: "sleep 99".to_string(),
+            follow_up: Some("f".to_string()),
+            kind,
+            timeout_secs: None,
+            started_at: Utc::now(),
+            timeout_deadline: None,
+            wake_deadline: None,
+        }
+    }
+
+    fn save(dir: &Path, record: &SavedWatch) {
+        WatchStore::new(dir.join(WATCHES_DIR)).save(record).unwrap();
+    }
+
+    fn watches_in(dir: &Path) -> Watches {
+        let inbox = std::sync::Arc::new(Inbox::new(dir.join("inbox")));
+        Watches::new(inbox, dir, std::time::Duration::from_secs(60))
+    }
+
+    #[test]
+    fn stopping_a_saved_persistent_watch_removes_its_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let watches = watches_in(dir.path());
+        save(dir.path(), &saved("watch:p", WatchKind::Persistent));
+        let target = StopTarget::Ids(vec!["watch:p".to_string()]);
+        let text = stop_text(&watches, dir.path(), &target, Utc::now());
+        assert_eq!(text, stop_message("watch:p", StopResult::RemovedSaved));
+        assert!(watches.saved().is_empty());
+    }
+
+    #[test]
+    fn stopping_all_handles_each_state_and_names_what_it_skips() {
+        let dir = tempfile::tempdir().unwrap();
+        let watches = watches_in(dir.path());
+        save(dir.path(), &saved("watch:p", WatchKind::Persistent));
+        save(dir.path(), &saved("watch:send-it-1", WatchKind::Normal));
+        queue(dir.path(), &request("watch:q")).unwrap();
+        let text = stop_text(&watches, dir.path(), &StopTarget::All, Utc::now());
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert!(lines.contains(&"Removed queued watch watch:q before it started."));
+        assert!(lines.contains(&stop_message("watch:p", StopResult::RemovedSaved).as_str()));
+        assert!(lines
+            .iter()
+            .any(|l| l.starts_with("Skipped watch:send-it-1:")));
+        assert!(list_queued(dir.path()).is_empty());
+        let left: Vec<String> = watches.saved().into_iter().map(|s| s.id).collect();
+        assert_eq!(left, ["watch:send-it-1"]);
     }
 
     #[test]

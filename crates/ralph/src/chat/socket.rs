@@ -474,6 +474,19 @@ mod tests {
     }
 
     #[test]
+    fn watch_stop_is_refused_when_no_turn_is_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let shared = shared(store.dir());
+        store.set_pending_turn(Trigger::User).unwrap();
+        assert!(!respond(&shared, &request("watch", watch_args())).is_error);
+        store.clear_pending_turn();
+        let refused = respond(&shared, &request("watch_stop", json!({"ids": ["ci"]})));
+        assert!(refused.is_error);
+        assert_eq!(watch_requests::list_queued(dir.path()).len(), 1);
+    }
+
+    #[test]
     fn watch_is_refused_on_a_worker_turn() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
