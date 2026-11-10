@@ -83,18 +83,18 @@ pub struct Span {
     pub text: String,
 }
 
-fn span(tone: Tone, text: impl Into<String>) -> Span {
+pub(crate) fn span(tone: Tone, text: impl Into<String>) -> Span {
     Span {
         tone,
         text: text.into(),
     }
 }
 
-fn plain(text: impl Into<String>) -> Span {
+pub(crate) fn plain(text: impl Into<String>) -> Span {
     span(Tone::Plain, text)
 }
 
-fn dim(text: impl Into<String>) -> Span {
+pub(crate) fn dim(text: impl Into<String>) -> Span {
     span(Tone::Dim, text)
 }
 
@@ -455,18 +455,18 @@ fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [Ve
     })
 }
 
-fn table_width(cells: &[[Vec<Span>; COLUMNS]]) -> usize {
-    let columns: usize = (0..HEADERS.len())
+pub(crate) fn table_width<R: AsRef<[Vec<Span>]>>(headers: &[&str], cells: &[R]) -> usize {
+    let columns: usize = (0..headers.len())
         .map(|i| {
             cells
                 .iter()
-                .map(|row| spans_text(&row[i]).width())
-                .chain([HEADERS[i].width(), MIN_COLUMN])
+                .map(|row| spans_text(&row.as_ref()[i]).width())
+                .chain([headers[i].width(), MIN_COLUMN])
                 .max()
                 .unwrap_or(0)
         })
         .sum();
-    columns + HEADERS.len() + 1
+    columns + headers.len() + 1
 }
 
 fn toned(start: char, text: &str) -> String {
@@ -495,12 +495,20 @@ fn cell_markdown(cell: &[Span], styled: bool) -> String {
     }
 }
 
-fn markdown(cells: &[[Vec<Span>; COLUMNS]], styled: bool) -> String {
+pub(crate) fn markdown<R: AsRef<[Vec<Span>]>>(
+    headers: &[&str],
+    cells: &[R],
+    styled: bool,
+) -> String {
     let line = |row: &[&str]| format!("| {} |", row.join(" | "));
-    let separator = vec!["---"; HEADERS.len()];
-    let mut lines = vec![line(&HEADERS), line(&separator)];
+    let separator = vec!["---"; headers.len()];
+    let mut lines = vec![line(headers), line(&separator)];
     lines.extend(cells.iter().map(|row| {
-        let row: Vec<String> = row.iter().map(|cell| cell_markdown(cell, styled)).collect();
+        let row: Vec<String> = row
+            .as_ref()
+            .iter()
+            .map(|cell| cell_markdown(cell, styled))
+            .collect();
         line(&row.iter().map(String::as_str).collect::<Vec<_>>())
     }));
     lines.join("\n")
@@ -526,13 +534,13 @@ fn table(rows: &[WorkerRow], now: DateTime<Utc>, width: usize, styled: bool) -> 
         .max()
         .unwrap_or(0);
     let full = build(longest);
-    let total = table_width(&full);
+    let total = table_width(&HEADERS, &full);
     if total <= width {
-        return Some(markdown(&full, styled));
+        return Some(markdown(&HEADERS, &full, styled));
     }
     let limit = longest.saturating_sub(total - width).max(MIN_SUBJECT);
     let cut_cells = build(limit);
-    (table_width(&cut_cells) <= width).then(|| markdown(&cut_cells, styled))
+    (table_width(&HEADERS, &cut_cells) <= width).then(|| markdown(&HEADERS, &cut_cells, styled))
 }
 
 fn row_lines(row: &WorkerRow, now: DateTime<Utc>) -> Vec<(&'static str, Vec<Span>)> {
@@ -548,7 +556,7 @@ fn row_lines(row: &WorkerRow, now: DateTime<Utc>) -> Vec<(&'static str, Vec<Span
     ]
 }
 
-fn block(title: Vec<Span>, lines: &[(&str, Vec<Span>)], width: usize) -> Vec<Vec<Span>> {
+pub(crate) fn block(title: Vec<Span>, lines: &[(&str, Vec<Span>)], width: usize) -> Vec<Vec<Span>> {
     let label = lines
         .iter()
         .map(|(name, _)| name.width())

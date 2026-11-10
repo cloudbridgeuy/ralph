@@ -1,6 +1,7 @@
+use crate::chat::inbox::Display;
 use crate::chat::schedule::{ask_answer, read_answer};
 use crate::chat::thread::{
-    config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, thread_dir,
+    config_root, listing, merge_precheck, merge_thread, park_thread, pull_thread, rows, thread_dir,
     view_thread,
 };
 use crate::cli::MERGE_TIMEOUT_SECS;
@@ -14,26 +15,28 @@ use ralph_core::chat_thread_cmd::{
 use std::io;
 use std::path::Path;
 
+pub(super) struct ThreadEnv<'a> {
+    pub store_dir: &'a Path,
+    pub in_thread: bool,
+    pub width: usize,
+    pub display: &'a Display<'a>,
+}
+
 pub(super) fn run(
     op: &ThreadOp,
-    store_dir: &Path,
-    in_thread: bool,
+    env: &ThreadEnv,
     confirm: &mut impl FnMut(&str) -> Option<bool>,
     running_of: &impl Fn(&ThreadName) -> Vec<String>,
 ) -> Result<String, String> {
-    if let Some(refusal) = op_refusal(in_thread, op) {
+    if let Some(refusal) = op_refusal(env.in_thread, op) {
         return Err(refusal);
     }
-    let main = config_root(store_dir);
+    let main = config_root(env.store_dir);
     match op {
         ThreadOp::Ls => {
-            let rows = list(&main, &|name| running_of(name).len())
+            let listed = rows(&main, &|name| running_of(name).len())
                 .map_err(|e| format!("could not list threads: {e}"))?;
-            Ok(if rows.is_empty() {
-                "no threads".to_string()
-            } else {
-                rows
-            })
+            Ok(listing(&listed, env.display, env.width, "no threads"))
         }
         ThreadOp::Pull(name) => pull_thread(&main, name),
         ThreadOp::Park(name) => {
@@ -71,7 +74,16 @@ pub(super) fn confirm(question: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ansi::fg;
     use crate::chat::thread::ensure;
+    use crate::chat::workers::{paint_tones, table_theme};
+    use crate::highlight::Highlighter;
+    use crate::markdown::MarkdownTheme;
+    use crate::render::text::render_prose;
+    use crate::render::RenderContext;
+    use crate::ui_theme::UiColors;
+    use ralph_core::chat_thread_table::{threads_view, ThreadTableOpts};
+    use ralph_core::workers_view::View;
     use ralph_server::chat::memory::Store;
 
     #[test]
@@ -95,6 +107,66 @@ mod tests {
         assert_eq!(merge_precheck(&main, &auth, &[]), Ok(()));
     }
 
+    fn with_env<R>(main: &Path, in_thread: bool, check: impl FnOnce(&ThreadEnv) -> R) -> R {
+        let highlighter = Highlighter::new();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::new(&highlighter, true),
+            theme: &theme,
+            color: true,
+            ui: UiColors::default(),
+        };
+        check(&ThreadEnv {
+            store_dir: main,
+            in_thread,
+            width: 200,
+            display: &display,
+        })
+    }
+
+    #[test]
+    fn ls_in_a_chat_prints_a_table_with_the_chat_display() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
+        let highlighter = Highlighter::new();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::new(&highlighter, true),
+            theme: &theme,
+            color: true,
+            ui: UiColors::default(),
+        };
+        let env = ThreadEnv {
+            store_dir: &main,
+            in_thread: false,
+            width: 200,
+            display: &display,
+        };
+        let text = run(&ThreadOp::Ls, &env, &mut |_: &str| None, &idle).unwrap();
+        // The in-chat prose wraps to the terminal's own width, so check only the border.
+        assert!(text.contains('│'), "{text}");
+        assert!(!text.contains("| NAME |"), "{text}");
+        // Paint the same table at a fixed width, as the /workers painted test does.
+        let opts = ThreadTableOpts {
+            now: chrono::Utc::now(),
+            width: 200,
+            styled: true,
+        };
+        let listed = rows(&main, &|_: &ThreadName| 0).unwrap();
+        let Some(View::Table(md)) = threads_view(&listed, &opts) else {
+            panic!("not a table");
+        };
+        let skin = table_theme(&theme).skin;
+        let painted = paint_tones(&render_prose(&skin, &md, 200), &theme.palette);
+        assert!(painted.contains("NAME"), "{painted}");
+        assert!(painted.contains("auth"), "{painted}");
+        assert!(
+            painted.contains(&format!("{}open", fg(theme.palette.done))),
+            "{painted:?}"
+        );
+    }
+
     fn idle(_: &ThreadName) -> Vec<String> {
         Vec::new()
     }
@@ -116,7 +188,9 @@ mod tests {
             asked += 1;
             Some(false)
         };
-        let result = run(&merge_auth(), &main, false, &mut confirm, &idle);
+        let result = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut confirm, &idle)
+        });
         assert_eq!(result, Ok("merge cancelled.".to_string()));
         assert_eq!(asked, 1);
     }
@@ -126,7 +200,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("chat");
         ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
-        let refusal = run(&merge_auth(), &main, false, &mut |_: &str| None, &idle).unwrap_err();
+        let refusal = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut |_: &str| None, &idle)
+        })
+        .unwrap_err();
         assert!(refusal.starts_with("merge aborted"), "{refusal}");
     }
 
@@ -135,7 +212,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("chat");
         let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
-        let refusal = run(&merge_auth(), &main, false, &mut confirm, &idle).unwrap_err();
+        let refusal = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut confirm, &idle)
+        })
+        .unwrap_err();
         assert!(refusal.starts_with("no thread auth"), "{refusal}");
     }
 
@@ -145,7 +225,10 @@ mod tests {
         let main = root.path().join("chat");
         ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
         let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
-        let refusal = run(&merge_auth(), &main, true, &mut confirm, &idle).unwrap_err();
+        let refusal = with_env(&main, true, |env| {
+            run(&merge_auth(), env, &mut confirm, &idle)
+        })
+        .unwrap_err();
         assert!(
             refusal.contains("Run /main, then /merge <name>."),
             "{refusal}"
@@ -166,13 +249,9 @@ mod tests {
                 vec!["w1".to_string()]
             }
         };
-        let refusal = run(
-            &merge_auth(),
-            &main,
-            false,
-            &mut |_: &str| Some(true),
-            &running_of,
-        )
+        let refusal = with_env(&main, false, |env| {
+            run(&merge_auth(), env, &mut |_: &str| Some(true), &running_of)
+        })
         .unwrap_err();
         assert!(refusal.contains("running workers (w1)"), "{refusal}");
         assert_eq!(lookups.get(), 2);

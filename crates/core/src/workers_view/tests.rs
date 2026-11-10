@@ -222,7 +222,7 @@ fn wide_screens_get_a_table_with_the_full_subject() {
 fn the_subject_is_cut_before_the_table_gives_up() {
     let markdown = table_of(workers_view(&[row("GUZ-1")], now(), 100));
     assert!(markdown.contains("…"), "{markdown}");
-    assert!(table_width(&[table_cells(&row("GUZ-1"), now(), 20)]) <= 100);
+    assert!(table_width(&HEADERS, &[table_cells(&row("GUZ-1"), now(), 20)]) <= 100);
 }
 
 #[test]

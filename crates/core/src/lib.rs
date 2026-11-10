@@ -39,6 +39,7 @@ pub mod chat_switch;
 pub mod chat_thread;
 pub mod chat_thread_cmd;
 mod chat_thread_root;
+pub mod chat_thread_table;
 pub mod chat_typed;
 pub mod chat_view;
 pub mod chunk;

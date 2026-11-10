@@ -52,7 +52,7 @@ ralph thread ls
 
 Inside a chat, type `/threads` for the same list. It works in main's chat and in a thread's chat, takes no arguments and starts no turn. A turn in progress does not block it, but it waits in the queue like `/thread`. `/threads`, `/pull`, `/park` and `/merge` run alone in the queue, never joined with other lines, in typed order.
 
-Each line shows the name, the fork point, the message count and the creation time. A line also shows `merged` or `parked` with a time, the running workers and the unread reports. The last three appear only when they are not zero. When there are none, the command prints `no threads in <store>`, with the store path that it read. It is safe while a thread chat is open.
+The list is a table with one row per thread: `NAME`, `STATE` (`open`, `parked 7d ago` or `merged 3d ago`), `FORK` (`#<base>`), `CREATED`, `ACTIVE` (the age of the thread's `log.jsonl` file; `-` when the thread has no messages yet), `MSGS`, `WORKERS` and `UNREAD`. Open threads come first, then parked, then merged, each group by name. `WORKERS` and `UNREAD` show a dim `-` when they are zero. In a terminal the table uses the same borders and colours as `/workers`; piped or with `NO_COLOR` set, it prints as plain markdown pipes. With colour on and a narrow screen, the table drops `ACTIVE`, then `UNREAD`, then `WORKERS`, and below that prints one block per thread. Plain output always has all eight columns. A time that does not parse shows a dim `-`. When there are none, the command prints `no threads in <store>`, with the store path that it read. It is safe while a thread chat is open.
 
 ## Pull main's new messages
 
@@ -132,7 +132,7 @@ Drop refuses an open chat and running workers. It refuses a merged thread, becau
 
 ```bash
 ralph chat --thread auth       # work on the auth topic, then quit with Ctrl-D
-ralph thread ls                # auth  forked at #42  6 messages ...
+ralph thread ls                # NAME | STATE | FORK | CREATED | ACTIVE | MSGS | ...
 ralph thread pull auth         # take main's newer messages
 ralph chat --thread auth       # continue with the new view
 ralph thread merge auth        # Haiku digest (1-3 calls); goes to main's inbox

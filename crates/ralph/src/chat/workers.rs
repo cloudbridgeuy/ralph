@@ -269,7 +269,7 @@ fn paint_lines(lines: &[Vec<Span>], palette: &Palette, color: bool) -> String {
         .join("\n")
 }
 
-fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
+pub(super) fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
     let mut skin = theme.skin.clone();
     skin.italic = CompoundStyle::with_attr(Attribute::Dim);
     skin.inline_code.object_style.background_color = None;
@@ -279,7 +279,7 @@ fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
     }
 }
 
-fn paint_tones(rendered: &str, palette: &Palette) -> String {
+pub(super) fn paint_tones(rendered: &str, palette: &Palette) -> String {
     let mut out = String::with_capacity(rendered.len());
     let mut open = false;
     for ch in rendered.chars() {
@@ -310,7 +310,7 @@ fn paint_tones(rendered: &str, palette: &Palette) -> String {
     out
 }
 
-fn shown(view: &View, display: &Display) -> String {
+pub(super) fn shown(view: &View, display: &Display) -> String {
     match view {
         View::Table(markdown) => paint_tones(
             &render_markdown(&display.ctx, markdown, &table_theme(display.theme)),
