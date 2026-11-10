@@ -272,3 +272,33 @@ fn the_usage_line_reads_an_optional_store() {
         (Some("s1"), None)
     );
 }
+
+#[test]
+fn a_codex_group_line_says_excluded_never_a_price() {
+    let rows = [with(
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!("codex"),
+        ),
+        "model",
+        json!("gpt-5"),
+    )];
+    let report = grouped(Dim::Harness, &rows, &[], &Filter::default());
+    assert_eq!(report.groups[0].line(), "codex: excluded");
+}
+
+#[test]
+fn a_mixed_group_line_keeps_the_known_dollars_and_flags_the_excluded_rows() {
+    let at = "2026-11-05T10:00:00Z";
+    let rows = [
+        with(worker("w1", at), "harness", json!("codex")),
+        worker("w2", at),
+    ];
+    let report = grouped(Dim::Kind, &rows, &[], &Filter::default());
+    let line = report.groups[0].line();
+    assert!(
+        line.contains("est.") && line.ends_with("+ excluded"),
+        "{line}"
+    );
+}

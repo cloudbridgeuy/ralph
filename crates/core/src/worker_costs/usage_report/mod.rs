@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 
 pub const MODEL_MISSING: &str = "(model missing)";
 pub const EST: &str = "est.";
+pub const EXCLUDED: &str = "excluded";
 const HARNESS_COST_SOURCE: &str = "harness";
 const TOTAL: &str = "total";
 
@@ -133,7 +134,22 @@ impl Group {
         if self.metered == 0 {
             return format!("{}: no data", self.key);
         }
-        format!("{} {}", self.key, self.cost_text())
+        if self.all_excluded() {
+            return format!("{}: {EXCLUDED}", self.key);
+        }
+        format!("{} {}", self.key, self.with_excluded(self.cost_text()))
+    }
+
+    pub fn all_excluded(&self) -> bool {
+        self.excluded > 0 && self.excluded == self.metered
+    }
+
+    pub fn with_excluded(&self, cost: String) -> String {
+        match (self.all_excluded(), self.excluded) {
+            (true, _) => EXCLUDED.to_string(),
+            (false, 0) => cost,
+            (false, _) => format!("{cost} + {EXCLUDED}"),
+        }
     }
 
     fn cost_text(&self) -> String {
