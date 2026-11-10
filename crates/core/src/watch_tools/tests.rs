@@ -236,3 +236,9 @@ fn the_stop_description_says_only_a_running_watch_posts_a_report() {
         text.contains("A running watch posts its stopped report; a saved or queued one posts none")
     );
 }
+
+#[test]
+fn the_list_description_says_it_adds_queued_and_saved_watches() {
+    let text = watch_list_definition().to_string();
+    assert!(text.contains("plus queued and saved ones"));
+}

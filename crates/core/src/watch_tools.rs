@@ -44,7 +44,7 @@ pub struct WatchRow {
 pub fn watch_list_definition() -> Value {
     json!({
         "name": "watch_list",
-        "description": "List this chat's watches, one line each: `<id> <state> <kind> <time left> <timeout> <started at> <command>`. State is queued (requested, not started yet), running, or saved (a persistent record that is not running). Kind is normal or persistent. It shows the same watches /watch list shows, plus queued ones. Read-only; takes no arguments. Use it for watch status; never guess from the chat history.",
+        "description": "List this chat's watches, one line each: `<id> <state> <kind> <time left> <timeout> <started at> <command>`. State is queued (requested, not started yet), running, or saved (a persistent record that is not running). Kind is normal or persistent. It shows the same watches /watch list shows, plus queued and saved ones. Read-only; takes no arguments. Use it for watch status; never guess from the chat history.",
         "inputSchema": {"type": "object", "properties": {}}
     })
 }
@@ -160,7 +160,7 @@ pub enum StopStep {
 pub fn watch_stop_definition() -> Value {
     json!({
         "name": "watch_stop",
-        "description": "Stop watches of this chat, like /watch stop: kill a running command, remove a persistent watch's saved record, or drop a queued request, . A running watch posts its stopped report; a saved or queued one posts none. Give ids, or all: true to stop every watch except scheduled tasks and /send-it checks (the result names what it skipped). Only when the person asked for it in their latest message. Call watch_list first.",
+        "description": "Stop watches of this chat, like /watch stop: kill a running command, remove a persistent watch's saved record, or drop a queued request. A running watch posts its stopped report; a saved or queued one posts none. Give ids, or all: true to stop every watch except scheduled tasks and /send-it checks (the result names what it skipped). Only when the person asked for it in their latest message. Call watch_list first.",
         "inputSchema": {
             "type": "object",
             "properties": {
