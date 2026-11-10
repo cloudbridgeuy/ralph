@@ -58,7 +58,11 @@ impl CallTokens {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsageEvent {
-    Call { total: CallTokens, last: CallTokens },
+    Call {
+        thread: String,
+        total: CallTokens,
+        last: CallTokens,
+    },
     Rerouted(String),
 }
 
@@ -85,6 +89,7 @@ pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
         TOKEN_USAGE_UPDATED => {
             let usage = &params["tokenUsage"];
             (usage["total"].is_object() && usage["last"].is_object()).then(|| UsageEvent::Call {
+                thread: params["threadId"].as_str().unwrap_or_default().to_string(),
                 total: decode_call(&usage["total"]),
                 last: decode_call(&usage["last"]),
             })
@@ -100,7 +105,7 @@ pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
 pub struct TurnUsage {
     base: Option<String>,
     current: Option<String>,
-    seen_total: Option<CallTokens>,
+    seen_total: BTreeMap<String, CallTokens>,
     by_model: BTreeMap<(String, bool), CallTokens>,
 }
 
@@ -109,7 +114,7 @@ impl TurnUsage {
         Self {
             base: model.clone(),
             current: model,
-            seen_total: None,
+            seen_total: BTreeMap::new(),
             by_model: BTreeMap::new(),
         }
     }
@@ -118,9 +123,15 @@ impl TurnUsage {
         match event {
             UsageEvent::Rerouted(model) if in_turn => self.current = Some(model),
             UsageEvent::Rerouted(_) => {}
-            UsageEvent::Call { total, last } => {
-                let tokens = self.seen_total.map_or(last, |seen| total.since(seen));
-                self.seen_total = Some(total);
+            UsageEvent::Call {
+                thread,
+                total,
+                last,
+            } => {
+                let tokens = self
+                    .seen_total
+                    .insert(thread, total)
+                    .map_or(last, |seen| total.since(seen));
                 if !in_turn {
                     return;
                 }
