@@ -1,5 +1,5 @@
 use crate::theme_slots::{resolve_slots, ResolveColors};
-pub use ralph_server::config::theme::InputTheme;
+use ralph_server::config::theme::InputTheme;
 use reedline::Color as Nu;
 use termimad::crossterm::style::Color;
 

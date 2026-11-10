@@ -23,7 +23,7 @@ pub fn run_stdio_server(
         let request: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
-                crate::warn::warn(format!("ignoring malformed JSON-RPC line: {e}"));
+                ralph_server::warn::warn(format!("ignoring malformed JSON-RPC line: {e}"));
                 continue;
             }
         };

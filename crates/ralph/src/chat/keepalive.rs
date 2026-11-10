@@ -1,7 +1,6 @@
 use crate::chat::memory::usage_path;
 use crate::ledger;
 use crate::subprocess::{Session, StreamingSubprocessResult};
-use crate::warn::warn_if_err;
 use crate::watches::locked;
 use chrono::{DateTime, Utc};
 use ralph_core::chat_keepalive::{
@@ -10,6 +9,7 @@ use ralph_core::chat_keepalive::{
 };
 use ralph_core::chat_memory::{subagent_records, usage_record, CallSite};
 use ralph_core::stream::IterationMetadata;
+use ralph_server::warn::warn_if_err;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

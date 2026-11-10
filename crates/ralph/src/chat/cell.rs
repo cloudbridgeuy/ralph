@@ -1,6 +1,5 @@
 use crate::ansi::{DIM, RESET};
 use crate::signal;
-use crate::warn::warn;
 use ralph_core::chat_cell::{
     bang, build_message, diff_snapshots, display_results, parse_cells, parse_snapshots, shell_cell,
     shell_stdin, strip_shell_preamble, Bang, Cell, CellLimits, CellRun, SavedState, ShellKind,
@@ -8,6 +7,7 @@ use ralph_core::chat_cell::{
 use ralph_core::chat_cell_stream::{ends_at_line_start, PreambleGate, Sanitizer};
 use ralph_server::subprocess::detach_from_terminal;
 use ralph_server::subprocess::kill_process_group;
+use ralph_server::warn::warn;
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};

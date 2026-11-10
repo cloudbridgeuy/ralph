@@ -1,5 +1,5 @@
 use crate::theme_slots::{resolve_slots, ResolveColors};
-pub use ralph_server::config::theme::UiTheme;
+use ralph_server::config::theme::UiTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.ui";

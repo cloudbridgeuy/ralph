@@ -370,7 +370,7 @@ fn prompt_write_warning(outcome: &PromptWrite) -> Option<String> {
 
 fn report_prompt_write(writer: Option<thread::JoinHandle<io::Result<()>>>) {
     if let Some(message) = writer.and_then(|handle| prompt_write_warning(&handle.join())) {
-        crate::warn::warn(message);
+        ralph_server::warn::warn(message);
     }
 }
 

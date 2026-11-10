@@ -1,7 +1,6 @@
 use crate::chat::terminal::{poll_input, read_input, Input, POLL_MS};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
-use crate::warn::warn_if_err;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use crate::workers::Workers;
@@ -14,6 +13,7 @@ use ralph_core::schedule_command::{
     SCHEDULE_USAGE,
 };
 use ralph_core::watch_request::start_failure_report;
+use ralph_server::warn::warn_if_err;
 use std::io::{self, Write};
 use std::sync::atomic::Ordering;
 use std::time::Duration;

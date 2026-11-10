@@ -1,6 +1,6 @@
 use crate::theme_slots::{resolve_slots, ResolveColors};
 use ralph_core::status_segments::Shade;
-pub use ralph_server::config::theme::StatusTheme;
+use ralph_server::config::theme::StatusTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.status";

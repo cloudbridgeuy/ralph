@@ -1,5 +1,4 @@
 use crate::chat::monitor::{Monitor, POLL};
-use crate::warn::warn_if_err;
 use crate::watches::locked;
 use crate::workers::{running_workers, SpawnArgs, Workers};
 use ralph_core::schedule::{Task, TaskStatus};
@@ -9,6 +8,7 @@ use ralph_core::schedule_worker::{
     WorkerEnd, WorkerFire,
 };
 use ralph_core::worker::HarnessId;
+use ralph_server::warn::warn_if_err;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -83,7 +83,7 @@ fn end_task(monitor: &Monitor, task: &Task, end: &WorkerEnd, now: chrono::DateTi
                 .err()
                 .map(|error| error.to_string());
             if let Some(error) = &stop_error {
-                crate::warn::warn(format!("stopping timed out worker {worker}: {error}"));
+                ralph_server::warn::warn(format!("stopping timed out worker {worker}: {error}"));
             }
             post_report(
                 monitor,
@@ -118,7 +118,7 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
         return;
     };
     if let Err(error) = monitor.schedule.save(&task) {
-        crate::warn::warn(format!(
+        ralph_server::warn::warn(format!(
             "marking scheduled task {} running: {error}",
             task.id
         ));

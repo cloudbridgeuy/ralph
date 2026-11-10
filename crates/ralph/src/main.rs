@@ -54,10 +54,10 @@ use cli::{
 };
 use invoke::InvocationConfig;
 use ralph_core::worker::HarnessId;
+use ralph_server::warn::{warn, warn_if_err};
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
 use version_drift::DriftRun;
-use warn::{warn, warn_if_err};
 
 fn main() -> ExitCode {
     ralph_server::warn::register_sink(warn::print_warning);

@@ -90,7 +90,7 @@ use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use crate::subprocess::OutputGate;
 use crate::theme_slots::ResolveColors;
-use crate::warn::{print_above_prompt, warn, warn_if_err};
+use crate::warn::print_above_prompt;
 use crate::watches::Watches;
 use crate::wire::store::current_uid;
 use crate::worker_mcp::Inbox;
@@ -125,6 +125,7 @@ use ralph_core::program_status::{status_enabled, Phase};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
+use ralph_server::warn::{warn, warn_if_err};
 use reedline::{EditCommand, ExternalPrinter, Reedline};
 #[cfg(test)]
 use session::resolve_store;

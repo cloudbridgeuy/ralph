@@ -22,7 +22,7 @@
 //! let rendered = renderer.render("# Hello\n\nThis is **bold** text.");
 //! ```
 
-pub use ralph_server::config::theme::RoleTheme;
+use ralph_server::config::theme::RoleTheme;
 use termimad::crossterm::style::{Attribute, Color};
 #[cfg(test)]
 use termimad::{CompoundStyle, FmtComposite, FmtLine};

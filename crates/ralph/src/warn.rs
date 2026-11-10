@@ -2,7 +2,6 @@ use crate::ansi::{fg, BOLD, CLEAR_EOL, CR, RESET};
 use crate::frame::frame;
 use crate::ui_theme::{DEFAULT_NOTICE_COLOR, DEFAULT_WARNING_COLOR};
 use ralph_server::warn::WARNING_PREFIX;
-pub use ralph_server::warn::{warn, warn_if_err, warn_once};
 use std::fmt::Display;
 use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc::SyncSender;

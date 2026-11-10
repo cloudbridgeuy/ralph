@@ -1,8 +1,8 @@
-use crate::warn::warn_if_err;
 use ralph_core::inbox_alert::{
     osc9, parse_pane, tmux_focus, Alert, Focus, CLIENT_FORMAT, NOTIFICATION_TITLE, PANE_FORMAT,
 };
 use ralph_server::subprocess::spawn_detached;
+use ralph_server::warn::warn_if_err;
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 

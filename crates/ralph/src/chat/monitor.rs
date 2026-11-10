@@ -10,7 +10,6 @@ use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use crate::subprocess::Session;
 use crate::version_drift::DailyTick;
-use crate::warn::{warn, warn_if_err};
 use crate::watch_requests;
 use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
@@ -39,6 +38,7 @@ use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
     CHECK_STATUS, NUDGE_TEXT,
 };
+use ralph_server::warn::{warn, warn_if_err};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};

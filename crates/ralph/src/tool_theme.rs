@@ -1,6 +1,6 @@
 use crate::ansi::fg;
 use crate::theme_slots::{resolve_slots, ResolveColors};
-pub use ralph_server::config::theme::ToolTheme;
+use ralph_server::config::theme::ToolTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.tools";

@@ -1,6 +1,5 @@
 use super::monitor::Monitor;
 use crate::cursor_owner::{now_secs, write_file};
-use crate::warn::warn_if_err;
 use crate::watches::locked;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{activity_path, sent_path, ActivityMark, HarnessId, Report};
@@ -10,6 +9,7 @@ use ralph_core::worker_stall::{
     report_secs, reported_since_go_ahead, stall_action, AutoContinue, ContinueStep, StallAction,
     StallFacts, CONTINUE_TEXT, REASON_API_ERROR,
 };
+use ralph_server::warn::warn_if_err;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
@@ -112,7 +112,7 @@ impl Monitor {
         }
         let sent = self.workers.nudge(id, CONTINUE_TEXT);
         if let Err(e) = &sent {
-            crate::warn::warn(format!("auto-continuing worker {id}: {e}"));
+            ralph_server::warn::warn(format!("auto-continuing worker {id}: {e}"));
         }
         self.run_steps(worker, at, after_send(sent.is_ok()));
     }
@@ -133,7 +133,7 @@ impl Monitor {
             gate
         };
         if let (true, Err(e)) = (gate.warn, &written) {
-            crate::warn::warn(format!(
+            ralph_server::warn::warn(format!(
                 "recording the auto-continue of worker {id}, no continue sent: {e}"
             ));
         }

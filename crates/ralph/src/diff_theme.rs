@@ -1,5 +1,5 @@
 use crate::theme_slots::{resolve_slots, ResolveColors};
-pub use ralph_server::config::theme::DiffTheme;
+use ralph_server::config::theme::DiffTheme;
 use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.diff";

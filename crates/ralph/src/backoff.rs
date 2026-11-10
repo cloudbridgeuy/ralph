@@ -1,7 +1,7 @@
 use crate::stream_processor::extract_response_text;
 use crate::subprocess::{StreamingSubprocessResult, SubprocessError};
-use crate::warn::warn;
 use ralph_core::retry::{classify, retry_delay, FailureInput, OUTAGE_BACKOFF_SECS};
+use ralph_server::warn::warn;
 use std::time::{Duration, Instant};
 
 const WAIT_SLICE: Duration = Duration::from_millis(100);
