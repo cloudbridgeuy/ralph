@@ -192,9 +192,37 @@ fn failures_never_count_as_tags() {
 }
 
 #[test]
-fn prompt_asks_two_labels_only() {
-    assert!(TAG_PROMPT.contains("{\"n\":<id>,\"rule\":bool,\"approval\":bool}"));
+fn the_prompt_names_the_three_labels_and_asks_for_the_decision_shape() {
+    for label in ["rule:", "decision:", "approval:"] {
+        assert!(TAG_PROMPT.contains(label), "{label}");
+    }
+    assert!(TAG_PROMPT.contains("{\"n\":<id>,\"rule\":bool,\"decision\":bool,\"approval\":bool}"));
+    assert!(TAG_PROMPT.contains("three yes/no questions"));
     assert!(!TAG_PROMPT.contains("risk:") && !TAG_PROMPT.contains("topic_break"));
+}
+
+#[test]
+fn the_prompt_limits_decisions_to_user_messages() {
+    assert!(TAG_PROMPT.contains("Only user messages can be decisions."));
+    assert!(TAG_PROMPT.contains("Assistant and worker entries are NEVER decisions"));
+}
+
+#[test]
+fn the_prompt_has_none_of_the_rejected_examples() {
+    for text in [
+        "Go, and pass this risk",
+        "built as 4 commits",
+        "pass this risk",
+    ] {
+        assert!(!TAG_PROMPT.contains(text), "{text}");
+    }
+}
+
+#[test]
+fn the_prompt_version_is_v2_and_rows_carry_it() {
+    assert_eq!(PROMPT_VERSION, "v2");
+    let line = row(3, &RowKind::Tagged(flags(false, false)));
+    assert!(line.contains("\"prompt\":\"v2\""), "{line}");
 }
 
 #[test]

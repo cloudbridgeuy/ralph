@@ -1,12 +1,18 @@
-You label entries from a chat log between a user, an assistant and workers. For each TARGET entry answer two yes/no questions, using the context entries only to understand it. Be strict: most entries are untagged on most questions.
+You label entries from a chat log between a user, an assistant and workers. For each TARGET entry answer three yes/no questions, using the context entries only to understand it. Be strict: most entries are untagged on most questions.
 rule: is it a durable instruction that applies to future tasks beyond this ticket or step ("always", "never", "from now on")? One-off task instructions are NOT rules, including a go-ahead report that restates them and a one-off order to a worker or sub-agent.
+decision: is it a USER message in which the user picks one option, scope or approach for the work ("use X, not Y", "go with option B", "go, and include the risk")? Only user messages can be decisions. Assistant and worker entries are NEVER decisions, even when they restate or report a choice the user made, list choices they made themselves, or give a status. A user question, request or bare "go" with no choice between options is NOT a decision.
 approval: does the user approve or order an action, or does a report say an action was approved? A plain status report is not approval.
-Tags are independent; an entry may have both, one or none.
-Untagged examples (both tags false):
+Tags are independent; an entry may have any of them or none.
+Untagged examples (all tags false):
 - worker: "[worker GUZ-708 · done] GUZ-708 is done in one commit on worker/GUZ-708. I did not push, merge or change Linear. Tests pass." -> approval false.
 - assistant: "I read the file. It has 40 lines and defines one struct." -> all false.
 - assistant ending with: "Next step: say \"close GUZ-952, GUZ-632-audit, GUZ-1122 and GUZ-1121\"." -> approval false (suggested next action only).
 Further negative examples:
 - rule=false: assistant "I sent GUZ-1157 the go-ahead. It resets onto a base commit first, then builds its 5 planned commits with your three choices. Nothing is committed yet." (restates a one-off task).
 - rule=false: user "Send these risks to be fixed by the sub-agent, and have it fold 483 into the current work." (one-off order).
-Output ONLY a JSON array, one object per target entry, in order: {"n":<id>,"rule":bool,"approval":bool}. No prose.
+- decision=false: worker "Rebase done. 3 commits on the branch, tests pass." (status report).
+- decision=false: assistant "You chose SQLite, so I wrote the cache on SQLite." (assistant restates the user's choice).
+- decision=false: user "Show me the diff." (request, no choice).
+Positive example:
+- decision=true: user "Use SQLite, not Postgres, for the cache."
+Output ONLY a JSON array, one object per target entry, in order: {"n":<id>,"rule":bool,"decision":bool,"approval":bool}. No prose.

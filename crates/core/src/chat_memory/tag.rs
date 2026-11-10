@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const TAG_PROMPT: &str = include_str!("tag_prompt.txt");
-pub const PROMPT_VERSION: &str = "v1";
+pub const PROMPT_VERSION: &str = "v2";
 pub const TAG_MODEL: &str = "claude-haiku-5-5";
 pub const TAGS_FILE: &str = "tags.jsonl";
 /// Most entries one pass tags: a backstop against a huge backlog.
