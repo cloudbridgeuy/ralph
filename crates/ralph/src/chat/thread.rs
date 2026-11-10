@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 use ralph_server::chat::memory::Reach;
 
 mod list;
-pub(super) use list::default_listing;
 pub use list::rows;
+pub(super) use list::{default_listing, listing};
 
 pub struct Fork {
     pub main: Store,
@@ -405,7 +405,6 @@ pub fn pull_thread(main: &Path, name: &ThreadName) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::list::listing;
     use super::*;
     use crate::chat::inbox::Display;
     use crate::config::load_for_chat;

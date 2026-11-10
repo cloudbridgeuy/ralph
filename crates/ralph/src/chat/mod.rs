@@ -803,13 +803,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             }
             Route::ThreadOp { op, line } => {
                 match op.and_then(|op| {
-                    thread_cmd::run(
-                        &op,
-                        &store_dir,
-                        fork.is_some(),
-                        &mut thread_cmd::confirm,
-                        &|name| thread::running_ids(&thread::config_root(&store_dir), name),
-                    )
+                    let env = thread_cmd::ThreadEnv {
+                        store_dir: &store_dir,
+                        in_thread: fork.is_some(),
+                        display: Some(&display),
+                    };
+                    thread_cmd::run(&op, &env, &mut thread_cmd::confirm, &|name| {
+                        thread::running_ids(&thread::config_root(&store_dir), name)
+                    })
                 }) {
                     Ok(text) => {
                         println!("{text}");

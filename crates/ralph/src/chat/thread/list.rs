@@ -52,7 +52,7 @@ pub fn rows(main: &Path, workers: &dyn Fn(&ThreadName) -> usize) -> io::Result<V
     Ok(rows)
 }
 
-pub(super) fn listing(rows: &[ThreadRow], display: &Display, empty: &str) -> String {
+pub(in crate::chat) fn listing(rows: &[ThreadRow], display: &Display, empty: &str) -> String {
     let opts = ThreadTableOpts {
         now: chrono::Utc::now(),
         width: screen_columns(),
