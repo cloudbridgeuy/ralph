@@ -204,7 +204,8 @@ pub fn check_watch_id(step: usize) -> String {
 }
 
 pub fn is_check_watch_id(id: &str) -> bool {
-    id.starts_with(&watch_id(CHECK_ID))
+    id.strip_prefix(&watch_id(CHECK_ID))
+        .is_some_and(|step| !step.is_empty() && step.bytes().all(|b| b.is_ascii_digit()))
 }
 
 pub fn check_spec(step: usize, command: &str) -> WatchSpec {

@@ -249,3 +249,12 @@ fn a_resumed_judge_step_judges_first_and_a_miss_is_not_a_judge_round() {
     );
     assert_eq!(probed.driving.progress, at(3));
 }
+
+#[test]
+fn only_the_generated_check_shape_is_a_check_watch_id() {
+    assert!(is_check_watch_id("watch:send-it-3"));
+    assert!(is_check_watch_id("watch:send-it-12"));
+    assert!(!is_check_watch_id("watch:send-it-deploy"));
+    assert!(!is_check_watch_id("watch:send-it-"));
+    assert!(!is_check_watch_id("watch:send-it-3x"));
+}
