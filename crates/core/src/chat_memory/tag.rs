@@ -176,6 +176,24 @@ fn cut(text: &str, chars: usize) -> String {
     text.chars().take(chars).collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagPlan {
+    Run,
+    SkipAhead,
+    Skip,
+}
+
+/// What a tag turn does, from the result of loading the `tag_entries` setting.
+/// A setting that cannot be read is no consent to paid calls: the turn does
+/// nothing, and the store is not touched.
+pub fn tag_plan<E>(tag_entries: Result<bool, E>) -> TagPlan {
+    match tag_entries {
+        Ok(true) => TagPlan::Run,
+        Ok(false) => TagPlan::SkipAhead,
+        Err(_) => TagPlan::Skip,
+    }
+}
+
 /// Entries whose text must stay out of batch context: those with a stored
 /// `failed` row or a `skipped` row, which failed alone in an earlier pass.
 pub fn context_exclusions(state: &TagState) -> BTreeSet<usize> {

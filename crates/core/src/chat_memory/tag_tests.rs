@@ -374,3 +374,10 @@ fn an_old_row_with_a_decision_key_decodes_without_it() {
     let s = state(&format!("{old}\n"));
     assert_eq!(s.tags.get(&4).copied(), Some(flags(true, false)));
 }
+
+#[test]
+fn a_setting_that_cannot_be_read_skips_the_pass_without_touching_the_store() {
+    assert_eq!(tag_plan(Err::<bool, &str>("bad toml")), TagPlan::Skip);
+    assert_eq!(tag_plan(Ok::<bool, &str>(true)), TagPlan::Run);
+    assert_eq!(tag_plan(Ok::<bool, &str>(false)), TagPlan::SkipAhead);
+}

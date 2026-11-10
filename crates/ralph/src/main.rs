@@ -414,13 +414,13 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
     config::set_store_layer(&args.store);
     let store = chat::tag_store::TagStore::new(args.store.clone());
     let now = || chrono::Utc::now().to_rfc3339();
-    if !config::AppConfig::load()
-        .unwrap_or_default()
-        .chat
-        .tag_entries
-    {
-        store.skip_ahead(&now)?;
-        return Ok(());
+    match ralph_core::chat_memory::tag_plan(config::AppConfig::load().map(|c| c.chat.tag_entries)) {
+        ralph_core::chat_memory::TagPlan::Run => {}
+        ralph_core::chat_memory::TagPlan::SkipAhead => {
+            store.skip_ahead(&now)?;
+            return Ok(());
+        }
+        ralph_core::chat_memory::TagPlan::Skip => return Ok(()),
     }
     let curator = Curator {
         kind: ralph_core::chat_memory::CallSite::Tag,
