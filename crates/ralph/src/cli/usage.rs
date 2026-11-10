@@ -9,6 +9,20 @@ pub struct UsageArgs {
     pub command: Option<UsageCommand>,
     #[command(flatten)]
     pub filters: UsageFilters,
+    #[arg(
+        long,
+        global = true,
+        conflicts_with = "png",
+        help = "Print text even on a terminal that can draw the chart"
+    )]
+    pub text: bool,
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        help = "Write the chart to this PNG file instead of printing"
+    )]
+    pub png: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]

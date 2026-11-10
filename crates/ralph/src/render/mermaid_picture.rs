@@ -70,7 +70,7 @@ pub fn options(style: &PictureStyle, room: &Room) -> bezel::Options {
     }
 }
 
-fn installed_families(fonts: &fontdb::Database) -> Vec<String> {
+pub(super) fn installed_families(fonts: &fontdb::Database) -> Vec<String> {
     fonts
         .faces()
         .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))

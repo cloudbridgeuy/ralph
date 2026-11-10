@@ -1,14 +1,16 @@
-use super::chart::pad_days;
+use super::chart::{bars_svg, daily_svg, pad_days, Heading};
 use super::{daily, group_by, parse, Dim, Filter, Group, Report, NO_DATA};
 use crate::wire::view::Pricing;
 use crate::worker_costs::tickets::parse_windows;
 use crate::worker_costs::{count, NO_USAGE};
 use chrono::TimeZone;
+use std::path::PathBuf;
 
 const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 const UNPRICED_MARK: char = '?';
 const GAP_MARK: char = ' ';
 const GAP: &str = "  ";
+const SPARKLINE_LEGEND: &str = "? = day with rows but no price";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -111,7 +113,11 @@ fn daily_text(report: &Report) -> String {
         .filter(|day| day.metered > 0)
         .chain([&report.total])
         .collect();
-    let mut body = vec![format!("trend{GAP}{}", sparkline(&days))];
+    let trend = sparkline(&days);
+    let mut body = vec![format!("trend{GAP}{trend}")];
+    if trend.contains(UNPRICED_MARK) {
+        body.push(SPARKLINE_LEGEND.to_string());
+    }
     body.extend(columns(&used, tokens));
     page(title, body, report.malformed)
 }
@@ -129,6 +135,22 @@ fn cache(group: &Group) -> Option<String> {
     })
 }
 
+fn report_of<Tz: TimeZone>(
+    view: View,
+    inputs: &Inputs,
+    filter: &Filter,
+    zone: &Tz,
+    pricing: &Pricing,
+) -> Report {
+    let windows = parse_windows(inputs.workers);
+    let ledger = parse(inputs.usage, &windows);
+    match view {
+        View::Daily => daily(&ledger, &windows, filter, zone, pricing),
+        View::By(dim) => group_by(dim, &ledger, &windows, filter, pricing),
+        View::Cache => group_by(Dim::Model, &ledger, &windows, filter, pricing),
+    }
+}
+
 pub fn render<Tz: TimeZone>(
     view: View,
     inputs: &Inputs,
@@ -136,20 +158,66 @@ pub fn render<Tz: TimeZone>(
     zone: &Tz,
     pricing: &Pricing,
 ) -> String {
-    let windows = parse_windows(inputs.workers);
-    let ledger = parse(inputs.usage, &windows);
+    let report = report_of(view, inputs, filter, zone, pricing);
     match view {
-        View::Daily => daily_text(&daily(&ledger, &windows, filter, zone, pricing)),
-        View::By(dim) => table(
-            &group_by(dim, &ledger, &windows, filter, pricing),
-            format!("usage by {}", dim_name(dim)),
-            tokens,
-        ),
-        View::Cache => table(
-            &group_by(Dim::Model, &ledger, &windows, filter, pricing),
-            "usage cache by model".to_string(),
-            cache,
-        ),
+        View::Daily => daily_text(&report),
+        View::By(dim) => table(&report, format!("usage by {}", dim_name(dim)), tokens),
+        View::Cache => table(&report, "usage cache by model".to_string(), cache),
+    }
+}
+
+pub fn chart<Tz: TimeZone>(
+    view: View,
+    inputs: &Inputs,
+    filter: &Filter,
+    zone: &Tz,
+    pricing: &Pricing,
+) -> Option<String> {
+    let report = report_of(view, inputs, filter, zone, pricing);
+    let subtitle = if report.malformed > 0 {
+        format!("malformed lines skipped: {}", report.malformed)
+    } else {
+        String::new()
+    };
+    match view {
+        View::Daily => Some(daily_svg(
+            &report.groups,
+            &Heading {
+                title: "Daily spend",
+                subtitle: &subtitle,
+            },
+        )),
+        View::By(dim) => Some(bars_svg(
+            &report.groups,
+            &Heading {
+                title: &format!("Spend by {}", dim_name(dim)),
+                subtitle: &subtitle,
+            },
+        )),
+        View::Cache => None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Output {
+    Text,
+    Png(PathBuf),
+    Inline,
+}
+
+pub fn choose(
+    view: View,
+    text: bool,
+    png: Option<PathBuf>,
+    inline: impl FnOnce() -> bool,
+) -> Result<Output, &'static str> {
+    let has_chart = view != View::Cache;
+    match png {
+        Some(_) if !has_chart => Err("the cache view has no chart"),
+        Some(path) => Ok(Output::Png(path)),
+        None if text || !has_chart => Ok(Output::Text),
+        None if inline() => Ok(Output::Inline),
+        None => Ok(Output::Text),
     }
 }
 

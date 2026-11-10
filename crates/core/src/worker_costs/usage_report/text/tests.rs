@@ -219,3 +219,131 @@ fn a_bound_is_a_local_day_or_an_instant() {
     assert_eq!(instant.as_deref(), Some("2026-11-05T10:00:00+00:00"));
     assert!(parse_bound("yesterday", &zone).is_none());
 }
+
+fn partial(key: &str, reported: Option<f64>, computed: Option<f64>) -> Group {
+    let mut group = group(key, reported, computed);
+    group.est.missing = true;
+    group
+}
+
+fn plus_after_a_digit(text: &str) -> bool {
+    text.chars()
+        .zip(text.chars().skip(1))
+        .any(|(before, after)| before.is_ascii_digit() && after == '+')
+}
+
+#[test]
+fn a_partial_price_reads_no_price_never_a_trailing_plus() {
+    assert_eq!(
+        partial("a", None, Some(5.0)).line(),
+        "a $5.00 est. + no price"
+    );
+    assert_eq!(
+        partial("a", Some(5.0), Some(2.0)).line(),
+        "a $5.00 + $2.00 est. + no price"
+    );
+    assert_eq!(partial("a", Some(5.0), None).line(), "a $5.00 + no price");
+}
+
+#[test]
+fn the_total_row_of_a_partly_priced_table_reads_no_price() {
+    let priced = row("ask", "2026-11-05T10:00:00Z");
+    let unpriced = with(
+        with(row("ask", "2026-11-05T11:00:00Z"), "model", Value::Null),
+        "cost_usd",
+        Value::Null,
+    );
+    let text = shown(View::By(Dim::Kind), &[priced, unpriced], &[]);
+    assert!(text.contains("total"), "{text}");
+    assert!(text.contains("+ no price"), "{text}");
+    assert!(!plus_after_a_digit(&text), "{text}");
+}
+
+#[test]
+fn the_sparkline_legend_shows_only_when_a_question_mark_does() {
+    let unpriced = with(
+        with(row("ask", "2026-11-05T10:00:00Z"), "model", Value::Null),
+        "cost_usd",
+        Value::Null,
+    );
+    let with_mark = shown(View::Daily, &[unpriced], &[]);
+    assert!(
+        with_mark.contains("? = day with rows but no price"),
+        "{with_mark}"
+    );
+    let without = shown(View::Daily, &[row("ask", "2026-11-05T10:00:00Z")], &[]);
+    assert!(!without.contains("? ="), "{without}");
+}
+
+#[test]
+fn text_forces_text_even_on_a_terminal() {
+    let asked = std::cell::Cell::new(false);
+    let output = choose(View::Daily, true, None, || {
+        asked.set(true);
+        true
+    });
+    assert_eq!(output, Ok(Output::Text));
+    assert!(!asked.get());
+}
+
+#[test]
+fn a_png_path_wins_without_asking_the_terminal() {
+    let asked = std::cell::Cell::new(false);
+    let path = PathBuf::from("/tmp/x.png");
+    let output = choose(View::By(Dim::Model), false, Some(path.clone()), || {
+        asked.set(true);
+        true
+    });
+    assert_eq!(output, Ok(Output::Png(path)));
+    assert!(!asked.get());
+}
+
+#[test]
+fn a_capable_terminal_draws_inline_and_anything_else_prints_text() {
+    assert_eq!(
+        choose(View::Daily, false, None, || true),
+        Ok(Output::Inline)
+    );
+    assert_eq!(choose(View::Daily, false, None, || false), Ok(Output::Text));
+}
+
+#[test]
+fn the_cache_view_has_no_chart() {
+    assert_eq!(choose(View::Cache, false, None, || true), Ok(Output::Text));
+    assert!(choose(
+        View::Cache,
+        false,
+        Some(PathBuf::from("/tmp/x.png")),
+        || true
+    )
+    .is_err());
+}
+
+fn chart_of(view: View, usage: &str) -> Option<String> {
+    let overrides: BTreeMap<String, PriceOverride> = BTreeMap::new();
+    let provider = provider(ProviderId::Anthropic);
+    let pricing = Pricing {
+        provider: provider.as_ref(),
+        overrides: &overrides,
+    };
+    let inputs = Inputs { usage, workers: "" };
+    chart(view, &inputs, &Filter::default(), &Utc, &pricing)
+}
+
+#[test]
+fn the_chart_is_an_svg_titled_by_its_dimension() {
+    let usage = jsonl(&[row("ask", "2026-11-05T10:00:00Z")]);
+    let svg = chart_of(View::By(Dim::Harness), &usage).unwrap_or_default();
+    assert!(svg.starts_with("<svg"), "{svg}");
+    assert!(svg.contains(">Spend by harness<"), "{svg}");
+    let daily = chart_of(View::Daily, &usage).unwrap_or_default();
+    assert!(daily.contains(">Daily spend<"), "{daily}");
+    assert!(chart_of(View::Cache, &usage).is_none());
+}
+
+#[test]
+fn the_chart_subtitle_counts_malformed_lines() {
+    let usage = format!("{}not json\n", jsonl(&[row("ask", "2026-11-05T10:00:00Z")]));
+    let svg = chart_of(View::Daily, &usage).unwrap_or_default();
+    assert!(svg.contains("malformed lines skipped: 1"), "{svg}");
+}

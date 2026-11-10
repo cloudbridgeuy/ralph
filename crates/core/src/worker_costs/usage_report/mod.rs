@@ -204,16 +204,22 @@ impl Group {
         label_excluded(cost, self.excluded, self.metered)
     }
 
+    pub fn partly_priced(&self) -> bool {
+        self.reported.missing || self.est.missing
+    }
+
     fn cost_text(&self) -> String {
-        let amount = |usd: Usd| {
-            usd.known
-                .map(|known| format!("${known:.2}{}", if usd.missing { "+" } else { "" }))
-        };
-        match (amount(self.reported), amount(self.est)) {
+        let amount = |usd: Usd| usd.known.map(|known| format!("${known:.2}"));
+        let priced = match (amount(self.reported), amount(self.est)) {
             (Some(reported), Some(est)) => format!("{reported} + {est} {EST}"),
             (Some(reported), None) => reported,
             (None, Some(est)) => format!("{est} {EST}"),
-            (None, None) => String::new(),
+            (None, None) => return String::new(),
+        };
+        if self.partly_priced() {
+            format!("{priced} + {NO_PRICE}")
+        } else {
+            priced
         }
     }
 

@@ -1,15 +1,17 @@
 use crate::chat::session::store_dir;
 use crate::cli::{UsageArgs, UsageCommand};
+use crate::render::image::{detect, draw_png, ImageBounds};
+use crate::render::svg_picture::rasterize_svg;
 use chrono::Local;
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::view::Pricing;
 use ralph_core::worker::workers_log_path;
-use ralph_core::worker_costs::usage_report::text::{render, Inputs, View};
+use ralph_core::worker_costs::usage_report::text::{chart, choose, render, Inputs, Output, View};
 use ralph_core::worker_costs::usage_report::{Dim, Filter};
 use ralph_server::chat::memory::{read_optional, usage_path};
 use ralph_server::config::AppConfig;
 use std::error::Error;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, IsTerminal};
 use std::{fs, path::Path};
 
 fn view_of(command: Option<UsageCommand>) -> View {
@@ -56,9 +58,33 @@ pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
         usage: &usage,
         workers: &workers,
     };
-    println!(
-        "{}",
-        render(view_of(args.command), &inputs, &filter, &Local, &pricing)
-    );
+    let view = view_of(args.command);
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let mut settings = None;
+    let output = choose(view, args.text, args.png, || {
+        settings = detect(color);
+        settings.is_some()
+    })?;
+    let picture = |svg: Option<String>| -> Result<Vec<u8>, Box<dyn Error>> {
+        let svg = svg.ok_or("the view has no chart")?;
+        Ok(rasterize_svg(&svg)?)
+    };
+    match output {
+        Output::Png(path) => {
+            fs::write(
+                &path,
+                picture(chart(view, &inputs, &filter, &Local, &pricing))?,
+            )?;
+            println!("Wrote {}", path.display());
+        }
+        Output::Inline => {
+            let bytes = picture(chart(view, &inputs, &filter, &Local, &pricing))?;
+            match settings.and_then(|s| draw_png(&bytes, s, ImageBounds::current())) {
+                Some(drawn) => println!("{drawn}"),
+                None => println!("{}", render(view, &inputs, &filter, &Local, &pricing)),
+            }
+        }
+        Output::Text => println!("{}", render(view, &inputs, &filter, &Local, &pricing)),
+    }
     Ok(())
 }

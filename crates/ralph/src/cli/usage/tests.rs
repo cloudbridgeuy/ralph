@@ -102,3 +102,22 @@ fn a_bad_since_is_a_validation_error() {
         Some(clap::error::ErrorKind::ValueValidation)
     );
 }
+
+#[test]
+fn text_and_png_parse_before_or_after_the_subcommand() {
+    let text = parsed(&["--text", "daily"]);
+    assert!(text.is_ok_and(|a| a.text));
+    let png = parsed(&["by", "model", "--png", "/tmp/m.png"]);
+    assert!(png.is_ok_and(|a| a.png.as_deref() == Some(std::path::Path::new("/tmp/m.png"))));
+    let early = parsed(&["--png", "/tmp/d.png", "daily"]);
+    assert!(early.is_ok_and(|a| a.png.is_some()));
+}
+
+#[test]
+fn text_and_png_conflict() {
+    let error = parsed(&["--text", "--png", "/tmp/x.png"]).err();
+    assert_eq!(
+        error.map(|e| e.kind()),
+        Some(clap::error::ErrorKind::ArgumentConflict)
+    );
+}

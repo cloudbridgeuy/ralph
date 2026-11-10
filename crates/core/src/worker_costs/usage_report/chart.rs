@@ -1,4 +1,4 @@
-use super::{Group, EST, NO_DATA};
+use super::{Group, EST, NO_DATA, NO_PRICE};
 use crate::worker_costs::NO_USAGE;
 use chrono::{Duration, NaiveDate};
 
@@ -201,13 +201,18 @@ pub fn daily_svg(days: &[Group], heading: &Heading) -> String {
                 svg += &bar(x, top, width, height_of(usd), fill);
             }
         }
-        if let Some(label) = day_label(day) {
+        let mut label_y = top - 5.0;
+        if day.state().is_none() && day.partly_priced() {
             svg += &text(
                 x + width / 2.0,
-                top - 5.0,
-                Style(TEXT, 10, "middle"),
-                &label,
+                label_y,
+                Style(MUTED, 10, "middle"),
+                &format!("+ {NO_PRICE}"),
             );
+            label_y -= 12.0;
+        }
+        if let Some(label) = day_label(day) {
+            svg += &text(x + width / 2.0, label_y, Style(TEXT, 10, "middle"), &label);
         }
         if index % stride == 0 {
             svg += &text(
@@ -235,6 +240,11 @@ fn value_text(group: &Group, grand: f64) -> String {
         ),
         (false, true) => format!("{} {EST}", money(computed(group))),
         _ => money(reported(group)),
+    };
+    let amount = if group.partly_priced() {
+        format!("{amount} + {NO_PRICE}")
+    } else {
+        amount
     };
     format!("{amount} ({share:.0}%)")
 }

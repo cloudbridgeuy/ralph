@@ -239,3 +239,29 @@ fn a_day_whose_rows_have_no_price_reads_no_price() {
     assert!(svg.contains(">no price<"), "{svg}");
     assert!(heights(&svg, EST_FILL).is_empty(), "{svg}");
 }
+
+fn partial(key: &str, reported: Option<f64>, computed: Option<f64>) -> Group {
+    let mut group = group(key, reported, computed);
+    group.est.missing = true;
+    group
+}
+
+#[test]
+fn a_partly_priced_bar_reads_no_price_never_a_trailing_plus() {
+    let svg = bars_svg(&[partial("a", None, Some(5.0))], &HEADING);
+    assert!(svg.contains(">$5.00 est. + no price (100%)<"), "{svg}");
+    let mixed = bars_svg(&[partial("a", Some(5.0), Some(5.0))], &HEADING);
+    assert!(
+        mixed.contains(">$5.00 + $5.00 est. + no price (100%)<"),
+        "{mixed}"
+    );
+}
+
+#[test]
+fn a_partly_priced_day_says_so_under_its_dollars() {
+    let svg = daily_svg(&[partial("2026-11-05", Some(3.2), None)], &HEADING);
+    assert!(
+        svg.contains(">$3.20<") && svg.contains(">+ no price<"),
+        "{svg}"
+    );
+}
