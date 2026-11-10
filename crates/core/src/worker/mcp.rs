@@ -9,6 +9,7 @@ use crate::mcp::string_arg;
 use crate::schedule_request::parse_schedule_args;
 use crate::schedule_worker::{is_scheduled_worker_id, WORKER_ID_PREFIX};
 use crate::watch_request::parse_watch_args;
+use crate::watch_tools::parse_stop_args;
 use serde_json::{json, Value};
 
 pub fn command_definitions() -> [Value; 5] {
@@ -106,6 +107,7 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
         }),
         "watch" => parse_watch_args(args).map(Command::Watch),
         "schedule" => parse_schedule_args(args).map(Command::Schedule),
+        "watch_stop" => parse_stop_args(args).map(Command::WatchStop),
         _ => return None,
     };
     Some(parsed)
@@ -297,6 +299,7 @@ fn harness(args: &Value) -> Result<ParsedSpawn, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::watch_tools::StopTarget;
 
     #[test]
     fn spawn_worker_model_description_names_the_codex_config_model() {
@@ -345,6 +348,21 @@ mod tests {
             }))
         );
         assert_eq!(parse_command("zoom", &json!({})), None);
+    }
+
+    #[test]
+    fn parse_command_reads_watch_stop_ids_and_all() {
+        assert_eq!(
+            parse_command("watch_stop", &json!({"ids": ["w1"]})),
+            Some(Ok(Command::WatchStop(StopTarget::Ids(vec![
+                "watch:w1".to_string()
+            ]))))
+        );
+        assert_eq!(
+            parse_command("watch_stop", &json!({"all": true})),
+            Some(Ok(Command::WatchStop(StopTarget::All)))
+        );
+        assert!(parse_command("watch_stop", &json!({})).unwrap().is_err());
     }
 
     #[test]

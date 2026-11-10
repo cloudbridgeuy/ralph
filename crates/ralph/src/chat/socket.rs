@@ -288,6 +288,12 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
             watch_requests::queue(store.dir(), request).map(|()| queued_message(&request.id))
         }
         Command::Schedule(request) => propose_schedule(store, request).map_err(io::Error::other),
+        Command::WatchStop(target) => Ok(watch_requests::stop_text(
+            watches,
+            store.dir(),
+            target,
+            Utc::now(),
+        )),
     }
     .map_err(|e| e.to_string())
 }
@@ -440,6 +446,31 @@ mod tests {
             "{}",
             listed.text
         );
+    }
+
+    #[test]
+    fn watch_stop_drops_a_queued_watch_only_on_a_user_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let shared = shared(store.dir());
+        store.set_pending_turn(Trigger::User).unwrap();
+        assert!(!respond(&shared, &request("watch", watch_args())).is_error);
+        let stop = json!({"ids": ["ci"]});
+        for refused in [Trigger::Worker, Trigger::SendIt] {
+            store.set_pending_turn(refused).unwrap();
+            assert!(respond(&shared, &request("watch_stop", stop.clone())).is_error);
+            assert_eq!(watch_requests::list_queued(dir.path()).len(), 1);
+        }
+        store.set_pending_turn(Trigger::User).unwrap();
+        let done = respond(&shared, &request("watch_stop", stop));
+        assert!(!done.is_error, "{}", done.text);
+        assert_eq!(
+            done.text,
+            "Removed queued watch watch:ci before it started."
+        );
+        assert!(watch_requests::list_queued(dir.path()).is_empty());
+        let bad = respond(&shared, &request("watch_stop", json!({})));
+        assert!(bad.is_error);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::chat_socket::is_socket_tool;
 use crate::chat_suggestion::suggest_reply_tool;
 use crate::chat_thread::{scope_arg, split_scope, Scope};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
-use crate::watch_tools::watch_list_definition;
+use crate::watch_tools::{watch_list_definition, watch_stop_definition};
 use crate::worker::command_definitions;
 use serde_json::{json, Value};
 
@@ -54,6 +54,7 @@ pub fn tool_definitions() -> Value {
     if let Some(list) = tools.as_array_mut() {
         list.extend(command_definitions());
         list.push(watch_list_definition());
+        list.push(watch_stop_definition());
         list.push(suggest_reply_tool());
         list.push(propose_run_tool());
         list.push(step_result_tool());
@@ -283,6 +284,7 @@ mod tests {
                 "watch",
                 "schedule",
                 "watch_list",
+                "watch_stop",
                 "suggest_reply",
                 "propose_run",
                 "step_result",

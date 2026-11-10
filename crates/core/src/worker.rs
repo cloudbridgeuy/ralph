@@ -2,6 +2,7 @@ use crate::chat_thread::THREAD_REPORT_PREFIX;
 use crate::inbox_post::{mark_untrusted, EXTERNAL_REPORT_PREFIX};
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
+use crate::watch_tools::StopTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -230,6 +231,7 @@ pub enum Command {
     },
     Watch(WatchRequest),
     Schedule(ScheduleRequest),
+    WatchStop(StopTarget),
 }
 
 pub fn branch_name(id: &str) -> String {

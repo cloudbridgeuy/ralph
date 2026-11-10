@@ -72,6 +72,7 @@ pub fn refused_tool(command: &Command) -> String {
         .join(" "),
         Command::Watch(_) => "watch".to_string(),
         Command::Schedule(_) => "schedule".to_string(),
+        Command::WatchStop(_) => "watch_stop".to_string(),
     }
 }
 
@@ -177,7 +178,11 @@ mod tests {
         ]
     }
 
-    fn every_command() -> [Command; 6] {
+    fn watch_stop() -> Command {
+        parsed("watch_stop", json!({"ids": ["w1"]}))
+    }
+
+    fn every_command() -> [Command; 7] {
         [
             close(),
             force_close(),
@@ -185,6 +190,7 @@ mod tests {
             reply(),
             watch(),
             schedule(),
+            watch_stop(),
         ]
     }
 
@@ -256,6 +262,7 @@ mod tests {
             (watch(), vec![Action::Watch], true),
             (watch(), vec![Action::Close], false),
             (schedule(), every_action(), false),
+            (watch_stop(), every_action(), false),
         ];
         for (command, allowed, expected) in cases {
             let gate = command_allowed(&command, Some(Trigger::SendIt), Some(allowed.as_slice()));
@@ -304,6 +311,7 @@ mod tests {
             (force_close(), "close_worker abandon force"),
             (watch(), "watch"),
             (schedule(), "schedule"),
+            (watch_stop(), "watch_stop"),
         ] {
             assert_eq!(refused_tool(&command), name);
         }

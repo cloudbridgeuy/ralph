@@ -1,8 +1,12 @@
 use chrono::{DateTime, Utc};
+use ralph_core::watch_command::{stop_message, StopResult};
 use ralph_core::watch_request::{
     already_queued_message, plan_queued, start_failure_report, WatchRequest, WATCH_REQUESTS_DIR,
 };
-use ralph_core::watch_tools::{format_rows, merge_rows};
+use ralph_core::watch_tools::{
+    dequeued_message, format_rows, merge_rows, plan_stop, skipped_message, stop_report, StopStep,
+    StopTarget,
+};
 use ralph_core::worker::Report;
 use ralph_server::warn::{warn, warn_if_err};
 use ralph_server::watches::Watches;
@@ -66,6 +70,45 @@ pub fn list_text(watches: &Watches, store_dir: &Path, now: DateTime<Utc>) -> Str
         &watches.saved(),
         now,
     ))
+}
+
+pub fn remove_queued(store_dir: &Path, id: &str) -> io::Result<()> {
+    let name = WatchRequest {
+        id: id.to_string(),
+        command: String::new(),
+        follow_up: String::new(),
+        persistent: false,
+        timeout_secs: None,
+    }
+    .file_name();
+    fs::remove_file(requests_dir(store_dir).join(name))
+}
+
+pub fn stop_text(
+    watches: &Watches,
+    store_dir: &Path,
+    target: &StopTarget,
+    now: DateTime<Utc>,
+) -> String {
+    let rows = merge_rows(
+        &list_queued(store_dir),
+        &watches.list(),
+        &watches.saved(),
+        now,
+    );
+    let lines: Vec<String> = plan_stop(target, &rows)
+        .into_iter()
+        .map(|step| match step {
+            StopStep::Stop(id) => stop_message(&id, watches.stop(&id)),
+            StopStep::Dequeue(id) => match remove_queued(store_dir, &id) {
+                Ok(()) => dequeued_message(&id),
+                Err(e) => format!("Could not remove queued watch {id}: {e}"),
+            },
+            StopStep::Skip { id, reason } => skipped_message(&id, reason),
+            StopStep::Unknown(id) => stop_message(&id, StopResult::Unknown),
+        })
+        .collect();
+    stop_report(&lines)
 }
 
 fn is_request(path: &Path) -> bool {
@@ -196,6 +239,25 @@ mod tests {
         assert_eq!(
             list_text(&watches, dir.path(), Utc::now()),
             "watch:a queued normal - default - true"
+        );
+    }
+
+    #[test]
+    fn stopping_a_queued_request_removes_its_file_and_names_unknown_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = std::sync::Arc::new(Inbox::new(dir.path().join("inbox")));
+        let watches = Watches::new(inbox, dir.path(), std::time::Duration::from_secs(60));
+        queue(dir.path(), &request("watch:a")).unwrap();
+        let target = StopTarget::Ids(vec!["watch:a".to_string(), "watch:b".to_string()]);
+        let text = stop_text(&watches, dir.path(), &target, Utc::now());
+        assert_eq!(
+            text,
+            "Removed queued watch watch:a before it started.\nNo watch watch:b. /watch list shows active watches."
+        );
+        assert!(list_queued(dir.path()).is_empty());
+        assert_eq!(
+            stop_text(&watches, dir.path(), &StopTarget::All, Utc::now()),
+            "No active watches."
         );
     }
 
