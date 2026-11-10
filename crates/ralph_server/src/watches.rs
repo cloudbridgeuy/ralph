@@ -60,6 +60,7 @@ pub struct Watches {
     store: WatchStore,
     active: Arc<Mutex<HashMap<String, Active>>>,
     closing: Arc<AtomicBool>,
+    intake: Arc<Mutex<()>>,
     default_timeout: Duration,
 }
 
@@ -157,6 +158,7 @@ impl Watches {
             store: WatchStore::new(store_dir.join(WATCHES_DIR)),
             active: Arc::new(Mutex::new(HashMap::new())),
             closing: Arc::new(AtomicBool::new(false)),
+            intake: Arc::new(Mutex::new(())),
             default_timeout,
         }
     }
@@ -264,6 +266,12 @@ impl Watches {
             .collect();
         watches.sort_by(|a, b| a.id.cmp(&b.id));
         watches
+    }
+
+    /// Held while queued requests move to the active map, and while a stop
+    /// reads them. A stop never sees a request that is in neither place.
+    pub fn intake(&self) -> MutexGuard<'_, ()> {
+        locked(&self.intake)
     }
 
     pub fn saved(&self) -> Vec<SavedWatch> {

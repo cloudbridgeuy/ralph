@@ -107,6 +107,7 @@ pub fn stop_text(
     target: &StopTarget,
     now: DateTime<Utc>,
 ) -> String {
+    let _intake = watches.intake();
     let rows = merge_rows(
         &list_queued(store_dir),
         &watches.list(),
@@ -164,6 +165,7 @@ fn post_failure(inbox: &Inbox, report: &Report) {
 }
 
 pub fn start_queued(watches: &Watches, inbox: &Inbox, store_dir: &Path) {
+    let _intake = watches.intake();
     let now = chrono::Utc::now().to_rfc3339();
     let plan = plan_queued(take_all(store_dir), &watches.used_ids(), &now);
     for report in &plan.rejected {
@@ -277,6 +279,31 @@ mod tests {
             stop_text(&watches, dir.path(), &StopTarget::All, Utc::now()),
             "No active watches."
         );
+    }
+
+    #[test]
+    fn a_stop_waits_while_a_start_holds_the_intake() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = std::sync::Arc::new(Inbox::new(dir.path().join("inbox")));
+        let watches = Watches::new(inbox, dir.path(), std::time::Duration::from_secs(60));
+        let (done, finished) = std::sync::mpsc::channel();
+        let held = watches.intake();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let text = stop_text(&watches, dir.path(), &StopTarget::All, Utc::now());
+                done.send(text).unwrap();
+            });
+            assert!(finished
+                .recv_timeout(std::time::Duration::from_millis(150))
+                .is_err());
+            drop(held);
+            assert_eq!(
+                finished
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap(),
+                "No active watches."
+            );
+        });
     }
 
     #[test]
