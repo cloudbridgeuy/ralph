@@ -37,7 +37,7 @@ fn word_len(text: &str) -> usize {
         .unwrap_or(text.len())
 }
 
-fn open_tag_len(rest: &str) -> Option<usize> {
+fn open_tag(rest: &str) -> Option<(usize, &str)> {
     let after_prefix = rest.strip_prefix("<ralph-")?;
     let verb = word_len(after_prefix);
     let after_verb = after_prefix.get(verb..).filter(|_| verb > 0)?;
@@ -46,33 +46,35 @@ fn open_tag_len(rest: &str) -> Option<usize> {
         .strip_prefix("to=\"")
         .filter(|_| spaced.len() < after_verb.len())?;
     let tail = value.get(value.find('"')?..)?.strip_prefix("\">")?;
-    Some(rest.len() - tail.len())
+    Some((rest.len() - tail.len(), after_prefix.get(..verb)?))
 }
 
-fn close_tag_len(rest: &str) -> Option<usize> {
-    let after_prefix = rest.strip_prefix("</ralph-")?;
-    let verb = word_len(after_prefix);
-    let tail = after_prefix
-        .get(verb..)
-        .filter(|_| verb > 0)?
-        .strip_prefix('>')?;
-    Some(rest.len() - tail.len())
+fn directive_len(rest: &str) -> Option<usize> {
+    let (open, verb) = open_tag(rest)?;
+    let close = format!("</ralph-{verb}>");
+    let body = rest.get(open..)?;
+    Some(open + body.find(&close)? + close.len())
 }
 
 pub fn strip_directive_tags(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
+    let mut removed = false;
     while let Some(ch) = rest.chars().next() {
-        let tag = if ch == '<' {
-            open_tag_len(rest).or_else(|| close_tag_len(rest))
-        } else {
-            None
-        };
-        let take = tag.unwrap_or(ch.len_utf8());
-        if tag.is_none() {
-            out.push(ch);
+        let span = if ch == '<' { directive_len(rest) } else { None };
+        match span {
+            Some(len) => {
+                removed = true;
+                rest = rest.get(len..).unwrap_or_default().trim_start_matches('\n');
+            }
+            None => {
+                out.push(ch);
+                rest = rest.get(ch.len_utf8()..).unwrap_or_default();
+            }
         }
-        rest = rest.get(take..).unwrap_or_default();
+    }
+    if removed {
+        out.truncate(out.trim_end().len());
     }
     out
 }

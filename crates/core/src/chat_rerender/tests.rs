@@ -95,37 +95,36 @@ fn the_selector_borrows_the_stored_entry() {
 }
 
 #[test]
-fn directive_tags_go_and_their_content_stays() {
+fn a_directive_goes_with_its_text() {
     let wrapped = "<ralph-ask to=\"reviewer\">Please review.</ralph-ask>";
-    assert_eq!(strip_directive_tags(wrapped), "Please review.");
+    assert_eq!(strip_directive_tags(wrapped), "");
     let two = "<ralph-tell to=\"a\">Hi\nthere</ralph-tell>\n\nplain\n\n<ralph-comment to=\"b\">Go</ralph-comment>";
-    assert_eq!(strip_directive_tags(two), "Hi\nthere\n\nplain\n\nGo");
+    assert_eq!(strip_directive_tags(two), "plain");
+    let before_code = "<ralph-ask to=\"a\">Q</ralph-ask>\n\n```rust\nfn x() {}\n```";
+    assert_eq!(strip_directive_tags(before_code), "```rust\nfn x() {}\n```");
+    assert_eq!(
+        strip_directive_tags("see <ralph-ask to=\"a\">Q</ralph-ask> now"),
+        "see  now"
+    );
 }
 
 #[test]
-fn text_without_directive_tags_is_unchanged() {
+fn text_without_a_matched_pair_is_unchanged() {
     for text in [
         "",
         "plain **bold** text",
         "a < b and c > d",
         "<div>html</div>",
         "<ralph-ask>no target</ralph-ask>",
-        "<ralph- to=\"x\">no verb",
+        "<ralph- to=\"x\">no verb</ralph->",
         "<ralph-ask to=\"x",
+        "see <ralph-ask to=\"a\">half",
+        "stray </ralph-ask> close",
+        "<ralph-ask to=\"a\">mismatch</ralph-tell>",
         "naïve — ünïcode <é>",
-        "```\n<ralph\n```",
     ] {
-        let expected = text.replace("</ralph-ask>", "");
-        assert_eq!(strip_directive_tags(text), expected, "{text}");
+        assert_eq!(strip_directive_tags(text), text, "{text}");
     }
-}
-
-#[test]
-fn an_unclosed_open_tag_loses_only_the_tag() {
-    assert_eq!(
-        strip_directive_tags("see <ralph-ask to=\"a\">half"),
-        "see half"
-    );
 }
 
 #[test]
@@ -142,7 +141,7 @@ fn a_reprint_pairs_the_header_with_the_stripped_markdown() {
     ];
     let reprint = reprint(&entries, 1).unwrap();
     assert_eq!(reprint.header, "reprint of reply 1");
-    assert_eq!(reprint.markdown, "Q?");
+    assert_eq!(reprint.markdown, "");
     assert_eq!(super::reprint(&entries, 2).unwrap().markdown, "old");
     assert_eq!(
         super::reprint(&entries, 3).unwrap_err(),
