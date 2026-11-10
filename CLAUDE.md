@@ -5,8 +5,8 @@
 ### Installation
 
 ```bash
-cargo install --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
-cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
+cargo install --locked --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
+cargo install --locked --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
 ```
 
 ## What ralph Is
