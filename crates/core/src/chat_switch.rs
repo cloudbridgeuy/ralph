@@ -332,6 +332,12 @@ mod tests {
     }
 
     #[test]
+    fn subcommand_completion_offers_drop_and_revive() {
+        assert_eq!(complete("/thread d", None), Some(vec!["drop".into()]));
+        assert_eq!(complete("/thread r", None), Some(vec!["revive".into()]));
+    }
+
+    #[test]
     fn completion_stops_after_the_name_and_after_other_subcommands() {
         assert_eq!(complete("/thread switch auth ", None), None);
         assert_eq!(complete("/thread park ", None), None);

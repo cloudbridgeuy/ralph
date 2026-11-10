@@ -176,3 +176,49 @@ fn help_lists_the_thread_subcommands_and_none_of_the_old_commands() {
         assert!(!wide.contains(&format!("\n{gone}")), "{gone}");
     }
 }
+
+fn op_debug(line: &str) -> String {
+    match route(line) {
+        Route::ThreadOp { op: Ok(op), .. } => format!("{op:?}"),
+        other => format!("not a thread op: {other:?}"),
+    }
+}
+
+#[test]
+fn thread_drop_and_revive_route_to_the_thread_operations() {
+    assert_eq!(op_debug("/thread drop auth"), "Drop(ThreadName(\"auth\"))");
+    assert_eq!(
+        op_debug("/thread revive auth"),
+        "Revive(ThreadName(\"auth\"))"
+    );
+}
+
+#[test]
+fn drop_and_revive_accept_subcommand_words_as_thread_names() {
+    assert_eq!(op_debug("/thread drop drop"), "Drop(ThreadName(\"drop\"))");
+    assert_eq!(op_debug("/thread revive ls"), "Revive(ThreadName(\"ls\"))");
+}
+
+#[test]
+fn malformed_drop_and_revive_get_a_usage_refusal() {
+    for line in [
+        "/thread drop",
+        "/thread drop a b",
+        "/thread drop Bad_Name",
+        "/thread revive",
+        "/thread revive a b",
+    ] {
+        assert!(
+            matches!(route(line), Route::ThreadOp { op: Err(_), .. }),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn help_lists_drop_and_revive() {
+    let wide = help_text(2_000);
+    for row in ["/thread drop <name>", "/thread revive <name>"] {
+        assert!(wide.contains(row), "{row}");
+    }
+}
