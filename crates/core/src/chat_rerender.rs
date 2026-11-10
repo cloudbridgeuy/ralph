@@ -77,5 +77,18 @@ pub fn strip_directive_tags(text: &str) -> String {
     out
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reprint {
+    pub header: String,
+    pub markdown: String,
+}
+
+pub fn reprint(entries: &[Entry], n: usize) -> Result<Reprint, String> {
+    nth_last_assistant(entries, n).map(|entry| Reprint {
+        header: rerender_header(n),
+        markdown: strip_directive_tags(&entry.text),
+    })
+}
+
 #[cfg(test)]
 mod tests;

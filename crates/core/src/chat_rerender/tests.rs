@@ -133,3 +133,19 @@ fn the_header_names_the_reply_number() {
     assert_eq!(rerender_header(1), "reprint of reply 1");
     assert_eq!(rerender_header(12), "reprint of reply 12");
 }
+
+#[test]
+fn a_reprint_pairs_the_header_with_the_stripped_markdown() {
+    let entries = [
+        entry(Role::Assistant, "old"),
+        entry(Role::Assistant, "<ralph-ask to=\"a\">Q?</ralph-ask>"),
+    ];
+    let reprint = reprint(&entries, 1).unwrap();
+    assert_eq!(reprint.header, "reprint of reply 1");
+    assert_eq!(reprint.markdown, "Q?");
+    assert_eq!(super::reprint(&entries, 2).unwrap().markdown, "old");
+    assert_eq!(
+        super::reprint(&entries, 3).unwrap_err(),
+        "/rerender: no reply 3; the chat has 2 assistant replies."
+    );
+}
