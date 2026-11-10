@@ -4,13 +4,14 @@ use crate::chat_status::ScheduleState;
 
 pub(super) const MODE_PRIORITY: u8 = 0;
 const NAME_PRIORITY: u8 = 1;
-const QUEUE_PRIORITY: u8 = 2;
-const MAIL_PRIORITY: u8 = 3;
-const PROCESS_PRIORITY: u8 = 4;
-const COST_PRIORITY: u8 = 5;
-const WORKERS_PRIORITY: u8 = 6;
-const WATCHES_PRIORITY: u8 = 7;
-const SCHEDULE_PRIORITY: u8 = 8;
+const THREAD_PRIORITY: u8 = 2;
+const QUEUE_PRIORITY: u8 = 3;
+const MAIL_PRIORITY: u8 = 4;
+const PROCESS_PRIORITY: u8 = 5;
+const COST_PRIORITY: u8 = 6;
+const WORKERS_PRIORITY: u8 = 7;
+const WATCHES_PRIORITY: u8 = 8;
+const SCHEDULE_PRIORITY: u8 = 9;
 
 fn workers_variants(status: &Status) -> Vec<String> {
     let count = status.workers.len();
@@ -111,6 +112,14 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             vec![context.name.clone()],
         )
     });
+    let thread = context.thread.as_ref().map(|thread| {
+        Segment::new(
+            Side::Left,
+            Kind::Thread,
+            THREAD_PRIORITY,
+            vec![format!("thread {thread}"), format!("⑂ {thread}")],
+        )
+    });
     let workers = (!status.workers.is_empty()).then(|| {
         Segment::new(
             Side::Right,
@@ -158,6 +167,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
     [
         Some(mode),
         name,
+        thread,
         queue,
         hold,
         mail,
