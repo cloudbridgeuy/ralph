@@ -326,6 +326,12 @@ mod tests {
     }
 
     #[test]
+    fn security_keys_flags_a_store_usage_ledger() {
+        let layer = table("[usage]\nledger = \"/data/usage.jsonl\"\n");
+        assert_eq!(security_keys(&layer), ["usage.ledger"]);
+    }
+
+    #[test]
     fn security_keys_ignores_other_keys_and_empty_tables() {
         assert!(security_keys(&Table::new()).is_empty());
         let layer = table("theme = 1\n[chat]\nwrap_width = 1\n[codex]\nmodel = \"x\"\n");

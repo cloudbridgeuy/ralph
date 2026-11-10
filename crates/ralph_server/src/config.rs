@@ -30,6 +30,7 @@ mod reset_limits_tests;
 #[cfg(test)]
 mod resume_summary_tests;
 pub mod theme;
+mod usage;
 mod wire;
 mod workers;
 pub use changes::ChangesSection;
@@ -44,6 +45,7 @@ pub use permissions::{
     configured_permission_mode, resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE,
     CHAT_DEFAULT_PERMISSION_MODE,
 };
+pub use usage::UsageSection;
 pub use wire::WireSection;
 pub use workers::{PrProvider, WorkersSection};
 
@@ -131,6 +133,9 @@ pub enum ConfigError {
 
     #[error("Invalid config at {path}: {message}")]
     InvalidWorkers { path: String, message: String },
+
+    #[error("Invalid config at {path}: {message}")]
+    InvalidUsage { path: String, message: String },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -170,6 +175,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub workers: WorkersSection,
+
+    #[serde(default)]
+    pub usage: UsageSection,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -564,6 +572,12 @@ impl AppConfig {
         self.workers
             .validate()
             .map_err(|message| ConfigError::InvalidWorkers {
+                path: path.to_string(),
+                message,
+            })?;
+        self.usage
+            .validate()
+            .map_err(|message| ConfigError::InvalidUsage {
                 path: path.to_string(),
                 message,
             })

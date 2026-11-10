@@ -30,6 +30,10 @@ pub fn usage_path() -> PathBuf {
     crate::paths::config_dir().join(USAGE_FILE)
 }
 
+pub fn ledger_path(configured: Option<&Path>, config_dir: &Path) -> PathBuf {
+    config_dir.join(USAGE_FILE)
+}
+
 fn open_stamped(path: &Path) -> io::Result<Option<(File, FileStamp)>> {
     check_path(path)?;
     let file = match File::open(path) {
@@ -440,6 +444,25 @@ mod tests {
         parse_search_args, split_view, LogIndex, RangeRequest, TreeIndex, FALLBACK_MARK,
         LOG_INDEX_FILE, MAX_NAP_ATTEMPTS, TREE_INDEX_FILE,
     };
+
+    #[test]
+    fn ledger_path_defaults_to_config_dir_usage_jsonl() {
+        assert_eq!(
+            ledger_path(None, Path::new("/cfg/ralph")),
+            PathBuf::from("/cfg/ralph/usage.jsonl")
+        );
+    }
+
+    #[test]
+    fn ledger_path_takes_the_configured_file() {
+        assert_eq!(
+            ledger_path(
+                Some(Path::new("/data/ledger.jsonl")),
+                Path::new("/cfg/ralph")
+            ),
+            PathBuf::from("/data/ledger.jsonl")
+        );
+    }
 
     #[test]
     fn second_chat_claim_is_refused_until_the_first_drops() {
