@@ -250,6 +250,8 @@ pub struct ChatSection {
     pub user_settings: bool,
     #[serde(default)]
     pub user_claude_md: bool,
+    #[serde(default = "default_true")]
+    pub tag_entries: bool,
     #[serde(default)]
     pub recent_history_tokens: Option<usize>,
     #[serde(default)]
@@ -345,6 +347,7 @@ impl Default for ChatSection {
             project_claude_md: true,
             user_settings: false,
             user_claude_md: false,
+            tag_entries: true,
             recent_history_tokens: None,
             worker_check_secs: None,
             keepalive_hours: None,
@@ -462,12 +465,19 @@ impl AppConfig {
     }
 
     pub fn load() -> Result<Self, ConfigError> {
-        let store_file = STORE_LAYER.get().map(|dir| dir.join("config.toml"));
-        let (result, notices) = Self::load_from(&config_path(), store_file.as_deref());
+        let (result, notices) = Self::load_with_notices();
         for notice in &notices {
             warn_once(&notice.key, &notice.message);
         }
         result
+    }
+
+    /// `load` without the warnings: the result and the notices it would show.
+    /// A caller can tell from `Notice::is_store_fallback` that the store's
+    /// config was ignored.
+    pub fn load_with_notices() -> (Result<Self, ConfigError>, Vec<Notice>) {
+        let store_file = STORE_LAYER.get().map(|dir| dir.join("config.toml"));
+        Self::load_from(&config_path(), store_file.as_deref())
     }
 
     pub fn load_from(

@@ -95,6 +95,18 @@ fn thread_merge_digests_count_as_nap() {
 }
 
 #[test]
+fn tag_rows_count_as_nap() {
+    let mut tag = nap("claude-haiku-5-5", 0.02);
+    tag["kind"] = json!("tag");
+    let rows = rows_of(&jsonl(&[nap("claude-haiku-5-5", 0.01), tag]));
+    assert_eq!(rows.len(), 1);
+    assert!(close(
+        find(&rows, "nap", "claude-haiku-5-5").harness_usd,
+        0.03
+    ));
+}
+
+#[test]
 fn ask_rows_show_as_ask() {
     let mut ask = nap("claude-haiku-5-5", 0.04);
     ask["kind"] = json!("ask");

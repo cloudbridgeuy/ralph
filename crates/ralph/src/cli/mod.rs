@@ -106,6 +106,9 @@ from source) unless --force. Running chats and workers keep the old build until 
     #[command(hide = true)]
     ChatNap(ChatNapArgs),
 
+    #[command(hide = true)]
+    ChatTag(ChatTagArgs),
+
     #[command(hide = true, name = "__mermaid")]
     Mermaid(MermaidArgs),
 
@@ -573,6 +576,13 @@ pub struct HistoryArgs {
     pub cursor: Option<String>,
 
     #[arg(
+        long,
+        value_name = "LABEL",
+        help = "Search only messages tagged rule or approval"
+    )]
+    pub tag: Option<String>,
+
+    #[arg(
         long = "in",
         value_name = "THREAD",
         help = "Recall or search in main or a named thread instead of this chat"
@@ -675,6 +685,18 @@ impl WorkerStopHookArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct ChatNapArgs {
+    #[arg(long, value_name = "DIR")]
+    pub store: std::path::PathBuf,
+
+    #[arg(long, value_name = "ID")]
+    pub run: Option<String>,
+
+    #[arg(long, default_value_t = NAP_TIMEOUT_SECS)]
+    pub timeout: u64,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ChatTagArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
 

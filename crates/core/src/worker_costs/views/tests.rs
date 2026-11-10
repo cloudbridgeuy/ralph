@@ -123,6 +123,16 @@ fn role_view_groups_by_role_and_keeps_merge_apart_from_nap() {
 }
 
 #[test]
+fn role_view_counts_tag_rows_as_nap() {
+    let view = view_of(
+        View::Role,
+        &[with_kind("tag"), nap("claude-haiku-5-5")],
+        &[],
+    );
+    assert_eq!(labels(&view), ["nap", "total"]);
+}
+
+#[test]
 fn role_view_sums_tokens_and_prices_the_rows() {
     let view = view_of(
         View::Role,

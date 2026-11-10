@@ -91,6 +91,19 @@ fn chat_section_parses_wrap_width() {
 }
 
 #[test]
+fn chat_section_tag_entries_is_on_by_default_and_can_be_turned_off() {
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(&path, "[chat]\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(config.chat.tag_entries);
+    assert!(AppConfig::new().chat.tag_entries);
+    fs::write(&path, "[chat]\ntag_entries = false\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(!config.chat.tag_entries);
+}
+
+#[test]
 fn chat_section_parses_editor() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");

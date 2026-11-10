@@ -20,6 +20,7 @@ mod recap;
 mod route;
 mod schedule;
 mod schedule_worker;
+pub(crate) use ralph_server::chat::tag_store;
 mod send_it;
 mod sent;
 mod session;

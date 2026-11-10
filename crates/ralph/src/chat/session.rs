@@ -55,6 +55,7 @@ pub(super) fn print_history(
         history.tool.name(),
         &history.words.join(" "),
         history.cursor.as_deref(),
+        history.tag.as_deref(),
     )
     .and_then(|call| match &history.scope {
         Some(scope) => in_scope(call, scope),

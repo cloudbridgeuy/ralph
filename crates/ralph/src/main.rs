@@ -42,8 +42,8 @@ mod wire;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, MermaidArgs, VerifyAgent,
-    WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, ChatTagArgs, Cli, Commands, MermaidArgs,
+    VerifyAgent, WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
 use invoke::InvocationConfig;
 use ralph_core::worker::HarnessId;
@@ -83,6 +83,7 @@ fn main() -> ExitCode {
         Commands::Upgrade(args) => upgrade::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
+        Commands::ChatTag(args) => execute_chat_tag(args),
         Commands::Mermaid(args) => execute_mermaid(args),
         Commands::WorkerMcp(args) => execute_worker_mcp(args),
         Commands::WorkerStopHook(args) => execute_worker_stop_hook(args),
@@ -403,6 +404,62 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>> {
+    ralph_server::config::set_store_layer(&args.store);
+    let store = chat::tag_store::TagStore::new(args.store.clone());
+    let now = || chrono::Utc::now().to_rfc3339();
+    let (loaded, notices) = ralph_server::config::AppConfig::load_with_notices();
+    let store_failed = notices
+        .iter()
+        .any(ralph_server::config::Notice::is_store_fallback);
+    match ralph_core::chat_memory::tag_plan(loaded.map(|c| c.chat.tag_entries), store_failed) {
+        ralph_core::chat_memory::TagPlan::Run => {}
+        ralph_core::chat_memory::TagPlan::SkipAhead => {
+            store.skip_ahead(&now)?;
+            return Ok(());
+        }
+        ralph_core::chat_memory::TagPlan::Skip => return Ok(()),
+    }
+    let curator = Curator {
+        kind: ralph_core::chat_memory::CallSite::Tag,
+        store: &args.store,
+        run: args.run.clone(),
+        timeout: args.timeout,
+    };
+    let command = tag_command();
+    let pass = store.run_pass(&now, &mut |batch| {
+        let run = run_memory_command(&command, batch, &curator)?;
+        ralph_core::chat_memory::tag_reply(
+            run.failure,
+            signal::is_terminated(),
+            run.code,
+            run.text.as_deref(),
+        )
+    })?;
+    if let chat::tag_store::Pass::Done(report) = pass {
+        if report.failed > 0 {
+            ralph_server::warn::warn(format!(
+                "chat tagging could not tag {} entries this pass",
+                report.failed
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn tag_command() -> String {
+    let config_dir = ralph_server::config::AppConfig::load()
+        .unwrap_or_default()
+        .claude
+        .config_dir;
+    invoke::build_tag_command(
+        ralph_core::chat_memory::TAG_MODEL,
+        ralph_core::chat_memory::TAG_PROMPT,
+        dirs::home_dir().as_deref(),
+        config_dir.as_deref(),
+    )
+}
+
 pub(crate) struct Curator<'a> {
     pub kind: ralph_core::chat_memory::CallSite,
     pub store: &'a std::path::Path,
@@ -436,19 +493,35 @@ fn curator_rows(
 }
 
 pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {
-    let theme_config = highlight::ThemeConfig::from_config_and_env();
     let config_dir = ralph_server::config::AppConfig::load()
         .unwrap_or_default()
         .claude
         .config_dir;
     let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
+    let run = run_memory_command(&command, prompt, curator)?;
+    ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref())
+}
+
+/// What a finished memory call left behind. `failure` is how the final
+/// attempt was classified, so a caller can tell an outage that ran out of
+/// retries from an ordinary failure.
+struct MemoryRun {
+    code: i32,
+    text: Option<String>,
+    failure: Option<ralph_core::retry::FailureKind>,
+}
+
+/// Runs one memory call. An error means the call never finished (timeout or a
+/// spawn error); the exit code and reply text are left to the caller.
+fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<MemoryRun, String> {
+    let theme_config = highlight::ThemeConfig::from_config_and_env();
     let stdin = invoke::prompt_stdin(prompt);
     let outcome = backoff::retry_on_outage(
         "chat memory curator",
         || {
             backoff::attempt_from(subprocess::invoke_subprocess_silent(
                 &subprocess::SpinnerSubprocessConfig {
-                    command: command.clone(),
+                    command: command.to_string(),
                     timeout_secs: Some(curator.timeout),
                     theme_config: theme_config.clone(),
                     session_elapsed_ms: 0,
@@ -479,9 +552,14 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
             "Failed to record chat usage",
         );
     }
+    let failure = backoff::final_tag_failure_kind(&outcome);
     let result = outcome.map_err(|e| e.to_string())?;
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
-    ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
+    Ok(MemoryRun {
+        code: result.exit_code,
+        text: response,
+        failure,
+    })
 }
 
 #[cfg(test)]

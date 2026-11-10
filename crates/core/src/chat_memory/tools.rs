@@ -107,6 +107,7 @@ fn memory_tool_definitions() -> Value {
                 "properties": {
                     "query": {"type": "string", "description": "Words, \"quoted phrases\", and identifiers. A message needs every phrase and at least one word or phrase."},
                     "role": {"type": "string", "enum": ["user", "assistant", "worker"], "description": "Only messages from this role."},
+                    "tag": {"type": "string", "enum": ["rule", "approval"], "description": "Only messages tagged this way. Tags exist only for messages written after tagging began."},
                     "since": {"type": "string", "description": "Earliest time: an RFC 3339 timestamp or a date like 2026-10-20."},
                     "until": {"type": "string", "description": "Latest time: an RFC 3339 timestamp or a date like 2026-10-20 (the whole day counts)."},
                     "limit": {"type": "integer", "description": "Hits per page, 1 to 50. Default 20."},
@@ -147,8 +148,16 @@ pub fn parse_tool_call(name: &str, args: &Value) -> Result<MemoryCall, String> {
     Ok(MemoryCall { scope, tool })
 }
 
-pub fn history_tool(name: &str, words: &str, cursor: Option<&str>) -> Result<MemoryCall, String> {
+pub fn history_tool(
+    name: &str,
+    words: &str,
+    cursor: Option<&str>,
+    tag: Option<&str>,
+) -> Result<MemoryCall, String> {
     let words = words.trim();
+    if tag.is_some() && name != "search" {
+        return Err("Only search takes a tag.".to_string());
+    }
     let args = match name {
         "read" => {
             let mut parts = words.split_whitespace();
@@ -158,7 +167,7 @@ pub fn history_tool(name: &str, words: &str, cursor: Option<&str>) -> Result<Mem
             }
             json!({"id": id, "mode": mode, "cursor": cursor})
         }
-        "search" => json!({"query": words, "cursor": cursor}),
+        "search" => json!({"query": words, "cursor": cursor, "tag": tag}),
         _ if cursor.is_some() => return Err(format!("{name} takes no cursor.")),
         "zoom" => json!({"id": words}),
         "recall" => json!({"pattern": words}),

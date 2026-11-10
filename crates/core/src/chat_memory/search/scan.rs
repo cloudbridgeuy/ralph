@@ -40,7 +40,7 @@ impl<'a> Scan<'a> {
     }
 
     fn push(&mut self, id: usize, entry: &Entry) {
-        if entry.is_corrupt() || !passes(self.request, entry) {
+        if entry.is_corrupt() || !passes(self.request, id, entry) {
             return;
         }
         let tokens = tokenize(&entry.text);

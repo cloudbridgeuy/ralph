@@ -197,7 +197,9 @@ impl Store {
                     })?;
                     recall(&entries, pattern).map(lines)
                 }
-                Tool::Search(request) => search(archive, request)?.map(lines),
+                Tool::Search(request) => {
+                    search(archive, &super::tag_store::with_tags(&self.dir, request)?)?.map(lines)
+                }
             })
         });
         result.unwrap_or_else(|e| Err(format!("Could not read chat memory: {e}")))

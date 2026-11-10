@@ -57,7 +57,7 @@ impl Role {
     fn of(kind: &str) -> Option<Role> {
         match kind {
             "turn" | "ping" => Some(Role::Main),
-            "nap" => Some(Role::Nap),
+            "nap" | "tag" => Some(Role::Nap),
             "merge" => Some(Role::Merge),
             "ask" => Some(Role::Ask),
             "subagent" => Some(Role::Subagent),

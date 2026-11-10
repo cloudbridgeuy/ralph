@@ -212,10 +212,10 @@ pub fn route_input(
                 Command::View => Route::View(parse_view_args(args)),
                 Command::Read | Command::Search => {
                     let (words, cursor) = split_cursor(args);
-                    Route::History(history_tool(&command.name()[1..], words, cursor))
+                    Route::History(history_tool(&command.name()[1..], words, cursor, None))
                 }
                 Command::Zoom | Command::Recall => {
-                    Route::History(history_tool(&command.name()[1..], args, None))
+                    Route::History(history_tool(&command.name()[1..], args, None, None))
                 }
             };
         }
