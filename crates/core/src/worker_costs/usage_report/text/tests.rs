@@ -347,3 +347,28 @@ fn the_chart_subtitle_counts_malformed_lines() {
     let svg = chart_of(View::Daily, &usage).unwrap_or_default();
     assert!(svg.contains("malformed lines skipped: 1"), "{svg}");
 }
+
+fn at_store(value: Value, store: &str) -> Value {
+    with(value, "store", json!(store))
+}
+
+#[test]
+fn two_stores_are_read_and_both_their_tickets_join() {
+    let usage = jsonl(&[
+        at_store(worker("w-a", "2026-11-05T10:00:00Z"), "/s/b"),
+        at_store(worker("w-b", "2026-11-05T11:00:00Z"), "/s/a"),
+        at_store(row("ask", "2026-11-05T12:00:00Z"), "/s/a"),
+        row("ask", "2026-11-05T13:00:00Z"),
+    ]);
+    assert_eq!(stores_to_read(&usage, None), ["/s/a", "/s/b"]);
+    assert_eq!(stores_to_read(&usage, Some("/s/z")), ["/s/z"]);
+    let text = shown_raw(
+        View::By(Dim::Ticket),
+        &usage,
+        &[
+            spawn("w-a", "GUZ-1", "claude"),
+            spawn("w-b", "GUZ-2", "claude"),
+        ],
+    );
+    assert!(text.contains("GUZ-1") && text.contains("GUZ-2"), "{text}");
+}

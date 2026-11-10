@@ -6,7 +6,9 @@ use chrono::Local;
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::view::Pricing;
 use ralph_core::worker::workers_log_path;
-use ralph_core::worker_costs::usage_report::text::{chart, choose, render, Inputs, Output, View};
+use ralph_core::worker_costs::usage_report::text::{
+    chart, choose, render, stores_to_read, Inputs, Output, View,
+};
 use ralph_core::worker_costs::usage_report::{Dim, Filter};
 use ralph_server::chat::memory::{read_optional, usage_path};
 use ralph_server::config::AppConfig;
@@ -37,8 +39,19 @@ pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
         return Ok(());
     };
     let filters = args.filters;
-    let store = store_dir(filters.store.clone())?;
-    let workers = String::from_utf8_lossy(&read_optional(&workers_log_path(&store))?).into_owned();
+    let only = filters
+        .store
+        .clone()
+        .map(|flag| store_dir(Some(flag)).map(|dir| dir.display().to_string()))
+        .transpose()?;
+    let workers = stores_to_read(&usage, only.as_deref())
+        .iter()
+        .map(|store| read_optional(&workers_log_path(Path::new(store))))
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n");
     let config = AppConfig::load()?;
     let provider = provider(ProviderId::Anthropic);
     let pricing = Pricing {
@@ -48,7 +61,7 @@ pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
     let filter = Filter {
         since: filters.since,
         until: filters.until,
-        store: filters.store.map(|_| store.display().to_string()),
+        store: only,
         harness: filters.harness,
         model: filters.model,
         ticket: filters.ticket,

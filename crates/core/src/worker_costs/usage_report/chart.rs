@@ -43,25 +43,37 @@ fn escape(text: &str) -> String {
         .collect()
 }
 
+const PARTIAL_MARK: char = '*';
+const PARTIAL_LEGEND: &str = "* = some rows have no price";
 const GLYPH_RATIO: f64 = 0.6;
 
 fn text_width(content: &str, size: u8) -> f64 {
     content.chars().count() as f64 * f64::from(size) * GLYPH_RATIO
 }
 
-fn money(usd: f64) -> String {
-    if usd < 100.0 {
-        return format!("${usd:.2}");
-    }
-    let whole = format!("{usd:.0}");
-    let mut grouped = String::new();
+fn grouped(usd: f64, decimals: usize) -> String {
+    let fixed = format!("{usd:.decimals$}");
+    let (whole, cents) = fixed.split_once('.').unwrap_or((&fixed, ""));
+    let mut digits = String::new();
     for (index, digit) in whole.chars().enumerate() {
         if index > 0 && (whole.len() - index) % 3 == 0 {
-            grouped.push(',');
+            digits.push(',');
         }
-        grouped.push(digit);
+        digits.push(digit);
     }
-    format!("${grouped}")
+    if cents.is_empty() {
+        format!("${digits}")
+    } else {
+        format!("${digits}.{cents}")
+    }
+}
+
+fn money(usd: f64) -> String {
+    grouped(usd, if usd < 100.0 { 2 } else { 0 })
+}
+
+fn tick_text(usd: f64, step: f64) -> String {
+    grouped(usd, if step >= 1.0 { 0 } else { 2 })
 }
 
 fn reported(group: &Group) -> f64 {
@@ -161,6 +173,7 @@ fn day_label(day: &Group) -> Option<String> {
     match day.state() {
         Some(NO_DATA) => None,
         Some(state) => Some(state.to_string()),
+        None if day.partly_priced() => Some(format!("{}{PARTIAL_MARK}", money(total(day)))),
         None => Some(money(total(day))),
     }
 }
@@ -177,6 +190,12 @@ pub fn daily_svg(days: &[Group], heading: &Heading) -> String {
     let plot_height = PLOT_BOTTOM - PLOT_TOP;
     let height_of = |usd: f64| usd / axis_max * plot_height;
     let mut svg = open(DAILY_HEIGHT, heading) + &legend();
+    if days
+        .iter()
+        .any(|day| day.state().is_none() && day.partly_priced())
+    {
+        svg += &text(20.0, 76.0, Style(MUTED, 11, "start"), PARTIAL_LEGEND);
+    }
     for tick in 0..=ticks {
         let y = PLOT_BOTTOM - height_of(step * tick as f64);
         svg += &format!(
@@ -186,7 +205,7 @@ pub fn daily_svg(days: &[Group], heading: &Heading) -> String {
             PLOT_LEFT - 8.0,
             y + 4.0,
             Style(MUTED, 11, "end"),
-            &money(step * tick as f64),
+            &tick_text(step * tick as f64, step),
         );
     }
     let slot = (PLOT_RIGHT - PLOT_LEFT) / days.len() as f64;
@@ -201,18 +220,13 @@ pub fn daily_svg(days: &[Group], heading: &Heading) -> String {
                 svg += &bar(x, top, width, height_of(usd), fill);
             }
         }
-        let mut label_y = top - 5.0;
-        if day.state().is_none() && day.partly_priced() {
+        if let Some(label) = day_label(day) {
             svg += &text(
                 x + width / 2.0,
-                label_y,
-                Style(MUTED, 10, "middle"),
-                &format!("+ {NO_PRICE}"),
+                top - 5.0,
+                Style(TEXT, 10, "middle"),
+                &label,
             );
-            label_y -= 12.0;
-        }
-        if let Some(label) = day_label(day) {
-            svg += &text(x + width / 2.0, label_y, Style(TEXT, 10, "middle"), &label);
         }
         if index % stride == 0 {
             svg += &text(
@@ -232,14 +246,15 @@ fn value_text(group: &Group, grand: f64) -> String {
     } else {
         0.0
     };
+    let exact = |usd: f64| grouped(usd, 2);
     let amount = match (reported(group) > 0.0, computed(group) > 0.0) {
         (true, true) => format!(
             "{} + {} {EST}",
-            money(reported(group)),
-            money(computed(group))
+            exact(reported(group)),
+            exact(computed(group))
         ),
-        (false, true) => format!("{} {EST}", money(computed(group))),
-        _ => money(reported(group)),
+        (false, true) => format!("{} {EST}", exact(computed(group))),
+        _ => exact(reported(group)),
     };
     let amount = if group.partly_priced() {
         format!("{amount} + {NO_PRICE}")
@@ -268,9 +283,9 @@ pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {
         let baseline = y + BAR_THICKNESS - 4.0;
         if group.state().is_some() {
             svg += &text(
-                BAR_START_X,
+                BAR_LABEL_X,
                 baseline,
-                Style(MUTED, 12, "start"),
+                Style(MUTED, 12, "end"),
                 &group.line(),
             );
             continue;

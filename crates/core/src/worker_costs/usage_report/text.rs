@@ -4,6 +4,7 @@ use crate::wire::view::Pricing;
 use crate::worker_costs::tickets::parse_windows;
 use crate::worker_costs::{count, NO_USAGE};
 use chrono::TimeZone;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
@@ -196,6 +197,19 @@ pub fn chart<Tz: TimeZone>(
         )),
         View::Cache => None,
     }
+}
+
+pub fn stores_to_read(usage: &str, only: Option<&str>) -> Vec<String> {
+    if let Some(only) = only {
+        return vec![only.to_string()];
+    }
+    parse(usage, &[])
+        .entries
+        .into_iter()
+        .filter_map(|entry| entry.line.store)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

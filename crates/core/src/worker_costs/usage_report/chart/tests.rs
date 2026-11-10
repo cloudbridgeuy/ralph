@@ -258,10 +258,76 @@ fn a_partly_priced_bar_reads_no_price_never_a_trailing_plus() {
 }
 
 #[test]
-fn a_partly_priced_day_says_so_under_its_dollars() {
+fn a_partly_priced_day_is_starred_with_a_legend() {
     let svg = daily_svg(&[partial("2026-11-05", Some(3.2), None)], &HEADING);
-    assert!(
-        svg.contains(">$3.20<") && svg.contains(">+ no price<"),
-        "{svg}"
+    assert!(svg.contains(">$3.20*<"), "{svg}");
+    assert!(svg.contains(">* = some rows have no price<"), "{svg}");
+    assert!(!svg.contains("+ no price"), "{svg}");
+}
+
+#[test]
+fn the_star_legend_shows_only_when_a_star_does() {
+    let svg = daily_svg(&[day("2026-11-05", Some(3.2), None)], &HEADING);
+    assert!(!svg.contains('*') && !svg.contains("some rows"), "{svg}");
+}
+
+fn axis_ticks(svg: &str) -> Vec<String> {
+    svg.split("<text ")
+        .skip(1)
+        .filter(|element| attr(element, "x") == "62.0")
+        .filter_map(|element| Some(element.split('>').nth(1)?.split('<').next()?.to_string()))
+        .collect()
+}
+
+#[test]
+fn axis_ticks_share_one_format_whole_dollars_from_a_one_dollar_step() {
+    let svg = daily_svg(&[day("2026-11-05", Some(150.0), None)], &HEADING);
+    let ticks = axis_ticks(&svg);
+    assert!(ticks.len() > 2, "{svg}");
+    assert!(ticks.iter().all(|tick| !tick.contains('.')), "{ticks:?}");
+    assert_eq!(ticks.first().map(String::as_str), Some("$0"), "{ticks:?}");
+}
+
+#[test]
+fn axis_ticks_keep_cents_below_a_one_dollar_step() {
+    let svg = daily_svg(&[day("2026-11-05", Some(0.8), None)], &HEADING);
+    let ticks = axis_ticks(&svg);
+    assert!(ticks.len() > 2, "{svg}");
+    assert!(ticks.iter().all(|tick| tick.contains('.')), "{ticks:?}");
+}
+
+#[test]
+fn bar_values_all_carry_cents_and_thousands_separators() {
+    let svg = bars_svg(
+        &[
+            group("a", None, Some(887.31)),
+            group("b", Some(0.34), None),
+            group("c", Some(1234.0), None),
+        ],
+        &HEADING,
     );
+    assert!(svg.contains(">$887.31 est. ("), "{svg}");
+    assert!(svg.contains(">$0.34 ("), "{svg}");
+    assert!(svg.contains(">$1,234.00 ("), "{svg}");
+}
+
+#[test]
+fn note_rows_sit_in_the_label_column_like_names() {
+    let cursor = Group {
+        key: "cursor".to_string(),
+        unmetered: 1,
+        ..Group::default()
+    };
+    let svg = bars_svg(&[group("claude", Some(3.0), None), cursor], &HEADING);
+    let element = |content: &str| {
+        svg.split("<text ")
+            .find(|element| element.contains(&format!(">{content}<")))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let name = element("claude");
+    let note = element("cursor: no data");
+    assert_eq!(attr(&note, "x"), "220.0", "{svg}");
+    assert_eq!(attr(&note, "text-anchor"), "end", "{svg}");
+    assert_eq!(attr(&name, "x"), attr(&note, "x"), "{svg}");
 }
