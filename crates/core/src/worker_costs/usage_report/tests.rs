@@ -359,3 +359,73 @@ fn text_that_is_not_a_day_has_no_weekday() {
     assert_eq!(weekday("2026-13-40"), None);
     assert_eq!(weekday(""), None);
 }
+
+fn model_row(harness: &str, model: &str) -> Value {
+    with(
+        with(
+            row("ask", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!(harness),
+        ),
+        "model",
+        json!(model),
+    )
+}
+
+fn sol_rows() -> [Value; 2] {
+    [
+        model_row("opencode", "openai/gpt-6.1-sol"),
+        model_row("codex", "gpt-6.1-sol"),
+    ]
+}
+
+#[test]
+fn an_openai_prefixed_model_and_its_bare_id_share_one_model_group() {
+    let report = grouped(Dim::Model, &sol_rows(), &[], &Filter::default());
+    assert_eq!(keys(&report), ["gpt-6.1-sol"]);
+    let group = &report.groups[0];
+    assert_eq!((group.metered, group.excluded), (2, 1));
+    assert!(known(group.est).is_some());
+}
+
+#[test]
+fn a_merged_model_group_shows_the_estimate_and_the_excluded_part() {
+    let report = grouped(Dim::Model, &sol_rows(), &[], &Filter::default());
+    let line = report.groups[0].line();
+    assert!(
+        line.starts_with("gpt-6.1-sol ") && line.contains("est.") && line.ends_with("+ excluded"),
+        "{line}"
+    );
+}
+
+#[test]
+fn the_model_filter_matches_the_prefixed_and_the_bare_id_alike() {
+    for wanted in ["gpt-6.1-sol", "openai/gpt-6.1-sol"] {
+        let filter = Filter {
+            model: Some(wanted.into()),
+            ..Filter::default()
+        };
+        let report = grouped(Dim::Model, &sol_rows(), &[], &filter);
+        assert_eq!(report.total.metered, 2, "{wanted}");
+    }
+}
+
+#[test]
+fn other_provider_prefixes_stay_separate_model_groups() {
+    let rows = [
+        model_row("opencode", "github-copilot/gpt-6.1-sol"),
+        model_row("codex", "gpt-6.1-sol"),
+    ];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["github-copilot/gpt-6.1-sol", "gpt-6.1-sol"]);
+}
+
+#[test]
+fn a_bracketed_model_variant_stays_apart_from_its_bare_id() {
+    let rows = [
+        model_row("claude", "claude-opus-5-5[1m]"),
+        model_row("claude", "claude-opus-5-5"),
+    ];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["claude-opus-5-5", "claude-opus-5-5[1m]"]);
+}
