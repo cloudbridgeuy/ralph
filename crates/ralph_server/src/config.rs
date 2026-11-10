@@ -45,7 +45,7 @@ pub use permissions::{
     configured_permission_mode, resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE,
     CHAT_DEFAULT_PERMISSION_MODE,
 };
-pub use usage::UsageSection;
+pub use usage::{configured_ledger, ledger_path, UsageSection};
 pub use wire::WireSection;
 pub use workers::{PrProvider, WorkersSection};
 

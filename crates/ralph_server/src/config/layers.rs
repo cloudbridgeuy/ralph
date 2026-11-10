@@ -83,7 +83,7 @@ pub fn culprit_path<'a, E: PartialEq>(
         .map_or(fallback, |(path, _)| path)
 }
 
-const SECURITY_KEYS: [&str; 14] = [
+const SECURITY_KEYS: [&str; 15] = [
     "chat.permission_mode",
     "chat.mcp_servers",
     "chat.user_settings",
@@ -98,6 +98,7 @@ const SECURITY_KEYS: [&str; 14] = [
     "chat.user_claude_md",
     "chat.empty_prompt",
     "changes.diff_args",
+    "usage.ledger",
 ];
 
 pub fn security_keys(layer: &Table) -> Vec<&'static str> {
