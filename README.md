@@ -44,7 +44,7 @@
 - **Threads** - `ralph chat --thread <name>` or `/fork <name>` opens a side chat forked from main; `ralph thread` lists, pulls, merges, parks, revives and drops threads ([guide](docs/context/threads.md)).
 - **send-it** - `/send-it <instructions>` turns a request into a plan of steps with exit criteria; after you approve it with `/send-it go`, the chat runs it with no input ([guide](docs/context/send-it.md)).
 - **Watch, schedule, hold** - `/watch` runs a command and reports when it ends, `/schedule` lists tasks the model armed, and `/hold` waits with no prompt for a matching report ([details](docs/context/ralph-chat.md#watches)).
-- **Markdown and diagrams** - `/view <file.md>` renders a local file; images and mermaid diagrams draw inline where the terminal shows images ([details](docs/context/ralph-chat.md#view)).
+- **Markdown and diagrams** - `/view <file.md>` renders a local file, and `/rerender [N]` reprints a stored reply at the current width; images and mermaid diagrams draw inline where the terminal shows images ([details](docs/context/ralph-chat.md#view)).
 - **Usage and costs** - Every chat turn, nap, worker session and `ralph ask` call that reports usage writes a usage row; `/workers costs` totals them ([details](docs/context/ralph-chat.md#usage)).
 - **Wire recording** - `ralph wire` is a local proxy that records harness-to-provider traffic; `ralph wire ls`, `show` and `diff` explain cost and cache misses ([details](docs/context/ralph-wire.md)).
 - **Status line** - Shows the chat mode (`HOLD`, `NAP`, `INBOX`, `WORK`, `IDLE`); colors are set under `[theme.status]`.

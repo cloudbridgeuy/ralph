@@ -346,7 +346,7 @@ The model schedules a shell command or a worker with the `schedule` tool (see [M
 
 `/help` is local: it never starts a turn or calls the model. Only the bare command (after trimming) counts: `/help x`, `/help me fix the build` and `/helpfoo` are normal messages. It prints `Store: <dir>`, a blank line, then the pure `chat_help::help_text(width)` (through `help_with_store`), word-wrapped to the prompt width (the terminal width, capped by `--wrap-width`); a section whose text column would be under 30 columns puts each text under its label:
 
-- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/send-it`, `/fork`, `/thread`, `/threads`, `/pull`, `/park`, `/merge`, `/main`, `/config`, `/view`, `/read`, `/zoom`, `/recall` and `/search`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
+- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/send-it`, `/fork`, `/thread`, `/threads`, `/pull`, `/park`, `/merge`, `/main`, `/config`, `/view`, `/rerender`, `/read`, `/zoom`, `/recall` and `/search`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
 - Cells: the `!` and `!!` shorthands and `!<runtime>` fences.
 - Keys: at the prompt, in vi mode, during a turn, and in the queue editor (`PROMPT_KEYS`, `VI_KEYS`, `TURN_KEYS`, `QUEUE_KEYS`).
 - Status bar: one row per segment `Kind`, the five modes (`HOLD`, `NAP`, `INBOX`, `WORK`, `IDLE`; first match wins), each part of the process cell (`T12/30`, `ctx 62%`, `cache 41m`, `!`, `shift ~9 msg`) and the `↻ tokens`, `↻ turns` and `↻ restart` marks.
@@ -367,6 +367,15 @@ Staleness tests: `chat_help` tests fail when a `Command` does not route or has n
 - Merged config: the `config show` rows (`leaf_sources` over the start layers; after a store fallback no row is tagged `store`; after a failed load the chat runs on defaults and no row is tagged `global` or `store`). A store value that hides a global one lists both (`chat.wrap_width = 100  [store; global = 80]`). A key that a flag or variable overrides shows that value, tagged `flag NAME` or `env NAME`, then every layer it hides with its file value (`chat.wrap_width = 90  [flag --wrap-width; store = 100, global = 80]`). A flag beats a variable. `RALPH_THEME` also overrides `theme.assistant.code`. An overridden key with no file value gets its own row.
 
 The chat sets the store config layer to the canonical store path, so its store warnings name that path too.
+
+## /rerender
+
+`/rerender [N]` reprints the Nth-last assistant reply from its stored markdown, with the chat renderer at the current terminal width and `[chat] wrap_width` (width is the smaller of the cap and the terminal). It is local: no turn, no model call, no `usage.jsonl` row, and nothing is added to the chat log. It waits in the queue while a turn runs (`runs_mid_turn` is false). It works the same in main and in a thread, and reads the log of the chat it runs in. It has no Tab completion.
+
+- `N` counts assistant replies only, from 1 (the last reply, the default). Worker and corrupt entries do not count.
+- Output is one dim line, `reprint of reply N`, then the reply. Directive tags (`<ralph-ask to="x">...</ralph-ask>`) are removed and their text stays.
+- Refusals: `/rerender: no assistant reply yet.`, `/rerender: no reply N; the chat has K assistant replies.`, and `Usage: /rerender [N] (N is 1 or more; 1 is the last reply)` for 0, a non-number or extra arguments.
+- Pure logic: `ralph_core::chat_rerender::{parse_rerender_args, nth_last_assistant, strip_directive_tags, reprint}`. The shell is `crates/ralph/src/chat/rerender.rs`; it renders through `view::render`, so images and mermaid blocks draw as in `/view`.
 
 ## /view
 
