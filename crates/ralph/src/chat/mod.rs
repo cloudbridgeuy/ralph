@@ -44,9 +44,8 @@ pub(crate) mod thread;
 mod thread_cmd;
 mod turn;
 mod view;
-mod watch;
+pub(crate) use ralph_server::chat::{watch, workers_remote};
 mod workers;
-mod workers_remote;
 
 use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
@@ -517,7 +516,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color,
         ui: *theme_config.ui(),
     };
-    let remote = RemoteStatus::new();
+    let remote = RemoteStatus::default();
     let mut shell_state = cell::ShellState::default();
     let display = inbox_display(color);
     let local_route = LocalRoute {

@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[derive(Default)]
 pub struct RemoteStatus {
     cache: Arc<Mutex<RemoteCache>>,
 }
@@ -61,12 +62,6 @@ fn fetch(key: &LookupKey, timeout: Duration) -> Fetched {
 }
 
 impl RemoteStatus {
-    pub fn new() -> Self {
-        Self {
-            cache: Arc::new(Mutex::new(RemoteCache::default())),
-        }
-    }
-
     fn start(&self, key: LookupKey, timeout: Duration) {
         let guard = StoreGuard {
             cache: Arc::clone(&self.cache),

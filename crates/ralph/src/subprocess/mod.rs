@@ -17,7 +17,7 @@ mod types;
 // Re-export public API
 pub use gate::OutputGate;
 pub(crate) use ralph_server::subprocess::{
-    exited_unreaped, kill_process_group, signal_group, spawn_detached, timed_output, TimedOutput,
+    exited_unreaped, kill_process_group, signal_group, spawn_detached,
 };
 pub use session::Session;
 pub use spinner::{

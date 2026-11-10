@@ -7,3 +7,5 @@ pub mod name;
 pub mod skills;
 pub mod snapshots;
 pub mod socket;
+pub mod watch;
+pub mod workers_remote;
