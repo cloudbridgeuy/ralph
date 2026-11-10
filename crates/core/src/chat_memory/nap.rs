@@ -161,13 +161,15 @@ fn unwrap_outer_fence(text: &str) -> &str {
     let (Some(first), Some(last)) = (lines.first(), lines.last()) else {
         return text;
     };
-    let closes_early = lines
+    let wrapper = parse_fence_open(first).is_some_and(|language| {
+        language.is_none_or(|name| matches!(name.to_ascii_lowercase().as_str(), "markdown" | "md"))
+    });
+    let middle_fence = lines
         .iter()
         .take(lines.len().saturating_sub(1))
         .skip(1)
-        .any(|line| is_fence_close(line));
-    if lines.len() < 3 || parse_fence_open(first).is_none() || !is_fence_close(last) || closes_early
-    {
+        .any(|line| parse_fence_open(line).is_some());
+    if lines.len() < 3 || !wrapper || !is_fence_close(last) || middle_fence {
         return text;
     }
     let inner_start = first.len() + 1;
@@ -348,6 +350,24 @@ mod tests {
             nap_summary(0, Some(inner)).unwrap(),
             "```markdown\nsee:\n```rust\nfn x() {}\n```\nmore\n```"
         );
+    }
+
+    #[test]
+    fn nap_summary_unwraps_only_a_markdown_or_bare_fence() {
+        for open in ["```", "```markdown", "```md"] {
+            let text = format!("{open}\nbody\n```");
+            assert_eq!(nap_summary(0, Some(&text)).unwrap(), "body", "{open}");
+        }
+        for open in ["```rust", "```sh", "```mermaid", "```diff"] {
+            let text = format!("{open}\nfn x() {{}}\n```");
+            assert_eq!(nap_summary(0, Some(&text)).unwrap(), text, "{open}");
+        }
+    }
+
+    #[test]
+    fn nap_summary_keeps_a_wrapper_with_an_inner_opening_fence() {
+        let text = "```markdown\nsee:\n```rust\nfn x() {}\n```";
+        assert_eq!(nap_summary(0, Some(text)).unwrap(), text);
     }
 
     #[test]
