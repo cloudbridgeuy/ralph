@@ -180,6 +180,18 @@ fn fenced_code_keeps_directive_looking_text() {
 }
 
 #[test]
+fn only_a_bare_fence_line_closes_a_fenced_block() {
+    let text = "```xml\n```rust\n<ralph-ask to=\"a\">Q</ralph-ask>\n```\n\nafter";
+    assert_eq!(strip_directive_tags(text), text);
+}
+
+#[test]
+fn a_close_tag_inside_a_fence_does_not_end_a_directive() {
+    let text = "<ralph-ask to=\"a\">see\n```\n</ralph-ask>\n```\nend</ralph-ask>\n\nafter";
+    assert_eq!(strip_directive_tags(text), "after");
+}
+
+#[test]
 fn the_header_names_the_reply_number() {
     assert_eq!(rerender_header(1), "reprint of reply 1");
     assert_eq!(rerender_header(12), "reprint of reply 12");

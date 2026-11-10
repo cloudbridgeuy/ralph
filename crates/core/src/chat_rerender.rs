@@ -1,4 +1,5 @@
 use crate::chat_memory::{Entry, Role};
+use crate::chunk::{is_fence_close, parse_fence_open};
 use crate::directive::normalize_verb;
 use std::ops::Range;
 
@@ -58,11 +59,18 @@ fn open_tag(rest: &str) -> Option<(usize, &str)> {
     Some((rest.len() - tail.len(), name))
 }
 
-fn directive_len(rest: &str) -> Option<usize> {
+fn in_fence(fenced: &[Range<usize>], at: usize) -> bool {
+    fenced.iter().any(|range| range.contains(&at))
+}
+
+fn directive_len(text: &str, at: usize, fenced: &[Range<usize>]) -> Option<usize> {
+    let rest = text.get(at..)?;
     let (open, verb) = open_tag(rest)?;
     let close = format!("</ralph-{verb}>");
     let body = rest.get(open..)?;
-    Some(open + body.find(&close)? + close.len())
+    body.match_indices(&close)
+        .find(|(index, _)| !in_fence(fenced, at + open + index))
+        .map(|(index, _)| open + index + close.len())
 }
 
 fn fenced_ranges(text: &str) -> Vec<Range<usize>> {
@@ -70,11 +78,13 @@ fn fenced_ranges(text: &str) -> Vec<Range<usize>> {
     let mut open: Option<usize> = None;
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
-        if line.trim_start().starts_with("```") {
-            match open.take() {
-                Some(start) => ranges.push(start..offset + line.len()),
-                None => open = Some(offset),
+        match open {
+            Some(start) if is_fence_close(line) => {
+                ranges.push(start..offset + line.len());
+                open = None;
             }
+            None if parse_fence_open(line).is_some() => open = Some(offset),
+            _ => {}
         }
         offset += line.len();
     }
@@ -91,9 +101,8 @@ pub fn strip_directive_tags(text: &str) -> String {
     let fenced = fenced_ranges(text);
     while let Some(ch) = rest.chars().next() {
         let at = text.len() - rest.len();
-        let in_fence = fenced.iter().any(|range| range.contains(&at));
-        let span = if ch == '<' && !in_fence {
-            directive_len(rest)
+        let span = if ch == '<' && !in_fence(&fenced, at) {
+            directive_len(text, at, &fenced)
         } else {
             None
         };
