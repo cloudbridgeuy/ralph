@@ -76,9 +76,22 @@ pub fn resolve_name(sources: &NameSources) -> String {
         .unwrap_or_else(|| FALLBACK_NAME.to_string())
 }
 
+pub fn title_name(name: &str, thread: Option<&str>) -> String {
+    match thread {
+        Some(thread) => format!("{name} · {thread}"),
+        None => name.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_adds_the_thread_after_the_session_name() {
+        assert_eq!(title_name("proj", None), "proj");
+        assert_eq!(title_name("proj", Some("t1")), "proj · t1");
+    }
 
     fn sources<'a>(cwd: &'a Path) -> NameSources<'a> {
         NameSources {

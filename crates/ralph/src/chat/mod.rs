@@ -92,7 +92,7 @@ use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
 use ralph_core::chat_switch::SwitchArgv;
-use ralph_core::chat_thread::{open_check, ThreadName};
+use ralph_core::chat_thread::open_check;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -351,14 +351,16 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         hold: Mutex::new(None),
     });
     let session_name = name::session_name(
-        args.name
-            .as_deref()
-            .or(args.thread.as_ref().map(ThreadName::as_str)),
+        args.name.as_deref(),
         chat_config.name.as_deref(),
         &cwd,
         name::resolved_home().as_deref(),
     );
-    monitor.term.start_title(&session_name);
+    let thread_name = fork.as_ref().map(|fork| fork.name.as_str());
+    monitor.term.start_title(&ralph_core::chat_name::title_name(
+        &session_name,
+        thread_name,
+    ));
     let _term_clear = ClearOnDrop(Arc::clone(&monitor.term));
     let roster = {
         let monitor = Arc::clone(&monitor);
@@ -497,7 +499,13 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
         color,
-        bar: StatusBar::new(&config.theme.status, &session_name, &chat_config, color),
+        bar: StatusBar::new(
+            &config.theme.status,
+            &session_name,
+            thread_name,
+            &chat_config,
+            color,
+        ),
         notice: RefCell::new(None),
         editor: editor_cmd,
         empty_submit,
