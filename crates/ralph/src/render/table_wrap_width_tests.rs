@@ -60,7 +60,7 @@ fn intact(lines: &[String], cell: &str) -> bool {
 }
 
 #[test]
-fn every_table_line_fits_the_width() {
+fn table_lines_never_exceed_the_render_width_at_80_and_160() {
     for width in [80, 160] {
         for line in lines_at(width) {
             assert!(line.width() <= width, "{width} columns: {line}");
@@ -69,7 +69,7 @@ fn every_table_line_fits_the_width() {
 }
 
 #[test]
-fn a_wide_terminal_keeps_every_cell_on_one_line() {
+fn table_cells_stay_unwrapped_when_the_render_width_is_160() {
     let lines = lines_at(160);
     for cell in CELLS.iter().flatten() {
         assert!(intact(&lines, cell), "{cell} wrapped at 160\n{lines:#?}");
@@ -77,7 +77,7 @@ fn a_wide_terminal_keeps_every_cell_on_one_line() {
 }
 
 #[test]
-fn a_narrow_terminal_wraps_at_least_one_cell() {
+fn table_cells_wrap_when_the_render_width_is_80() {
     let lines = lines_at(80);
     let wrapped = CELLS.iter().flatten().any(|cell| !intact(&lines, cell));
     assert!(wrapped, "no cell wrapped at 80\n{lines:#?}");

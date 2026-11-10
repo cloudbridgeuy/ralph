@@ -20,9 +20,9 @@ pub mod image;
 mod link;
 pub mod mermaid;
 pub mod mermaid_picture;
-#[cfg(test)]
-mod rerender_width_tests;
 pub mod svg_picture;
+#[cfg(test)]
+mod table_wrap_width_tests;
 pub mod text;
 pub mod tool_renderers;
 pub mod utils;
