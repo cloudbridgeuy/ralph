@@ -203,6 +203,10 @@ pub fn check_watch_id(step: usize) -> String {
     watch_id(&format!("{CHECK_ID}{}", step + 1))
 }
 
+pub fn is_check_watch_id(id: &str) -> bool {
+    id.starts_with(&watch_id(CHECK_ID))
+}
+
 pub fn check_spec(step: usize, command: &str) -> WatchSpec {
     WatchSpec {
         id: check_watch_id(step),

@@ -1,3 +1,7 @@
+use crate::chat_send_it::is_check_watch_id;
+use crate::mcp::string_arg;
+use crate::schedule::SCHEDULE_ID_PREFIX;
+use crate::watch::watch_id;
 use crate::watch_command::{format_left, time_left};
 use crate::watch_request::WatchRequest;
 use crate::watch_store::SavedWatch;
@@ -134,6 +138,130 @@ pub fn format_rows(rows: &[WatchRow]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub const SKIP_SCHEDULE: &str = "it is a scheduled task; use /schedule cancel.";
+pub const SKIP_SEND_IT: &str = "it checks a /send-it step; /send-it off stops the run.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopTarget {
+    Ids(Vec<String>),
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopStep {
+    Stop(String),
+    Dequeue(String),
+    Skip { id: String, reason: &'static str },
+    Unknown(String),
+}
+
+pub fn watch_stop_definition() -> Value {
+    json!({
+        "name": "watch_stop",
+        "description": "Stop watches of this chat, like /watch stop: kill a running command, remove a persistent watch's saved record, or drop a queued request, and post the usual stopped report. Give ids, or all: true to stop every watch except scheduled tasks and /send-it checks (the result names what it skipped). Only when the person asked for it in their latest message. Call watch_list first.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ids": {"type": "array", "items": {"type": "string"}, "description": "Watch ids, `w1` or `watch:w1`."},
+                "all": {"type": "boolean", "description": "Stop every watch. Use instead of ids. Default false."}
+            }
+        }
+    })
+}
+
+pub fn parse_stop_args(args: &Value) -> Result<StopTarget, String> {
+    let all = match args.get("all") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(_) => return Err("all must be true or false.".to_string()),
+    };
+    let ids = args.get("ids").filter(|value| !value.is_null());
+    match (all, ids) {
+        (true, None) => Ok(StopTarget::All),
+        (true, Some(_)) => Err("Give ids or all, not both.".to_string()),
+        (false, None) => Err("Give ids, or all: true.".to_string()),
+        (false, Some(value)) => parse_ids(value).map(StopTarget::Ids),
+    }
+}
+
+fn parse_ids(value: &Value) -> Result<Vec<String>, String> {
+    let list = value
+        .as_array()
+        .ok_or_else(|| "ids must be a list of watch ids.".to_string())?;
+    if list.is_empty() {
+        return Err("ids must not be empty.".to_string());
+    }
+    let mut ids: Vec<String> = Vec::new();
+    for item in list {
+        let raw = string_arg(&json!({"id": item}), "id")?;
+        if raw.chars().any(|c| c == '/' || c.is_whitespace()) {
+            return Err(format!(
+                "Watch id '{raw}' must not contain spaces or slashes."
+            ));
+        }
+        let id = watch_id(&raw);
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn skip_reason(id: &str) -> Option<&'static str> {
+    if id.starts_with(SCHEDULE_ID_PREFIX) {
+        Some(SKIP_SCHEDULE)
+    } else if is_check_watch_id(id) {
+        Some(SKIP_SEND_IT)
+    } else {
+        None
+    }
+}
+
+fn step_for(row: &WatchRow) -> StopStep {
+    match row.state {
+        WatchState::Queued => StopStep::Dequeue(row.id.clone()),
+        WatchState::Running | WatchState::Saved => StopStep::Stop(row.id.clone()),
+    }
+}
+
+pub fn plan_stop(target: &StopTarget, rows: &[WatchRow]) -> Vec<StopStep> {
+    match target {
+        StopTarget::All => rows
+            .iter()
+            .map(|row| match skip_reason(&row.id) {
+                Some(reason) => StopStep::Skip {
+                    id: row.id.clone(),
+                    reason,
+                },
+                None => step_for(row),
+            })
+            .collect(),
+        StopTarget::Ids(ids) => ids
+            .iter()
+            .map(|id| match rows.iter().find(|row| &row.id == id) {
+                Some(row) => step_for(row),
+                None => StopStep::Unknown(id.clone()),
+            })
+            .collect(),
+    }
+}
+
+pub fn dequeued_message(id: &str) -> String {
+    format!("Removed queued watch {id} before it started.")
+}
+
+pub fn skipped_message(id: &str, reason: &str) -> String {
+    format!("Skipped {id}: {reason}")
+}
+
+pub fn stop_report(lines: &[String]) -> String {
+    if lines.is_empty() {
+        NO_WATCHES.to_string()
+    } else {
+        lines.join("\n")
+    }
 }
 
 #[cfg(test)]

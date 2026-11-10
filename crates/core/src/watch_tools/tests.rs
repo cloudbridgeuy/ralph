@@ -107,3 +107,123 @@ fn the_definition_takes_no_arguments() {
         .unwrap()
         .is_empty());
 }
+
+fn rows() -> Vec<WatchRow> {
+    merge_rows(
+        &[request("watch:q", None)],
+        &[
+            saved("watch:r", WatchKind::Persistent, Some(60)),
+            saved("schedule:nightly", WatchKind::Normal, None),
+            saved("watch:send-it-1", WatchKind::Normal, None),
+        ],
+        &[saved("watch:p", WatchKind::Persistent, Some(60))],
+        at(0),
+    )
+}
+
+fn ids(args: Value) -> Result<StopTarget, String> {
+    parse_stop_args(&args)
+}
+
+#[test]
+fn stop_ids_get_the_watch_prefix_and_lose_duplicates() {
+    assert_eq!(
+        ids(json!({"ids": ["w1", "watch:w1", "ci"]})),
+        Ok(StopTarget::Ids(vec![
+            "watch:w1".to_string(),
+            "watch:ci".to_string()
+        ]))
+    );
+}
+
+#[test]
+fn stop_all_is_a_true_flag() {
+    assert_eq!(ids(json!({"all": true})), Ok(StopTarget::All));
+}
+
+#[test]
+fn stop_needs_exactly_one_of_ids_or_all() {
+    for bad in [
+        json!({}),
+        json!({"all": false}),
+        json!({"ids": []}),
+        json!({"ids": ["a"], "all": true}),
+        json!({"ids": "a"}),
+        json!({"ids": [1]}),
+        json!({"ids": ["a b"]}),
+        json!({"ids": ["a/b"]}),
+        json!({"all": "yes"}),
+    ] {
+        assert!(ids(bad.clone()).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn stopping_ids_picks_the_action_by_state() {
+    let target = StopTarget::Ids(
+        ["watch:r", "watch:q", "watch:p", "watch:nope"]
+            .map(String::from)
+            .to_vec(),
+    );
+    assert_eq!(
+        plan_stop(&target, &rows()),
+        [
+            StopStep::Stop("watch:r".to_string()),
+            StopStep::Dequeue("watch:q".to_string()),
+            StopStep::Stop("watch:p".to_string()),
+            StopStep::Unknown("watch:nope".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn stopping_all_skips_schedule_and_send_it_check_watches() {
+    let steps = plan_stop(&StopTarget::All, &rows());
+    assert_eq!(
+        steps,
+        [
+            StopStep::Skip {
+                id: "schedule:nightly".to_string(),
+                reason: SKIP_SCHEDULE
+            },
+            StopStep::Stop("watch:p".to_string()),
+            StopStep::Dequeue("watch:q".to_string()),
+            StopStep::Stop("watch:r".to_string()),
+            StopStep::Skip {
+                id: "watch:send-it-1".to_string(),
+                reason: SKIP_SEND_IT
+            },
+        ]
+    );
+}
+
+#[test]
+fn stopping_all_with_no_watches_plans_nothing() {
+    assert!(plan_stop(&StopTarget::All, &[]).is_empty());
+    assert_eq!(stop_report(&[]), "No active watches.");
+}
+
+#[test]
+fn the_report_joins_one_line_per_step() {
+    assert_eq!(stop_report(&["a".to_string(), "b".to_string()]), "a\nb");
+    assert_eq!(
+        dequeued_message("watch:q"),
+        "Removed queued watch watch:q before it started."
+    );
+    assert_eq!(
+        skipped_message("schedule:x", SKIP_SCHEDULE),
+        "Skipped schedule:x: it is a scheduled task; use /schedule cancel."
+    );
+}
+
+#[test]
+fn the_stop_definition_names_ids_and_all() {
+    let def = watch_stop_definition();
+    assert_eq!(def["name"], "watch_stop");
+    assert!(def["description"]
+        .as_str()
+        .unwrap()
+        .contains("latest message"));
+    let props = def["inputSchema"]["properties"].as_object().unwrap();
+    assert!(props.contains_key("ids") && props.contains_key("all"));
+}
