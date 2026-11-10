@@ -5,6 +5,8 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
 use ralph_server::chat::memory::Store;
+use ralph_server::watches::Watches;
+use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
 use serde_json::json;
 use std::sync::Mutex;
@@ -296,6 +298,14 @@ fn the_next_tick_takes_the_recorded_step_result_once() {
     assert!(line.contains("judge: not met: "), "{line}");
 }
 
+fn watches(dir: &std::path::Path) -> Watches {
+    Watches::new(
+        std::sync::Arc::new(Inbox::new(dir.join("inbox"))),
+        dir,
+        std::time::Duration::from_secs(60),
+    )
+}
+
 #[test]
 fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     let dir = tempfile::tempdir().unwrap();
@@ -305,6 +315,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
         suggestions: SuggestionSlot::default(),
         send_it: send_it.clone(),
+        watches: watches(dir.path()),
     };
     let call = |args: Value| {
         respond(
@@ -398,6 +409,7 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
         suggestions: SuggestionSlot::default(),
         send_it: SendIt::new(dir.path(), LIMITS),
+        watches: watches(dir.path()),
     };
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "watch"}]);
@@ -436,6 +448,7 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
         suggestions: SuggestionSlot::default(),
         send_it: SendIt::new(dir.path(), LIMITS),
+        watches: watches(dir.path()),
     };
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "watch"}]);

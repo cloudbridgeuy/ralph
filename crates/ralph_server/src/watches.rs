@@ -266,6 +266,10 @@ impl Watches {
         watches
     }
 
+    pub fn saved(&self) -> Vec<SavedWatch> {
+        self.store.load_all()
+    }
+
     pub fn used_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = locked(&self.active).keys().cloned().collect();
         ids.extend(self.store.load_all().into_iter().map(|saved| saved.id));

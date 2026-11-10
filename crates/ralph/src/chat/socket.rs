@@ -20,6 +20,7 @@ use ralph_server::chat::memory::Store;
 use ralph_server::chat::socket::{SocketFiles, SocketPlace};
 use ralph_server::cursor_owner::process_start;
 use ralph_server::warn::warn;
+use ralph_server::watches::Watches;
 use ralph_server::wire::store::ensure_store_root;
 use ralph_server::workers::{canonical_store, SpawnArgs, Workers};
 use serde_json::Value;
@@ -38,6 +39,7 @@ const SUGGEST_REPLY: &str = "suggest_reply";
 const PROPOSE_RUN: &str = "propose_run";
 type Roster = Box<dyn Fn() -> String + Send + Sync>;
 const WORKERS: &str = "workers";
+const WATCH_LIST: &str = "watch_list";
 const REQUEST_LIMIT_BYTES: u64 = 1 << 20;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
@@ -47,6 +49,7 @@ pub(crate) struct Shared {
     pub(crate) workers: Workers,
     pub(crate) suggestions: SuggestionSlot,
     pub(crate) send_it: SendIt,
+    pub(crate) watches: Watches,
 }
 
 pub(crate) struct SocketGuard(pub(crate) SocketFiles);
@@ -224,12 +227,16 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
         workers,
         suggestions,
         send_it,
+        watches,
     } = shared;
     if request.tool == SUGGEST_REPLY {
         suggestions.set(parse_suggestion(&request.args)?);
         return Ok(
             "Suggested reply set. Now write your reply; do not mention the suggestion.".to_string(),
         );
+    }
+    if request.tool == WATCH_LIST {
+        return Ok(watch_requests::list_text(watches, store.dir(), Utc::now()));
     }
     let pending = store
         .pending_turn()
@@ -358,6 +365,7 @@ mod tests {
     use super::*;
     use ralph_core::chat_send_it::Limits;
     use ralph_core::chat_socket::sidecar_name;
+    use ralph_server::worker_mcp::Inbox;
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
@@ -376,6 +384,11 @@ mod tests {
                     max_turns: 3,
                     max_usd: 1.0,
                 },
+            ),
+            watches: Watches::new(
+                Arc::new(Inbox::new(dir.join("inbox"))),
+                dir,
+                Duration::from_secs(60),
             ),
         }
     }
@@ -403,6 +416,30 @@ mod tests {
         assert_eq!(queued[0].command, "gh run watch 1");
         assert!(queued[0].persistent);
         assert_eq!(queued[0].timeout_secs, Some(60));
+    }
+
+    #[test]
+    fn watch_list_answers_on_any_turn_and_shows_a_queued_watch() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::Worker).unwrap();
+        let shared = shared(store.dir());
+        let empty = respond(&shared, &request("watch_list", json!({})));
+        assert_eq!(
+            (empty.text.as_str(), empty.is_error),
+            ("No active watches.", false)
+        );
+        respond(&shared, &request("watch", watch_args()));
+        let none = watch_requests::list_queued(dir.path());
+        assert!(none.is_empty(), "a worker turn must not queue");
+        store.set_pending_turn(Trigger::User).unwrap();
+        respond(&shared, &request("watch", watch_args()));
+        let listed = respond(&shared, &request("watch_list", json!({})));
+        assert!(
+            listed.text.starts_with("watch:ci queued persistent"),
+            "{}",
+            listed.text
+        );
     }
 
     #[test]

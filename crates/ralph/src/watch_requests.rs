@@ -1,6 +1,8 @@
+use chrono::{DateTime, Utc};
 use ralph_core::watch_request::{
     already_queued_message, plan_queued, start_failure_report, WatchRequest, WATCH_REQUESTS_DIR,
 };
+use ralph_core::watch_tools::{format_rows, merge_rows};
 use ralph_core::worker::Report;
 use ralph_server::warn::{warn, warn_if_err};
 use ralph_server::watches::Watches;
@@ -40,6 +42,30 @@ pub fn take_all(store_dir: &Path) -> Vec<WatchRequest> {
         .collect();
     paths.sort();
     paths.iter().filter_map(|path| take(path)).collect()
+}
+
+pub fn list_queued(store_dir: &Path) -> Vec<WatchRequest> {
+    let Ok(entries) = fs::read_dir(requests_dir(store_dir)) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| is_request(path))
+        .collect();
+    paths.sort();
+    paths
+        .iter()
+        .filter_map(|path| serde_json::from_slice(&fs::read(path).ok()?).ok())
+        .collect()
+}
+
+pub fn list_text(watches: &Watches, store_dir: &Path, now: DateTime<Utc>) -> String {
+    format_rows(&merge_rows(
+        &list_queued(store_dir),
+        &watches.list(),
+        &watches.saved(),
+        now,
+    ))
 }
 
 fn is_request(path: &Path) -> bool {
@@ -147,6 +173,30 @@ mod tests {
         assert!(take_all(dir.path()).is_empty());
         assert!(!requests.join("bad.json").exists());
         assert!(requests.join(".half.json").exists());
+    }
+
+    #[test]
+    fn listing_queued_requests_leaves_the_files() {
+        let dir = tempfile::tempdir().unwrap();
+        queue(dir.path(), &request("a")).unwrap();
+        assert_eq!(list_queued(dir.path()), [request("a")]);
+        assert_eq!(take_all(dir.path()), [request("a")]);
+    }
+
+    #[test]
+    fn the_list_text_names_a_queued_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = std::sync::Arc::new(Inbox::new(dir.path().join("inbox")));
+        let watches = Watches::new(inbox, dir.path(), std::time::Duration::from_secs(60));
+        assert_eq!(
+            list_text(&watches, dir.path(), Utc::now()),
+            "No active watches."
+        );
+        queue(dir.path(), &request("watch:a")).unwrap();
+        assert_eq!(
+            list_text(&watches, dir.path(), Utc::now()),
+            "watch:a queued normal - default - true"
+        );
     }
 
     #[test]

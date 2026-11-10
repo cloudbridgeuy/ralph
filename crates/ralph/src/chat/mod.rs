@@ -385,6 +385,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             ),
             suggestions: suggestions.clone(),
             send_it: send_it.clone(),
+            watches: monitor.watches.clone(),
         },
         roster,
     );
