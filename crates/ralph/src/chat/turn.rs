@@ -22,8 +22,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    carry_metadata, reply_entries, split_view, subagent_records, trigger_entries, usage_record,
-    view_stats, CallSite, Trigger, ViewSplit,
+    carry_metadata, reply_entries, split_view, subagent_records, trigger_entries, turn_row,
+    usage_record, view_stats, CallSite, Trigger, TurnTiming, ViewSplit,
 };
 use ralph_core::chat_process::ResetReason;
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
@@ -33,6 +33,7 @@ use ralph_server::chat::memory::{usage_path, Store};
 use ralph_server::ledger;
 use ralph_server::private_file::write_private;
 use ralph_server::subprocess::spawn_detached;
+use ralph_server::timing;
 use ralph_server::watches::locked;
 use ralph_server::workers::usage_store;
 use std::borrow::Cow;
@@ -41,6 +42,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
+use std::time::Instant;
 use termimad::MadSkin;
 
 pub(super) fn rule(skin: &MadSkin, width: usize) -> String {
@@ -94,6 +96,10 @@ pub(super) fn logged_before_reply(trigger: Trigger) -> bool {
     trigger == Trigger::Worker
 }
 
+fn turn_ok(outcome: &Result<TurnOutcome, Box<dyn std::error::Error>>) -> bool {
+    matches!(outcome, Ok(TurnOutcome::Replied))
+}
+
 pub(super) fn draft_after(outcome: TurnOutcome, message: String) -> Option<String> {
     (outcome == TurnOutcome::Unanswered).then_some(message)
 }
@@ -140,6 +146,7 @@ pub(super) struct Turn<'a> {
     pub(super) last_turn_end: Stamp,
     pub(super) identity: Arc<Mutex<IterationMetadata>>,
     pub(super) last_cost_usd: Mutex<Option<f64>>,
+    pub(super) timing: Mutex<TurnTiming>,
 }
 
 impl Turn<'_> {
@@ -162,6 +169,11 @@ impl Turn<'_> {
         if let Err(e) = result {
             self.warn(format!("{context}: {e}"));
         }
+    }
+
+    fn note_timing(&self, update: impl FnOnce(TurnTiming) -> TurnTiming) {
+        let mut held = locked(&self.timing);
+        *held = update(*held);
     }
 
     fn note_reset(&self, reason: ResetReason) {
@@ -209,8 +221,15 @@ impl Turn<'_> {
         logged: &[String],
         message: &str,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+        let started = Instant::now();
+        *locked(&self.timing) = TurnTiming::default();
         locked(&self.last_cost_usd).take();
         let outcome = self.run_turn(trigger, logged, message);
+        let elapsed = started.elapsed();
+        let turn_timing = *locked(&self.timing);
+        timing::record(self.store_dir, Some(self.run), |key| {
+            turn_row(key, elapsed, &turn_timing, turn_ok(&outcome))
+        });
         *locked(&self.last_turn_end) = Some(chrono::Utc::now());
         self.live
             .store(locked(&self.session).is_some(), Ordering::SeqCst);
@@ -268,7 +287,12 @@ impl Turn<'_> {
                     attempt
                 }
             },
-            |delay| wait_unless(|| self.stopped(), delay),
+            |delay| {
+                let waited_from = Instant::now();
+                let keep_waiting = wait_unless(|| self.stopped(), delay);
+                self.note_timing(|held| held.with_outage_wait(waited_from.elapsed()));
+                keep_waiting
+            },
         );
         *locked(&self.session) = self.live_or_note(session);
         let process_turns = next_process_turns(
@@ -309,6 +333,7 @@ impl Turn<'_> {
                     .concat(),
                 ));
             }
+            self.note_timing(|held| held.with_model_ms(turn.stream_result.costs.duration_ms));
             let record = record
                 .with_process_turn(process_turns)
                 .with_request_at(turn.request_at.map(|at| at.to_rfc3339()))
@@ -440,12 +465,15 @@ impl Turn<'_> {
     }
 
     fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
-        let (mut entries, tree) = self.store.load_after_nap(|| {
+        let waited_from = Instant::now();
+        let loaded = self.store.load_after_nap(|| {
             let mut spinner = Spinner::with_session_context(0, chat_session_info())
                 .with_color(self.theme_config.ui().spinner);
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
             spinner
-        })?;
+        });
+        self.note_timing(|held| held.with_memory_wait(waited_from.elapsed()));
+        let (mut entries, tree) = loaded?;
         if let Some(len) = pre_log_len {
             entries.truncate(len);
         }
@@ -541,6 +569,7 @@ mod tests {
     use super::*;
     use crate::stream_processor::StreamProcessorResult;
     use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
 
     #[test]
     fn system_prompt_file_holds_the_old_argument_bytes_privately() {
@@ -792,5 +821,39 @@ mod tests {
             SubprocessError::LeftoverResult.to_string(),
             "claude process wrote a result after the last turn"
         );
+    }
+
+    #[test]
+    fn only_a_replied_turn_is_timed_ok() {
+        type Outcome = Result<TurnOutcome, Box<dyn std::error::Error>>;
+        let ok = |outcome: Outcome| turn_ok(&outcome);
+        assert!(ok(Ok(TurnOutcome::Replied)));
+        assert!(!ok(Ok(TurnOutcome::Unanswered)));
+        assert!(!ok(Ok(TurnOutcome::Exit)));
+        assert!(!ok(Err("store".into())));
+    }
+
+    #[test]
+    fn a_turn_row_for_a_failed_turn_keeps_the_waits_and_says_not_ok() {
+        use ralph_core::chat_memory::{turn_row, TimingKey};
+        let timing = TurnTiming::default()
+            .with_memory_wait(Duration::from_millis(12))
+            .with_outage_wait(Duration::from_millis(30));
+        let key = TimingKey {
+            store: "/s",
+            run: Some("r"),
+            at: chrono::Utc::now(),
+        };
+        let line = ralph_core::chat_memory::encode_timing(&turn_row(
+            &key,
+            Duration::from_millis(80),
+            &timing,
+            false,
+        ))
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["memory_wait_ms"], 12);
+        assert_eq!(value["outage_retries"], 1);
     }
 }
