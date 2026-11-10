@@ -179,8 +179,8 @@ fn release(version: &str) -> Result<(), Box<dyn std::error::Error>> {
 **Usage:**
 
 ```bash
-cargo install --path crates/ralph --root ~/.local --force
-cargo install --path crates/ralph --root /usr/local --force
+cargo install --locked --path crates/ralph --root ~/.local --force
+cargo install --locked --path crates/ralph --root /usr/local --force
 cargo xtask release 1.0.0
 ```
 

@@ -57,8 +57,8 @@
 ```bash
 git clone https://github.com/cloudbridgeuy/ralph.git
 cd ralph
-cargo install --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
-cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
+cargo install --locked --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
+cargo install --locked --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
 ```
 
 `ralph upgrade` replaces an installed binary with the latest GitHub release ([details](docs/context/release-process.md#upgrade-an-install)). A source install is a dev build, so it needs `ralph upgrade --force`.
@@ -149,7 +149,7 @@ cargo test
 cargo xtask lint
 
 # Install locally for testing
-cargo install --path crates/ralph --root ~/.local --force
+cargo install --locked --path crates/ralph --root ~/.local --force
 ```
 
 ## License

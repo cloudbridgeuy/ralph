@@ -134,10 +134,10 @@ Install ralph to your local bin directory:
 
 ```bash
 # Install to ~/.local/bin (default)
-cargo install --path crates/ralph --root ~/.local --force
+cargo install --locked --path crates/ralph --root ~/.local --force
 
 # Install to custom prefix (binary in <prefix>/bin)
-cargo install --path crates/ralph --root /usr/local --force
+cargo install --locked --path crates/ralph --root /usr/local --force
 ```
 
 Ensure the installation directory is in your `PATH`.
