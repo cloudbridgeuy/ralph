@@ -3,12 +3,10 @@ use ralph_core::chat_socket::encode_line;
 use ralph_core::worker::{
     hook_output, parse_hook_input, read_outcome, BridgeAsk, HookOutcome, BRIDGE_TIMEOUT,
 };
-use server::LINE_LIMIT_BYTES;
+use ralph_server::hook_bridge::LINE_LIMIT_BYTES;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-
-pub(crate) mod server;
 
 #[cfg(test)]
 mod tests;

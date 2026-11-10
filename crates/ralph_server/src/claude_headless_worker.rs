@@ -1,6 +1,6 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::chat::memory::usage_path;
-use crate::chat::read_claude_config;
+use crate::chat::skills::read_claude_config;
 use crate::codex_worker::pipes::pipe_lines;
 use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;

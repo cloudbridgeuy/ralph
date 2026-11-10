@@ -4,7 +4,7 @@ use ralph_core::worker::{HeadlessEffect, Marker, WorkerEvent, WorkerMarkers};
 use std::fs;
 use std::sync::{Arc, Mutex};
 
-pub(crate) type Events = Arc<Mutex<Vec<WorkerEvent>>>;
+pub type Events = Arc<Mutex<Vec<WorkerEvent>>>;
 
 pub(crate) fn push_event(events: &Events, event: WorkerEvent) {
     locked(events).push(event);

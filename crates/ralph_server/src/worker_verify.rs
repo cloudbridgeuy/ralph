@@ -163,7 +163,7 @@ fn conclude(
     }
 }
 
-pub(crate) fn run(
+pub fn run(
     agent: HarnessId,
     live: bool,
     drift: Option<DriftRun>,

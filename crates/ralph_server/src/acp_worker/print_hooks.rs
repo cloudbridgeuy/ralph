@@ -1,5 +1,5 @@
 use crate::cursor_owner::write_file;
-use crate::hook_bridge::server::{deliver, HookQueue, HookSocket};
+use crate::hook_bridge::{deliver, HookQueue, HookSocket};
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::wire::store::{current_uid, ensure_store_root};
 use crate::worker_events::Events;

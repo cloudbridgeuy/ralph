@@ -3,12 +3,13 @@ use super::{
     resolve_base_branch, run, Workers,
 };
 use crate::chat::memory::usage_path;
-use crate::chat::read_claude_config;
+use crate::chat::skills::read_claude_config;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::outcome_log;
 use crate::paths::absolute_from;
 use crate::private_file::{check_path, write_private, write_worker_config};
+use crate::subprocess::detach_from_terminal;
 use crate::subprocess::kill_process_group;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
@@ -29,7 +30,6 @@ use ralph_core::worker::{
     FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
     WORKERS_DIR,
 };
-use ralph_server::subprocess::detach_from_terminal;
 use serde_json::{Map, Value};
 use std::fs;
 use std::io;
@@ -637,7 +637,7 @@ struct Launch<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct SpawnArgs<'a> {
+pub struct SpawnArgs<'a> {
     pub id: &'a str,
     pub task: &'a str,
     pub harness: HarnessId,

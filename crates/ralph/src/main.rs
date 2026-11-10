@@ -2,14 +2,11 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
-mod acp_worker;
 pub mod ansi;
 mod backoff;
 mod chat;
-mod claude_headless_worker;
 mod cli;
 mod clipboard;
-mod codex_worker;
 pub mod config;
 pub mod diff_highlight;
 mod diff_theme;
@@ -24,13 +21,12 @@ mod invoke;
 mod licenses;
 pub mod markdown;
 mod mermaid_guard;
-mod opencode_worker;
-mod outcome_log;
-mod permission_queue;
 pub use ralph_server::{
-    acp_log, claude_cleanup, codex_usage, cursor_cleanup, cursor_owner, cursor_sweep, cursor_usage,
-    json_file, ledger, opencode_usage, paths, private_file, process_tree, snapshot, transport,
-    verified_agents, watch_store, worker_changes, worker_usage,
+    acp_log, acp_worker, claude_cleanup, claude_headless_worker, codex_usage, codex_worker,
+    cursor_cleanup, cursor_owner, cursor_sweep, cursor_usage, json_file, ledger, opencode_usage,
+    opencode_worker, outcome_log, paths, permission_queue, private_file, process_tree, snapshot,
+    transport, verified_agents, version_drift, watch_store, watches, worker_changes, worker_events,
+    worker_mcp, worker_usage, worker_verify, workers,
 };
 pub mod prompt_source;
 pub mod render;
@@ -47,15 +43,9 @@ mod upgrade;
 pub mod stream_processor;
 pub mod subprocess;
 mod version;
-mod version_drift;
 pub mod warn;
 mod watch_requests;
-mod watches;
 mod wire;
-mod worker_events;
-mod worker_mcp;
-mod worker_verify;
-mod workers;
 
 use clap::Parser;
 use cli::{

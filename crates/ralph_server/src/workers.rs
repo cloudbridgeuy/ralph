@@ -29,11 +29,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod close;
 mod guard;
-pub(crate) mod headless;
+pub mod headless;
 mod reply;
 mod spawn;
 mod verify;
-pub(crate) use spawn::SpawnArgs;
+pub use spawn::SpawnArgs;
 pub(crate) use verify::verify;
 
 #[derive(Clone)]

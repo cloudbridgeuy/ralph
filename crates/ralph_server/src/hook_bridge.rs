@@ -13,32 +13,32 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub(super) const LINE_LIMIT_BYTES: u64 = 1 << 20;
+pub const LINE_LIMIT_BYTES: u64 = 1 << 20;
 const ASK_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOK_POLL: Duration = Duration::from_millis(250);
 
-pub(crate) struct HookReply {
-    pub(super) id: String,
-    pub(super) answer: mpsc::Sender<String>,
+pub struct HookReply {
+    pub id: String,
+    pub answer: mpsc::Sender<String>,
 }
 
-pub(crate) type HookQueue = PermissionQueue<HookReply>;
+pub type HookQueue = PermissionQueue<HookReply>;
 
-pub(crate) fn deliver(reply: HookReply, option_id: String, request_id: &str) -> Result<(), String> {
+pub fn deliver(reply: HookReply, option_id: String, request_id: &str) -> Result<(), String> {
     reply
         .answer
         .send(option_id)
         .map_err(|_| format!("stale request {request_id}: the hook already denied the command"))
 }
 
-pub(crate) struct HookSocket {
+pub struct HookSocket {
     listener: UnixListener,
     path: PathBuf,
     closed: Arc<AtomicBool>,
 }
 
 impl HookSocket {
-    pub(crate) fn bind(path: &Path) -> io::Result<Self> {
+    pub fn bind(path: &Path) -> io::Result<Self> {
         fs::remove_file(path).ok();
         let listener = UnixListener::bind(path)?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
@@ -49,11 +49,11 @@ impl HookSocket {
         })
     }
 
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub(crate) fn serve(&self, queue: Arc<HookQueue>) -> io::Result<()> {
+    pub fn serve(&self, queue: Arc<HookQueue>) -> io::Result<()> {
         let listener = self.listener.try_clone()?;
         let closed = Arc::clone(&self.closed);
         let counter = Arc::new(AtomicU64::new(0));

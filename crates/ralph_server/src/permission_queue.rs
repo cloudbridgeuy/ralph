@@ -21,7 +21,7 @@ pub(crate) fn host_process_token() -> String {
     )
 }
 
-pub(crate) struct PermissionQueue<R> {
+pub struct PermissionQueue<R> {
     process: String,
     events: Events,
     worker_id: String,
@@ -31,7 +31,7 @@ pub(crate) struct PermissionQueue<R> {
 }
 
 impl<R> PermissionQueue<R> {
-    pub(crate) fn new(process: String, worker_id: String, inbox: Inbox, events: Events) -> Self {
+    pub fn new(process: String, worker_id: String, inbox: Inbox, events: Events) -> Self {
         Self {
             process,
             events,
@@ -95,7 +95,7 @@ impl<R> PermissionQueue<R> {
         None
     }
 
-    pub(crate) fn take_answer(
+    pub fn take_answer(
         &self,
         request_id: &str,
         text: &str,

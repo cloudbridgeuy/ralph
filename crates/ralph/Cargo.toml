@@ -14,9 +14,6 @@ name = "ralph"
 path = "src/main.rs"
 
 [dependencies]
-agent-client-protocol = { workspace = true }
-blocking = { workspace = true }
-futures = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 signal-hook = { workspace = true }

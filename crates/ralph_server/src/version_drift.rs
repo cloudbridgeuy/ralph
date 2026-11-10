@@ -95,7 +95,7 @@ fn probed(harness: HarnessId) -> Result<String, String> {
     }
 }
 
-pub(crate) fn run_daily(inbox: &Path) {
+pub fn run_daily(inbox: &Path) {
     verified_agents::save_last_check(chrono::Utc::now()).ok();
     std::thread::spawn(|| {
         std::thread::sleep(DAILY_CHECK_LIMIT);
@@ -116,20 +116,20 @@ pub(crate) fn run_daily(inbox: &Path) {
     }
 }
 
-pub(crate) struct DailyTick {
+pub struct DailyTick {
     enabled: bool,
     last: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl DailyTick {
-    pub(crate) fn start() -> Self {
+    pub fn start() -> Self {
         Self {
             enabled: verify_on_drift(),
             last: last_check_time(&verified_agents::load_drift()),
         }
     }
 
-    pub(crate) fn tick(&mut self, inbox: &Path) {
+    pub fn tick(&mut self, inbox: &Path) {
         let now = chrono::Utc::now();
         if daily_check_due(self.enabled, self.last, now) {
             self.last = Some(now);
@@ -208,7 +208,7 @@ fn start_verify(agent: &str, found: &str, inbox: &Path) {
 }
 
 #[derive(Clone)]
-pub(crate) struct DriftRun {
+pub struct DriftRun {
     version: String,
     inbox: PathBuf,
     _lock: Option<Arc<File>>,
@@ -217,7 +217,7 @@ pub(crate) struct DriftRun {
 }
 
 impl DriftRun {
-    pub(crate) fn new(version: String, inbox: PathBuf) -> Self {
+    pub fn new(version: String, inbox: PathBuf) -> Self {
         Self {
             version,
             inbox,

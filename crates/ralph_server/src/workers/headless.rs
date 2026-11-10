@@ -1,4 +1,5 @@
 use crate::acp_worker::CursorHost;
+use crate::chat::socket::SocketFiles;
 use crate::claude_headless_worker::ClaudeHeadlessHost;
 use crate::codex_worker::CodexHost;
 use crate::cursor_owner::{now_secs, queued_entries, write_file, write_interrupt_result};
@@ -9,13 +10,12 @@ use ralph_core::worker::{
     lost_marker_name, queued_disposition, render_gone, ActivityMark, ActivityState,
     InterruptOutcome, OwnerRecord, Queued, QueuedFacts, QueuedOwner, Scope,
 };
-use ralph_server::chat::socket::SocketFiles;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// A chat's host, not an individual worker. One host may own many workers.
-pub(crate) trait HeadlessHost: Send + Sync {
+pub trait HeadlessHost: Send + Sync {
     /// Resume persisted workers or supervise shared resources on a dedicated thread.
     fn resume(&self);
 
@@ -158,12 +158,12 @@ pub(crate) fn drain_queued(
 }
 
 /// Owns host lifetimes for a chat, including early returns from the chat loop.
-pub(crate) struct HeadlessShutdown {
+pub struct HeadlessShutdown {
     hosts: Vec<Arc<dyn HeadlessHost>>,
 }
 
 impl HeadlessShutdown {
-    pub(crate) fn new(store_dir: PathBuf) -> Self {
+    pub fn new(store_dir: PathBuf) -> Self {
         Self {
             hosts: vec![
                 CursorHost::new(store_dir.clone()),
@@ -174,7 +174,7 @@ impl HeadlessShutdown {
         }
     }
 
-    pub(crate) fn hosts(&self) -> &[Arc<dyn HeadlessHost>] {
+    pub fn hosts(&self) -> &[Arc<dyn HeadlessHost>] {
         &self.hosts
     }
 }
@@ -188,14 +188,14 @@ impl Drop for HeadlessShutdown {
     }
 }
 
-pub(crate) struct ExitCleanup {
+pub struct ExitCleanup {
     watches: Watches,
     hosts: Vec<Arc<dyn HeadlessHost>>,
     socket: SocketFiles,
 }
 
 impl ExitCleanup {
-    pub(crate) fn new(watches: Watches, headless: &HeadlessShutdown, socket: SocketFiles) -> Self {
+    pub fn new(watches: Watches, headless: &HeadlessShutdown, socket: SocketFiles) -> Self {
         Self {
             watches,
             hosts: headless.hosts.clone(),
@@ -203,7 +203,7 @@ impl ExitCleanup {
         }
     }
 
-    pub(crate) fn run(&self) {
+    pub fn run(&self) {
         self.watches.kill_all();
         for host in &self.hosts {
             host.shutdown();

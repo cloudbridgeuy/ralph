@@ -193,7 +193,7 @@ pub fn running_opencode_sessions() -> Option<HashSet<String>> {
     running_sessions(&body).map(|running| running.into_iter().collect())
 }
 
-pub(crate) fn sweep_stale_server_records() {
+pub fn sweep_stale_server_records() {
     let dir = std::env::temp_dir();
     let Ok(entries) = fs::read_dir(&dir) else {
         return;

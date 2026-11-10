@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 const POLL: Duration = Duration::from_millis(25);
 const DRAIN_GRACE: Duration = Duration::from_millis(500);
 
-pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
