@@ -9,10 +9,10 @@ pub const DAILY_CHECK_LIMIT: Duration = Duration::from_secs(45);
 
 pub fn daily_gate(harness: HarnessId) -> Option<&'static VersionGate> {
     match harness {
-        HarnessId::Claude => Some(&CLAUDE_TMUX_GATE),
+        HarnessId::ClaudeTmux => Some(&CLAUDE_TMUX_GATE),
         HarnessId::Opencode => Some(&OPENCODE_GATE),
         HarnessId::Cursor => Some(&CURSOR_GATE),
-        HarnessId::Codex | HarnessId::ClaudeHeadless => None,
+        HarnessId::Codex | HarnessId::Claude => None,
     }
 }
 
@@ -69,17 +69,21 @@ mod tests {
     fn the_plan_probes_every_harness_with_a_version_decoder_and_skips_codex() {
         assert_eq!(
             daily_probe_plan(),
-            vec![HarnessId::Claude, HarnessId::Opencode, HarnessId::Cursor]
+            vec![
+                HarnessId::ClaudeTmux,
+                HarnessId::Opencode,
+                HarnessId::Cursor
+            ]
         );
         assert!(daily_gate(HarnessId::Codex).is_none());
-        assert!(daily_gate(HarnessId::ClaudeHeadless).is_none());
+        assert!(daily_gate(HarnessId::Claude).is_none());
     }
 
     #[test]
     fn each_probed_harness_uses_its_own_gate() {
         assert_eq!(
-            daily_gate(HarnessId::Claude).map(|g| g.agent),
-            Some("claude")
+            daily_gate(HarnessId::ClaudeTmux).map(|g| g.agent),
+            Some("claude-tmux")
         );
         assert_eq!(
             daily_gate(HarnessId::Opencode).map(|g| g.agent),
@@ -125,7 +129,7 @@ mod tests {
     #[test]
     fn stamping_keeps_the_recorded_outcomes() {
         let entry = DriftEntry {
-            agent: "claude".to_string(),
+            agent: "claude-tmux".to_string(),
             version: "99.0.0".to_string(),
             outcome: DriftOutcome::Passed,
             at: "2026-11-03T00:00:00Z".to_string(),
@@ -154,11 +158,11 @@ mod tests {
     #[test]
     fn a_verified_or_probed_or_known_failing_version_starts_nothing() {
         let verified =
-            VerifiedAgents::default().record(verified_entry("claude", "99.0.0", false, "d"));
+            VerifiedAgents::default().record(verified_entry("claude-tmux", "99.0.0", false, "d"));
         let probed = CLAUDE_TMUX_GATE.probed.to_string();
         let failed = DriftRecord {
             agents: vec![DriftEntry {
-                agent: "claude".to_string(),
+                agent: "claude-tmux".to_string(),
                 version: "98.0.0".to_string(),
                 outcome: DriftOutcome::Failed {
                     checks: vec!["spawn".to_string()],

@@ -168,7 +168,7 @@ impl Monitor {
 
     fn alert_stalled(&self, worker: &RunningWorker, record: Option<AutoContinue>) {
         let id = &worker.id;
-        let tmux = (worker.kind == HarnessId::Claude).then_some(worker.session.as_str());
+        let tmux = (worker.kind == HarnessId::ClaudeTmux).then_some(worker.session.as_str());
         let report = Report {
             worker: id.clone(),
             at: chrono::Utc::now().to_rfc3339(),

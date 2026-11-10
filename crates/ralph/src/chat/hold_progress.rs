@@ -181,7 +181,7 @@ fn progress_of(
             .map(|mark| mark.state),
         rebase: tree.and_then(rebase_of),
         commits: tree.and_then(|tree| commits_since(tree, base)),
-        hint: (worker.kind == HarnessId::Claude)
+        hint: (worker.kind == HarnessId::ClaudeTmux)
             .then(|| pane_of(&worker.session))
             .flatten()
             .and_then(|pane| last_hint(&pane)),

@@ -70,7 +70,7 @@ pub(crate) fn codex_gate(
 
 pub(crate) fn spawn_warning(harness: HarnessId, inbox: &Path) -> Option<String> {
     match harness {
-        HarnessId::Claude => soft_warning(
+        HarnessId::ClaudeTmux => soft_warning(
             &CLAUDE_TMUX_GATE,
             tmux_claude_version(&probe(CLAUDE_COMMAND)),
             inbox,
@@ -80,18 +80,18 @@ pub(crate) fn spawn_warning(harness: HarnessId, inbox: &Path) -> Option<String> 
             opencode_probed_version(&probe(OPENCODE_COMMAND)),
             inbox,
         ),
-        HarnessId::Cursor | HarnessId::Codex | HarnessId::ClaudeHeadless => None,
+        HarnessId::Cursor | HarnessId::Codex | HarnessId::Claude => None,
     }
 }
 
 fn probed(harness: HarnessId) -> Result<String, String> {
     match harness {
-        HarnessId::Claude => tmux_claude_version(&probe(CLAUDE_COMMAND)),
+        HarnessId::ClaudeTmux => tmux_claude_version(&probe(CLAUDE_COMMAND)),
         HarnessId::Opencode => opencode_probed_version(&probe(OPENCODE_COMMAND)),
         HarnessId::Cursor => {
             probed_version(&CURSOR_AGENT, &probe(CURSOR_AGENT.command)).map(str::to_string)
         }
-        HarnessId::Codex | HarnessId::ClaudeHeadless => Err("not probed".to_string()),
+        HarnessId::Codex | HarnessId::Claude => Err("not probed".to_string()),
     }
 }
 

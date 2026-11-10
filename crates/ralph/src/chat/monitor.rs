@@ -147,7 +147,7 @@ impl Monitor {
         let unreported = unreported_path(&self.store_dir, id).exists();
         let reported = !sent_path(&self.store_dir, id).exists()
             && reported_since_nudge(state.reports.get(id), state.nudges.get(id));
-        let pane = (matches!(worker.kind, HarnessId::Claude)
+        let pane = (matches!(worker.kind, HarnessId::ClaudeTmux)
             && !(blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
             .flatten();
@@ -181,7 +181,7 @@ impl Monitor {
         let mut alerts = Vec::new();
         let ids: Vec<String> = running
             .iter()
-            .filter(|w| w.kind != HarnessId::Claude)
+            .filter(|w| w.kind != HarnessId::ClaudeTmux)
             .map(|w| w.id.clone())
             .chain(state.claude_dead.iter().cloned())
             .collect();
@@ -225,7 +225,7 @@ impl Monitor {
                 .retain(|id, _| running.iter().any(|worker| &worker.id == id));
             let alive: HashSet<String> = running
                 .iter()
-                .filter(|worker| matches!(worker.kind, HarnessId::Claude))
+                .filter(|worker| matches!(worker.kind, HarnessId::ClaudeTmux))
                 .map(|worker| worker.id.clone())
                 .collect();
             for id in vanished_claude(&state.claude_alive, &alive, &ready_ids(&self.store_dir)) {

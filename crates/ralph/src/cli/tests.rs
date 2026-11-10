@@ -479,7 +479,7 @@ fn long_about(command: &clap::Command) -> String {
 #[test]
 fn test_cli_top_level_help_names_every_worker_agent() {
     let text = long_about(&subcommand(&[]));
-    for agent in ["claude", "cursor", "codex", "claude-headless", "opencode"] {
+    for agent in ["claude", "claude-tmux", "cursor", "codex", "opencode"] {
         assert!(text.contains(agent), "{agent} missing from: {text}");
     }
 }

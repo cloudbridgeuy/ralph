@@ -7,7 +7,7 @@ fn busy_marked(state: ActivityState, age: u64, pane: Option<&str>) -> WorkerObse
     WorkerObservation {
         id: "w1".to_string(),
         session: "sess".to_string(),
-        kind: HarnessId::Claude,
+        kind: HarnessId::ClaudeTmux,
         ready: true,
         blocked: false,
         waiting: false,

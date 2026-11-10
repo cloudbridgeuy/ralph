@@ -46,7 +46,7 @@ pub const OPENCODE_GATE: VersionGate = VersionGate {
 };
 
 pub const CLAUDE_TMUX_GATE: VersionGate = VersionGate {
-    agent: "claude",
+    agent: "claude-tmux",
     package: "Claude Code",
     min: (0, 0),
     probed: CLAUDE_GATE.probed,

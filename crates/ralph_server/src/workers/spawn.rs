@@ -51,7 +51,7 @@ struct ImportSource {
 }
 
 fn import_source<E>(harness: HarnessId, config: Result<&AppConfig, E>) -> Option<ImportSource> {
-    if harness != HarnessId::Claude {
+    if harness != HarnessId::ClaudeTmux {
         return None;
     }
     let fallback;
@@ -106,7 +106,7 @@ impl Workers {
                 .map(|config| config.claude.shell_setting())
                 .map_err(String::as_str),
         );
-        let shell_warning = shell_warning.filter(|_| harness == HarnessId::Claude);
+        let shell_warning = shell_warning.filter(|_| harness == HarnessId::ClaudeTmux);
         self.preflight(id, harness, shell).map_err(|e| {
             io::Error::new(
                 e.kind(),
@@ -153,7 +153,7 @@ impl Workers {
                 );
                 (Some(model), warning)
             }
-            HarnessId::Claude | HarnessId::ClaudeHeadless => resolve_claude_model(
+            HarnessId::ClaudeTmux | HarnessId::Claude => resolve_claude_model(
                 model,
                 config
                     .as_ref()
@@ -287,7 +287,7 @@ impl Workers {
 
     fn preflight(&self, id: &str, harness: HarnessId, shell: ClaudeShell) -> io::Result<()> {
         match harness {
-            HarnessId::Claude => {
+            HarnessId::ClaudeTmux => {
                 require_on_path("tmux")?;
                 require_on_path(shell.program())?;
                 let mut check = Command::new(shell.program());
@@ -310,7 +310,7 @@ impl Workers {
             HarnessId::Opencode => self.preflight_opencode(id),
             HarnessId::Cursor => require_on_path(CURSOR_AGENT.command),
             HarnessId::Codex => require_on_path(CODEX_COMMAND),
-            HarnessId::ClaudeHeadless => require_on_path(CLAUDE_COMMAND),
+            HarnessId::Claude => require_on_path(CLAUDE_COMMAND),
         }
     }
 
@@ -341,7 +341,7 @@ impl Workers {
         }
         self.write_spawn_record(id, *harness, ticket.clone(), base_sha.clone())?;
         let command = match harness {
-            HarnessId::Claude => {
+            HarnessId::ClaudeTmux => {
                 let settings = self.write_settings(id, &markers, *site)?;
                 let task_dir = self.write_task(id, task)?;
                 let copied: Vec<String> = servers.keys().cloned().collect();
@@ -390,9 +390,9 @@ impl Workers {
                     warning.as_deref(),
                 ));
             }
-            HarnessId::ClaudeHeadless => {
+            HarnessId::Claude => {
                 let files = HandoffFiles::claude_headless(&self.store_dir, id);
-                let warning = self.spawn_headless(launch, files, "claude-headless")?;
+                let warning = self.spawn_headless(launch, files, "claude")?;
                 return Ok(with_start_warning(
                     format!("{started} It runs headless inside ralph chat (no tmux session)."),
                     warning.as_deref(),
@@ -438,7 +438,7 @@ impl Workers {
 
     fn harness_running(&self, launch: &Launch) -> bool {
         match launch.harness {
-            HarnessId::Claude => session_exists(launch.session).unwrap_or(true),
+            HarnessId::ClaudeTmux => session_exists(launch.session).unwrap_or(true),
             HarnessId::Opencode => HandoffFiles::opencode(&self.store_dir, launch.id)
                 .owner
                 .exists(),
@@ -448,7 +448,7 @@ impl Workers {
             HarnessId::Codex => HandoffFiles::codex(&self.store_dir, launch.id)
                 .owner
                 .exists(),
-            HarnessId::ClaudeHeadless => HandoffFiles::claude_headless(&self.store_dir, launch.id)
+            HarnessId::Claude => HandoffFiles::claude_headless(&self.store_dir, launch.id)
                 .owner
                 .exists(),
         }
@@ -841,7 +841,7 @@ mod tests {
 
     #[test]
     fn a_failed_config_load_falls_back_to_the_default_allow_list() {
-        let source = import_source(HarnessId::Claude, Err("bad toml")).unwrap();
+        let source = import_source(HarnessId::ClaudeTmux, Err("bad toml")).unwrap();
         assert_eq!(source.names, ["mcptools"]);
         assert_eq!(source.config_dir, None);
     }
@@ -854,7 +854,7 @@ mod tests {
         )
         .unwrap()
         .0;
-        let source = import_source(HarnessId::Claude, Ok::<_, String>(&config)).unwrap();
+        let source = import_source(HarnessId::ClaudeTmux, Ok::<_, String>(&config)).unwrap();
         assert_eq!(source.names, ["docs"]);
         assert_eq!(source.config_dir, Some(PathBuf::from("/alt")));
     }
@@ -884,11 +884,7 @@ mod tests {
     #[test]
     fn other_harnesses_import_nothing() {
         let config = AppConfig::new();
-        for harness in [
-            HarnessId::ClaudeHeadless,
-            HarnessId::Codex,
-            HarnessId::Cursor,
-        ] {
+        for harness in [HarnessId::Claude, HarnessId::Codex, HarnessId::Cursor] {
             assert!(import_source(harness, Ok::<_, String>(&config)).is_none());
         }
         assert!(import_source(HarnessId::Opencode, Err("x")).is_none());

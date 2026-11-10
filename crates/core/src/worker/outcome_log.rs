@@ -88,7 +88,7 @@ pub fn diff_range(base_sha: Option<&str>, branch: &str) -> Option<String> {
 /// Turn-end snapshots after the spawn snapshot (turn 0), or `None` when the
 /// worker has no turn snapshots.
 pub fn turn_count(harness: HarnessId, turn_ids: &[u64]) -> Option<u64> {
-    if harness == HarnessId::ClaudeHeadless {
+    if harness == HarnessId::Claude {
         return None;
     }
     turn_ids.iter().max().copied()
@@ -304,7 +304,7 @@ mod tests {
             key: key(1_700_000_000),
             ticket: Some("GUZ-1"),
             tracker: Some(Tracker::Linear),
-            harness: HarnessId::ClaudeHeadless,
+            harness: HarnessId::Claude,
             model: Some("opus"),
             base_sha: Some("abc123"),
             scheduled: false,
@@ -358,7 +358,7 @@ mod tests {
                 "event": "spawn",
                 "ticket": "GUZ-1",
                 "tracker": "linear",
-                "harness": "claude-headless",
+                "harness": "claude",
                 "model": "opus",
                 "base_sha": "abc123",
                 "scheduled": false,
@@ -511,16 +511,16 @@ mod tests {
 
     #[test]
     fn the_turn_count_is_the_highest_snapshot_id() {
-        assert_eq!(turn_count(HarnessId::Claude, &[0]), Some(0));
-        assert_eq!(turn_count(HarnessId::Claude, &[0, 1, 2, 3]), Some(3));
+        assert_eq!(turn_count(HarnessId::ClaudeTmux, &[0]), Some(0));
+        assert_eq!(turn_count(HarnessId::ClaudeTmux, &[0, 1, 2, 3]), Some(3));
         assert_eq!(turn_count(HarnessId::Codex, &[12, 13, 14]), Some(14));
     }
 
     #[test]
     fn the_turn_count_is_null_without_snapshots_or_for_claude_headless() {
-        assert_eq!(turn_count(HarnessId::Claude, &[]), None);
-        assert_eq!(turn_count(HarnessId::ClaudeHeadless, &[0]), None);
-        assert_eq!(turn_count(HarnessId::ClaudeHeadless, &[0, 1]), None);
+        assert_eq!(turn_count(HarnessId::ClaudeTmux, &[]), None);
+        assert_eq!(turn_count(HarnessId::Claude, &[0]), None);
+        assert_eq!(turn_count(HarnessId::Claude, &[0, 1]), None);
     }
 
     #[test]

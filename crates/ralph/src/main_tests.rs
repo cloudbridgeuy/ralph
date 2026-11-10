@@ -140,10 +140,12 @@ fn every_curator_row_carries_the_run_and_the_store() {
 
 #[test]
 fn the_cli_accepts_claude_as_a_verify_agent() {
-    for agent in ["cursor", "codex", "claude-headless", "opencode", "claude"] {
+    for agent in ["cursor", "codex", "claude", "opencode", "claude-tmux"] {
         assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_ok());
     }
-    assert!(Cli::try_parse_from(["ralph", "worker", "verify", "tmux"]).is_err());
+    for agent in ["tmux", "claude-headless"] {
+        assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_err());
+    }
 }
 
 #[test]

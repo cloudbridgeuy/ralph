@@ -4,7 +4,7 @@ fn failed_idle(auto_continue: bool) -> WorkerObservation {
     WorkerObservation {
         id: "w1".to_string(),
         session: "sess".to_string(),
-        kind: HarnessId::Claude,
+        kind: HarnessId::ClaudeTmux,
         ready: true,
         blocked: false,
         waiting: false,

@@ -114,7 +114,7 @@ impl Workers {
         let sent = self.mark_sent(id, delivered)?;
         let harness = self
             .headless_files(id)
-            .map_or(HarnessId::Claude, |(kind, _)| kind);
+            .map_or(HarnessId::ClaudeTmux, |(kind, _)| kind);
         outcome_log::record(&self.store_dir, id, |key| {
             reply_event(&ReplyFacts {
                 key,
@@ -229,7 +229,7 @@ impl Workers {
         }
         if self.claude_headless_running(id) {
             let files = HandoffFiles::claude_headless(&self.store_dir, id);
-            return Some((HarnessId::ClaudeHeadless, files));
+            return Some((HarnessId::Claude, files));
         }
         self.opencode_http(id).then(|| {
             (
@@ -344,7 +344,7 @@ impl Workers {
             CloseStep::TerminateClaudeHeadless => {
                 if self.claude_headless_running(id) {
                     let files = HandoffFiles::claude_headless(&self.store_dir, id);
-                    self.terminate_headless(&files, "claude-headless")?;
+                    self.terminate_headless(&files, "claude")?;
                 }
             }
             CloseStep::KillSession(session) => {
@@ -422,14 +422,10 @@ impl Workers {
     }
 
     fn refuse_busy_headless(&self, id: &str, closing: bool) -> io::Result<()> {
-        for harness in [
-            HarnessId::Cursor,
-            HarnessId::Codex,
-            HarnessId::ClaudeHeadless,
-        ] {
+        for harness in [HarnessId::Cursor, HarnessId::Codex, HarnessId::Claude] {
             let files = match harness {
                 HarnessId::Codex => HandoffFiles::codex(&self.store_dir, id),
-                HarnessId::ClaudeHeadless => HandoffFiles::claude_headless(&self.store_dir, id),
+                HarnessId::Claude => HandoffFiles::claude_headless(&self.store_dir, id),
                 _ => HandoffFiles::cursor(&self.store_dir, id),
             };
             match sweep_owner(&files) {
@@ -670,7 +666,7 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     workers.extend(
         owned_claude_headless_ids(store_dir)
             .iter()
-            .map(|id| RunningWorker::headless(id, HarnessId::ClaudeHeadless)),
+            .map(|id| RunningWorker::headless(id, HarnessId::Claude)),
     );
     workers.extend(
         entry_ids(store_dir, OPENCODE_OWNER_DIR)

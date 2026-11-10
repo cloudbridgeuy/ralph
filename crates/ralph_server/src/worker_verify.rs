@@ -95,7 +95,7 @@ fn resolved_model(
 ) -> (Option<String>, Option<String>) {
     match agent {
         HarnessId::Cursor | HarnessId::Codex => (None, None),
-        HarnessId::Claude | HarnessId::ClaudeHeadless => resolve_claude_model(
+        HarnessId::ClaudeTmux | HarnessId::Claude => resolve_claude_model(
             None,
             config
                 .as_ref()
@@ -118,7 +118,7 @@ fn resolved_model(
 fn model_label(agent: HarnessId, model: Option<&str>) -> Option<String> {
     match agent {
         HarnessId::Cursor | HarnessId::Codex => None,
-        HarnessId::Claude | HarnessId::ClaudeHeadless => {
+        HarnessId::ClaudeTmux | HarnessId::Claude => {
             Some(model.unwrap_or("claude's default model").to_string())
         }
         HarnessId::Opencode => model.map(str::to_string),
@@ -196,7 +196,7 @@ pub fn run(
             codex_worker::verify(live, dir.path(), &checks),
             CODEX_REQUIRED_CHECKS,
         ),
-        HarnessId::ClaudeHeadless => (
+        HarnessId::Claude => (
             claude_headless_worker::verify(live, dir.path(), &checks, &config, model.as_deref()),
             CLAUDE_HEADLESS_REQUIRED_CHECKS,
         ),
@@ -209,7 +209,7 @@ pub fn run(
             ),
             OPENCODE_REQUIRED_CHECKS,
         ),
-        HarnessId::Claude => (
+        HarnessId::ClaudeTmux => (
             workers::verify(live, dir.path(), &checks, &config, model.as_deref()),
             claude_required_checks(live),
         ),
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn claude_kinds_resolve_the_configured_model_like_spawn() {
-        for agent in [HarnessId::Claude, HarnessId::ClaudeHeadless] {
+        for agent in [HarnessId::ClaudeTmux, HarnessId::Claude] {
             let config = config_with(Some("claude-haiku-5-5"), None);
             assert_eq!(
                 resolved_model(agent, &config),
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn a_bad_configured_model_warns_and_falls_back() {
         let (model, warning) =
-            resolved_model(HarnessId::Claude, &config_with(Some("two words"), None));
+            resolved_model(HarnessId::ClaudeTmux, &config_with(Some("two words"), None));
         assert_eq!(model, None);
         assert!(warning.is_some());
     }
@@ -367,11 +367,11 @@ mod tests {
         assert_eq!(model_label(HarnessId::Cursor, None), None);
         assert_eq!(model_label(HarnessId::Codex, Some("x")), None);
         assert_eq!(
-            model_label(HarnessId::Claude, None).as_deref(),
+            model_label(HarnessId::ClaudeTmux, None).as_deref(),
             Some("claude's default model")
         );
         assert_eq!(
-            model_label(HarnessId::ClaudeHeadless, Some("m")).as_deref(),
+            model_label(HarnessId::Claude, Some("m")).as_deref(),
             Some("m")
         );
     }

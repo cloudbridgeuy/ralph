@@ -252,15 +252,12 @@ mod tests {
         let record = SpawnRecord::new(
             ticket("GUZ-918", Some(Tracker::Linear)),
             Some("abc123".into()),
-            HarnessId::ClaudeHeadless,
+            HarnessId::Claude,
             1_767_225_600,
         );
         let encoded = encode_spawn_record(&record).unwrap();
         assert!(encoded.contains(r#""tracker":"linear""#), "{encoded}");
-        assert!(
-            encoded.contains(r#""harness":"claude-headless""#),
-            "{encoded}"
-        );
+        assert!(encoded.contains(r#""harness":"claude""#), "{encoded}");
         assert!(encoded.contains(r#""base_sha":"abc123""#), "{encoded}");
         assert_eq!(decode_spawn_record(&encoded), Some(record.clone()));
         assert_eq!(record.ticket(), ticket("GUZ-918", Some(Tracker::Linear)));
@@ -268,10 +265,10 @@ mod tests {
 
     #[test]
     fn a_record_without_a_ticket_has_none() {
-        let record = SpawnRecord::new(None, None, HarnessId::Claude, 5);
+        let record = SpawnRecord::new(None, None, HarnessId::ClaudeTmux, 5);
         assert_eq!(
             encode_spawn_record(&record).unwrap(),
-            r#"{"at":5,"harness":"claude"}"#
+            r#"{"at":5,"harness":"claude-tmux"}"#
         );
         assert_eq!(record.ticket(), None);
     }

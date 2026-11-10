@@ -117,7 +117,7 @@ pub const GONE_DIR: &str = "gone";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-6.1-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const CODEX_HARNESS: &str = "codex";
-pub const CLAUDE_HEADLESS_HARNESS: &str = "claude-headless";
+pub const CLAUDE_TMUX_HARNESS: &str = "claude-tmux";
 pub const STORE_OPTION: &str = "@ralph_store";
 pub const ID_OPTION: &str = "@ralph_id";
 pub const SESSION_FORMAT: &str = "#{session_name}\t#{@ralph_store}\t#{@ralph_id}";
@@ -574,7 +574,7 @@ mod tests {
         let repo = Path::new("/repo");
         let dir = repo.join(WORKTREE_DIR);
         assert_eq!(
-            exclude_lines(HarnessId::Claude, repo, &dir),
+            exclude_lines(HarnessId::ClaudeTmux, repo, &dir),
             ["/.worktrees/"]
         );
         assert_eq!(
@@ -591,12 +591,12 @@ mod tests {
     fn exclude_lines_cover_only_a_worktree_dir_inside_the_repo() {
         let repo = Path::new("/repo");
         assert_eq!(
-            exclude_lines(HarnessId::Claude, repo, Path::new("/repo/tmp/wt")),
+            exclude_lines(HarnessId::ClaudeTmux, repo, Path::new("/repo/tmp/wt")),
             ["/tmp/wt/"]
         );
-        assert!(exclude_lines(HarnessId::Claude, repo, Path::new("/elsewhere/wt")).is_empty());
-        assert!(exclude_lines(HarnessId::Claude, repo, Path::new("/repo/../wt")).is_empty());
-        assert!(exclude_lines(HarnessId::Claude, repo, repo).is_empty());
+        assert!(exclude_lines(HarnessId::ClaudeTmux, repo, Path::new("/elsewhere/wt")).is_empty());
+        assert!(exclude_lines(HarnessId::ClaudeTmux, repo, Path::new("/repo/../wt")).is_empty());
+        assert!(exclude_lines(HarnessId::ClaudeTmux, repo, repo).is_empty());
     }
 
     #[test]

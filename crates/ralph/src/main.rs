@@ -123,9 +123,9 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
             match agent {
                 VerifyAgent::Cursor => HarnessId::Cursor,
                 VerifyAgent::Codex => HarnessId::Codex,
-                VerifyAgent::ClaudeHeadless => HarnessId::ClaudeHeadless,
-                VerifyAgent::Opencode => HarnessId::Opencode,
                 VerifyAgent::Claude => HarnessId::Claude,
+                VerifyAgent::Opencode => HarnessId::Opencode,
+                VerifyAgent::ClaudeTmux => HarnessId::ClaudeTmux,
             },
             live,
             drift

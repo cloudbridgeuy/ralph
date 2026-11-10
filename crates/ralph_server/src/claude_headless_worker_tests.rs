@@ -417,7 +417,7 @@ fn a_turn_end_records_the_transcript_as_one_claude_headless_row() {
     let row = &rows[0];
     assert_eq!(row["kind"], "worker");
     assert_eq!(row["worker_id"], "w");
-    assert_eq!(row["harness"], "claude-headless");
+    assert_eq!(row["harness"], "claude");
     assert_eq!(row["model"], "claude-haiku-5-5");
     assert_eq!(row["session_id"], "s1");
     assert_eq!(row["input_tokens"], 2);

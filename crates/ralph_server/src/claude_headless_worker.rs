@@ -108,7 +108,7 @@ impl Shared {
         let session = UsageSession {
             session_id: &usage.session_id,
             transcript: &usage.transcript,
-            harness: HarnessId::ClaudeHeadless,
+            harness: HarnessId::Claude,
         };
         record_session_or_warn(&usage.target, &session);
     }
@@ -216,7 +216,7 @@ impl Shared {
                 }
                 Action::PostFailure(problem) => {
                     let at = chrono::Utc::now().to_rfc3339();
-                    let agent = HarnessId::ClaudeHeadless.as_str();
+                    let agent = HarnessId::Claude.as_str();
                     let report = prompt_failure_report(agent, &self.id, &at, &problem);
                     self.inbox.post(&report, 0).ok();
                 }
@@ -757,7 +757,7 @@ impl HeadlessHost for ClaudeHeadlessHost {
             let activity = fs::read_to_string(activity_path(&self.store_dir, &id)).ok();
             let lost = turn_lost_at_resume(activity.as_deref());
             let resumed = Resumed {
-                agent: HarnessId::ClaudeHeadless.as_str(),
+                agent: HarnessId::Claude.as_str(),
                 id: &id,
                 store: &self.store_dir,
                 files: &files,
