@@ -14,10 +14,10 @@ use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub const TERM_GRACE: Duration = Duration::from_secs(3);
-pub const TERM_POLL: Duration = Duration::from_millis(20);
+pub(crate) const TERM_GRACE: Duration = Duration::from_secs(3);
+pub(crate) const TERM_POLL: Duration = Duration::from_millis(20);
 
-pub fn signal_group(group: u32, signal: &str) {
+pub(crate) fn signal_group(group: u32, signal: &str) {
     Command::new("kill")
         .args([format!("-{signal}"), "--".to_string(), format!("-{group}")])
         .stdin(Stdio::null())
@@ -244,7 +244,7 @@ pub fn now_secs() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-pub fn request_ids(store_dir: &Path, dir: &str) -> Vec<String> {
+pub(crate) fn request_ids(store_dir: &Path, dir: &str) -> Vec<String> {
     fs::read_dir(store_dir.join(dir))
         .map(|entries| {
             entries
@@ -255,7 +255,7 @@ pub fn request_ids(store_dir: &Path, dir: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn take_answer(files: &HandoffFiles, handle: impl FnOnce(&str) -> Result<(), String>) {
+pub(crate) fn take_answer(files: &HandoffFiles, handle: impl FnOnce(&str) -> Result<(), String>) {
     if fs::rename(&files.answer, &files.claim).is_err() {
         return;
     }
@@ -269,7 +269,7 @@ pub fn take_answer(files: &HandoffFiles, handle: impl FnOnce(&str) -> Result<(),
     fs::remove_file(&files.claim).ok();
 }
 
-pub fn queued_entries(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn queued_entries(dir: &Path) -> Vec<PathBuf> {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)
         .map(|dir| {
             dir.filter_map(Result::ok)

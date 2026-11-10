@@ -28,15 +28,15 @@ fn with_groups<T>(apply: impl FnOnce(&mut GroupSet) -> T) -> T {
     apply(&mut GROUPS.lock().unwrap_or_else(PoisonError::into_inner))
 }
 
-pub fn register_group(group: u32) {
+pub(crate) fn register_group(group: u32) {
     with_groups(|groups| groups.register(group));
 }
 
-pub fn unregister_group(group: u32) {
+pub(crate) fn unregister_group(group: u32) {
     with_groups(|groups| groups.unregister(group));
 }
 
-pub fn kill_registered_groups() {
+pub(crate) fn kill_registered_groups() {
     for group in with_groups(|groups| groups.snapshot()) {
         unsafe { libc::killpg(group as libc::pid_t, libc::SIGKILL) };
     }

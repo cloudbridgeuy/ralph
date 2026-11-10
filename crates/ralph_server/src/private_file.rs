@@ -44,7 +44,7 @@ pub fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-pub fn write_worker_config(
+pub(crate) fn write_worker_config(
     store: &Path,
     id: &str,
     imported: &Map<String, Value>,

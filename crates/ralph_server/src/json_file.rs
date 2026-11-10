@@ -4,14 +4,14 @@ use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
 
-pub fn read_json(path: &Path) -> Result<Value, String> {
+pub(crate) fn read_json(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
     serde_json::from_str(&text)
         .map_err(|error| format!("could not parse {}: {error}", path.display()))
 }
 
-pub fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+pub(crate) fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value)
         .map_err(|error| format!("could not encode {}: {error}", path.display()))?;
     let dir = path.parent().unwrap_or(Path::new("."));

@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Instant;
 
-pub fn process_table() -> Vec<(u32, u32)> {
+pub(crate) fn process_table() -> Vec<(u32, u32)> {
     Command::new("ps")
         .args(["-axo", "pid=,ppid="])
         .stdin(Stdio::null())
@@ -16,7 +16,7 @@ pub fn process_table() -> Vec<(u32, u32)> {
         .unwrap_or_default()
 }
 
-pub fn group_table() -> Vec<GroupRow> {
+pub(crate) fn group_table() -> Vec<GroupRow> {
     Command::new("ps")
         .args(["-axo", "pid=,ppid=,pgid=,command="])
         .stdin(Stdio::null())
@@ -26,7 +26,7 @@ pub fn group_table() -> Vec<GroupRow> {
         .unwrap_or_default()
 }
 
-pub fn snapshot_tree(root: u32) -> Vec<Tracked> {
+pub(crate) fn snapshot_tree(root: u32) -> Vec<Tracked> {
     descendants(&process_table(), root)
         .into_iter()
         .filter_map(|pid| process_start(pid).map(|start| Tracked { pid, start }))
@@ -43,7 +43,7 @@ fn signal_pid(pid: u32, signal: &str) {
         .ok();
 }
 
-pub fn sweep_tree(snapshot: &[Tracked]) -> Vec<u32> {
+pub(crate) fn sweep_tree(snapshot: &[Tracked]) -> Vec<u32> {
     let found = still_running(snapshot, process_start);
     for pid in &found {
         signal_pid(*pid, "TERM");

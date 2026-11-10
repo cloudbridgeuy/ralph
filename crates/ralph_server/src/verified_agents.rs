@@ -8,14 +8,14 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
-pub fn load() -> VerifiedAgents {
+pub(crate) fn load() -> VerifiedAgents {
     read_json(&config_dir().join(VERIFIED_AGENTS_FILE))
         .ok()
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default()
 }
 
-pub fn save(entry: VerifiedAgent) -> Result<(), String> {
+pub(crate) fn save(entry: VerifiedAgent) -> Result<(), String> {
     let dir = config_dir();
     fs::create_dir_all(&dir)
         .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
@@ -30,14 +30,14 @@ pub fn save(entry: VerifiedAgent) -> Result<(), String> {
     write_json(&path, &value)
 }
 
-pub fn load_drift() -> DriftRecord {
+pub(crate) fn load_drift() -> DriftRecord {
     read_json(&config_dir().join(DRIFT_FILE))
         .ok()
         .and_then(|value| serde_json::from_value(value).ok())
         .unwrap_or_default()
 }
 
-pub fn save_drift(entry: DriftEntry) -> Result<(), String> {
+pub(crate) fn save_drift(entry: DriftEntry) -> Result<(), String> {
     let dir = config_dir();
     fs::create_dir_all(&dir)
         .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
@@ -46,7 +46,7 @@ pub fn save_drift(entry: DriftEntry) -> Result<(), String> {
     write_json(&dir.join(DRIFT_FILE), &value)
 }
 
-pub fn save_last_check(now: chrono::DateTime<chrono::Utc>) -> Result<(), String> {
+pub(crate) fn save_last_check(now: chrono::DateTime<chrono::Utc>) -> Result<(), String> {
     let dir = config_dir();
     fs::create_dir_all(&dir)
         .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
@@ -55,6 +55,6 @@ pub fn save_last_check(now: chrono::DateTime<chrono::Utc>) -> Result<(), String>
     write_json(&dir.join(DRIFT_FILE), &value)
 }
 
-pub fn drift_lock_path(agent: &str) -> PathBuf {
+pub(crate) fn drift_lock_path(agent: &str) -> PathBuf {
     config_dir().join(drift_lock_file(agent))
 }

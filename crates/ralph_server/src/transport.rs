@@ -1,2 +1,2 @@
-pub mod http;
-pub mod stdio;
+pub(crate) mod http;
+pub(crate) mod stdio;

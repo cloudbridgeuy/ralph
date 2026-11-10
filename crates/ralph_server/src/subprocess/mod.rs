@@ -7,8 +7,8 @@ mod groups;
 mod timed;
 
 pub(crate) use groups::Registered;
-pub use groups::{kill_registered_groups, register_group, unregister_group};
-pub use timed::{timed_output, TimedOutput};
+pub(crate) use groups::{kill_registered_groups, register_group, unregister_group};
+pub(crate) use timed::{timed_output, TimedOutput};
 
 pub fn kill_process_group(child: &mut Child) {
     signal_group(child);

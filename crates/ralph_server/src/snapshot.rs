@@ -47,7 +47,10 @@ pub fn stdout_of(command: &mut Command) -> io::Result<String> {
     }
 }
 
-pub fn run_diff(args: &[String], configure: impl FnOnce(&mut Command)) -> io::Result<String> {
+pub(crate) fn run_diff(
+    args: &[String],
+    configure: impl FnOnce(&mut Command),
+) -> io::Result<String> {
     let (program, rest) = args
         .split_first()
         .ok_or_else(|| io::Error::other("empty diff command"))?;
@@ -90,7 +93,7 @@ pub fn base_with(config: &Result<AppConfig, String>, origin_head: Option<&str>) 
     .branch
 }
 
-pub fn base_of(worktree: &Path) -> String {
+pub(crate) fn base_of(worktree: &Path) -> String {
     let config = AppConfig::load().map_err(|e| e.to_string());
     base_with(&config, git_line(worktree, &ORIGIN_HEAD_ARGS).as_deref())
 }

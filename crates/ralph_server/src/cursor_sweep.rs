@@ -32,7 +32,7 @@ fn stop_group(group: u32) {
     }
 }
 
-pub fn sweep_worker_server(projects_base: &Path, real_worktree: &Path) -> Vec<u32> {
+pub(crate) fn sweep_worker_server(projects_base: &Path, real_worktree: &Path) -> Vec<u32> {
     let Some(socket_dir) = socket_project_dir(projects_base, &real_worktree.to_string_lossy())
     else {
         return Vec::new();
