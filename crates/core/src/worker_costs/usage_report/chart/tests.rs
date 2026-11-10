@@ -345,3 +345,30 @@ fn daily_labels_all_carry_cents_and_thousands_separators() {
         assert!(svg.contains(label), "{label} in {svg}");
     }
 }
+
+fn text_y(svg: &str, content: &str) -> f64 {
+    svg.split("<text ")
+        .find(|element| element.contains(&format!(">{content}<")))
+        .map(|element| attr(element, "y").parse().unwrap_or(0.0))
+        .unwrap_or(0.0)
+}
+
+#[test]
+fn x_labels_stack_the_weekday_over_the_date_below_the_axis() {
+    let svg = daily_svg(&[day("2026-11-05", Some(3.2), None)], &HEADING);
+    let weekday = text_y(&svg, "Thu");
+    let date = text_y(&svg, "11-05");
+    let axis = text_y(&svg, "$0.00") + 4.0;
+    assert!(weekday > axis && date > weekday, "{axis} {weekday} {date}");
+    assert!(date < 420.0, "{date}");
+}
+
+#[test]
+fn every_labelled_day_names_its_weekday() {
+    let days = [
+        day("2026-11-08", Some(1.0), None),
+        day("2026-11-09", Some(1.0), None),
+    ];
+    let svg = daily_svg(&days, &HEADING);
+    assert!(svg.contains(">Sun<") && svg.contains(">Mon<"), "{svg}");
+}

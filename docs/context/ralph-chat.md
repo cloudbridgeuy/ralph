@@ -775,7 +775,7 @@ A codex worker appends the same kind of rows with `harness` `codex` and `session
 
 `ralph usage` reads `<config_dir>/usage.jsonl` and prints cost reports. It never writes the ledger, calls no model and costs $0. The core is `crates/core/src/worker_costs/usage_report/` (pure: parse, filter, group, text, SVG charts); the shell is `crates/ralph/src/usage_cmd.rs`. It shares its grouping with the `/workers costs` views.
 
-- Views: `ralph usage` or `ralph usage daily` (one row per local day, a trend line, a total row), `ralph usage by <kind|store|harness|model|ticket|run>`, and `ralph usage cache` (hit rate per model).
+- Views: `ralph usage` or `ralph usage daily` (one row per local day, each as `2026-11-05 Thu`, a trend line, a total row), `ralph usage by <kind|store|harness|model|ticket|run>`, and `ralph usage cache` (hit rate per model).
 - Money has two series. Reported dollars come from the harness (`cost_usd`). `est.` dollars are priced from tokens with the `ralph wire` table and `[wire.prices]` overrides. A group can show both: `$X + $Y est.`.
 - A total is a lower bound when some rows have no price. Text reads `+ no price`; a daily chart bar reads `$X*` with the legend `* = some rows have no price`; a bar chart value reads `+ no price` too. A group where nothing has a price reads `name: no price`, never `$0`.
 - Other states read `name: state`: `excluded` (codex, GUZ-1550: tokens count, dollars do not), `no data` (a cursor worker has no usage rows) and `no price`. A row with no model groups under `(model missing)`. A ticket of `unknown` is spend with no worker window: chat turns, naps and asks.
@@ -783,7 +783,7 @@ A codex worker appends the same kind of rows with `harness` `codex` and `session
 - Token columns: `in` counts only uncached input; cache reads and writes are separate (see `usage cache`). `out` is output tokens.
 - Filters (global, before or after the view): `--since` and `--until` (a local day or an RFC 3339 time; `--since` inclusive, `--until` exclusive), `--store`, `--harness`, `--model`, `--ticket`, `--kind`. Days are local days.
 - A line that is not JSON, or has a missing or unreadable `at`, is skipped and counted: `malformed lines skipped: N`.
-- Output: `--text` forces text. `--png <PATH>` renders the chart (daily bars, or horizontal bars for `by`) with the bundled resvg and prints `Wrote <PATH>`. With neither flag, a terminal that can draw images (the same detection as chat images) shows the chart inline; anything else gets text. The two flags conflict. `usage cache --png` is an error (`the cache view has no chart`, exit 1, no file); `usage cache` on a terminal prints text.
+- Output: `--text` forces text. `--png <PATH>` renders the chart (daily bars with the weekday over the date on the x axis, or horizontal bars for `by`) with the bundled resvg and prints `Wrote <PATH>`. With neither flag, a terminal that can draw images (the same detection as chat images) shows the chart inline; anything else gets text. The two flags conflict. `usage cache --png` is an error (`the cache view has no chart`, exit 1, no file); `usage cache` on a terminal prints text.
 - The legend `? = day with rows but no price` under the trend line appears only when the trend shows a `?`.
 - Not covered: the legacy per-store ledger. Keepalive `ping` rows are counted under `main`; whether pings pay off is GUZ-1549.
 

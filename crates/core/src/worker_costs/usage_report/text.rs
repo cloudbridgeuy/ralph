@@ -1,5 +1,5 @@
 use super::chart::{bars_svg, daily_svg, pad_days, Heading};
-use super::{daily, group_by, parse, Dim, Filter, Group, Report, NO_DATA};
+use super::{daily, group_by, parse, weekday, Dim, Filter, Group, Report, NO_DATA};
 use crate::wire::view::Pricing;
 use crate::worker_costs::tickets::parse_windows;
 use crate::worker_costs::{count, NO_USAGE};
@@ -109,11 +109,16 @@ fn daily_text(report: &Report) -> String {
         return table(report, title, tokens);
     }
     let days = pad_days(&report.groups);
-    let used: Vec<&Group> = days
+    let dated: Vec<Group> = days
         .iter()
         .filter(|day| day.metered > 0)
-        .chain([&report.total])
+        .map(|day| Group {
+            key: weekday(&day.key)
+                .map_or_else(|| day.key.clone(), |name| format!("{} {name}", day.key)),
+            ..day.clone()
+        })
         .collect();
+    let used: Vec<&Group> = dated.iter().chain([&report.total]).collect();
     let trend = sparkline(&days);
     let mut body = vec![format!("trend{GAP}{trend}")];
     if trend.contains(UNPRICED_MARK) {

@@ -1,4 +1,4 @@
-use super::{Group, EST, NO_DATA, NO_PRICE};
+use super::{weekday, Group, EST, NO_DATA, NO_PRICE};
 use crate::worker_costs::NO_USAGE;
 use chrono::{Duration, NaiveDate};
 
@@ -13,7 +13,9 @@ const DAILY_HEIGHT: f64 = 420.0;
 const PLOT_LEFT: f64 = 70.0;
 const PLOT_RIGHT: f64 = 870.0;
 const PLOT_TOP: f64 = 110.0;
-const PLOT_BOTTOM: f64 = 370.0;
+const PLOT_BOTTOM: f64 = 356.0;
+const WEEKDAY_DROP: f64 = 15.0;
+const DATE_DROP: f64 = 28.0;
 const BAR_FILL_RATIO: f64 = 0.8;
 const MAX_X_LABELS: usize = 16;
 const BAR_LABEL_X: f64 = 220.0;
@@ -229,9 +231,18 @@ pub fn daily_svg(days: &[Group], heading: &Heading) -> String {
             );
         }
         if index % stride == 0 {
+            let centre = x + width / 2.0;
+            if let Some(name) = weekday(&day.key) {
+                svg += &text(
+                    centre,
+                    PLOT_BOTTOM + WEEKDAY_DROP,
+                    Style(MUTED, 10, "middle"),
+                    name,
+                );
+            }
             svg += &text(
-                x + width / 2.0,
-                PLOT_BOTTOM + 16.0,
+                centre,
+                PLOT_BOTTOM + DATE_DROP,
                 Style(MUTED, 10, "middle"),
                 x_label(&day.key),
             );

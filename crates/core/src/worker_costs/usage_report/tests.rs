@@ -302,3 +302,18 @@ fn a_mixed_group_line_keeps_the_known_dollars_and_flags_the_excluded_rows() {
         "{line}"
     );
 }
+
+#[test]
+fn a_local_day_names_its_english_weekday() {
+    assert_eq!(weekday("2026-11-05"), Some("Thu"));
+    assert_eq!(weekday("2026-11-08"), Some("Sun"));
+    assert_eq!(weekday("2026-11-09"), Some("Mon"));
+    assert_eq!(weekday("2026-11-10"), Some("Tue"));
+}
+
+#[test]
+fn text_that_is_not_a_day_has_no_weekday() {
+    assert_eq!(weekday("total"), None);
+    assert_eq!(weekday("2026-13-40"), None);
+    assert_eq!(weekday(""), None);
+}

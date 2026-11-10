@@ -188,7 +188,7 @@ Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`). It only 
 
 | Option | Meaning |
 |--------|---------|
-| `daily` (default) | One row per local day, a trend line and a total |
+| `daily` (default) | One row per local day (date and weekday), a trend line and a total |
 | `by <DIM>` | Group by kind, store, harness, model, ticket or run |
 | `cache` | Cache hit rate per model; has no chart |
 | `--since`, `--until` | A local day (`YYYY-MM-DD`) or an RFC 3339 time. `--since` is inclusive, `--until` is exclusive |

@@ -372,3 +372,32 @@ fn two_stores_are_read_and_both_their_tickets_join() {
     );
     assert!(text.contains("GUZ-1") && text.contains("GUZ-2"), "{text}");
 }
+
+#[test]
+fn daily_rows_carry_the_weekday_after_the_date() {
+    let text = shown(
+        View::Daily,
+        &[
+            row("ask", "2026-11-05T10:00:00Z"),
+            with(
+                with(row("ask", "2026-11-09T10:00:00Z"), "model", Value::Null),
+                "cost_usd",
+                Value::Null,
+            ),
+        ],
+        &[],
+    );
+    assert!(text.contains("2026-11-05 Thu  "), "{text}");
+    assert!(text.contains("2026-11-09 Mon: no price"), "{text}");
+    assert!(text.contains("\ntotal  "), "{text}");
+}
+
+#[test]
+fn other_views_keep_plain_keys() {
+    let text = shown(
+        View::By(Dim::Kind),
+        &[row("ask", "2026-11-05T10:00:00Z")],
+        &[],
+    );
+    assert!(!text.contains("Thu"), "{text}");
+}

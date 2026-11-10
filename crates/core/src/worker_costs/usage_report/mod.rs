@@ -9,7 +9,7 @@ use crate::chat_process::UsageLine;
 use crate::wire::price::PriceTable;
 use crate::wire::view::Pricing;
 use crate::worker::HarnessId;
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 
@@ -135,6 +135,15 @@ pub fn parse_bound<Tz: TimeZone>(text: &str, zone: &Tz) -> Option<DateTime<Utc>>
     zone.from_local_datetime(&midnight)
         .earliest()
         .map(|at| at.with_timezone(&Utc))
+}
+
+const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+pub fn weekday(day: &str) -> Option<&'static str> {
+    let date = NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
+    WEEKDAYS
+        .get(date.weekday().num_days_from_monday() as usize)
+        .copied()
 }
 
 pub fn is_excluded(line: &UsageLine) -> bool {
