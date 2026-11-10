@@ -1,4 +1,4 @@
-use crate::cli::{ThreadArgs, ThreadCommand, NAP_TIMEOUT_SECS};
+use crate::cli::{ThreadArgs, ThreadCommand, MERGE_TIMEOUT_SECS};
 use crate::schedule_store::ScheduleStore;
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
@@ -121,7 +121,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
                 kind: CallSite::Merge,
                 store: &dir,
                 run: None,
-                timeout: NAP_TIMEOUT_SECS,
+                timeout: MERGE_TIMEOUT_SECS,
             };
             let running = running_ids(&main, &name);
             let message = merge_thread(&main, &name, &running, &mut |prompt: &str| {

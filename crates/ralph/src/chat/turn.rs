@@ -29,7 +29,7 @@ use ralph_core::chat_process::ResetReason;
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
-use ralph_server::chat::memory::{usage_path, Store};
+use ralph_server::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use ralph_server::ledger;
 use ralph_server::private_file::write_private;
 use ralph_server::subprocess::spawn_detached;
@@ -466,14 +466,17 @@ impl Turn<'_> {
 
     fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
         let waited_from = Instant::now();
-        let loaded = self.store.load_after_nap(|| {
+        let loaded = self.store.load_after_nap(NAP_WAIT_LIMIT, || {
             let mut spinner = Spinner::with_session_context(0, chat_session_info())
                 .with_color(self.theme_config.ui().spinner);
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
             spinner
         });
         self.note_timing(|held| held.with_memory_wait(waited_from.elapsed()));
-        let (mut entries, tree) = loaded?;
+        let (mut entries, tree, wait) = loaded?;
+        if wait == NapWait::Capped {
+            self.warn("chat memory is still napping; this session starts with older summaries");
+        }
         if let Some(len) = pre_log_len {
             entries.truncate(len);
         }
