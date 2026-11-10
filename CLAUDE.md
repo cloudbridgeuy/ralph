@@ -22,7 +22,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `ralph ask` - single-shot prompt; stores only a usage row ([details](docs/context/ralph-ask.md))
 - `ralph wire` - local proxy that records harness-to-provider traffic; `wire ls`/`wire show`/`wire diff`/`wire sessions` inspect it ([details](docs/context/ralph-wire.md))
 - `ralph config <check|show> [--store <DIR>]` - check `config.toml` for errors, or print the merged config with each value's source ([CLI reference](docs/cli-reference.md#ralph-config))
-- `ralph worker verify <cursor|codex|claude-headless|opencode|claude> [--live]` - check an installed worker agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))
+- `ralph worker verify <cursor|codex|claude|opencode|claude-tmux> [--live]` - check an installed worker agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))
 - `ralph upgrade [--check] [--force]` - install the latest GitHub release over the running binary ([details](docs/context/release-process.md#upgrade-an-install))
 - `ralph themes` - list syntax highlighting themes ([CLI reference](docs/cli-reference.md))
 - `ralph licenses` - print the licence notices of the bundled syntax grammars ([CLI reference](docs/cli-reference.md#ralph-licenses))
