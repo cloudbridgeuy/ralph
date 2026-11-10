@@ -46,7 +46,12 @@ fn asked_ids(batch: &str) -> Vec<usize> {
 fn reply_for(ids: &[usize], rule: impl Fn(usize) -> bool) -> String {
     let rows: Vec<String> = ids
         .iter()
-        .map(|n| format!("{{\"n\":{n},\"rule\":{},\"approval\":false}}", rule(*n)))
+        .map(|n| {
+            format!(
+                "{{\"n\":{n},\"rule\":{},\"decision\":false,\"approval\":false}}",
+                rule(*n)
+            )
+        })
         .collect();
     format!("[{}]", rows.join(","))
 }
@@ -454,4 +459,33 @@ fn an_entry_skipped_in_an_earlier_pass_never_rides_as_context_in_a_later_one() {
     let s = state(&dir);
     assert_eq!(s.tags.keys().copied().collect::<Vec<_>>(), [1, 2, 3, 4]);
     assert!(!s.failures.contains_key(&1));
+}
+
+#[test]
+fn a_decision_the_model_gives_an_assistant_entry_is_stored_false_and_a_user_entry_keeps_it() {
+    let (dir, store) = store_with(2);
+    let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
+    pass(&store, &mut none).unwrap();
+    grow(&dir, 3, 2);
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(dir.path().join("log.jsonl"))
+        .unwrap();
+    writeln!(
+        file,
+        "{{\"role\":\"user\",\"at\":\"2026-11-09T00:00:00Z\",\"text\":\"use sqlite\"}}"
+    )
+    .unwrap();
+    let mut ask = |batch: &str| {
+        let rows: Vec<String> = asked_ids(batch)
+            .iter()
+            .map(|n| format!("{{\"n\":{n},\"rule\":false,\"decision\":true,\"approval\":false}}"))
+            .collect();
+        ok(format!("[{}]", rows.join(",")))
+    };
+    pass(&store, &mut ask).unwrap();
+    let s = state(&dir);
+    let decision = |n: usize| s.tags.get(&n).map(|f| f.decision);
+    assert_eq!(decision(2), Some(false));
+    assert_eq!(decision(3), Some(true));
 }

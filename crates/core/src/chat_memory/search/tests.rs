@@ -501,6 +501,23 @@ fn tag_filter_keeps_only_entries_with_the_tag() {
 }
 
 #[test]
+fn a_decision_tag_matches_only_user_entries_and_other_tags_match_any_role() {
+    let entries = [
+        user(0, "ship it"),
+        timed(Role::Assistant, &at(1), "ship it"),
+        timed(Role::Worker, &at(2), "ship it"),
+    ];
+    let found = |tag: &str| {
+        let out = run_tagged(&entries, json!({"query": "ship", "tag": tag}), &[0, 1, 2]).unwrap();
+        let mut found = ids(&out);
+        found.sort();
+        found
+    };
+    assert_eq!(found("decision"), vec![0]);
+    assert_eq!(found("rule"), vec![0, 1, 2]);
+}
+
+#[test]
 fn tag_filter_without_tagged_entries_finds_nothing() {
     let entries = [user(0, "ship it")];
     let out = run_tagged(&entries, json!({"query": "ship", "tag": "approval"}), &[]).unwrap();
@@ -510,7 +527,7 @@ fn tag_filter_without_tagged_entries_finds_nothing() {
 #[test]
 fn tag_must_be_a_known_label() {
     let err = parse_search_args(&json!({"query": "ship", "tag": "risk"})).unwrap_err();
-    assert!(err.contains("rule or approval"), "{err}");
+    assert!(err.contains("rule, decision or approval"), "{err}");
 }
 
 #[test]
@@ -538,7 +555,8 @@ fn history_search_passes_the_tag_and_other_tools_refuse_it() {
 }
 
 #[test]
-fn decision_is_not_a_tag_filter() {
-    let err = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap_err();
-    assert!(err.contains("rule or approval"), "{err}");
+fn decision_is_a_tag_filter() {
+    let args = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap();
+    let rule = parse_search_args(&json!({"query": "ship", "tag": "rule"})).unwrap();
+    assert_ne!(args.fingerprint, rule.fingerprint);
 }

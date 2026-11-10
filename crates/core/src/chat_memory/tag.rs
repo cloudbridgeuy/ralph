@@ -1,13 +1,13 @@
 //! Pure side of entry tagging: the prompt, batches, reply parsing and the
 //! `tags.jsonl` rows. The shell appends the rows and runs the model.
 
-use super::Entry;
+use super::{Entry, Role};
 use crate::retry::{classify, FailureInput, FailureKind};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const TAG_PROMPT: &str = include_str!("tag_prompt.txt");
-pub const PROMPT_VERSION: &str = "v1";
+pub const PROMPT_VERSION: &str = "v2";
 pub const TAG_MODEL: &str = "claude-haiku-5-5";
 pub const TAGS_FILE: &str = "tags.jsonl";
 /// Most entries one pass tags: a backstop against a huge backlog.
@@ -22,13 +22,22 @@ const SKIP_AFTER_FAILURES: u32 = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Flags {
     pub rule: bool,
+    pub decision: bool,
     pub approval: bool,
 }
 
-/// One of the two labels a search can filter on.
+pub fn restrict_decision(role: Role, flags: Flags) -> Flags {
+    Flags {
+        decision: flags.decision && role == Role::User,
+        ..flags
+    }
+}
+
+/// One of the three labels a search can filter on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Label {
     Rule,
+    Decision,
     Approval,
 }
 
@@ -36,14 +45,18 @@ impl Label {
     pub fn parse(s: &str) -> Result<Label, String> {
         match s.trim() {
             "rule" => Ok(Label::Rule),
+            "decision" => Ok(Label::Decision),
             "approval" => Ok(Label::Approval),
-            other => Err(format!("'{other}' is not a tag. Use rule or approval.")),
+            other => Err(format!(
+                "'{other}' is not a tag. Use rule, decision or approval."
+            )),
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Label::Rule => "rule",
+            Label::Decision => "decision",
             Label::Approval => "approval",
         }
     }
@@ -51,12 +64,14 @@ impl Label {
     fn set_in(self, flags: Flags) -> bool {
         match self {
             Label::Rule => flags.rule,
+            Label::Decision => flags.decision,
             Label::Approval => flags.approval,
         }
     }
 }
 
-/// Ids of the entries whose latest tag row carries `label`.
+/// Ids of the entries whose latest tag row carries `label`. The search joins
+/// them to entries and drops a `decision` hit on a non-user entry (`passes`).
 pub fn ids_with(state: &TagState, label: Label) -> BTreeSet<usize> {
     state
         .tags
@@ -100,6 +115,7 @@ pub fn encode_row(row: &TagRow) -> Result<String, String> {
     let mut value = json!({"v": ROW_VERSION, "n": row.n});
     if let (Some(map), RowKind::Tagged(flags)) = (value.as_object_mut(), &row.kind) {
         map.insert("rule".into(), flags.rule.into());
+        map.insert("decision".into(), flags.decision.into());
         map.insert("approval".into(), flags.approval.into());
     }
     if let Some(map) = value.as_object_mut() {
@@ -152,6 +168,7 @@ fn flags_of(value: &Value) -> Option<Flags> {
     let flag = |key: &str| value.get(key).and_then(Value::as_bool);
     Some(Flags {
         rule: flag("rule")?,
+        decision: flag("decision").unwrap_or(false),
         approval: flag("approval")?,
     })
 }
@@ -384,7 +401,9 @@ pub fn parse_reply(reply: &str, asked: &[usize]) -> Parsed {
     let mut tagged: Vec<(usize, Flags)> = Vec::new();
     for value in &rows {
         let n = value.get("n").and_then(Value::as_u64).map(|n| n as usize);
-        if let (Some(n), Some(flags)) = (n, flags_of(value)) {
+        let flags =
+            flags_of(value).filter(|_| value.get("decision").is_some_and(Value::is_boolean));
+        if let (Some(n), Some(flags)) = (n, flags) {
             if asked.contains(&n) && !tagged.iter().any(|(seen, _)| *seen == n) {
                 tagged.push((n, flags));
             }

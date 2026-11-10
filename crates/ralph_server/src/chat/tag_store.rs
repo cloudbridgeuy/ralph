@@ -4,9 +4,9 @@
 use crate::private_file::check_path;
 use ralph_core::chat_memory::{
     after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
-    failure_kind, ids_with, isolated, next_size, parse_log, parse_reply, retake, take_confirmed,
-    untagged, CallReply, Entry, PassHealth, RowKind, SearchRequest, TagRow, TagState, Verdict,
-    BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
+    failure_kind, ids_with, isolated, next_size, parse_log, parse_reply, restrict_decision, retake,
+    take_confirmed, untagged, CallReply, Entry, PassHealth, Role, RowKind, SearchRequest, TagRow,
+    TagState, Verdict, BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -241,7 +241,11 @@ impl Round<'_> {
         let rows = parsed
             .tagged
             .iter()
-            .map(|(n, flags)| encode_row(&self.row(*n, RowKind::Tagged(*flags))))
+            .map(|(n, flags)| {
+                let role = self.entries.get(*n).map_or(Role::Assistant, |e| e.role);
+                let flags = restrict_decision(role, *flags);
+                encode_row(&self.row(*n, RowKind::Tagged(flags)))
+            })
             .collect::<Result<String, String>>()
             .map_err(io::Error::other)?;
         if !rows.is_empty() {
