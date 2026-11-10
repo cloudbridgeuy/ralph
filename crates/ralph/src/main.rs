@@ -71,6 +71,7 @@ use warn::{warn, warn_if_err};
 
 fn main() -> ExitCode {
     ralph_server::warn::register_sink(warn::print_warning);
+    ralph_server::warn::register_notice_sink(|m| warn::notice(m));
     let cli = Cli::parse();
 
     let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {

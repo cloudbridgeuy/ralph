@@ -28,6 +28,19 @@ pub fn warn(message: impl Display) {
     emit(&message.to_string(), sink, &mut io::stderr()).ok();
 }
 
+static NOTICE_SINK: OnceLock<WarnSink> = OnceLock::new();
+
+pub fn register_notice_sink(sink: WarnSink) {
+    let _ = NOTICE_SINK.set(sink);
+}
+
+pub fn notice(message: impl Display) {
+    match NOTICE_SINK.get() {
+        Some(sink) => sink(&message.to_string()),
+        None => writeln!(io::stderr(), "{message}").unwrap_or(()),
+    }
+}
+
 static SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 fn first_sighting(seen: &mut BTreeSet<String>, key: &str) -> bool {
