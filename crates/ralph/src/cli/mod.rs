@@ -8,10 +8,15 @@ use ralph_core::chat_thread::ThreadName;
 use ralph_core::inbox_post::validate_source;
 use std::path::PathBuf;
 
+mod usage;
+pub use usage::{UsageArgs, UsageCommand};
+
 #[cfg(test)]
 mod tests;
 
-pub const NAP_TIMEOUT_SECS: u64 = 600;
+pub const NAP_TIMEOUT_SECS: u64 = 240;
+pub const MERGE_TIMEOUT_SECS: u64 = 600;
+pub const TAG_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Parser, Debug)]
 #[command(author, version = crate::version::current())]
@@ -99,6 +104,12 @@ verifies its .sha256, and atomically replaces the running binary. Refuses on a d
 from source) unless --force. Running chats and workers keep the old build until they restart."
     )]
     Upgrade(UpgradeArgs),
+
+    #[command(
+        about = "Report what ralph spent: daily, by kind, store, harness, model, ticket or run, and cache hits.",
+        long_about = "Reads the global usage ledger (read-only) and prints a text report. Bare `ralph usage` is the daily view."
+    )]
+    Usage(UsageArgs),
 
     #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
@@ -703,7 +714,7 @@ pub struct ChatTagArgs {
     #[arg(long, value_name = "ID")]
     pub run: Option<String>,
 
-    #[arg(long, default_value_t = NAP_TIMEOUT_SECS)]
+    #[arg(long, default_value_t = TAG_TIMEOUT_SECS)]
     pub timeout: u64,
 }
 

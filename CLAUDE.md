@@ -5,8 +5,8 @@
 ### Installation
 
 ```bash
-cargo install --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
-cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
+cargo install --locked --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
+cargo install --locked --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
 ```
 
 ## What ralph Is
@@ -20,6 +20,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `@<id> <text>` - in a chat, send `<text>` to worker `<id>` as written, with no model turn and no cost ([details](docs/context/ralph-chat.md#id-text))
 - `ralph inbox post --store <DIR> --from <SOURCE> <FILE|->` - deliver a text report from an outside program to a chat inbox ([details](docs/context/ralph-chat.md#external-reports))
 - `ralph ask` - single-shot prompt; stores only a usage row ([details](docs/context/ralph-ask.md))
+- `ralph usage [daily|by <DIM>|cache]` - read-only cost reports from the usage ledger, as text or a PNG chart ([details](docs/context/ralph-chat.md#ralph-usage))
 - `ralph wire` - local proxy that records harness-to-provider traffic; `wire ls`/`wire show`/`wire diff`/`wire sessions` inspect it ([details](docs/context/ralph-wire.md))
 - `ralph config <check|show> [--store <DIR>]` - check `config.toml` for errors, or print the merged config with each value's source ([CLI reference](docs/cli-reference.md#ralph-config))
 - `ralph worker verify <cursor|codex|claude|opencode|claude-tmux> [--live]` - check an installed worker agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))

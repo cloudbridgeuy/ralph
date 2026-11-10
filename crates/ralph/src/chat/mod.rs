@@ -23,7 +23,7 @@ mod schedule_worker;
 pub(crate) use ralph_server::chat::tag_store;
 mod send_it;
 mod sent;
-mod session;
+pub(crate) mod session;
 pub(crate) mod socket;
 mod stall;
 mod statusbar;
@@ -291,6 +291,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         last_turn_end: Arc::clone(&last_turn_end),
         identity: Arc::default(),
         last_cost_usd: Mutex::new(None),
+        timing: Mutex::default(),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),

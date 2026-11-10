@@ -32,6 +32,7 @@ mod theme_slots;
 mod tool_theme;
 mod ui_theme;
 mod upgrade;
+mod usage_cmd;
 
 pub mod stream_processor;
 pub mod subprocess;
@@ -81,6 +82,7 @@ fn main() -> ExitCode {
         Commands::Config(args) => execute_config(args),
         Commands::Worker(args) => execute_worker(args),
         Commands::Upgrade(args) => upgrade::run(args),
+        Commands::Usage(args) => usage_cmd::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::ChatTag(args) => execute_chat_tag(args),
@@ -390,8 +392,8 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
     ralph_server::config::set_store_layer(&args.store);
     let store = ralph_server::chat::memory::Store::new(args.store.clone());
-    store.nap(|prompt| {
-        run_curator(
+    store.nap(args.run.as_deref(), |prompt| {
+        run_curator_detailed(
             prompt,
             &Curator {
                 kind: ralph_core::chat_memory::CallSite::Nap,
@@ -428,7 +430,7 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
     };
     let command = tag_command();
     let pass = store.run_pass(&now, &mut |batch| {
-        let run = run_memory_command(&command, batch, &curator)?;
+        let run = run_memory_command(&command, batch, &curator).map_err(|e| e.message)?;
         ralph_core::chat_memory::tag_reply(
             run.failure,
             signal::is_terminated(),
@@ -493,13 +495,26 @@ fn curator_rows(
 }
 
 pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {
+    run_curator_detailed(prompt, curator).map_err(|e| e.message)
+}
+
+fn run_curator_detailed(
+    prompt: &str,
+    curator: &Curator,
+) -> Result<String, ralph_core::chat_memory::CuratorError> {
     let config_dir = ralph_server::config::AppConfig::load()
         .unwrap_or_default()
         .claude
         .config_dir;
     let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
     let run = run_memory_command(&command, prompt, curator)?;
-    ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref())
+    ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref()).map_err(|message| {
+        ralph_core::chat_memory::CuratorError {
+            message,
+            timed_out: false,
+            exit: Some(run.code),
+        }
+    })
 }
 
 /// What a finished memory call left behind. `failure` is how the final
@@ -513,7 +528,11 @@ struct MemoryRun {
 
 /// Runs one memory call. An error means the call never finished (timeout or a
 /// spawn error); the exit code and reply text are left to the caller.
-fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<MemoryRun, String> {
+fn run_memory_command(
+    command: &str,
+    prompt: &str,
+    curator: &Curator,
+) -> Result<MemoryRun, ralph_core::chat_memory::CuratorError> {
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     let stdin = invoke::prompt_stdin(prompt);
     let outcome = backoff::retry_on_outage(
@@ -553,7 +572,11 @@ fn run_memory_command(command: &str, prompt: &str, curator: &Curator) -> Result<
         );
     }
     let failure = backoff::final_tag_failure_kind(&outcome);
-    let result = outcome.map_err(|e| e.to_string())?;
+    let result = outcome.map_err(|e| ralph_core::chat_memory::CuratorError {
+        timed_out: matches!(e, subprocess::SubprocessError::Timeout { .. }),
+        exit: e.partial_result().map(|partial| partial.exit_code),
+        message: e.to_string(),
+    })?;
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
     Ok(MemoryRun {
         code: result.exit_code,
