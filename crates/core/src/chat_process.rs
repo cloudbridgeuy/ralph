@@ -49,6 +49,7 @@ pub struct UsageLine {
     pub cache_write_5m: Option<u64>,
     pub cache_write_1h: Option<u64>,
     pub long_prompt: Option<bool>,
+    pub per_thread_usage: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

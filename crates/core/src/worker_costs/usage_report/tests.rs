@@ -242,6 +242,25 @@ fn a_codex_gpt_6_1_sol_row_stays_excluded_from_dollars() {
 }
 
 #[test]
+fn a_marked_codex_row_joins_the_dollar_totals() {
+    let at = "2026-11-05T10:00:00Z";
+    let marked = with(
+        with(
+            with(worker("w1", at), "harness", json!("codex")),
+            "model",
+            json!("gpt-6.1-sol"),
+        ),
+        "per_thread_usage",
+        json!(true),
+    );
+    let report = grouped(Dim::Model, &[marked], &[], &Filter::default());
+    let group = &report.groups[0];
+    assert_eq!(group.excluded, 0);
+    assert!(known(group.est).is_some());
+    assert_ne!(group.line(), "gpt-6.1-sol: excluded");
+}
+
+#[test]
 fn a_cursor_with_no_rows_shows_no_data_never_zero() {
     let workers = [spawn("c1", "2026-11-05T09:00:00Z", "GUZ-2", "cursor")];
     let report = grouped(Dim::Harness, &[], &workers, &Filter::default());
