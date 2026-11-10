@@ -1,12 +1,24 @@
 use super::*;
 use crate::chat_memory::fixtures::texted;
-use crate::chat_memory::Entry;
+use crate::chat_memory::{Entry, Role};
 use crate::retry::FailureKind;
 
 const MODEL: &str = "claude-haiku-5-5";
 
 fn flags(rule: bool, approval: bool) -> Flags {
-    Flags { rule, approval }
+    Flags {
+        rule,
+        decision: false,
+        approval,
+    }
+}
+
+fn decided(rule: bool, decision: bool, approval: bool) -> Flags {
+    Flags {
+        rule,
+        decision,
+        approval,
+    }
 }
 
 fn state(text: &str) -> TagState {
@@ -42,6 +54,7 @@ fn tagged_row_round_trips() {
     assert_eq!(value["v"], 1);
     assert_eq!(value["n"], 3);
     assert_eq!(value["rule"], true);
+    assert_eq!(value["decision"], false);
     assert_eq!(value["approval"], true);
     assert_eq!(value["model"], MODEL);
     assert_eq!(value["prompt"], PROMPT_VERSION);
@@ -114,21 +127,21 @@ fn first_entry_has_no_context() {
 
 #[test]
 fn reply_parses_with_fences_and_prose_around_the_array() {
-    let reply = "Here:\n```json\n[{\"n\":4,\"rule\":true,\"approval\":false},{\"n\":5,\"rule\":false,\"approval\":true}]\n```";
+    let reply = "Here:\n```json\n[{\"n\":4,\"rule\":true,\"decision\":false,\"approval\":false},{\"n\":5,\"rule\":false,\"decision\":true,\"approval\":true}]\n```";
     let parsed = parse_reply(reply, &[4, 5]);
     assert_eq!(
         parsed.tagged,
-        vec![(4, flags(true, false)), (5, flags(false, true))]
+        vec![(4, flags(true, false)), (5, decided(false, true, true))]
     );
     assert!(parsed.missing.is_empty());
 }
 
 #[test]
 fn reply_keeps_valid_rows_and_reports_missing_wrong_and_malformed_ones() {
-    let reply = "[{\"n\":4,\"rule\":true,\"approval\":false},{\"n\":5,\"rule\":true},{\"n\":99,\"rule\":true,\"approval\":true}]";
-    let parsed = parse_reply(reply, &[4, 5, 6]);
+    let reply = "[{\"n\":4,\"rule\":true,\"decision\":false,\"approval\":false},{\"n\":5,\"rule\":true,\"approval\":false},{\"n\":6,\"rule\":true,\"decision\":false},{\"n\":99,\"rule\":true,\"decision\":false,\"approval\":true}]";
+    let parsed = parse_reply(reply, &[4, 5, 6, 7]);
     assert_eq!(parsed.tagged, vec![(4, flags(true, false))]);
-    assert_eq!(parsed.missing, vec![5, 6]);
+    assert_eq!(parsed.missing, vec![5, 6, 7]);
 }
 
 #[test]
@@ -140,7 +153,7 @@ fn reply_that_is_not_an_array_misses_every_entry() {
 
 #[test]
 fn duplicate_reply_rows_count_once() {
-    let one = "{\"n\":4,\"rule\":true,\"approval\":false}";
+    let one = "{\"n\":4,\"rule\":true,\"decision\":false,\"approval\":false}";
     let parsed = parse_reply(&format!("[{one},{one}]"), &[4]);
     assert_eq!(parsed.tagged.len(), 1);
 }
@@ -188,20 +201,23 @@ fn prompt_asks_two_labels_only() {
 fn labels_parse_and_select_flagged_ids() {
     assert_eq!(Label::parse("rule"), Ok(Label::Rule));
     assert_eq!(Label::parse(" approval "), Ok(Label::Approval));
+    assert_eq!(Label::parse("decision"), Ok(Label::Decision));
     assert!(Label::parse("risk")
         .unwrap_err()
-        .contains("rule or approval"));
+        .contains("Use rule, decision or approval."));
     let text = [
         row(3, &RowKind::Tagged(flags(true, false))),
         row(4, &RowKind::Tagged(flags(false, true))),
         row(5, &RowKind::Tagged(flags(false, false))),
         row(6, &RowKind::Failed),
+        row(7, &RowKind::Tagged(decided(false, true, false))),
     ]
     .concat();
     let state = state(&text);
     let ids = |label| ids_with(&state, label).into_iter().collect::<Vec<_>>();
     assert_eq!(ids(Label::Rule), vec![3]);
     assert_eq!(ids(Label::Approval), vec![4]);
+    assert_eq!(ids(Label::Decision), vec![7]);
 }
 
 #[test]
@@ -351,28 +367,65 @@ fn excluded_entries_never_ride_as_context() {
 }
 
 #[test]
-fn decision_is_not_a_label() {
-    assert!(Label::parse("decision").is_err());
-    assert!(!TAG_PROMPT.contains("decision"));
-    let line = row(3, &RowKind::Tagged(flags(true, true)));
-    assert!(!line.contains("decision"), "{line}");
+fn a_decision_row_encodes_and_decodes_with_its_flag() {
+    let line = row(3, &RowKind::Tagged(decided(false, true, false)));
+    assert!(line.contains("\"decision\":true"), "{line}");
+    assert_eq!(
+        state(&line).tags.get(&3).copied(),
+        Some(decided(false, true, false))
+    );
 }
 
 #[test]
-fn reply_with_only_rule_and_approval_parses_and_a_decision_key_is_ignored() {
-    let reply = "[{\"n\":4,\"rule\":true,\"approval\":false},{\"n\":5,\"rule\":false,\"decision\":true,\"approval\":true}]";
-    let parsed = parse_reply(reply, &[4, 5]);
-    assert_eq!(parsed.tagged.len(), 2);
-    assert!(parsed.tagged[0].1.rule && !parsed.tagged[0].1.approval);
-    assert!(!parsed.tagged[1].1.rule && parsed.tagged[1].1.approval);
-    assert!(parsed.missing.is_empty());
+fn a_reply_row_without_a_decision_key_is_malformed() {
+    let reply = "[{\"n\":4,\"rule\":true,\"approval\":false}]";
+    let parsed = parse_reply(reply, &[4]);
+    assert!(parsed.tagged.is_empty());
+    assert_eq!(parsed.missing, vec![4]);
 }
 
 #[test]
-fn an_old_row_with_a_decision_key_decodes_without_it() {
-    let old = r#"{"v":1,"n":4,"rule":true,"decision":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
+fn an_old_row_without_a_decision_key_decodes_with_decision_false() {
+    let old = r#"{"v":1,"n":4,"rule":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
     let s = state(&format!("{old}\n"));
     assert_eq!(s.tags.get(&4).copied(), Some(flags(true, false)));
+}
+
+#[test]
+fn an_old_row_with_a_decision_key_keeps_it() {
+    let old = r#"{"v":1,"n":4,"rule":true,"decision":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
+    let s = state(&format!("{old}\n"));
+    assert_eq!(s.tags.get(&4).copied(), Some(decided(true, true, false)));
+}
+
+#[test]
+fn a_prompt_version_change_does_not_retag_entries_that_already_have_a_row() {
+    let entries = texted(4, |i| format!("m{i}"));
+    let old = |n: usize| {
+        format!(
+            "{{\"v\":1,\"n\":{n},\"rule\":false,\"approval\":false,\"model\":\"m\",\"prompt\":\"v1\",\"at\":\"t\"}}\n"
+        )
+    };
+    let text = format!(
+        "{}{}{}{}{}",
+        encode_start(0, "t").unwrap(),
+        old(0),
+        old(1),
+        old(2),
+        old(3)
+    );
+    assert!(untagged(&entries, &state(&text)).is_empty());
+}
+
+#[test]
+fn only_a_user_entry_may_keep_the_decision_flag() {
+    let all = decided(true, true, true);
+    assert_eq!(restrict_decision(Role::User, all), all);
+    for role in [Role::Assistant, Role::Worker] {
+        assert_eq!(restrict_decision(role, all), decided(true, false, true));
+    }
+    let none = decided(false, false, false);
+    assert_eq!(restrict_decision(Role::Worker, none), none);
 }
 
 #[test]

@@ -36,10 +36,10 @@ pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search, SearchRequest};
 pub use tag::{
     after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
-    failure_kind, ids_with, isolated, next_size, parse_reply, retake, tag_failure_kind, tag_plan,
-    tag_reply, take_confirmed, untagged, CallReply, Label, PassHealth, RowKind, TagPlan, TagRow,
-    TagState, Verdict, BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
-    TAG_PROMPT,
+    failure_kind, ids_with, isolated, next_size, parse_reply, restrict_decision, retake,
+    tag_failure_kind, tag_plan, tag_reply, take_confirmed, untagged, CallReply, Label, PassHealth,
+    RowKind, TagPlan, TagRow, TagState, Verdict, BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION,
+    TAGS_FILE, TAG_MODEL, TAG_PROMPT,
 };
 pub use tools::{
     finish_call, handle_request, history_tool, parse_tool_call, tool_definitions, MemoryCall,

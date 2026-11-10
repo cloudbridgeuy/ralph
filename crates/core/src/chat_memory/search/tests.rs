@@ -510,7 +510,7 @@ fn tag_filter_without_tagged_entries_finds_nothing() {
 #[test]
 fn tag_must_be_a_known_label() {
     let err = parse_search_args(&json!({"query": "ship", "tag": "risk"})).unwrap_err();
-    assert!(err.contains("rule or approval"), "{err}");
+    assert!(err.contains("rule, decision or approval"), "{err}");
 }
 
 #[test]
@@ -538,7 +538,8 @@ fn history_search_passes_the_tag_and_other_tools_refuse_it() {
 }
 
 #[test]
-fn decision_is_not_a_tag_filter() {
-    let err = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap_err();
-    assert!(err.contains("rule or approval"), "{err}");
+fn decision_is_a_tag_filter() {
+    let args = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap();
+    let rule = parse_search_args(&json!({"query": "ship", "tag": "rule"})).unwrap();
+    assert_ne!(args.fingerprint, rule.fingerprint);
 }
