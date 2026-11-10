@@ -20,6 +20,7 @@ pub mod image;
 mod link;
 pub mod mermaid;
 pub mod mermaid_picture;
+pub mod svg_picture;
 pub mod text;
 pub mod tool_renderers;
 pub mod utils;

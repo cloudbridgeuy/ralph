@@ -1,6 +1,7 @@
 use super::*;
 use crate::wire::price::PriceOverride;
 use crate::wire::provider::{provider, ProviderId};
+use crate::worker_costs::window::instant;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -371,14 +372,14 @@ fn a_window_keeps_only_rows_at_or_after_its_start() {
 }
 
 #[test]
-fn a_row_with_an_unreadable_time_is_in_all_time_only() {
+fn a_row_with_an_unreadable_time_is_skipped_as_malformed() {
     let usage = [at(with_kind("ask"), "last tuesday")];
     for view in [View::Role, View::Harness, View::Ticket] {
         assert_eq!(
             view_since(view, since("2026-11-06T00:00:00Z"), &usage, &[]),
             NO_USAGE
         );
-        assert_ne!(view_since(view, None, &usage, &[]), NO_USAGE);
+        assert_eq!(view_since(view, None, &usage, &[]), NO_USAGE);
     }
 }
 
@@ -387,7 +388,7 @@ fn the_harness_and_model_view_follows_the_window() {
     let usage = [
         at(worker("w1", "x", "claude-opus-5-5"), "2026-11-01T10:00:00Z"),
         at(worker("w2", "x", "claude-opus-5-5"), "2026-11-06T10:00:00Z"),
-        at(worker("w3", "x", "claude-opus-5-5"), "not a time"),
+        at(worker("w3", "x", "claude-opus-5-5"), "2026-11-02T10:00:00Z"),
     ];
     let windowed = view_since(
         View::HarnessModel,
@@ -537,4 +538,123 @@ fn a_process_that_starts_inside_the_window_loses_nothing() {
         &[],
     );
     assert_eq!(main_harness_usd(&view), "0.75");
+}
+
+fn golden_usage() -> Vec<Value> {
+    vec![
+        json!({
+            "kind": "turn", "at": "2026-11-05T09:00:00Z", "trigger": "user", "run": "r1",
+            "process_turn": 1, "harness": "claude", "model": "claude-sonnet-5-5",
+            "cost_usd": 0.5, "input_tokens": 10, "output_tokens": 5,
+            "cache_creation_input_tokens": 100, "cache_read_input_tokens": 1000,
+        }),
+        json!({
+            "kind": "turn", "at": "2026-11-05T09:30:00Z", "trigger": "user", "run": "r1",
+            "process_turn": 2, "harness": "claude", "model": "claude-sonnet-5-5",
+            "cost_usd": 0.75, "input_tokens": 20, "output_tokens": 8,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 1500,
+        }),
+        json!({
+            "kind": "nap", "at": "2026-11-05T10:00:00Z", "harness": "claude",
+            "model": "claude-haiku-5-5", "cost_usd": 0.1, "input_tokens": 1000,
+            "output_tokens": 200, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        }),
+        json!({
+            "kind": "ask", "at": "2026-11-05T10:30:00Z", "harness": "claude",
+            "model": "claude-haiku-5-5", "cost_usd": 0.2, "input_tokens": 500,
+            "output_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        }),
+        worker("w1", "2026-11-05T11:00:00Z", "claude-sonnet-5-5"),
+        worker("w2", "2026-11-06T11:00:00Z", "claude-haiku-5-5"),
+        reported(json!({
+            "kind": "worker", "at": "2026-11-06T12:00:00Z", "worker_id": "w3",
+            "turn_id": 1, "harness": "opencode", "model": "kimi", "session_id": "s3",
+            "cost_usd": 0.3, "input_tokens": 40, "output_tokens": 9,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        })),
+    ]
+}
+
+fn golden_workers() -> Vec<Value> {
+    vec![
+        json!({"at": "2026-11-05T10:55:00Z", "worker_id": "w1", "event": "spawn", "ticket": "GUZ-1", "harness": "claude"}),
+        json!({"at": "2026-11-06T10:55:00Z", "worker_id": "w2", "event": "spawn", "ticket": "GUZ-2", "harness": "claude"}),
+        json!({"at": "2026-11-06T11:55:00Z", "worker_id": "w3", "event": "spawn", "ticket": "GUZ-2", "harness": "opencode"}),
+        json!({"at": "2026-11-06T13:00:00Z", "worker_id": "c1", "event": "spawn", "ticket": "GUZ-3", "harness": "cursor"}),
+    ]
+}
+
+#[test]
+fn golden_costs_views_stay_byte_for_byte() {
+    let usage = golden_usage();
+    let workers = golden_workers();
+    let since = since("2026-11-06T00:00:00Z");
+    let out = [
+        view_of(View::HarnessModel, &usage, &workers),
+        view_of(View::Harness, &usage, &workers),
+        view_of(View::Role, &usage, &workers),
+        view_of(View::Ticket, &usage, &workers),
+        view_since(View::Ticket, since, &usage, &workers),
+    ]
+    .join("\n\n");
+    assert_eq!(out, GOLDEN_COSTS);
+}
+
+const GOLDEN_COSTS: &str = r#"| HARNESS | MODEL | RUNS | INPUT | OUTPUT | CACHE READ | CACHE WRITE | 5M | 1H | REASONING | USD | HARNESS USD |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| main | claude-sonnet-5-5 | 1 | 30 | 13 | 2.5k | 100 | – | – | – | ~0.00 | 0.75 |
+| nap | claude-haiku-5-5 | 1 | 1.0k | 200 | 0 | 0 | – | – | – | ~0.00 | 0.10 |
+| ask | claude-haiku-5-5 | 1 | 500 | 50 | 0 | 0 | – | – | – | ~0.00 | 0.20 |
+| claude | claude-haiku-5-5 | 1 | 3 | 7 | 400 | 50 | 20 | 30 | – | ~0.00 | n/a |
+| claude | claude-sonnet-5-5 | 1 | 3 | 7 | 400 | 50 | 20 | 30 | – | ~0.00 | n/a |
+| opencode | kimi | 1 | 40 | 9 | 0 | 0 | – | – | – | n/a | 0.30 |
+| total |  |  | 1.5k | 286 | 3.3k | 200 | 40+ | 60+ | – | ~0.00+ | 1.35+ |
+
+| HARNESS | INPUT | OUTPUT | CACHE READ | CACHE WRITE | 5M | 1H | REASONING | USD |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| main | 30 | 13 | 2.5k | 100 | – | – | – | ~0.00 |
+| nap | 1.0k | 200 | 0 | 0 | – | – | – | ~0.00 |
+| ask | 500 | 50 | 0 | 0 | – | – | – | ~0.00 |
+| claude | 6 | 14 | 800 | 100 | 40 | 60 | – | ~0.00 |
+| cursor | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown |
+| opencode | 40 | 9 | 0 | 0 | – | – | – | 0.30 reported |
+| total | 1.5k+ | 286+ | 3.3k+ | 200+ | 40+ | 60+ | – | ~0.30+ |
+
+| ROLE | INPUT | OUTPUT | CACHE READ | CACHE WRITE | 5M | 1H | REASONING | USD |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| main | 30 | 13 | 2.5k | 100 | – | – | – | ~0.00 |
+| nap | 1.0k | 200 | 0 | 0 | – | – | – | ~0.00 |
+| ask | 500 | 50 | 0 | 0 | – | – | – | ~0.00 |
+| worker | 46+ | 23+ | 800+ | 100+ | 40+ | 60+ | – | ~0.30+ |
+| total | 1.5k+ | 286+ | 3.3k+ | 200+ | 40+ | 60+ | – | ~0.30+ |
+
+| TICKET | INPUT | OUTPUT | CACHE READ | CACHE WRITE | 5M | 1H | REASONING | USD |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GUZ-1 | 3 | 7 | 400 | 50 | 20 | 30 | – | ~0.00 |
+| GUZ-2 | 43 | 16 | 400 | 50 | 20+ | 30+ | – | ~0.30 |
+| GUZ-3 | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown |
+| unknown | 1.5k | 263 | 2.5k | 100 | – | – | – | ~0.00 |
+| total | 1.5k+ | 286+ | 3.3k+ | 200+ | 40+ | 60+ | – | ~0.30+ |
+
+| TICKET | INPUT | OUTPUT | CACHE READ | CACHE WRITE | 5M | 1H | REASONING | USD |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GUZ-2 | 43 | 16 | 400 | 50 | 20+ | 30+ | – | ~0.30 |
+| GUZ-3 | unknown | unknown | unknown | unknown | unknown | unknown | unknown | unknown |
+| total | 43+ | 16+ | 400+ | 50+ | 20+ | 30+ | – | ~0.30+ |"#;
+
+#[test]
+fn codex_dollars_show_as_excluded_in_every_chat_view() {
+    let mut codex = worker("w1", "2026-11-05T11:00:00Z", "gpt-5");
+    codex["harness"] = json!("codex");
+    let workers = [
+        json!({"at": "2026-11-05T10:55:00Z", "worker_id": "w1", "event": "spawn", "ticket": "GUZ-1", "harness": "codex"}),
+    ];
+    for view in [View::Harness, View::Role, View::Ticket] {
+        let out = view_of(view, std::slice::from_ref(&codex), &workers);
+        assert!(out.contains("excluded"), "{view:?}: {out}");
+        assert!(
+            !out.contains("n/a") && !out.contains("0.00"),
+            "{view:?}: {out}"
+        );
+    }
 }

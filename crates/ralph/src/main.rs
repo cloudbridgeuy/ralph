@@ -32,6 +32,7 @@ mod theme_slots;
 mod tool_theme;
 mod ui_theme;
 mod upgrade;
+mod usage_cmd;
 
 pub mod stream_processor;
 pub mod subprocess;
@@ -81,6 +82,7 @@ fn main() -> ExitCode {
         Commands::Config(args) => execute_config(args),
         Commands::Worker(args) => execute_worker(args),
         Commands::Upgrade(args) => upgrade::run(args),
+        Commands::Usage(args) => usage_cmd::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::ChatTag(args) => execute_chat_tag(args),
