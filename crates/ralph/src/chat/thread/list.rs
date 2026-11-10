@@ -60,7 +60,8 @@ pub(in crate::chat) fn listing(
 ) -> String {
     let opts = ThreadTableOpts {
         now: chrono::Utc::now(),
-        width,
+        // Plain output is piped or logged: keep every column rather than fit a width.
+        width: if display.color { width } else { usize::MAX },
         styled: display.color,
     };
     match threads_view(rows, &opts) {
@@ -119,6 +120,23 @@ mod tests {
         assert_eq!(side.name, "b-side");
         assert!(matches!(side.state, ThreadState::Parked(_)));
         assert_eq!(side.active, None);
+    }
+
+    #[test]
+    fn colour_off_prints_every_column_whatever_the_width() {
+        let (_root, main, _dir) = forked();
+        let highlighter = Highlighter::new();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::new(&highlighter, false),
+            theme: &theme,
+            color: false,
+            ui: UiColors::default(),
+        };
+        let listed = rows(&main, &|_| 0).unwrap();
+        let text = listing(&listed, &display, 20, "none");
+        let header = text.lines().next().unwrap();
+        assert!(header.ends_with("| WORKERS | UNREAD |"), "{text}");
     }
 
     #[test]

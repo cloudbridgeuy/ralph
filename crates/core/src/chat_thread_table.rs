@@ -84,7 +84,7 @@ impl Column {
     }
 
     fn cell(self, row: &ThreadRow, now: DateTime<Utc>) -> Vec<Span> {
-        let ago = |at: &str| format!("{} ago", age(at, now));
+        let ago = |at: &str| ago(at, now);
         let count = |n: usize, tone: Tone| match n {
             0 => dim("-"),
             n => span(tone, n.to_string()),
@@ -93,11 +93,11 @@ impl Column {
             Column::Name => span(Tone::Name, row.name.as_str()),
             Column::State => state_span(&row.state, now),
             Column::Fork => plain(format!("#{}", row.base)),
-            Column::Created => plain(ago(&row.created)),
+            Column::Created => time_span(ago(&row.created)),
             Column::Active => row
                 .active
                 .as_deref()
-                .map_or_else(|| dim("-"), |at| plain(ago(at))),
+                .map_or_else(|| dim("-"), |at| time_span(ago(at))),
             Column::Messages => plain(row.messages.to_string()),
             Column::Workers => count(row.workers, Tone::Active),
             Column::Unread => count(row.unread, Tone::Attention),
@@ -105,11 +105,27 @@ impl Column {
     }
 }
 
+fn ago(at: &str, now: DateTime<Utc>) -> Option<String> {
+    DateTime::parse_from_rfc3339(at)
+        .ok()
+        .map(|_| format!("{} ago", age(at, now)))
+}
+
+fn time_span(ago: Option<String>) -> Span {
+    ago.map_or_else(|| dim("-"), plain)
+}
+
 fn state_span(state: &ThreadState, now: DateTime<Utc>) -> Span {
     match state {
         ThreadState::Open => span(Tone::Done, "open"),
-        ThreadState::Parked(at) => span(Tone::Attention, format!("parked {} ago", age(at, now))),
-        ThreadState::Merged(at) => dim(format!("merged {} ago", age(at, now))),
+        ThreadState::Parked(at) => span(
+            Tone::Attention,
+            format!("parked {}", ago(at, now).unwrap_or_else(|| "-".into())),
+        ),
+        ThreadState::Merged(at) => dim(format!(
+            "merged {}",
+            ago(at, now).unwrap_or_else(|| "-".into())
+        )),
     }
 }
 
@@ -268,6 +284,27 @@ mod tests {
         assert!(!header(65).contains("ACTIVE") && header(65).contains("UNREAD"));
         assert!(!header(58).contains("UNREAD") && header(58).contains("WORKERS"));
         assert!(!header(51).contains("WORKERS") && header(51).contains("MSGS"));
+    }
+
+    #[test]
+    fn unparsable_times_show_a_dim_dash_and_future_times_clamp() {
+        let mut bad = row("bad", ThreadState::Parked("junk".into()));
+        bad.created = "".into();
+        bad.active = Some("not a time".into());
+        let mut gone = row("gone", ThreadState::Merged("?".into()));
+        gone.created = "2026-02-01T00:00:00Z".into();
+        let Some(View::Table(markdown)) = threads_view(&[bad, gone], &opts(200, false)) else {
+            panic!("not a table");
+        };
+        assert!(!markdown.contains('?'), "{markdown}");
+        assert!(
+            markdown.contains("| bad | parked - | #1 | `-` | `-` |"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("| gone | merged - | #1 | 0s ago |"),
+            "{markdown}"
+        );
     }
 
     #[test]
