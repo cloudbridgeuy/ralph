@@ -7,9 +7,9 @@ use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
 use crate::chat_rerender::parse_rerender_args;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
-use crate::chat_switch::{parse_main_args, parse_switch_args, SwitchTarget};
+use crate::chat_switch::SwitchTarget;
 use crate::chat_thread::{parse_fork_args, ForkCommand};
-use crate::chat_thread_cmd::{parse_thread_op, ThreadOp};
+use crate::chat_thread_cmd::{parse_thread_args, ThreadLine, ThreadOp};
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -194,22 +194,15 @@ pub fn route_input(
                 Command::Nudge => Route::Nudge(parse_nudge_args(args)),
                 Command::SendIt => Route::SendIt(parse_send_it_args(args)),
                 Command::Fork => Route::Fork(parse_fork_args(args)),
-                Command::Thread => Route::Switch {
-                    parsed: parse_switch_args(args),
-                    line: line.to_string(),
-                },
-                Command::Threads | Command::Pull | Command::Park | Command::Merge => {
-                    parse_thread_op(command, args).map_or_else(
-                        || Route::Send(line.to_string()),
-                        |op| Route::ThreadOp {
-                            op,
-                            line: line.to_string(),
-                        },
-                    )
-                }
-                Command::Main => Route::Switch {
-                    parsed: parse_main_args(args),
-                    line: line.to_string(),
+                Command::Thread => match parse_thread_args(args) {
+                    ThreadLine::Switch(parsed) => Route::Switch {
+                        parsed,
+                        line: line.to_string(),
+                    },
+                    ThreadLine::Op(op) => Route::ThreadOp {
+                        op,
+                        line: line.to_string(),
+                    },
                 },
                 Command::Config => Route::Config,
                 Command::View => Route::View(parse_view_args(args)),

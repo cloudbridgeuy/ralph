@@ -176,7 +176,7 @@ mod tests {
             refused_draft("/thread bad", &entries(&["fix the test", "run it"]), ""),
             "/thread bad\n\nfix the test\n\nrun it"
         );
-        assert_eq!(refused_draft("/main", &[], ""), "/main");
+        assert_eq!(refused_draft("/thread main", &[], ""), "/thread main");
     }
 
     #[test]
@@ -185,38 +185,41 @@ mod tests {
             refused_draft("/thread bad", &entries(&["fix"]), "typed"),
             "/thread bad\n\nfix\n\ntyped"
         );
-        assert_eq!(refused_draft("/main", &[], "typed"), "/main\n\ntyped");
-        assert_eq!(refused_draft("/main", &[], "  \n"), "/main");
+        assert_eq!(
+            refused_draft("/thread main", &[], "typed"),
+            "/thread main\n\ntyped"
+        );
+        assert_eq!(refused_draft("/thread main", &[], "  \n"), "/thread main");
     }
 
     #[test]
     fn terminated_refusal_saves_line_then_queue() {
         assert_eq!(
-            refusal_action(true, "/merge x", &entries(&["a", "b"]), ""),
-            Refusal::Save(entries(&["/merge x", "a", "b"]))
+            refusal_action(true, "/thread merge x", &entries(&["a", "b"]), ""),
+            Refusal::Save(entries(&["/thread merge x", "a", "b"]))
         );
     }
 
     #[test]
     fn terminated_refusal_saves_the_buffer_last() {
         assert_eq!(
-            refusal_action(true, "/merge x", &entries(&["a"]), "typed"),
-            Refusal::Save(entries(&["/merge x", "a", "typed"]))
+            refusal_action(true, "/thread merge x", &entries(&["a"]), "typed"),
+            Refusal::Save(entries(&["/thread merge x", "a", "typed"]))
         );
     }
 
     #[test]
     fn terminated_refusal_drops_a_blank_buffer() {
         assert_eq!(
-            refusal_action(true, "/merge x", &[], "  \n"),
-            Refusal::Save(entries(&["/merge x"]))
+            refusal_action(true, "/thread merge x", &[], "  \n"),
+            Refusal::Save(entries(&["/thread merge x"]))
         );
     }
 
     #[test]
     fn live_refusal_restores_the_prompt() {
         assert_eq!(
-            refusal_action(false, "/merge x", &entries(&["a"]), "typed"),
+            refusal_action(false, "/thread merge x", &entries(&["a"]), "typed"),
             Refusal::Restore
         );
     }
@@ -457,12 +460,8 @@ mod tests {
             Some(("hi".to_string(), entries(&["/thread side", "yo"])))
         );
         assert_eq!(
-            next_batch(entries(&["a", "  /main  "])),
-            Some(("a".to_string(), entries(&["  /main  "])))
-        );
-        assert_eq!(
-            next_batch(entries(&["/threads x", "b"])),
-            Some(("/threads x\n\nb".to_string(), Vec::new()))
+            next_batch(entries(&["a", "  /thread main  "])),
+            Some(("a".to_string(), entries(&["  /thread main  "])))
         );
         assert_eq!(
             next_batch(entries(&["/threads are slow", "b"])),
@@ -473,12 +472,12 @@ mod tests {
             Some(("/merge requests failing on CI\n\nb".to_string(), Vec::new()))
         );
         assert_eq!(
-            next_batch(entries(&["fix", "/merge a", "run it"])),
-            Some(("fix".to_string(), entries(&["/merge a", "run it"])))
+            next_batch(entries(&["fix", "/thread merge a", "run it"])),
+            Some(("fix".to_string(), entries(&["/thread merge a", "run it"])))
         );
         assert_eq!(
-            next_batch(entries(&["/merge a", "run it"])),
-            Some(("/merge a".to_string(), entries(&["run it"])))
+            next_batch(entries(&["/thread merge a", "run it"])),
+            Some(("/thread merge a".to_string(), entries(&["run it"])))
         );
     }
 

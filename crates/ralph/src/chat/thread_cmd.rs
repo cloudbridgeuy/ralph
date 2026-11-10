@@ -230,7 +230,7 @@ mod tests {
         })
         .unwrap_err();
         assert!(
-            refusal.contains("Run /main, then /merge <name>."),
+            refusal.contains("Run /thread main, then /thread merge <name>."),
             "{refusal}"
         );
     }

@@ -1,12 +1,17 @@
 use crate::chat_help::Command;
+use crate::chat_switch::SwitchTarget;
 use crate::chat_thread::ThreadName;
 
 pub const VIEW_FLAG: &str = "--view";
 const VIEW_ALIAS: &str = "--rebase";
+const LS_USAGE: &str = "usage: /thread ls takes no arguments.";
+const MAIN_USAGE: &str = "usage: /thread main takes no arguments and switches this chat to main.";
+const SWITCH_USAGE: &str =
+    "usage: /thread switch <name> switches this chat to thread <name>; /thread main returns to main.";
 const PARK_USAGE: &str =
-    "usage: /park <name> stops thread <name> from opening; run it in main's chat.";
+    "usage: /thread park <name> stops thread <name> from opening; run it in main's chat.";
 const PULL_USAGE: &str =
-    "usage: /pull <name> moves thread <name> to main's end; run it in main's chat.";
+    "usage: /thread pull <name> moves thread <name> to main's end; run it in main's chat.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadOp {
@@ -16,50 +21,69 @@ pub enum ThreadOp {
     Merge { name: ThreadName, view: bool },
 }
 
-pub fn parse_thread_op(command: Command, args: &str) -> Option<Result<ThreadOp, String>> {
-    if args.trim().is_empty() {
-        return match command {
-            Command::Threads => Some(Ok(ThreadOp::Ls)),
-            Command::Pull => Some(Err(PULL_USAGE.to_string())),
-            Command::Park => Some(Err(PARK_USAGE.to_string())),
-            Command::Merge => Some(Err(merge_usage())),
-            _ => None,
-        };
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThreadLine {
+    Switch(Result<SwitchTarget, String>),
+    Op(Result<ThreadOp, String>),
+}
+
+pub fn parse_thread_args(args: &str) -> ThreadLine {
+    let words: Vec<&str> = args.split_whitespace().collect();
+    match words.split_first() {
+        Some((&"ls", [])) => ThreadLine::Op(Ok(ThreadOp::Ls)),
+        Some((&"ls", _)) => ThreadLine::Op(Err(LS_USAGE.to_string())),
+        Some((&"main", [])) => ThreadLine::Switch(Ok(SwitchTarget::Main)),
+        Some((&"main", _)) => ThreadLine::Switch(Err(MAIN_USAGE.to_string())),
+        Some((&"switch", rest)) => {
+            ThreadLine::Switch(one_name(rest, SWITCH_USAGE).map(SwitchTarget::Thread))
+        }
+        Some((&"pull", rest)) => ThreadLine::Op(one_name(rest, PULL_USAGE).map(ThreadOp::Pull)),
+        Some((&"park", rest)) => ThreadLine::Op(one_name(rest, PARK_USAGE).map(ThreadOp::Park)),
+        Some((&"merge", rest)) => ThreadLine::Op(parse_merge(rest)),
+        _ => ThreadLine::Switch(Err(thread_usage())),
     }
-    match command {
-        Command::Pull => thread_arg(args).map(ThreadOp::Pull),
-        Command::Park => thread_arg(args).map(ThreadOp::Park),
-        Command::Merge => parse_merge(args),
-        _ => None,
-    }
-    .map(Ok)
 }
 
 pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
     match op {
         ThreadOp::Ls => None,
-        ThreadOp::Pull(_) => in_thread.then(|| main_only(Command::Pull)),
-        ThreadOp::Park(_) => in_thread.then(|| main_only(Command::Park)),
-        ThreadOp::Merge { .. } => in_thread.then(|| main_only(Command::Merge)),
+        ThreadOp::Pull(_) => in_thread.then(|| main_only("pull")),
+        ThreadOp::Park(_) => in_thread.then(|| main_only("park")),
+        ThreadOp::Merge { .. } => in_thread.then(|| main_only("merge")),
     }
+}
+
+fn thread_usage() -> String {
+    format!(
+        "usage: /thread <ls | switch <name> | main | pull <name> | park <name> | merge <name> [{VIEW_FLAG}]>"
+    )
 }
 
 fn merge_usage() -> String {
     format!(
-        "usage: /merge <name> [{VIEW_FLAG}] merges thread <name> into main's inbox; {VIEW_FLAG} posts its memory view with no model call and no confirmation; run it in main's chat."
+        "usage: /thread merge <name> [{VIEW_FLAG}] merges thread <name> into main's inbox; {VIEW_FLAG} posts its memory view with no model call and no confirmation; run it in main's chat."
     )
 }
 
-fn parse_merge(args: &str) -> Option<ThreadOp> {
-    let (flags, rest): (Vec<&str>, Vec<&str>) = args
-        .split_whitespace()
-        .partition(|word| *word == VIEW_FLAG || *word == VIEW_ALIAS);
+fn parse_merge(words: &[&str]) -> Result<ThreadOp, String> {
+    let (flags, rest): (Vec<&str>, Vec<&str>) = words
+        .iter()
+        .partition(|word| **word == VIEW_FLAG || **word == VIEW_ALIAS);
     match (flags.len(), rest.as_slice()) {
-        (0 | 1, [word]) => ThreadName::parse(word).ok().map(|name| ThreadOp::Merge {
-            name,
-            view: !flags.is_empty(),
-        }),
-        _ => None,
+        (0 | 1, [word]) => ThreadName::parse(word)
+            .map(|name| ThreadOp::Merge {
+                name,
+                view: !flags.is_empty(),
+            })
+            .map_err(|e| format!("{e}\n{}", merge_usage())),
+        _ => Err(merge_usage()),
+    }
+}
+
+fn one_name(words: &[&str], usage: &str) -> Result<ThreadName, String> {
+    match words {
+        [word] => ThreadName::parse(word).map_err(|e| format!("{e}\n{usage}")),
+        _ => Err(usage.to_string()),
     }
 }
 
@@ -72,22 +96,7 @@ pub fn parked_message(name: &ThreadName) -> String {
 }
 
 pub fn is_cell_command(line: &str) -> bool {
-    let plain = [Command::Thread, Command::Main]
-        .iter()
-        .any(|command| command.args(line).is_some());
-    let shaped = [
-        Command::Threads,
-        Command::Pull,
-        Command::Park,
-        Command::Merge,
-    ]
-    .iter()
-    .any(|command| {
-        command
-            .args(line)
-            .is_some_and(|args| parse_thread_op(*command, args).is_some())
-    });
-    plain || shaped
+    Command::Thread.args(line).is_some()
 }
 
 pub fn merging_notice(name: &ThreadName) -> String {
@@ -104,24 +113,28 @@ pub fn merge_answer(answer: Option<bool>) -> Result<bool, String> {
     answer.ok_or_else(|| "merge aborted; the command stays in the prompt.".to_string())
 }
 
-fn main_only(command: Command) -> String {
-    let name = command.name();
-    format!("{name} runs in main's chat. Run /main, then {name} <name>.")
-}
-
-fn thread_arg(args: &str) -> Option<ThreadName> {
-    let mut words = args.split_whitespace();
-    match (words.next(), words.next()) {
-        (Some(word), None) => ThreadName::parse(word).ok(),
-        _ => None,
-    }
+fn main_only(sub: &str) -> String {
+    format!("/thread {sub} runs in main's chat. Run /thread main, then /thread {sub} <name>.")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat_help::Command;
-    use crate::chat_thread::ThreadName;
+
+    fn auth() -> ThreadName {
+        ThreadName::parse("auth").unwrap()
+    }
+
+    fn op(args: &str) -> Result<ThreadOp, String> {
+        match parse_thread_args(args) {
+            ThreadLine::Op(parsed) => parsed,
+            other => panic!("{args:?} is not a thread op: {other:?}"),
+        }
+    }
+
+    fn merge(view: bool) -> ThreadOp {
+        ThreadOp::Merge { name: auth(), view }
+    }
 
     #[test]
     fn only_an_answer_decides_the_merge() {
@@ -132,61 +145,126 @@ mod tests {
     }
 
     #[test]
-    fn threads_without_arguments_lists() {
-        assert_eq!(
-            parse_thread_op(Command::Threads, ""),
-            Some(Ok(ThreadOp::Ls))
-        );
-        assert_eq!(
-            parse_thread_op(Command::Threads, "  "),
-            Some(Ok(ThreadOp::Ls))
-        );
+    fn ls_takes_no_arguments() {
+        assert_eq!(op(" ls "), Ok(ThreadOp::Ls));
+        assert_eq!(op("ls auth"), Err(LS_USAGE.to_string()));
     }
 
     #[test]
-    fn threads_with_an_argument_is_not_a_thread_op() {
-        assert_eq!(parse_thread_op(Command::Threads, " auth"), None);
+    fn pull_and_park_take_one_thread_name() {
+        assert_eq!(op(" pull auth "), Ok(ThreadOp::Pull(auth())));
+        assert_eq!(op("park auth"), Ok(ThreadOp::Park(auth())));
     }
 
     #[test]
-    fn a_command_that_is_not_a_thread_command_is_not_a_thread_op() {
-        assert_eq!(parse_thread_op(Command::Help, ""), None);
-        assert_eq!(parse_thread_op(Command::Help, "auth"), None);
-    }
-
-    fn auth() -> ThreadName {
-        ThreadName::parse("auth").unwrap()
-    }
-
-    #[test]
-    fn pull_takes_one_thread_name() {
-        assert_eq!(
-            parse_thread_op(Command::Pull, " auth "),
-            Some(Ok(ThreadOp::Pull(auth())))
-        );
-    }
-
-    #[test]
-    fn pull_without_a_name_is_a_usage_error() {
-        let err = parse_thread_op(Command::Pull, "  ").unwrap().unwrap_err();
-        assert!(err.starts_with("usage: /pull <name>"), "{err}");
-    }
-
-    #[test]
-    fn pull_with_extra_words_or_a_bad_name_is_not_a_thread_op() {
-        for args in ["auth now", "auth\nfix", "Bad_Name"] {
-            assert_eq!(parse_thread_op(Command::Pull, args), None, "{args}");
+    fn pull_and_park_refuse_no_name_two_names_or_a_bad_name_with_usage() {
+        for (sub, usage) in [("pull", PULL_USAGE), ("park", PARK_USAGE)] {
+            assert_eq!(op(sub), Err(usage.to_string()));
+            assert_eq!(op(&format!("{sub} auth now")), Err(usage.to_string()));
+            let bad = op(&format!("{sub} Bad_Name")).unwrap_err();
+            assert!(bad.starts_with("'Bad_Name' is not a thread name."), "{bad}");
+            assert!(bad.ends_with(usage), "{bad}");
         }
     }
 
     #[test]
-    fn a_thread_chat_refuses_pull_with_a_hint_and_main_allows_it() {
-        let pull = ThreadOp::Pull(auth());
+    fn merge_squashes_without_the_flag_and_posts_the_view_with_it() {
+        assert_eq!(op("merge  auth "), Ok(merge(false)));
+        for line in [
+            "merge auth --view",
+            "merge --view  auth",
+            "merge auth --rebase",
+            "merge --rebase auth",
+        ] {
+            assert_eq!(op(line), Ok(merge(true)), "{line}");
+        }
+    }
+
+    #[test]
+    fn merge_with_the_wrong_shape_gets_the_usage() {
+        for line in [
+            "merge",
+            "merge --view",
+            "merge auth other",
+            "merge auth --view --rebase",
+            "merge auth --view --view",
+            "merge auth --force",
+        ] {
+            let err = op(line).unwrap_err();
+            assert!(
+                err.starts_with("usage: /thread merge <name> [--view]"),
+                "{line}: {err}"
+            );
+        }
+        let bad = op("merge Bad_Name").unwrap_err();
+        assert!(bad.starts_with("'Bad_Name' is not a thread name."), "{bad}");
+    }
+
+    #[test]
+    fn switch_takes_one_thread_name_and_never_main() {
         assert_eq!(
-            op_refusal(true, &pull),
-            Some("/pull runs in main's chat. Run /main, then /pull <name>.".to_string())
+            parse_thread_args("switch auth"),
+            ThreadLine::Switch(Ok(SwitchTarget::Thread(auth())))
         );
-        assert_eq!(op_refusal(false, &pull), None);
+        for line in ["switch", "switch a b", "switch Bad_Name", "switch main"] {
+            let ThreadLine::Switch(Err(err)) = parse_thread_args(line) else {
+                panic!("{line}: not a switch refusal");
+            };
+            assert!(err.ends_with(SWITCH_USAGE), "{line}: {err}");
+        }
+    }
+
+    #[test]
+    fn main_takes_no_arguments() {
+        assert_eq!(
+            parse_thread_args(" main "),
+            ThreadLine::Switch(Ok(SwitchTarget::Main))
+        );
+        assert_eq!(
+            parse_thread_args("main side"),
+            ThreadLine::Switch(Err(MAIN_USAGE.to_string()))
+        );
+    }
+
+    #[test]
+    fn no_subcommand_or_a_bare_name_gets_the_general_usage() {
+        for line in ["", "  ", "auth", "Merge auth"] {
+            assert_eq!(
+                parse_thread_args(line),
+                ThreadLine::Switch(Err(thread_usage())),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn subcommand_words_are_not_reserved_as_thread_names() {
+        for sub in ["ls", "drop", "switch", "merge", "park", "pull"] {
+            let name = ThreadName::parse(sub).unwrap();
+            assert_eq!(
+                parse_thread_args(&format!("switch {sub}")),
+                ThreadLine::Switch(Ok(SwitchTarget::Thread(name.clone())))
+            );
+            assert_eq!(op(&format!("park {sub}")), Ok(ThreadOp::Park(name)));
+        }
+    }
+
+    #[test]
+    fn a_thread_chat_refuses_the_main_only_ops_with_a_hint_and_main_allows_them() {
+        for (op, sub) in [
+            (ThreadOp::Pull(auth()), "pull"),
+            (ThreadOp::Park(auth()), "park"),
+            (merge(false), "merge"),
+            (merge(true), "merge"),
+        ] {
+            assert_eq!(
+                op_refusal(true, &op),
+                Some(format!(
+                    "/thread {sub} runs in main's chat. Run /thread main, then /thread {sub} <name>."
+                ))
+            );
+            assert_eq!(op_refusal(false, &op), None);
+        }
     }
 
     #[test]
@@ -196,177 +274,11 @@ mod tests {
     }
 
     #[test]
-    fn route_input_routes_pull_and_it_queues_mid_turn() {
-        use crate::chat_status::{route_input, EmptySubmit, Route};
-        use std::collections::BTreeSet;
-        let routed = route_input("/pull auth", 0, &EmptySubmit::default(), &BTreeSet::new());
-        assert_eq!(
-            routed,
-            Route::ThreadOp {
-                op: Ok(ThreadOp::Pull(auth())),
-                line: "/pull auth".into()
-            }
-        );
-        assert!(!routed.runs_mid_turn());
-    }
-
-    #[test]
-    fn park_takes_one_thread_name() {
-        assert_eq!(
-            parse_thread_op(Command::Park, "auth"),
-            Some(Ok(ThreadOp::Park(auth())))
-        );
-    }
-
-    #[test]
-    fn park_without_a_name_is_a_usage_error() {
-        let err = parse_thread_op(Command::Park, "").unwrap().unwrap_err();
-        assert!(err.starts_with("usage: /park <name>"), "{err}");
-    }
-
-    #[test]
-    fn park_with_extra_words_is_not_a_thread_op() {
-        assert_eq!(parse_thread_op(Command::Park, "auth now"), None);
-    }
-
-    #[test]
-    fn a_thread_chat_refuses_park_with_a_hint_and_main_allows_it() {
-        let park = ThreadOp::Park(auth());
-        assert_eq!(
-            op_refusal(true, &park),
-            Some("/park runs in main's chat. Run /main, then /park <name>.".to_string())
-        );
-        assert_eq!(op_refusal(false, &park), None);
-    }
-
-    fn merge(view: bool) -> ThreadOp {
-        ThreadOp::Merge { name: auth(), view }
-    }
-
-    #[test]
-    fn merge_without_the_flag_squashes() {
-        assert_eq!(
-            parse_thread_op(Command::Merge, " auth "),
-            Some(Ok(merge(false)))
-        );
-    }
-
-    #[test]
-    fn merge_with_the_rebase_alias_in_either_place_posts_the_view() {
-        for line in ["auth --rebase", "--rebase  auth"] {
-            assert_eq!(
-                parse_thread_op(Command::Merge, line),
-                Some(Ok(merge(true))),
-                "{line}"
-            );
-        }
-    }
-
-    #[test]
-    fn merge_with_the_view_flag_in_either_place_posts_the_view() {
-        for line in ["auth --view", "--view  auth"] {
-            assert_eq!(
-                parse_thread_op(Command::Merge, line),
-                Some(Ok(merge(true))),
-                "{line}"
-            );
-        }
-    }
-
-    #[test]
-    fn merge_with_the_view_flag_and_its_alias_is_a_repeat() {
-        for line in ["auth --view --rebase", "auth --view --view"] {
-            assert_eq!(parse_thread_op(Command::Merge, line), None, "{line}");
-        }
-    }
-
-    #[test]
-    fn merge_without_arguments_is_a_usage_error() {
-        let err = parse_thread_op(Command::Merge, "").unwrap().unwrap_err();
-        assert!(err.starts_with("usage: /merge <name> [--view]"), "{err}");
-        assert!(err.contains(&format!("[{VIEW_FLAG}]")), "{err}");
-    }
-
-    #[test]
-    fn merge_with_the_wrong_shape_is_not_a_thread_op() {
-        let both = format!("auth other {VIEW_FLAG}");
-        let twice = format!("auth {VIEW_FLAG} {VIEW_FLAG}");
-        for args in [VIEW_FLAG, "auth other", "Bad_Name", &both, &twice] {
-            assert_eq!(parse_thread_op(Command::Merge, args), None, "{args}");
-        }
-    }
-
-    #[test]
-    fn a_thread_chat_refuses_both_merges_with_a_hint_and_main_allows_them() {
-        for view in [false, true] {
-            assert_eq!(
-                op_refusal(true, &merge(view)),
-                Some("/merge runs in main's chat. Run /main, then /merge <name>.".to_string())
-            );
-            assert_eq!(op_refusal(false, &merge(view)), None);
-        }
-    }
-
-    #[test]
     fn the_merge_question_names_the_thread_the_cost_and_the_answer_keys() {
         let question = merge_question(&auth());
         assert!(question.contains("auth"), "{question}");
         assert!(question.contains("Haiku"), "{question}");
         assert!(question.ends_with("[y/n] "), "{question}");
-    }
-
-    #[test]
-    fn route_input_routes_threads_and_it_queues_mid_turn() {
-        use crate::chat_status::{route_input, EmptySubmit, Route};
-        use std::collections::BTreeSet;
-        let route = |line: &str| route_input(line, 0, &EmptySubmit::default(), &BTreeSet::new());
-        let routed = route("/threads");
-        assert_eq!(
-            routed,
-            Route::ThreadOp {
-                op: Ok(ThreadOp::Ls),
-                line: "/threads".into()
-            }
-        );
-        assert!(!routed.runs_mid_turn());
-        assert!(matches!(route("/threads x"), Route::Send(_)));
-        assert!(matches!(route("/threadsx"), Route::Send(_)));
-        assert!(matches!(route("/thread auth"), Route::Switch { .. }));
-    }
-
-    #[test]
-    fn lines_that_do_not_have_the_command_shape_go_to_the_model() {
-        use crate::chat_status::{route_input, EmptySubmit, Route};
-        use std::collections::BTreeSet;
-        let route = |line: &str| route_input(line, 0, &EmptySubmit::default(), &BTreeSet::new());
-        for line in [
-            "/merge requests are failing on CI",
-            "/pull Bad_Name",
-            "/park auth now",
-            "/merge --view",
-            "/merge auth --force",
-            "/merge auth --view --view",
-            "/threads x",
-        ] {
-            assert_eq!(route(line), Route::Send(line.to_string()), "{line}");
-        }
-    }
-
-    #[test]
-    fn well_formed_and_bare_commands_stay_thread_ops() {
-        use crate::chat_status::{route_input, EmptySubmit, Route};
-        use std::collections::BTreeSet;
-        let route = |line: &str| route_input(line, 0, &EmptySubmit::default(), &BTreeSet::new());
-        for line in ["/pull", "/park", "/merge"] {
-            assert!(
-                matches!(route(line), Route::ThreadOp { op: Err(_), .. }),
-                "{line}"
-            );
-        }
-        assert!(matches!(
-            route("/merge auth --view"),
-            Route::ThreadOp { op: Ok(_), .. }
-        ));
     }
 
     #[test]
@@ -383,36 +295,6 @@ mod tests {
             parked_message(&auth()),
             "parked thread auth; `ralph thread revive auth` opens it again"
         );
-    }
-
-    #[test]
-    fn thread_and_switch_commands_are_cell_commands() {
-        for line in [
-            "/merge a",
-            "/threads",
-            "/pull a",
-            "/park a",
-            "/thread a",
-            "/main",
-            "/merge a --view",
-            "/merge",
-            "/pull",
-            "/park",
-            "/thread a b",
-        ] {
-            assert!(is_cell_command(line), "{line}");
-        }
-        for line in [
-            "/threadsx",
-            "/merged",
-            "hello",
-            "/threads are slow",
-            "/merge requests failing on CI",
-            "/pull a b",
-            "/park a b",
-        ] {
-            assert!(!is_cell_command(line), "{line}");
-        }
     }
 
     #[test]

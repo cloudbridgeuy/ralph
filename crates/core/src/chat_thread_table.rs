@@ -1,4 +1,4 @@
-//! `ralph thread ls` and `/threads`: the thread rows and their table, built
+//! `ralph thread ls` and `/thread ls`: the thread rows and their table, built
 //! from data the shell collected.
 
 use crate::inbox::age;

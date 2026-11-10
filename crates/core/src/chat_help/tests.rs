@@ -86,11 +86,6 @@ fn lists_hold_every_variant() {
             SendIt,
             Fork,
             Thread,
-            Threads,
-            Pull,
-            Park,
-            Merge,
-            Main,
             Config,
             View,
             Rerender,
@@ -124,7 +119,7 @@ fn lists_hold_every_variant() {
 fn the_merge_view_row_uses_the_view_flag_constant() {
     let wide = help_text(2_000);
     assert!(
-        wide.contains(&format!("/merge <name> {VIEW_FLAG}")),
+        wide.contains(&format!("/thread merge <name> {VIEW_FLAG}")),
         "{wide}"
     );
 }

@@ -870,50 +870,6 @@ fn route_input_parses_fork_and_fork_waits_for_the_turn() {
 }
 
 #[test]
-fn route_input_parses_thread_and_main_switches() {
-    use crate::chat_switch::SwitchTarget;
-    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
-    let auth = crate::chat_thread::ThreadName::parse("auth").unwrap();
-    let switch = |parsed, line: &str| Route::Switch {
-        parsed,
-        line: line.to_string(),
-    };
-    assert_eq!(
-        route("/thread auth"),
-        switch(Ok(SwitchTarget::Thread(auth)), "/thread auth")
-    );
-    assert_eq!(
-        route("/thread main"),
-        switch(Ok(SwitchTarget::Main), "/thread main")
-    );
-    assert_eq!(route("/main"), switch(Ok(SwitchTarget::Main), "/main"));
-    assert!(matches!(
-        route("/thread"),
-        Route::Switch { parsed: Err(_), .. }
-    ));
-    let Route::Switch { parsed, line } = route("  /main now ") else {
-        panic!("not a switch");
-    };
-    assert!(parsed.is_err());
-    assert_eq!(line, "/main now");
-    let Route::Switch { parsed, line } = route("/main\nfix the test") else {
-        panic!("not a switch");
-    };
-    assert!(parsed.is_err());
-    assert_eq!(line, "/main\nfix the test");
-    assert_eq!(
-        route("/thread\nauth"),
-        Route::Switch {
-            parsed: Ok(SwitchTarget::Thread(
-                crate::chat_thread::ThreadName::parse("auth").unwrap()
-            )),
-            line: "/thread\nauth".into(),
-        }
-    );
-    assert_eq!(route("/mainx"), Route::Send("/mainx".into()));
-}
-
-#[test]
 fn a_switch_waits_for_the_turn() {
     use crate::chat_switch::SwitchTarget;
     let switch = |parsed| Route::Switch {

@@ -3,10 +3,8 @@ use crate::chat_thread::{open_check, ThreadMeta, ThreadName};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-const MAIN: &str = "main";
-const THREAD_USAGE: &str =
-    "usage: /thread <name> switches this chat to thread <name>; /thread main returns to main.";
-const MAIN_USAGE: &str = "usage: /main takes no arguments and switches this chat to main.";
+const SWITCH: &str = "switch";
+const SUBCOMMANDS: [&str; 6] = ["ls", "main", "merge", "park", "pull", SWITCH];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwitchTarget {
@@ -25,24 +23,6 @@ pub struct SwitchArgv {
     pub no_inbox_sound: bool,
     pub no_inbox_notification: bool,
     pub skip_summary: bool,
-}
-
-pub fn parse_switch_args(args: &str) -> Result<SwitchTarget, String> {
-    let mut words = args.split_whitespace();
-    match (words.next(), words.next()) {
-        (Some(MAIN), None) => Ok(SwitchTarget::Main),
-        (Some(word), None) => ThreadName::parse(word)
-            .map(SwitchTarget::Thread)
-            .map_err(|e| format!("{e}\n{THREAD_USAGE}")),
-        _ => Err(THREAD_USAGE.to_string()),
-    }
-}
-
-pub fn parse_main_args(args: &str) -> Result<SwitchTarget, String> {
-    match args.split_whitespace().next() {
-        None => Ok(SwitchTarget::Main),
-        Some(_) => Err(MAIN_USAGE.to_string()),
-    }
 }
 
 pub fn switch_decision(
@@ -117,16 +97,19 @@ pub fn switch_completions(
     threads: &[String],
 ) -> Option<HoldCompletion> {
     let args = command_args(line, cursor, "/thread")?;
-    if args.trim_start().contains(char::is_whitespace) {
-        return None;
-    }
-    let main = current.map(|_| MAIN.to_string());
-    let targets = threads
-        .iter()
-        .filter(|name| current.is_none_or(|now| now.as_str() != name.as_str()))
-        .cloned()
-        .chain(main)
-        .collect();
+    let targets = match args.trim_start().split_once(char::is_whitespace) {
+        None => SUBCOMMANDS
+            .iter()
+            .filter(|word| current.is_some() || **word != "main")
+            .map(|word| word.to_string())
+            .collect(),
+        Some((SWITCH, rest)) if !rest.trim_start().contains(char::is_whitespace) => threads
+            .iter()
+            .filter(|name| current.is_none_or(|now| now.as_str() != name.as_str()))
+            .cloned()
+            .collect(),
+        Some(_) => return None,
+    };
     Some(word_completion(args, cursor, targets))
 }
 
@@ -168,42 +151,6 @@ mod tests {
         argv.into_iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
-    }
-
-    #[test]
-    fn thread_args_parse_one_name() {
-        assert_eq!(
-            parse_switch_args("  side "),
-            Ok(SwitchTarget::Thread(name("side")))
-        );
-    }
-
-    #[test]
-    fn the_word_main_means_main() {
-        assert_eq!(parse_switch_args("main"), Ok(SwitchTarget::Main));
-    }
-
-    #[test]
-    fn thread_args_refuse_no_name_or_two_names() {
-        let usage = "usage: /thread <name> switches this chat to thread <name>; /thread main returns to main.";
-        assert_eq!(parse_switch_args(""), Err(usage.to_string()));
-        assert_eq!(parse_switch_args("a b"), Err(usage.to_string()));
-    }
-
-    #[test]
-    fn thread_args_refuse_a_bad_name_with_usage() {
-        let err = parse_switch_args("Bad_Name").unwrap_err();
-        assert!(err.starts_with("'Bad_Name' is not a thread name."));
-        assert!(err.ends_with("returns to main."));
-    }
-
-    #[test]
-    fn main_args_take_no_words() {
-        assert_eq!(parse_main_args("  "), Ok(SwitchTarget::Main));
-        assert_eq!(
-            parse_main_args("side"),
-            Err("usage: /main takes no arguments and switches this chat to main.".to_string())
-        );
     }
 
     #[test]
@@ -360,24 +307,34 @@ mod tests {
     }
 
     #[test]
-    fn thread_completion_lists_open_threads_and_main() {
+    fn switch_completion_lists_open_threads_without_main_or_the_current_one() {
         assert_eq!(
-            complete("/thread ", Some("side")),
-            Some(vec!["auth".into(), "main".into(), "sub".into()])
+            complete("/thread switch ", Some("side")),
+            Some(vec!["auth".into(), "sub".into()])
         );
-    }
-
-    #[test]
-    fn thread_completion_in_main_has_no_main_entry() {
         assert_eq!(
-            complete("/thread s", None),
+            complete("/thread switch s", None),
             Some(vec!["side".into(), "sub".into()])
         );
     }
 
     #[test]
-    fn thread_completion_takes_one_word_and_only_the_thread_command() {
-        assert_eq!(complete("/thread auth ", None), None);
+    fn subcommand_completion_offers_main_only_inside_a_thread() {
+        assert_eq!(
+            complete("/thread ", Some("side")),
+            Some(
+                ["ls", "main", "merge", "park", "pull", "switch"]
+                    .map(String::from)
+                    .to_vec()
+            )
+        );
+        assert_eq!(complete("/thread m", None), Some(vec!["merge".into()]));
+    }
+
+    #[test]
+    fn completion_stops_after_the_name_and_after_other_subcommands() {
+        assert_eq!(complete("/thread switch auth ", None), None);
+        assert_eq!(complete("/thread park ", None), None);
         assert_eq!(complete("/thread", None), None);
         assert_eq!(complete("/main ", None), None);
         assert_eq!(complete("/fork a", None), None);
@@ -386,7 +343,7 @@ mod tests {
     #[test]
     fn thread_completion_span_covers_the_partial_word() {
         let threads = ["auth".to_string()];
-        let found = switch_completions("/thread au", 10, None, &threads).unwrap();
-        assert_eq!(found.span, 8..10);
+        let found = switch_completions("/thread switch au", 17, None, &threads).unwrap();
+        assert_eq!(found.span, 15..17);
     }
 }
