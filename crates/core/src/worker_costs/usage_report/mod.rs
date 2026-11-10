@@ -1,3 +1,4 @@
+pub mod chart;
 pub mod model_view;
 
 use super::tickets::{window_position, WorkerWindow};
