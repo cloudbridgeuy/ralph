@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const TOKEN_USAGE_UPDATED: &str = "thread/tokenUsage/updated";
+pub const THREAD_STARTED: &str = "thread/started";
 pub const MODEL_REROUTED: &str = "model/rerouted";
 const UNKNOWN_MODEL: &str = "unknown";
 
@@ -99,6 +100,17 @@ pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
             .map(|model| UsageEvent::Rerouted(model.to_string())),
         _ => None,
     }
+}
+
+pub fn decode_thread_parent(method: &str, params: &Value) -> Option<(String, String)> {
+    if method != THREAD_STARTED {
+        return None;
+    }
+    let thread = &params["thread"];
+    let parent = thread["parentThreadId"]
+        .as_str()
+        .or_else(|| thread["source"]["subAgent"]["thread_spawn"]["parent_thread_id"].as_str())?;
+    Some((thread["id"].as_str()?.to_string(), parent.to_string()))
 }
 
 #[derive(Debug, Default)]
@@ -378,5 +390,22 @@ mod tests {
         turn.observe(on_thread("parent", (10, 0), (110, 0)), true);
         let rows = turn.take();
         assert_eq!(rows[0].usage.input_uncached, 10);
+    }
+
+    #[test]
+    fn a_started_thread_names_its_parent_from_either_field() {
+        let direct = json!({"thread": {"id": "c", "parentThreadId": "p"}});
+        let spawned = json!({"thread": {"id": "c", "source": {"subAgent": {"thread_spawn": {"parent_thread_id": "p", "depth": 1}}}}});
+        let expected = Some(("c".to_string(), "p".to_string()));
+        assert_eq!(decode_thread_parent(THREAD_STARTED, &direct), expected);
+        assert_eq!(decode_thread_parent(THREAD_STARTED, &spawned), expected);
+    }
+
+    #[test]
+    fn a_thread_without_a_parent_or_another_method_names_none() {
+        let root = json!({"thread": {"id": "c", "parentThreadId": null, "source": "appServer"}});
+        assert_eq!(decode_thread_parent(THREAD_STARTED, &root), None);
+        let child = json!({"thread": {"id": "c", "parentThreadId": "p"}});
+        assert_eq!(decode_thread_parent("turn/started", &child), None);
     }
 }

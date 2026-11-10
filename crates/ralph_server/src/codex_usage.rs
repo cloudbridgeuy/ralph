@@ -2,8 +2,9 @@ use crate::chat::memory::usage_path;
 use crate::ledger;
 use crate::warn::warn_if_err;
 use ralph_core::chat_memory::{worker_usage_record, CallSite};
-use ralph_core::worker::{decode_usage_event, ModelUsage, TurnUsage};
+use ralph_core::worker::{decode_thread_parent, decode_usage_event, ModelUsage, TurnUsage};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -14,6 +15,22 @@ const HARNESS: &str = "codex";
 struct Bound {
     thread: String,
     turn: TurnUsage,
+    parents: BTreeMap<String, String>,
+    active: bool,
+}
+
+impl Bound {
+    fn descends_from_bound(&self, params: &Value) -> bool {
+        let mut at = params["threadId"].as_str();
+        for _ in 0..=self.parents.len() {
+            match at {
+                Some(thread) if thread == self.thread => return true,
+                Some(thread) => at = self.parents.get(thread).map(String::as_str),
+                None => return false,
+            }
+        }
+        false
+    }
 }
 
 pub struct CodexUsage {
@@ -35,12 +52,17 @@ impl CodexUsage {
         *self.bound.lock().unwrap_or_else(PoisonError::into_inner) = Bound {
             thread: thread.to_string(),
             turn: TurnUsage::new(model),
+            ..Bound::default()
         };
     }
 
     pub fn observe(&self, method: &str, params: &Value, in_turn: bool) {
+        let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((thread, parent)) = decode_thread_parent(method, params) {
+            bound.parents.insert(thread, parent);
+        }
         if let Some(event) = decode_usage_event(method, params) {
-            let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+            let in_turn = in_turn || (bound.active && bound.descends_from_bound(params));
             bound.turn.observe(event, in_turn);
         }
     }
@@ -48,11 +70,13 @@ impl CodexUsage {
     pub fn start_turn(&self) {
         let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
         bound.turn.start_turn();
+        bound.active = true;
     }
 
     pub fn flush(&self, turn_id: Option<u64>) {
         let (thread, rows) = {
             let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+            bound.active = false;
             (bound.thread.clone(), bound.turn.take())
         };
         warn_if_err(
