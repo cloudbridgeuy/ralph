@@ -418,6 +418,18 @@ mod tests {
     }
 
     #[test]
+    fn lookup_strips_only_a_leading_openai_prefix() {
+        let table = PriceTable {
+            as_of: "2026-10-28",
+            entries: vec![entry("gpt-6.1-sol", None, 2.0)],
+        };
+        assert_eq!(table.lookup("gpt-6.1-sol", 1).unwrap().input, 2.0);
+        assert_eq!(table.lookup("openai/gpt-6.1-sol", 1).unwrap().input, 2.0);
+        assert!(table.lookup("github-copilot/gpt-6.1-sol", 1).is_none());
+        assert!(table.lookup("openai/openai/gpt-6.1-sol", 1).is_none());
+    }
+
+    #[test]
     fn override_full_wins_for_every_prompt_size() {
         let mut over = overrides(2.0);
         let entry = over.get_mut("claude-haiku-5-5").unwrap();

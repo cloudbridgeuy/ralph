@@ -200,6 +200,48 @@ fn a_missing_model_is_labelled_in_the_group_line() {
 }
 
 #[test]
+fn an_openai_prefixed_opencode_row_is_an_estimate_never_reported() {
+    let rows = [with(
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!("opencode"),
+        ),
+        "model",
+        json!("openai/gpt-6.1-sol"),
+    )];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    let group = &report.groups[0];
+    assert_eq!(group.key, "openai/gpt-6.1-sol");
+    assert!(known(group.est).is_some());
+    assert_eq!(known(group.reported), None);
+    assert!(
+        group.cost_label().ends_with("est."),
+        "{}",
+        group.cost_label()
+    );
+}
+
+#[test]
+fn a_codex_gpt_6_1_sol_row_stays_excluded_from_dollars() {
+    let rows = [with(
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!("codex"),
+        ),
+        "model",
+        json!("gpt-6.1-sol"),
+    )];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    let group = &report.groups[0];
+    assert_eq!(group.excluded, 1);
+    assert_eq!(known(group.est), None);
+    assert_eq!(known(group.reported), None);
+    assert_eq!(group.line(), "gpt-6.1-sol: excluded");
+}
+
+#[test]
 fn a_cursor_with_no_rows_shows_no_data_never_zero() {
     let workers = [spawn("c1", "2026-11-05T09:00:00Z", "GUZ-2", "cursor")];
     let report = grouped(Dim::Harness, &[], &workers, &Filter::default());
