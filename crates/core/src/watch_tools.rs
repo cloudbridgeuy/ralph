@@ -201,7 +201,11 @@ fn parse_ids(value: &Value) -> Result<Vec<String>, String> {
                 "Watch id '{raw}' must not contain spaces or slashes."
             ));
         }
-        let id = watch_id(&raw);
+        let id = if raw.starts_with(SCHEDULE_ID_PREFIX) {
+            raw
+        } else {
+            watch_id(&raw)
+        };
         if !ids.contains(&id) {
             ids.push(id);
         }
@@ -241,6 +245,10 @@ pub fn plan_stop(target: &StopTarget, rows: &[WatchRow]) -> Vec<StopStep> {
         StopTarget::Ids(ids) => ids
             .iter()
             .map(|id| match rows.iter().find(|row| &row.id == id) {
+                _ if id.starts_with(SCHEDULE_ID_PREFIX) => StopStep::Skip {
+                    id: id.clone(),
+                    reason: SKIP_SCHEDULE,
+                },
                 Some(row) => step_for(row),
                 None => StopStep::Unknown(id.clone()),
             })

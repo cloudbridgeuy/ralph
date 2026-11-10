@@ -242,3 +242,19 @@ fn the_list_description_says_it_adds_queued_and_saved_watches() {
     let text = watch_list_definition().to_string();
     assert!(text.contains("plus queued and saved ones"));
 }
+
+#[test]
+fn a_schedule_id_keeps_its_name_and_is_skipped_by_id() {
+    let target = ids(json!({"ids": ["schedule:nightly"]})).unwrap();
+    assert_eq!(
+        target,
+        StopTarget::Ids(vec!["schedule:nightly".to_string()])
+    );
+    assert_eq!(
+        plan_stop(&target, &rows()),
+        [StopStep::Skip {
+            id: "schedule:nightly".to_string(),
+            reason: SKIP_SCHEDULE
+        }]
+    );
+}
