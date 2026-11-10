@@ -322,7 +322,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `reset_turns` | integer | `30` | Turns one `claude` process serves before chat drops it and respawns from the store; must be above 0, else a warning and `30` |
 | `reset_tokens` | integer | `140000` | Context tokens of the last assistant message at which chat drops the process and respawns from the store; must be above 0, else a warning and `140000` |
 | `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
-| `tag_entries` | bool | `true` | `false` turns off the background pass that tags new chat messages `rule` or `approval` with Haiku after each reply; while it is off, messages written are never tagged later ([Tagging](context/ralph-chat.md#tagging)) |
+| `tag_entries` | bool | `true` | `false` turns off the background pass that tags new chat messages `rule`, `decision` or `approval` with Haiku after each reply; while it is off, messages written are never tagged later ([Tagging](context/ralph-chat.md#tagging)) |
 | `wrap_width` | integer | unset | Column cap for chat replies and the prompt area; `0` or unset wraps at the terminal width |
 | `cell_output_limit` | integer | `200` | Lines of cell output sent to Claude, per stream (stdout, stderr): first half and last half kept; `0` sends all |
 | `cell_output_bytes` | integer | `65536` | Bytes of cell output sent to Claude, per stream (stdout, stderr): head and tail kept; `0` sends all |
