@@ -381,3 +381,15 @@ fn a_setting_that_cannot_be_read_skips_the_pass_without_touching_the_store() {
     assert_eq!(tag_plan(Ok::<bool, &str>(true)), TagPlan::Run);
     assert_eq!(tag_plan(Ok::<bool, &str>(false)), TagPlan::SkipAhead);
 }
+
+#[test]
+fn an_entry_with_a_failed_row_and_a_later_tag_is_not_excluded_from_context() {
+    let text = [
+        row(2, &RowKind::Failed),
+        row(2, &RowKind::Tagged(flags(false, false))),
+        row(3, &RowKind::Failed),
+        row(4, &RowKind::Skipped),
+    ]
+    .concat();
+    assert_eq!(context_exclusions(&state(&text)), BTreeSet::from([3, 4]));
+}

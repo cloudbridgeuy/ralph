@@ -195,11 +195,13 @@ pub fn tag_plan<E>(tag_entries: Result<bool, E>) -> TagPlan {
 }
 
 /// Entries whose text must stay out of batch context: those with a stored
-/// `failed` row or a `skipped` row, which failed alone in an earlier pass.
+/// `failed` row and no tag, or a `skipped` row: they failed alone in an earlier
+/// pass. A later tag clears a `failed` row.
 pub fn context_exclusions(state: &TagState) -> BTreeSet<usize> {
     state
         .failures
         .keys()
+        .filter(|n| !state.tags.contains_key(n))
         .chain(state.skipped.iter())
         .copied()
         .collect()
