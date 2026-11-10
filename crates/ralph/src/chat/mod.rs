@@ -374,6 +374,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
     let send_it = SendIt::new(&store_dir, send_it_limits);
+    let _close = monitor.watches.close_guard();
+    monitor.watches.restore();
     chat_socket.serve(
         Shared {
             store: Store::new(store_dir.clone()),
@@ -389,8 +391,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         },
         roster,
     );
-    let _close = monitor.watches.close_guard();
-    monitor.watches.restore();
     restore_schedule(
         &monitor.schedule,
         &schedule_worker::alive_worker_ids(&monitor.store_dir),
