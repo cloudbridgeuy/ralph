@@ -70,12 +70,18 @@ impl Label {
     }
 }
 
-/// Ids of the entries whose latest tag row carries `label`.
-pub fn ids_with(state: &TagState, label: Label) -> BTreeSet<usize> {
+/// Ids of the entries whose latest tag row carries `label`. A stored
+/// `decision` counts only on a user entry, so a row from an earlier writer
+/// never makes an assistant or worker entry match; an id with no entry in
+/// `entries` is taken as an assistant entry.
+pub fn ids_with(state: &TagState, entries: &[Entry], label: Label) -> BTreeSet<usize> {
     state
         .tags
         .iter()
-        .filter(|(_, flags)| label.set_in(**flags))
+        .filter(|(id, flags)| {
+            let role = entries.get(**id).map_or(Role::Assistant, |e| e.role);
+            label.set_in(restrict_decision(role, **flags))
+        })
         .map(|(id, _)| *id)
         .collect()
 }

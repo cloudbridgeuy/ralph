@@ -279,6 +279,28 @@ fn with_tags_reads_the_ids_for_a_tagged_request_only() {
 }
 
 #[test]
+fn a_decision_search_skips_a_stored_decision_on_a_non_user_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = [("user", "a"), ("assistant", "b"), ("worker", "c")]
+        .iter()
+        .map(|(role, text)| {
+            format!("{{\"role\":\"{role}\",\"at\":\"2026-11-09T00:00:00Z\",\"text\":\"{text}\"}}\n")
+        })
+        .collect::<String>();
+    fs::write(dir.path().join("log.jsonl"), log).unwrap();
+    let rows: String = (0..3)
+        .map(|n| format!("{{\"v\":1,\"n\":{n},\"rule\":false,\"decision\":true,\"approval\":false,\"model\":\"m\",\"prompt\":\"v1\",\"at\":\"t\"}}\n"))
+        .collect();
+    fs::write(dir.path().join(TAGS_FILE), rows).unwrap();
+    let tagged = ralph_core::chat_memory::parse_search_args(
+        &serde_json::json!({"query": "x", "tag": "decision"}),
+    )
+    .unwrap();
+    let expected = tagged.clone().with_tag_ids(BTreeSet::from([0]));
+    assert_eq!(with_tags(dir.path(), &tagged).unwrap(), expected);
+}
+
+#[test]
 fn skip_ahead_moves_the_start_so_a_later_pass_asks_nothing() {
     let (dir, store) = store_with(3);
     let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
