@@ -77,6 +77,7 @@ pub(super) fn confirm(question: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ansi::fg;
     use crate::chat::thread::ensure;
     use crate::chat::workers::{paint_tones, table_theme};
     use crate::highlight::Highlighter;
@@ -153,6 +154,10 @@ mod tests {
         let painted = paint_tones(&render_prose(&skin, &md, 200), &theme.palette);
         assert!(painted.contains("NAME"), "{painted}");
         assert!(painted.contains("auth"), "{painted}");
+        assert!(
+            painted.contains(&format!("{}open", fg(theme.palette.done))),
+            "{painted:?}"
+        );
     }
 
     fn idle(_: &ThreadName) -> Vec<String> {
