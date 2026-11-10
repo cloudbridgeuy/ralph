@@ -11,7 +11,9 @@ use std::path::PathBuf;
 #[cfg(test)]
 mod tests;
 
-pub const NAP_TIMEOUT_SECS: u64 = 600;
+pub const NAP_TIMEOUT_SECS: u64 = 240;
+pub const MERGE_TIMEOUT_SECS: u64 = 600;
+pub const TAG_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Parser, Debug)]
 #[command(author, version = crate::version::current())]
@@ -703,7 +705,7 @@ pub struct ChatTagArgs {
     #[arg(long, value_name = "ID")]
     pub run: Option<String>,
 
-    #[arg(long, default_value_t = NAP_TIMEOUT_SECS)]
+    #[arg(long, default_value_t = TAG_TIMEOUT_SECS)]
     pub timeout: u64,
 }
 

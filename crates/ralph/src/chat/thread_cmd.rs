@@ -3,7 +3,7 @@ use crate::chat::thread::{
     config_root, list, merge_precheck, merge_thread, park_thread, pull_thread, thread_dir,
     view_thread,
 };
-use crate::cli::NAP_TIMEOUT_SECS;
+use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_thread::ThreadName;
@@ -54,7 +54,7 @@ pub(super) fn run(
                 kind: CallSite::Merge,
                 store: &dir,
                 run: None,
-                timeout: NAP_TIMEOUT_SECS,
+                timeout: MERGE_TIMEOUT_SECS,
             };
             merge_thread(&main, name, &running, &mut |prompt: &str| {
                 run_curator(prompt, &curator)
