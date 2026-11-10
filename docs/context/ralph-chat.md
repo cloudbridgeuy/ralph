@@ -747,7 +747,7 @@ Local PNG, JPEG, GIF and WebP images in agent replies and in `!shell` cell outpu
 
 ## Storage and isolation
 
-- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `log.idx`, `tree.idx`, `LOCK`, `NAP`, `TAG`, `tags.jsonl`, `history.txt`, `editor.md`, `suggestions.jsonl`, `attachments/`, and an optional `config.toml` that overrides the global config per key for chats using this store (see [configuration](../configuration.md#configuration-precedence)). A store `config.toml` that fails to load falls back to the global config with a warning, and setting a security-relevant key warns once; details are in [configuration](../configuration.md). It is not project-scoped.
+- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `log.idx`, `tree.idx`, `LOCK`, `NAP`, `TAG`, `tags.jsonl`, `history.txt`, `editor.md`, `suggestions.jsonl`, `analytics/timing.jsonl` ([timing log](#timing-log)), `attachments/`, and an optional `config.toml` that overrides the global config per key for chats using this store (see [configuration](../configuration.md#configuration-precedence)). A store `config.toml` that fails to load falls back to the global config with a warning, and setting a security-relevant key warns once; details are in [configuration](../configuration.md). It is not project-scoped.
 - `LOCK` is a file lock: exclusive for append and for each nap commit, shared for settled load and the nap snapshot. `NAP` is an exclusive file lock held for the whole nap; `napping()` probes it. Store paths that are symlinks or multiply-linked files are rejected.
 - Isolation: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Chat turns can change this with `[chat]` keys (`Isolation::for_chat`): `user_settings = true` uses `user,project,local`; `user_claude_md = true` drops the home entry; `project_claude_md = false` adds `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` of the chat process directory (not ancestors). The key is left out when the list is empty. The curator keeps the default. Project and local settings stay active; this is context isolation, not a sandbox. With `[claude] config_dir` set, the `CLAUDE.md` entry uses that folder and the command gets a `CLAUDE_CONFIG_DIR='<dir>'` prefix (turns, nap and `ralph ask`).
 - User agents in `~/.claude/agents` do not load, so `build_agents_args` passes the bundled `SUBAGENTS` (`evidence-collector` haiku, `implementer` sonnet, `reviser` opus) as `--agents <json>`. These copies may drift from `~/.claude/agents`.
@@ -762,6 +762,16 @@ Every row has a `role` key: `main` for a turn or a ping, `nap`, `tag` (a tag pas
 ```bash
 jq -s '[.[] | select((.kind == "turn" and .process_turn != null) or .kind == "ping")] | group_by(.run) | map(reduce .[] as $t ([]; if $t.process_turn == 1 or length == 0 then . + [$t.cost_usd // 0] else .[-1] = ($t.cost_usd // .[-1]) end) | add) | add' <config dir>/usage.jsonl
 ```
+
+### Timing log
+
+`<store>/analytics/timing.jsonl` holds one JSON line per timing event, next to `analytics/workers.jsonl`. `usage.jsonl` and `workers.jsonl` are unchanged. Every row has `v` (1), `at` (RFC 3339), `store` (the canonical store path, as in usage rows), `event`, and `run` (the same `<pid>-<start RFC 3339>` id the usage rows carry; absent when the writer has none). A reader must ignore fields it does not know. Optional fields are left out when empty.
+
+- `turn`: one row per chat turn, written when the turn ends. `turn_ms` (start to end), `memory_wait_ms` (time blocked in `load_after_nap`, so it includes the wait for a running nap or a reset or launch on process start; summed over relaunches in the turn), `outage_wait_ms` and `outage_retries` (the sleeps of `retry_on_outage`, counted in its `wait` closure), `model_ms` (the `duration_ms` of the turn's usage row; absent when the turn wrote none), `ok` (true only for a turn that got a reply; failed, cancelled and exited turns write `ok:false`).
+- `nap`: one row per nap, written when it ends. `total_ms`, `pending_at_start` (nodes waiting when the nap took its snapshot), `calls` (curator calls), `lock_held_ms` (time holding the `NAP` lock) and `nap_lock_wait_ms` (time waiting to get it).
+- `nap_call`: one row per curator call of a nap, including calls that wrote no usage row. `node` (the node id, `lo` or `lo-hi`), `attempt` (1-based, up to `MAX_NAP_ATTEMPTS`), `duration_ms`, `outcome` (`ok`, `rejected` when `check_summary` refused the reply, `failed`, or `timeout`) and `exit` (the process exit code when known).
+
+Writes are best effort: an I/O error shows one warning and never fails a turn or a nap. Rows are one `write_all` on an `O_APPEND` file opened with `O_NOFOLLOW`, with no `LOCK`. `ralph thread merge` and keepalive pings write no timing rows. Limit: an `outage_retry` outcome is not written; a call's retries inside one curator run show only in the usage rows and the final outcome.
 
 ### Claude worker usage
 
