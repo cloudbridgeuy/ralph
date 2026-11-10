@@ -81,3 +81,57 @@ fn log_mtime(dir: &Path) -> Option<String> {
     let modified = fs::metadata(dir.join("log.jsonl")).ok()?.modified().ok()?;
     Some(chrono::DateTime::<chrono::Utc>::from(modified).to_rfc3339())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::thread::tests::{forked, name};
+    use crate::chat::thread::{ensure, park_thread};
+    use ralph_core::chat_thread::merged_report;
+
+    #[test]
+    fn rows_gather_state_counts_and_the_log_mtime() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        ensure(&main, &name("b-side")).unwrap();
+        Inbox::new(dir.join(INBOX_DIR))
+            .post(&merged_report(&auth, "a", "t1"), 0)
+            .unwrap();
+        park_thread(&main, &name("b-side"), &[]).unwrap();
+        let rows = rows(&main, &|n| usize::from(n.as_str() == "auth") * 3).unwrap();
+        assert_eq!(rows.len(), 2);
+        let (auth_row, side) = (&rows[0], &rows[1]);
+        assert_eq!(auth_row.name, "auth");
+        assert_eq!(auth_row.state, ThreadState::Open);
+        assert_eq!((auth_row.base, auth_row.messages), (2, 1));
+        assert_eq!((auth_row.workers, auth_row.unread), (3, 1));
+        let modified = fs::metadata(dir.join("log.jsonl"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let expected = chrono::DateTime::<chrono::Utc>::from(modified).to_rfc3339();
+        assert_eq!(auth_row.active, Some(expected));
+        assert_eq!(side.name, "b-side");
+        assert!(matches!(side.state, ThreadState::Parked(_)));
+        assert_eq!(side.active, None);
+    }
+
+    #[test]
+    fn listing_prints_a_table_or_the_empty_message() {
+        let (_root, main, _dir) = forked();
+        let highlighter = Highlighter::new();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::new(&highlighter, false),
+            theme: &theme,
+            color: false,
+            ui: UiColors::default(),
+        };
+        let listed = rows(&main, &|_| 0).unwrap();
+        let text = listing(&listed, &display, "none");
+        assert!(text.starts_with("| NAME | STATE | FORK |"), "{text}");
+        assert!(text.contains("| auth | open | #2 |"), "{text}");
+        assert!(!text.ends_with('\n'));
+        assert_eq!(listing(&[], &display, "none"), "none");
+    }
+}
