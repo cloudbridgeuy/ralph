@@ -100,6 +100,7 @@ impl CodexUsage {
             };
             let usage =
                 worker_usage_record(kind, at.clone(), Some(thread.to_string()), HARNESS, row)
+                    .with_subagent_usage()
                     .with_store(
                         self.store
                             .as_ref()
@@ -133,6 +134,7 @@ mod tests {
         assert_eq!(row["model"], "gpt");
         assert_eq!(row["input_tokens"], 5);
         assert_eq!(row["turn_id"], 3);
+        assert_eq!(row["subagent_usage"], true);
         assert!(usage.bound.lock().unwrap().turn.take().is_empty());
     }
 

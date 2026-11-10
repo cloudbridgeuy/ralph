@@ -147,7 +147,7 @@ pub fn weekday(day: &str) -> Option<&'static str> {
 }
 
 pub fn is_excluded(line: &UsageLine) -> bool {
-    line.harness.as_deref() == Some(HarnessId::Codex.as_str())
+    line.harness.as_deref() == Some(HarnessId::Codex.as_str()) && line.subagent_usage != Some(true)
 }
 
 pub fn label_excluded(cost: String, excluded: usize, metered: usize) -> String {
