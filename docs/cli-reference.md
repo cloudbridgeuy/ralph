@@ -192,6 +192,7 @@ Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`, or the fi
 | `by <DIM>` | Group by kind, store, harness, model, ticket or run |
 | `cache` | Cache hit rate per model; has no chart |
 | `--since`, `--until` | A local day (`YYYY-MM-DD`) or an RFC 3339 time. `--since` is inclusive, `--until` is exclusive |
+| `--ledger FILE` | Read this ledger instead of `[usage] ledger` or `<config dir>/usage.jsonl`. A relative path is read from the current directory. It moves only this read; chats and workers keep writing where the config says |
 | `--store DIR` | Only this store's rows, and only its workers log for tickets. Without it, tickets come from the log of every store in the ledger |
 | `--harness`, `--model`, `--ticket`, `--kind` | Keep only matching rows |
 | `--text` | Print text even on a terminal that can draw images. Conflicts with `--png` |

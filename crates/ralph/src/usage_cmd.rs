@@ -10,11 +10,15 @@ use ralph_core::worker_costs::usage_report::text::{
     chart, choose, render, stores_to_read, Inputs, Output, View,
 };
 use ralph_core::worker_costs::usage_report::{Dim, Filter};
-use ralph_server::chat::memory::{read_optional, usage_path};
-use ralph_server::config::AppConfig;
+use ralph_server::chat::memory::read_optional;
+use ralph_server::config::{configured_ledger, ledger_path, AppConfig};
+use ralph_server::paths::{absolute_from, config_dir};
 use std::error::Error;
 use std::io::{ErrorKind, IsTerminal};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn view_of(command: Option<UsageCommand>) -> View {
     match command {
@@ -32,8 +36,25 @@ fn read_ledger(path: &Path) -> Result<Option<String>, Box<dyn Error>> {
     }
 }
 
+fn usage_ledger(
+    flag: Option<&Path>,
+    cwd: &Path,
+    configured: Option<&Path>,
+    config_dir: &Path,
+) -> PathBuf {
+    flag.map_or_else(
+        || ledger_path(configured, config_dir),
+        |flag| absolute_from(flag, cwd),
+    )
+}
+
 pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
-    let path = usage_path();
+    let path = usage_ledger(
+        args.ledger.as_deref(),
+        &std::env::current_dir()?,
+        configured_ledger(),
+        &config_dir(),
+    );
     let Some(usage) = read_ledger(&path)? else {
         println!("No usage ledger at {}.", path.display());
         return Ok(());
@@ -100,4 +121,32 @@ pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
         Output::Text => println!("{}", render(view, &inputs, &filter, &Local, &pricing)),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ledger_flag_overrides_config() {
+        let cwd = Path::new("/work");
+        let dir = Path::new("/cfg/ralph");
+        let configured = Some(Path::new("/data/configured.jsonl"));
+        assert_eq!(
+            usage_ledger(Some(Path::new("/tmp/flag.jsonl")), cwd, configured, dir),
+            PathBuf::from("/tmp/flag.jsonl")
+        );
+        assert_eq!(
+            usage_ledger(Some(Path::new("rel/flag.jsonl")), cwd, configured, dir),
+            PathBuf::from("/work/rel/flag.jsonl")
+        );
+        assert_eq!(
+            usage_ledger(None, cwd, configured, dir),
+            PathBuf::from("/data/configured.jsonl")
+        );
+        assert_eq!(
+            usage_ledger(None, cwd, None, dir),
+            PathBuf::from("/cfg/ralph/usage.jsonl")
+        );
+    }
 }

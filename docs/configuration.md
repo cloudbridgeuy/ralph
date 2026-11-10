@@ -502,7 +502,7 @@ accent = "#d08770"
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `ledger` | absolute path | unset (`<config dir>/usage.jsonl`) | File that every usage row is appended to and that `/workers costs`, the chat status bar and `ralph usage` read. A relative path is an error: `ralph config check` reports it and config load fails. A store config can set it per store, and ralph warns once when it does. `ralph ask`, chat, the memory nap, workers and the Stop hook all follow it |
+| `ledger` | absolute path | unset (`<config dir>/usage.jsonl`) | File that every usage row is appended to and that `/workers costs`, the chat status bar and `ralph usage` read. A relative path is an error: `ralph config check` reports it and config load fails. A store config can set it per store, and ralph warns once when it does. `ralph ask`, chat, the memory nap, workers and the Stop hook all follow it; `ralph usage --ledger FILE` wins over it for that one read |
 
 The key is read once per process, so a change needs a restart of a running chat. `RALPH_CONFIG_DIR` still moves `config.toml` and the default ledger together; `ledger` moves only the ledger.
 

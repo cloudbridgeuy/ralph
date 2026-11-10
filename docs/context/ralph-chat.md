@@ -802,7 +802,7 @@ A codex worker appends the same kind of rows with `harness` `codex` and `session
 
 ### ralph usage
 
-`ralph usage` reads the usage ledger (`<config_dir>/usage.jsonl`, or the file `[usage] ledger` names) and prints cost reports. It never writes the ledger, calls no model and costs $0. The core is `crates/core/src/worker_costs/usage_report/` (pure: parse, filter, group, text, SVG charts); the shell is `crates/ralph/src/usage_cmd.rs`. It shares its grouping with the `/workers costs` views.
+`ralph usage` reads the usage ledger (`--ledger FILE`, else `[usage] ledger`, else `<config_dir>/usage.jsonl`; the pure `usage_ledger` in `usage_cmd.rs` picks it, a relative flag path is read from the cwd) and prints cost reports. It never writes the ledger, calls no model and costs $0. The core is `crates/core/src/worker_costs/usage_report/` (pure: parse, filter, group, text, SVG charts); the shell is `crates/ralph/src/usage_cmd.rs`. It shares its grouping with the `/workers costs` views.
 
 - Views: `ralph usage` or `ralph usage daily` (one row per local day, each as `2026-11-05 Thu`, a trend line, a total row), `ralph usage by <kind|store|harness|model|ticket|run>`, and `ralph usage cache` (hit rate per model).
 - Money has two series. Reported dollars come from the harness (`cost_usd`). `est.` dollars are priced from tokens with the `ralph wire` table and `[wire.prices]` overrides. A group can show both: `$X + $Y est.`.

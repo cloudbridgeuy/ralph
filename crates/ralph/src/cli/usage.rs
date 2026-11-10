@@ -19,6 +19,13 @@ pub struct UsageArgs {
     #[arg(
         long,
         global = true,
+        value_name = "FILE",
+        help = "Read this usage ledger instead of the configured one; a relative path is read from the current directory"
+    )]
+    pub ledger: Option<PathBuf>,
+    #[arg(
+        long,
+        global = true,
         value_name = "PATH",
         help = "Write the chart to this PNG file instead of printing"
     )]
