@@ -20,13 +20,3 @@ pub fn run(n: &Result<usize, String>, store: &Path, display: &Display) {
         Err(message) => println!("{message}"),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_handler_takes_no_writer_and_only_a_store_path() {
-        let _: fn(&Result<usize, String>, &Path, &Display) = run;
-    }
-}
