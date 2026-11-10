@@ -487,3 +487,5 @@ pub fn footer(unread: usize, width: usize) -> String {
 mod rerender_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod thread_route_tests;
