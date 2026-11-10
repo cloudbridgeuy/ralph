@@ -28,6 +28,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `inbox` | Post a report from an outside program to a chat inbox ([details](context/ralph-chat.md#external-reports)) |
 | `config` | `check` finds errors and unknown keys in `config.toml`; `show` prints the merged config with the source of each value ([details](#ralph-config)) |
 | `worker` | Verify an installed worker agent against ralph's local spec ([details](context/headless-workers.md#verify-an-agent-version)) |
+| `usage` | Cost reports from the usage ledger, as text or a PNG chart ([details](#ralph-usage)) |
 | `upgrade` | Install the latest GitHub release over the running binary ([details](context/release-process.md#upgrade-an-install)) |
 
 `ralph chat --name <NAME>` sets the chat session name shown in the status bar and the terminal title. It overrides `[chat] name`; without both, the name is the git root or cwd folder name. The name is only a label: chats that share a store still share memory and workers, so use `--store` to separate them ([details](context/ralph-chat.md#session-name)).
@@ -172,6 +173,31 @@ With `--store DIR` it also checks `DIR/config.toml` on its own, then the merged 
 | `ok: <path>` | No errors |
 
 Parse failures and invalid `[workers]` or `[wire.prices]` values also fail the check. Exit code is 1 when any error is found. Environment variables and `$EDITOR` are not consulted.
+
+---
+
+## ralph usage
+
+```bash
+ralph usage [daily] [FILTERS] [--text | --png PATH]
+ralph usage by <kind|store|harness|model|ticket|run> [FILTERS] [--text | --png PATH]
+ralph usage cache [FILTERS] [--text]
+```
+
+Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`). It only reads, calls no model and costs $0. Reported dollars and `est.` dollars are separate. `+ no price` and `$X*` mark a lower bound; `excluded` (codex), `no data` (cursor) and `(model missing)` are states, not `$0`. See [ralph usage](context/ralph-chat.md#ralph-usage) for the rules.
+
+| Option | Meaning |
+|--------|---------|
+| `daily` (default) | One row per local day, a trend line and a total |
+| `by <DIM>` | Group by kind, store, harness, model, ticket or run |
+| `cache` | Cache hit rate per model; has no chart |
+| `--since`, `--until` | A local day (`YYYY-MM-DD`) or an RFC 3339 time. `--since` is inclusive, `--until` is exclusive |
+| `--store DIR` | Only this store's rows, and only its workers log for tickets. Without it, tickets come from the log of every store in the ledger |
+| `--harness`, `--model`, `--ticket`, `--kind` | Keep only matching rows |
+| `--text` | Print text even on a terminal that can draw images. Conflicts with `--png` |
+| `--png PATH` | Write the chart to a PNG file and print `Wrote PATH`. Conflicts with `--text` |
+
+With neither `--text` nor `--png`, a terminal that can draw images shows the chart inline; otherwise (piped output, no image support) the command prints text. `ralph usage cache --png` exits 1 with `the cache view has no chart` and writes no file. A missing ledger prints `No usage ledger at <path>.` and exits 0.
 
 ---
 
