@@ -1,4 +1,4 @@
-use super::{Group, EST};
+use super::{Group, EST, EXCLUDED};
 use crate::worker_costs::NO_USAGE;
 use chrono::{Duration, NaiveDate};
 
@@ -18,7 +18,10 @@ const BAR_FILL_RATIO: f64 = 0.8;
 const MAX_X_LABELS: usize = 16;
 const BAR_LABEL_X: f64 = 220.0;
 const BAR_START_X: f64 = 230.0;
-const BAR_MAX_WIDTH: f64 = 560.0;
+const VALUE_GAP: f64 = 6.0;
+const VALUE_SIZE: u8 = 11;
+const RIGHT_MARGIN: f64 = 20.0;
+const NO_PRICE: &str = "no price";
 const BAR_ROW: f64 = 28.0;
 const BAR_TOP: f64 = 75.0;
 const BAR_THICKNESS: f64 = 18.0;
@@ -39,6 +42,12 @@ fn escape(text: &str) -> String {
             other => other.to_string(),
         })
         .collect()
+}
+
+const GLYPH_RATIO: f64 = 0.6;
+
+fn text_width(content: &str, size: u8) -> f64 {
+    content.chars().count() as f64 * f64::from(size) * GLYPH_RATIO
 }
 
 fn money(usd: f64) -> String {
@@ -149,6 +158,18 @@ fn x_label(key: &str) -> &str {
     key.get(5..).unwrap_or(key)
 }
 
+fn day_label(day: &Group) -> Option<String> {
+    if day.metered == 0 {
+        None
+    } else if day.all_excluded() {
+        Some(EXCLUDED.to_string())
+    } else if day.usd().known.is_none() {
+        Some(NO_PRICE.to_string())
+    } else {
+        Some(money(total(day)))
+    }
+}
+
 pub fn daily_svg(days: &[Group], heading: &Heading) -> String {
     let days = pad_days(days);
     if days.is_empty() {
@@ -185,12 +206,14 @@ pub fn daily_svg(days: &[Group], heading: &Heading) -> String {
                 svg += &bar(x, top, width, height_of(usd), fill);
             }
         }
-        svg += &text(
-            x + width / 2.0,
-            top - 5.0,
-            Style(TEXT, 10, "middle"),
-            &format!("{:.0}", total(day)),
-        );
+        if let Some(label) = day_label(day) {
+            svg += &text(
+                x + width / 2.0,
+                top - 5.0,
+                Style(TEXT, 10, "middle"),
+                &label,
+            );
+        }
         if index % stride == 0 {
             svg += &text(
                 x + width / 2.0,
@@ -209,12 +232,28 @@ fn value_text(group: &Group, grand: f64) -> String {
     } else {
         0.0
     };
-    let mark = if computed(group) > 0.0 {
-        format!(" {EST}")
-    } else {
-        String::new()
+    let amount = match (reported(group) > 0.0, computed(group) > 0.0) {
+        (true, true) => format!(
+            "{} + {} {EST}",
+            money(reported(group)),
+            money(computed(group))
+        ),
+        (false, true) => format!("{} {EST}", money(computed(group))),
+        _ => money(reported(group)),
     };
-    format!("{}{mark} ({share:.0}%)", money(total(group)))
+    format!("{amount} ({share:.0}%)")
+}
+
+fn unpriced(group: &Group) -> bool {
+    group.usd().known.is_none()
+}
+
+fn plain_line(group: &Group) -> String {
+    if unpriced(group) && group.metered > 0 && !group.all_excluded() {
+        format!("{}: {NO_PRICE}", group.key)
+    } else {
+        group.line()
+    }
 }
 
 pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {
@@ -224,25 +263,27 @@ pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {
     }
     let grand: f64 = groups.iter().map(total).sum();
     let peak = groups.iter().map(total).fold(0.0, f64::max);
+    let widest_value = groups
+        .iter()
+        .filter(|group| !unpriced(group))
+        .map(|group| text_width(&value_text(group, grand), VALUE_SIZE))
+        .fold(0.0, f64::max);
+    let bar_room = WIDTH - RIGHT_MARGIN - BAR_START_X - VALUE_GAP - widest_value;
     let mut svg = open(height, heading);
     for (index, group) in groups.iter().enumerate() {
         let y = BAR_TOP + BAR_ROW * index as f64;
         let baseline = y + BAR_THICKNESS - 4.0;
-        if group.metered == 0 || group.all_excluded() || group.usd().known.is_none() {
+        if group.metered == 0 || group.all_excluded() || unpriced(group) {
             svg += &text(
                 BAR_START_X,
                 baseline,
                 Style(MUTED, 12, "start"),
-                &group.line(),
+                &plain_line(group),
             );
             continue;
         }
         svg += &text(BAR_LABEL_X, baseline, Style(TEXT, 12, "end"), &group.key);
-        let scale = if peak > 0.0 {
-            BAR_MAX_WIDTH / peak
-        } else {
-            0.0
-        };
+        let scale = if peak > 0.0 { bar_room / peak } else { 0.0 };
         let mut x = BAR_START_X;
         for (usd, fill) in [
             (reported(group), REPORTED_FILL),
@@ -254,9 +295,9 @@ pub fn bars_svg(groups: &[Group], heading: &Heading) -> String {
             }
         }
         svg += &text(
-            x + 6.0,
+            x + VALUE_GAP,
             baseline,
-            Style(MUTED, 11, "start"),
+            Style(MUTED, VALUE_SIZE, "start"),
             &value_text(group, grand),
         );
     }

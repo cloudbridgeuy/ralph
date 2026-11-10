@@ -143,6 +143,99 @@ fn an_unpriced_group_reads_its_line_never_zero_dollars() {
         ..Group::default()
     };
     let svg = bars_svg(&[unpriced], &HEADING);
-    assert!(svg.contains(">(model missing) n/a<"), "{svg}");
+    assert!(svg.contains(">(model missing): no price<"), "{svg}");
     assert!(!svg.contains("$0"), "{svg}");
+}
+
+fn attr<'a>(element: &'a str, name: &str) -> &'a str {
+    element
+        .split(&format!("{name}=\""))
+        .nth(1)
+        .and_then(|tail| tail.split('"').next())
+        .unwrap_or_default()
+}
+
+fn right_edges(svg: &str) -> Vec<f64> {
+    svg.split("<text ")
+        .skip(1)
+        .filter_map(|element| {
+            let x: f64 = attr(element, "x").parse().ok()?;
+            let size: u8 = attr(element, "font-size").parse().ok()?;
+            let content = element.split('>').nth(1)?.split('<').next()?;
+            let width = text_width(content, size);
+            Some(match attr(element, "text-anchor") {
+                "end" => x,
+                "middle" => x + width / 2.0,
+                _ => x + width,
+            })
+        })
+        .collect()
+}
+
+fn day(key: &str, reported: Option<f64>, computed: Option<f64>) -> Group {
+    group(key, reported, computed)
+}
+
+#[test]
+fn value_labels_stay_inside_the_svg_width() {
+    let groups = [
+        group("GUZ-1", Some(1000.0), Some(2000.0)),
+        group("GUZ-2", Some(50.0), Some(25.0)),
+    ];
+    let svg = bars_svg(&groups, &HEADING);
+    let widest = right_edges(&svg).into_iter().fold(0.0, f64::max);
+    assert!(widest <= 900.0, "right edge {widest} in {svg}");
+}
+
+#[test]
+fn a_mixed_bar_reads_reported_plus_est() {
+    let svg = bars_svg(&[group("a", Some(40.0), Some(12.8))], &HEADING);
+    assert!(svg.contains(">$40.00 + $12.80 est. (100%)<"), "{svg}");
+}
+
+#[test]
+fn an_all_reported_bar_reads_plain_dollars() {
+    let svg = bars_svg(&[group("a", Some(40.0), None)], &HEADING);
+    assert!(svg.contains(">$40.00 (100%)<"), "{svg}");
+    assert!(!svg.contains("est. ("), "{svg}");
+}
+
+#[test]
+fn an_all_est_bar_reads_dollars_est() {
+    let svg = bars_svg(&[group("a", None, Some(12.8))], &HEADING);
+    assert!(svg.contains(">$12.80 est. (100%)<"), "{svg}");
+}
+
+#[test]
+fn daily_value_labels_are_dollars() {
+    let svg = daily_svg(&[day("2026-11-05", Some(3.2), None)], &HEADING);
+    assert!(svg.contains(">$3.20<"), "{svg}");
+}
+
+#[test]
+fn a_day_with_no_rows_has_no_label_and_no_bar() {
+    let days = [
+        day("2026-11-05", Some(2.3), None),
+        day("2026-11-07", Some(2.3), None),
+    ];
+    let svg = daily_svg(&days, &HEADING);
+    assert_eq!(svg.matches(">$2.30<").count(), 2, "{svg}");
+    assert_eq!(heights(&svg, REPORTED_FILL).len(), 2, "{svg}");
+}
+
+#[test]
+fn a_day_whose_rows_have_no_price_reads_no_price() {
+    let unpriced = Group {
+        key: "2026-11-05".to_string(),
+        metered: 2,
+        est: Usd {
+            missing: true,
+            estimate: true,
+            ..Usd::default()
+        },
+        ..Group::default()
+    };
+    let svg = daily_svg(&[unpriced], &HEADING);
+    assert!(svg.contains(">no price<"), "{svg}");
+    assert!(heights(&svg, EST_FILL).is_empty(), "{svg}");
 }
