@@ -5,10 +5,9 @@ use crate::chat::index_files::{
 use crate::private_file::check_path;
 use crate::warn::warn;
 use ralph_core::chat_memory::{
-    check_summary, commit_decision, encode_entry, encode_record, fallback_summary, holder_pid,
-    log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall, retry_prompt, search,
-    Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, Role, Tool, Tree, Trigger,
-    MAX_NAP_ATTEMPTS,
+    commit_decision, encode_entry, encode_record, holder_pid, log_tail, parse_log, parse_tree,
+    recall, search, Archive, Commit, Entry, LogTail, NewEntry, Node, NodeSlot, Role, Tool, Tree,
+    Trigger,
 };
 use ralph_core::chat_process::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::chat_suggestion::SuggestionRecord;
@@ -19,6 +18,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+
+mod nap;
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
 const USAGE_FILE: &str = "usage.jsonl";
@@ -354,28 +355,6 @@ impl Store {
         Ok(parse_pending_turn(&String::from_utf8_lossy(&marker)))
     }
 
-    /// Holds `LOCK` only to snapshot and to commit; curator calls run unlocked.
-    pub fn nap(&self, mut curate: impl FnMut(&str) -> Result<String, String>) -> io::Result<()> {
-        let nap_lock = self.open_nap_lock()?;
-        nap_lock.lock()?;
-        let (entries, mut tree) = self.load_settled(|| ())?;
-        for node in pending(&entries, &tree) {
-            let base = match nap_step(&entries, &tree, node) {
-                NapStep::Done => continue,
-                NapStep::Blocked(e) => {
-                    warn(format!("chat memory skipped #{}: {e}", node.id()));
-                    continue;
-                }
-                NapStep::Ask(prompt) => prompt,
-            };
-            match summarize(&entries, &tree, node, base, &mut curate) {
-                Some(summary) => tree = self.commit(node, &summary)?,
-                None => warn(format!("chat memory left #{} pending", node.id())),
-            }
-        }
-        Ok(())
-    }
-
     /// Re-reads the tree under the exclusive `LOCK` and writes the summary only
     /// when no other nap committed the node first. Returns the committed tree.
     fn commit(&self, node: Node, summary: &str) -> io::Result<Tree> {
@@ -424,43 +403,12 @@ fn trim_torn_tail(file: &mut File) -> io::Result<()> {
     }
 }
 
-/// Runs the curator with `check_summary` retries. Returns the summary, the raw
-/// fallback after `MAX_NAP_ATTEMPTS` rejections, or `None` on a curator error.
-fn summarize(
-    entries: &[Entry],
-    tree: &Tree,
-    node: Node,
-    base: String,
-    curate: &mut impl FnMut(&str) -> Result<String, String>,
-) -> Option<String> {
-    let mut prompt = base.clone();
-    for _ in 0..MAX_NAP_ATTEMPTS {
-        let reply = match curate(&prompt) {
-            Ok(reply) => reply,
-            Err(e) => {
-                warn(format!("chat memory curator failed on #{}: {e}", node.id()));
-                return None;
-            }
-        };
-        match check_summary(&reply) {
-            Ok(summary) => return Some(summary),
-            Err(e) => prompt = retry_prompt(&base, &e),
-        }
-    }
-    let source = nap_source(entries, tree, node).ok()?;
-    warn(format!(
-        "chat memory stored raw fallback for #{}",
-        node.id()
-    ));
-    Some(fallback_summary(&source))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
         parse_search_args, split_view, LogIndex, RangeRequest, TreeIndex, FALLBACK_MARK,
-        LOG_INDEX_FILE, TREE_INDEX_FILE,
+        LOG_INDEX_FILE, MAX_NAP_ATTEMPTS, TREE_INDEX_FILE,
     };
 
     #[test]
@@ -837,7 +785,7 @@ mod tests {
         let (_dir, store) = seeded(&[1], 4);
         let mut calls = 0;
         store
-            .nap(|_| {
+            .nap(None, |_| {
                 calls += 1;
                 Ok(format!("sum{calls}"))
             })
@@ -847,7 +795,7 @@ mod tests {
         assert_eq!(tree.len(), 4);
         let mut again = 0;
         store
-            .nap(|_| {
+            .nap(None, |_| {
                 again += 1;
                 Ok("x".into())
             })
@@ -860,7 +808,7 @@ mod tests {
         let (_dir, store) = seeded(&[1], 4);
         let mut calls = 0;
         store
-            .nap(|_| {
+            .nap(None, |_| {
                 calls += 1;
                 Ok(format!("sum{calls}"))
             })
@@ -916,7 +864,7 @@ mod tests {
         let (_dir, store) = seeded(&[0], 2);
         let mut free = Vec::new();
         store
-            .nap(|_| {
+            .nap(None, |_| {
                 let probe = store.open_lock().unwrap();
                 free.push(frees_soon(&probe));
                 Ok("sum".into())
@@ -931,7 +879,7 @@ mod tests {
         let (_dir, store) = seeded(&[0], 2);
         let mut calls = 0;
         store
-            .nap(|_| {
+            .nap(None, |_| {
                 calls += 1;
                 Ok("z".repeat(600))
             })
@@ -947,7 +895,7 @@ mod tests {
     #[test]
     fn nap_curator_error_leaves_node_pending_without_fallback() {
         let (_dir, store) = seeded(&[0], 1);
-        store.nap(|_| Err("down".into())).unwrap();
+        store.nap(None, |_| Err("down".into())).unwrap();
         let (_, tree) = store.load().unwrap();
         assert!(tree.is_empty());
     }
@@ -957,7 +905,7 @@ mod tests {
         let (_dir, store) = seeded(&[0], 1);
         let mut prompts = Vec::new();
         store
-            .nap(|prompt| {
+            .nap(None, |prompt| {
                 prompts.push(prompt.to_string());
                 Ok(if prompts.len() == 1 {
                     "a\nb".to_string()
@@ -977,7 +925,7 @@ mod tests {
         let (_dir, store) = seeded(&[0, 2], 4);
         let mut calls = 0;
         store
-            .nap(|_| {
+            .nap(None, |_| {
                 calls += 1;
                 if calls == 1 {
                     Err("boom".into())

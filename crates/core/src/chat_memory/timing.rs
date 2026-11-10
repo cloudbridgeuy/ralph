@@ -98,6 +98,63 @@ pub struct NapCallFacts {
     pub exit: Option<i32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CuratorError {
+    pub message: String,
+    pub timed_out: bool,
+    pub exit: Option<i32>,
+}
+
+impl From<String> for CuratorError {
+    fn from(message: String) -> CuratorError {
+        CuratorError {
+            message,
+            timed_out: false,
+            exit: None,
+        }
+    }
+}
+
+impl From<&str> for CuratorError {
+    fn from(message: &str) -> CuratorError {
+        CuratorError::from(message.to_string())
+    }
+}
+
+impl std::fmt::Display for CuratorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CallVerdict<'a> {
+    Accepted,
+    Rejected,
+    Failed(&'a CuratorError),
+}
+
+pub fn call_facts(
+    node: String,
+    attempt: u64,
+    took: Duration,
+    verdict: CallVerdict,
+) -> NapCallFacts {
+    let (outcome, exit) = match verdict {
+        CallVerdict::Accepted => (CallOutcome::Ok, None),
+        CallVerdict::Rejected => (CallOutcome::Rejected, None),
+        CallVerdict::Failed(error) if error.timed_out => (CallOutcome::Timeout, error.exit),
+        CallVerdict::Failed(error) => (CallOutcome::Failed, error.exit),
+    };
+    NapCallFacts {
+        node,
+        attempt,
+        took,
+        outcome,
+        exit,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum TimingEvent {
@@ -304,6 +361,45 @@ mod tests {
         assert_eq!(
             (v["outage_retries"].as_u64(), v["outage_wait_ms"].as_u64()),
             (Some(3), Some(390))
+        );
+    }
+
+    #[test]
+    fn a_call_verdict_picks_the_outcome_and_the_exit() {
+        let plain = CuratorError::from("down");
+        let timed_out = CuratorError {
+            message: "slow".into(),
+            timed_out: true,
+            exit: Some(-1),
+        };
+        let exited = CuratorError {
+            message: "exit".into(),
+            timed_out: false,
+            exit: Some(2),
+        };
+        let facts = |verdict| call_facts("0".into(), 1, Duration::ZERO, verdict);
+        let seen: Vec<_> = [
+            CallVerdict::Accepted,
+            CallVerdict::Rejected,
+            CallVerdict::Failed(&plain),
+            CallVerdict::Failed(&timed_out),
+            CallVerdict::Failed(&exited),
+        ]
+        .into_iter()
+        .map(|verdict| {
+            let call = facts(verdict);
+            (call.outcome, call.exit)
+        })
+        .collect();
+        assert_eq!(
+            seen,
+            [
+                (CallOutcome::Ok, None),
+                (CallOutcome::Rejected, None),
+                (CallOutcome::Failed, None),
+                (CallOutcome::Timeout, Some(-1)),
+                (CallOutcome::Failed, Some(2)),
+            ]
         );
     }
 

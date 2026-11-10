@@ -43,8 +43,8 @@ pub use tag::{
     TAGS_FILE, TAG_MODEL, TAG_PROMPT,
 };
 pub use timing::{
-    encode_timing, nap_call_row, nap_row, timing_path, turn_row, CallOutcome, NapCallFacts,
-    NapStats, NapTimes, TimingKey, TimingRow, TurnTiming,
+    call_facts, encode_timing, nap_call_row, nap_row, timing_path, turn_row, CallOutcome,
+    CallVerdict, CuratorError, NapCallFacts, NapStats, NapTimes, TimingKey, TimingRow, TurnTiming,
 };
 pub use tools::{
     finish_call, handle_request, history_tool, parse_tool_call, tool_definitions, MemoryCall,
