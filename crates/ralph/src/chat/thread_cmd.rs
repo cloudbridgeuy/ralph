@@ -78,10 +78,14 @@ pub(super) fn confirm(question: &str) -> Option<bool> {
 mod tests {
     use super::*;
     use crate::chat::thread::ensure;
+    use crate::chat::workers::{paint_tones, table_theme};
     use crate::highlight::Highlighter;
     use crate::markdown::MarkdownTheme;
+    use crate::render::text::render_prose;
     use crate::render::RenderContext;
     use crate::ui_theme::UiColors;
+    use ralph_core::chat_thread_table::{threads_view, ThreadTableOpts};
+    use ralph_core::workers_view::View;
     use ralph_server::chat::memory::Store;
 
     #[test]
@@ -132,9 +136,23 @@ mod tests {
             ..env(&main, false)
         };
         let text = run(&ThreadOp::Ls, &env, &mut |_: &str| None, &idle).unwrap();
-        // The painted prose wraps to the terminal's own width, so check only the border.
+        // The in-chat prose wraps to the terminal's own width, so check only the border.
         assert!(text.contains('│'), "{text}");
         assert!(!text.contains("| NAME |"), "{text}");
+        // Paint the same table at a fixed width, as the /workers painted test does.
+        let opts = ThreadTableOpts {
+            now: chrono::Utc::now(),
+            width: 200,
+            styled: true,
+        };
+        let listed = rows(&main, &|_: &ThreadName| 0).unwrap();
+        let Some(View::Table(md)) = threads_view(&listed, &opts) else {
+            panic!("not a table");
+        };
+        let skin = table_theme(&theme).skin;
+        let painted = paint_tones(&render_prose(&skin, &md, 200), &theme.palette);
+        assert!(painted.contains("NAME"), "{painted}");
+        assert!(painted.contains("auth"), "{painted}");
     }
 
     fn idle(_: &ThreadName) -> Vec<String> {
