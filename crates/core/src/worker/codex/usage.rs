@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const TOKEN_USAGE_UPDATED: &str = "thread/tokenUsage/updated";
-pub const THREAD_STARTED: &str = "thread/started";
+pub const ITEM_STARTED: &str = "item/started";
 pub const MODEL_REROUTED: &str = "model/rerouted";
 const UNKNOWN_MODEL: &str = "unknown";
 
@@ -102,15 +102,21 @@ pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
     }
 }
 
-pub fn decode_thread_parent(method: &str, params: &Value) -> Option<(String, String)> {
-    if method != THREAD_STARTED {
-        return None;
-    }
-    let thread = &params["thread"];
-    let parent = thread["parentThreadId"]
-        .as_str()
-        .or_else(|| thread["source"]["subAgent"]["thread_spawn"]["parent_thread_id"].as_str())?;
-    Some((thread["id"].as_str()?.to_string(), parent.to_string()))
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subagent {
+    pub thread: String,
+    pub parent: String,
+    pub model: Option<String>,
+}
+
+pub fn decode_subagent(method: &str, params: &Value) -> Option<Subagent> {
+    let item = &params["item"];
+    (method == ITEM_STARTED && item["type"] == "subAgentActivity").then_some(())?;
+    Some(Subagent {
+        thread: item["agentThreadId"].as_str()?.to_string(),
+        parent: params["threadId"].as_str()?.to_string(),
+        model: item["model"].as_str().map(str::to_string),
+    })
 }
 
 #[derive(Debug, Default)]
@@ -118,6 +124,7 @@ pub struct TurnUsage {
     base: Option<String>,
     current: Option<String>,
     seen_total: BTreeMap<String, CallTokens>,
+    thread_models: BTreeMap<String, String>,
     by_model: BTreeMap<(String, bool), CallTokens>,
 }
 
@@ -127,8 +134,13 @@ impl TurnUsage {
             base: model.clone(),
             current: model,
             seen_total: BTreeMap::new(),
+            thread_models: BTreeMap::new(),
             by_model: BTreeMap::new(),
         }
+    }
+
+    pub fn set_thread_model(&mut self, thread: &str, model: String) {
+        self.thread_models.insert(thread.to_string(), model);
     }
 
     pub fn observe(&mut self, event: UsageEvent, in_turn: bool) {
@@ -142,12 +154,16 @@ impl TurnUsage {
             } => {
                 let tokens = self
                     .seen_total
-                    .insert(thread, total)
+                    .insert(thread.clone(), total)
                     .map_or(last, |seen| total.since(seen));
                 if !in_turn {
                     return;
                 }
-                let model = self.current.as_deref().unwrap_or(UNKNOWN_MODEL);
+                let model = self
+                    .thread_models
+                    .get(&thread)
+                    .or(self.current.as_ref())
+                    .map_or(UNKNOWN_MODEL, String::as_str);
                 let long = long_prompt_call(model, &tokens.usage());
                 self.by_model
                     .entry((model.to_string(), long))
@@ -393,19 +409,36 @@ mod tests {
     }
 
     #[test]
-    fn a_started_thread_names_its_parent_from_either_field() {
-        let direct = json!({"thread": {"id": "c", "parentThreadId": "p"}});
-        let spawned = json!({"thread": {"id": "c", "source": {"subAgent": {"thread_spawn": {"parent_thread_id": "p", "depth": 1}}}}});
-        let expected = Some(("c".to_string(), "p".to_string()));
-        assert_eq!(decode_thread_parent(THREAD_STARTED, &direct), expected);
-        assert_eq!(decode_thread_parent(THREAD_STARTED, &spawned), expected);
+    fn a_subagent_activity_names_the_child_its_parent_and_its_model() {
+        let params = json!({"threadId": "p", "item": {"type": "subAgentActivity", "kind": "started", "agentThreadId": "c", "model": "m"}});
+        let expected = Some(Subagent {
+            thread: "c".into(),
+            parent: "p".into(),
+            model: Some("m".into()),
+        });
+        assert_eq!(decode_subagent(ITEM_STARTED, &params), expected);
     }
 
     #[test]
-    fn a_thread_without_a_parent_or_another_method_names_none() {
-        let root = json!({"thread": {"id": "c", "parentThreadId": null, "source": "appServer"}});
-        assert_eq!(decode_thread_parent(THREAD_STARTED, &root), None);
-        let child = json!({"thread": {"id": "c", "parentThreadId": "p"}});
-        assert_eq!(decode_thread_parent("turn/started", &child), None);
+    fn other_items_and_methods_name_no_subagent() {
+        let message = json!({"threadId": "p", "item": {"type": "agentMessage"}});
+        assert_eq!(decode_subagent(ITEM_STARTED, &message), None);
+        let activity =
+            json!({"threadId": "p", "item": {"type": "subAgentActivity", "agentThreadId": "c"}});
+        assert_eq!(decode_subagent("item/completed", &activity), None);
+    }
+
+    #[test]
+    fn a_thread_model_prices_that_threads_calls() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.set_thread_model("child", "b".into());
+        turn.observe(on_thread("parent", (10, 0), (10, 0)), true);
+        turn.observe(on_thread("child", (5, 0), (5, 0)), true);
+        let rows: Vec<_> = turn
+            .take()
+            .iter()
+            .map(|row| (row.model.clone(), row.usage.input_uncached))
+            .collect();
+        assert_eq!(rows, [("a".to_string(), 10), ("b".to_string(), 5)]);
     }
 }

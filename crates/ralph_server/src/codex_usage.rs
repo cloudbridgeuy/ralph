@@ -2,7 +2,7 @@ use crate::chat::memory::usage_path;
 use crate::ledger;
 use crate::warn::warn_if_err;
 use ralph_core::chat_memory::{worker_usage_record, CallSite};
-use ralph_core::worker::{decode_thread_parent, decode_usage_event, ModelUsage, TurnUsage};
+use ralph_core::worker::{decode_subagent, decode_usage_event, ModelUsage, TurnUsage};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
@@ -58,8 +58,11 @@ impl CodexUsage {
 
     pub fn observe(&self, method: &str, params: &Value, in_turn: bool) {
         let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((thread, parent)) = decode_thread_parent(method, params) {
-            bound.parents.insert(thread, parent);
+        if let Some(subagent) = decode_subagent(method, params) {
+            if let Some(model) = &subagent.model {
+                bound.turn.set_thread_model(&subagent.thread, model.clone());
+            }
+            bound.parents.insert(subagent.thread, subagent.parent);
         }
         if let Some(event) = decode_usage_event(method, params) {
             let in_turn = in_turn || (bound.active && bound.descends_from_bound(params));
@@ -143,7 +146,7 @@ mod tests {
     }
 
     fn started(thread: &str, parent: &str) -> Value {
-        serde_json::json!({"thread": {"id": thread, "parentThreadId": parent}})
+        serde_json::json!({"threadId": parent, "item": {"type": "subAgentActivity", "kind": "started", "agentThreadId": thread}})
     }
 
     fn counted(usage: &CodexUsage) -> Vec<u64> {
@@ -156,8 +159,8 @@ mod tests {
         let usage = CodexUsage::new("w1", None);
         usage.bind("parent", Some("gpt".into()));
         usage.start_turn();
-        usage.observe("thread/started", &started("child", "parent"), false);
-        usage.observe("thread/started", &started("grand", "child"), false);
+        usage.observe("item/started", &started("child", "parent"), false);
+        usage.observe("item/started", &started("grand", "child"), false);
         usage.observe(
             "thread/tokenUsage/updated",
             &usage_params("parent", 100, 100),
@@ -185,7 +188,7 @@ mod tests {
     fn unrelated_thread_usage_and_child_usage_between_turns_are_not_counted() {
         let usage = CodexUsage::new("w1", None);
         usage.bind("parent", Some("gpt".into()));
-        usage.observe("thread/started", &started("child", "parent"), false);
+        usage.observe("item/started", &started("child", "parent"), false);
         usage.observe(
             "thread/tokenUsage/updated",
             &usage_params("child", 5, 5),
