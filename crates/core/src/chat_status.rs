@@ -60,7 +60,7 @@ pub struct ScheduleState {
 pub struct RunningWorker {
     pub id: String,
     pub session: String,
-    #[serde(default, alias = "cursor")]
+    #[serde(default)]
     pub kind: HarnessId,
 }
 
@@ -334,7 +334,7 @@ pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
         .map(|session| RunningWorker {
             id: session.id,
             session: session.name,
-            kind: HarnessId::Claude,
+            kind: HarnessId::ClaudeTmux,
         })
         .collect();
     workers.sort_by(|a, b| a.id.cmp(&b.id));

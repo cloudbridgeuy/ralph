@@ -10,11 +10,11 @@ use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::claude_leftovers::{configured_dir, CLAUDE_CONFIG_DIR_ENV};
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
-    acp_mcp_server, argv_check, cancel_check, claude_headless_args, claude_mcp_config,
+    acp_mcp_server, argv_check, cancel_check, claude_args, claude_mcp_config,
     claude_probed_version, claude_verify_spawns, fold_claude_line, init_check, mcp_check,
-    new_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeFold,
-    ClaudeHeadlessArgs, ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode,
-    PermissionSetup, StderrRead, CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED,
+    new_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeArgs,
+    ClaudeFold, ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode, PermissionSetup,
+    StderrRead, CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED,
     CLAUDE_PERMISSION_PROMPT, CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::fs;
@@ -112,7 +112,7 @@ fn live_checks(wire: &Wire, expected_session: &str, dir: &Path, checks: &Checks,
     checks.add(permission_check(
         &allowed.summary,
         CLAUDE_ENDED,
-        &PermissionSetup::claude_headless(),
+        &PermissionSetup::claude(),
     ));
     if !budget.allows(checks, "cancel") {
         return;
@@ -215,7 +215,7 @@ fn verify_mcp_config(exe: &Path, dir: &Path) -> String {
 }
 
 fn verify_args(model: Option<&str>, dir: &Path, session: &str, exe: &Path) -> Vec<String> {
-    let mut args = claude_headless_args(&ClaudeHeadlessArgs {
+    let mut args = claude_args(&ClaudeArgs {
         model,
         mcp_config: &verify_mcp_config(exe, dir),
         attachments: dir,
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn worker_args_do_not_restrict_setting_sources() {
-        let args = claude_headless_args(&ClaudeHeadlessArgs {
+        let args = claude_args(&ClaudeArgs {
             model: None,
             mcp_config: "{}",
             attachments: Path::new("/tmp/verify-dir"),

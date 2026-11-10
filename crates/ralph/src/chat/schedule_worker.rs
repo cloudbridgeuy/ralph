@@ -137,7 +137,7 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
         let args = SpawnArgs {
             id: &worker,
             task: &brief,
-            harness: HarnessId::Claude,
+            harness: HarnessId::ClaudeTmux,
             model: None,
             ticket: None,
             scheduled: true,

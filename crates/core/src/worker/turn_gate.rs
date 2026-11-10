@@ -109,7 +109,7 @@ mod tests {
     }
 
     fn spawn() -> Command {
-        spawn_on(HarnessId::Claude)
+        spawn_on(HarnessId::ClaudeTmux)
     }
 
     fn reply() -> Command {
@@ -164,7 +164,7 @@ mod tests {
     fn every_action() -> Vec<Action> {
         vec![
             Action::Spawn {
-                harness: HarnessId::Claude,
+                harness: HarnessId::ClaudeTmux,
             },
             Action::Reply,
             Action::Close,
@@ -240,12 +240,12 @@ mod tests {
     #[test]
     fn send_it_turn_allows_only_what_the_run_lists() {
         let claude = Action::Spawn {
-            harness: HarnessId::Claude,
+            harness: HarnessId::ClaudeTmux,
         };
         let cases = [
-            (spawn_on(HarnessId::Claude), vec![claude.clone()], true),
+            (spawn_on(HarnessId::ClaudeTmux), vec![claude.clone()], true),
             (spawn_on(HarnessId::Codex), vec![claude.clone()], false),
-            (spawn_on(HarnessId::Claude), vec![Action::Reply], false),
+            (spawn_on(HarnessId::ClaudeTmux), vec![Action::Reply], false),
             (reply(), vec![Action::Reply], true),
             (reply(), vec![], false),
             (close(), vec![Action::Close], true),
@@ -297,10 +297,7 @@ mod tests {
     fn refused_tool_names_the_tool_and_its_risky_options() {
         for (command, name) in [
             (spawn_on(HarnessId::Codex), "spawn_worker codex"),
-            (
-                spawn_on(HarnessId::ClaudeHeadless),
-                "spawn_worker claude-headless",
-            ),
+            (spawn_on(HarnessId::Claude), "spawn_worker claude"),
             (reply(), "reply"),
             (close(), "close_worker"),
             (close_with(true, false), "close_worker abandon"),

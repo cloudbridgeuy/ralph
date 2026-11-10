@@ -1,33 +1,32 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum HarnessId {
     #[default]
     Claude,
+    ClaudeTmux,
     Cursor,
     Opencode,
     Codex,
-    #[serde(rename = "claude-headless")]
-    ClaudeHeadless,
 }
 
 impl HarnessId {
     pub const ALL: [HarnessId; 5] = [
-        Self::Claude,
+        Self::ClaudeTmux,
         Self::Opencode,
         Self::Cursor,
         Self::Codex,
-        Self::ClaudeHeadless,
+        Self::Claude,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
+            Self::ClaudeTmux => "claude-tmux",
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Codex => "codex",
-            Self::ClaudeHeadless => "claude-headless",
         }
     }
 }
@@ -36,7 +35,7 @@ impl HarnessId {
 pub struct LiveHarness {
     pub cursor: bool,
     pub codex: bool,
-    pub claude_headless: bool,
+    pub claude: bool,
     pub opencode: bool,
 }
 
@@ -45,43 +44,12 @@ pub fn close_harness(recorded: Option<HarnessId>, live: LiveHarness) -> HarnessI
         HarnessId::Cursor
     } else if live.codex {
         HarnessId::Codex
-    } else if live.claude_headless {
-        HarnessId::ClaudeHeadless
+    } else if live.claude {
+        HarnessId::Claude
     } else if live.opencode {
         HarnessId::Opencode
     } else {
         recorded.unwrap_or_default()
-    }
-}
-
-impl<'de> Deserialize<'de> for HarnessId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case")]
-        enum Kind {
-            Claude,
-            Tmux,
-            Cursor,
-            Opencode,
-            Codex,
-            #[serde(rename = "claude-headless")]
-            ClaudeHeadless,
-        }
-
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Compatible {
-            Kind(Kind),
-            Cursor(bool),
-        }
-
-        Ok(match Compatible::deserialize(deserializer)? {
-            Compatible::Kind(Kind::Claude | Kind::Tmux) | Compatible::Cursor(false) => Self::Claude,
-            Compatible::Kind(Kind::Cursor) | Compatible::Cursor(true) => Self::Cursor,
-            Compatible::Kind(Kind::Opencode) => Self::Opencode,
-            Compatible::Kind(Kind::Codex) => Self::Codex,
-            Compatible::Kind(Kind::ClaudeHeadless) => Self::ClaudeHeadless,
-        })
     }
 }
 
@@ -93,11 +61,11 @@ mod tests {
     #[test]
     fn kinds_round_trip_with_stable_names() {
         for (kind, name) in [
-            (HarnessId::Claude, "claude"),
+            (HarnessId::ClaudeTmux, "claude-tmux"),
             (HarnessId::Cursor, "cursor"),
             (HarnessId::Opencode, "opencode"),
             (HarnessId::Codex, "codex"),
-            (HarnessId::ClaudeHeadless, "claude-headless"),
+            (HarnessId::Claude, "claude"),
         ] {
             let json = format!("\"{name}\"");
             assert_eq!(serde_json::to_string(&kind).unwrap(), json);
@@ -106,45 +74,39 @@ mod tests {
     }
 
     #[test]
-    fn legacy_cursor_flags_load() {
-        assert_eq!(
-            serde_json::from_str::<HarnessId>("true").unwrap(),
-            HarnessId::Cursor
-        );
-        assert_eq!(
-            serde_json::from_str::<HarnessId>("false").unwrap(),
-            HarnessId::Claude
-        );
-        assert_eq!(
-            serde_json::from_str::<HarnessId>("\"tmux\"").unwrap(),
-            HarnessId::Claude
-        );
+    fn the_default_harness_is_headless_claude() {
         assert_eq!(HarnessId::default(), HarnessId::Claude);
     }
 
     #[test]
     fn invalid_kinds_are_rejected() {
-        for json in ["null", "1", "{}", "\"unknown\""] {
+        for json in [
+            "null",
+            "1",
+            "{}",
+            "\"unknown\"",
+            "true",
+            "false",
+            "\"tmux\"",
+            "\"claude-headless\"",
+        ] {
             assert!(serde_json::from_str::<HarnessId>(json).is_err());
         }
     }
 
-    fn probes(cursor: bool, codex: bool, claude_headless: bool, opencode: bool) -> LiveHarness {
+    fn probes(cursor: bool, codex: bool, claude: bool, opencode: bool) -> LiveHarness {
         LiveHarness {
             cursor,
             codex,
-            claude_headless,
+            claude,
             opencode,
         }
     }
 
     #[test]
-    fn a_dead_claude_headless_worker_with_a_record_keeps_its_harness() {
-        let kind = close_harness(
-            Some(HarnessId::ClaudeHeadless),
-            probes(false, false, false, false),
-        );
-        assert_eq!(kind, HarnessId::ClaudeHeadless);
+    fn a_dead_claude_worker_with_a_record_keeps_its_harness() {
+        let kind = close_harness(Some(HarnessId::Claude), probes(false, false, false, false));
+        assert_eq!(kind, HarnessId::Claude);
         assert_eq!(turn_count(kind, &[0]), None);
     }
 
@@ -164,7 +126,7 @@ mod tests {
         );
         assert_eq!(
             close_harness(None, probes(false, false, true, true)),
-            HarnessId::ClaudeHeadless
+            HarnessId::Claude
         );
         assert_eq!(
             close_harness(None, probes(false, false, false, true)),
@@ -175,14 +137,14 @@ mod tests {
     #[test]
     fn a_live_probe_wins_over_the_record() {
         assert_eq!(
-            close_harness(Some(HarnessId::Claude), probes(false, true, false, false)),
+            close_harness(
+                Some(HarnessId::ClaudeTmux),
+                probes(false, true, false, false)
+            ),
             HarnessId::Codex
         );
         assert_eq!(
-            close_harness(
-                Some(HarnessId::ClaudeHeadless),
-                probes(true, false, false, false)
-            ),
+            close_harness(Some(HarnessId::Claude), probes(true, false, false, false)),
             HarnessId::Cursor
         );
     }

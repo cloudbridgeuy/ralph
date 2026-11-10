@@ -1,6 +1,6 @@
 use crate::acp_worker::CursorHost;
 use crate::chat::socket::SocketFiles;
-use crate::claude_headless_worker::ClaudeHeadlessHost;
+use crate::claude_worker::ClaudeHost;
 use crate::codex_worker::CodexHost;
 use crate::cursor_owner::{now_secs, queued_entries, write_file, write_interrupt_result};
 use crate::opencode_worker::OpencodeHost;
@@ -169,7 +169,7 @@ impl HeadlessShutdown {
                 CursorHost::new(store_dir.clone()),
                 OpencodeHost::new(store_dir.clone()),
                 CodexHost::new(store_dir.clone()),
-                ClaudeHeadlessHost::new(store_dir),
+                ClaudeHost::new(store_dir),
             ],
         }
     }

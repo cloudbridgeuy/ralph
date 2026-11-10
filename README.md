@@ -39,7 +39,7 @@
 
 - **Persistent chat** - Bare `ralph` runs `ralph chat`. One Claude process serves the chat, started with a compressed view of the chat so far, stored under `~/.ralph/chat`.
 - **Compressed memory** - The chat log is summarized into a tree by a background nap pass. Claude opens details with the `zoom` and `recall` tools.
-- **Background workers** - Claude starts, messages, and closes workers with `spawn_worker`, `reply`, and `close_worker`. Harnesses: `claude` in tmux, `claude-headless`, `cursor`, `opencode`, and `codex` (see [Codex workers](docs/configuration.md#codex---codex-workers)). Each worker gets its own git worktree. These tools come from `ralph chat-mcp`, which talks to the running chat over a Unix socket.
+- **Background workers** - Claude starts, messages, and closes workers with `spawn_worker`, `reply`, and `close_worker`. Harnesses: `claude` (the default, a headless `claude -p` child), `claude-tmux` (claude in tmux), `cursor`, `opencode`, and `codex` (see [Codex workers](docs/configuration.md#codex---codex-workers)). Each worker gets its own git worktree. These tools come from `ralph chat-mcp`, which talks to the running chat over a Unix socket.
 - **Inbox and watches** - Worker reports and finished `watch` commands land in the chat inbox. Read them with `/inbox`.
 - **Threads** - `ralph chat --thread <name>` or `/fork <name>` opens a side chat forked from main; `ralph thread` lists, pulls, merges, parks, revives and drops threads ([guide](docs/context/threads.md)).
 - **send-it** - `/send-it <instructions>` turns a request into a plan of steps with exit criteria; after you approve it with `/send-it go`, the chat runs it with no input ([guide](docs/context/send-it.md)).
@@ -68,7 +68,7 @@ cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (bi
 - Rust 1.95.0 or later
 - [Claude Code](https://github.com/anthropics/claude-code) (`claude` on `PATH`)
 - git, for worker worktrees
-- Per worker harness: `tmux` for `claude` workers, the Cursor `agent` CLI for `cursor` workers, `opencode` for `opencode` workers
+- Per worker harness: `tmux` for `claude-tmux` workers, the Cursor `agent` CLI for `cursor` workers, `opencode` for `opencode` workers
 
 ## Quick Start
 

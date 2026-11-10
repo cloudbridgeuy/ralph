@@ -54,7 +54,7 @@ fn record(target: &UsageTarget, payload: &str, turn_id: Option<u64>) -> io::Resu
     let session = UsageSession {
         session_id: &session.session_id,
         transcript: &session.transcript_path,
-        harness: HarnessId::Claude,
+        harness: HarnessId::ClaudeTmux,
     };
     record_session(target, &session, turn_id)
 }

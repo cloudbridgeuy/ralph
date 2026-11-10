@@ -21,8 +21,8 @@ pub const NAP_TIMEOUT_SECS: u64 = 600;
     long_about = "Chat with Claude from the terminal: persistent memory, background workers, rich rendering.
 
 Bare `ralph` runs `ralph chat`: one long-running chat whose memory is a compressed tree of \
-summaries, kept small by a background nap pass. From chat, Claude can start workers (claude in \
-tmux, claude-headless, cursor, codex or opencode), each in its own git worktree, and watch \
+summaries, kept small by a background nap pass. From chat, Claude can start workers (claude, \
+claude-tmux, cursor, codex or opencode), each in its own git worktree, and watch \
 long-running commands. Their reports land in the chat inbox.
 
 `ralph ask` sends one prompt and stores only a usage row. `ralph thread` manages side chats, `ralph wire` \
@@ -88,7 +88,7 @@ creates or opens it under <store>/threads/<NAME>. These subcommands work without
 
     #[command(
         about = "Check a worker agent against ralph's local spec.",
-        long_about = "Subcommands exercise the installed worker agent (cursor, codex, claude-headless, opencode or the tmux claude worker) without starting a chat."
+        long_about = "Subcommands exercise the installed worker agent (cursor, codex, claude, opencode or claude-tmux) without starting a chat."
     )]
     Worker(WorkerArgs),
 
@@ -143,9 +143,9 @@ pub struct WorkerArgs {
 pub enum VerifyAgent {
     Cursor,
     Codex,
-    ClaudeHeadless,
-    Opencode,
     Claude,
+    Opencode,
+    ClaudeTmux,
 }
 
 #[derive(Subcommand, Debug)]

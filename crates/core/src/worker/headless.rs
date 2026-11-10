@@ -63,15 +63,15 @@ pub struct Capabilities {
 
 impl Capabilities {
     pub fn headless(&self) -> bool {
-        self.harness != HarnessId::Claude
+        self.harness != HarnessId::ClaudeTmux
     }
 
     pub fn support(&self, feature: Feature) -> Support {
         use Feature::*;
         use Support::{Full, Partial};
         match (self.harness, feature) {
-            (HarnessId::Claude, Model) => Full,
-            (HarnessId::Claude, _) => Support::None,
+            (HarnessId::ClaudeTmux, Model) => Full,
+            (HarnessId::ClaudeTmux, _) => Support::None,
             (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report | Model | Close) => Full,
             (HarnessId::Cursor, Interrupt) => Partial("outcome unknown after 30 s"),
             (HarnessId::Cursor, PermYolo) => Partial("global config, not per spawn"),
@@ -98,16 +98,16 @@ impl Capabilities {
             (HarnessId::Codex, Heartbeat) => Partial(
                 "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default",
             ),
-            (HarnessId::ClaudeHeadless, Spawn | Prompt | Report | Model | Close | PermAsk | PermYolo) => {
+            (HarnessId::Claude, Spawn | Prompt | Report | Model | Close | PermAsk | PermYolo) => {
                 Full
             }
-            (HarnessId::ClaudeHeadless, Heartbeat) => Partial(
+            (HarnessId::Claude, Heartbeat) => Partial(
                 "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
             ),
-            (HarnessId::ClaudeHeadless, Interrupt) => {
+            (HarnessId::Claude, Interrupt) => {
                 Partial("outcome unknown if claude ignores the interrupt for 30 s")
             }
-            (HarnessId::ClaudeHeadless, Resume) => {
+            (HarnessId::Claude, Resume) => {
                 Partial("turn in flight reported, not re-sent; same cwd required")
             }
         }
@@ -371,8 +371,8 @@ mod tests {
     }
 
     #[test]
-    fn claude_headless_cells_match_the_s2_matrix() {
-        let caps = capabilities(HarnessId::ClaudeHeadless);
+    fn claude_cells_match_the_s2_matrix() {
+        let caps = capabilities(HarnessId::Claude);
         assert!(caps.headless());
         for feature in Feature::ALL {
             let expected = match feature {
@@ -460,7 +460,7 @@ mod tests {
     fn model_refusal_names_accepting_harnesses() {
         assert_eq!(
             model_refusal(HarnessId::Cursor),
-            "cursor does not accept a model; harnesses that do: claude, opencode, cursor, codex, claude-headless"
+            "cursor does not accept a model; harnesses that do: claude-tmux, opencode, cursor, codex, claude"
         );
     }
 
@@ -489,8 +489,8 @@ mod tests {
     #[test]
     fn describe_keeps_generic_wording_for_unsupported_features() {
         assert_eq!(
-            describe(&capabilities(HarnessId::Claude), Feature::Spawn),
-            "claude spawn: not supported"
+            describe(&capabilities(HarnessId::ClaudeTmux), Feature::Spawn),
+            "claude-tmux spawn: not supported"
         );
     }
 
@@ -498,7 +498,7 @@ mod tests {
     fn non_headless_harnesses_reject_every_command() {
         for harness in HarnessId::ALL {
             let caps = capabilities(harness);
-            assert_eq!(caps.headless(), harness != HarnessId::Claude);
+            assert_eq!(caps.headless(), harness != HarnessId::ClaudeTmux);
             if caps.headless() {
                 continue;
             }

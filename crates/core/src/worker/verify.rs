@@ -255,7 +255,7 @@ impl PermissionSetup {
         }
     }
 
-    pub fn claude_headless() -> Self {
+    pub fn claude() -> Self {
         let label =
             "setting-sources project,local with permission-mode default and prompt-tool stdio";
         Self {

@@ -4,8 +4,8 @@ use crate::warn::warn;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
     sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep,
-    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR,
-    CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
+    CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -92,12 +92,8 @@ pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
     owned_ids(store_dir, CURSOR_OWNER_DIR, HandoffFiles::cursor)
 }
 
-pub fn owned_claude_headless_ids(store_dir: &Path) -> Vec<String> {
-    owned_ids(
-        store_dir,
-        CLAUDE_HEADLESS_OWNER_DIR,
-        HandoffFiles::claude_headless,
-    )
+pub fn owned_claude_ids(store_dir: &Path) -> Vec<String> {
+    owned_ids(store_dir, CLAUDE_OWNER_DIR, HandoffFiles::claude)
 }
 
 pub fn owned_codex_ids(store_dir: &Path) -> Vec<String> {
@@ -119,7 +115,7 @@ pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
 pub fn resumable_ids(store_dir: &Path) -> Vec<String> {
     let mut ids = request_ids(store_dir, CURSOR_SESSION_DIR);
     ids.extend(request_ids(store_dir, CODEX_SESSION_DIR));
-    ids.extend(request_ids(store_dir, CLAUDE_HEADLESS_SESSION_DIR));
+    ids.extend(request_ids(store_dir, CLAUDE_SESSION_DIR));
     ids.sort();
     ids
 }
@@ -382,7 +378,7 @@ mod tests {
         for (dir, id) in [
             (CURSOR_SESSION_DIR, "C-1"),
             (CODEX_SESSION_DIR, "X-1"),
-            (CLAUDE_HEADLESS_SESSION_DIR, "H-1"),
+            (CLAUDE_SESSION_DIR, "H-1"),
         ] {
             fs::create_dir_all(store.path().join(dir)).unwrap();
             fs::write(store.path().join(dir).join(id), "{}").unwrap();

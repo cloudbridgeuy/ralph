@@ -19,7 +19,7 @@ impl Workers {
     ) -> io::Result<String> {
         let (kind, files) = self.headless_files(id).ok_or_else(|| {
             io::Error::other(format!(
-                "worker {id} is not a running Cursor, Codex, claude-headless or opencode worker"
+                "worker {id} is not a running Cursor, Codex, claude or opencode worker"
             ))
         })?;
         let caps = capabilities(kind);

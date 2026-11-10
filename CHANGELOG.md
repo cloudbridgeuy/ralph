@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- The headless Claude worker is now the default `claude` harness, and the tmux Claude worker is now `claude-tmux`. The `claude-headless` and `tmux` names are no longer accepted, and the old `cursor: true/false` worker records no longer load. Store dirs `claude-headless*` are now `claude*`. (GUZ-1538)
+
+### Upgrade
+
+1. Close all workers, of both kinds, in every chat, before you reinstall.
+2. Delete the old store dirs by hand: `rm -r <store>/claude-headless*`.
+3. Run `ralph worker verify claude` and `ralph worker verify claude-tmux` again.
+
 ## v0.4.0 - 2026-11-04
 
 This release adds threaded work (fork, squash and rebase merge, park and revive), a reworked `/send-it` with a planning driver, and chat commands for nudging workers, holding progress, running local shell commands with `!!`, and rendering markdown with `/view`. It also adds a usage ledger that prices every agent call at list rates by token kind, `ralph worker verify` for all five harnesses, hardens external inbox reports against control and bidi characters, and fixes several worker, snapshot, and upgrade bugs, including musl hosts downloading the glibc asset.

@@ -73,7 +73,7 @@ impl Workers {
         let live = LiveHarness {
             cursor: HandoffFiles::cursor(&self.store_dir, id).owner.exists(),
             codex: self.codex_running(id),
-            claude_headless: self.claude_headless_running(id),
+            claude: self.claude_running(id),
             opencode: self.opencode_http(id),
         };
         let kind = close_harness(None, live);

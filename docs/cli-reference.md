@@ -93,7 +93,7 @@ Environment variables can be used instead of CLI flags. CLI flags take precedenc
 | `RALPH_THEME` | `--theme` | Set syntax highlighting theme |
 | `RALPH_NO_BACKGROUND` | `--no-background` | Disable theme backgrounds (set to `1`) |
 | `RALPH_ASK_PERMISSION_MODE` | `ask --permission-mode` | Permission mode for `ask` |
-| `RALPH_CHAT_PERMISSION_MODE` | `chat --permission-mode` | Permission mode for chat turns and claude workers |
+| `RALPH_CHAT_PERMISSION_MODE` | `chat --permission-mode` | Permission mode for chat turns and claude-tmux workers |
 | `RALPH_WORKTREE_DIR` | `chat --worktree-dir` | Directory for worker worktrees |
 | `RALPH_CHAT_SKILLS` | `chat --skill` | `:`-separated skill directories for chat |
 | `RALPH_WRAP_WIDTH` | `chat --wrap-width` | Column cap for chat replies and the prompt area (also `[chat] wrap_width`); `0` = terminal width |
@@ -178,10 +178,10 @@ Parse failures and invalid `[workers]` or `[wire.prices]` values also fail the c
 ## ralph worker
 
 ```bash
-ralph worker verify <cursor|codex|claude-headless|opencode|claude> [--live]
+ralph worker verify <cursor|codex|claude|opencode|claude-tmux> [--live]
 ```
 
-Runs the installed worker agent in a fresh temporary directory and prints `PASS`, `FAIL` or `UNKNOWN` per check, then a summary line that says whether `--live` ran. For `claude-headless`, `claude` and `opencode` the summary also names the model, chosen from `[claude] model` or `[opencode] model` as `ralph worker spawn` does (claude's default model, or the opencode default, when unset). Exit code is 0 when every blocking check passes and 1 otherwise. A full pass records the agent version in `verified-agents.json` in the config directory (honours `RALPH_CONFIG_DIR`), which stops the "differs from the tested" warning for that version.
+Runs the installed worker agent in a fresh temporary directory and prints `PASS`, `FAIL` or `UNKNOWN` per check, then a summary line that says whether `--live` ran. For `claude`, `claude-tmux` and `opencode` the summary also names the model, chosen from `[claude] model` or `[opencode] model` as `ralph worker spawn` does (claude's default model, or the opencode default, when unset). Exit code is 0 when every blocking check passes and 1 otherwise. A full pass records the agent version in `verified-agents.json` in the config directory (honours `RALPH_CONFIG_DIR`), which stops the "differs from the tested" warning for that version.
 
 Without `--live` no prompt is sent and no model is called. `--live` adds one reply, one permission round-trip and one cancel, which use model calls. For `claude` it also adds the interactive session start, because starting claude makes a model call. A failed or unknown cancel is printed but never fails the spec. See [Headless workers](context/headless-workers.md#verify-an-agent-version) for the checks.
 

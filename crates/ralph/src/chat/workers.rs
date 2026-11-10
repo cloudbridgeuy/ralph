@@ -394,7 +394,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote
         row,
         branch: branch_name(id),
         worktree,
-        tmux: (worker.kind == HarnessId::Claude && !worker.session.is_empty())
+        tmux: (worker.kind == HarnessId::ClaudeTmux && !worker.session.is_empty())
             .then(|| worker.session.clone()),
         markers: markers(&monitor.store_dir, id),
         heartbeat: heartbeat(&monitor.store_dir, id),

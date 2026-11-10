@@ -1,7 +1,7 @@
 use super::{
     capabilities, decide, is_claude_model, is_cursor_model, is_model_id, is_token_model,
     model_refusal, Command, Feature, HarnessId, SpawnSpec, Support, WorkPhase, WorkerCommand,
-    WorkerEvent, CLAUDE_HEADLESS_HARNESS, CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
+    WorkerEvent, CLAUDE_TMUX_HARNESS, CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
 use crate::chat_status::WORKER_COSTS;
 use crate::chat_thread::refuse_thread_report;
@@ -15,7 +15,7 @@ pub fn command_definitions() -> [Value; 5] {
     [
         json!({
             "name": "spawn_worker",
-            "description": "Start a worker agent on a task in its own git worktree and tmux session. Only when the person asked for it in their latest message. When the worker needs a pasted image, copy its [Image #N: <path>] reference verbatim into task.",
+            "description": "Start a worker agent on a task in its own git worktree. Only when the person asked for it in their latest message. When the worker needs a pasted image, copy its [Image #N: <path>] reference verbatim into task.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -24,7 +24,7 @@ pub fn command_definitions() -> [Value; 5] {
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
                     "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
                     "phase": {"type": "string", "enum": WorkPhase::ALL.map(WorkPhase::as_str), "description": "What this worker does: plan, build, fix or live-check. Recorded in the lifecycle log. Omit when none fits."},
-                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. claude-headless: as claude."}
+                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. claude-tmux: as claude."}
                 },
                 "required": ["id", "task"]
             }
@@ -37,7 +37,7 @@ pub fn command_definitions() -> [Value; 5] {
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
                     "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."},
-                    "request": {"type": "string", "description": "cursor, codex, claude-headless and opencode workers: the request id of the waiting permission request this answers, from its blocked alert or the reply error; text is then one optionId. Required to answer a permission request; a stale or unknown id is refused."},
+                    "request": {"type": "string", "description": "cursor, codex, claude and opencode workers: the request id of the waiting permission request this answers, from its blocked alert or the reply error; text is then one optionId. Required to answer a permission request; a stale or unknown id is refused."},
                     "interrupt": {"type": "boolean", "description": interrupt_description()}
                 },
                 "required": ["id", "text"]
@@ -258,10 +258,8 @@ fn harness(args: &Value) -> Result<ParsedSpawn, String> {
     let (harness, model) = match (args.get("harness").and_then(Value::as_str), model) {
         (None | Some("claude"), None) => Ok((HarnessId::Claude, None)),
         (None | Some("claude"), Some(model)) => claude_model(HarnessId::Claude, model),
-        (Some(CLAUDE_HEADLESS_HARNESS), None) => Ok((HarnessId::ClaudeHeadless, None)),
-        (Some(CLAUDE_HEADLESS_HARNESS), Some(model)) => {
-            claude_model(HarnessId::ClaudeHeadless, model)
-        }
+        (Some(CLAUDE_TMUX_HARNESS), None) => Ok((HarnessId::ClaudeTmux, None)),
+        (Some(CLAUDE_TMUX_HARNESS), Some(model)) => claude_model(HarnessId::ClaudeTmux, model),
         (Some(OPENCODE_HARNESS), None) => Ok((HarnessId::Opencode, None)),
         (Some(OPENCODE_HARNESS), Some(model)) if is_model_id(model) => {
             Ok((HarnessId::Opencode, Some(model.to_string())))
@@ -551,6 +549,10 @@ mod tests {
             Ok((HarnessId::Claude, None))
         );
         assert_eq!(
+            spawn_harness(json!({"harness": "claude-tmux"})),
+            Ok((HarnessId::ClaudeTmux, None))
+        );
+        assert_eq!(
             spawn_harness(json!({"harness": "opencode"})),
             Ok((HarnessId::Opencode, None))
         );
@@ -564,6 +566,8 @@ mod tests {
     fn spawn_harness_rejects_bad_choices() {
         for args in [
             json!({"harness": "gemini"}),
+            json!({"harness": "claude-headless"}),
+            json!({"harness": "tmux"}),
             json!({"harness": "codex", "model": "two words"}),
             json!({"model": "two words"}),
             json!({"harness": "claude", "model": ""}),
@@ -578,18 +582,16 @@ mod tests {
     }
 
     #[test]
-    fn spawn_harness_accepts_claude_headless_with_a_claude_model() {
+    fn spawn_harness_accepts_claude_tmux_with_a_claude_model() {
         assert_eq!(
-            spawn_harness(json!({"harness": "claude-headless"})),
-            Ok((HarnessId::ClaudeHeadless, None))
+            spawn_harness(json!({"harness": "claude", "model": "haiku"})),
+            Ok((HarnessId::Claude, Some("haiku".into())))
         );
         assert_eq!(
-            spawn_harness(json!({"harness": "claude-headless", "model": "haiku"})),
-            Ok((HarnessId::ClaudeHeadless, Some("haiku".into())))
+            spawn_harness(json!({"harness": "claude-tmux", "model": "haiku"})),
+            Ok((HarnessId::ClaudeTmux, Some("haiku".into())))
         );
-        assert!(
-            spawn_harness(json!({"harness": "claude-headless", "model": "two words"})).is_err()
-        );
+        assert!(spawn_harness(json!({"harness": "claude-tmux", "model": "two words"})).is_err());
     }
 
     #[test]
@@ -668,7 +670,7 @@ mod tests {
             .into_iter()
             .filter(|harness| capabilities(*harness).support(Feature::Interrupt) != Support::None)
             .collect::<Vec<_>>();
-        assert!(interruptible.contains(&HarnessId::ClaudeHeadless));
+        assert!(interruptible.contains(&HarnessId::Claude));
         for harness in HarnessId::ALL {
             assert_eq!(
                 words.contains(&harness.as_str()),

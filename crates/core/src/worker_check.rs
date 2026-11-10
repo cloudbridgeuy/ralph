@@ -187,7 +187,7 @@ pub fn classify(obs: &WorkerObservation) -> WorkerState {
 fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
     let id = &obs.id;
     let session = &obs.session;
-    if obs.kind != HarnessId::Claude {
+    if obs.kind != HarnessId::ClaudeTmux {
         return match state {
             WorkerState::Waiting => Some(format!("Worker {id} stopped without calling report.")),
             WorkerState::BlockedPermission if obs.kind == HarnessId::Opencode => Some(format!(
@@ -265,7 +265,7 @@ mod tests {
         WorkerObservation {
             id: "w1".to_string(),
             session: "sess".to_string(),
-            kind: HarnessId::Claude,
+            kind: HarnessId::ClaudeTmux,
             ready: true,
             blocked: false,
             waiting: false,

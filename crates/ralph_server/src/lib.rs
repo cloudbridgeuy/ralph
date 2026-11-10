@@ -6,7 +6,7 @@ pub(crate) mod acp_log;
 pub(crate) mod acp_worker;
 pub mod chat;
 pub(crate) mod claude_cleanup;
-pub(crate) mod claude_headless_worker;
+pub(crate) mod claude_worker;
 pub(crate) mod codex_usage;
 pub(crate) mod codex_worker;
 pub mod config;

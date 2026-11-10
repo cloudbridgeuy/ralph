@@ -170,7 +170,7 @@ fn spawn_request() -> SpawnRequest {
 }
 
 fn start_files(dir: &TempDir) -> (HandoffFiles, SessionRecord) {
-    let files = HandoffFiles::claude_headless(dir.path(), "w");
+    let files = HandoffFiles::claude(dir.path(), "w");
     let record = session_record("sid", &spawn_request(), dir.path(), PermissionMode::Ask);
     (files, record)
 }
@@ -235,7 +235,7 @@ fn a_failed_record_write_removes_the_owner_file_and_reports_the_error() {
     let dir = TempDir::new().unwrap();
     let (files, record) = start_files(&dir);
     let config = worker_config_path(dir.path(), "w");
-    fs::write(dir.path().join(CLAUDE_HEADLESS_SESSION_DIR), "").unwrap();
+    fs::write(dir.path().join(CLAUDE_SESSION_DIR), "").unwrap();
     let steps = start_steps(&ClaudeSession::New("sid"));
     let error = write_start_files(
         steps,
@@ -365,7 +365,7 @@ fn an_interrupt_pending_when_claude_exits_writes_gone() {
 #[test]
 fn an_interrupt_for_a_worker_without_a_process_writes_gone() {
     let dir = TempDir::new().unwrap();
-    let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
+    let host = ClaudeHost::new(dir.path().to_path_buf());
     let files = host.files("w");
     write_file(&files.interrupt.join("e1"), "stop").unwrap();
     host.poll();
@@ -407,7 +407,7 @@ fn rows(usage: &Path) -> Vec<Value> {
 }
 
 #[test]
-fn a_turn_end_records_the_transcript_as_one_claude_headless_row() {
+fn a_turn_end_records_the_transcript_as_one_claude_row() {
     let mut run = run(PermissionMode::Ask, &[]);
     let usage = with_usage(&mut run);
     end_turn(&run);
@@ -417,7 +417,7 @@ fn a_turn_end_records_the_transcript_as_one_claude_headless_row() {
     let row = &rows[0];
     assert_eq!(row["kind"], "worker");
     assert_eq!(row["worker_id"], "w");
-    assert_eq!(row["harness"], "claude-headless");
+    assert_eq!(row["harness"], "claude");
     assert_eq!(row["model"], "claude-haiku-5-5");
     assert_eq!(row["session_id"], "s1");
     assert_eq!(row["input_tokens"], 2);
@@ -482,7 +482,7 @@ fn a_turn_end_leaves_close_free_to_record_later_messages() {
 #[test]
 fn a_prompt_with_no_owner_leaves_a_lost_marker() {
     let dir = TempDir::new().unwrap();
-    let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
+    let host = ClaudeHost::new(dir.path().to_path_buf());
     let files = host.files("w");
     write_file(&files.prompt.join("e1"), "hello").unwrap();
     host.poll();
@@ -496,7 +496,7 @@ fn a_prompt_with_no_owner_leaves_a_lost_marker() {
 #[test]
 fn a_prompt_this_chat_owns_but_has_not_adopted_stays_queued() {
     let dir = TempDir::new().unwrap();
-    let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
+    let host = ClaudeHost::new(dir.path().to_path_buf());
     let files = host.files("w");
     crate::cursor_owner::claim_owner(&files.owner).unwrap();
     write_file(&files.prompt.join("e1"), "hello").unwrap();

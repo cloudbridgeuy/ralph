@@ -115,7 +115,10 @@ mod tests {
             &state(HarnessId::Opencode),
             &steps
         ));
-        assert!(!cleans_cursor_leftovers(&state(HarnessId::Claude), &steps));
+        assert!(!cleans_cursor_leftovers(
+            &state(HarnessId::ClaudeTmux),
+            &steps
+        ));
         assert!(!cleans_cursor_leftovers(
             &state(HarnessId::Cursor),
             &[CloseStep::ClearMarkers]

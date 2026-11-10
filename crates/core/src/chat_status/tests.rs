@@ -488,32 +488,15 @@ fn store_workers_take_the_bare_id_from_the_id_tag() {
         vec![RunningWorker {
             id: "GUZ-1".into(),
             session: "ralph-my-proj-GUZ-1".into(),
-            kind: HarnessId::Claude
+            kind: HarnessId::ClaudeTmux
         }]
     );
 }
 
 #[test]
-fn running_worker_loads_legacy_cursor_records() {
-    for (cursor, kind) in [(true, HarnessId::Cursor), (false, HarnessId::Claude)] {
-        let record = serde_json::json!({
-            "id": "A", "session": "", "opencode": false, "cursor": cursor
-        });
-        let worker: RunningWorker = serde_json::from_value(record).unwrap();
-        assert_eq!(worker.kind, kind);
-        let saved = serde_json::to_value(&worker).unwrap();
-        assert!(saved.get("cursor").is_none());
-        assert_eq!(
-            serde_json::from_value::<RunningWorker>(saved).unwrap(),
-            worker
-        );
-    }
-}
-
-#[test]
-fn running_worker_loads_explicit_kinds_and_defaults_to_claude() {
+fn running_worker_loads_explicit_kinds() {
     for (name, kind) in [
-        ("tmux", HarnessId::Claude),
+        ("claude-tmux", HarnessId::ClaudeTmux),
         ("claude", HarnessId::Claude),
         ("cursor", HarnessId::Cursor),
         ("opencode", HarnessId::Opencode),
@@ -525,6 +508,10 @@ fn running_worker_loads_explicit_kinds_and_defaults_to_claude() {
         assert_eq!(worker.kind, kind);
         assert_eq!(serde_json::to_value(worker).unwrap()["kind"], kind.as_str());
     }
+}
+
+#[test]
+fn a_record_without_kind_reads_as_headless_claude() {
     let worker: RunningWorker =
         serde_json::from_str(r#"{"id":"A","session":"s","opencode":false}"#).unwrap();
     assert_eq!(worker.kind, HarnessId::Claude);
@@ -535,7 +522,7 @@ fn orphan_hint_lists_ready_ids_without_a_session() {
     let running = [RunningWorker {
         id: "A".into(),
         session: "ralph-p-A".into(),
-        kind: HarnessId::Claude,
+        kind: HarnessId::ClaudeTmux,
     }];
     let ready = ["C".to_string(), "A".to_string(), "B".to_string()];
     let hint = orphan_hint(&ready, &running, &[], &[]).unwrap();
@@ -551,7 +538,7 @@ fn orphan_hint_skips_an_acp_alive_cursor_worker() {
         RunningWorker {
             id: "claude-up".into(),
             session: "ralph-p-claude-up".into(),
-            kind: HarnessId::Claude,
+            kind: HarnessId::ClaudeTmux,
         },
         RunningWorker::headless("cursor-owned", HarnessId::Cursor),
     ];
@@ -620,7 +607,7 @@ fn opencode_workers_are_busy_while_their_session_is_active() {
         worker("idle", HarnessId::Opencode),
         worker("done", HarnessId::Opencode),
         worker("redo", HarnessId::Opencode),
-        worker("claude", HarnessId::Claude),
+        worker("claude", HarnessId::ClaudeTmux),
     ];
     let seen = HashMap::from([
         ("done".to_string(), "done".to_string()),
@@ -651,10 +638,10 @@ fn a_sent_message_drops_a_report_status_but_keeps_other_statuses() {
         kind,
     };
     let workers = [
-        worker("redone", HarnessId::Claude),
-        worker("quiet", HarnessId::Claude),
-        worker("checked", HarnessId::Claude),
-        worker("ask", HarnessId::Claude),
+        worker("redone", HarnessId::ClaudeTmux),
+        worker("quiet", HarnessId::ClaudeTmux),
+        worker("checked", HarnessId::ClaudeTmux),
+        worker("ask", HarnessId::ClaudeTmux),
         worker("busy", HarnessId::Opencode),
     ];
     let seen = HashMap::from([
