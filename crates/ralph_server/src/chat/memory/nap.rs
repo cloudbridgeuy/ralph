@@ -107,7 +107,10 @@ fn summarize<C: FnMut(&str) -> Result<String, CuratorError>>(
             Ok(Err(e)) => prompt = retry_prompt(&base, &e),
             Err(e) => {
                 warn(format!("chat memory curator failed on #{}: {e}", node.id()));
-                return None;
+                if !e.timed_out {
+                    return None;
+                }
+                break;
             }
         }
     }
@@ -242,5 +245,26 @@ mod tests {
         assert!(waited);
         assert_eq!(wait, NapWait::Capped);
         assert!(started.elapsed() >= Duration::from_millis(200));
+    }
+
+    #[test]
+    fn a_timed_out_call_stores_the_raw_fallback() {
+        let (dir, store) = seeded(1);
+        let timed_out = |_: &str| {
+            Err(CuratorError {
+                message: "slow".into(),
+                timed_out: true,
+                exit: Some(-1),
+            })
+        };
+        store.nap(None, timed_out).unwrap();
+        let (_, tree) = store.load().unwrap();
+        let leaf = &tree[&Node::new(0, 1).unwrap()];
+        assert!(leaf.starts_with(ralph_core::chat_memory::FALLBACK_MARK));
+        store.nap(None, timed_out).unwrap();
+        let rows = rows(dir.path());
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["outcome"], "timeout");
+        assert_eq!(rows[2]["pending_at_start"], 0);
     }
 }
