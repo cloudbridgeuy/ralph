@@ -3,10 +3,10 @@ use crate::frame::worker_header;
 use crate::markdown::MarkdownTheme;
 use crate::render::{render_markdown, RenderContext};
 use crate::ui_theme::UiColors;
-use crate::worker_mcp::Inbox;
 use ralph_core::chat_status::INBOX_USAGE;
 use ralph_core::inbox::{self, Position, Selection, UnreadTurn};
 use ralph_core::worker::Report;
+use ralph_server::worker_mcp::Inbox;
 use std::io;
 
 pub struct Display<'a> {

@@ -60,23 +60,16 @@ use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::cli::{ChatArgs, ChatCommand};
 use crate::config::{load_for_chat, ConfigSnapshot, FileState, MermaidStyleExt, ThemeWarnings};
-use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;
 use crate::invoke::Isolation;
 use crate::markdown::{MarkdownTheme, RolePalette, ThemeRole};
-use crate::opencode_worker::sweep_stale_server_records;
-use crate::paths::{absolute_from, config_path};
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use crate::subprocess::OutputGate;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
-use crate::watches::Watches;
-use crate::worker_mcp::Inbox;
-use crate::workers::headless::ExitCleanup;
-use crate::workers::{canonical_store, running_workers, usage_store, Workers};
 use keepalive::{KeepaliveWatch, Stamp};
 use ralph_core::chat::{
     resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
@@ -115,8 +108,15 @@ use ralph_server::chat::skills::{
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
+use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
+use ralph_server::opencode_worker::sweep_stale_server_records;
+use ralph_server::paths::{absolute_from, config_path};
 use ralph_server::warn::{warn, warn_if_err};
+use ralph_server::watches::Watches;
 use ralph_server::wire::store::current_uid;
+use ralph_server::worker_mcp::Inbox;
+use ralph_server::workers::headless::ExitCleanup;
+use ralph_server::workers::{canonical_store, running_workers, usage_store, Workers};
 use reedline::{EditCommand, ExternalPrinter, Reedline};
 #[cfg(test)]
 use session::resolve_store;

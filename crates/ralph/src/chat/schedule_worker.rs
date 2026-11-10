@@ -1,6 +1,4 @@
 use crate::chat::monitor::{Monitor, POLL};
-use crate::watches::locked;
-use crate::workers::{running_workers, SpawnArgs, Workers};
 use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_worker::{
     alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
@@ -9,6 +7,8 @@ use ralph_core::schedule_worker::{
 };
 use ralph_core::worker::HarnessId;
 use ralph_server::warn::warn_if_err;
+use ralph_server::watches::locked;
+use ralph_server::workers::{running_workers, SpawnArgs, Workers};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 

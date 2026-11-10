@@ -21,13 +21,6 @@ mod invoke;
 mod licenses;
 pub mod markdown;
 mod mermaid_guard;
-pub use ralph_server::{
-    acp_log, acp_worker, claude_cleanup, claude_headless_worker, codex_usage, codex_worker,
-    cursor_cleanup, cursor_owner, cursor_sweep, cursor_usage, json_file, ledger, opencode_usage,
-    opencode_worker, outcome_log, paths, permission_queue, private_file, process_tree, snapshot,
-    transport, verified_agents, version_drift, watch_store, watches, worker_changes, worker_events,
-    worker_mcp, worker_usage, worker_verify, workers,
-};
 pub mod prompt_source;
 pub mod render;
 mod schedule_store;
@@ -54,10 +47,10 @@ use cli::{
 };
 use invoke::InvocationConfig;
 use ralph_core::worker::HarnessId;
+use ralph_server::version_drift::DriftRun;
 use ralph_server::warn::{warn, warn_if_err};
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
-use version_drift::DriftRun;
 
 fn main() -> ExitCode {
     ralph_server::warn::register_sink(warn::print_warning);
@@ -126,7 +119,7 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
             live,
             drift,
             inbox,
-        } => worker_verify::run(
+        } => ralph_server::worker_verify::run(
             match agent {
                 VerifyAgent::Cursor => HarnessId::Cursor,
                 VerifyAgent::Codex => HarnessId::Codex,
@@ -140,7 +133,7 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
                 .map(|(version, inbox)| DriftRun::new(version, inbox)),
         ),
         WorkerCommand::DriftCheck { inbox } => {
-            version_drift::run_daily(&inbox);
+            ralph_server::version_drift::run_daily(&inbox);
             Ok(())
         }
     }
@@ -238,7 +231,7 @@ fn record_ask(result: &subprocess::StreamingSubprocessResult) {
         &result.stream_result.metadata,
     ) {
         warn_if_err(
-            ledger::record(
+            ralph_server::ledger::record(
                 &ralph_server::chat::memory::usage_path(),
                 &record.with_request_at(result.request_at.map(|at| at.to_rfc3339())),
             ),
@@ -246,7 +239,7 @@ fn record_ask(result: &subprocess::StreamingSubprocessResult) {
         );
     }
     warn_if_err(
-        ledger::record_all(
+        ralph_server::ledger::record_all(
             &ralph_server::chat::memory::usage_path(),
             ralph_core::chat_memory::subagent_records(&at, costs, &result.stream_result.metadata),
         ),
@@ -338,11 +331,13 @@ fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Err
             id: args.id.clone(),
             worktree,
         });
-    let changes = site.as_ref().and_then(worker_changes::WorkerChanges::open);
-    let inbox = worker_mcp::Inbox::new(args.inbox).requiring_owner(args.owner);
+    let changes = site
+        .as_ref()
+        .and_then(ralph_server::worker_changes::WorkerChanges::open);
+    let inbox = ralph_server::worker_mcp::Inbox::new(args.inbox).requiring_owner(args.owner);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    worker_mcp::run_stdio_server(
+    ralph_server::worker_mcp::run_stdio_server(
         &args.id,
         &inbox,
         changes.as_ref(),
@@ -358,15 +353,14 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
     }
     let store = args.store.clone();
     let usage_file = args.usage;
-    let usage = args
-        .worker
-        .zip(args.usage_seen)
-        .map(|(worker, seen)| worker_usage::UsageTarget {
+    let usage = args.worker.zip(args.usage_seen).map(|(worker, seen)| {
+        ralph_server::worker_usage::UsageTarget {
             worker,
             seen,
             store,
             usage: usage_file.unwrap_or_else(ralph_server::chat::memory::usage_path),
-        });
+        }
+    });
     let changes = args
         .store
         .zip(args.id)
@@ -377,9 +371,9 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
             worktree,
         })
         .as_ref()
-        .and_then(worker_changes::WorkerChanges::open);
-    worker_mcp::run_stop_hook(
-        &worker_mcp::StopHook {
+        .and_then(ralph_server::worker_changes::WorkerChanges::open);
+    ralph_server::worker_mcp::run_stop_hook(
+        &ralph_server::worker_mcp::StopHook {
             reported: &args.reported,
             unreported: &args.unreported,
             activity: args.activity.as_deref(),
@@ -474,11 +468,11 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
         let rows = CuratorRows {
             kind: curator.kind.clone(),
             run: curator.run.clone(),
-            store: workers::usage_store(curator.store),
+            store: ralph_server::workers::usage_store(curator.store),
             at: chrono::Utc::now().to_rfc3339(),
         };
         warn_if_err(
-            ledger::record_all(
+            ralph_server::ledger::record_all(
                 &ralph_server::chat::memory::usage_path(),
                 curator_rows(&rows, done),
             ),

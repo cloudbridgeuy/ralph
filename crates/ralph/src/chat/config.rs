@@ -1,7 +1,7 @@
 use super::STORE_ENV;
 use crate::cli::ChatArgs;
 use crate::config::{config_view, effective_now, env_settings, ConfigSnapshot, Origin, Setting};
-use crate::paths::RALPH_CONFIG_DIR_ENV;
+use ralph_server::paths::RALPH_CONFIG_DIR_ENV;
 use std::path::Path;
 use toml::Value;
 

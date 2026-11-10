@@ -1,7 +1,5 @@
 use crate::chat::bounded::stdout_within;
 use crate::chat::prompt::terminal_columns;
-use crate::snapshot::{base_with, ORIGIN_HEAD_ARGS};
-use crate::workers::running_workers;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_hold_progress::{
     held_ids, last_hint, lines, rebase_progress, redraw, HoldProgress,
@@ -11,6 +9,8 @@ use ralph_core::worker::{
     activity_path, branch_name, worktree_for_branch, ActivityMark, HarnessId,
 };
 use ralph_server::config::AppConfig;
+use ralph_server::snapshot::{base_with, ORIGIN_HEAD_ARGS};
+use ralph_server::workers::running_workers;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -1,9 +1,9 @@
 use super::*;
-use crate::permission_queue::PermissionQueue;
-use crate::worker_events::Events;
-use crate::worker_mcp::Inbox;
 use ralph_core::worker::{WorkerEvent, ALLOW_ONCE};
 use ralph_server::hook_bridge::{deliver, HookQueue, HookReply, HookSocket};
+use ralph_server::permission_queue::PermissionQueue;
+use ralph_server::worker_events::Events;
+use ralph_server::worker_mcp::Inbox;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{mpsc, Arc};

@@ -1,8 +1,6 @@
 use crate::chat::editor::open_in_editor;
 use crate::chat::monitor::Monitor;
 use crate::inbox_alert;
-use crate::watches::{locked, OutcomeSlot};
-use crate::workers::running_workers;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
@@ -15,6 +13,8 @@ use ralph_core::chat_send_it::{
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::worker_check::logged_states;
 use ralph_server::chat::memory::Store;
+use ralph_server::watches::{locked, OutcomeSlot};
+use ralph_server::workers::running_workers;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;

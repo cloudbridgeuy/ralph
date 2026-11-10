@@ -51,7 +51,7 @@ impl TermStatus {
         let Some(bytes) = frame(report, self.in_tmux) else {
             return;
         };
-        let mut sent = crate::watches::locked(&self.sent);
+        let mut sent = ralph_server::watches::locked(&self.sent);
         if changed(&sent, &bytes) {
             let _ = write_terminal(&bytes);
             sent.last = Some(bytes);
@@ -62,7 +62,7 @@ impl TermStatus {
         if !self.title_enabled {
             return;
         }
-        let mut sent = crate::watches::locked(&self.sent);
+        let mut sent = ralph_server::watches::locked(&self.sent);
         if !sent.title_open {
             let _ = write_terminal(&title_start(name));
             sent.title_open = true;
@@ -70,7 +70,7 @@ impl TermStatus {
     }
 
     pub(super) fn clear(&self) {
-        let mut sent = crate::watches::locked(&self.sent);
+        let mut sent = ralph_server::watches::locked(&self.sent);
         if take_title_restore(&mut sent) {
             let _ = write_terminal(title_end());
         }

@@ -1,10 +1,10 @@
-use crate::watches::Watches;
-use crate::worker_mcp::Inbox;
 use ralph_core::watch_request::{
     already_queued_message, plan_queued, start_failure_report, WatchRequest, WATCH_REQUESTS_DIR,
 };
 use ralph_core::worker::Report;
 use ralph_server::warn::{warn, warn_if_err};
+use ralph_server::watches::Watches;
+use ralph_server::worker_mcp::Inbox;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

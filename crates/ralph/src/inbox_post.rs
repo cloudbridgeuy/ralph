@@ -1,7 +1,7 @@
 use crate::cli::{InboxArgs, InboxCommand};
-use crate::worker_mcp::Inbox;
 use ralph_core::inbox_post::{check_store, external_report, MAX_TEXT_BYTES};
 use ralph_core::worker::INBOX_DIR;
+use ralph_server::worker_mcp::Inbox;
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, Read};

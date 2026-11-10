@@ -1,9 +1,9 @@
 use crate::chat::monitor::Monitor;
 use crate::chat::thread::{claim_closed, config_root, read_meta, thread_dir};
-use crate::workers::running_workers;
 use ralph_core::chat_switch::{switch_blockers, switch_decision, SwitchArgv, SwitchTarget};
 use ralph_core::chat_thread::{ThreadName, THREAD_FILE};
 use ralph_server::chat::memory::Store;
+use ralph_server::workers::running_workers;
 use std::path::Path;
 
 pub(crate) enum ChatExit {
