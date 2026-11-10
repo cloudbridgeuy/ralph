@@ -1,3 +1,4 @@
+use crate::chat_process::CACHE_TTL_SECS;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 
@@ -81,6 +82,7 @@ pub fn keepalive_action(input: &KeepaliveInput) -> Keepalive {
         || !input.session_live
         || retry_pending
         || input.keeps >= KEEPALIVE_MAX_KEEPS
+        || input.since_activity_secs >= CACHE_TTL_SECS
     {
         Keepalive::Skip
     } else if since_activity >= KEEPALIVE_PING_SECS {
@@ -98,7 +100,7 @@ mod tests {
         KeepaliveInput {
             limit_hours: 18,
             idle_secs: 3600,
-            since_activity_secs: 3600,
+            since_activity_secs: 3300,
             since_attempt_secs: None,
             session_live: true,
             turn_running: false,
@@ -121,6 +123,39 @@ mod tests {
         };
         assert_eq!(keepalive_action(&at(3299)), Keepalive::Skip);
         assert_eq!(keepalive_action(&at(3300)), Keepalive::Ping);
+    }
+
+    #[test]
+    fn skips_once_the_cache_is_cold() {
+        let at = |secs| KeepaliveInput {
+            idle_secs: 2 * 3600,
+            since_activity_secs: secs,
+            ..input()
+        };
+        assert_eq!(keepalive_action(&at(3599)), Keepalive::Ping);
+        assert_eq!(keepalive_action(&at(3600)), Keepalive::Skip);
+    }
+
+    #[test]
+    fn a_cold_cache_stays_skipped_until_activity_resets() {
+        let later = |since, since_attempt, keeps| KeepaliveInput {
+            idle_secs: 3 * 3600,
+            since_activity_secs: since,
+            since_attempt_secs: since_attempt,
+            keeps,
+            ..input()
+        };
+        assert_eq!(keepalive_action(&later(3630, None, 0)), Keepalive::Skip);
+        assert_eq!(
+            keepalive_action(&later(3630, Some(600), 0)),
+            Keepalive::Skip
+        );
+        assert_eq!(keepalive_action(&later(7200, None, 0)), Keepalive::Skip);
+        assert_eq!(
+            keepalive_action(&later(7200, Some(3600), 2)),
+            Keepalive::Skip
+        );
+        assert_eq!(keepalive_action(&later(3300, None, 0)), Keepalive::Ping);
     }
 
     #[test]
