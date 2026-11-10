@@ -439,8 +439,17 @@ fn text_block_to_response_text(text_block: &TextBlock) -> String {
                 text_block.chunk.content
             )
         }
-        _ => text_block.chunk.content.clone(),
+        ChunkType::Code { language } => fenced(
+            language.as_deref().unwrap_or_default(),
+            &text_block.chunk.content,
+        ),
+        ChunkType::Diff => fenced("diff", &text_block.chunk.content),
+        ChunkType::Prose => text_block.chunk.content.clone(),
     }
+}
+
+fn fenced(language: &str, content: &str) -> String {
+    format!("```{language}\n{content}\n```")
 }
 
 #[cfg(test)]
@@ -699,6 +708,51 @@ mod tests {
         assert_eq!(
             extract_response_text(&blocks),
             Some("<ralph-ask to=\"a\">Q</ralph-ask>".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_response_text_keeps_code_fences_and_languages() {
+        let blocks = vec![
+            OutputBlock::text(ParsedChunk::prose("Intro")),
+            OutputBlock::text(ParsedChunk::code(
+                "# comment\nfn main() {}",
+                Some("rust".to_string()),
+            )),
+            OutputBlock::text(ParsedChunk::code(
+                "graph TD\n  A-->B",
+                Some("mermaid".to_string()),
+            )),
+            OutputBlock::text(ParsedChunk::code("plain", None)),
+            OutputBlock::text(ParsedChunk::diff("-old\n+new")),
+        ];
+        assert_eq!(
+            extract_response_text(&blocks).unwrap(),
+            "Intro\n\n```rust\n# comment\nfn main() {}\n```\n\n```mermaid\ngraph TD\n  A-->B\n```\n\n```\nplain\n```\n\n```diff\n-old\n+new\n```"
+        );
+    }
+
+    #[test]
+    fn test_stored_fences_parse_back_to_the_same_chunks() {
+        let blocks = vec![
+            OutputBlock::text(ParsedChunk::code("fn main() {}", Some("rust".to_string()))),
+            OutputBlock::text(ParsedChunk::code("graph TD", Some("mermaid".to_string()))),
+        ];
+        let stored = extract_response_text(&blocks).unwrap();
+        let chunks = ralph_core::chunk::parse_chunks(&stored);
+        let kinds: Vec<_> = chunks
+            .iter()
+            .filter_map(|chunk| match &chunk.chunk_type {
+                ChunkType::Code { language } => Some((language.clone(), chunk.content.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (Some("rust".to_string()), "fn main() {}".to_string()),
+                (Some("mermaid".to_string()), "graph TD".to_string())
+            ]
         );
     }
 }

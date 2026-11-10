@@ -372,3 +372,38 @@ fn every_labelled_day_names_its_weekday() {
     let svg = daily_svg(&days, &HEADING);
     assert!(svg.contains(">Sun<") && svg.contains(">Mon<"), "{svg}");
 }
+
+#[test]
+fn a_bar_with_an_excluded_part_says_so_after_its_dollars() {
+    let merged = Group {
+        metered: 3,
+        excluded: 2,
+        ..group("gpt-6.1-sol", None, Some(4.0))
+    };
+    let svg = bars_svg(&[merged], &HEADING);
+    assert!(svg.contains(">$4.00 est. + excluded (100%)<"), "{svg}");
+}
+
+#[test]
+fn an_unpriced_part_comes_before_the_excluded_part_in_a_bar_label() {
+    let mut est = est(4.0);
+    est.missing = true;
+    let merged = Group {
+        metered: 3,
+        excluded: 2,
+        est,
+        ..group("m", None, None)
+    };
+    let svg = bars_svg(&[merged], &HEADING);
+    assert!(
+        svg.contains(">$4.00 est. + no price + excluded (100%)<"),
+        "{svg}"
+    );
+}
+
+#[test]
+fn a_bar_with_no_excluded_part_keeps_its_label() {
+    let svg = bars_svg(&[group("a", None, Some(4.0))], &HEADING);
+    assert!(svg.contains(">$4.00 est. (100%)<"), "{svg}");
+    assert!(!svg.contains("excluded"), "{svg}");
+}

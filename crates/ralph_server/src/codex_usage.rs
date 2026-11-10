@@ -2,8 +2,9 @@ use crate::chat::memory::usage_path;
 use crate::ledger;
 use crate::warn::warn_if_err;
 use ralph_core::chat_memory::{worker_usage_record, CallSite};
-use ralph_core::worker::{decode_usage_event, ModelUsage, TurnUsage};
+use ralph_core::worker::{decode_subagent, decode_usage_event, ModelUsage, TurnUsage};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -14,6 +15,22 @@ const HARNESS: &str = "codex";
 struct Bound {
     thread: String,
     turn: TurnUsage,
+    parents: BTreeMap<String, String>,
+    active: bool,
+}
+
+impl Bound {
+    fn descends_from_bound(&self, params: &Value) -> bool {
+        let mut at = params["threadId"].as_str();
+        for _ in 0..=self.parents.len() {
+            match at {
+                Some(thread) if thread == self.thread => return true,
+                Some(thread) => at = self.parents.get(thread).map(String::as_str),
+                None => return false,
+            }
+        }
+        false
+    }
 }
 
 pub struct CodexUsage {
@@ -35,12 +52,20 @@ impl CodexUsage {
         *self.bound.lock().unwrap_or_else(PoisonError::into_inner) = Bound {
             thread: thread.to_string(),
             turn: TurnUsage::new(model),
+            ..Bound::default()
         };
     }
 
     pub fn observe(&self, method: &str, params: &Value, in_turn: bool) {
+        let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(subagent) = decode_subagent(method, params) {
+            if let Some(model) = &subagent.model {
+                bound.turn.set_thread_model(&subagent.thread, model.clone());
+            }
+            bound.parents.insert(subagent.thread, subagent.parent);
+        }
         if let Some(event) = decode_usage_event(method, params) {
-            let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+            let in_turn = in_turn || (bound.active && bound.descends_from_bound(params));
             bound.turn.observe(event, in_turn);
         }
     }
@@ -48,11 +73,13 @@ impl CodexUsage {
     pub fn start_turn(&self) {
         let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
         bound.turn.start_turn();
+        bound.active = true;
     }
 
     pub fn flush(&self, turn_id: Option<u64>) {
         let (thread, rows) = {
             let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+            bound.active = false;
             (bound.thread.clone(), bound.turn.take())
         };
         warn_if_err(
@@ -76,6 +103,7 @@ impl CodexUsage {
             };
             let usage =
                 worker_usage_record(kind, at.clone(), Some(thread.to_string()), HARNESS, row)
+                    .with_per_thread_usage()
                     .with_store(
                         self.store
                             .as_ref()
@@ -109,6 +137,115 @@ mod tests {
         assert_eq!(row["model"], "gpt");
         assert_eq!(row["input_tokens"], 5);
         assert_eq!(row["turn_id"], 3);
+        assert_eq!(row["per_thread_usage"], true);
         assert!(usage.bound.lock().unwrap().turn.take().is_empty());
+    }
+
+    fn usage_params(thread: &str, input: u64, total: u64) -> Value {
+        serde_json::json!({"threadId": thread, "turnId": "child-turn", "tokenUsage": {"last": {"inputTokens": input}, "total": {"inputTokens": total}}})
+    }
+
+    fn started(thread: &str, parent: &str) -> Value {
+        serde_json::json!({"threadId": parent, "item": {"type": "subAgentActivity", "kind": "started", "agentThreadId": thread}})
+    }
+
+    fn counted(usage: &CodexUsage) -> Vec<u64> {
+        let rows = usage.bound.lock().unwrap().turn.take();
+        rows.iter().map(|row| row.usage.input_uncached).collect()
+    }
+
+    #[test]
+    fn child_thread_usage_counts_in_the_active_turn() {
+        let usage = CodexUsage::new("w1", None);
+        usage.bind("parent", Some("gpt".into()));
+        usage.start_turn();
+        usage.observe("item/started", &started("child", "parent"), false);
+        usage.observe("item/started", &started("grand", "child"), false);
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("parent", 100, 100),
+            true,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("child", 5, 5),
+            false,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("grand", 3, 3),
+            false,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("parent", 10, 110),
+            true,
+        );
+        assert_eq!(counted(&usage), [118]);
+    }
+
+    #[test]
+    fn unrelated_thread_usage_and_child_usage_between_turns_are_not_counted() {
+        let usage = CodexUsage::new("w1", None);
+        usage.bind("parent", Some("gpt".into()));
+        usage.observe("item/started", &started("child", "parent"), false);
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("child", 5, 5),
+            false,
+        );
+        usage.start_turn();
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("other", 9, 9),
+            false,
+        );
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("child", 2, 7),
+            false,
+        );
+        assert_eq!(counted(&usage), [2]);
+    }
+
+    const PARENT_THREAD: &str = "01a1c705-07b4-7a80-9cf0-03e4b25fd71e";
+    const PARENT_TURN: &str = "01a1c705-07dd-7d32-b08c-6e73fe8fb4fb";
+
+    fn replay_subagent_frames() -> Vec<ModelUsage> {
+        let usage = CodexUsage::new("w1", None);
+        usage.bind(PARENT_THREAD, Some("gpt-6.1-sol".into()));
+        for line in include_str!("fixtures/codex_subagent_frames.jsonl").lines() {
+            let frame: Value = serde_json::from_str(line).unwrap();
+            let method = frame["method"].as_str().unwrap();
+            let params = &frame["params"];
+            if method == "turn/started" && params["threadId"] == PARENT_THREAD {
+                usage.start_turn();
+            }
+            let owned = params["turnId"] == PARENT_TURN;
+            usage.observe(method, params, owned);
+        }
+        let rows = usage.bound.lock().unwrap().turn.take();
+        rows
+    }
+
+    #[test]
+    fn a_recorded_subagent_turn_counts_the_parent_and_the_child_in_full() {
+        let rows = replay_subagent_frames();
+        let tokens: u64 = rows
+            .iter()
+            .map(|row| {
+                let usage = &row.usage;
+                let written: u64 = usage.cache_writes.iter().map(|write| write.tokens).sum();
+                usage.input_uncached + usage.cache_read + written + usage.output
+            })
+            .sum();
+        assert_eq!(tokens, 69_512 + 44_211);
+    }
+
+    #[test]
+    fn a_recorded_subagent_turn_prices_the_child_at_the_child_model() {
+        let rows = replay_subagent_frames();
+        let models: Vec<&str> = rows.iter().map(|row| row.model.as_str()).collect();
+        assert_eq!(models, ["gpt-6-luna", "gpt-6.1-sol"]);
     }
 }

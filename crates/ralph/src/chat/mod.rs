@@ -17,6 +17,7 @@ mod nudge;
 mod prompt;
 mod queue;
 mod recap;
+mod rerender;
 mod route;
 mod schedule;
 mod schedule_worker;

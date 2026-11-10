@@ -6,7 +6,7 @@ use super::tickets::{window_position, WorkerWindow};
 use super::window::instant;
 use super::{builtin_prices, computed_usd, Source, Tokens, Usd, UNKNOWN};
 use crate::chat_process::UsageLine;
-use crate::wire::price::PriceTable;
+use crate::wire::price::{strip_openai_prefix, PriceTable};
 use crate::wire::view::Pricing;
 use crate::worker::HarnessId;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -148,6 +148,7 @@ pub fn weekday(day: &str) -> Option<&'static str> {
 
 pub fn is_excluded(line: &UsageLine) -> bool {
     line.harness.as_deref() == Some(HarnessId::Codex.as_str())
+        && line.per_thread_usage != Some(true)
 }
 
 pub fn label_excluded(cost: String, excluded: usize, metered: usize) -> String {
@@ -315,7 +316,10 @@ fn admits(entry: &Entry, filter: &Filter, windows: &[WorkerWindow]) -> bool {
         && filter.until.is_none_or(|until| entry.at < until)
         && wants(filter.store.as_deref(), entry.line.store.as_deref())
         && wants(filter.harness.as_deref(), Some(entry.source.label()))
-        && wants(filter.model.as_deref(), entry.line.model.as_deref())
+        && wants(
+            filter.model.as_deref().map(strip_openai_prefix),
+            entry.line.model.as_deref().map(strip_openai_prefix),
+        )
         && wants(filter.kind.as_deref(), Some(entry.role.label()))
         && wants(
             filter.ticket.as_deref(),
@@ -352,8 +356,9 @@ fn key_of(dim: Dim, entry: &Entry, windows: &[WorkerWindow]) -> SortKey {
             entry
                 .line
                 .model
-                .clone()
-                .unwrap_or_else(|| MODEL_MISSING.to_string()),
+                .as_deref()
+                .map_or(MODEL_MISSING, strip_openai_prefix)
+                .to_string(),
         ),
         Dim::Ticket => named(ticket_of(entry, windows)),
         Dim::Run => named(entry.line.run.as_deref()),

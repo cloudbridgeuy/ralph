@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const TOKEN_USAGE_UPDATED: &str = "thread/tokenUsage/updated";
+pub const ITEM_STARTED: &str = "item/started";
 pub const MODEL_REROUTED: &str = "model/rerouted";
 const UNKNOWN_MODEL: &str = "unknown";
 
@@ -58,7 +59,11 @@ impl CallTokens {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsageEvent {
-    Call { total: CallTokens, last: CallTokens },
+    Call {
+        thread: String,
+        total: CallTokens,
+        last: CallTokens,
+    },
     Rerouted(String),
 }
 
@@ -85,6 +90,7 @@ pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
         TOKEN_USAGE_UPDATED => {
             let usage = &params["tokenUsage"];
             (usage["total"].is_object() && usage["last"].is_object()).then(|| UsageEvent::Call {
+                thread: params["threadId"].as_str().unwrap_or_default().to_string(),
                 total: decode_call(&usage["total"]),
                 last: decode_call(&usage["last"]),
             })
@@ -96,11 +102,29 @@ pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subagent {
+    pub thread: String,
+    pub parent: String,
+    pub model: Option<String>,
+}
+
+pub fn decode_subagent(method: &str, params: &Value) -> Option<Subagent> {
+    let item = &params["item"];
+    (method == ITEM_STARTED && item["type"] == "subAgentActivity").then_some(())?;
+    Some(Subagent {
+        thread: item["agentThreadId"].as_str()?.to_string(),
+        parent: params["threadId"].as_str()?.to_string(),
+        model: item["model"].as_str().map(str::to_string),
+    })
+}
+
 #[derive(Debug, Default)]
 pub struct TurnUsage {
     base: Option<String>,
     current: Option<String>,
-    seen_total: Option<CallTokens>,
+    seen_total: BTreeMap<String, CallTokens>,
+    thread_models: BTreeMap<String, String>,
     by_model: BTreeMap<(String, bool), CallTokens>,
 }
 
@@ -109,22 +133,37 @@ impl TurnUsage {
         Self {
             base: model.clone(),
             current: model,
-            seen_total: None,
+            seen_total: BTreeMap::new(),
+            thread_models: BTreeMap::new(),
             by_model: BTreeMap::new(),
         }
+    }
+
+    pub fn set_thread_model(&mut self, thread: &str, model: String) {
+        self.thread_models.insert(thread.to_string(), model);
     }
 
     pub fn observe(&mut self, event: UsageEvent, in_turn: bool) {
         match event {
             UsageEvent::Rerouted(model) if in_turn => self.current = Some(model),
             UsageEvent::Rerouted(_) => {}
-            UsageEvent::Call { total, last } => {
-                let tokens = self.seen_total.map_or(last, |seen| total.since(seen));
-                self.seen_total = Some(total);
+            UsageEvent::Call {
+                thread,
+                total,
+                last,
+            } => {
+                let tokens = self
+                    .seen_total
+                    .insert(thread.clone(), total)
+                    .map_or(last, |seen| total.since(seen));
                 if !in_turn {
                     return;
                 }
-                let model = self.current.as_deref().unwrap_or(UNKNOWN_MODEL);
+                let model = self
+                    .thread_models
+                    .get(&thread)
+                    .or(self.current.as_ref())
+                    .map_or(UNKNOWN_MODEL, String::as_str);
                 let long = long_prompt_call(model, &tokens.usage());
                 self.by_model
                     .entry((model.to_string(), long))
@@ -350,5 +389,56 @@ mod tests {
         turn.start_turn();
         turn.observe(totals((1, 1), (1, 1)), true);
         assert_eq!(turn.take()[0].model, "a");
+    }
+
+    fn on_thread(thread: &str, last: (u64, u64), total: (u64, u64)) -> UsageEvent {
+        let mut params = updated(breakdown(last.0, last.1), breakdown(total.0, total.1));
+        params["threadId"] = json!(thread);
+        decode_usage_event(TOKEN_USAGE_UPDATED, &params).unwrap()
+    }
+
+    #[test]
+    fn a_child_thread_total_does_not_reset_the_parent_baseline() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.observe(on_thread("parent", (100, 0), (100, 0)), true);
+        turn.take();
+        turn.observe(on_thread("child", (5, 0), (5, 0)), false);
+        turn.observe(on_thread("parent", (10, 0), (110, 0)), true);
+        let rows = turn.take();
+        assert_eq!(rows[0].usage.input_uncached, 10);
+    }
+
+    #[test]
+    fn a_subagent_activity_names_the_child_its_parent_and_its_model() {
+        let params = json!({"threadId": "p", "item": {"type": "subAgentActivity", "kind": "started", "agentThreadId": "c", "model": "m"}});
+        let expected = Some(Subagent {
+            thread: "c".into(),
+            parent: "p".into(),
+            model: Some("m".into()),
+        });
+        assert_eq!(decode_subagent(ITEM_STARTED, &params), expected);
+    }
+
+    #[test]
+    fn other_items_and_methods_name_no_subagent() {
+        let message = json!({"threadId": "p", "item": {"type": "agentMessage"}});
+        assert_eq!(decode_subagent(ITEM_STARTED, &message), None);
+        let activity =
+            json!({"threadId": "p", "item": {"type": "subAgentActivity", "agentThreadId": "c"}});
+        assert_eq!(decode_subagent("item/completed", &activity), None);
+    }
+
+    #[test]
+    fn a_thread_model_prices_that_threads_calls() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.set_thread_model("child", "b".into());
+        turn.observe(on_thread("parent", (10, 0), (10, 0)), true);
+        turn.observe(on_thread("child", (5, 0), (5, 0)), true);
+        let rows: Vec<_> = turn
+            .take()
+            .iter()
+            .map(|row| (row.model.clone(), row.usage.input_uncached))
+            .collect();
+        assert_eq!(rows, [("a".to_string(), 10), ("b".to_string(), 5)]);
     }
 }

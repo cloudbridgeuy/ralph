@@ -21,7 +21,7 @@ pub fn run(args: &ViewArgs, display: &Display) {
     }
 }
 
-fn render(display: &Display, text: &str) -> String {
+pub(super) fn render(display: &Display, text: &str) -> String {
     render_markdown_with(&display.ctx, text, display.theme, |chunk| {
         picture(&display.ctx, chunk, &display.ui)
     })
