@@ -8,8 +8,10 @@ pub fn parse_rerender_args(args: &str) -> Result<usize, String> {
     let Some(first) = words.next() else {
         return Ok(1);
     };
-    match (first.parse::<usize>(), words.next()) {
-        (Ok(n), None) if n >= 1 => Ok(n),
+    let digits = !first.is_empty() && first.bytes().all(|byte| byte.is_ascii_digit());
+    let n = first.parse::<usize>().unwrap_or(usize::MAX);
+    match (digits, words.next()) {
+        (true, None) if n >= 1 => Ok(n),
         _ => Err(RERENDER_USAGE.to_string()),
     }
 }

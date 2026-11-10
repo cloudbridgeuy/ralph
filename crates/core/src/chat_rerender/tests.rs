@@ -13,6 +13,26 @@ fn a_positive_number_selects_that_reply() {
 }
 
 #[test]
+fn a_number_too_big_for_usize_is_a_number_not_a_usage_error() {
+    assert_eq!(
+        parse_rerender_args("99999999999999999999999999"),
+        Ok(usize::MAX)
+    );
+    let huge = parse_rerender_args("99999999999999999999999999").unwrap();
+    assert_eq!(
+        nth_last_assistant(&log(), huge).unwrap_err(),
+        format!(
+            "/rerender: no reply {}; the chat has 3 assistant replies.",
+            usize::MAX
+        )
+    );
+    assert_eq!(
+        parse_rerender_args("0000000000000000000000000"),
+        Err(RERENDER_USAGE.to_string())
+    );
+}
+
+#[test]
 fn zero_words_and_extra_arguments_give_the_usage() {
     let usage = Err(RERENDER_USAGE.to_string());
     for args in ["0", "x", "-1", "1.5", "2 3", "1 x", "last"] {
