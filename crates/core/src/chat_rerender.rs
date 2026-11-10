@@ -1,4 +1,5 @@
 use crate::chat_memory::{Entry, Role};
+use crate::directive::normalize_verb;
 use std::ops::Range;
 
 pub const RERENDER_USAGE: &str = "Usage: /rerender [N] (N is 1 or more; 1 is the last reply)";
@@ -46,13 +47,15 @@ fn word_len(text: &str) -> usize {
 fn open_tag(rest: &str) -> Option<(usize, &str)> {
     let after_prefix = rest.strip_prefix("<ralph-")?;
     let verb = word_len(after_prefix);
+    let name = after_prefix.get(..verb)?;
+    normalize_verb(name)?;
     let after_verb = after_prefix.get(verb..).filter(|_| verb > 0)?;
     let spaced = after_verb.trim_start();
     let value = spaced
         .strip_prefix("to=\"")
         .filter(|_| spaced.len() < after_verb.len())?;
     let tail = value.get(value.find('"')?..)?.strip_prefix("\">")?;
-    Some((rest.len() - tail.len(), after_prefix.get(..verb)?))
+    Some((rest.len() - tail.len(), name))
 }
 
 fn directive_len(rest: &str) -> Option<usize> {

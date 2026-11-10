@@ -129,6 +129,22 @@ fn a_directive_goes_with_its_text() {
 }
 
 #[test]
+fn every_live_directive_verb_is_dropped() {
+    for verb in [
+        "ask", "tell", "say", "respond", "reply", "comment", "note", "inform",
+    ] {
+        let text = format!("<ralph-{verb} to=\"a\">Q</ralph-{verb}>");
+        assert_eq!(strip_directive_tags(&text), "", "{verb}");
+    }
+}
+
+#[test]
+fn an_unknown_verb_is_plain_text_like_the_live_view() {
+    let text = "<ralph-explode to=\"x\">Boom</ralph-explode>";
+    assert_eq!(strip_directive_tags(text), text);
+}
+
+#[test]
 fn text_without_a_matched_pair_is_unchanged() {
     for text in [
         "",
