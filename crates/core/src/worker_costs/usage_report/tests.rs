@@ -212,7 +212,7 @@ fn an_openai_prefixed_opencode_row_is_an_estimate_never_reported() {
     )];
     let report = grouped(Dim::Model, &rows, &[], &Filter::default());
     let group = &report.groups[0];
-    assert_eq!(group.key, "openai/gpt-6.1-sol");
+    assert_eq!(group.key, "gpt-6.1-sol");
     assert!(known(group.est).is_some());
     assert_eq!(known(group.reported), None);
     assert!(

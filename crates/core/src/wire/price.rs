@@ -48,8 +48,12 @@ pub struct PriceOverride {
     pub output: Option<f64>,
 }
 
+pub fn strip_openai_prefix(model: &str) -> &str {
+    model.strip_prefix("openai/").unwrap_or(model)
+}
+
 pub fn normalize_model(model: &str) -> &str {
-    let model = model.strip_prefix("openai/").unwrap_or(model);
+    let model = strip_openai_prefix(model);
     model.split('[').next().unwrap_or(model)
 }
 
