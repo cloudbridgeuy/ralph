@@ -250,7 +250,7 @@ fn a_marked_codex_row_joins_the_dollar_totals() {
             "model",
             json!("gpt-6.1-sol"),
         ),
-        "subagent_usage",
+        "per_thread_usage",
         json!(true),
     );
     let report = grouped(Dim::Model, &[marked], &[], &Filter::default());

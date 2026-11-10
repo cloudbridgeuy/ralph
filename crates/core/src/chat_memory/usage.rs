@@ -163,7 +163,7 @@ pub struct LedgerRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     long_prompt: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    subagent_usage: Option<bool>,
+    per_thread_usage: Option<bool>,
     #[serde(flatten)]
     view: Option<ViewStats>,
 }
@@ -192,9 +192,9 @@ impl LedgerRow {
         LedgerRow { store, ..self }
     }
 
-    pub fn with_subagent_usage(self) -> LedgerRow {
+    pub fn with_per_thread_usage(self) -> LedgerRow {
         LedgerRow {
-            subagent_usage: Some(true),
+            per_thread_usage: Some(true),
             ..self
         }
     }
@@ -255,7 +255,7 @@ pub fn usage_record(
             .as_ref()
             .map(|tiers| tiers.ephemeral_1h_input_tokens),
         long_prompt: None,
-        subagent_usage: None,
+        per_thread_usage: None,
         view: None,
     })
 }
@@ -299,7 +299,7 @@ pub fn worker_usage_record(
         cache_write_5m: written(FIVE_MIN),
         cache_write_1h: written(ONE_HOUR),
         long_prompt: Some(row.long_prompt),
-        subagent_usage: None,
+        per_thread_usage: None,
         view: None,
     }
 }

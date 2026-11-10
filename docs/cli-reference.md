@@ -184,7 +184,7 @@ ralph usage by <kind|store|harness|model|ticket|run> [FILTERS] [--text | --png P
 ralph usage cache [FILTERS] [--text]
 ```
 
-Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`). It only reads, calls no model and costs $0. Reported dollars and `est.` dollars are separate. `+ no price` and `$X*` mark a lower bound; `excluded` (old codex rows without the `subagent_usage` marker), `no data` (cursor) and `(model missing)` are states, not `$0`. See [ralph usage](context/ralph-chat.md#ralph-usage) for the rules.
+Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`). It only reads, calls no model and costs $0. Reported dollars and `est.` dollars are separate. `+ no price` and `$X*` mark a lower bound; `excluded` (old codex rows without the `per_thread_usage` marker), `no data` (cursor) and `(model missing)` are states, not `$0`. See [ralph usage](context/ralph-chat.md#ralph-usage) for the rules.
 
 | Option | Meaning |
 |--------|---------|
