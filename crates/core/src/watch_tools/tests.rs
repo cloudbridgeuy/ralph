@@ -227,3 +227,12 @@ fn the_stop_definition_names_ids_and_all() {
     let props = def["inputSchema"]["properties"].as_object().unwrap();
     assert!(props.contains_key("ids") && props.contains_key("all"));
 }
+
+#[test]
+fn the_stop_description_says_only_a_running_watch_posts_a_report() {
+    let text = watch_stop_definition().to_string();
+    assert!(!text.contains("post the usual stopped report"));
+    assert!(
+        text.contains("A running watch posts its stopped report; a saved or queued one posts none")
+    );
+}

@@ -160,7 +160,7 @@ pub enum StopStep {
 pub fn watch_stop_definition() -> Value {
     json!({
         "name": "watch_stop",
-        "description": "Stop watches of this chat, like /watch stop: kill a running command, remove a persistent watch's saved record, or drop a queued request, and post the usual stopped report. Give ids, or all: true to stop every watch except scheduled tasks and /send-it checks (the result names what it skipped). Only when the person asked for it in their latest message. Call watch_list first.",
+        "description": "Stop watches of this chat, like /watch stop: kill a running command, remove a persistent watch's saved record, or drop a queued request, . A running watch posts its stopped report; a saved or queued one posts none. Give ids, or all: true to stop every watch except scheduled tasks and /send-it checks (the result names what it skipped). Only when the person asked for it in their latest message. Call watch_list first.",
         "inputSchema": {
             "type": "object",
             "properties": {
