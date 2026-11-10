@@ -414,7 +414,9 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
     config::set_store_layer(&args.store);
     let store = chat::tag_store::TagStore::new(args.store.clone());
     let now = || chrono::Utc::now().to_rfc3339();
-    match ralph_core::chat_memory::tag_plan(config::AppConfig::load().map(|c| c.chat.tag_entries)) {
+    let (loaded, notices) = config::AppConfig::load_with_notices();
+    let store_failed = notices.iter().any(config::Notice::is_store_fallback);
+    match ralph_core::chat_memory::tag_plan(loaded.map(|c| c.chat.tag_entries), store_failed) {
         ralph_core::chat_memory::TagPlan::Run => {}
         ralph_core::chat_memory::TagPlan::SkipAhead => {
             store.skip_ahead(&now)?;

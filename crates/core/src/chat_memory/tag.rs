@@ -183,11 +183,14 @@ pub enum TagPlan {
     Skip,
 }
 
-/// What a tag turn does, from the result of loading the `tag_entries` setting.
+/// What a tag turn does, from the result of loading the `tag_entries` setting
+/// and whether the store's `config.toml` failed to load (the load then falls
+/// back to the global config, whose value may differ from the store's).
 /// A setting that cannot be read is no consent to paid calls: the turn does
 /// nothing, and the store is not touched.
-pub fn tag_plan<E>(tag_entries: Result<bool, E>) -> TagPlan {
+pub fn tag_plan<E>(tag_entries: Result<bool, E>, store_layer_failed: bool) -> TagPlan {
     match tag_entries {
+        _ if store_layer_failed => TagPlan::Skip,
         Ok(true) => TagPlan::Run,
         Ok(false) => TagPlan::SkipAhead,
         Err(_) => TagPlan::Skip,

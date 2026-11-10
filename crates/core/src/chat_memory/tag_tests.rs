@@ -376,10 +376,14 @@ fn an_old_row_with_a_decision_key_decodes_without_it() {
 }
 
 #[test]
-fn a_setting_that_cannot_be_read_skips_the_pass_without_touching_the_store() {
-    assert_eq!(tag_plan(Err::<bool, &str>("bad toml")), TagPlan::Skip);
-    assert_eq!(tag_plan(Ok::<bool, &str>(true)), TagPlan::Run);
-    assert_eq!(tag_plan(Ok::<bool, &str>(false)), TagPlan::SkipAhead);
+fn a_config_layer_that_cannot_be_read_skips_the_pass_without_touching_the_store() {
+    let plan = |setting: Result<bool, &str>, store_failed| tag_plan(setting, store_failed);
+    assert_eq!(plan(Err("bad toml"), false), TagPlan::Skip);
+    assert_eq!(plan(Err("bad toml"), true), TagPlan::Skip);
+    assert_eq!(plan(Ok(true), true), TagPlan::Skip);
+    assert_eq!(plan(Ok(false), true), TagPlan::Skip);
+    assert_eq!(plan(Ok(true), false), TagPlan::Run);
+    assert_eq!(plan(Ok(false), false), TagPlan::SkipAhead);
 }
 
 #[test]
