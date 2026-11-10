@@ -102,7 +102,7 @@ serde_ignored = "0.1.14"
 serde_json = { version = "1.0", features = ["preserve_order", "float_roundtrip"] }
 
 # MD5 (Cursor chat store folder names)
-md5 = "0.7"
+md5 = "0.8"
 
 # SHA-256 hashing
 sha2 = "0.11"
