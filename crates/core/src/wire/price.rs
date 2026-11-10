@@ -49,6 +49,7 @@ pub struct PriceOverride {
 }
 
 pub fn normalize_model(model: &str) -> &str {
+    let model = model.strip_prefix("openai/").unwrap_or(model);
     model.split('[').next().unwrap_or(model)
 }
 
