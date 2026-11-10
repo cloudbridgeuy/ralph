@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_headless_cells_match_the_s2_matrix() {
+    fn claude_cells_match_the_s2_matrix() {
         let caps = capabilities(HarnessId::Claude);
         assert!(caps.headless());
         for feature in Feature::ALL {

@@ -391,7 +391,7 @@ impl Workers {
                 ));
             }
             HarnessId::Claude => {
-                let files = HandoffFiles::claude_headless(&self.store_dir, id);
+                let files = HandoffFiles::claude(&self.store_dir, id);
                 let warning = self.spawn_headless(launch, files, "claude")?;
                 return Ok(with_start_warning(
                     format!("{started} It runs headless inside ralph chat (no tmux session)."),
@@ -448,7 +448,7 @@ impl Workers {
             HarnessId::Codex => HandoffFiles::codex(&self.store_dir, launch.id)
                 .owner
                 .exists(),
-            HarnessId::Claude => HandoffFiles::claude_headless(&self.store_dir, launch.id)
+            HarnessId::Claude => HandoffFiles::claude(&self.store_dir, launch.id)
                 .owner
                 .exists(),
         }

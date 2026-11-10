@@ -2,15 +2,13 @@ use crate::config::AppConfig;
 use crate::subprocess::TimedOutput;
 use crate::version_drift::{record_manual, DriftRun};
 use crate::watches::locked;
-use crate::{
-    acp_worker, claude_headless_worker, codex_worker, opencode_worker, verified_agents, workers,
-};
+use crate::{acp_worker, claude_worker, codex_worker, opencode_worker, verified_agents, workers};
 use ralph_core::worker::{
     claude_required_checks, finish_plan, finished_probe, limit_failure, render_check,
     render_summary, required_failure, resolve_claude_model, resolve_opencode_model, spec_passed,
     verified_entry, verify_limit, CheckResult, HarnessId, Verdict, VerifiedAgent, VersionProbe,
-    CLAUDE_HEADLESS_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
-    DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
+    CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL,
+    OPENCODE_REQUIRED_CHECKS,
 };
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -197,8 +195,8 @@ pub fn run(
             CODEX_REQUIRED_CHECKS,
         ),
         HarnessId::Claude => (
-            claude_headless_worker::verify(live, dir.path(), &checks, &config, model.as_deref()),
-            CLAUDE_HEADLESS_REQUIRED_CHECKS,
+            claude_worker::verify(live, dir.path(), &checks, &config, model.as_deref()),
+            CLAUDE_REQUIRED_CHECKS,
         ),
         HarnessId::Opencode => (
             opencode_worker::verify(

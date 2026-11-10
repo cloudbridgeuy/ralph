@@ -261,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_worker_removing_its_worktree_is_cleaned() {
+    fn claude_tmux_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
         assert!(cleans_claude_leftovers(
             &state(HarnessId::ClaudeTmux),
@@ -270,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_headless_worker_removing_its_worktree_is_cleaned() {
+    fn claude_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
         let state = state(HarnessId::Claude);
         assert!(cleans_claude_leftovers(&state, &steps));

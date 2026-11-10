@@ -517,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn the_turn_count_is_null_without_snapshots_or_for_claude_headless() {
+    fn the_turn_count_is_null_without_snapshots_or_for_claude() {
         assert_eq!(turn_count(HarnessId::ClaudeTmux, &[]), None);
         assert_eq!(turn_count(HarnessId::Claude, &[0]), None);
         assert_eq!(turn_count(HarnessId::Claude, &[0, 1]), None);

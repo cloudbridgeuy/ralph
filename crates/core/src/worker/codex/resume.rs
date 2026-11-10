@@ -79,9 +79,9 @@ mod tests {
             ),
         ];
         for (rec, facts, why) in cases {
-            match resume_decision_for("claude-headless", "a", &rec, store, facts) {
+            match resume_decision_for("claude", "a", &rec, store, facts) {
                 Resume::Skip(message) => {
-                    assert!(message.starts_with("claude-headless session a not resumed: "));
+                    assert!(message.starts_with("claude session a not resumed: "));
                     assert!(message.contains(why), "{message}");
                 }
                 Resume::Go => panic!("must skip"),

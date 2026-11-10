@@ -35,7 +35,7 @@ impl HarnessId {
 pub struct LiveHarness {
     pub cursor: bool,
     pub codex: bool,
-    pub claude_headless: bool,
+    pub claude: bool,
     pub opencode: bool,
 }
 
@@ -44,7 +44,7 @@ pub fn close_harness(recorded: Option<HarnessId>, live: LiveHarness) -> HarnessI
         HarnessId::Cursor
     } else if live.codex {
         HarnessId::Codex
-    } else if live.claude_headless {
+    } else if live.claude {
         HarnessId::Claude
     } else if live.opencode {
         HarnessId::Opencode
@@ -94,17 +94,17 @@ mod tests {
         }
     }
 
-    fn probes(cursor: bool, codex: bool, claude_headless: bool, opencode: bool) -> LiveHarness {
+    fn probes(cursor: bool, codex: bool, claude: bool, opencode: bool) -> LiveHarness {
         LiveHarness {
             cursor,
             codex,
-            claude_headless,
+            claude,
             opencode,
         }
     }
 
     #[test]
-    fn a_dead_claude_headless_worker_with_a_record_keeps_its_harness() {
+    fn a_dead_claude_worker_with_a_record_keeps_its_harness() {
         let kind = close_harness(Some(HarnessId::Claude), probes(false, false, false, false));
         assert_eq!(kind, HarnessId::Claude);
         assert_eq!(turn_count(kind, &[0]), None);

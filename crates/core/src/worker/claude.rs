@@ -8,15 +8,15 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 pub const CLAUDE_COMMAND: &str = "claude";
-pub const CLAUDE_HEADLESS_SPAWN_DIR: &str = "claude-spawn";
-pub const CLAUDE_HEADLESS_CLOSE_DIR: &str = "claude-close";
-pub const CLAUDE_HEADLESS_ERROR_DIR: &str = "claude-error";
-pub const CLAUDE_HEADLESS_OWNER_DIR: &str = "claude";
-pub const CLAUDE_HEADLESS_ANSWER_DIR: &str = "claude-answer";
-pub const CLAUDE_HEADLESS_PROMPT_DIR: &str = "claude-prompt";
-pub const CLAUDE_HEADLESS_INTERRUPT_DIR: &str = "claude-interrupt";
-pub const CLAUDE_HEADLESS_INTERRUPT_RESULT_DIR: &str = "claude-interrupt-result";
-pub const CLAUDE_HEADLESS_SESSION_DIR: &str = "claude-session";
+pub const CLAUDE_SPAWN_DIR: &str = "claude-spawn";
+pub const CLAUDE_CLOSE_DIR: &str = "claude-close";
+pub const CLAUDE_ERROR_DIR: &str = "claude-error";
+pub const CLAUDE_OWNER_DIR: &str = "claude";
+pub const CLAUDE_ANSWER_DIR: &str = "claude-answer";
+pub const CLAUDE_PROMPT_DIR: &str = "claude-prompt";
+pub const CLAUDE_INTERRUPT_DIR: &str = "claude-interrupt";
+pub const CLAUDE_INTERRUPT_RESULT_DIR: &str = "claude-interrupt-result";
+pub const CLAUDE_SESSION_DIR: &str = "claude-session";
 
 pub const ALLOW_ONCE: &str = "allow_once";
 const DENY: &str = "deny";
@@ -210,7 +210,7 @@ pub fn bind_started_turn(turns: &mut Turns, mut actions: Vec<Action>, seq: u64) 
 }
 
 #[derive(Clone, Copy)]
-pub struct ClaudeHeadlessArgs<'a> {
+pub struct ClaudeArgs<'a> {
     pub model: Option<&'a str>,
     pub mcp_config: &'a str,
     pub attachments: &'a Path,
@@ -219,8 +219,8 @@ pub struct ClaudeHeadlessArgs<'a> {
     pub copied: &'a [String],
 }
 
-pub fn claude_headless_args(options: &ClaudeHeadlessArgs) -> Vec<String> {
-    let ClaudeHeadlessArgs {
+pub fn claude_args(options: &ClaudeArgs) -> Vec<String> {
+    let ClaudeArgs {
         model,
         mcp_config,
         attachments,
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn args_run_prompt_less_stream_json_with_the_report_server() {
-        let args = claude_headless_args(&ClaudeHeadlessArgs {
+        let args = claude_args(&ClaudeArgs {
             model: Some("haiku"),
             mcp_config: "{}",
             attachments: Path::new("/a"),
@@ -678,7 +678,7 @@ mod tests {
         ));
         assert!(!args.contains(&"--resume".into()));
         assert!(args.contains(&"--strict-mcp-config".into()));
-        let yolo = claude_headless_args(&ClaudeHeadlessArgs {
+        let yolo = claude_args(&ClaudeArgs {
             model: None,
             mcp_config: "{}",
             attachments: Path::new("/a"),
@@ -690,7 +690,7 @@ mod tests {
             .join(" ")
             .contains("--permission-mode auto --permission-prompt-tool stdio"));
         assert!(!yolo.contains(&"--model".into()));
-        let resumed = claude_headless_args(&ClaudeHeadlessArgs {
+        let resumed = claude_args(&ClaudeArgs {
             model: None,
             mcp_config: "{}",
             attachments: Path::new("/a"),
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn args_allow_the_copied_servers_and_pass_the_config_path() {
         let copied = ["mcptools".to_string(), "docs".to_string()];
-        let args = claude_headless_args(&ClaudeHeadlessArgs {
+        let args = claude_args(&ClaudeArgs {
             model: None,
             mcp_config: "/s/workers/A.json",
             attachments: Path::new("/a"),
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn a_new_session_passes_its_id_and_never_resume() {
-        let args = claude_headless_args(&ClaudeHeadlessArgs {
+        let args = claude_args(&ClaudeArgs {
             model: None,
             mcp_config: "{}",
             attachments: Path::new("/a"),
@@ -833,7 +833,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_headless_warning_is_silent_for_a_recorded_version() {
+    fn claude_warning_is_silent_for_a_recorded_version() {
         let recorded = VerifiedAgents::default().record(crate::worker::verified_entry(
             "claude",
             "2.2.0",

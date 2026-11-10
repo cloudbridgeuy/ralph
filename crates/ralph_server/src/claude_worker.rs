@@ -26,18 +26,18 @@ use ralph_core::claude_leftovers::{
 };
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_headless_args,
-    claude_mcp_config, cleanup, decode_claude_version, decode_line, deny_line, gone_path,
-    import_servers, interrupt_lines, interrupted_end, join_start_warnings, permission_response,
+    acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_args, claude_mcp_config,
+    cleanup, decode_claude_version, decode_line, deny_line, gone_path, import_servers,
+    interrupt_lines, interrupted_end, join_start_warnings, permission_response,
     prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
     start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
-    usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs,
-    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
+    usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, ClaudeArgs, ClaudeLine,
+    ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
     PermissionAnswer, PermissionMode, QueuedFacts, QueuedWorker, SessionRecord, ShutdownStep,
     SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
-    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
-    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
+    ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR, CLAUDE_CLOSE_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
+    CLAUDE_INTERRUPT_DIR, CLAUDE_OWNER_DIR, CLAUDE_PROMPT_DIR, CLAUDE_SESSION_DIR,
+    CLAUDE_SPAWN_DIR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -448,7 +448,7 @@ impl ClaudeWorker {
         let expected_session = match session {
             ClaudeSession::New(id) | ClaudeSession::Resume(id) => id.to_string(),
         };
-        let args = claude_headless_args(&ClaudeHeadlessArgs {
+        let args = claude_args(&ClaudeArgs {
             model: request.model.as_deref(),
             mcp_config: &mcp_path.to_string_lossy(),
             attachments: &attachments,
@@ -597,17 +597,17 @@ impl Drop for ClaudeWorker {
     }
 }
 
-pub(crate) struct ClaudeHeadlessHost {
+pub(crate) struct ClaudeHost {
     store_dir: PathBuf,
     workers: Mutex<HashMap<String, ClaudeWorker>>,
     starting: Mutex<HashMap<String, u32>>,
     closed: AtomicBool,
 }
 
-impl ClaudeHeadlessHost {
+impl ClaudeHost {
     pub(crate) fn new(store_dir: PathBuf) -> Arc<Self> {
-        for id in request_ids(&store_dir, CLAUDE_HEADLESS_OWNER_DIR) {
-            sweep_owner(&HandoffFiles::claude_headless(&store_dir, &id));
+        for id in request_ids(&store_dir, CLAUDE_OWNER_DIR) {
+            sweep_owner(&HandoffFiles::claude(&store_dir, &id));
         }
         Arc::new(Self {
             store_dir,
@@ -618,7 +618,7 @@ impl ClaudeHeadlessHost {
     }
 
     fn files(&self, id: &str) -> HandoffFiles {
-        HandoffFiles::claude_headless(&self.store_dir, id)
+        HandoffFiles::claude(&self.store_dir, id)
     }
 
     fn queued_facts(&self, id: &str) -> QueuedFacts {
@@ -750,9 +750,9 @@ impl ClaudeHeadlessHost {
     }
 }
 
-impl HeadlessHost for ClaudeHeadlessHost {
+impl HeadlessHost for ClaudeHost {
     fn resume(&self) {
-        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_SESSION_DIR) {
+        for id in request_ids(&self.store_dir, CLAUDE_SESSION_DIR) {
             let files = self.files(&id);
             let activity = fs::read_to_string(activity_path(&self.store_dir, &id)).ok();
             let lost = turn_lost_at_resume(activity.as_deref());
@@ -784,13 +784,13 @@ impl HeadlessHost for ClaudeHeadlessHost {
         for worker in locked(&self.workers).values_mut() {
             worker.apply_events();
         }
-        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_CLOSE_DIR) {
+        for id in request_ids(&self.store_dir, CLAUDE_CLOSE_DIR) {
             self.close(&id);
         }
-        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_ANSWER_DIR) {
+        for id in request_ids(&self.store_dir, CLAUDE_ANSWER_DIR) {
             self.answer(&id);
         }
-        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_PROMPT_DIR) {
+        for id in request_ids(&self.store_dir, CLAUDE_PROMPT_DIR) {
             self.deliver_queued(
                 &id,
                 |files| &files.prompt,
@@ -798,7 +798,7 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 |_, entry| mark_prompt_lost(entry),
             );
         }
-        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_INTERRUPT_DIR) {
+        for id in request_ids(&self.store_dir, CLAUDE_INTERRUPT_DIR) {
             self.deliver_queued(
                 &id,
                 |files| &files.interrupt,
@@ -806,7 +806,7 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 |files, entry| report_interrupt_gone(&files.interrupt_result, entry),
             );
         }
-        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_SPAWN_DIR) {
+        for id in request_ids(&self.store_dir, CLAUDE_SPAWN_DIR) {
             self.spawn(&id);
         }
         true
@@ -837,5 +837,5 @@ impl HeadlessHost for ClaudeHeadlessHost {
 }
 
 #[cfg(test)]
-#[path = "claude_headless_worker_tests.rs"]
+#[path = "claude_worker_tests.rs"]
 mod tests;
