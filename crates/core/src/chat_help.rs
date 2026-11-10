@@ -117,12 +117,16 @@ impl Command {
                 ),
                 (
                     "/watch start --persistent ...",
-                    "save the watch so it runs again with its time left when ralph chat restarts; only /watch stop removes it",
+                    "save the watch so it runs again with its time left when ralph chat restarts; only /watch stop (or the model's watch_stop) removes it",
                 ),
                 ("/watch list", "list the active watches and their time left"),
                 (
                     "/watch stop <id>",
                     "kill the watch and post its stopped report; <id> is w1 or watch:w1; also removes a persistent one",
+                ),
+                (
+                    "model tools watch_list, watch_stop",
+                    "the model lists watches (queued, running or saved) with watch_list; with watch_stop it stops ids or all, like /watch stop, only when your latest message asks; all skips schedule: and /send-it check watches and names them",
                 ),
             ],
             Command::Schedule => &[

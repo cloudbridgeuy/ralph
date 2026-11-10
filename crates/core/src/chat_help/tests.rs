@@ -338,6 +338,8 @@ fn watch_help_explains_reports() {
         "watch:wN",
         "/inbox or /hold",
         "w1 or watch:w1",
+        "watch_list",
+        "watch_stop",
     ] {
         assert!(text.contains(part), "{part}");
     }
