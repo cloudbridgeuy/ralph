@@ -1,16 +1,16 @@
 use crate::chat::inbox::Display;
 use crate::chat::schedule::{ask_answer, read_answer};
 use crate::chat::thread::{
-    config_root, listing, merge_precheck, merge_thread, park_thread, pull_thread, rows, thread_dir,
-    view_thread,
+    config_root, drop_precheck, drop_thread, listing, merge_precheck, merge_thread, park_thread,
+    pull_thread, revive_thread, rows, thread_dir, view_thread,
 };
 use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::{
-    merge_answer, merge_question, merging_notice, op_refusal, parked_message, view_posted_message,
-    ThreadOp,
+    drop_answer, drop_question, merge_answer, merge_question, merging_notice, op_refusal,
+    parked_message, revived_message, view_posted_message, ThreadOp,
 };
 use std::io;
 use std::path::Path;
@@ -41,6 +41,14 @@ pub(super) fn run(
         ThreadOp::Pull(name) => pull_thread(&main, name),
         ThreadOp::Park(name) => {
             park_thread(&main, name, &running_of(name)).map(|()| parked_message(name))
+        }
+        ThreadOp::Revive(name) => revive_thread(&main, name).map(|()| revived_message(name)),
+        ThreadOp::Drop(name) => {
+            drop_precheck(&main, name, &running_of(name))?;
+            if !drop_answer(confirm(&drop_question(name)))? {
+                return Ok("drop cancelled.".to_string());
+            }
+            drop_thread(&main, name, &running_of(name))
         }
         ThreadOp::Merge { name, view: true } => view_thread(&main, name, &running_of(name))
             .map(|message| view_posted_message(name, &message)),
@@ -233,6 +241,102 @@ mod tests {
             refusal.contains("Run /thread main, then /thread merge <name>."),
             "{refusal}"
         );
+    }
+
+    fn drop_auth() -> ThreadOp {
+        ThreadOp::Drop(ThreadName::parse("auth").unwrap())
+    }
+
+    #[test]
+    fn a_confirmed_drop_deletes_the_thread_after_one_question() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let mut asked = 0;
+        let mut confirm = |question: &str| {
+            asked += 1;
+            assert!(question.contains("cannot be undone"), "{question}");
+            Some(true)
+        };
+        let result = with_env(&main, false, |env| {
+            run(&drop_auth(), env, &mut confirm, &idle)
+        });
+        assert_eq!(result, Ok("dropped thread auth".to_string()));
+        assert_eq!(asked, 1);
+        assert!(!thread_dir(&main, &auth).exists());
+    }
+
+    #[test]
+    fn a_declined_drop_keeps_the_thread() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let result = with_env(&main, false, |env| {
+            run(&drop_auth(), env, &mut |_: &str| Some(false), &idle)
+        });
+        assert_eq!(result, Ok("drop cancelled.".to_string()));
+        assert!(thread_dir(&main, &auth).exists());
+    }
+
+    #[test]
+    fn an_aborted_drop_question_is_refused_and_keeps_the_thread() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let refusal = with_env(&main, false, |env| {
+            run(&drop_auth(), env, &mut |_: &str| None, &idle)
+        })
+        .unwrap_err();
+        assert!(refusal.starts_with("drop aborted"), "{refusal}");
+        assert!(thread_dir(&main, &auth).exists());
+    }
+
+    #[test]
+    fn a_drop_that_the_thread_state_refuses_never_asks() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
+        let unknown = with_env(&main, false, |env| {
+            run(&drop_auth(), env, &mut confirm, &idle)
+        })
+        .unwrap_err();
+        assert!(unknown.starts_with("no thread auth"), "{unknown}");
+        ensure(&main, &ThreadName::parse("auth").unwrap()).unwrap();
+        let busy = with_env(&main, false, |env| {
+            run(&drop_auth(), env, &mut confirm, &|_: &ThreadName| {
+                vec!["w1".to_string()]
+            })
+        })
+        .unwrap_err();
+        assert!(busy.contains("running workers (w1)"), "{busy}");
+        let in_thread = with_env(&main, true, |env| {
+            run(&drop_auth(), env, &mut confirm, &idle)
+        })
+        .unwrap_err();
+        assert!(
+            in_thread.contains("Run /thread main, then /thread drop <name>."),
+            "{in_thread}"
+        );
+    }
+
+    #[test]
+    fn revive_opens_a_parked_thread_and_refuses_one_that_is_not_parked() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let revive = ThreadOp::Revive(auth.clone());
+        let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
+        let not_parked =
+            with_env(&main, false, |env| run(&revive, env, &mut confirm, &idle)).unwrap_err();
+        assert_eq!(not_parked, "thread auth is not parked.");
+        let park = ThreadOp::Park(auth);
+        with_env(&main, false, |env| run(&park, env, &mut confirm, &idle)).unwrap();
+        let revived = with_env(&main, false, |env| run(&revive, env, &mut confirm, &idle));
+        assert_eq!(revived, Ok("revived thread auth".to_string()));
     }
 
     #[test]

@@ -4,7 +4,9 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 const SWITCH: &str = "switch";
-const SUBCOMMANDS: [&str; 6] = ["ls", "main", "merge", "park", "pull", SWITCH];
+const SUBCOMMANDS: [&str; 8] = [
+    "drop", "ls", "main", "merge", "park", "pull", "revive", SWITCH,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwitchTarget {
@@ -323,7 +325,7 @@ mod tests {
         assert_eq!(
             complete("/thread ", Some("side")),
             Some(
-                ["ls", "main", "merge", "park", "pull", "switch"]
+                ["drop", "ls", "main", "merge", "park", "pull", "revive", "switch"]
                     .map(String::from)
                     .to_vec()
             )

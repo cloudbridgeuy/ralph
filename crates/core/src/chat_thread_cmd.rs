@@ -12,12 +12,18 @@ const PARK_USAGE: &str =
     "usage: /thread park <name> stops thread <name> from opening; run it in main's chat.";
 const PULL_USAGE: &str =
     "usage: /thread pull <name> moves thread <name> to main's end; run it in main's chat.";
+const REVIVE_USAGE: &str =
+    "usage: /thread revive <name> lets parked thread <name> open again; run it in main's chat.";
+const DROP_USAGE: &str =
+    "usage: /thread drop <name> deletes thread <name> after a y/n; run it in main's chat.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadOp {
     Ls,
     Pull(ThreadName),
     Park(ThreadName),
+    Revive(ThreadName),
+    Drop(ThreadName),
     Merge { name: ThreadName, view: bool },
 }
 
@@ -39,6 +45,10 @@ pub fn parse_thread_args(args: &str) -> ThreadLine {
         }
         Some((&"pull", rest)) => ThreadLine::Op(one_name(rest, PULL_USAGE).map(ThreadOp::Pull)),
         Some((&"park", rest)) => ThreadLine::Op(one_name(rest, PARK_USAGE).map(ThreadOp::Park)),
+        Some((&"revive", rest)) => {
+            ThreadLine::Op(one_name(rest, REVIVE_USAGE).map(ThreadOp::Revive))
+        }
+        Some((&"drop", rest)) => ThreadLine::Op(one_name(rest, DROP_USAGE).map(ThreadOp::Drop)),
         Some((&"merge", rest)) => ThreadLine::Op(parse_merge(rest)),
         _ => ThreadLine::Switch(Err(thread_usage())),
     }
@@ -49,13 +59,15 @@ pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
         ThreadOp::Ls => None,
         ThreadOp::Pull(_) => in_thread.then(|| main_only("pull")),
         ThreadOp::Park(_) => in_thread.then(|| main_only("park")),
+        ThreadOp::Revive(_) => in_thread.then(|| main_only("revive")),
+        ThreadOp::Drop(_) => in_thread.then(|| main_only("drop")),
         ThreadOp::Merge { .. } => in_thread.then(|| main_only("merge")),
     }
 }
 
 fn thread_usage() -> String {
     format!(
-        "usage: /thread <ls | switch <name> | main | pull <name> | park <name> | merge <name> [{VIEW_FLAG}]>"
+        "usage: /thread <ls | switch <name> | main | pull <name> | park <name> | revive <name> | drop <name> | merge <name> [{VIEW_FLAG}]>"
     )
 }
 
@@ -93,6 +105,18 @@ pub fn view_posted_message(name: &ThreadName, report: &str) -> String {
 
 pub fn parked_message(name: &ThreadName) -> String {
     format!("parked thread {name}; `ralph thread revive {name}` opens it again")
+}
+
+pub fn revived_message(name: &ThreadName) -> String {
+    format!("revived thread {name}")
+}
+
+pub fn drop_question(name: &ThreadName) -> String {
+    format!("Drop thread {name}? This deletes its folder and cannot be undone. [y/n] ")
+}
+
+pub fn drop_answer(answer: Option<bool>) -> Result<bool, String> {
+    answer.ok_or_else(|| "drop aborted; the command stays in the prompt.".to_string())
 }
 
 pub fn is_cell_command(line: &str) -> bool {
@@ -163,6 +187,22 @@ mod tests {
             assert_eq!(op(&format!("{sub} auth now")), Err(usage.to_string()));
             let bad = op(&format!("{sub} Bad_Name")).unwrap_err();
             assert!(bad.starts_with("'Bad_Name' is not a thread name."), "{bad}");
+            assert!(bad.ends_with(usage), "{bad}");
+        }
+    }
+
+    #[test]
+    fn revive_and_drop_take_one_thread_name() {
+        assert_eq!(op(" revive auth "), Ok(ThreadOp::Revive(auth())));
+        assert_eq!(op("drop auth"), Ok(ThreadOp::Drop(auth())));
+    }
+
+    #[test]
+    fn revive_and_drop_refuse_no_name_two_names_or_a_bad_name_with_usage() {
+        for (sub, usage) in [("revive", REVIVE_USAGE), ("drop", DROP_USAGE)] {
+            assert_eq!(op(sub), Err(usage.to_string()));
+            assert_eq!(op(&format!("{sub} auth now")), Err(usage.to_string()));
+            let bad = op(&format!("{sub} Bad_Name")).unwrap_err();
             assert!(bad.ends_with(usage), "{bad}");
         }
     }
@@ -254,6 +294,8 @@ mod tests {
         for (op, sub) in [
             (ThreadOp::Pull(auth()), "pull"),
             (ThreadOp::Park(auth()), "park"),
+            (ThreadOp::Revive(auth()), "revive"),
+            (ThreadOp::Drop(auth()), "drop"),
             (merge(false), "merge"),
             (merge(true), "merge"),
         ] {
@@ -279,6 +321,27 @@ mod tests {
         assert!(question.contains("auth"), "{question}");
         assert!(question.contains("Haiku"), "{question}");
         assert!(question.ends_with("[y/n] "), "{question}");
+    }
+
+    #[test]
+    fn only_an_answer_decides_the_drop() {
+        assert_eq!(drop_answer(Some(true)), Ok(true));
+        assert_eq!(drop_answer(Some(false)), Ok(false));
+        let aborted = drop_answer(None).unwrap_err();
+        assert!(aborted.starts_with("drop aborted"), "{aborted}");
+    }
+
+    #[test]
+    fn the_drop_question_names_the_thread_and_that_it_cannot_be_undone() {
+        let question = drop_question(&auth());
+        assert!(question.contains("auth"), "{question}");
+        assert!(question.contains("cannot be undone"), "{question}");
+        assert!(question.ends_with("[y/n] "), "{question}");
+    }
+
+    #[test]
+    fn the_revived_message_names_the_thread() {
+        assert_eq!(revived_message(&auth()), "revived thread auth");
     }
 
     #[test]

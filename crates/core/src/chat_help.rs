@@ -235,7 +235,15 @@ impl Command {
                 ),
                 (
                     "/thread park <name>",
-                    "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /thread main first); the thread's saved watches and schedules wait; ralph thread revive <name> opens it again; while a turn runs it waits in the queue",
+                    "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /thread main first); the thread's saved watches and schedules wait; /thread revive <name> opens it again; while a turn runs it waits in the queue",
+                ),
+                (
+                    "/thread revive <name>",
+                    "open parked thread <name> again, like ralph thread revive; main's chat only, with no model call; refused when the thread is not parked, merged or unknown, and inside a thread's chat (run /thread main first); while a turn runs it waits in the queue",
+                ),
+                (
+                    "/thread drop <name>",
+                    "delete thread <name>'s folder, like ralph thread drop; asks y/n first because it cannot be undone, and Ctrl-C or a closed input aborts; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged or unknown, and inside a thread's chat (run /thread main first); saved watches and schedules of the thread go with it; while a turn runs it waits in the queue",
                 ),
                 (
                     "/thread merge <name>",

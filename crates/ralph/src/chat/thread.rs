@@ -13,7 +13,7 @@ use ralph_core::chat_thread::{
     Merged, Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
     VIEW_BLOCK_LINES,
 };
-use ralph_core::chat_thread_cmd::{parked_message, view_posted_message};
+use ralph_core::chat_thread_cmd::{parked_message, revived_message, view_posted_message};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
@@ -140,7 +140,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         ThreadCommand::Revive { name } => {
             revive_thread(&main, &name)?;
-            println!("revived thread {name}");
+            println!("{}", revived_message(&name));
         }
         ThreadCommand::Pull { name } => println!("{}", pull_thread(&main, &name)?),
     }
@@ -257,6 +257,17 @@ pub(super) fn merge_precheck(
     let dir = thread_dir(main, name);
     merged_check(name, &known_meta(&dir, name)?)?;
     guard_check(name, Guarded::Merge, live(&dir, running))?;
+    claim_closed(&dir, name).map(drop)
+}
+
+pub(super) fn drop_precheck(
+    main: &Path,
+    name: &ThreadName,
+    running: &[String],
+) -> Result<(), String> {
+    let dir = thread_dir(main, name);
+    merged_check(name, &known_meta(&dir, name)?)?;
+    guard_check(name, Guarded::Drop, live(&dir, running))?;
     claim_closed(&dir, name).map(drop)
 }
 
