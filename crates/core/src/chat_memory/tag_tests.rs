@@ -96,7 +96,7 @@ fn without_a_start_row_nothing_is_untagged() {
 fn batch_lists_targets_with_three_context_entries_and_cuts_text() {
     let mut entries = texted(6, |i| format!("m{i}"));
     entries[5].text = "x".repeat(2000);
-    let batch = build_batch(&entries, &[5]);
+    let batch = build_batch(&entries, &[5], &BTreeSet::new());
     assert!(batch.starts_with("### ENTRY 5 (assistant)\n"));
     for ctx in ["2", "3", "4"] {
         assert!(batch.contains(&format!("[context #{ctx} ")));
@@ -109,7 +109,7 @@ fn batch_lists_targets_with_three_context_entries_and_cuts_text() {
 #[test]
 fn first_entry_has_no_context() {
     let entries = texted(2, |i| format!("m{i}"));
-    assert!(!build_batch(&entries, &[0]).contains("[context"));
+    assert!(!build_batch(&entries, &[0], &BTreeSet::new()).contains("[context"));
 }
 
 #[test]
@@ -245,17 +245,33 @@ fn a_pass_retakes_the_lock_only_when_the_log_grew_after_its_last_read() {
 }
 
 #[test]
-fn only_stderr_decides_the_failure_kind() {
+fn on_a_failed_call_the_api_error_lines_of_the_reply_count_like_stderr() {
+    let kind = |stderr: &str, response: &str| tag_failure_kind(false, 1, stderr, response);
+    assert_eq!(kind("", "API Error: 529 overloaded"), FailureKind::Outage);
     assert_eq!(
-        tag_failure_kind(false, 1, "API Error: 529 overloaded"),
+        kind("", "x\n\n api error: 503 unavailable"),
         FailureKind::Outage
     );
     assert_eq!(
-        tag_failure_kind(false, 1, "read ECONNRESET"),
-        FailureKind::Outage
+        kind("", "see the API Error: 529 note"),
+        FailureKind::Refusal
     );
-    assert_eq!(tag_failure_kind(false, 1, ""), FailureKind::Refusal);
-    assert_eq!(tag_failure_kind(true, 1, ""), FailureKind::Timeout);
+    assert_eq!(kind("", r#"[{"n":503,"rule":true}]"#), FailureKind::Refusal);
+    assert_eq!(kind("API Error: 529 overloaded", ""), FailureKind::Outage);
+    assert_eq!(kind("read ECONNRESET", "[]"), FailureKind::Outage);
+    assert_eq!(
+        tag_failure_kind(true, 1, "", r#"[{"n":503}]"#),
+        FailureKind::Timeout
+    );
+}
+
+#[test]
+fn an_exit_zero_reply_is_never_an_error() {
+    let quoted = "API Error: 529 overloaded";
+    assert_eq!(tag_failure_kind(false, 0, "", quoted), FailureKind::Refusal);
+    let reply = tag_reply(None, false, 0, Some("API Error: 400 bad request")).unwrap();
+    assert!(reply.exited_ok);
+    assert_eq!(reply.text, "API Error: 400 bad request");
 }
 
 fn feed(calls: &[bool]) -> (PassHealth, Vec<Verdict>) {
@@ -269,33 +285,56 @@ fn feed(calls: &[bool]) -> (PassHealth, Vec<Verdict>) {
 }
 
 #[test]
-fn four_bad_calls_in_a_row_before_any_good_one_stop_the_pass() {
+fn four_bad_calls_in_a_row_stop_the_pass_even_after_good_calls() {
     let (_, verdicts) = feed(&[false; 4]);
-    assert_eq!(
-        verdicts,
-        vec![Verdict::Go, Verdict::Go, Verdict::Go, Verdict::Stop]
-    );
+    assert_eq!(verdicts.last(), Some(&Verdict::Stop));
+    assert!(verdicts[..3].iter().all(|v| *v == Verdict::Go));
+    let (_, verdicts) = feed(&[true, true, false, false, false, false]);
+    assert_eq!(verdicts.last(), Some(&Verdict::Stop));
+    assert!(verdicts[..5].iter().all(|v| *v == Verdict::Go));
 }
 
 #[test]
-fn a_good_call_ends_the_streak_for_the_whole_pass() {
-    let (health, verdicts) = feed(&[false, false, true, false, false, false, false, false]);
+fn a_good_call_resets_the_streak() {
+    let (_, verdicts) = feed(&[false, false, false, true, false, false, false]);
     assert!(verdicts.iter().all(|v| *v == Verdict::Go));
-    assert!(may_mark_failed(health));
 }
 
 #[test]
-fn a_bad_streak_below_the_limit_does_not_stop_the_pass() {
-    let (health, verdicts) = feed(&[false, false, false]);
-    assert!(verdicts.iter().all(|v| *v == Verdict::Go));
-    assert!(!may_mark_failed(health));
+fn an_entry_isolated_by_a_bad_call_is_confirmed_only_by_a_later_good_call() {
+    let health = isolated(PassHealth::default(), 7, false);
+    let (health, confirmed) = take_confirmed(health);
+    assert!(confirmed.is_empty());
+    let (health, _) = after_call(health, true);
+    let (_, confirmed) = take_confirmed(health);
+    assert_eq!(confirmed, vec![7]);
 }
 
 #[test]
-fn no_failed_rows_until_a_call_exits_zero() {
-    assert!(!may_mark_failed(PassHealth::default()));
-    assert!(!may_mark_failed(feed(&[false, false]).0));
-    assert!(may_mark_failed(feed(&[false, true]).0));
+fn an_entry_left_out_of_an_exit_zero_reply_is_confirmed_at_once() {
+    let (_, confirmed) = take_confirmed(isolated(PassHealth::default(), 3, true));
+    assert_eq!(confirmed, vec![3]);
+}
+
+#[test]
+fn a_stop_drops_the_entries_still_pending() {
+    let mut health = isolated(PassHealth::default(), 7, false);
+    for _ in 0..3 {
+        health = after_call(health, false).0;
+    }
+    let (health, verdict) = after_call(health, false);
+    assert_eq!(verdict, Verdict::Stop);
+    assert!(take_confirmed(health).1.is_empty());
+}
+
+#[test]
+fn excluded_entries_never_ride_as_context() {
+    let entries = texted(6, |i| format!("m{i}"));
+    let batch = build_batch(&entries, &[5], &BTreeSet::from([3]));
+    assert!(batch.contains("[context #4 ") && batch.contains("[context #2 "));
+    assert!(!batch.contains("[context #3 "));
+    let target = build_batch(&entries, &[3], &BTreeSet::from([3]));
+    assert!(target.starts_with("### ENTRY 3 "));
 }
 
 #[test]

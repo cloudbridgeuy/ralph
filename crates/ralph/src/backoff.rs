@@ -46,11 +46,17 @@ pub fn attempt_from(result: SubprocessOutcome) -> Attempt<SubprocessOutcome> {
 }
 
 /// How the last attempt of a tag call failed, or `None` if it did not. Unlike
-/// the retry loop, it keeps the model's reply out of the outage check (see
-/// `tag_failure_kind`).
+/// the retry loop, it reads only the `API Error` lines of the reply (see
+/// `tag_failure_kind`), and only for a failed call.
 pub fn final_tag_failure_kind(result: &SubprocessOutcome) -> Option<FailureKind> {
     let (timed_out, done) = failed_run(result)?;
-    Some(tag_failure_kind(timed_out, done.exit_code, &done.stderr))
+    let response = extract_response_text(&done.stream_result.output_blocks).unwrap_or_default();
+    Some(tag_failure_kind(
+        timed_out,
+        done.exit_code,
+        &done.stderr,
+        &response,
+    ))
 }
 
 fn failure_text(result: &StreamingSubprocessResult) -> String {
@@ -186,6 +192,38 @@ mod tests {
             assert_eq!(final_tag_failure_kind(&outcome), kind);
             assert_eq!(failure_of(&outcome).is_some(), kind.is_some());
         }
+    }
+
+    fn replied(exit_code: i32, response: &str) -> SubprocessOutcome {
+        use crate::stream_processor::OutputBlock;
+        use ralph_core::chunk::{ChunkType, ParsedChunk};
+        let mut done = finished(exit_code, "");
+        done.stream_result
+            .output_blocks
+            .push(OutputBlock::text(ParsedChunk {
+                chunk_type: ChunkType::Prose,
+                content: response.to_string(),
+            }));
+        Ok(done)
+    }
+
+    #[test]
+    fn a_lasting_outage_in_the_reply_of_a_failed_call_is_an_outage() {
+        let kind = |code, response| final_tag_failure_kind(&replied(code, response));
+        assert_eq!(
+            kind(1, "API Error: 529 overloaded"),
+            Some(FailureKind::Outage)
+        );
+        assert_eq!(
+            kind(1, "ok\n\n api error: 503 unavailable"),
+            Some(FailureKind::Outage)
+        );
+        assert_eq!(
+            kind(1, r#"[{"n":503,"rule":true}]"#),
+            Some(FailureKind::Refusal)
+        );
+        assert_eq!(kind(0, "API Error: 400 bad request"), None);
+        assert_eq!(kind(0, "API Error: 529 overloaded"), None);
     }
 
     #[test]

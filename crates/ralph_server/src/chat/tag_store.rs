@@ -4,8 +4,8 @@
 use crate::private_file::check_path;
 use ralph_core::chat_memory::{
     after_call, batches, build_batch, decode_rows, encode_row, encode_start, failure_kind,
-    ids_with, may_mark_failed, next_size, parse_log, parse_reply, retake, untagged, CallReply,
-    Entry, PassHealth, RowKind, SearchRequest, TagRow, TagState, Verdict, BATCH_LADDER,
+    ids_with, isolated, next_size, parse_log, parse_reply, retake, take_confirmed, untagged,
+    CallReply, Entry, PassHealth, RowKind, SearchRequest, TagRow, TagState, Verdict, BATCH_LADDER,
     MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
 };
 use std::collections::BTreeSet;
@@ -37,6 +37,9 @@ struct Progress {
     attempted: BTreeSet<usize>,
     report: Report,
     health: PassHealth,
+    /// Entries that failed alone in this pass; their text stays out of the
+    /// context of later batches.
+    excluded: BTreeSet<usize>,
     stopped: bool,
 }
 
@@ -187,17 +190,9 @@ impl TagStore {
                 state: &state,
                 now,
             };
-            let failed = round.resolve(&todo, BATCH_LADDER[0], ask, progress)?;
+            round.resolve(&todo, BATCH_LADDER[0], ask, progress)?;
             if progress.stopped {
                 return Ok(Some(entries.len()));
-            }
-            if !failed.is_empty() {
-                if !may_mark_failed(progress.health) {
-                    progress.stopped = true;
-                    return Ok(Some(entries.len()));
-                }
-                round.mark_failed(&failed)?;
-                progress.report.failed += failed.len();
             }
         }
     }
@@ -222,22 +217,25 @@ impl Round<'_> {
     }
 
     /// Asks `ids` at `size`; writes the valid rows; retries the rest one rung
-    /// lower. Returns the ids that still failed alone.
+    /// lower. An id that still fails alone goes to the pass health, which says
+    /// when it may get a `failed` row.
     fn resolve(
         &self,
         ids: &[usize],
         size: usize,
         ask: &mut Ask,
         progress: &mut Progress,
-    ) -> io::Result<Vec<usize>> {
+    ) -> io::Result<()> {
         let size = if ids.len() == 1 { 1 } else { size };
-        let reply = ask(&build_batch(self.entries, ids)).map_err(io::Error::other)?;
-        let (health, verdict) = after_call(progress.health, reply.exited_ok);
+        let batch = build_batch(self.entries, ids, &progress.excluded);
+        let reply = ask(&batch).map_err(io::Error::other)?;
+        let (health, verdict) = after_call(std::mem::take(&mut progress.health), reply.exited_ok);
         progress.health = health;
         if verdict == Verdict::Stop {
             progress.stopped = true;
-            return Ok(Vec::new());
+            return Ok(());
         }
+        self.mark_confirmed(progress)?;
         let parsed = parse_reply(&reply.text, ids);
         let rows = parsed
             .tagged
@@ -250,18 +248,34 @@ impl Round<'_> {
             progress.report.tagged += parsed.tagged.len();
         }
         let Some(next) = next_size(size) else {
-            return Ok(parsed.missing);
+            for id in parsed.missing {
+                progress.health =
+                    isolated(std::mem::take(&mut progress.health), id, reply.exited_ok);
+                progress.excluded.insert(id);
+            }
+            return self.mark_confirmed(progress);
         };
-        let mut failed = Vec::new();
         if !parsed.missing.is_empty() {
             for chunk in batches(&parsed.missing, next) {
-                failed.extend(self.resolve(&chunk, next, ask, progress)?);
+                self.resolve(&chunk, next, ask, progress)?;
                 if progress.stopped {
-                    return Ok(Vec::new());
+                    break;
                 }
             }
         }
-        Ok(failed)
+        Ok(())
+    }
+
+    /// Writes the `failed` rows of the entries the pass health has confirmed.
+    fn mark_confirmed(&self, progress: &mut Progress) -> io::Result<()> {
+        let (health, confirmed) = take_confirmed(std::mem::take(&mut progress.health));
+        progress.health = health;
+        if confirmed.is_empty() {
+            return Ok(());
+        }
+        self.mark_failed(&confirmed)?;
+        progress.report.failed += confirmed.len();
+        Ok(())
     }
 
     fn mark_failed(&self, ids: &[usize]) -> io::Result<()> {

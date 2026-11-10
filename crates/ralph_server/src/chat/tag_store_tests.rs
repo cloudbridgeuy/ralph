@@ -310,6 +310,11 @@ fn one_pass_tags_at_most_the_cap() {
     assert_eq!(report.tagged, 50);
 }
 
+/// Whether a batch shows entry `n`, as a target or as context.
+fn mentions(batch: &str, n: usize) -> bool {
+    batch.contains(&format!("### ENTRY {n} ")) || batch.contains(&format!("[context #{n} "))
+}
+
 fn started(entries: usize) -> (tempfile::TempDir, TagStore) {
     let (dir, store) = store_with(0);
     let mut none = |_: &str| -> Result<CallReply, String> { Err("unused".into()) };
@@ -337,11 +342,10 @@ fn a_global_error_stops_the_pass_after_four_calls_and_writes_no_rows() {
 fn one_bad_entry_is_isolated_then_marked_failed_once_a_later_call_succeeds() {
     let (dir, store) = started(4);
     let mut ask = |batch: &str| {
-        let ids = asked_ids(batch);
-        if ids.contains(&0) {
+        if mentions(batch, 0) {
             return bad();
         }
-        ok(reply_for(&ids, |_| false))
+        ok(reply_for(&asked_ids(batch), |_| false))
     };
     let report = pass(&store, &mut ask).unwrap();
     assert_eq!((report.tagged, report.failed), (3, 1));
@@ -366,18 +370,67 @@ fn a_pass_with_no_exit_zero_writes_no_failed_rows() {
 
 #[test]
 fn two_bad_entries_at_the_front_look_global_and_stall_the_pass() {
-    let (dir, store) = started(6);
+    let (dir, store) = started(5);
     let calls = RefCell::new(0);
     let mut ask = |batch: &str| {
         *calls.borrow_mut() += 1;
-        let ids = asked_ids(batch);
-        if ids.iter().any(|n| *n < 2) {
+        if mentions(batch, 0) || mentions(batch, 1) {
             return bad();
         }
-        ok(reply_for(&ids, |_| false))
+        ok(reply_for(&asked_ids(batch), |_| false))
     };
     let report = pass(&store, &mut ask).unwrap();
     assert_eq!(*calls.borrow(), 4);
     assert_eq!((report.tagged, report.failed), (0, 0));
     assert!(state(&dir).tags.is_empty());
+}
+
+#[test]
+fn a_fault_that_starts_after_a_good_batch_stops_after_four_bad_calls_and_marks_nothing() {
+    let (dir, store) = started(100);
+    let calls = RefCell::new(0);
+    let mut ask = |batch: &str| {
+        *calls.borrow_mut() += 1;
+        if *calls.borrow() == 1 {
+            return ok(reply_for(&asked_ids(batch), |_| false));
+        }
+        bad()
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!(*calls.borrow(), 5);
+    assert_eq!((report.tagged, report.failed), (20, 0));
+    let s = state(&dir);
+    assert_eq!(s.tags.len(), 20);
+    assert!(s.failures.is_empty() && s.skipped.is_empty());
+}
+
+#[test]
+fn a_bad_entry_in_the_context_of_later_entries_is_isolated_without_a_stall() {
+    let (dir, store) = started(8);
+    let mut ask = |batch: &str| {
+        if mentions(batch, 2) {
+            return bad();
+        }
+        ok(reply_for(&asked_ids(batch), |_| false))
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!((report.tagged, report.failed), (7, 1));
+    let s = state(&dir);
+    assert_eq!(s.failures.get(&2), Some(&1));
+    assert_eq!(s.tags.len(), 7);
+}
+
+#[test]
+fn a_pending_entry_with_no_later_exit_zero_gets_no_row() {
+    let (dir, store) = started(3);
+    let mut ask = |batch: &str| {
+        if mentions(batch, 2) {
+            return bad();
+        }
+        ok(reply_for(&asked_ids(batch), |_| false))
+    };
+    let report = pass(&store, &mut ask).unwrap();
+    assert_eq!((report.tagged, report.failed), (2, 0));
+    let s = state(&dir);
+    assert!(s.failures.is_empty() && !s.tags.contains_key(&2));
 }

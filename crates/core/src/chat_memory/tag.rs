@@ -176,7 +176,10 @@ fn cut(text: &str, chars: usize) -> String {
     text.chars().take(chars).collect()
 }
 
-pub fn build_batch(entries: &[Entry], ids: &[usize]) -> String {
+/// The batch text. Entries in `exclude` (ones that failed alone in this pass)
+/// never ride along as context, or their text would fail the calls of the
+/// entries after them.
+pub fn build_batch(entries: &[Entry], ids: &[usize], exclude: &BTreeSet<usize>) -> String {
     let mut out = String::new();
     for &id in ids {
         let Some(target) = entries.get(id) else {
@@ -185,6 +188,9 @@ pub fn build_batch(entries: &[Entry], ids: &[usize]) -> String {
         out.push_str(&format!("### ENTRY {id} ({})\n", target.role.as_str()));
         let first = id.saturating_sub(CONTEXT_ENTRIES);
         for (ctx, entry) in entries.iter().enumerate().take(id).skip(first) {
+            if exclude.contains(&ctx) {
+                continue;
+            }
             out.push_str(&format!(
                 "  [context #{ctx} {}] {}\n",
                 entry.role.as_str(),
@@ -215,14 +221,27 @@ pub fn retake(len_now: usize, seen: usize) -> bool {
     len_now > seen
 }
 
-/// Classifies a failed tag call from its exit and stderr only. The model's
-/// reply never counts: it can quote an error (this chat does), and a tag reply
-/// is full of entry numbers that the shared classifier reads as codes.
-pub fn tag_failure_kind(timed_out: bool, exit_code: i32, stderr: &str) -> FailureKind {
+/// Classifies a failed tag call. `claude -p` prints an API error such as
+/// "API Error: 529 ..." as its reply, with an empty stderr, so on a non-zero
+/// exit the reply counts, but only through its lines that start with
+/// `API Error`: the shared classifier reads bare codes such as "503" anywhere,
+/// and a tag reply is full of entry numbers. An exit-0 reply never counts.
+pub fn tag_failure_kind(
+    timed_out: bool,
+    exit_code: i32,
+    stderr: &str,
+    response: &str,
+) -> FailureKind {
+    let errors: Vec<&str> = response
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.to_lowercase().starts_with("api error"))
+        .collect();
+    let text = format!("{stderr}\n{}", errors.join("\n"));
     classify(&FailureInput {
         timed_out,
         exit_code,
-        text: stderr,
+        text: &text,
     })
 }
 
@@ -234,15 +253,18 @@ pub struct CallReply {
     pub exited_ok: bool,
 }
 
-/// How many calls in a row may exit non-zero, before any call of the pass has
-/// exited 0, before the pass reads the failure as global and stops.
-pub const MAX_BAD_STREAK: u32 = 4;
+/// How many calls in a row may exit non-zero before the pass reads the
+/// failure as global and stops. A good call only resets the count.
+const MAX_BAD_STREAK: u32 = 4;
 
-/// What a pass has seen of its own calls.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// What a pass has seen of its own calls, and which entries that isolated.
+/// An entry that failed alone waits in `pending` until a later call exits 0;
+/// then it is `confirmed` and the shell may write its `failed` row.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PassHealth {
-    exited_ok: bool,
     bad_streak: u32,
+    pending: Vec<usize>,
+    confirmed: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,35 +275,49 @@ pub enum Verdict {
 
 /// Folds one finished call into the pass health. A global fault (a bad login,
 /// credit, a flag) makes every call fail, which text cannot tell from one bad
-/// entry; so the pass stops when `MAX_BAD_STREAK` calls in a row exit non-zero
-/// before any call exited 0.
+/// entry. So the pass stops at `MAX_BAD_STREAK` non-zero exits in a row, even
+/// after earlier good calls. A good call resets the count and confirms the
+/// entries isolated before it; a stop drops the pending ones.
 pub fn after_call(health: PassHealth, exited_ok: bool) -> (PassHealth, Verdict) {
+    let mut health = health;
     if exited_ok {
-        let health = PassHealth {
-            exited_ok: true,
-            bad_streak: 0,
-        };
+        health.bad_streak = 0;
+        let waiting = std::mem::take(&mut health.pending);
+        health.confirmed.extend(waiting);
         return (health, Verdict::Go);
     }
-    let health = PassHealth {
-        bad_streak: health.bad_streak + 1,
-        ..health
-    };
-    let global = !health.exited_ok && health.bad_streak >= MAX_BAD_STREAK;
-    (health, if global { Verdict::Stop } else { Verdict::Go })
+    health.bad_streak += 1;
+    if health.bad_streak >= MAX_BAD_STREAK {
+        health.pending.clear();
+        return (health, Verdict::Stop);
+    }
+    (health, Verdict::Go)
 }
 
-/// Whether the pass may write `failed` rows: only once a call of the same pass
-/// exited 0, which shows the model and the account work.
-pub fn may_mark_failed(health: PassHealth) -> bool {
-    health.exited_ok
+/// Records that `id` failed alone, on a call that exited 0 or not. After an
+/// exit-0 call it is confirmed at once: the model answered and left it out.
+/// After a non-zero exit it waits for a later call to exit 0.
+pub fn isolated(health: PassHealth, id: usize, exited_ok: bool) -> PassHealth {
+    let mut health = health;
+    if exited_ok {
+        health.confirmed.push(id);
+    } else {
+        health.pending.push(id);
+    }
+    health
+}
+
+/// The entries confirmed so far, and the health without them.
+pub fn take_confirmed(health: PassHealth) -> (PassHealth, Vec<usize>) {
+    let mut health = health;
+    let confirmed = std::mem::take(&mut health.confirmed);
+    (health, confirmed)
 }
 
 /// The reply of a finished call, or an error when the call did not finish. An
 /// outage that outlasted the backoff and a process told to stop end the pass
 /// with no rows. A non-zero exit gives no text, so the ladder isolates the
-/// entries; `after_call` and `may_mark_failed` keep a global fault from marking
-/// them.
+/// entries; `after_call` and `isolated` keep a global fault from marking them.
 pub fn tag_reply(
     failure: Option<FailureKind>,
     terminated: bool,
