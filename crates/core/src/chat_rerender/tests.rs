@@ -128,6 +128,22 @@ fn text_without_a_matched_pair_is_unchanged() {
 }
 
 #[test]
+fn fenced_code_keeps_directive_looking_text() {
+    for text in [
+        "```\n</ralph-ask>\n```",
+        "intro\n\n```xml\n<ralph-ask to=\"a\">Q</ralph-ask>\n```\n\noutro",
+        "  ```\n<ralph-tell to=\"a\">Hi</ralph-tell>\n  ```",
+    ] {
+        assert_eq!(strip_directive_tags(text), text, "{text}");
+    }
+    let mixed = "```\n<ralph-ask to=\"a\">Q</ralph-ask>\n```\n\n<ralph-ask to=\"a\">Hidden</ralph-ask>\n\nafter";
+    assert_eq!(
+        strip_directive_tags(mixed),
+        "```\n<ralph-ask to=\"a\">Q</ralph-ask>\n```\n\nafter"
+    );
+}
+
+#[test]
 fn the_header_names_the_reply_number() {
     assert_eq!(rerender_header(1), "reprint of reply 1");
     assert_eq!(rerender_header(12), "reprint of reply 12");

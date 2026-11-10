@@ -1,4 +1,5 @@
 use crate::chat_memory::{Entry, Role};
+use std::ops::Range;
 
 pub const RERENDER_USAGE: &str = "Usage: /rerender [N] (N is 1 or more; 1 is the last reply)";
 
@@ -56,12 +57,38 @@ fn directive_len(rest: &str) -> Option<usize> {
     Some(open + body.find(&close)? + close.len())
 }
 
+fn fenced_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut open: Option<usize> = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            match open.take() {
+                Some(start) => ranges.push(start..offset + line.len()),
+                None => open = Some(offset),
+            }
+        }
+        offset += line.len();
+    }
+    if let Some(start) = open {
+        ranges.push(start..text.len());
+    }
+    ranges
+}
+
 pub fn strip_directive_tags(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     let mut removed = false;
+    let fenced = fenced_ranges(text);
     while let Some(ch) = rest.chars().next() {
-        let span = if ch == '<' { directive_len(rest) } else { None };
+        let at = text.len() - rest.len();
+        let in_fence = fenced.iter().any(|range| range.contains(&at));
+        let span = if ch == '<' && !in_fence {
+            directive_len(rest)
+        } else {
+            None
+        };
         match span {
             Some(len) => {
                 removed = true;
