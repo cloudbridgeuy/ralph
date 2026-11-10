@@ -1,6 +1,4 @@
-use crate::chat::check::CheckState;
 use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
-use crate::chat::memory::{self, Store};
 use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
 use crate::chat::term_status::TermStatus;
@@ -38,6 +36,8 @@ use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
     CHECK_STATUS, NUDGE_TEXT,
 };
+use ralph_server::chat::check::CheckState;
+use ralph_server::chat::memory::{self, Store};
 use ralph_server::warn::{warn, warn_if_err};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};

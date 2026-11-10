@@ -1,6 +1,5 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::keepalive::Stamp;
-use crate::chat::memory::{usage_path, Store};
 use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::chat::thread::{fork_view, Fork};
@@ -33,6 +32,7 @@ use ralph_core::chat_process::ResetReason;
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
+use ralph_server::chat::memory::{usage_path, Store};
 use ralph_server::subprocess::spawn_detached;
 use std::borrow::Cow;
 use std::io::{self};

@@ -1,10 +1,10 @@
-use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
 use crate::chat::route::LocalRoute;
 use ralph_core::chat_direct::{failure_line, memory_line, resolve_direct, Direct};
 use ralph_core::chat_memory::Role;
 use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::worker::blocked_path;
+use ralph_server::chat::memory::Store;
 use std::io;
 
 pub fn run(direct: Direct, ctx: &LocalRoute) {

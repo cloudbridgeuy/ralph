@@ -1,7 +1,8 @@
-use crate::chat::{CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, SKILLS_ENV, WRAP_WIDTH_ENV};
+use crate::chat::{CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, WRAP_WIDTH_ENV};
 use crate::highlight::{RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV};
 use crate::invoke::{ASK_PERMISSION_MODE_ENV, CHAT_PERMISSION_MODE_ENV};
 use ralph_core::worker::WORKTREE_DIR_ENV;
+use ralph_server::chat::skills::SKILLS_ENV;
 use ralph_server::config::{leaf_sources, read_layer, AppConfig, Notice, Row};
 use ralph_server::warn::{warn, warn_once};
 use std::fmt;

@@ -1,8 +1,8 @@
 use crate::chat::bounded::stdout_within;
-use crate::chat::memory::Store;
 use crate::chat::prompt::screen_columns;
 use crate::chat::sent::SentStyle;
 use ralph_core::chat_recap::{recap, RecapFacts};
+use ralph_server::chat::memory::Store;
 use std::process::Command;
 use std::time::Duration;
 

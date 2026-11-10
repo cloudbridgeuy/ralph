@@ -1,8 +1,5 @@
 mod bounded;
 pub(crate) mod cell;
-pub(crate) use ralph_server::chat::changes;
-pub(crate) use ralph_server::chat::check;
-pub(crate) use ralph_server::chat::claim;
 mod config;
 #[cfg(test)]
 mod corrupt_tests;
@@ -12,14 +9,10 @@ mod editor;
 mod hold;
 mod hold_progress;
 mod inbox;
-#[cfg(test)]
-pub(crate) use ralph_server::chat::index_files;
 mod keepalive;
 mod keys;
 pub(crate) mod mcp;
-pub(crate) use ralph_server::chat::memory;
 mod monitor;
-pub(crate) use ralph_server::chat::name;
 mod nudge;
 mod prompt;
 mod queue;
@@ -27,14 +20,11 @@ mod recap;
 mod route;
 mod schedule;
 mod schedule_worker;
-mod session;
-pub(crate) use ralph_server::chat::skills;
-mod stall;
-pub(crate) use skills::{read_claude_config, SKILLS_ENV};
 mod send_it;
 mod sent;
-pub(crate) use ralph_server::chat::snapshots;
+mod session;
 pub(crate) mod socket;
+mod stall;
 mod statusbar;
 mod suggestion;
 mod switch;
@@ -44,15 +34,12 @@ pub(crate) mod thread;
 mod thread_cmd;
 mod turn;
 mod view;
-pub(crate) use ralph_server::chat::{watch, workers_remote};
 mod workers;
 
-use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
 use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
-use crate::chat::memory::Store;
 use crate::chat::monitor::{
     ready_ids, watch_headless, watch_input, watch_status, Monitor, ProcessMemo,
 };
@@ -64,10 +51,6 @@ use crate::chat::queue::{
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::send_it::{worker_states, Active, SendIt};
-use crate::chat::skills::{
-    env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
-};
-use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
@@ -75,7 +58,6 @@ use crate::chat::switch::{check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
-use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::{ChatArgs, ChatCommand};
 use crate::config::{load_for_chat, ConfigSnapshot, FileState, MermaidStyleExt, ThemeWarnings};
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
@@ -124,6 +106,15 @@ use ralph_core::program_status::{status_enabled, Phase};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
+use ralph_server::chat::check::CheckState;
+use ralph_server::chat::memory::Store;
+use ralph_server::chat::skills::read_claude_config;
+use ralph_server::chat::skills::{
+    env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
+};
+use ralph_server::chat::snapshots::TurnSnapshots;
+use ralph_server::chat::workers_remote::RemoteStatus;
+use ralph_server::chat::{memory, name};
 use ralph_server::warn::{warn, warn_if_err};
 use ralph_server::wire::store::current_uid;
 use reedline::{EditCommand, ExternalPrinter, Reedline};

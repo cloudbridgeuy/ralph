@@ -1,4 +1,3 @@
-use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::thread::{fork_of, open_names};
@@ -13,6 +12,7 @@ use ralph_core::chat_memory::Role;
 use ralph_core::chat_nudge::nudge_completions;
 use ralph_core::chat_switch::switch_completions;
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
+use ralph_server::chat::memory::Store;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     default_vi_visual_keybindings, ColumnarMenu, Completer, CompletionResult, EditCommand,

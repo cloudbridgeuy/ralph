@@ -1,5 +1,3 @@
-use crate::chat::claim::ChatClaim;
-use crate::chat::memory::Store;
 use crate::cli::{ThreadArgs, ThreadCommand, NAP_TIMEOUT_SECS};
 use crate::private_file::check_path;
 use crate::schedule_store::ScheduleStore;
@@ -22,6 +20,8 @@ use ralph_core::chat_thread_cmd::{parked_message, view_posted_message};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
+use ralph_server::chat::claim::ChatClaim;
+use ralph_server::chat::memory::Store;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

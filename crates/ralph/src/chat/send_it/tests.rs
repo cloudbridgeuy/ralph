@@ -1,11 +1,11 @@
 use super::*;
-use crate::chat::memory::Store;
 use crate::chat::socket::{respond, Shared};
 use crate::chat::suggestion::SuggestionSlot;
 use crate::workers::Workers;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
+use ralph_server::chat::memory::Store;
 use serde_json::json;
 use std::sync::Mutex;
 

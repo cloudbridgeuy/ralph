@@ -1,10 +1,10 @@
-use crate::chat::changes::run_changes;
 use crate::chat::socket::forward;
 use crate::chat::thread::{config_root, Memory};
 use ralph_core::chat_help::config_help;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::mcp::tool_result;
+use ralph_server::chat::changes::run_changes;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -64,8 +64,8 @@ pub fn run_stdio_server(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat::memory::Store;
     use ralph_server::chat::memory::Reach;
+    use ralph_server::chat::memory::Store;
 
     fn run(store: &Store, socket: &Path, input: &str) -> Vec<Value> {
         let mut out = Vec::new();

@@ -239,7 +239,7 @@ fn record_ask(result: &subprocess::StreamingSubprocessResult) {
     ) {
         warn_if_err(
             ledger::record(
-                &chat::memory::usage_path(),
+                &ralph_server::chat::memory::usage_path(),
                 &record.with_request_at(result.request_at.map(|at| at.to_rfc3339())),
             ),
             "Failed to record ask usage",
@@ -247,7 +247,7 @@ fn record_ask(result: &subprocess::StreamingSubprocessResult) {
     }
     warn_if_err(
         ledger::record_all(
-            &chat::memory::usage_path(),
+            &ralph_server::chat::memory::usage_path(),
             ralph_core::chat_memory::subagent_records(&at, costs, &result.stream_result.metadata),
         ),
         "Failed to record ask subagent usage",
@@ -365,7 +365,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
             worker,
             seen,
             store,
-            usage: usage_file.unwrap_or_else(chat::memory::usage_path),
+            usage: usage_file.unwrap_or_else(ralph_server::chat::memory::usage_path),
         });
     let changes = args
         .store
@@ -394,7 +394,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
     ralph_server::config::set_store_layer(&args.store);
-    let store = chat::memory::Store::new(args.store.clone());
+    let store = ralph_server::chat::memory::Store::new(args.store.clone());
     store.nap(|prompt| {
         run_curator(
             prompt,
@@ -478,7 +478,10 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
             at: chrono::Utc::now().to_rfc3339(),
         };
         warn_if_err(
-            ledger::record_all(&chat::memory::usage_path(), curator_rows(&rows, done)),
+            ledger::record_all(
+                &ralph_server::chat::memory::usage_path(),
+                curator_rows(&rows, done),
+            ),
             "Failed to record chat usage",
         );
     }

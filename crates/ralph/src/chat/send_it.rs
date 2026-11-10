@@ -1,5 +1,4 @@
 use crate::chat::editor::open_in_editor;
-use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
 use crate::inbox_alert;
 use crate::watches::{locked, OutcomeSlot};
@@ -15,6 +14,7 @@ use ralph_core::chat_send_it::{
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::worker_check::logged_states;
+use ralph_server::chat::memory::Store;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;

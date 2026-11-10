@@ -71,8 +71,8 @@ pub(super) fn confirm(question: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat::memory::Store;
     use crate::chat::thread::ensure;
+    use ralph_server::chat::memory::Store;
 
     #[test]
     fn the_merge_precheck_refuses_before_any_question() {

@@ -1,4 +1,3 @@
-use crate::chat::memory::Store;
 use crate::chat::send_it::SendIt;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::cursor_owner::process_start;
@@ -19,6 +18,7 @@ use ralph_core::schedule_request::{
 use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command};
+use ralph_server::chat::memory::Store;
 use ralph_server::chat::socket::{SocketFiles, SocketPlace};
 use ralph_server::warn::warn;
 use ralph_server::wire::store::ensure_store_root;
