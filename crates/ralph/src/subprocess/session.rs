@@ -2,10 +2,10 @@ use super::spinner::{spawn_piped, Display, Pump, Readers, SpinnerSubprocessConfi
 use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
-use super::{exited_unreaped, signal_group};
 use crate::signal;
 use ralph_core::chat_memory::model_usage_since;
 use ralph_core::stream::{interrupt_line, result_is_error, user_line, ModelTotals};
+use ralph_server::subprocess::{exited_unreaped, signal_group};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};

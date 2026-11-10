@@ -7,7 +7,6 @@
 //! `Ctrl+C` kills the child process via the cancel flag or the signal path (`signal::is_interrupted()`).
 
 use super::gate::{write_direct, OutputGate, Stream};
-use super::kill_process_group;
 use super::timeout::try_wait_child;
 use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
@@ -18,6 +17,7 @@ use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
+use ralph_server::subprocess::kill_process_group;
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;

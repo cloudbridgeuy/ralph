@@ -13,8 +13,8 @@ use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
-    recorded, spawn_detached, OutputGate, Session, SpinnerSubprocessConfig,
-    StreamingSubprocessResult, SubprocessError,
+    recorded, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
+    SubprocessError,
 };
 use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
@@ -33,6 +33,7 @@ use ralph_core::chat_process::ResetReason;
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
+use ralph_server::subprocess::spawn_detached;
 use std::borrow::Cow;
 use std::io::{self};
 use std::path::{Path, PathBuf};
