@@ -351,4 +351,21 @@ mod tests {
         turn.observe(totals((1, 1), (1, 1)), true);
         assert_eq!(turn.take()[0].model, "a");
     }
+
+    fn on_thread(thread: &str, last: (u64, u64), total: (u64, u64)) -> UsageEvent {
+        let mut params = updated(breakdown(last.0, last.1), breakdown(total.0, total.1));
+        params["threadId"] = json!(thread);
+        decode_usage_event(TOKEN_USAGE_UPDATED, &params).unwrap()
+    }
+
+    #[test]
+    fn a_child_thread_total_does_not_reset_the_parent_baseline() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.observe(on_thread("parent", (100, 0), (100, 0)), true);
+        turn.take();
+        turn.observe(on_thread("child", (5, 0), (5, 0)), false);
+        turn.observe(on_thread("parent", (10, 0), (110, 0)), true);
+        let rows = turn.take();
+        assert_eq!(rows[0].usage.input_uncached, 10);
+    }
 }
