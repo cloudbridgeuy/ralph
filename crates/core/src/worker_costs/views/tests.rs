@@ -388,7 +388,7 @@ fn the_harness_and_model_view_follows_the_window() {
     let usage = [
         at(worker("w1", "x", "claude-opus-5-5"), "2026-11-01T10:00:00Z"),
         at(worker("w2", "x", "claude-opus-5-5"), "2026-11-06T10:00:00Z"),
-        at(worker("w3", "x", "claude-opus-5-5"), "not a time"),
+        at(worker("w3", "x", "claude-opus-5-5"), "2026-11-02T10:00:00Z"),
     ];
     let windowed = view_since(
         View::HarnessModel,

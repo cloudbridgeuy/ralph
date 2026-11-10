@@ -1,3 +1,5 @@
+pub mod model_view;
+
 use super::tickets::{window_position, WorkerWindow};
 use super::window::instant;
 use super::{builtin_prices, computed_usd, Source, Tokens, Usd, NO_PRICE, UNKNOWN};
@@ -119,6 +121,31 @@ struct CostSourceTag {
     cost_source: Option<String>,
 }
 
+pub fn is_excluded(line: &UsageLine) -> bool {
+    line.harness.as_deref() == Some(HarnessId::Codex.as_str())
+}
+
+pub fn label_excluded(cost: String, excluded: usize, metered: usize) -> String {
+    if excluded == 0 {
+        cost
+    } else if excluded == metered {
+        EXCLUDED.to_string()
+    } else {
+        format!("{cost} + {EXCLUDED}")
+    }
+}
+
+pub(crate) fn partition<'a, K: Ord>(
+    entries: impl Iterator<Item = &'a Entry>,
+    key: impl Fn(&Entry) -> K,
+) -> BTreeMap<K, Vec<&'a Entry>> {
+    let mut groups: BTreeMap<K, Vec<&Entry>> = BTreeMap::new();
+    for entry in entries {
+        groups.entry(key(entry)).or_default().push(entry);
+    }
+    groups
+}
+
 impl Group {
     pub fn usd(&self) -> Usd {
         self.reported.plus(self.est)
@@ -145,11 +172,7 @@ impl Group {
     }
 
     pub fn with_excluded(&self, cost: String) -> String {
-        match (self.all_excluded(), self.excluded) {
-            (true, _) => EXCLUDED.to_string(),
-            (false, 0) => cost,
-            (false, _) => format!("{cost} + {EXCLUDED}"),
-        }
+        label_excluded(cost, self.excluded, self.metered)
     }
 
     fn cost_text(&self) -> String {
@@ -335,7 +358,7 @@ fn unmetered_keys(
 }
 
 fn priced(entry: &Entry, pricing: &Pricing, table: &PriceTable) -> (Series, Usd) {
-    if entry.line.harness.as_deref() == Some(HarnessId::Codex.as_str()) {
+    if is_excluded(&entry.line) {
         return (Series::Excluded, Usd::default());
     }
     match (entry.reported, entry.line.cost_usd) {
@@ -364,9 +387,13 @@ fn report(
     for key in unmetered {
         slot(&mut groups, key).unmetered += 1;
     }
-    for entry in ledger.entries.iter().filter(|entry| admit(entry)) {
-        let (series, usd) = priced(entry, pricing, &table);
-        slot(&mut groups, key(entry)).add(entry, series, usd);
+    let admitted = ledger.entries.iter().filter(|entry| admit(entry));
+    for (key, entries) in partition(admitted, key) {
+        let group = slot(&mut groups, key);
+        for entry in entries {
+            let (series, usd) = priced(entry, pricing, &table);
+            group.add(entry, series, usd);
+        }
     }
     let groups: Vec<Group> = groups.into_values().collect();
     let total = groups.iter().fold(

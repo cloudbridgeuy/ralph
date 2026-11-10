@@ -1,6 +1,7 @@
 use super::tickets::parse_windows;
+use super::usage_report::model_view::costs_view;
 use super::usage_report::{group_by, parse, Dim, Filter, Group};
-use super::{costs_view, count, tier, Usd, MISSING, NO_USAGE, UNKNOWN};
+use super::{count, tier, Usd, MISSING, NO_USAGE, UNKNOWN};
 use crate::wire::view::Pricing;
 use chrono::{DateTime, Utc};
 

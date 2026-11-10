@@ -1,7 +1,9 @@
+use super::usage_report::model_view::{baseline, cells, cost_rows, costs_view, total_row, CostRow};
 use super::*;
 use crate::wire::price::PriceOverride;
 use crate::wire::provider::{provider, ProviderId};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 fn with_pricing<T>(overrides: &BTreeMap<String, PriceOverride>, f: impl Fn(&Pricing) -> T) -> T {
     let provider = provider(ProviderId::Anthropic);
@@ -20,7 +22,16 @@ fn view_of(usage: &str) -> String {
 }
 
 fn jsonl(rows: &[Value]) -> String {
-    rows.iter().map(|row| format!("{row}\n")).collect()
+    rows.iter()
+        .map(|row| {
+            let mut row = row.clone();
+            row["at"] = row
+                .get("at")
+                .cloned()
+                .unwrap_or(json!("2026-11-05T10:00:00Z"));
+            format!("{row}\n")
+        })
+        .collect()
 }
 
 fn turn(run: &str, process_turn: u64, cost: f64) -> Value {
@@ -672,4 +683,90 @@ fn a_cursor_row_with_an_unpriced_model_shows_unknown_cost_not_zero() {
     .usd;
     assert_eq!(usd.text(), "n/a");
     assert_eq!(usd.known, None);
+}
+
+fn golden_model_usage() -> String {
+    let at = |mut row: Value, at: &str| {
+        row["at"] = json!(at);
+        row
+    };
+    jsonl(&[
+        at(turn("r1", 1, 0.5), "2026-11-05T09:00:00Z"),
+        at(turn("r1", 2, 0.75), "2026-11-05T09:30:00Z"),
+        at(turn("r1", 3, 1.25), "2026-11-06T09:00:00Z"),
+        at(turn("r2", 1, 0.4), "2026-11-06T10:00:00Z"),
+        at(nap("claude-haiku-5-5", 0.01), "2026-11-05T10:00:00Z"),
+        at(nap("claude-haiku-5-5", 0.02), "2026-11-06T10:30:00Z"),
+        at(
+            worker("w1", "s1", "claude-sonnet-5-5"),
+            "2026-11-05T11:00:00Z",
+        ),
+        at(
+            worker("w1", "s2", "claude-sonnet-5-5"),
+            "2026-11-06T11:00:00Z",
+        ),
+        at(
+            json!({
+                "kind": "worker", "worker_id": "w2", "harness": "opencode", "model": "kimi",
+                "session_id": "s9", "cost_usd": 0.3, "cost_source": "harness",
+                "input_tokens": 40, "output_tokens": 9, "reasoning_tokens": 4,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            }),
+            "2026-11-06T12:00:00Z",
+        ),
+        at(
+            json!({
+                "kind": "ask", "harness": "claude", "cost_usd": 0.2, "input_tokens": 500,
+                "output_tokens": 50, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            }),
+            "2026-11-06T13:00:00Z",
+        ),
+    ])
+}
+
+#[test]
+fn golden_model_view_stays_byte_for_byte() {
+    let usage = golden_model_usage();
+    let since = window::instant("2026-11-06T00:00:00Z");
+    let out = with_pricing(&BTreeMap::new(), |pricing| {
+        [
+            costs_view(&usage, None, pricing),
+            costs_view(&usage, since, pricing),
+        ]
+        .join("\n\n")
+    });
+    assert_eq!(out, GOLDEN_MODEL_VIEW);
+}
+
+const GOLDEN_MODEL_VIEW: &str = r#"| HARNESS | MODEL | RUNS | INPUT | OUTPUT | CACHE READ | CACHE WRITE | 5M | 1H | REASONING | USD | HARNESS USD |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| main | unknown | 2 | 40 | 20 | 4.0k | 400 | – | – | – | n/a | 1.65 |
+| nap | claude-haiku-5-5 | 2 | 2 | 4 | 0 | 0 | – | – | – | ~0.00 | 0.03 |
+| ask | unknown | 1 | 500 | 50 | 0 | 0 | – | – | – | n/a | 0.20 |
+| claude | claude-sonnet-5-5 | 2 | 6 | 14 | 800 | 100 | 40 | 60 | – | ~0.00 | n/a |
+| opencode | kimi | 1 | 40 | 9 | 0 | 0 | – | – | 4 | n/a | 0.30 |
+| total |  |  | 588 | 97 | 4.8k | 500 | 40+ | 60+ | 4+ | ~0.00+ | 2.18+ |
+
+| HARNESS | MODEL | RUNS | INPUT | OUTPUT | CACHE READ | CACHE WRITE | 5M | 1H | REASONING | USD | HARNESS USD |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| main | unknown | 2 | 20 | 10 | 2.0k | 200 | – | – | – | n/a | 0.90 |
+| nap | claude-haiku-5-5 | 1 | 1 | 2 | 0 | 0 | – | – | – | ~0.00 | 0.02 |
+| ask | unknown | 1 | 500 | 50 | 0 | 0 | – | – | – | n/a | 0.20 |
+| claude | claude-sonnet-5-5 | 1 | 3 | 7 | 400 | 50 | 20 | 30 | – | ~0.00 | n/a |
+| opencode | kimi | 1 | 40 | 9 | 0 | 0 | – | – | 4 | n/a | 0.30 |
+| total |  |  | 564 | 78 | 2.4k | 250 | 20+ | 30+ | 4+ | ~0.00+ | 1.42+ |"#;
+
+#[test]
+fn codex_rows_show_excluded_in_the_model_view() {
+    let row = json!({
+        "kind": "worker", "at": "2026-11-05T10:00:00Z", "worker_id": "w", "harness": "codex",
+        "model": "gpt-5", "session_id": "s", "cost_usd": 0.4, "input_tokens": 10,
+        "output_tokens": 5, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+    });
+    let out = view_of(&jsonl(&[row]));
+    let codex = out
+        .lines()
+        .find(|line| line.starts_with("| codex"))
+        .unwrap();
+    assert!(codex.ends_with("| excluded | excluded |"), "{codex}");
 }
