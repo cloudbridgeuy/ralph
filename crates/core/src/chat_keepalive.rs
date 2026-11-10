@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use std::time::Duration;
 
 pub const KEEPALIVE_HOURS: u64 = 4;
-pub const KEEPALIVE_PING_SECS: u64 = 55 * 60;
+pub const KEEPALIVE_PING_SECS: u64 = 50 * 60;
 pub const KEEPALIVE_RETRY_SECS: u64 = 5 * 60;
 pub const KEEPALIVE_MAX_KEEPS: u32 = 3;
 pub const KEEPALIVE_PING_PROMPT: &str = "PING. Reply with only PONG.";
@@ -116,13 +116,13 @@ mod tests {
     }
 
     #[test]
-    fn pings_at_fifty_five_minutes_not_before() {
+    fn pings_at_fifty_minutes_not_before() {
         let at = |secs| KeepaliveInput {
             since_activity_secs: secs,
             ..input()
         };
-        assert_eq!(keepalive_action(&at(3299)), Keepalive::Skip);
-        assert_eq!(keepalive_action(&at(3300)), Keepalive::Ping);
+        assert_eq!(keepalive_action(&at(2999)), Keepalive::Skip);
+        assert_eq!(keepalive_action(&at(3000)), Keepalive::Ping);
     }
 
     #[test]
@@ -165,8 +165,8 @@ mod tests {
             since_activity_secs: since,
             ..input()
         };
-        assert_eq!(keepalive_action(&at(54 * 60)), Keepalive::Skip);
-        assert_eq!(keepalive_action(&at(55 * 60)), Keepalive::Ping);
+        assert_eq!(keepalive_action(&at(49 * 60)), Keepalive::Skip);
+        assert_eq!(keepalive_action(&at(50 * 60)), Keepalive::Ping);
     }
 
     #[test]
