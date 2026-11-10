@@ -204,4 +204,45 @@ mod tests {
         );
         assert_eq!(counted(&usage), [2]);
     }
+
+    const PARENT_THREAD: &str = "01a1c705-07b4-7a80-9cf0-03e4b25fd71e";
+    const PARENT_TURN: &str = "01a1c705-07dd-7d32-b08c-6e73fe8fb4fb";
+
+    fn replay_subagent_frames() -> Vec<ModelUsage> {
+        let usage = CodexUsage::new("w1", None);
+        usage.bind(PARENT_THREAD, Some("gpt-6.1-sol".into()));
+        for line in include_str!("fixtures/codex_subagent_frames.jsonl").lines() {
+            let frame: Value = serde_json::from_str(line).unwrap();
+            let method = frame["method"].as_str().unwrap();
+            let params = &frame["params"];
+            if method == "turn/started" && params["threadId"] == PARENT_THREAD {
+                usage.start_turn();
+            }
+            let owned = params["turnId"] == PARENT_TURN;
+            usage.observe(method, params, owned);
+        }
+        let rows = usage.bound.lock().unwrap().turn.take();
+        rows
+    }
+
+    #[test]
+    fn a_recorded_subagent_turn_counts_the_parent_and_the_child_in_full() {
+        let rows = replay_subagent_frames();
+        let tokens: u64 = rows
+            .iter()
+            .map(|row| {
+                let usage = &row.usage;
+                let written: u64 = usage.cache_writes.iter().map(|write| write.tokens).sum();
+                usage.input_uncached + usage.cache_read + written + usage.output
+            })
+            .sum();
+        assert_eq!(tokens, 69_512 + 44_211);
+    }
+
+    #[test]
+    fn a_recorded_subagent_turn_prices_the_child_at_the_child_model() {
+        let rows = replay_subagent_frames();
+        let models: Vec<&str> = rows.iter().map(|row| row.model.as_str()).collect();
+        assert_eq!(models, ["gpt-6-luna", "gpt-6.1-sol"]);
+    }
 }
