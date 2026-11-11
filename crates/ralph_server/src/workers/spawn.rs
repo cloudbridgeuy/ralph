@@ -22,13 +22,13 @@ use ralph_core::worker::{
     resolve_codex_warning, resolve_cursor_model, resolve_opencode_model, resolve_ticket,
     rollback_plan, rollback_report, session_name, spawn_base_sha, spawn_event, spawn_handoff,
     spawn_record_path, startup_state, task_dir_path, task_file_path, trust_key, with_start_warning,
-    worker_command, worker_config_path, worker_mcp_args, worker_mcp_config, worktree_add_args,
-    wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn,
-    Owner, Rollback, SpawnFacts, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket,
-    TicketKeys, UsageSink, WorkPhase, WorkerImport, WorkerMarkers, WorktreeBase, WorktreeVia,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS,
-    FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
-    WORKERS_DIR,
+    worker_command, worker_config_path, worker_mcp_args, worker_mcp_config, worker_settings_path,
+    worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles,
+    HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFacts, SpawnFootprint, SpawnRecord,
+    SpawnRequest, Startup, Ticket, TicketKeys, UsageSink, WorkPhase, WorkerImport, WorkerMarkers,
+    WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT,
+    FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
+    STORE_OPTION, WORKERS_DIR,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -565,10 +565,9 @@ impl Workers {
         markers: &WorkerMarkers,
         site: Option<&WorkerSite>,
     ) -> io::Result<PathBuf> {
-        let dir = self.store_dir.join(WORKERS_DIR);
-        fs::create_dir_all(&dir)?;
+        fs::create_dir_all(self.store_dir.join(WORKERS_DIR))?;
         let usage = absolute_from(&usage_path(), &std::env::current_dir()?);
-        let path = dir.join(format!("{id}.settings.json"));
+        let path = worker_settings_path(&self.store_dir, id);
         fs::write(
             &path,
             claude_worker_settings_with_config(
