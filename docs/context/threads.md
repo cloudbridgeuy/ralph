@@ -142,6 +142,10 @@ ralph thread merge auth        # Haiku digest (1-3 calls); goes to main's inbox
 ralph chat history zoom auth:0 # the merged thread is still readable
 ```
 
+## What the model sees
+
+`/thread pull`, `park`, `revive`, `drop` and `merge`, refused or not, and `/fork <name>` add the typed line and the printed result to the log of the chat where you typed them. They are never added to the thread's log. The model sees them before its next message. `/thread ls` is not recorded. See [Local command records](ralph-chat.md#local-command-records).
+
 ## Refusals
 
 Each message is quoted in its stable part. `<name>` is the thread. The checks are in `crates/core/src/chat_thread.rs` unless the table says otherwise.
