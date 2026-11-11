@@ -126,7 +126,9 @@ pub fn session_owner(sessions: &[TaggedSession], store: &str, project: &str, id:
     let names = [session_name(project, id), format!("ralph-{id}")];
     let found: Vec<&TaggedSession> = sessions
         .iter()
-        .filter(|session| names.contains(&session.name))
+        .filter(|session| {
+            names.contains(&session.name) || (session.id == id && same_store(&session.store, store))
+        })
         .collect();
     match found
         .iter()
@@ -312,6 +314,27 @@ mod tests {
         assert_eq!(
             session_owner(&[tagged("ralph-p-A", "")], "/s", "p", "A"),
             Owner::Foreign(tagged("ralph-p-A", ""))
+        );
+    }
+
+    #[test]
+    fn session_owner_finds_a_session_tagged_with_this_store_and_id_under_another_name() {
+        let mine = tagged("ralph-q-A", "/s");
+        assert_eq!(
+            session_owner(std::slice::from_ref(&mine), "/s", "p", "A"),
+            Owner::Mine(mine)
+        );
+    }
+
+    #[test]
+    fn session_owner_ignores_a_same_id_tag_from_another_store() {
+        assert_eq!(
+            session_owner(&[tagged("ralph-q-A", "/other")], "/s", "p", "A"),
+            Owner::Missing
+        );
+        assert_eq!(
+            session_owner(&[tagged("ralph-q-B", "/s")], "/s", "p", "B"),
+            Owner::Missing
         );
     }
 
