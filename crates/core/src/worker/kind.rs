@@ -53,6 +53,10 @@ pub fn close_harness(recorded: Option<HarnessId>, live: LiveHarness) -> HarnessI
     }
 }
 
+pub fn close_kind(live: LiveHarness) -> HarnessId {
+    close_harness(Some(HarnessId::ClaudeTmux), live)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,7 +118,7 @@ mod tests {
     fn without_a_record_the_live_order_holds() {
         assert_eq!(
             close_harness(None, probes(false, false, false, false)),
-            HarnessId::Claude
+            HarnessId::default()
         );
         assert_eq!(
             close_harness(None, probes(true, true, true, true)),
@@ -131,6 +135,18 @@ mod tests {
         assert_eq!(
             close_harness(None, probes(false, false, false, true)),
             HarnessId::Opencode
+        );
+    }
+
+    #[test]
+    fn a_dead_worker_with_no_probe_closes_as_claude_tmux() {
+        assert_eq!(
+            close_kind(probes(false, false, false, false)),
+            HarnessId::ClaudeTmux
+        );
+        assert_eq!(
+            close_kind(probes(false, false, true, false)),
+            HarnessId::Claude
         );
     }
 

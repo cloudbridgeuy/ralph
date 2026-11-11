@@ -242,9 +242,38 @@ pub fn close_plan(
     Ok(steps)
 }
 
+pub fn close_summary(id: &str, steps: &[CloseStep]) -> String {
+    let done: Vec<String> = steps
+        .iter()
+        .filter_map(|step| match step {
+            CloseStep::KillSession(session) => Some(format!("killed tmux session {session}")),
+            CloseStep::TerminateCursor => Some("stopped its cursor process".into()),
+            CloseStep::TerminateCodex => Some("stopped its codex process".into()),
+            CloseStep::TerminateClaude => Some("stopped its claude process".into()),
+            CloseStep::RemoveWorktree { .. } => Some("removed its worktree".into()),
+            CloseStep::DeleteBranch => Some(format!("deleted branch {}", branch_name(id))),
+            CloseStep::RemoveOpencodeSession
+            | CloseStep::PruneWorktrees
+            | CloseStep::ClearMarkers => None,
+        })
+        .collect();
+    let done = if done.is_empty() {
+        "cleared its markers".to_string()
+    } else {
+        done.join(", ")
+    };
+    let note = if steps.contains(&CloseStep::RemoveOpencodeSession) {
+        " Evicted its opencode location."
+    } else {
+        ""
+    };
+    format!("Closed worker {id}: {done}.{note}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::{close_kind, LiveHarness};
 
     #[test]
     fn project_slug_keeps_letters_digits_and_dashes() {
@@ -401,6 +430,46 @@ mod tests {
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateClaude);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
+    }
+
+    #[test]
+    fn close_plan_kills_the_tmux_session_of_a_dead_claude_tmux_worker() {
+        let mut state = close_state(Owner::Mine(tagged("ralph-ralph-GUZ-1389", "/s")));
+        state.kind = close_kind(LiveHarness::default());
+        let steps = close_plan(&state, false, false).unwrap();
+        assert!(steps.contains(&CloseStep::KillSession("ralph-ralph-GUZ-1389".into())));
+        assert!(!steps.contains(&CloseStep::TerminateClaude));
+    }
+
+    #[test]
+    fn close_summary_names_the_killed_session() {
+        let steps = [
+            CloseStep::KillSession("ralph-p-A".into()),
+            CloseStep::RemoveWorktree { force: false },
+            CloseStep::DeleteBranch,
+            CloseStep::PruneWorktrees,
+            CloseStep::ClearMarkers,
+        ];
+        assert_eq!(
+            close_summary("A", &steps),
+            "Closed worker A: killed tmux session ralph-p-A, removed its worktree, deleted branch worker/A."
+        );
+    }
+
+    #[test]
+    fn close_summary_omits_sessions_when_no_kill_step_ran() {
+        let steps = [
+            CloseStep::TerminateClaude,
+            CloseStep::RemoveWorktree { force: true },
+            CloseStep::PruneWorktrees,
+            CloseStep::ClearMarkers,
+        ];
+        let summary = close_summary("A", &steps);
+        assert_eq!(
+            summary,
+            "Closed worker A: stopped its claude process, removed its worktree."
+        );
+        assert!(!summary.contains("session"));
     }
 
     #[test]
