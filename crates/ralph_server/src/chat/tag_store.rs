@@ -242,8 +242,11 @@ impl Round<'_> {
             .tagged
             .iter()
             .map(|(n, flags)| {
-                let role = self.entries.get(*n).map_or(Role::Assistant, |e| e.role);
-                let flags = restrict_decision(role, *flags);
+                let (role, text) = self
+                    .entries
+                    .get(*n)
+                    .map_or((Role::Assistant, ""), |e| (e.role, e.text.as_str()));
+                let flags = restrict_decision(role, text, *flags);
                 encode_row(&self.row(*n, RowKind::Tagged(flags)))
             })
             .collect::<Result<String, String>>()
