@@ -293,6 +293,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         identity: Arc::default(),
         last_cost_usd: Mutex::new(None),
         timing: Mutex::default(),
+        seen_len: Mutex::new(None),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),

@@ -1,3 +1,4 @@
+use crate::chat_memory::{tail_lines, Entry, Tree};
 use crate::chat_nudge::NudgeCommand;
 use crate::chat_send_it::SendItCommand;
 use crate::chat_status::Route;
@@ -48,6 +49,13 @@ pub fn catch_up_prompt(rows: &[String], message: &str) -> String {
             "Since your last turn:\n{}\n\nNew message:\n{message}",
             rows.join("\n")
         ),
+    }
+}
+
+pub fn unseen_lines(entries: &[Entry], seen: Option<usize>) -> Vec<String> {
+    match seen {
+        Some(seen) if seen < entries.len() => tail_lines(entries, &Tree::new(), seen, usize::MAX),
+        _ => Vec::new(),
     }
 }
 

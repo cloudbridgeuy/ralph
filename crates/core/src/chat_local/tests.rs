@@ -113,3 +113,49 @@ fn catch_up_prompt_puts_unseen_rows_before_the_message() {
 fn catch_up_prompt_without_rows_is_the_message() {
     assert_eq!(catch_up_prompt(&[], "next?"), "next?");
 }
+
+fn logged(texts: &[&str]) -> Vec<crate::chat_memory::Entry> {
+    texts
+        .iter()
+        .enumerate()
+        .map(|(i, text)| crate::chat_memory::Entry {
+            role: crate::chat_memory::Role::User,
+            at: format!("2026-01-01T00:00:0{i}Z"),
+            text: text.to_string(),
+            corrupt: false,
+        })
+        .collect()
+}
+
+#[test]
+fn rows_after_the_seen_length_are_shown_as_view_lines() {
+    let entries = logged(&["hi", "hello", "/send-it off\nResult: gone"]);
+    assert_eq!(
+        unseen_lines(&entries, Some(2)),
+        rows(&["#2 user 2026-01-01T00:00:02Z /send-it off\nResult: gone"])
+    );
+}
+
+#[test]
+fn an_unknown_seen_length_or_a_caught_up_log_shows_nothing() {
+    let entries = logged(&["hi", "hello"]);
+    assert!(unseen_lines(&entries, None).is_empty());
+    assert!(unseen_lines(&entries, Some(2)).is_empty());
+    assert!(unseen_lines(&entries, Some(5)).is_empty());
+}
+
+#[test]
+fn every_unseen_row_is_shown_in_log_order() {
+    let entries = logged(&[
+        "hi",
+        "/thread drop a\nResult: Dropped a.",
+        "@GUZ-1 go\nResult: Sent.",
+    ]);
+    assert_eq!(
+        unseen_lines(&entries, Some(1)),
+        rows(&[
+            "#1 user 2026-01-01T00:00:01Z /thread drop a\nResult: Dropped a.",
+            "#2 user 2026-01-01T00:00:02Z @GUZ-1 go\nResult: Sent.",
+        ])
+    );
+}
