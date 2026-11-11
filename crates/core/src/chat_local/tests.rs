@@ -159,3 +159,33 @@ fn every_unseen_row_is_shown_in_log_order() {
         ])
     );
 }
+
+#[test]
+fn a_state_command_gives_its_log_row() {
+    assert_eq!(
+        CommandRecord::for_route(&route("/send-it off"), "/send-it off")
+            .row("No send-it run. Start one with /send-it <instructions>."),
+        Some(
+            "/send-it off\nResult: No send-it run. Start one with /send-it <instructions>."
+                .to_string()
+        )
+    );
+    assert_eq!(
+        CommandRecord::for_route(&route("/thread park auth"), "/thread park auth")
+            .row("Parked auth."),
+        Some("/thread park auth\nResult: Parked auth.".to_string())
+    );
+}
+
+#[test]
+fn a_read_only_command_gives_no_log_row() {
+    assert_eq!(
+        CommandRecord::for_route(&route("/send-it status"), "/send-it status")
+            .row("No send-it run."),
+        None
+    );
+    assert_eq!(
+        CommandRecord::for_route(&route("/watch list"), "/watch list").row("No watches."),
+        None
+    );
+}

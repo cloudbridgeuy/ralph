@@ -2,6 +2,8 @@ use crate::chat::editor::open_in_editor;
 use crate::chat::monitor::Monitor;
 use crate::inbox_alert;
 use ralph_core::chat_hold::HoldFilter;
+use ralph_core::chat_local::notice_record;
+use ralph_core::chat_memory::Role;
 use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
@@ -13,6 +15,7 @@ use ralph_core::chat_send_it::{
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::worker_check::logged_states;
 use ralph_server::chat::memory::Store;
+use ralph_server::warn::warn_if_err;
 use ralph_server::watches::{locked, OutcomeSlot};
 use ralph_server::workers::running_workers;
 use serde_json::Value;
@@ -35,6 +38,7 @@ fn unreadable(path: &Path, error: io::Error) -> String {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SendIt {
+    log: PathBuf,
     path: PathBuf,
     templates: PathBuf,
     limits: Limits,
@@ -101,6 +105,7 @@ pub(super) fn worker_states(monitor: &Monitor) -> (HashMap<String, String>, Vec<
 impl SendIt {
     pub(crate) fn new(store_dir: &Path, limits: Limits) -> Self {
         Self {
+            log: store_dir.to_path_buf(),
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
             templates: store_dir.join(RUN_DIR).join(TEMPLATE_DIR),
             limits,
@@ -297,8 +302,16 @@ impl SendIt {
         }
     }
 
+    fn log_notice(&self, notice: &str) {
+        warn_if_err(
+            Store::new(self.log.clone()).append(Role::User, &notice_record(notice)),
+            "Failed to record the send-it notice",
+        );
+    }
+
     fn ended(&self, notice: &str, driving: &Driving) -> Driven {
         println!("{notice}");
+        self.log_notice(notice);
         if let Err(error) = self.release(&driving.hash, None) {
             println!("{error}");
         }
@@ -309,6 +322,7 @@ impl SendIt {
         let kept = self.release(&driving.hash, Some(driving.progress.step + 1));
         let notice = reason.notice(&driving.run, kept.as_ref().ok().and_then(Option::as_ref));
         println!("{notice}");
+        self.log_notice(&notice);
         if let Err(error) = kept {
             println!("{error}");
         }

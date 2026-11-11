@@ -10,7 +10,7 @@ use crate::watch_command::WatchCommand;
 const RESULT: &str = "\nResult: ";
 const NOTICE: &str = "[ralph] ";
 
-pub fn recorded(route: &Route) -> bool {
+fn recorded(route: &Route) -> bool {
     match route {
         Route::SendIt(command) => !matches!(
             command,
@@ -23,6 +23,18 @@ pub fn recorded(route: &Route) -> bool {
         Route::Nudge(command) => matches!(command, NudgeCommand::Send { .. }),
         Route::DropInbox(_) => true,
         _ => false,
+    }
+}
+
+pub struct CommandRecord(Option<String>);
+
+impl CommandRecord {
+    pub fn for_route(route: &Route, line: &str) -> Self {
+        Self(recorded(route).then(|| line.to_string()))
+    }
+
+    pub fn row(&self, output: &str) -> Option<String> {
+        self.0.as_deref().map(|line| local_record(line, output))
     }
 }
 

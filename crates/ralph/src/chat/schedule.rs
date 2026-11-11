@@ -168,15 +168,12 @@ pub(super) fn run(
     store: &ScheduleStore,
     watches: &Watches,
     workers: &Workers,
-) {
+) -> String {
     match command {
-        ScheduleCommand::List => println!(
-            "{}",
-            list_tasks(
-                &store.load_all(),
-                chrono::Utc::now(),
-                *chrono::Local::now().offset()
-            )
+        ScheduleCommand::List => list_tasks(
+            &store.load_all(),
+            chrono::Utc::now(),
+            *chrono::Local::now().offset(),
         ),
         ScheduleCommand::Cancel(id) => {
             let plan = plan_cancel(&id, &store.load_all());
@@ -193,9 +190,9 @@ pub(super) fn run(
                     None => {}
                 }
             }
-            println!("{}", cancel_message(&plan));
+            cancel_message(&plan)
         }
-        ScheduleCommand::Usage => println!("{SCHEDULE_USAGE}"),
+        ScheduleCommand::Usage => SCHEDULE_USAGE.to_string(),
     }
 }
 

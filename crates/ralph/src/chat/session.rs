@@ -1,11 +1,11 @@
-use crate::chat::prompt::ChatPrompt;
+use crate::chat::prompt::{ChatPrompt, Submitted};
 use crate::chat::queue::exit_notice;
 use crate::chat::thread::{self, Memory};
 use crate::cli::HistoryArgs;
 use ralph_core::chat::{prompt_text, CustomPrompt};
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_memory::history_tool;
-use ralph_core::chat_status::{route_input, Route};
+use ralph_core::chat_status::route_input;
 use ralph_core::chat_thread::{in_scope, ThreadName};
 use ralph_server::config::PromptFiles;
 use ralph_server::warn::warn_if_err;
@@ -105,7 +105,7 @@ pub(super) fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<Stri
     )
 }
 
-pub(super) fn route_queued(text: String, editor: &mut Reedline, prompt: &ChatPrompt) -> Route {
+pub(super) fn route_queued(text: String, editor: &mut Reedline, prompt: &ChatPrompt) -> Submitted {
     print!("{}", prompt.echo(&text));
     warn_if_err(
         editor
@@ -114,12 +114,13 @@ pub(super) fn route_queued(text: String, editor: &mut Reedline, prompt: &ChatPro
         "Failed to save chat history",
     );
     let status = prompt.monitor.status();
-    route_input(
+    let route = route_input(
         &text,
         status.unread,
         &prompt.empty_submit,
         &hold_targets(&status),
-    )
+    );
+    Submitted { line: text, route }
 }
 
 pub(super) fn save_unsent(editor: &mut Reedline, lost: &[String]) -> bool {

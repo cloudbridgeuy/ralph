@@ -47,12 +47,11 @@ pub fn peek(inbox: &Inbox, position: Position, display: &Display) -> io::Result<
     Ok(())
 }
 
-pub fn drop_report(inbox: &Inbox, position: Position) -> io::Result<()> {
-    match inbox.drop_report(position)? {
-        Some(_) => println!("Dropped report {position}."),
-        None => println!("No report {position}. /inbox list shows the queue."),
-    }
-    Ok(())
+pub fn drop_report(inbox: &Inbox, position: Position) -> io::Result<String> {
+    Ok(match inbox.drop_report(position)? {
+        Some(_) => format!("Dropped report {position}."),
+        None => format!("No report {position}. /inbox list shows the queue."),
+    })
 }
 
 pub fn usage() {
