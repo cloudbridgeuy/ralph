@@ -184,7 +184,7 @@ ralph usage by <kind|store|harness|model|ticket|run> [FILTERS] [--text | --png P
 ralph usage cache [FILTERS] [--text]
 ```
 
-Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`). It only reads, calls no model and costs $0. Reported dollars and `est.` dollars are separate. `+ no price` and `$X*` mark a lower bound; `excluded` (old codex rows without the `per_thread_usage` marker), `no data` (cursor) and `(model missing)` are states, not `$0`. See [ralph usage](context/ralph-chat.md#ralph-usage) for the rules.
+Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`, or the file `[usage] ledger` names). It only reads, calls no model and costs $0. Reported dollars and `est.` dollars are separate. `+ no price` and `$X*` mark a lower bound; `excluded` (old codex rows without the `per_thread_usage` marker), `no data` (cursor) and `(model missing)` are states, not `$0`. See [ralph usage](context/ralph-chat.md#ralph-usage) for the rules.
 
 | Option | Meaning |
 |--------|---------|
@@ -192,6 +192,7 @@ Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`). It only 
 | `by <DIM>` | Group by kind, store, harness, model, ticket or run |
 | `cache` | Cache hit rate per model; has no chart |
 | `--since`, `--until` | A local day (`YYYY-MM-DD`) or an RFC 3339 time. `--since` is inclusive, `--until` is exclusive |
+| `--ledger FILE` | Read this ledger instead of `[usage] ledger` or `<config dir>/usage.jsonl`. A relative path is read from the current directory. It moves only this read; chats and workers keep writing where the config says |
 | `--store DIR` | Only this store's rows, and only its workers log for tickets. Without it, tickets come from the log of every store in the ledger |
 | `--harness`, `--model`, `--ticket`, `--kind` | Keep only matching rows |
 | `--text` | Print text even on a terminal that can draw images. Conflicts with `--png` |

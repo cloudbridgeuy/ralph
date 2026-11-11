@@ -23,11 +23,13 @@ use std::time::{Duration, Instant};
 mod nap;
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
-const USAGE_FILE: &str = "usage.jsonl";
 const SUGGESTIONS_FILE: &str = "suggestions.jsonl";
 
 pub fn usage_path() -> PathBuf {
-    crate::paths::config_dir().join(USAGE_FILE)
+    crate::config::ledger_path(
+        crate::config::configured_ledger(),
+        &crate::paths::config_dir(),
+    )
 }
 
 fn open_stamped(path: &Path) -> io::Result<Option<(File, FileStamp)>> {
