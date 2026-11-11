@@ -14,9 +14,10 @@ use ralph_core::claude_leftovers::{
 };
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
-    branch_name, close_clear_paths, close_event, close_harness, close_plan, close_remove_paths,
-    decode_spawn_record, diff_range, project_slug, spawn_record_path, turn_count, CloseFacts,
-    CloseState, CloseStep, HandoffFiles, HarnessId, LiveHarness, Owner, OPENCODE_CONFIG_FILE,
+    branch_name, close_clear_paths, close_event, close_harness, close_kind, close_plan,
+    close_remove_paths, close_summary, decode_spawn_record, diff_range, project_slug,
+    spawn_record_path, turn_count, CloseFacts, CloseState, CloseStep, HandoffFiles, HarnessId,
+    LiveHarness, Owner, OPENCODE_CONFIG_FILE,
 };
 use ralph_core::workers_view::{parse_numstat, Diff};
 use std::fs;
@@ -76,7 +77,7 @@ impl Workers {
             claude: self.claude_running(id),
             opencode: self.opencode_http(id),
         };
-        let kind = close_harness(None, live);
+        let kind = close_kind(live);
         let logged_kind = close_harness(record.as_ref().and_then(|record| record.harness), live);
         let opencode = kind == HarnessId::Opencode || worktree.join(OPENCODE_CONFIG_FILE).exists();
         let state = CloseState {
@@ -149,11 +150,6 @@ impl Workers {
                 |text, warning| format!("{text} {warning}"),
             ));
         }
-        let note = if opencode {
-            " Evicted its opencode location."
-        } else {
-            ""
-        };
         let leftovers = if cleans_claude_leftovers(&state, &steps) {
             dirs::home_dir()
                 .map(|home| {
@@ -188,11 +184,11 @@ impl Workers {
         } else {
             Vec::new()
         };
-        Ok(unset_warning.into_iter().chain(leftovers).fold(
-            with_warning(format!(
-                "Closed worker {id}: removed its sessions, worktree and branch {branch}.{note}"
-            )),
-            |text, warning| format!("{text} {warning}"),
-        ))
+        Ok(unset_warning
+            .into_iter()
+            .chain(leftovers)
+            .fold(with_warning(close_summary(id, &steps)), |text, warning| {
+                format!("{text} {warning}")
+            }))
     }
 }
