@@ -38,23 +38,30 @@ pub struct LocalRoute<'a> {
     pub config: &'a ConfigSnapshot,
 }
 
-pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Result<()> {
+pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Result<Option<String>> {
+    let output = match route {
+        Route::DropInbox(id) => inbox::drop_report(ctx.inbox, id)?,
+        Route::Watch(command) => watch::run(command, ctx.watches),
+        Route::Schedule(command) => {
+            schedule::run(command, ctx.schedule, ctx.watches, &ctx.monitor.workers)
+        }
+        Route::Nudge(command) => nudge::run(command, ctx.monitor),
+        Route::Fork(command) => thread::fork(ctx.store, command),
+        other => {
+            run_shown(other, ctx)?;
+            return Ok(None);
+        }
+    };
+    println!("{output}");
+    refresh();
+    Ok(Some(output))
+}
+
+fn run_shown(route: Route, ctx: &LocalRoute) -> io::Result<()> {
     match route {
         Route::ListInbox => inbox::list(ctx.inbox)?,
         Route::PeekInbox(id) => inbox::peek(ctx.inbox, id, ctx.display)?,
-        Route::DropInbox(id) => {
-            inbox::drop_report(ctx.inbox, id)?;
-            refresh();
-        }
         Route::InboxUsage => inbox::usage(),
-        Route::Watch(command) => {
-            watch::run(command, ctx.watches);
-            refresh();
-        }
-        Route::Schedule(command) => {
-            schedule::run(command, ctx.schedule, ctx.watches, &ctx.monitor.workers);
-            refresh();
-        }
         Route::Diff(DiffArgs::Target(target)) => diff::run(
             &DiffContext {
                 changes: ctx.changes,
@@ -65,10 +72,8 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Diff(DiffArgs::Usage(usage)) => println!("{usage}"),
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
-        Route::Nudge(command) => nudge::run(command, ctx.monitor),
         Route::Direct(direct) => direct::run(direct, ctx),
         Route::WorkerCosts(args) => workers::costs(ctx.display, ctx.prices, ctx.store, args),
-        Route::Fork(command) => println!("{}", thread::fork(ctx.store, command)),
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
@@ -85,6 +90,11 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         | Route::ReadInbox(_)
         | Route::Hold(_)
         | Route::SendIt(_)
+        | Route::DropInbox(_)
+        | Route::Watch(_)
+        | Route::Schedule(_)
+        | Route::Nudge(_)
+        | Route::Fork(_)
         | Route::Ignore => {}
     }
     Ok(())

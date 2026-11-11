@@ -81,7 +81,8 @@ use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
-use ralph_core::chat_memory::{store_in_use_message, Trigger};
+use ralph_core::chat_local::CommandRecord;
+use ralph_core::chat_memory::{store_in_use_message, Role, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
 use ralph_core::chat_send_it::{
     propose_prompt, usage as send_it_usage, Ended, Seen, SendItCommand,
@@ -293,6 +294,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         identity: Arc::default(),
         last_cost_usd: Mutex::new(None),
         timing: Mutex::default(),
+        seen_len: Mutex::new(None),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -548,7 +550,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let schedule_store = monitor.schedule.clone();
     approve_proposed(&schedule_store, watch_timeout);
-    let mut pending: Option<Route> = None;
+    let mut pending: Option<Submitted> = None;
     let mut shown_plan: Option<String> = None;
     let mut sending: Option<Active> = None;
     let mut offered: Option<(String, u64)> = None;
@@ -566,8 +568,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
         let typed_at_prompt = pending.is_none();
-        let route = match pending.take() {
-            Some(route) => Some(route),
+        let submitted = match pending.take() {
+            Some(submitted) => Some(submitted),
             None => {
                 at_prompt.store(true, Ordering::SeqCst);
                 idle.store(true, Ordering::SeqCst);
@@ -577,26 +579,38 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 at_prompt.store(false, Ordering::SeqCst);
                 idle.store(false, Ordering::SeqCst);
                 monitor.set_phase(Phase::Prompt);
-                submitted?.map(|Submitted { line, route }| {
+                submitted?.inspect(|submitted| {
                     if let Some((suggestion, turn_number)) = offered.take() {
                         let record = SuggestionRecord::new(
                             chrono::Utc::now().to_rfc3339(),
                             &run,
                             turn_number,
                             &suggestion,
-                            &line,
+                            &submitted.line,
                         );
                         warn_if_err(
                             store.append_suggestion(&record),
                             "Failed to record suggestion outcome",
                         );
                     }
-                    route
                 })
             }
         };
-        let Some(route) = route else {
+        let Some(Submitted {
+            line: typed_line,
+            route,
+        }) = submitted
+        else {
             break;
+        };
+        let record = CommandRecord::for_route(&route, &typed_line);
+        let note = |output: &str| {
+            if let Some(row) = record.row(output) {
+                warn_if_err(
+                    store.append(Role::User, &row),
+                    "Failed to record the command",
+                );
+            }
         };
         let mut queue = Queue::default();
         let mut drained = Vec::new();
@@ -682,7 +696,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 idle.store(false, Ordering::SeqCst);
                 match held {
                     Held::Item(position) => {
-                        pending = Some(Route::ReadInbox(Selection::At(position)));
+                        pending = Some(Submitted::internal(Route::ReadInbox(Selection::At(
+                            position,
+                        ))));
                     }
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);
@@ -698,11 +714,13 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 if let Some((ticket, name)) = send_it.template_use(&text) {
                     let screen = send_it.use_template(&ticket, &name);
                     println!("{}", screen.text);
+                    note(&screen.text);
                     shown_plan = screen.shown;
                     continue;
                 }
                 if let Some(refusal) = send_it.refusal() {
                     println!("{refusal}");
+                    note(&refusal);
                     continue;
                 }
                 let before = send_it.current_hash();
@@ -719,7 +737,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 (outcome, None)
             }
             Route::SendIt(SendItCommand::Save { name, ticket }) => {
-                println!("{}", send_it.save_template(&name, ticket.as_deref()));
+                let saved = send_it.save_template(&name, ticket.as_deref());
+                println!("{saved}");
+                note(&saved);
                 continue;
             }
             Route::SendIt(SendItCommand::Templates) => {
@@ -738,16 +758,19 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 };
                 let (text, started) = send_it.go(shown_plan.as_deref(), typed_at_prompt, &seen);
                 println!("{text}");
+                note(&text);
                 if let Some(started) = started {
                     shown_plan = None;
                     let driven = send_it.dispatch(started, &monitor);
-                    (sending, pending) = (driven.active, driven.route);
+                    (sending, pending) = (driven.active, driven.route.map(Submitted::internal));
                 }
                 continue;
             }
             Route::SendIt(SendItCommand::Off) => {
                 shown_plan = None;
-                println!("{}", send_it.off());
+                let off = send_it.off();
+                println!("{off}");
+                note(&off);
                 continue;
             }
             Route::SendIt(command @ (SendItCommand::Status | SendItCommand::Edit)) => {
@@ -757,6 +780,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     send_it.status()
                 };
                 println!("{}", screen.text);
+                note(&screen.text);
                 shown_plan = screen.shown;
                 continue;
             }
@@ -824,6 +848,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 }) {
                     Ok(text) => {
                         println!("{text}");
+                        note(&text);
                         monitor.refresh(true);
                         if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
                             carried = rest;
@@ -832,6 +857,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     }
                     Err(refusal) => {
                         println!("{refusal}");
+                        note(&refusal);
                         if refuse_or_exit(&mut editor, &line, std::mem::take(&mut carried))? {
                             break;
                         }
@@ -840,9 +866,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             local => {
-                run_local(local, &local_route, || {
+                if let Some(output) = run_local(local, &local_route, || {
                     monitor.refresh(true);
-                })?;
+                })? {
+                    note(&output);
+                }
                 continue;
             }
         };
@@ -880,7 +908,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             let driven = send_it.dispatch(send_it.tick(&active, ended), &monitor);
             sending = driven.active;
             if driven.route.is_some() {
-                pending = driven.route;
+                pending = driven.route.map(Submitted::internal);
                 continue;
             }
         }
@@ -921,7 +949,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         "Failed to record suggestion outcome",
                     );
                 }
-                pending = Some(Route::Hold(filter));
+                pending = Some(Submitted::internal(Route::Hold(filter)));
             }
             Next::Prefill(fill) => {
                 let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;

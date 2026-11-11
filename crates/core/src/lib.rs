@@ -24,6 +24,7 @@ pub mod chat_hold;
 pub mod chat_hold_progress;
 pub mod chat_input;
 pub mod chat_keepalive;
+pub mod chat_local;
 pub mod chat_memory;
 pub mod chat_name;
 pub mod chat_nudge;

@@ -21,6 +21,7 @@ use ralph_core::chat::{
     VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
+use ralph_core::chat_local::{catch_up_prompt, unseen_lines};
 use ralph_core::chat_memory::{
     carry_metadata, reply_entries, split_view, subagent_records, trigger_entries, turn_row,
     usage_record, view_stats, CallSite, Trigger, TurnTiming, ViewSplit,
@@ -113,6 +114,11 @@ impl Drop for PendingTurn<'_> {
     }
 }
 
+struct Prompts<'a> {
+    sent: &'a str,
+    live: &'a str,
+}
+
 struct Launch {
     config: SpinnerSubprocessConfig,
     split: ViewSplit,
@@ -147,6 +153,7 @@ pub(super) struct Turn<'a> {
     pub(super) identity: Arc<Mutex<IterationMetadata>>,
     pub(super) last_cost_usd: Mutex<Option<f64>>,
     pub(super) timing: Mutex<TurnTiming>,
+    pub(super) seen_len: Mutex<Option<usize>>,
 }
 
 impl Turn<'_> {
@@ -187,6 +194,16 @@ impl Turn<'_> {
         }
         self.note_reset(ResetReason::Restart);
         None
+    }
+
+    fn unseen(&self) -> io::Result<Vec<String>> {
+        let seen = *locked(&self.seen_len);
+        match seen {
+            Some(seen) if seen < self.store.log_len()? => {
+                Ok(unseen_lines(&self.store.load_log_quiet()?.0, Some(seen)))
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 
     pub(super) fn take_cost(&self) -> Option<f64> {
@@ -245,6 +262,10 @@ impl Turn<'_> {
         self.cancel.store(false, Ordering::SeqCst);
         self.store.set_pending_turn(trigger)?;
         let _pending = PendingTurn(self.store);
+        let unseen = self.unseen().unwrap_or_else(|e| {
+            self.warn(format!("Failed to read the chat log for the catch-up: {e}"));
+            Vec::new()
+        });
         let pre_log_len = logged_before_reply(trigger)
             .then(|| self.store.log_len())
             .transpose()?;
@@ -254,6 +275,11 @@ impl Turn<'_> {
         let sent = match trigger {
             Trigger::User | Trigger::SendIt => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
+        };
+        let live = catch_up_prompt(&unseen, &sent);
+        let prompts = Prompts {
+            sent: &sent,
+            live: &live,
         };
         self.print_rule();
         let mut session = self.take_session();
@@ -274,7 +300,7 @@ impl Turn<'_> {
                 launch = None;
                 self.suggestions.clear();
                 let (live, result, ran) =
-                    self.attempt(session.take(), pre_log_len, &sent, &mut launch);
+                    self.attempt(session.take(), pre_log_len, &prompts, &mut launch);
                 session = live;
                 ran_session = ran;
                 if self.stopped() {
@@ -386,6 +412,7 @@ impl Turn<'_> {
                 reply_entries(&reply)
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
+                *locked(&self.seen_len) = self.store.log_len().ok();
                 self.warn_if_err(
                     spawn_nap(self.store_dir, self.run),
                     "Failed to start chat memory nap",
@@ -421,7 +448,7 @@ impl Turn<'_> {
         &self,
         reused: Option<Session>,
         pre_log_len: Option<usize>,
-        sent: &str,
+        prompts: &Prompts,
         launch: &mut Option<Launch>,
     ) -> (
         Option<Session>,
@@ -431,14 +458,14 @@ impl Turn<'_> {
         let was_reused = reused.is_some();
         let started = match reused {
             Some(live) => Ok(live),
-            None => self.start(pre_log_len, sent, launch),
+            None => self.start(pre_log_len, prompts.sent, launch),
         };
         let (session, result, ran) = match started {
             Err(e) => (None, Err(e), false),
             Ok(mut live) => {
                 let prompt = launch
                     .as_ref()
-                    .map_or(sent, |spawned| spawned.first_prompt.as_str());
+                    .map_or(prompts.live, |spawned| spawned.first_prompt.as_str());
                 let result = live.turn(prompt);
                 (Some(live), result, true)
             }
@@ -446,7 +473,7 @@ impl Turn<'_> {
         if relaunch(was_reused, &result) {
             drop(session);
             self.note_reset(ResetReason::Restart);
-            return self.attempt(None, pre_log_len, sent, launch);
+            return self.attempt(None, pre_log_len, prompts, launch);
         }
         (session, result, ran)
     }

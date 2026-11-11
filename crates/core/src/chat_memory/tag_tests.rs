@@ -448,12 +448,30 @@ fn a_prompt_version_change_does_not_retag_entries_that_already_have_a_row() {
 #[test]
 fn only_a_user_entry_may_keep_the_decision_flag() {
     let all = decided(true, true, true);
-    assert_eq!(restrict_decision(Role::User, all), all);
+    assert_eq!(restrict_decision(Role::User, "merge it", all), all);
     for role in [Role::Assistant, Role::Worker] {
-        assert_eq!(restrict_decision(role, all), decided(true, false, true));
+        assert_eq!(
+            restrict_decision(role, "merge it", all),
+            decided(true, false, true)
+        );
     }
     let none = decided(false, false, false);
-    assert_eq!(restrict_decision(Role::Worker, none), none);
+    assert_eq!(restrict_decision(Role::Worker, "merge it", none), none);
+}
+
+#[test]
+fn a_local_command_record_never_keeps_the_decision_flag() {
+    let all = decided(true, true, true);
+    let record = crate::chat_local::local_record("/send-it off", "No send-it run.");
+    assert_eq!(
+        restrict_decision(Role::User, &record, all),
+        decided(true, false, true)
+    );
+    let notice = crate::chat_local::notice_record("send-it done: 1/1 steps in 1 turns, $0.10.");
+    assert_eq!(
+        restrict_decision(Role::User, &notice, all),
+        decided(true, false, true)
+    );
 }
 
 #[test]

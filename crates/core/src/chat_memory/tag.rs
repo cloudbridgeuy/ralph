@@ -2,6 +2,7 @@
 //! `tags.jsonl` rows. The shell appends the rows and runs the model.
 
 use super::{Entry, Role};
+use crate::chat_local::is_local_record;
 use crate::retry::{classify, FailureInput, FailureKind};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,9 +27,9 @@ pub struct Flags {
     pub approval: bool,
 }
 
-pub fn restrict_decision(role: Role, flags: Flags) -> Flags {
+pub fn restrict_decision(role: Role, text: &str, flags: Flags) -> Flags {
     Flags {
-        decision: flags.decision && role == Role::User,
+        decision: flags.decision && role == Role::User && !is_local_record(text),
         ..flags
     }
 }

@@ -176,6 +176,15 @@ pub(super) struct Submitted {
     pub route: Route,
 }
 
+impl Submitted {
+    pub(super) fn internal(route: Route) -> Self {
+        Self {
+            line: String::new(),
+            route,
+        }
+    }
+}
+
 pub(super) fn next_route(
     editor: &mut Reedline,
     prompt: &ChatPrompt,
