@@ -9,7 +9,7 @@ use crate::{run_curator, Curator};
 use ralph_core::chat_local::local_record;
 use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_memory::Role;
-use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread::{ThreadName, THREADS_DIR, THREAD_FILE};
 use ralph_core::chat_thread_cmd::{
     drop_answer, drop_question, merge_answer, merge_posted_message, merge_question, merging_notice,
     op_refusal, parked_message, revived_message, view_posted_message, ThreadOp, VIEW_FLAG,
@@ -87,9 +87,13 @@ pub(super) fn merge_line(name: &ThreadName, view: bool) -> String {
 }
 
 pub(super) fn record_cli_merge(main: &Path, name: &ThreadName, line: &str, output: &str) {
+    let kept = Path::new(THREADS_DIR).join(name.as_str()).join(THREAD_FILE);
     warn_if_err(
         Store::new(main.to_path_buf()).append(Role::User, &local_record(line, output)),
-        format!("Failed to record the thread merge; the digest is in threads/{name}/thread.json under the store"),
+        format!(
+            "Failed to record the thread merge; the merge text is in {} under the store",
+            kept.display()
+        ),
     );
 }
 
