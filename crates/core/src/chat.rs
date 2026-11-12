@@ -606,6 +606,14 @@ mod tests {
     }
 
     #[test]
+    fn system_prompt_asks_for_a_final_next_step_line_and_no_tool_call() {
+        let prompt = default_prompt();
+        assert!(prompt.contains("End the reply with a final line `Next step: <"));
+        assert!(prompt.contains("200 characters"));
+        assert!(!prompt.contains("suggest_reply"));
+    }
+
+    #[test]
     fn system_prompt_prefers_pending_decision_over_hold() {
         let prompt = default_prompt();
         assert!(prompt.contains("when the next step is waiting and nothing waits on the person"));

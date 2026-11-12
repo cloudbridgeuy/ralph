@@ -44,6 +44,10 @@ pub fn parse_suggestion(args: &Value) -> Result<String, String> {
     }
 }
 
+pub fn from_reply(_reply: &str) -> Option<String> {
+    None
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Prefill {
     Draft(String),
