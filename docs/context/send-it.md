@@ -94,7 +94,7 @@ If the model uses a tool that the plan does not allow, the tool is refused and t
 
 Before each step turn, ralph shows the step, the turns used and the cost against the caps. When a step is met, ralph tells you.
 
-While a run continues, ralph shows no suggested reply and does not hold on its own.
+While a run continues, ralph shows no Next step pre-fill and does not hold on its own.
 
 To take over, type a message, or leave the run's hold with Ctrl-Q or Ctrl-D. The run stops and your message runs as usual. A queued `/send-it off` stops the run and deletes the plan.
 

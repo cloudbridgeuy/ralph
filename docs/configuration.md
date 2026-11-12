@@ -152,11 +152,11 @@ The default `base_bg` is ANSI color 236, written `#303030` above. `reset` is the
 
 #### Input colors: `[theme.input]`
 
-`ralph chat` draws the `suggest_reply` pre-fill in its own color, so you can tell it from your own draft. The text goes back to the normal color on the first edit and stays normal, even if you retype the same words. Held and queued text keeps the normal color. The key is optional and takes the same color values as the role themes. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it.
+`ralph chat` draws the Next step pre-fill in its own color, so you can tell it from your own draft. The text goes back to the normal color on the first edit and stays normal, even if you retype the same words. Held and queued text keeps the normal color. The key is optional and takes the same color values as the role themes. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it.
 
 ```toml
 [theme.input]
-suggestion = "cyan"  # suggest_reply pre-fill text
+suggestion = "cyan"  # Next step pre-fill text
 ```
 
 #### Diff colors: `[theme.diff]`
@@ -310,7 +310,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 |-------|------|---------|-------------|
 | `mcp_servers` | list of strings | `["mcptools"]` | Servers from `~/.claude.json` to load in chat turns and in claude and claude-tmux workers |
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
-| `prompt_file` | path | unset | Text file that replaces the behaviour rules of the chat system prompt: the reply format, ask-first, verify, cite-history, development-roles and similar rules. The tool contract (`suggest_reply`, `help`, `config`), the worker, watch and memory rules, and the forget and logging rules stay. Unset uses the built-in text, which is byte-identical to earlier versions. A file that is empty or only whitespace prints a warning and counts as unset |
+| `prompt_file` | path | unset | Text file that replaces the behaviour rules of the chat system prompt: the reply format, ask-first, verify, cite-history, development-roles and similar rules. The Next step line rule and the tool contract (`help`, `config`), the worker, watch and memory rules, and the forget and logging rules stay. Unset uses the built-in text, which is byte-identical to earlier versions. A file that is empty or only whitespace prints a warning and counts as unset |
 | `append_prompt_files` | list of paths | `[]` | Text files appended, in order, after the system prompt and before the older chat lines |
 | `project_claude_md` | bool | `true` | `false` adds `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` of the directory where chat runs to `claudeMdExcludes`; ancestors are not excluded |
 | `user_settings` | bool | `false` | `true` loads user settings too (`--setting-sources user,project,local`); it does not change `claudeMdExcludes` |
