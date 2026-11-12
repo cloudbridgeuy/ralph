@@ -59,4 +59,24 @@ mod tests {
         assert_eq!(row["session_id"], "chat-1");
         assert_eq!(row["store"], dir.path().to_string_lossy().as_ref());
     }
+
+    #[test]
+    fn a_cursor_row_carries_the_ticket_of_its_spawn_record() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::ledger::fixtures::spawn_record(dir.path(), "w1", "GUZ-9");
+        let file = dir.path().join("usage.jsonl");
+        let counters =
+            json!({"inputTokens":8,"outputTokens":3,"cacheReadTokens":0,"cacheWriteTokens":0});
+        let usage = map_print_usage(&counters, "composer-2").unwrap();
+        let turn = CursorTurn {
+            worker: "w1",
+            chat: None,
+            store: Some(dir.path()),
+            turn_id: None,
+        };
+        append(&turn, &usage, &file).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        let row: Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(row["ticket"], "GUZ-9");
+    }
 }

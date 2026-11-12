@@ -17,3 +17,20 @@ pub fn record(path: &Path, row: &LedgerRow) -> io::Result<()> {
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(line.as_bytes())
 }
+
+#[cfg(test)]
+pub(crate) mod fixtures {
+    use ralph_core::worker::spawn_record_path;
+    use std::fs;
+    use std::path::Path;
+
+    pub(crate) fn spawn_record(store: &Path, worker: &str, ticket: &str) {
+        let path = spawn_record_path(store, worker);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            format!(r#"{{"ticket":"{ticket}","tracker":"linear","at":0}}"#),
+        )
+        .unwrap();
+    }
+}

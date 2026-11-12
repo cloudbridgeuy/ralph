@@ -448,3 +448,52 @@ fn a_bracketed_model_variant_stays_apart_from_its_bare_id() {
     let report = grouped(Dim::Model, &rows, &[], &Filter::default());
     assert_eq!(keys(&report), ["claude-opus-5-5", "claude-opus-5-5[1m]"]);
 }
+
+#[test]
+fn a_row_ticket_groups_without_any_spawn_window() {
+    let rows = [
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "ticket",
+            json!("GUZ-7"),
+        ),
+        with(
+            worker("w2", "2026-11-05T10:01:00Z"),
+            "ticket",
+            json!("GUZ-7"),
+        ),
+        worker("w3", "2026-11-05T10:02:00Z"),
+    ];
+    let report = grouped(Dim::Ticket, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["GUZ-7", "unknown"]);
+}
+
+#[test]
+fn a_row_ticket_wins_over_the_spawn_window() {
+    let rows = [with(
+        worker("w1", "2026-11-05T10:05:00Z"),
+        "ticket",
+        json!("GUZ-2"),
+    )];
+    let workers = [spawn("w1", "2026-11-05T10:00:00Z", "GUZ-1", "claude")];
+    let report = grouped(Dim::Ticket, &rows, &workers, &Filter::default());
+    assert_eq!(keys(&report), ["GUZ-2"]);
+}
+
+#[test]
+fn the_ticket_filter_matches_the_row_ticket() {
+    let rows = [
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "ticket",
+            json!("GUZ-7"),
+        ),
+        worker("w2", "2026-11-05T10:01:00Z"),
+    ];
+    let filter = Filter {
+        ticket: Some("GUZ-7".into()),
+        ..Filter::default()
+    };
+    let report = grouped(Dim::Ticket, &rows, &[], &filter);
+    assert_eq!(keys(&report), ["GUZ-7"]);
+}

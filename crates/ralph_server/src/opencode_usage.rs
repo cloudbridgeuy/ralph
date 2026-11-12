@@ -64,4 +64,24 @@ mod tests {
         assert_eq!(row["turn_id"], 3);
         assert_eq!(row["store"], dir.path().to_string_lossy().as_ref());
     }
+
+    #[test]
+    fn an_opencode_row_carries_the_ticket_of_its_spawn_record() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::ledger::fixtures::spawn_record(dir.path(), "w1", "GUZ-9");
+        let file = dir.path().join("usage.jsonl");
+        let line = r#"data: {"id":"e","type":"session.step.ended","data":{"sessionID":"ses_a","cost":0,"tokens":{"input":9,"output":2,"reasoning":1,"cache":{"read":4,"write":0}}}}"#;
+        let mut usage = OpencodeTurnUsage::new("openai/gpt-6.1-sol");
+        usage.observe(decode_opencode_usage(&parse_event(line).unwrap()).unwrap());
+        let turn = OpencodeTurn {
+            worker: "w1",
+            session_id: "ses_a",
+            store: Some(dir.path()),
+            turn_id: None,
+        };
+        append(&turn, &usage.take(), &file).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        let row: Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(row["ticket"], "GUZ-9");
+    }
 }
