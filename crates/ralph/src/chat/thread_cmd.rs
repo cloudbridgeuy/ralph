@@ -11,8 +11,8 @@ use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::{
-    drop_answer, drop_question, merge_answer, merge_question, merging_notice, op_refusal,
-    parked_message, revived_message, view_posted_message, ThreadOp, VIEW_FLAG,
+    drop_answer, drop_question, merge_answer, merge_posted_message, merge_question, merging_notice,
+    op_refusal, parked_message, revived_message, view_posted_message, ThreadOp, VIEW_FLAG,
 };
 use ralph_server::chat::memory::Store;
 use ralph_server::warn::warn_if_err;
@@ -74,7 +74,7 @@ pub(super) fn run(
             merge_thread(&main, name, &running, &mut |prompt: &str| {
                 run_curator(prompt, &curator)
             })
-            .map(|message| format!("merged thread {name} ; the digest is in main's log\n{message}"))
+            .map(|message| merge_posted_message(name, &message))
         }
     }
 }
@@ -86,10 +86,10 @@ pub(super) fn merge_line(name: &ThreadName, view: bool) -> String {
     }
 }
 
-pub(super) fn record_cli_merge(main: &Path, line: &str, output: &str) {
+pub(super) fn record_cli_merge(main: &Path, name: &ThreadName, line: &str, output: &str) {
     warn_if_err(
         Store::new(main.to_path_buf()).append(Role::User, &local_record(line, output)),
-        "Failed to record the thread merge",
+        format!("Failed to record the thread merge; the digest is in threads/{name}/thread.json under the store"),
     );
 }
 
@@ -128,6 +128,7 @@ mod tests {
             let line = merge_line(&auth, view);
             record_cli_merge(
                 &main,
+                &auth,
                 &line,
                 "merged thread auth\n[digest] Picked x. #auth:0",
             );

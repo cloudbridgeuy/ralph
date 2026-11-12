@@ -125,7 +125,7 @@ pub fn refuse_thread_report(id: &str) -> Result<(), String> {
 pub fn merge_prompt(name: &ThreadName, base: usize, lines: &[String]) -> String {
     format!(
         "Write the merge digest of chat thread {name}, forked from main at #{base}. \
-         Main reads it once, as one inbox message, instead of the whole thread.\n\
+         Main reads it once, as one row in main's log, instead of the whole thread.\n\
          Keep the decisions, results and open items; drop the chatter. \
          Cite the thread ids behind each point as #{name}:a-b or #{name}:a.\n\
          At most {MAX_DIGEST_BYTES} bytes of plain text. Return only the digest, with no preface.\n\n\

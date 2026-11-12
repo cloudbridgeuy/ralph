@@ -14,7 +14,9 @@ use ralph_core::chat_thread::{
     Merged, Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
     VIEW_BLOCK_LINES,
 };
-use ralph_core::chat_thread_cmd::{parked_message, revived_message, view_posted_message};
+use ralph_core::chat_thread_cmd::{
+    merge_posted_message, parked_message, revived_message, view_posted_message,
+};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report};
@@ -120,7 +122,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             let message = view_thread(&main, &name, &running_ids(&main, &name))?;
             let output = view_posted_message(&name, &message);
             println!("{output}");
-            record_cli_merge(&main, &merge_line(&name, true), &output);
+            record_cli_merge(&main, &name, &merge_line(&name, true), &output);
         }
         ThreadCommand::Merge { name, view: false } => {
             let dir = thread_dir(&main, &name);
@@ -134,9 +136,9 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             let message = merge_thread(&main, &name, &running, &mut |prompt: &str| {
                 run_curator(prompt, &curator)
             })?;
-            let output = format!("merged thread {name} ; the digest is in main's log\n{message}");
+            let output = merge_posted_message(&name, &message);
             println!("{output}");
-            record_cli_merge(&main, &merge_line(&name, false), &output);
+            record_cli_merge(&main, &name, &merge_line(&name, false), &output);
         }
         ThreadCommand::Park { name } => {
             park_thread(&main, &name, &running_ids(&main, &name))?;

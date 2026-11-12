@@ -103,6 +103,10 @@ pub fn view_posted_message(name: &ThreadName, report: &str) -> String {
     format!("posted thread {name}'s memory view to main's log.\n{report}")
 }
 
+pub fn merge_posted_message(name: &ThreadName, digest: &str) -> String {
+    format!("merged thread {name}; the digest is in main's log\n{digest}")
+}
+
 pub fn parked_message(name: &ThreadName) -> String {
     format!("parked thread {name}; `ralph thread revive {name}` opens it again")
 }
@@ -349,6 +353,14 @@ mod tests {
         assert_eq!(
             view_posted_message(&auth(), "[thread auth · view]\nblock"),
             "posted thread auth's memory view to main's log.\n[thread auth · view]\nblock"
+        );
+    }
+
+    #[test]
+    fn the_merge_posted_message_names_the_thread_and_keeps_the_digest() {
+        assert_eq!(
+            merge_posted_message(&auth(), "[digest] Picked x. #auth:0"),
+            "merged thread auth; the digest is in main's log\n[digest] Picked x. #auth:0"
         );
     }
 
