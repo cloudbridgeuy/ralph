@@ -252,7 +252,7 @@ pub enum ThreadCommand {
         name: ThreadName,
     },
     #[command(
-        about = "Squash a thread into main: Haiku writes a digest (up to 3 calls) that reaches main's inbox; the thread stays read-only."
+        about = "Squash a thread into main: Haiku writes a digest (up to 3 calls) that is written to main's log; the thread stays read-only."
     )]
     Merge {
         #[arg(value_parser = ThreadName::parse, help = "Thread name")]
@@ -260,7 +260,7 @@ pub enum ThreadCommand {
         #[arg(
             long,
             alias = "rebase",
-            help = "Post the thread's labelled memory view (100 lines, at most 64 KB) to main's inbox instead of a Haiku digest; no model call."
+            help = "Post the thread's labelled memory view (100 lines, at most 64 KB) to main's log instead of a Haiku digest; no model call."
         )]
         view: bool,
     },

@@ -247,11 +247,11 @@ impl Command {
                 ),
                 (
                     "/thread merge <name>",
-                    "squash thread <name> into a digest in main's inbox and make the thread read-only, like ralph thread merge; asks y/n first because it makes one paid Haiku call, up to 3 if the digest is refused; runs in the foreground, so the prompt returns when it ends; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it is merged or unknown, and inside a thread's chat (run /thread main first); while a turn runs it waits in the queue",
+                    "squash thread <name> into a digest in main's log (one row, no inbox report) and make the thread read-only, like ralph thread merge; asks y/n first because it makes one paid Haiku call, up to 3 if the digest is refused; runs in the foreground, so the prompt returns when it ends; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it is merged or unknown, and inside a thread's chat (run /thread main first); while a turn runs it waits in the queue",
                 ),
                 (
                     "/thread merge <name> --view",
-                    "post thread <name>'s memory view (at most 100 lines and 64 KB) to main's inbox and make the thread read-only; no model call and no confirmation; refused for a thread with no messages, plus the /thread merge <name> refusals",
+                    "post thread <name>'s memory view (at most 100 lines and 64 KB) to main's log (one row, no inbox report) and make the thread read-only; no model call and no confirmation; refused for a thread with no messages, plus the /thread merge <name> refusals",
                 ),
             ],
             Command::Config => &[(

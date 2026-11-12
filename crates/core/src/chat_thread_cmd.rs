@@ -73,7 +73,7 @@ fn thread_usage() -> String {
 
 fn merge_usage() -> String {
     format!(
-        "usage: /thread merge <name> [{VIEW_FLAG}] merges thread <name> into main's inbox; {VIEW_FLAG} posts its memory view with no model call and no confirmation; run it in main's chat."
+        "usage: /thread merge <name> [{VIEW_FLAG}] merges thread <name> into a digest in main's log; {VIEW_FLAG} posts its memory view to main's log with no model call and no confirmation; run it in main's chat."
     )
 }
 
@@ -100,7 +100,7 @@ fn one_name(words: &[&str], usage: &str) -> Result<ThreadName, String> {
 }
 
 pub fn view_posted_message(name: &ThreadName, report: &str) -> String {
-    format!("posted thread {name}'s memory view to main's inbox.\n{report}")
+    format!("posted thread {name}'s memory view to main's log.\n{report}")
 }
 
 pub fn parked_message(name: &ThreadName) -> String {
@@ -348,7 +348,7 @@ mod tests {
     fn the_view_posted_message_names_the_thread_and_keeps_the_report() {
         assert_eq!(
             view_posted_message(&auth(), "[thread auth · view]\nblock"),
-            "posted thread auth's memory view to main's inbox.\n[thread auth · view]\nblock"
+            "posted thread auth's memory view to main's log.\n[thread auth · view]\nblock"
         );
     }
 

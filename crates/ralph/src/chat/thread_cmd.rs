@@ -6,12 +6,16 @@ use crate::chat::thread::{
 };
 use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
+use ralph_core::chat_local::local_record;
 use ralph_core::chat_memory::CallSite;
+use ralph_core::chat_memory::Role;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::{
     drop_answer, drop_question, merge_answer, merge_question, merging_notice, op_refusal,
-    parked_message, revived_message, view_posted_message, ThreadOp,
+    parked_message, revived_message, view_posted_message, ThreadOp, VIEW_FLAG,
 };
+use ralph_server::chat::memory::Store;
+use ralph_server::warn::warn_if_err;
 use std::io;
 use std::path::Path;
 
@@ -70,9 +74,23 @@ pub(super) fn run(
             merge_thread(&main, name, &running, &mut |prompt: &str| {
                 run_curator(prompt, &curator)
             })
-            .map(|message| format!("merged thread {name} into main's inbox\n{message}"))
+            .map(|message| format!("merged thread {name} ; the digest is in main's log\n{message}"))
         }
     }
+}
+
+pub(super) fn merge_line(name: &ThreadName, view: bool) -> String {
+    match view {
+        true => format!("/thread merge {name} {VIEW_FLAG}"),
+        false => format!("/thread merge {name}"),
+    }
+}
+
+pub(super) fn record_cli_merge(main: &Path, line: &str, output: &str) {
+    warn_if_err(
+        Store::new(main.to_path_buf()).append(Role::User, &local_record(line, output)),
+        "Failed to record the thread merge",
+    );
 }
 
 pub(super) fn confirm(question: &str) -> Option<bool> {
@@ -92,7 +110,35 @@ mod tests {
     use crate::ui_theme::UiColors;
     use ralph_core::chat_thread_table::{threads_view, ThreadTableOpts};
     use ralph_core::workers_view::View;
-    use ralph_server::chat::memory::Store;
+
+    #[test]
+    fn the_merge_line_names_the_thread_and_the_view_flag() {
+        let auth = ThreadName::parse("auth").unwrap();
+        assert_eq!(merge_line(&auth, false), "/thread merge auth");
+        assert_eq!(merge_line(&auth, true), "/thread merge auth --view");
+    }
+
+    #[test]
+    fn a_cli_merge_appends_one_row_with_the_digest() {
+        let auth = ThreadName::parse("auth").unwrap();
+        for view in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let main = root.path().join("chat");
+            let before = Store::new(main.clone()).log_len().unwrap();
+            let line = merge_line(&auth, view);
+            record_cli_merge(
+                &main,
+                &line,
+                "merged thread auth\n[digest] Picked x. #auth:0",
+            );
+            let store = Store::new(main.clone());
+            assert_eq!(store.log_len().unwrap(), before + 1);
+            let (entries, _) = store.load().unwrap();
+            let row = &entries[before].text;
+            assert!(row.starts_with(&line), "{row}");
+            assert!(row.contains("Picked x. #auth:0"), "{row}");
+        }
+    }
 
     #[test]
     fn the_merge_precheck_refuses_before_any_question() {

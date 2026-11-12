@@ -70,7 +70,7 @@ This moves the fork point of the thread to the end of main. The next `ralph chat
 
 ## Finish a thread: merge
 
-Merge sends the result of a thread to main's inbox. Main reads it on its next turn. The thread becomes read-only.
+Merge writes the result of a thread to main's log as one row. Main reads it on its next turn. No inbox report is queued and no alert is raised. The thread becomes read-only.
 
 Squash merge:
 
@@ -80,7 +80,7 @@ ralph thread merge <name>
 
 - In main's chat, type `/thread merge <name>`. It first checks the cheap refusals (unknown or merged thread, running workers or saved records, an open chat: `merge_precheck`) and prints them with no question. Then it asks `[y/n]`, because it makes a paid call. Any answer other than `y`, `yes`, `n` or `no` asks again; `n` or `no` cancels with `merge cancelled.` and the queued lines go on as usual. Ctrl-C, a closed input or a signal aborts instead: it prints `merge aborted; the command stays in the prompt.` and puts `/thread merge <name>` and the rest of the queue back in the prompt, with nothing sent. After `y` it reads the running workers again, so a worker that started during the question is refused. It then prints `merging <name> (one paid Haiku call, up to 3 if the digest is refused)...` and runs in the foreground, so the prompt returns when it ends. It does not leave the chat. In a thread's chat it refuses with `Run /thread main, then /thread merge <name>.`; the other refusals of the shell command, such as a failed digest, still apply after the answer.
 - It makes one paid call to the Haiku model, and up to 3 if the model's digest is refused. The model writes a digest from a 200-line view of the thread.
-- The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing. If posting the digest to main's inbox fails, the thread stays merged and the error names `thread.json`, which holds the digest.
+- The digest is at most 2048 bytes and cites thread message ids as `#<name>:<id>`. ralph tries at most 3 times in total; each retry tells the model why the last digest was refused. A refused merge, or a digest that fails 3 times, changes nothing. The CLI appends the digest to main's log as one row (`/thread merge <name>` plus `Result:` and the printed text), like the chat command. If that append fails, ralph warns and the thread stays merged; `thread.json` holds the digest.
 
 View merge:
 
@@ -93,7 +93,7 @@ ralph thread merge <name> --view
 - It refuses a thread with no messages. It refuses a block over 64 KB. Use the squash merge for these.
 - In main's chat, type `/thread merge <name> --view` for the same result. It asks no confirmation and makes no model call. It runs in main's chat only and does not leave the chat. In a thread's chat it refuses with `Run /thread main, then /thread merge <name>.` The flag text is the `VIEW_FLAG` constant in `crates/core/src/chat_thread_cmd.rs`.
 
-Use the squash merge when you want a short digest. Use `--view` when you want main to see the memory view and you want no cost. `--rebase` is the old name of `--view`. It still works and is hidden from help. The inbox status is `view`; entries posted before the rename show `rebased`.
+Use the squash merge when you want a short digest. Use `--view` when you want main to see the memory view and you want no cost. `--rebase` is the old name of `--view`. It still works and is hidden from help. The view reaches main the same way as a digest: one log row, no inbox report.
 
 Merge refuses while a worker of the thread runs or while the thread has saved watches or schedules. Close or stop them from the thread's chat first.
 
@@ -102,7 +102,7 @@ Merge refuses while a worker of the thread runs or while the thread has saved wa
 A merged thread is read-only. You cannot open it, drop it or merge it again. Its memory stays readable:
 
 - `ralph chat --thread <name> history ...` reads it. See [history commands](ralph-chat.md#history-commands).
-- Main's tools resolve ids such as `#<name>:5`. The digest in main's inbox cites these ids.
+- Main's tools resolve ids such as `#<name>:5`. The digest in main's log cites these ids.
 
 ## Park and revive
 
@@ -138,7 +138,7 @@ ralph chat --thread auth       # work on the auth topic, then quit with Ctrl-D
 ralph thread ls                # NAME | STATE | FORK | CREATED | ACTIVE | MSGS | ...
 ralph thread pull auth         # take main's newer messages
 ralph chat --thread auth       # continue with the new view
-ralph thread merge auth        # Haiku digest (1-3 calls); goes to main's inbox
+ralph thread merge auth        # Haiku digest (1-3 calls); goes to main's log
 ralph chat history zoom auth:0 # the merged thread is still readable
 ```
 

@@ -1,4 +1,5 @@
 use crate::chat::prompt::screen_columns;
+use crate::chat::thread_cmd::{merge_line, record_cli_merge};
 use crate::cli::{ThreadArgs, ThreadCommand, MERGE_TIMEOUT_SECS};
 use crate::schedule_store::ScheduleStore;
 use crate::{run_curator, Curator};
@@ -16,12 +17,11 @@ use ralph_core::chat_thread::{
 use ralph_core::chat_thread_cmd::{parked_message, revived_message, view_posted_message};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
-use ralph_core::worker::{chat_message, Report, INBOX_DIR};
+use ralph_core::worker::{chat_message, Report};
 use ralph_server::chat::claim::ChatClaim;
 use ralph_server::chat::memory::Store;
 use ralph_server::private_file::check_path;
 use ralph_server::watch_store::WatchStore;
-use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::{canonical_store, running_workers};
 use std::fs;
 use std::io;
@@ -118,7 +118,9 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         ThreadCommand::Merge { name, view: true } => {
             let message = view_thread(&main, &name, &running_ids(&main, &name))?;
-            println!("{}", view_posted_message(&name, &message));
+            let output = view_posted_message(&name, &message);
+            println!("{output}");
+            record_cli_merge(&main, &merge_line(&name, true), &output);
         }
         ThreadCommand::Merge { name, view: false } => {
             let dir = thread_dir(&main, &name);
@@ -132,7 +134,9 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             let message = merge_thread(&main, &name, &running, &mut |prompt: &str| {
                 run_curator(prompt, &curator)
             })?;
-            println!("merged thread {name} into main's inbox\n{message}");
+            let output = format!("merged thread {name} ; the digest is in main's log\n{message}");
+            println!("{output}");
+            record_cli_merge(&main, &merge_line(&name, false), &output);
         }
         ThreadCommand::Park { name } => {
             park_thread(&main, &name, &running_ids(&main, &name))?;
@@ -238,14 +242,6 @@ fn merge_with(
         ..meta
     };
     write_meta(&dir, &merged).map_err(failed)?;
-    Inbox::new(main.join(INBOX_DIR))
-        .post(&report, 0)
-        .map_err(|e| {
-            format!(
-                "thread {name} is merged, but its digest did not reach main's inbox: {e}. The digest is in {}.",
-                dir.join(THREAD_FILE).display()
-            )
-        })?;
     Ok(chat_message(&[report]))
 }
 
@@ -426,6 +422,8 @@ mod tests {
     use ralph_core::schedule::{Task, TaskKind, TaskStatus};
     use ralph_core::watch::WatchKind;
     use ralph_core::watch_store::SavedWatch;
+    use ralph_core::worker::INBOX_DIR;
+    use ralph_server::worker_mcp::Inbox;
     use serde_json::json;
     use std::fs;
 
@@ -602,6 +600,7 @@ mod tests {
     #[test]
     fn merge_posts_a_digest_to_main_and_freezes_the_thread() {
         let (_root, main, dir) = forked();
+        let log_before = Store::new(main.clone()).log_len().unwrap();
         let mut asked = Vec::new();
         let printed = merge_thread(&main, &name("auth"), &[], &mut |prompt: &str| {
             asked.push(prompt.to_string());
@@ -613,10 +612,11 @@ mod tests {
         assert!(asked[0].contains("\n#auth:0 user"), "{}", asked[0]);
         let merged = read_meta(&dir).unwrap().merged.unwrap();
         assert_eq!(merged.digest, "Picked a needle. #auth:0");
-        let inbox = Inbox::new(main.join(INBOX_DIR)).peek().unwrap();
-        assert_eq!(inbox.len(), 1);
-        assert_eq!(inbox[0].worker, "thread:auth");
-        assert_eq!(inbox[0].at, merged.at);
+        assert!(Inbox::new(main.join(INBOX_DIR))
+            .peek()
+            .unwrap_or_default()
+            .is_empty());
+        assert_eq!(Store::new(main.clone()).log_len().unwrap(), log_before);
         let listed = rows(&main, &|_| 0).unwrap();
         assert_eq!(listed[0].state, ThreadState::Merged(merged.at.clone()));
         let frozen = "thread auth is merged into main and stays read-only";
@@ -626,7 +626,10 @@ mod tests {
             .unwrap_err()
             .starts_with(frozen));
         assert!(dir.join(THREAD_FILE).is_file());
-        assert_eq!(Inbox::new(main.join(INBOX_DIR)).peek().unwrap().len(), 1);
+        assert!(Inbox::new(main.join(INBOX_DIR))
+            .peek()
+            .unwrap_or_default()
+            .is_empty());
     }
 
     #[test]
@@ -776,24 +779,26 @@ mod tests {
     fn view_posts_the_block_to_main_and_freezes_the_thread_without_a_curator() {
         let (_root, main, dir) = forked();
         let auth = name("auth");
+        let log_before = Store::new(main.clone()).log_len().unwrap();
         let printed = view_thread(&main, &auth, &[]).unwrap();
         let head = "[thread auth · view]\nThread auth, forked from main at #2, with its memory view posted to main:\n#auth:0 user";
         assert!(printed.starts_with(head), "{printed}");
         let merged = read_meta(&dir).unwrap().merged.unwrap();
         assert!(printed.ends_with(&merged.digest), "{printed}");
-        let inbox = Inbox::new(main.join(INBOX_DIR)).peek().unwrap();
-        assert_eq!(inbox.len(), 1);
-        assert_eq!(
-            (inbox[0].worker.as_str(), inbox[0].status.as_str()),
-            ("thread:auth", "view")
-        );
-        assert_eq!((&inbox[0].text, &inbox[0].at), (&merged.digest, &merged.at));
+        assert!(Inbox::new(main.join(INBOX_DIR))
+            .peek()
+            .unwrap_or_default()
+            .is_empty());
+        assert_eq!(Store::new(main.clone()).log_len().unwrap(), log_before);
         let again = view_thread(&main, &auth, &[]).unwrap_err();
         assert!(
             again.starts_with("thread auth is merged into main"),
             "{again}"
         );
-        assert_eq!(Inbox::new(main.join(INBOX_DIR)).peek().unwrap().len(), 1);
+        assert!(Inbox::new(main.join(INBOX_DIR))
+            .peek()
+            .unwrap_or_default()
+            .is_empty());
     }
 
     #[test]
