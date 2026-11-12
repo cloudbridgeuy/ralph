@@ -277,7 +277,14 @@ fn parsed(text: &str, windows: &[WorkerWindow], keys: &TicketKeys) -> Parsed {
         .is_ok_and(|tag| tag.cost_source.as_deref() == Some(HARNESS_COST_SOURCE));
     let reported = from_harness && line.cost_usd.is_some() && role != Role::Main;
     let window = (role == Role::Worker)
-        .then(|| window_position(windows, line.worker_id.as_deref()?, at))
+        .then(|| {
+            window_position(
+                windows,
+                line.store.as_deref(),
+                line.worker_id.as_deref()?,
+                at,
+            )
+        })
         .flatten();
     let id_ticket = (role == Role::Worker)
         .then(|| resolve_ticket(line.worker_id.as_deref()?, None, keys))
