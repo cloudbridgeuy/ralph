@@ -28,7 +28,8 @@ fn append(turn: &OpencodeTurn, rows: &[OpencodeModelUsage], usage_file: &Path) -
             turn_id: turn.turn_id,
         };
         let usage = opencode_usage_record(kind, at.clone(), turn.session_id, spend)
-            .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()));
+            .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()))
+            .with_ticket(ledger::worker_ticket(turn.store, turn.worker));
         ledger::record(usage_file, &usage)?;
     }
     Ok(())

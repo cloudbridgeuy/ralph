@@ -80,12 +80,17 @@ fn record_session(
         };
         let session_id = Some(session.session_id.to_string());
         let harness = session.harness.as_str();
-        let usage = worker_usage_record(kind, at.clone(), session_id, harness, row).with_store(
-            target
-                .store
-                .as_ref()
-                .map(|store| store.to_string_lossy().into_owned()),
-        );
+        let usage = worker_usage_record(kind, at.clone(), session_id, harness, row)
+            .with_store(
+                target
+                    .store
+                    .as_ref()
+                    .map(|store| store.to_string_lossy().into_owned()),
+            )
+            .with_ticket(ledger::worker_ticket(
+                target.store.as_deref(),
+                &target.worker,
+            ));
         ledger::record(&target.usage, &usage)?;
     }
     if found.recorded.is_empty() {

@@ -108,7 +108,8 @@ impl CodexUsage {
                         self.store
                             .as_ref()
                             .map(|store| store.to_string_lossy().into_owned()),
-                    );
+                    )
+                    .with_ticket(ledger::worker_ticket(self.store.as_deref(), &self.worker));
             ledger::record(usage_file, &usage)?;
         }
         Ok(())

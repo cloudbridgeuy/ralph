@@ -300,11 +300,13 @@ pub fn parse(usage: &str, windows: &[WorkerWindow]) -> Ledger {
     ledger
 }
 
-fn ticket_of<'a>(entry: &Entry, windows: &'a [WorkerWindow]) -> Option<&'a str> {
-    entry
-        .window
-        .and_then(|position| windows.get(position))
-        .and_then(|window| window.ticket.as_deref())
+fn ticket_of<'a>(entry: &'a Entry, windows: &'a [WorkerWindow]) -> Option<&'a str> {
+    entry.line.ticket.as_deref().or_else(|| {
+        entry
+            .window
+            .and_then(|position| windows.get(position))
+            .and_then(|window| window.ticket.as_deref())
+    })
 }
 
 fn wants(wanted: Option<&str>, actual: Option<&str>) -> bool {

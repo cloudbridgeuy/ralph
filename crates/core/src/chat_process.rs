@@ -40,6 +40,7 @@ pub struct UsageLine {
     pub request_at: Option<String>,
     pub reset: Option<ResetReason>,
     pub run: Option<String>,
+    pub ticket: Option<String>,
     pub worker_id: Option<String>,
     pub session_id: Option<String>,
     pub store: Option<String>,

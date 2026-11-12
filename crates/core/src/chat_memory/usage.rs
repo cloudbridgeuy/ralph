@@ -147,6 +147,8 @@ pub struct LedgerRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     store: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    ticket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     harness: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
@@ -190,6 +192,10 @@ impl LedgerRow {
 
     pub fn with_store(self, store: Option<String>) -> LedgerRow {
         LedgerRow { store, ..self }
+    }
+
+    pub fn with_ticket(self, ticket: Option<String>) -> LedgerRow {
+        LedgerRow { ticket, ..self }
     }
 
     pub fn with_per_thread_usage(self) -> LedgerRow {
@@ -238,6 +244,7 @@ pub fn usage_record(
         reset: None,
         run: None,
         store: None,
+        ticket: None,
         harness: Some(MAIN_HARNESS.to_string()),
         model: metadata.model.clone(),
         session_id: metadata.session_id.clone(),
@@ -291,6 +298,7 @@ pub fn worker_usage_record(
         reset: None,
         run: None,
         store: None,
+        ticket: None,
         harness: Some(harness.to_string()),
         model: Some(row.model.clone()),
         session_id,

@@ -1,11 +1,17 @@
 use crate::private_file::check_path;
 use ralph_core::chat_memory::{encode_usage, LedgerRow};
+use ralph_core::worker::{decode_spawn_record, spawn_record_path};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
 pub fn record_all(path: &Path, rows: impl IntoIterator<Item = LedgerRow>) -> io::Result<()> {
     rows.into_iter().try_for_each(|row| record(path, &row))
+}
+
+pub fn worker_ticket(store: Option<&Path>, worker: &str) -> Option<String> {
+    let raw = fs::read_to_string(spawn_record_path(store?, worker)).ok()?;
+    decode_spawn_record(&raw)?.ticket
 }
 
 pub fn record(path: &Path, row: &LedgerRow) -> io::Result<()> {

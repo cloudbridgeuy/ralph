@@ -28,7 +28,8 @@ fn append(turn: &CursorTurn, usage: &ModelUsage, usage_file: &Path) -> io::Resul
         turn.chat.map(str::to_string),
         usage,
     )
-    .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()));
+    .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()))
+    .with_ticket(ledger::worker_ticket(turn.store, turn.worker));
     ledger::record(usage_file, &row)
 }
 
