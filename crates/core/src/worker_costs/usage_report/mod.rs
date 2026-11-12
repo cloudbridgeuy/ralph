@@ -8,7 +8,7 @@ use super::{builtin_prices, computed_usd, Source, Tokens, Usd, UNKNOWN};
 use crate::chat_process::UsageLine;
 use crate::wire::price::{strip_openai_prefix, PriceTable};
 use crate::wire::view::Pricing;
-use crate::worker::{HarnessId, TicketKeys};
+use crate::worker::{resolve_ticket, HarnessId, TicketKeys};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -87,6 +87,7 @@ pub struct Entry {
     pub at: DateTime<Utc>,
     pub reported: bool,
     pub window: Option<usize>,
+    pub id_ticket: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -262,7 +263,7 @@ enum Parsed {
     Malformed,
 }
 
-fn parsed(text: &str, windows: &[WorkerWindow], _keys: &TicketKeys) -> Parsed {
+fn parsed(text: &str, windows: &[WorkerWindow], keys: &TicketKeys) -> Parsed {
     let Ok(line) = serde_json::from_str::<UsageLine>(text) else {
         return Parsed::Malformed;
     };
@@ -278,6 +279,10 @@ fn parsed(text: &str, windows: &[WorkerWindow], _keys: &TicketKeys) -> Parsed {
     let window = (role == Role::Worker)
         .then(|| window_position(windows, line.worker_id.as_deref()?, at))
         .flatten();
+    let id_ticket = (role == Role::Worker)
+        .then(|| resolve_ticket(line.worker_id.as_deref()?, None, keys))
+        .flatten()
+        .map(|ticket| ticket.key);
     Parsed::Entry(Box::new(Entry {
         line,
         source,
@@ -285,6 +290,7 @@ fn parsed(text: &str, windows: &[WorkerWindow], _keys: &TicketKeys) -> Parsed {
         at,
         reported,
         window,
+        id_ticket,
     }))
 }
 
@@ -301,12 +307,17 @@ pub fn parse(usage: &str, windows: &[WorkerWindow], keys: &TicketKeys) -> Ledger
 }
 
 fn ticket_of<'a>(entry: &'a Entry, windows: &'a [WorkerWindow]) -> Option<&'a str> {
-    entry.line.ticket.as_deref().or_else(|| {
-        entry
-            .window
-            .and_then(|position| windows.get(position))
-            .and_then(|window| window.ticket.as_deref())
-    })
+    entry
+        .line
+        .ticket
+        .as_deref()
+        .or_else(|| {
+            entry
+                .window
+                .and_then(|position| windows.get(position))
+                .and_then(|window| window.ticket.as_deref())
+        })
+        .or(entry.id_ticket.as_deref())
 }
 
 fn wants(wanted: Option<&str>, actual: Option<&str>) -> bool {
