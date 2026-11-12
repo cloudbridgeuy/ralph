@@ -102,7 +102,12 @@ pub fn build_memory_command(home: Option<&Path>, config_dir: Option<&Path>) -> S
 }
 
 pub fn build_nap_command(home: Option<&Path>, config_dir: Option<&Path>) -> String {
-    build_memory_command(home, config_dir)
+    build_tag_command(
+        "haiku",
+        &ralph_core::chat_memory::nap_system(),
+        home,
+        config_dir,
+    )
 }
 
 /// The tag pass: `model` with the labelling prompt as the whole system prompt.
