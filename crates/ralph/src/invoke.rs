@@ -277,6 +277,27 @@ mod tests {
     }
 
     #[test]
+    fn nap_curator_drops_every_claude_md_and_auto_memory_but_merge_and_tag_keep_them() {
+        let home = Some(Path::new("/home/u"));
+        let nap = build_nap_command(home, None);
+        for needle in [
+            r#""autoMemoryEnabled":false"#,
+            r#""**/CLAUDE.md""#,
+            r#""**/CLAUDE.local.md""#,
+        ] {
+            assert!(nap.contains(needle), "{needle}: {nap}");
+        }
+        assert_eq!(nap.matches("--settings ").count(), 1, "{nap}");
+        for other in [
+            build_memory_command(home, None),
+            build_tag_command("claude-haiku-5-5", "p", home, None),
+        ] {
+            assert!(!other.contains("autoMemoryEnabled"), "{other}");
+            assert!(!other.contains("**/CLAUDE.md"), "{other}");
+        }
+    }
+
+    #[test]
     fn merge_curator_keeps_the_default_system_prompt() {
         let cmd = build_memory_command(Some(Path::new("/home/u")), None);
         assert!(!cmd.contains("--system-prompt"), "{cmd}");
