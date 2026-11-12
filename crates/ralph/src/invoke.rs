@@ -101,6 +101,10 @@ pub fn build_memory_command(home: Option<&Path>, config_dir: Option<&Path>) -> S
     memory_command("haiku", "", home, config_dir)
 }
 
+pub fn build_nap_command(home: Option<&Path>, config_dir: Option<&Path>) -> String {
+    build_memory_command(home, config_dir)
+}
+
 /// The tag pass: `model` with the labelling prompt as the whole system prompt.
 pub fn build_tag_command(
     model: &str,
@@ -251,6 +255,26 @@ mod tests {
         let cmd = build_tag_command("model-x", "p", None, None);
         assert!(cmd.contains("--model model-x "), "{cmd}");
         assert!(!cmd.contains("haiku"), "{cmd}");
+    }
+
+    #[test]
+    fn nap_curator_gets_the_nap_rules_as_its_system_prompt() {
+        let cmd = build_nap_command(Some(Path::new("/home/u")), None);
+        let system = ralph_core::chat_memory::nap_system();
+        assert!(
+            cmd.contains(&format!("--system-prompt {} ", shell_quote(&system))),
+            "{cmd}"
+        );
+        assert!(cmd.contains("Invent nothing"), "{cmd}");
+        assert!(cmd.contains("--model haiku "), "{cmd}");
+        assert!(cmd.contains("--tools ''"), "{cmd}");
+        assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
+    }
+
+    #[test]
+    fn merge_curator_keeps_the_default_system_prompt() {
+        let cmd = build_memory_command(Some(Path::new("/home/u")), None);
+        assert!(!cmd.contains("--system-prompt"), "{cmd}");
     }
 
     #[test]
