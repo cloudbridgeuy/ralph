@@ -506,7 +506,12 @@ fn run_curator_detailed(
         .unwrap_or_default()
         .claude
         .config_dir;
-    let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
+    let home = dirs::home_dir();
+    let command = if matches!(curator.kind, ralph_core::chat_memory::CallSite::Nap) {
+        invoke::build_nap_command(home.as_deref(), config_dir.as_deref())
+    } else {
+        invoke::build_memory_command(home.as_deref(), config_dir.as_deref())
+    };
     let run = run_memory_command(&command, prompt, curator)?;
     ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref()).map_err(|message| {
         ralph_core::chat_memory::CuratorError {

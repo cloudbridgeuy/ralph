@@ -40,6 +40,7 @@ pub struct Isolation {
     pub user_claude_md: bool,
     pub project_excludes: Vec<PathBuf>,
     pub config_dir: Option<PathBuf>,
+    pub no_auto_memory: bool,
 }
 
 impl Isolation {
@@ -57,6 +58,25 @@ impl Isolation {
                 ]
             },
             config_dir: config_dir.map(Path::to_path_buf),
+            no_auto_memory: false,
+        }
+    }
+
+    fn for_memory(config_dir: Option<&Path>) -> Self {
+        Self {
+            config_dir: config_dir.map(Path::to_path_buf),
+            ..Self::default()
+        }
+    }
+
+    fn for_nap(config_dir: Option<&Path>) -> Self {
+        Self {
+            project_excludes: vec![
+                PathBuf::from("**/CLAUDE.md"),
+                PathBuf::from("**/CLAUDE.local.md"),
+            ],
+            no_auto_memory: true,
+            ..Self::for_memory(config_dir)
         }
     }
 }
@@ -65,6 +85,9 @@ fn isolation_args(home: Option<&Path>, auto_compact_off: bool, isolation: &Isola
     let mut settings = serde_json::Map::new();
     if auto_compact_off {
         settings.insert("autoCompactEnabled".to_string(), false.into());
+    }
+    if isolation.no_auto_memory {
+        settings.insert("autoMemoryEnabled".to_string(), false.into());
     }
     let excludes: Vec<String> = home
         .filter(|_| !isolation.user_claude_md)
@@ -98,7 +121,12 @@ pub fn prompt_stdin(prompt: &str) -> String {
 }
 
 pub fn build_memory_command(home: Option<&Path>, config_dir: Option<&Path>) -> String {
-    memory_command("haiku", "", home, config_dir)
+    memory_command("haiku", "", &Isolation::for_memory(config_dir), home)
+}
+
+pub fn build_nap_command(home: Option<&Path>, config_dir: Option<&Path>) -> String {
+    let system = system_prompt_arg(&ralph_core::chat_memory::nap_system());
+    memory_command("haiku", &system, &Isolation::for_nap(config_dir), home)
 }
 
 /// The tag pass: `model` with the labelling prompt as the whole system prompt.
@@ -108,24 +136,19 @@ pub fn build_tag_command(
     home: Option<&Path>,
     config_dir: Option<&Path>,
 ) -> String {
-    let system = format!("--system-prompt {} ", shell_quote(system_prompt));
-    memory_command(model, &system, home, config_dir)
+    let system = system_prompt_arg(system_prompt);
+    memory_command(model, &system, &Isolation::for_memory(config_dir), home)
 }
 
-fn memory_command(
-    model: &str,
-    system: &str,
-    home: Option<&Path>,
-    config_dir: Option<&Path>,
-) -> String {
-    let isolation = Isolation {
-        config_dir: config_dir.map(Path::to_path_buf),
-        ..Isolation::default()
-    };
+fn system_prompt_arg(system_prompt: &str) -> String {
+    format!("--system-prompt {} ", shell_quote(system_prompt))
+}
+
+fn memory_command(model: &str, system: &str, isolation: &Isolation, home: Option<&Path>) -> String {
     format!(
         "{}claude --verbose --model {model} {system}{} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
-        config_dir_env(config_dir, home),
-        isolation_args(home, false, &isolation),
+        config_dir_env(isolation.config_dir.as_deref(), home),
+        isolation_args(home, false, isolation),
     )
 }
 
@@ -251,6 +274,56 @@ mod tests {
         let cmd = build_tag_command("model-x", "p", None, None);
         assert!(cmd.contains("--model model-x "), "{cmd}");
         assert!(!cmd.contains("haiku"), "{cmd}");
+    }
+
+    #[test]
+    fn nap_curator_gets_the_nap_rules_as_its_system_prompt() {
+        let cmd = build_nap_command(Some(Path::new("/home/u")), None);
+        let system = ralph_core::chat_memory::nap_system();
+        assert!(
+            cmd.contains(&format!("--system-prompt {} ", shell_quote(&system))),
+            "{cmd}"
+        );
+        assert!(cmd.contains("Invent nothing"), "{cmd}");
+        assert!(cmd.contains("--model haiku "), "{cmd}");
+        assert!(cmd.contains("--tools ''"), "{cmd}");
+        assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
+    }
+
+    #[test]
+    fn nap_curator_drops_every_claude_md_and_auto_memory_but_merge_and_tag_keep_them() {
+        let home = Some(Path::new("/home/u"));
+        let nap = build_nap_command(home, None);
+        for needle in [
+            r#""autoMemoryEnabled":false"#,
+            r#""**/CLAUDE.md""#,
+            r#""**/CLAUDE.local.md""#,
+        ] {
+            assert!(nap.contains(needle), "{needle}: {nap}");
+        }
+        assert_eq!(nap.matches("--settings ").count(), 1, "{nap}");
+        for other in [
+            build_memory_command(home, None),
+            build_tag_command("claude-haiku-5-5", "p", home, None),
+        ] {
+            assert!(!other.contains("autoMemoryEnabled"), "{other}");
+            assert!(!other.contains("**/CLAUDE.md"), "{other}");
+        }
+    }
+
+    #[test]
+    fn isolation_args_turns_auto_memory_off_only_when_asked() {
+        let off = r#""autoMemoryEnabled":false"#;
+        let nap = isolation_args(None, false, &Isolation::for_nap(None));
+        assert!(nap.contains(off), "{nap}");
+        let chat = isolation_args(None, true, &Isolation::default());
+        assert!(!chat.contains("autoMemoryEnabled"), "{chat}");
+    }
+
+    #[test]
+    fn merge_curator_keeps_the_default_system_prompt() {
+        let cmd = build_memory_command(Some(Path::new("/home/u")), None);
+        assert!(!cmd.contains("--system-prompt"), "{cmd}");
     }
 
     #[test]
