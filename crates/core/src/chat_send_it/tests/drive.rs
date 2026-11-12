@@ -280,3 +280,140 @@ fn only_the_generated_check_shape_is_a_check_watch_id() {
     assert!(!is_check_watch_id("watch:send-it-"));
     assert!(!is_check_watch_id("watch:send-it-3x"));
 }
+
+fn checking(file: &RunFile, step: usize, run: Run) -> Driving {
+    Driving {
+        run,
+        ..state(file, step, Awaiting::Report(check_watch_id(step)))
+    }
+}
+
+#[test]
+fn a_passing_check_settles_into_the_next_step_with_a_met_line_and_no_turn() {
+    let file = approved(plan());
+    let run = spent(1, 0.25);
+    let settled = settle_check(
+        &checking(&file, 2, run.clone()),
+        Some(&file),
+        &WatchOutcome::Exited(0),
+    );
+    assert_eq!(settled.next, Next::Send(STEP_4.to_string()));
+    assert_eq!(settled.driving.progress, at(3));
+    assert_eq!(settled.driving.awaiting, Awaiting::Turn);
+    assert_eq!(settled.driving.run, run);
+    assert_eq!(
+        settled.met.as_deref(),
+        Some("send-it: step 3/4 met (`cargo xtask lint` exits 0)")
+    );
+}
+
+#[test]
+fn a_passing_last_check_finishes_the_run() {
+    let mut plan = plan();
+    plan.steps.truncate(3);
+    let file = approved(plan);
+    let settled = settle_check(
+        &checking(&file, 2, Run::default()),
+        Some(&file),
+        &WatchOutcome::Exited(0),
+    );
+    assert_eq!(settled.next, Next::Done);
+    assert_eq!(
+        settled.met.as_deref(),
+        Some("send-it: step 3/3 met (`cargo xtask lint` exits 0)")
+    );
+}
+
+#[test]
+fn a_passing_watch_chains_into_a_following_check_without_a_turn() {
+    let file = approved(plan());
+    let settled = settle_check(
+        &checking(&file, 1, Run::default()),
+        Some(&file),
+        &WatchOutcome::Exited(0),
+    );
+    assert_eq!(settled.next, Next::Check("cargo xtask lint".to_string()));
+    assert_eq!(
+        settled.driving.awaiting,
+        Awaiting::Report("watch:send-it-3".to_string())
+    );
+    assert_eq!(settled.driving.run, Run::default());
+}
+
+#[test]
+fn any_other_outcome_stops_the_run_with_check_failed_and_no_turn() {
+    let file = approved(plan());
+    let run = spent(1, 0.25);
+    for outcome in [
+        WatchOutcome::Exited(1),
+        WatchOutcome::Signaled(9),
+        WatchOutcome::Stopped,
+        WatchOutcome::WaitFailed("gone".to_string()),
+    ] {
+        let settled = settle_check(&checking(&file, 2, run.clone()), Some(&file), &outcome);
+        assert_eq!(
+            settled.next,
+            Next::Stop(StopReason::CheckFailed { step: 3 }),
+            "{outcome:?}"
+        );
+        assert_eq!(settled.driving.run, run);
+        assert_eq!(settled.met, None);
+    }
+}
+
+#[test]
+fn a_failed_resume_probe_stops_with_check_failed() {
+    let file = stopped_on(3);
+    let started = start(&file, &[], &[]).unwrap();
+    let settled = settle_check(&started.driving, Some(&file), &WatchOutcome::Exited(1));
+    assert_eq!(
+        settled.next,
+        Next::Stop(StopReason::CheckFailed { step: 3 })
+    );
+}
+
+#[test]
+fn a_changed_unapproved_or_deleted_plan_stops_a_settling_check() {
+    let file = approved(plan());
+    let mut edited = plan();
+    edited.goal = "ship GUZ-2".to_string();
+    let unapproved = RunFile {
+        approved: None,
+        ..approved(plan())
+    };
+    for current in [Some(&approved(edited)), Some(&unapproved)] {
+        let settled = settle_check(
+            &checking(&file, 2, Run::default()),
+            current,
+            &WatchOutcome::Exited(0),
+        );
+        assert_eq!(settled.next, Next::Stop(StopReason::PlanChanged));
+        assert_eq!(settled.driving.progress, at(2));
+    }
+    let off = settle_check(
+        &checking(&file, 2, Run::default()),
+        None,
+        &WatchOutcome::Exited(0),
+    );
+    assert_eq!(off.next, Next::Stop(StopReason::Off));
+}
+
+#[test]
+fn a_settled_check_at_the_turn_cap_stops_before_sending_the_next_step() {
+    let file = approved(plan());
+    let settled = settle_check(
+        &checking(&file, 2, spent(30, 0.5)),
+        Some(&file),
+        &WatchOutcome::Exited(0),
+    );
+    assert_eq!(settled.next, Next::Stop(StopReason::TurnCap));
+}
+
+#[test]
+fn only_a_run_waiting_on_a_generated_check_watch_awaits_a_check() {
+    let file = approved(plan());
+    assert!(awaits_check(&checking(&file, 2, Run::default())));
+    assert!(!awaits_check(&held(&file)));
+    assert!(!awaits_check(&state(&file, 2, Awaiting::Turn)));
+    assert!(!awaits_check(&state(&file, 3, Awaiting::Verdict)));
+}

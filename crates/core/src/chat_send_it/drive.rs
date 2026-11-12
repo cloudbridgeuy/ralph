@@ -300,14 +300,23 @@ fn unanswered_flag(ended: &Ended, file: &RunFile) -> bool {
             .any(|report| !(may_reply && ended.answered.contains(&report.worker)))
 }
 
+fn current_plan<'a>(file: Option<&'a RunFile>, hash: &str) -> Result<&'a RunFile, StopReason> {
+    let file = file.ok_or(StopReason::Off)?;
+    if file.is_approved() && plan_hash(&file.plan) == hash {
+        Ok(file)
+    } else {
+        Err(StopReason::PlanChanged)
+    }
+}
+
 fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason> {
-    let file = ended
-        .file
-        .filter(|_| !ended.queued.iter().any(|line| is_off(line)))
-        .ok_or(StopReason::Off)?;
-    let stop = if !file.is_approved() || plan_hash(&file.plan) != hash {
-        Some(StopReason::PlanChanged)
-    } else if let Some(tool) = ended.refused {
+    let file = current_plan(
+        ended
+            .file
+            .filter(|_| !ended.queued.iter().any(|line| is_off(line))),
+        hash,
+    )?;
+    let stop = if let Some(tool) = ended.refused {
         Some(StopReason::Refused {
             tool: tool.to_string(),
         })
@@ -401,6 +410,38 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         _ => decided,
     };
     finish(run, progress, next, met)
+}
+
+pub fn awaits_check(driving: &Driving) -> bool {
+    matches!(&driving.awaiting, Awaiting::Report(source) if is_check_watch_id(source))
+}
+
+pub fn settle_check(driving: &Driving, file: Option<&RunFile>, outcome: &WatchOutcome) -> Ticked {
+    let finish = |progress: Progress, next: Next, met: Option<String>| Ticked {
+        driving: Driving {
+            hash: driving.hash.clone(),
+            progress,
+            run: driving.run.clone(),
+            awaiting: awaiting(&next, progress),
+        },
+        next,
+        met,
+    };
+    let plan = match current_plan(file, &driving.hash) {
+        Ok(file) => &file.plan,
+        Err(reason) => return finish(driving.progress, Next::Stop(reason), None),
+    };
+    let (progress, decided) = advance(plan, driving.progress, Event::Watched(outcome));
+    let met = (progress.step > driving.progress.step || decided == Next::Done)
+        .then(|| met_line(plan, driving.progress.step, None));
+    let next = match decided {
+        Next::Done | Next::Stop(_) => decided,
+        _ => match advance(plan, progress, Event::TurnEnded(&driving.run)).1 {
+            stop @ Next::Stop(_) => stop,
+            _ => decided,
+        },
+    };
+    finish(progress, next, met)
 }
 
 fn met_line(plan: &RunPlan, step: usize, evidence: Option<&str>) -> String {
