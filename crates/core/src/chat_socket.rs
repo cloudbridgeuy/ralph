@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-const SOCKET_TOOLS: [&str; 11] = [
+const SOCKET_TOOLS: [&str; 10] = [
     "workers",
     "spawn_worker",
     "reply",
@@ -14,7 +14,6 @@ const SOCKET_TOOLS: [&str; 11] = [
     "watch_list",
     "watch_stop",
     "schedule",
-    "suggest_reply",
     "propose_run",
     "step_result",
 ];
@@ -201,7 +200,6 @@ mod tests {
             "watch_list",
             "watch_stop",
             "schedule",
-            "suggest_reply",
             "propose_run",
             "step_result",
         ] {

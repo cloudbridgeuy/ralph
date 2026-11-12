@@ -1,6 +1,5 @@
 use super::*;
 use crate::chat::socket::{respond, Shared};
-use crate::chat::suggestion::SuggestionSlot;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
@@ -313,7 +312,6 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        suggestions: SuggestionSlot::default(),
         send_it: send_it.clone(),
         watches: watches(dir.path()),
     };
@@ -407,7 +405,6 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        suggestions: SuggestionSlot::default(),
         send_it: SendIt::new(dir.path(), LIMITS),
         watches: watches(dir.path()),
     };
@@ -446,7 +443,6 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        suggestions: SuggestionSlot::default(),
         send_it: SendIt::new(dir.path(), LIMITS),
         watches: watches(dir.path()),
     };

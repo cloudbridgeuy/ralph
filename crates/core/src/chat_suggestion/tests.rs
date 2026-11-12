@@ -2,9 +2,10 @@ use super::*;
 use crate::chat_status::{ScheduleState, WatchState, WorkerState};
 use crate::inbox::Entry;
 use crate::worker::Report;
+use serde_json::json;
 
 fn parse(text: &str) -> Result<String, String> {
-    parse_suggestion(&json!({"text": text}))
+    checked(text)
 }
 
 #[test]
@@ -39,29 +40,6 @@ fn length_limit_counts_characters_and_never_truncates() {
     assert!(error.contains("201") && error.contains("200"));
     assert_eq!(parse(&"é".repeat(200)).map(|t| t.chars().count()), Ok(200));
     assert!(parse(&"é".repeat(201)).is_err());
-}
-
-#[test]
-fn missing_or_non_string_text_is_an_error() {
-    assert!(parse_suggestion(&json!({})).is_err());
-    assert!(parse_suggestion(&json!({"text": 5})).is_err());
-    assert!(parse_suggestion(&json!({"text": null})).is_err());
-    assert!(parse_suggestion(&json!({"other": "x"})).is_err());
-}
-
-#[test]
-fn tool_schema_names_the_tool_and_requires_text() {
-    let tool = suggest_reply_tool();
-    assert_eq!(tool["name"], "suggest_reply");
-    assert_eq!(tool["inputSchema"]["required"], json!(["text"]));
-    assert_eq!(tool["inputSchema"]["properties"]["text"]["maxLength"], 200);
-    let description = tool["description"].as_str().unwrap();
-    assert!(description.chars().count() <= 300);
-    assert!(description.contains("before any reply text"));
-    assert!(description.contains("never mention it"));
-    assert!(description.contains(
-        "exactly `/hold [<target> ...]` naming listed targets can start that hold at once"
-    ));
 }
 
 fn some(text: &str) -> Option<String> {
@@ -414,17 +392,6 @@ fn the_notice_names_a_set_or_anyone() {
         auto_hold_notice(&HoldFilter::Any),
         "auto-hold: anyone · Ctrl-Q to type"
     );
-}
-
-#[test]
-fn the_schema_takes_only_the_text() {
-    let tool = suggest_reply_tool();
-    assert_eq!(
-        tool["inputSchema"]["properties"].as_object().unwrap().len(),
-        1
-    );
-    assert_eq!(tool["inputSchema"]["required"], json!(["text"]));
-    assert!(!tool["description"].as_str().unwrap().contains("step"));
 }
 
 #[test]

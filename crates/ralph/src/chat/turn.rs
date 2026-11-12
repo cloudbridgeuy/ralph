@@ -1,7 +1,7 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::keepalive::Stamp;
 use crate::chat::prompt::screen_columns;
-use crate::chat::suggestion::SuggestionSlot;
+use crate::chat::suggestion::SuggestionCell;
 use crate::chat::thread::{fork_view, Fork};
 use crate::highlight::ThemeConfig;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
@@ -149,7 +149,7 @@ pub(super) struct Turn<'a> {
     pub(super) cancel: Arc<AtomicBool>,
     pub(super) gate: Arc<OutputGate>,
     pub(super) run: &'a str,
-    pub(super) suggestions: SuggestionSlot,
+    pub(super) suggestions: SuggestionCell,
     pub(super) last_turn_end: Stamp,
     pub(super) identity: Arc<Mutex<IterationMetadata>>,
     pub(super) last_cost_usd: Mutex<Option<f64>>,

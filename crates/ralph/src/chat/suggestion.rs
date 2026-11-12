@@ -3,9 +3,9 @@ use reedline::{Color, ExampleHighlighter, Highlighter, StyledText};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 #[derive(Clone, Default)]
-pub(crate) struct SuggestionSlot(Arc<Mutex<Option<String>>>);
+pub(crate) struct SuggestionCell(Arc<Mutex<Option<String>>>);
 
-impl SuggestionSlot {
+impl SuggestionCell {
     fn guard(&self) -> MutexGuard<'_, Option<String>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -33,13 +33,13 @@ impl SuggestionSlot {
 }
 
 pub(crate) struct SuggestionHighlighter {
-    shown: SuggestionSlot,
+    shown: SuggestionCell,
     color: Color,
     plain: ExampleHighlighter,
 }
 
 impl SuggestionHighlighter {
-    pub(crate) fn new(shown: SuggestionSlot, color: Color) -> Self {
+    pub(crate) fn new(shown: SuggestionCell, color: Color) -> Self {
         Self {
             shown,
             color,
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn a_later_set_replaces_the_earlier_one() {
-        let slot = SuggestionSlot::default();
+        let slot = SuggestionCell::default();
         slot.set(plain("one"));
         slot.set(plain("two"));
         assert_eq!(slot.take(), Some(plain("two")));
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn take_empties_the_slot() {
-        let slot = SuggestionSlot::default();
+        let slot = SuggestionCell::default();
         slot.set(plain("one"));
         assert_eq!(slot.take(), Some(plain("one")));
         assert_eq!(slot.take(), None);
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn clear_drops_a_pending_suggestion() {
-        let slot = SuggestionSlot::default();
+        let slot = SuggestionCell::default();
         slot.set(plain("one"));
         slot.clear();
         assert_eq!(slot.take(), None);
@@ -94,14 +94,14 @@ mod tests {
 
     #[test]
     fn clones_share_one_slot() {
-        let slot = SuggestionSlot::default();
+        let slot = SuggestionCell::default();
         slot.clone().set(plain("one"));
         assert_eq!(slot.take(), Some(plain("one")));
     }
 
     #[test]
     fn a_poisoned_lock_still_works() {
-        let slot = SuggestionSlot::default();
+        let slot = SuggestionCell::default();
         let other = slot.clone();
         let _ = std::thread::spawn(move || {
             let _held = other.0.lock().unwrap();
@@ -112,8 +112,8 @@ mod tests {
         assert_eq!(slot.take(), Some(plain("one")));
     }
 
-    fn highlighter(text: &str) -> (SuggestionHighlighter, SuggestionSlot) {
-        let shown = SuggestionSlot::default();
+    fn highlighter(text: &str) -> (SuggestionHighlighter, SuggestionCell) {
+        let shown = SuggestionCell::default();
         shown.set(plain(text));
         (
             SuggestionHighlighter::new(shown.clone(), Color::Cyan),
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn an_empty_slot_is_plain() {
-        let highlighter = SuggestionHighlighter::new(SuggestionSlot::default(), Color::Cyan);
+        let highlighter = SuggestionHighlighter::new(SuggestionCell::default(), Color::Cyan);
         let expected = ExampleHighlighter::default().highlight("x", 1);
         assert_eq!(highlighter.highlight("x", 1).buffer, expected.buffer);
     }

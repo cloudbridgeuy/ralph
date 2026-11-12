@@ -606,11 +606,10 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_asks_for_a_final_next_step_line_and_no_tool_call() {
+    fn system_prompt_asks_for_a_final_next_step_line() {
         let prompt = default_prompt();
         assert!(prompt.contains("End the reply with a final line `Next step: <"));
         assert!(prompt.contains("200 characters"));
-        assert!(!prompt.contains("suggest_reply"));
     }
 
     #[test]
