@@ -96,7 +96,6 @@ use ralph_core::chat_suggestion::{
 use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::chat_thread::open_check;
 use ralph_core::claude_leftovers::claude_dir;
-use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{status_enabled, Phase};
 use ralph_core::schedule_request::SCHEDULE_DIR;
@@ -697,9 +696,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 idle.store(false, Ordering::SeqCst);
                 match held {
                     Held::Item(position) => {
-                        pending = Some(Submitted::internal(Route::ReadInbox(Selection::At(
-                            position,
-                        ))));
+                        let route = send_it.held_item(&mut sending, position, &monitor)?;
+                        pending = route.map(Submitted::internal);
                     }
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);

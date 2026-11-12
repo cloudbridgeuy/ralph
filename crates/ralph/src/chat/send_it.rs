@@ -8,12 +8,14 @@ use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
 use ralph_core::chat_send_it::{
-    approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
-    plan_hash, propose_refusal, read_run, render_status, running_line, start_run, step_line,
-    stop_file, tick, write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult,
-    StopReason, Ticked,
+    approve, awaits_check, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt,
+    parse_run, plan_hash, propose_refusal, read_run, render_status, running_line, settle_check,
+    start_run, step_line, stop_file, tick, write_run, Action, Driving, Ended, Limits, Next,
+    RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
+use ralph_core::inbox::{Position, Selection};
+use ralph_core::program_status::Phase;
 use ralph_core::worker_check::logged_states;
 use ralph_server::chat::memory::Store;
 use ralph_server::warn::warn_if_err;
@@ -244,6 +246,40 @@ impl SendIt {
                 ..ended
             },
         )
+    }
+
+    pub(super) fn held_item(
+        &self,
+        sending: &mut Option<Active>,
+        position: Position,
+        monitor: &Monitor,
+    ) -> io::Result<Option<Route>> {
+        let read = Route::ReadInbox(Selection::At(position));
+        let Some(active) = sending.take() else {
+            return Ok(Some(read));
+        };
+        let outcome = active
+            .watched
+            .as_ref()
+            .and_then(|slot| locked(slot).clone())
+            .filter(|_| awaits_check(&active.driving));
+        let Some(outcome) = outcome else {
+            *sending = Some(active);
+            return Ok(Some(read));
+        };
+        monitor.drain(Selection::At(position))?;
+        monitor.refresh(true);
+        let file = self.load().ok().flatten();
+        let ticked = settle_check(&active.driving, file.as_ref(), &outcome);
+        if let Some(met) = &ticked.met {
+            self.log_notice(met);
+        }
+        let driven = self.dispatch(ticked, monitor);
+        if driven.route.is_none() {
+            monitor.set_phase(Phase::Prompt);
+        }
+        *sending = driven.active;
+        Ok(driven.route)
     }
 
     pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
