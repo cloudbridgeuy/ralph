@@ -226,8 +226,6 @@ fn a_turn_that_stores_no_new_plan_says_so() {
     assert_eq!(send_it.proposed(None).shown, Some(hash));
 }
 
-const STEP_1: &str = "[send-it 1/1] run the checks · exit: `cargo xtask lint` exits 0";
-
 fn started(dir: &Path) -> (SendIt, Active) {
     let (send_it, hash) = proposed(dir);
     let ticked = go(&send_it, Some(&hash), true).1.unwrap();
@@ -498,11 +496,7 @@ fn go_starts_only_the_approved_plan_at_step_one() {
     let (send_it, hash) = proposed(dir.path());
     assert!(go(&send_it, None, true).1.is_none());
     let ticked = go(&send_it, Some(&hash), true).1.unwrap();
-    let Next::Send(brief) = ticked.next else {
-        panic!("{:?}", ticked.next)
-    };
-    assert!(brief.ends_with(STEP_1), "{brief}");
-    assert!(brief.starts_with("send-it run "), "{brief}");
+    assert_eq!(ticked.next, Next::Check("cargo xtask lint".to_string()));
 }
 
 #[test]
@@ -590,13 +584,7 @@ fn go_on_a_stopped_worker_step_skips_it_once_the_worker_reported_done() {
         resumed.met.as_deref(),
         Some("send-it: step 1/2 met (worker GUZ-1 reports done)")
     );
-    let Next::Send(brief) = resumed.next else {
-        panic!("{:?}", resumed.next)
-    };
-    assert!(
-        brief.ends_with("[send-it 2/2] run the checks · exit: `cargo xtask lint` exits 0"),
-        "{brief}"
-    );
+    assert_eq!(resumed.next, Next::Check("cargo xtask lint".to_string()));
 }
 
 #[test]

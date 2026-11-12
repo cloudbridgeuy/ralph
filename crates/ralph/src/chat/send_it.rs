@@ -9,8 +9,9 @@ use ralph_core::chat_send_it::template::{
 };
 use ralph_core::chat_send_it::{
     approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
-    plan_hash, propose_refusal, read_run, render_status, running_line, start_run, stop_file, tick,
-    write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
+    plan_hash, propose_refusal, read_run, render_status, running_line, start_run, step_line,
+    stop_file, tick, write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult,
+    StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::worker_check::logged_states;
@@ -270,6 +271,12 @@ impl SendIt {
                 Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None)
             }
             Next::Watch(command) | Next::Check(command) => {
+                if let Some(plan) = &plan {
+                    println!("{}", running_line(plan, &driving));
+                    if let Some(step) = plan.steps.get(driving.progress.step) {
+                        println!("{}", step_line(plan, driving.progress.step, step));
+                    }
+                }
                 let spec = check_spec(driving.progress.step, &command);
                 let id = spec.id.clone();
                 match monitor.watches.start(spec) {

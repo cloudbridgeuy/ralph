@@ -359,11 +359,10 @@ fn caps_stop_at_a_turn_end_and_grants_lift_them() {
 #[test]
 fn reports_move_on_wait_or_stop() {
     let plan = plan();
-    let line_2 = "[send-it 2/4] wait for CI · exit: watch `gh pr checks --watch` exits 0";
     for (report, expected) in [
         (
             worker_report("E1", "done"),
-            (at(1), Next::Send(line_2.to_string())),
+            (at(1), Next::Watch("gh pr checks --watch".to_string())),
         ),
         (worker_report("X9", "done"), (at(0), Next::Wait)),
         (
@@ -378,11 +377,10 @@ fn reports_move_on_wait_or_stop() {
 #[test]
 fn each_watch_outcome_settles_a_check_as_met_or_failed() {
     let plan = plan();
-    let line_3 = "[send-it 3/4] run the checks · exit: `cargo xtask lint` exits 0";
     let passed = WatchOutcome::Exited(0);
     assert_eq!(
         advance(&plan, at(1), Event::Watched(&passed)),
-        (at(2), Next::Send(line_3.to_string()))
+        (at(2), Next::Check("cargo xtask lint".to_string()))
     );
     assert_eq!(
         advance(&plan, at(2), Event::Watched(&passed)),
@@ -534,8 +532,6 @@ fn ended(file: &RunFile) -> Ended<'_> {
     }
 }
 
-const LINE_2: &str = "[send-it 2/4] wait for CI · exit: watch `gh pr checks --watch` exits 0";
-
 #[test]
 fn only_an_approved_file_starts_a_run_at_step_one() {
     let unapproved = RunFile {
@@ -671,14 +667,14 @@ fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, Next::Send(LINE_2.to_string()));
+    assert_eq!(ticked.next, Next::Watch("gh pr checks --watch".to_string()));
     assert_eq!(
         ticked.met.as_deref(),
         Some("send-it: step 1/4 met (worker E1 reports done)")
     );
     assert_eq!(
         (ticked.driving.progress, ticked.driving.awaiting),
-        (at(1), Awaiting::Turn)
+        (at(1), Awaiting::Report("watch:send-it-2".to_string()))
     );
     let other = [worker_report("X9", "done")];
     let held = tick(
@@ -748,7 +744,7 @@ fn a_settling_report_turn_one_below_the_turn_cap_still_sends() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, Next::Send(LINE_2.to_string()));
+    assert_eq!(ticked.next, Next::Watch("gh pr checks --watch".to_string()));
     assert_eq!(ticked.driving.run, spent(29, 0.5));
 }
 

@@ -48,7 +48,7 @@ pub(super) fn granted_limits(plan: &RunPlan) -> Limits {
         })
 }
 
-pub(super) fn step_line(plan: &RunPlan, index: usize, step: &Step) -> String {
+pub fn step_line(plan: &RunPlan, index: usize, step: &Step) -> String {
     format!(
         "[send-it {}/{}] {} · exit: {}",
         index + 1,
@@ -67,6 +67,15 @@ fn wait_on(criterion: &Criterion) -> Next {
     }
 }
 
+fn begin(plan: &RunPlan, index: usize, step: &Step) -> Next {
+    match &step.criterion {
+        Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. } => wait_on(&step.criterion),
+        Criterion::WorkerDone { .. } | Criterion::Judge { .. } => {
+            Next::Send(step_line(plan, index, step))
+        }
+    }
+}
+
 fn step_met(plan: &RunPlan, progress: Progress) -> (Progress, Next) {
     let index = progress.step + 1;
     match plan.steps.get(index) {
@@ -75,7 +84,7 @@ fn step_met(plan: &RunPlan, progress: Progress) -> (Progress, Next) {
                 step: index,
                 ..Progress::default()
             },
-            Next::Send(step_line(plan, index, step)),
+            begin(plan, index, step),
         ),
         None => (progress, Next::Done),
     }
@@ -88,7 +97,7 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
     let number = progress.step + 1;
     let unmet = (progress, Next::Stop(StopReason::Unmet { step: number }));
     match (event, &step.criterion) {
-        (Event::Start, _) => (progress, Next::Send(step_line(plan, progress.step, step))),
+        (Event::Start, _) => (progress, begin(plan, progress.step, step)),
         (Event::TurnEnded(run), criterion) => {
             let limits = granted_limits(plan);
             let next = if run.turns >= limits.max_turns {
@@ -113,14 +122,6 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
         ) => {
             if *outcome == WatchOutcome::Exited(0) {
                 step_met(plan, progress)
-            } else if progress.probing {
-                (
-                    Progress {
-                        probing: false,
-                        ..progress
-                    },
-                    Next::Send(step_line(plan, progress.step, step)),
-                )
             } else {
                 (
                     progress,
@@ -240,13 +241,14 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
             }
             _ => advance(plan, progress, Event::Start),
         },
-        criterion => (
+        Criterion::Judge { .. } => (
             Progress {
                 probing: true,
                 ..progress
             },
-            wait_on(criterion),
+            Next::Judge,
         ),
+        criterion => (progress, wait_on(criterion)),
     }
 }
 

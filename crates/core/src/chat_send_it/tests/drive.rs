@@ -134,17 +134,21 @@ fn stopped_on(step: usize) -> RunFile {
     }
 }
 
-const STEP_3: &str = "[send-it 3/4] run the checks · exit: `cargo xtask lint` exits 0";
-
 #[test]
 fn a_resumed_worker_step_whose_worker_reported_done_moves_to_the_next_step() {
     let started = start(&stopped_on(1), &[("E1", "done")], &[]).unwrap();
-    assert_eq!(started.driving, driving(1, Awaiting::Turn, Run::default()));
-    let Next::Send(brief) = &started.next else {
-        panic!("{:?}", started.next)
-    };
-    assert!(brief.starts_with("send-it run "), "{brief}");
-    assert!(brief.ends_with(LINE_2), "{brief}");
+    assert_eq!(
+        started.driving,
+        driving(
+            1,
+            Awaiting::Report("watch:send-it-2".to_string()),
+            Run::default()
+        )
+    );
+    assert_eq!(
+        started.next,
+        Next::Watch("gh pr checks --watch".to_string())
+    );
     assert_eq!(
         started.met.as_deref(),
         Some("send-it: step 1/4 met (worker E1 reports done)")
@@ -177,7 +181,7 @@ fn a_resumed_worker_step_with_an_unknown_worker_sends_the_step() {
 }
 
 #[test]
-fn a_resumed_check_step_runs_the_check_first_and_a_failure_sends_the_step() {
+fn a_resumed_check_step_runs_the_check_first_and_a_failure_stops_the_run() {
     let file = stopped_on(3);
     let started = start(&file, &[], &[]).unwrap();
     assert_eq!(started.next, Next::Check("cargo xtask lint".to_string()));
@@ -186,19 +190,8 @@ fn a_resumed_check_step_runs_the_check_first_and_a_failure_sends_the_step() {
         Awaiting::Report("watch:send-it-3".to_string())
     );
     let failed = WatchOutcome::Exited(1);
-    let probed = tick(
-        &started.driving,
-        &Ended {
-            watched: Some(&failed),
-            ..ended(&file)
-        },
-    );
-    assert_eq!(probed.next, Next::Send(STEP_3.to_string()));
-    assert_eq!(probed.driving.progress, at(2));
-    let checking = tick(&probed.driving, &ended(&file));
-    assert_eq!(checking.next, Next::Check("cargo xtask lint".to_string()));
     let stopped = tick(
-        &checking.driving,
+        &started.driving,
         &Ended {
             watched: Some(&failed),
             ..ended(&file)
@@ -224,6 +217,35 @@ fn a_resumed_check_step_that_passes_is_met() {
     );
     assert_eq!(ticked.next, Next::Send(STEP_4.to_string()));
     assert_eq!(ticked.driving.progress, at(3));
+}
+
+#[test]
+fn a_check_or_watch_step_starts_by_running_the_command_with_no_step_turn() {
+    let plan = plan();
+    assert_eq!(
+        advance(&plan, at(1), Event::Start),
+        (at(1), Next::Watch("gh pr checks --watch".to_string()))
+    );
+    assert_eq!(
+        advance(&plan, at(2), Event::Start),
+        (at(2), Next::Check("cargo xtask lint".to_string()))
+    );
+}
+
+#[test]
+fn a_run_whose_first_step_is_a_check_starts_by_running_it() {
+    let mut plan = plan();
+    plan.steps.remove(0);
+    let started = start(&approved(plan), &[], &[]).unwrap();
+    assert_eq!(
+        started.next,
+        Next::Watch("gh pr checks --watch".to_string())
+    );
+    assert_eq!(
+        started.driving.awaiting,
+        Awaiting::Report("watch:send-it-1".to_string())
+    );
+    assert_eq!(started.met, None);
 }
 
 #[test]
