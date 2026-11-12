@@ -66,6 +66,7 @@ fn curator_outcome(
         stderr: String::new(),
         stream_result: processor.finish(),
         request_at: None,
+        cost_before: None,
     })))
 }
 

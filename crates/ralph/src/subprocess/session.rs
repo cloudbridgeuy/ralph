@@ -66,6 +66,7 @@ pub struct Session {
     reaped: bool,
     config: SpinnerSubprocessConfig,
     model_usage: BTreeMap<String, ModelTotals>,
+    cost_usd: Option<f64>,
 }
 
 impl Session {
@@ -81,6 +82,7 @@ impl Session {
             reaped: false,
             config: config.clone(),
             model_usage: BTreeMap::new(),
+            cost_usd: None,
         })
     }
 
@@ -159,14 +161,20 @@ impl Session {
     ) -> Result<StreamingSubprocessResult, SubprocessError> {
         let mut result = self.exchange(prompt, display, timeout, interrupts);
         match &mut result {
-            Ok(done) => self.advance_model_usage(done),
+            Ok(done) => self.advance_usage(done),
             Err(
                 SubprocessError::Timeout { partial_result, .. }
                 | SubprocessError::Interrupted { partial_result },
-            ) => self.advance_model_usage(partial_result),
+            ) => self.advance_usage(partial_result),
             Err(_) => {}
         }
         result
+    }
+
+    fn advance_usage(&mut self, run: &mut StreamingSubprocessResult) {
+        run.cost_before = self.cost_usd;
+        self.cost_usd = run.stream_result.costs.cost_usd.or(self.cost_usd);
+        self.advance_model_usage(run);
     }
 
     fn advance_model_usage(&mut self, run: &mut StreamingSubprocessResult) {

@@ -349,6 +349,7 @@ impl Pump {
             stderr: self.stderr,
             stream_result,
             request_at: self.request_at,
+            cost_before: None,
         }
     }
 }

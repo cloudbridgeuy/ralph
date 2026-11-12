@@ -79,6 +79,8 @@ pub struct StreamingSubprocessResult {
     /// Processed stream result with chunks, metadata, and tool interactions.
     pub stream_result: StreamProcessorResult,
     pub request_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Running claude cost logged before this call in the same process, set by `Session`.
+    pub cost_before: Option<f64>,
 }
 
 #[cfg(test)]
@@ -97,6 +99,7 @@ mod tests {
             stderr: String::new(),
             stream_result: processor.finish(),
             request_at: None,
+            cost_before: None,
         }
     }
 

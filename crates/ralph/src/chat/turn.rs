@@ -26,7 +26,7 @@ use ralph_core::chat_memory::{
     carry_metadata, reply_entries, split_view, subagent_records, trigger_entries, turn_row,
     usage_record, view_stats, CallSite, Trigger, TurnTiming, ViewSplit,
 };
-use ralph_core::chat_process::ResetReason;
+use ralph_core::chat_process::{spend_over, ResetReason};
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
@@ -402,7 +402,9 @@ impl Turn<'_> {
         };
         self.print_rule();
         let costs = &result.stream_result.costs;
-        *locked(&self.last_cost_usd) = costs.cost_usd;
+        *locked(&self.last_cost_usd) = costs
+            .cost_usd
+            .map(|total| spend_over(total, result.cost_before, process_turns == 1).unwrap_or(0.0));
         let blocked = hit_blocking_limit(costs);
         match extract_response_text(&result.stream_result.output_blocks) {
             Some(reply) if result.exit_code == 0 && !blocked => {
@@ -627,6 +629,7 @@ mod tests {
                 ..Default::default()
             },
             request_at: None,
+            cost_before: None,
         }
     }
 
@@ -646,6 +649,7 @@ mod tests {
             stderr: String::new(),
             stream_result: processor.finish(),
             request_at: None,
+            cost_before: None,
         });
         let identity = carry_metadata(&IterationMetadata::new(), true, &turn_metadata(&result));
         let costs = &result.as_ref().unwrap().stream_result.costs;
@@ -673,6 +677,7 @@ mod tests {
             stderr: String::new(),
             stream_result: processor.finish(),
             request_at: None,
+            cost_before: None,
         }
     }
 

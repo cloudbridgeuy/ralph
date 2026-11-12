@@ -178,23 +178,30 @@ pub(crate) fn processes(rows: &[UsageLine]) -> Vec<&[UsageLine]> {
         .collect()
 }
 
+/// What one turn cost, from the running total of its claude process.
+///
+/// `previous` is the last logged total of the same process, a ping row
+/// included, so a ping between two turns is not charged to the next turn.
+/// The first turn of a process pays its whole total. A missing previous
+/// total or a total that went down gives `None`.
+pub fn spend_over(total: f64, previous: Option<f64>, first_of_process: bool) -> Option<f64> {
+    let base = if first_of_process { 0.0 } else { previous? };
+    Some(total - base).filter(|spend| *spend >= 0.0)
+}
+
 fn last_delta(rows: &[UsageLine]) -> Option<f64> {
     let at = rows.iter().rposition(|row| row.kind == "turn")?;
     let own = rows[at].cost_usd?;
-    let base = if rows[at].process_turn == Some(1) {
-        0.0
-    } else {
-        rows[..at]
-            .iter()
-            .rev()
-            .scan(false, |done, row| {
-                let previous = (!*done).then_some(row);
-                *done = row.process_turn == Some(1);
-                previous
-            })
-            .find_map(|row| row.cost_usd)?
-    };
-    Some(own - base).filter(|delta| *delta >= 0.0)
+    let previous = rows[..at]
+        .iter()
+        .rev()
+        .scan(false, |done, row| {
+            let previous = (!*done).then_some(row);
+            *done = row.process_turn == Some(1);
+            previous
+        })
+        .find_map(|row| row.cost_usd);
+    spend_over(own, previous, rows[at].process_turn == Some(1))
 }
 
 fn carries_tokens(row: &UsageLine) -> bool {

@@ -167,6 +167,7 @@ mod tests {
             stderr: stderr.to_string(),
             stream_result: Default::default(),
             request_at: None,
+            cost_before: None,
         }
     }
 

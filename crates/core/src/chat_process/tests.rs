@@ -707,3 +707,38 @@ fn cost_variants_show_the_delta_first() {
     };
     assert_eq!(cost_variants(&flat), ["$4.12"]);
 }
+
+#[test]
+fn spend_is_the_total_on_the_first_turn_of_a_process() {
+    assert_eq!(spend_over(0.4, None, true), Some(0.4));
+    assert_eq!(spend_over(0.4, Some(9.0), true), Some(0.4));
+}
+
+#[test]
+fn spend_is_the_rise_over_the_previous_total_of_the_same_process() {
+    let spends: Vec<f64> = [0.2, 0.5, 0.8]
+        .iter()
+        .scan(None, |previous, total| {
+            let spend = spend_over(*total, *previous, previous.is_none());
+            *previous = Some(*total);
+            spend
+        })
+        .collect();
+    assert!((spends.iter().sum::<f64>() - 0.8).abs() < 1e-9);
+}
+
+#[test]
+fn spend_after_a_ping_excludes_the_ping() {
+    let spend = spend_over(0.8, Some(0.5), false).unwrap();
+    assert!((spend - 0.3).abs() < 1e-9);
+}
+
+#[test]
+fn spend_is_unknown_without_a_previous_total_mid_process() {
+    assert_eq!(spend_over(0.8, None, false), None);
+}
+
+#[test]
+fn spend_is_unknown_when_the_total_goes_down() {
+    assert_eq!(spend_over(0.3, Some(0.5), false), None);
+}
