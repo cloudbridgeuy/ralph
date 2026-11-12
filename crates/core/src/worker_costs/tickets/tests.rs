@@ -24,7 +24,7 @@ fn jsonl(events: &[Value]) -> String {
 }
 
 fn ticket_at(windows: &[WorkerWindow], id: &str, when: &str) -> Option<Option<String>> {
-    window_position(windows, id, at(when)).map(|position| windows[position].ticket.clone())
+    window_position(windows, None, id, at(when)).map(|position| windows[position].ticket.clone())
 }
 
 #[test]
@@ -37,6 +37,7 @@ fn a_spawn_and_close_make_one_closed_window() {
         windows,
         [WorkerWindow {
             worker_id: "w1".into(),
+            store: Some("/s".into()),
             ticket: Some("GUZ-1".into()),
             harness: "claude".into(),
             start: at("2026-11-01T10:00:00Z"),
@@ -186,15 +187,15 @@ fn window_position_names_the_index_of_the_joined_window() {
         spawn("w1", "2026-11-02T10:00:00Z", Some("GUZ-2")),
     ]));
     assert_eq!(
-        window_position(&windows, "w1", at("2026-11-02T10:30:00Z")),
+        window_position(&windows, None, "w1", at("2026-11-02T10:30:00Z")),
         Some(1)
     );
     assert_eq!(
-        window_position(&windows, "w1", at("2026-11-01T10:30:00Z")),
+        window_position(&windows, None, "w1", at("2026-11-01T10:30:00Z")),
         Some(0)
     );
     assert_eq!(
-        window_position(&windows, "w1", at("2026-10-31T00:00:00Z")),
+        window_position(&windows, None, "w1", at("2026-10-31T00:00:00Z")),
         None
     );
 }

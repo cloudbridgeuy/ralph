@@ -8,7 +8,7 @@ use super::{builtin_prices, computed_usd, Source, Tokens, Usd, UNKNOWN};
 use crate::chat_process::UsageLine;
 use crate::wire::price::{strip_openai_prefix, PriceTable};
 use crate::wire::view::Pricing;
-use crate::worker::HarnessId;
+use crate::worker::{resolve_ticket, HarnessId, TicketKeys};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -87,6 +87,7 @@ pub struct Entry {
     pub at: DateTime<Utc>,
     pub reported: bool,
     pub window: Option<usize>,
+    pub id_ticket: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -262,7 +263,7 @@ enum Parsed {
     Malformed,
 }
 
-fn parsed(text: &str, windows: &[WorkerWindow]) -> Parsed {
+fn parsed(text: &str, windows: &[WorkerWindow], keys: &TicketKeys) -> Parsed {
     let Ok(line) = serde_json::from_str::<UsageLine>(text) else {
         return Parsed::Malformed;
     };
@@ -276,8 +277,19 @@ fn parsed(text: &str, windows: &[WorkerWindow]) -> Parsed {
         .is_ok_and(|tag| tag.cost_source.as_deref() == Some(HARNESS_COST_SOURCE));
     let reported = from_harness && line.cost_usd.is_some() && role != Role::Main;
     let window = (role == Role::Worker)
-        .then(|| window_position(windows, line.worker_id.as_deref()?, at))
+        .then(|| {
+            window_position(
+                windows,
+                line.store.as_deref(),
+                line.worker_id.as_deref()?,
+                at,
+            )
+        })
         .flatten();
+    let id_ticket = (role == Role::Worker)
+        .then(|| resolve_ticket(line.worker_id.as_deref()?, None, keys))
+        .flatten()
+        .map(|ticket| ticket.key);
     Parsed::Entry(Box::new(Entry {
         line,
         source,
@@ -285,13 +297,14 @@ fn parsed(text: &str, windows: &[WorkerWindow]) -> Parsed {
         at,
         reported,
         window,
+        id_ticket,
     }))
 }
 
-pub fn parse(usage: &str, windows: &[WorkerWindow]) -> Ledger {
+pub fn parse(usage: &str, windows: &[WorkerWindow], keys: &TicketKeys) -> Ledger {
     let mut ledger = Ledger::default();
     for text in usage.lines().filter(|text| !text.trim().is_empty()) {
-        match parsed(text, windows) {
+        match parsed(text, windows, keys) {
             Parsed::Entry(entry) => ledger.entries.push(*entry),
             Parsed::Skipped => {}
             Parsed::Malformed => ledger.malformed += 1,
@@ -300,11 +313,18 @@ pub fn parse(usage: &str, windows: &[WorkerWindow]) -> Ledger {
     ledger
 }
 
-fn ticket_of<'a>(entry: &Entry, windows: &'a [WorkerWindow]) -> Option<&'a str> {
+fn ticket_of<'a>(entry: &'a Entry, windows: &'a [WorkerWindow]) -> Option<&'a str> {
     entry
-        .window
-        .and_then(|position| windows.get(position))
-        .and_then(|window| window.ticket.as_deref())
+        .line
+        .ticket
+        .as_deref()
+        .or_else(|| {
+            entry
+                .window
+                .and_then(|position| windows.get(position))
+                .and_then(|window| window.ticket.as_deref())
+        })
+        .or(entry.id_ticket.as_deref())
 }
 
 fn wants(wanted: Option<&str>, actual: Option<&str>) -> bool {

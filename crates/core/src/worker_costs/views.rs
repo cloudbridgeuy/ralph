@@ -3,6 +3,7 @@ use super::usage_report::model_view::costs_view;
 use super::usage_report::{group_by, parse, Dim, Filter, Group};
 use super::{count, tier, Usd, MISSING, NO_USAGE, UNKNOWN};
 use crate::wire::view::Pricing;
+use crate::worker::TicketKeys;
 use chrono::{DateTime, Utc};
 
 const HEADERS: [&str; 8] = [
@@ -28,6 +29,7 @@ pub enum View {
 pub struct Inputs<'a> {
     pub usage: &'a str,
     pub workers: &'a str,
+    pub tickets: &'a TicketKeys,
 }
 
 fn cells(group: &Group) -> Vec<String> {
@@ -107,7 +109,7 @@ pub fn costs_by_view(
     };
     let report = group_by(
         dim,
-        &parse(inputs.usage, &windows),
+        &parse(inputs.usage, &windows, inputs.tickets),
         &windows,
         &filter,
         pricing,

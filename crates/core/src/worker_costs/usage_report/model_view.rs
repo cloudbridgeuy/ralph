@@ -1,6 +1,7 @@
 use super::{label_excluded, parse, partition, Entry};
 use crate::chat_process::{processes, session_cost, UsageLine};
 use crate::wire::view::Pricing;
+use crate::worker::TicketKeys;
 use crate::worker_costs::window::{in_window, instant};
 use crate::worker_costs::{
     builtin_prices, computed_usd, count, summed, tier, Source, Tokens, Usd, NO_USAGE, UNKNOWN,
@@ -162,7 +163,7 @@ pub(crate) fn cost_rows(
 ) -> Vec<CostRow> {
     let table = builtin_prices(pricing.provider);
     let priced = |line: &UsageLine| computed_usd(line, pricing, &table);
-    let ledger = parse(usage_jsonl, &[]);
+    let ledger = parse(usage_jsonl, &[], &TicketKeys::default());
     let (main, others): (Vec<&Entry>, Vec<&Entry>) = ledger
         .entries
         .iter()

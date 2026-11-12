@@ -80,12 +80,17 @@ fn record_session(
         };
         let session_id = Some(session.session_id.to_string());
         let harness = session.harness.as_str();
-        let usage = worker_usage_record(kind, at.clone(), session_id, harness, row).with_store(
-            target
-                .store
-                .as_ref()
-                .map(|store| store.to_string_lossy().into_owned()),
-        );
+        let usage = worker_usage_record(kind, at.clone(), session_id, harness, row)
+            .with_store(
+                target
+                    .store
+                    .as_ref()
+                    .map(|store| store.to_string_lossy().into_owned()),
+            )
+            .with_ticket(ledger::worker_ticket(
+                target.store.as_deref(),
+                &target.worker,
+            ));
         ledger::record(&target.usage, &usage)?;
     }
     if found.recorded.is_empty() {
@@ -165,5 +170,48 @@ mod tests {
 m2
 "
         );
+    }
+
+    #[test]
+    fn a_worker_row_carries_the_ticket_of_its_spawn_record() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::ledger::fixtures::spawn_record(dir.path(), "w1", "GUZ-9");
+        let transcript = dir.path().join("s1.jsonl");
+        fs::write(&transcript, assistant("m1", "opus", r#""end_turn""#)).unwrap();
+        let target = UsageTarget {
+            worker: "w1".into(),
+            seen: dir.path().join("workers").join("w1.usage-seen"),
+            store: Some(dir.path().to_path_buf()),
+            usage: dir.path().join("usage.jsonl"),
+        };
+        let payload = format!(
+            r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
+            transcript.display()
+        );
+        record(&target, &payload, None).unwrap();
+        let written = fs::read_to_string(&target.usage).unwrap();
+        let row: serde_json::Value = serde_json::from_str(written.trim()).unwrap();
+        assert_eq!(row["ticket"], "GUZ-9");
+    }
+
+    #[test]
+    fn a_worker_row_without_a_spawn_record_has_no_ticket() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("s1.jsonl");
+        fs::write(&transcript, assistant("m1", "opus", r#""end_turn""#)).unwrap();
+        let target = UsageTarget {
+            worker: "w1".into(),
+            seen: dir.path().join("workers").join("w1.usage-seen"),
+            store: Some(dir.path().to_path_buf()),
+            usage: dir.path().join("usage.jsonl"),
+        };
+        let payload = format!(
+            r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
+            transcript.display()
+        );
+        record(&target, &payload, None).unwrap();
+        let written = fs::read_to_string(&target.usage).unwrap();
+        let row: serde_json::Value = serde_json::from_str(written.trim()).unwrap();
+        assert!(row.get("ticket").is_none());
     }
 }

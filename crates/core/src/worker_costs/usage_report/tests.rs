@@ -2,6 +2,7 @@ use super::*;
 use crate::chat_process::UsageLine;
 use crate::wire::price::PriceOverride;
 use crate::wire::provider::{provider, ProviderId};
+use crate::worker::TicketKeys;
 use crate::worker_costs::tickets::parse_windows;
 use crate::worker_costs::window::instant;
 use chrono::FixedOffset;
@@ -36,13 +37,30 @@ fn spawn(id: &str, at: &str, ticket: &str, harness: &str) -> Value {
     json!({"at": at, "worker_id": id, "event": "spawn", "ticket": ticket, "harness": harness})
 }
 
-fn ledger(rows: &[Value], workers: &[Value]) -> (Ledger, Vec<WorkerWindow>) {
+fn linear_guz() -> TicketKeys {
+    TicketKeys {
+        linear: vec!["GUZ".into()],
+        jira: Vec::new(),
+    }
+}
+
+fn ledger(rows: &[Value], workers: &[Value], tickets: &TicketKeys) -> (Ledger, Vec<WorkerWindow>) {
     let windows = parse_windows(&jsonl(workers));
-    (parse(&jsonl(rows), &windows), windows)
+    (parse(&jsonl(rows), &windows, tickets), windows)
 }
 
 fn grouped(dim: Dim, rows: &[Value], workers: &[Value], filter: &Filter) -> Report {
-    let (ledger, windows) = ledger(rows, workers);
+    grouped_with(dim, rows, workers, filter, &TicketKeys::default())
+}
+
+fn grouped_with(
+    dim: Dim,
+    rows: &[Value],
+    workers: &[Value],
+    filter: &Filter,
+    tickets: &TicketKeys,
+) -> Report {
+    let (ledger, windows) = ledger(rows, workers, tickets);
     let overrides: BTreeMap<String, PriceOverride> = BTreeMap::new();
     let provider = provider(ProviderId::Anthropic);
     let pricing = Pricing {
@@ -73,7 +91,7 @@ fn malformed_lines_are_counted_and_skipped() {
         json!({"kind": "ask"}),
         row("mystery", "2026-11-05T10:00:00Z"),
     );
-    let ledger = parse(&text, &[]);
+    let ledger = parse(&text, &[], &TicketKeys::default());
     assert_eq!((ledger.entries.len(), ledger.malformed), (1, 3));
 }
 
@@ -295,7 +313,7 @@ fn daily_buckets_use_the_local_day() {
         row("ask", "2026-11-05T23:30:00Z"),
         row("ask", "2026-11-06T00:30:00Z"),
     ];
-    let (ledger, windows) = ledger(&rows, &[]);
+    let (ledger, windows) = ledger(&rows, &[], &TicketKeys::default());
     let overrides: BTreeMap<String, PriceOverride> = BTreeMap::new();
     let provider = provider(ProviderId::Anthropic);
     let pricing = Pricing {
@@ -447,4 +465,198 @@ fn a_bracketed_model_variant_stays_apart_from_its_bare_id() {
     ];
     let report = grouped(Dim::Model, &rows, &[], &Filter::default());
     assert_eq!(keys(&report), ["claude-opus-5-5", "claude-opus-5-5[1m]"]);
+}
+
+#[test]
+fn a_row_ticket_groups_without_any_spawn_window() {
+    let rows = [
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "ticket",
+            json!("GUZ-7"),
+        ),
+        with(
+            worker("w2", "2026-11-05T10:01:00Z"),
+            "ticket",
+            json!("GUZ-7"),
+        ),
+        worker("w3", "2026-11-05T10:02:00Z"),
+    ];
+    let report = grouped(Dim::Ticket, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["GUZ-7", "unknown"]);
+}
+
+#[test]
+fn a_row_ticket_wins_over_the_spawn_window() {
+    let rows = [with(
+        worker("w1", "2026-11-05T10:05:00Z"),
+        "ticket",
+        json!("GUZ-2"),
+    )];
+    let workers = [spawn("w1", "2026-11-05T10:00:00Z", "GUZ-1", "claude")];
+    let report = grouped(Dim::Ticket, &rows, &workers, &Filter::default());
+    assert_eq!(keys(&report), ["GUZ-2"]);
+}
+
+#[test]
+fn the_ticket_filter_matches_the_row_ticket() {
+    let rows = [
+        with(
+            worker("w1", "2026-11-05T10:00:00Z"),
+            "ticket",
+            json!("GUZ-7"),
+        ),
+        worker("w2", "2026-11-05T10:01:00Z"),
+    ];
+    let filter = Filter {
+        ticket: Some("GUZ-7".into()),
+        ..Filter::default()
+    };
+    let report = grouped(Dim::Ticket, &rows, &[], &filter);
+    assert_eq!(keys(&report), ["GUZ-7"]);
+}
+
+#[test]
+fn a_ticket_shaped_worker_id_is_the_ticket_when_nothing_else_names_one() {
+    let rows = [worker("GUZ-5", "2026-11-05T10:00:00Z")];
+    let report = grouped_with(Dim::Ticket, &rows, &[], &Filter::default(), &linear_guz());
+    assert_eq!(keys(&report), ["GUZ-5"]);
+}
+
+#[test]
+fn a_spawn_window_without_a_ticket_falls_back_to_the_worker_id() {
+    let rows = [worker("GUZ-5", "2026-11-05T10:05:00Z")];
+    let workers = [json!({
+        "at": "2026-11-05T10:00:00Z", "worker_id": "GUZ-5", "event": "spawn", "harness": "claude"
+    })];
+    let report = grouped_with(
+        Dim::Ticket,
+        &rows,
+        &workers,
+        &Filter::default(),
+        &linear_guz(),
+    );
+    assert_eq!(keys(&report), ["GUZ-5"]);
+}
+
+#[test]
+fn the_worker_id_fallback_needs_a_configured_key() {
+    let rows = [worker("GUZ-5", "2026-11-05T10:00:00Z")];
+    let report = grouped(Dim::Ticket, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["unknown"]);
+}
+
+#[test]
+fn a_worker_id_that_is_not_a_ticket_stays_unknown() {
+    let rows = [
+        worker("state-machines", "2026-11-05T10:00:00Z"),
+        worker("GUZ-x", "2026-11-05T10:01:00Z"),
+        worker("OTHER-5", "2026-11-05T10:02:00Z"),
+    ];
+    let report = grouped_with(Dim::Ticket, &rows, &[], &Filter::default(), &linear_guz());
+    assert_eq!(keys(&report), ["unknown"]);
+}
+
+#[test]
+fn the_spawn_window_and_the_row_ticket_win_over_the_worker_id() {
+    let rows = [
+        worker("GUZ-5", "2026-11-05T10:05:00Z"),
+        with(
+            worker("GUZ-5", "2026-11-05T11:05:00Z"),
+            "ticket",
+            json!("GUZ-8"),
+        ),
+    ];
+    let workers = [spawn("GUZ-5", "2026-11-05T10:00:00Z", "GUZ-1", "claude")];
+    let report = grouped_with(
+        Dim::Ticket,
+        &rows,
+        &workers,
+        &Filter::default(),
+        &linear_guz(),
+    );
+    assert_eq!(keys(&report), ["GUZ-1", "GUZ-8"]);
+}
+
+#[test]
+fn the_ticket_filter_matches_the_worker_id_fallback() {
+    let rows = [
+        worker("GUZ-5", "2026-11-05T10:00:00Z"),
+        worker("w1", "2026-11-05T10:01:00Z"),
+    ];
+    let filter = Filter {
+        ticket: Some("GUZ-5".into()),
+        ..Filter::default()
+    };
+    let report = grouped_with(Dim::Ticket, &rows, &[], &filter, &linear_guz());
+    assert_eq!(keys(&report), ["GUZ-5"]);
+}
+
+fn spawn_in(store: &str, id: &str, at: &str, ticket: &str) -> Value {
+    with(spawn(id, at, ticket, "claude"), "store", json!(store))
+}
+
+fn close_in(store: &str, id: &str, at: &str) -> Value {
+    json!({"at": at, "worker_id": id, "event": "close", "store": store})
+}
+
+fn worker_in(store: &str, id: &str, at: &str) -> Value {
+    with(worker(id, at), "store", json!(store))
+}
+
+fn ticket_totals(report: &Report) -> Vec<(&str, u64)> {
+    report
+        .groups
+        .iter()
+        .map(|group| (group.key.as_str(), group.tokens.output))
+        .collect()
+}
+
+#[test]
+fn a_worker_id_reused_in_two_stores_keeps_each_stores_ticket() {
+    let workers = [
+        spawn_in("/a", "w1", "2026-11-05T10:00:00Z", "GUZ-1"),
+        spawn_in("/b", "w1", "2026-11-05T10:00:00Z", "GUZ-2"),
+    ];
+    let rows = [
+        worker_in("/a", "w1", "2026-11-05T10:30:00Z"),
+        worker_in("/b", "w1", "2026-11-05T10:31:00Z"),
+        worker_in("/b", "w1", "2026-11-05T10:32:00Z"),
+    ];
+    let report = grouped(Dim::Ticket, &rows, &workers, &Filter::default());
+    assert_eq!(ticket_totals(&report), [("GUZ-1", 10), ("GUZ-2", 20)]);
+}
+
+#[test]
+fn a_store_with_no_window_for_the_id_does_not_borrow_another_stores_ticket() {
+    let workers = [spawn_in("/a", "w1", "2026-11-05T10:00:00Z", "GUZ-1")];
+    let rows = [worker_in("/b", "w1", "2026-11-05T10:30:00Z")];
+    let report = grouped(Dim::Ticket, &rows, &workers, &Filter::default());
+    assert_eq!(keys(&report), ["unknown"]);
+}
+
+#[test]
+fn a_close_in_one_store_does_not_end_the_window_of_another() {
+    let workers = [
+        spawn_in("/a", "w1", "2026-11-05T10:00:00Z", "GUZ-1"),
+        spawn_in("/b", "w1", "2026-11-05T10:30:00Z", "GUZ-2"),
+        close_in("/a", "w1", "2026-11-05T11:00:00Z"),
+    ];
+    let rows = [worker_in("/b", "w1", "2026-11-05T12:00:00Z")];
+    let report = grouped(Dim::Ticket, &rows, &workers, &Filter::default());
+    assert_eq!(keys(&report), ["GUZ-2"]);
+}
+
+#[test]
+fn a_row_or_a_spawn_without_a_store_still_joins_by_worker_id() {
+    let workers = [
+        spawn_in("/a", "w1", "2026-11-05T10:00:00Z", "GUZ-1"),
+        spawn("w2", "2026-11-05T10:00:00Z", "GUZ-2", "claude"),
+    ];
+    let rows = [
+        worker("w1", "2026-11-05T10:30:00Z"),
+        worker_in("/a", "w2", "2026-11-05T10:30:00Z"),
+    ];
+    let report = grouped(Dim::Ticket, &rows, &workers, &Filter::default());
+    assert_eq!(keys(&report), ["GUZ-1", "GUZ-2"]);
 }
