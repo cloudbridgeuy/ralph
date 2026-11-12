@@ -139,11 +139,14 @@ fn a_resumed_worker_step_whose_worker_reported_done_moves_to_the_next_step() {
     let started = start(&stopped_on(1), &[("E1", "done")], &[]).unwrap();
     assert_eq!(
         started.driving,
-        driving(
-            1,
-            Awaiting::Report("watch:send-it-2".to_string()),
-            Run::default()
-        )
+        Driving {
+            briefed: false,
+            ..driving(
+                1,
+                Awaiting::Report("watch:send-it-2".to_string()),
+                Run::default()
+            )
+        }
     );
     assert_eq!(
         started.next,
@@ -164,7 +167,10 @@ fn a_resumed_worker_step_with_a_known_or_running_worker_holds_and_does_not_resen
         assert_eq!(started.next, Next::Hold("E1".to_string()));
         assert_eq!(
             started.driving,
-            driving(0, Awaiting::Report("E1".to_string()), Run::default())
+            Driving {
+                briefed: false,
+                ..driving(0, Awaiting::Report("E1".to_string()), Run::default())
+            }
         );
         assert_eq!(started.met, None);
     }
@@ -212,7 +218,7 @@ fn a_resumed_check_step_that_passes_is_met() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, Next::Send(STEP_4.to_string()));
+    assert!(is_brief_for(&ticked.next, STEP_4), "{:?}", ticked.next);
     assert_eq!(ticked.driving.progress, at(3));
 }
 
@@ -262,10 +268,8 @@ fn a_resumed_judge_step_judges_first_and_a_miss_is_not_a_judge_round() {
             ..ended(&file)
         },
     );
-    assert_eq!(
-        probed.next,
-        Next::Send(format!("{STEP_4}\njudge: not met: finding 2 is open"))
-    );
+    let retry = format!("{STEP_4}\njudge: not met: finding 2 is open");
+    assert!(is_brief_for(&probed.next, &retry), "{:?}", probed.next);
     assert_eq!(probed.driving.progress, at(3));
 }
 
@@ -540,4 +544,105 @@ fn a_settled_check_failure_carries_the_exit_code_and_output_from_its_report() {
             detail: Some("exited with code 1".to_string())
         })
     );
+}
+
+fn is_brief_for(next: &Next, line: &str) -> bool {
+    let Next::Send(text) = next else {
+        return false;
+    };
+    text.starts_with("send-it run ") && text.contains("Allowed:") && text.ends_with(line)
+}
+
+#[test]
+fn a_run_that_starts_with_a_check_briefs_the_first_step_it_sends() {
+    let mut plan = plan();
+    plan.steps.remove(0);
+    let file = approved(plan);
+    let started = start(&file, &[], &[]).unwrap();
+    assert!(!started.driving.briefed);
+    let settled = settle_check(
+        &Driving {
+            progress: at(1),
+            awaiting: Awaiting::Report(check_watch_id(1)),
+            ..started.driving
+        },
+        Some(&file),
+        &WatchOutcome::Exited(0),
+        &[],
+    );
+    assert!(
+        is_brief_for(
+            &settled.next,
+            "[send-it 3/3] address review · exit: judged: are all findings resolved?"
+        ),
+        "{:?}",
+        settled.next
+    );
+    assert!(settled.driving.briefed);
+}
+
+#[test]
+fn a_resume_on_a_check_step_briefs_the_first_step_it_sends() {
+    let file = stopped_on(3);
+    let started = start(&file, &[], &[]).unwrap();
+    assert!(!started.driving.briefed);
+    let settled = settle_check(&started.driving, Some(&file), &WatchOutcome::Exited(0), &[]);
+    assert!(is_brief_for(&settled.next, STEP_4), "{:?}", settled.next);
+    assert!(settled.driving.briefed);
+}
+
+#[test]
+fn a_tick_that_sends_first_after_a_hold_briefs_it() {
+    let mut plan = plan();
+    plan.steps.drain(1..3);
+    let file = approved(plan);
+    let resumed = start(
+        &RunFile {
+            stopped: Some(Stopped {
+                step: 1,
+                hash: plan_hash(&file.plan),
+            }),
+            ..file.clone()
+        },
+        &[],
+        &["E1"],
+    )
+    .unwrap();
+    assert_eq!(resumed.next, Next::Hold("E1".to_string()));
+    assert!(!resumed.driving.briefed);
+    let done = [worker_report("E1", "done")];
+    let ticked = tick(
+        &resumed.driving,
+        &Ended {
+            drained: &done,
+            ..ended(&file)
+        },
+    );
+    assert!(
+        is_brief_for(
+            &ticked.next,
+            "[send-it 2/2] address review · exit: judged: are all findings resolved?"
+        ),
+        "{:?}",
+        ticked.next
+    );
+    assert!(ticked.driving.briefed);
+}
+
+#[test]
+fn a_run_already_briefed_sends_later_steps_bare() {
+    let file = approved(plan());
+    let started = start(&file, &[], &[]).unwrap();
+    assert!(started.driving.briefed);
+    let settled = settle_check(
+        &Driving {
+            progress: at(2),
+            awaiting: Awaiting::Report(check_watch_id(2)),
+            ..started.driving
+        },
+        Some(&file),
+        &WatchOutcome::Exited(0),
+        &[],
+    );
+    assert_eq!(settled.next, Next::Send(STEP_4.to_string()));
 }

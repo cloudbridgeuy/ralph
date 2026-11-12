@@ -511,6 +511,7 @@ fn driving(step: usize, awaiting: Awaiting, run: Run) -> Driving {
         progress: at(step),
         run,
         awaiting,
+        briefed: true,
     }
 }
 

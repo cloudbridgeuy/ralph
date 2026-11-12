@@ -171,6 +171,7 @@ pub struct Driving {
     pub progress: Progress,
     pub run: Run,
     pub awaiting: Awaiting,
+    pub briefed: bool,
 }
 
 pub struct Ended<'a> {
@@ -262,16 +263,7 @@ pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
         Some(_) => probe(&file.plan, start, seen),
         None => advance(&file.plan, start, Event::Start),
     };
-    let (progress, next) = match first {
-        (progress, Next::Send(line)) => (
-            progress,
-            Next::Send(format!(
-                "send-it run {hash} is approved. Work the current step only, and take only the allowed actions; ralph checks each exit criterion and sends the next step.\n\n{}\n\n{line}",
-                render_run(&file.plan)
-            )),
-        ),
-        started => started,
-    };
+    let (progress, next) = first;
     let met = (progress.step > start.step || next == Next::Done)
         .then(|| met_line(&file.plan, start.step, None));
     let driving = Driving {
@@ -279,8 +271,35 @@ pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
         awaiting: awaiting(&next, progress),
         progress,
         run: Run::default(),
+        briefed: false,
     };
-    Some(Ticked { driving, next, met })
+    Some(Ticked { driving, next, met }.briefed_by(&file.plan))
+}
+
+impl Ticked {
+    fn briefed_by(self, plan: &RunPlan) -> Ticked {
+        match self.next {
+            Next::Send(line) if !self.driving.briefed => {
+                let next = Next::Send(brief(plan, &self.driving.hash, &line));
+                Ticked {
+                    driving: Driving {
+                        briefed: true,
+                        ..self.driving
+                    },
+                    next,
+                    met: self.met,
+                }
+            }
+            next => Ticked { next, ..self },
+        }
+    }
+}
+
+fn brief(plan: &RunPlan, hash: &str, line: &str) -> String {
+    format!(
+        "send-it run {hash} is approved. Work the current step only, and take only the allowed actions; ralph checks each exit criterion and sends the next step.\n\n{}\n\n{line}",
+        render_run(plan)
+    )
 }
 
 fn is_off(line: &str) -> bool {
@@ -373,6 +392,7 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
             progress,
             run,
             awaiting: awaiting(&next, progress),
+            briefed: driving.briefed,
         },
         next,
         met,
@@ -406,7 +426,7 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         waiting if decided == Next::Wait => waiting,
         _ => decided,
     };
-    finish(run, progress, next, met)
+    finish(run, progress, next, met).briefed_by(plan)
 }
 
 pub fn awaits_check(driving: &Driving) -> bool {
@@ -425,6 +445,7 @@ pub fn settle_check(
             progress,
             run: driving.run.clone(),
             awaiting: awaiting(&next, progress),
+            briefed: driving.briefed,
         },
         next,
         met,
@@ -454,7 +475,7 @@ pub fn settle_check(
             _ => decided,
         },
     };
-    finish(progress, next, met)
+    finish(progress, next, met).briefed_by(plan)
 }
 
 fn met_line(plan: &RunPlan, step: usize, evidence: Option<&str>) -> String {
