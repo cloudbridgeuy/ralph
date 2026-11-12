@@ -16,6 +16,7 @@ use ralph_core::chat_help::help_with_store;
 use ralph_core::chat_status::Route;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
+use ralph_core::worker::TicketKeys;
 use ralph_server::chat::watch;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::config::ChangesSection;
@@ -32,6 +33,7 @@ pub struct LocalRoute<'a> {
     pub display: &'a Display<'a>,
     pub changes: &'a ChangesSection,
     pub prices: &'a BTreeMap<String, PriceOverride>,
+    pub tickets: &'a TicketKeys,
     pub store: &'a Path,
     pub monitor: &'a Monitor,
     pub remote: &'a RemoteStatus,
@@ -73,7 +75,9 @@ fn run_shown(route: Route, ctx: &LocalRoute) -> io::Result<()> {
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::Direct(direct) => direct::run(direct, ctx),
-        Route::WorkerCosts(args) => workers::costs(ctx.display, ctx.prices, ctx.store, args),
+        Route::WorkerCosts(args) => {
+            workers::costs(ctx.display, ctx.prices, ctx.tickets, ctx.store, args)
+        }
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),

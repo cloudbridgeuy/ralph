@@ -8,7 +8,7 @@ use super::{builtin_prices, computed_usd, Source, Tokens, Usd, UNKNOWN};
 use crate::chat_process::UsageLine;
 use crate::wire::price::{strip_openai_prefix, PriceTable};
 use crate::wire::view::Pricing;
-use crate::worker::HarnessId;
+use crate::worker::{HarnessId, TicketKeys};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -262,7 +262,7 @@ enum Parsed {
     Malformed,
 }
 
-fn parsed(text: &str, windows: &[WorkerWindow]) -> Parsed {
+fn parsed(text: &str, windows: &[WorkerWindow], _keys: &TicketKeys) -> Parsed {
     let Ok(line) = serde_json::from_str::<UsageLine>(text) else {
         return Parsed::Malformed;
     };
@@ -288,10 +288,10 @@ fn parsed(text: &str, windows: &[WorkerWindow]) -> Parsed {
     }))
 }
 
-pub fn parse(usage: &str, windows: &[WorkerWindow]) -> Ledger {
+pub fn parse(usage: &str, windows: &[WorkerWindow], keys: &TicketKeys) -> Ledger {
     let mut ledger = Ledger::default();
     for text in usage.lines().filter(|text| !text.trim().is_empty()) {
-        match parsed(text, windows) {
+        match parsed(text, windows, keys) {
             Parsed::Entry(entry) => ledger.entries.push(*entry),
             Parsed::Skipped => {}
             Parsed::Malformed => ledger.malformed += 1,

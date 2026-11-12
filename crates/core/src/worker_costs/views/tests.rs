@@ -24,6 +24,7 @@ fn view_since(
     let inputs = Inputs {
         usage: &jsonl(usage),
         workers: &jsonl(workers),
+        tickets: &TicketKeys::default(),
     };
     costs_by_view(view, since, &inputs, &pricing)
 }

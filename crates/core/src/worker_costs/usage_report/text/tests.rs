@@ -51,6 +51,7 @@ fn shown_raw(view: View, usage: &str, workers: &[Value]) -> String {
     let inputs = Inputs {
         usage,
         workers: &jsonl(workers),
+        tickets: &TicketKeys::default(),
     };
     render(view, &inputs, &Filter::default(), &Utc, &pricing)
 }
@@ -326,7 +327,11 @@ fn chart_of(view: View, usage: &str) -> Option<String> {
         provider: provider.as_ref(),
         overrides: &overrides,
     };
-    let inputs = Inputs { usage, workers: "" };
+    let inputs = Inputs {
+        usage,
+        workers: "",
+        tickets: &TicketKeys::default(),
+    };
     chart(view, &inputs, &Filter::default(), &Utc, &pricing)
 }
 

@@ -1,6 +1,7 @@
 use super::chart::{bars_svg, daily_svg, pad_days, Heading};
 use super::{daily, group_by, parse, weekday, Dim, Filter, Group, Report, NO_DATA};
 use crate::wire::view::Pricing;
+use crate::worker::TicketKeys;
 use crate::worker_costs::tickets::parse_windows;
 use crate::worker_costs::{count, NO_USAGE};
 use chrono::TimeZone;
@@ -23,6 +24,7 @@ pub enum View {
 pub struct Inputs<'a> {
     pub usage: &'a str,
     pub workers: &'a str,
+    pub tickets: &'a TicketKeys,
 }
 
 fn dollars(group: &Group) -> f64 {
@@ -149,7 +151,7 @@ fn report_of<Tz: TimeZone>(
     pricing: &Pricing,
 ) -> Report {
     let windows = parse_windows(inputs.workers);
-    let ledger = parse(inputs.usage, &windows);
+    let ledger = parse(inputs.usage, &windows, inputs.tickets);
     match view {
         View::Daily => daily(&ledger, &windows, filter, zone, pricing),
         View::By(dim) => group_by(dim, &ledger, &windows, filter, pricing),
@@ -208,7 +210,7 @@ pub fn stores_to_read(usage: &str, only: Option<&str>) -> Vec<String> {
     if let Some(only) = only {
         return vec![only.to_string()];
     }
-    parse(usage, &[])
+    parse(usage, &[], &TicketKeys::default())
         .entries
         .into_iter()
         .filter_map(|entry| entry.line.store)
