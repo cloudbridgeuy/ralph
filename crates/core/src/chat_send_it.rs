@@ -1,7 +1,7 @@
 use crate::chat_help::{wrap, Command};
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
-use crate::watch::{watch_id, WatchKind, WatchOutcome, WatchSpec};
+use crate::watch::{describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT};
 use crate::worker::{HarnessId, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -575,7 +575,7 @@ pub enum StopReason {
     Unmet { step: usize },
     WorkerFlagged,
     JudgeRounds { step: usize, evidence: String },
-    CheckFailed { step: usize },
+    CheckFailed { step: usize, detail: Option<String> },
     Off,
     PlanChanged,
     NoReply,
@@ -584,7 +584,44 @@ pub enum StopReason {
     Refused { tool: String },
 }
 
+const DETAIL_LINES: usize = 3;
+const DETAIL_CHARS: usize = 200;
+const OUTPUT_HEADER: &str = "\nOutput:\n";
+const FOLLOW_UP_HEADER: &str = "\n\nFollow-up: ";
+
+fn output_tail(text: &str) -> Option<String> {
+    let output = text.split_once(OUTPUT_HEADER)?.1;
+    let output = output.split(FOLLOW_UP_HEADER).next().unwrap_or(output);
+    let lines: Vec<&str> = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    let tail = lines[lines.len().saturating_sub(DETAIL_LINES)..].join(" / ");
+    let chars = tail.chars().count();
+    if tail.is_empty() || tail == NO_OUTPUT {
+        None
+    } else if chars > DETAIL_CHARS {
+        let kept: String = tail.chars().skip(chars - DETAIL_CHARS).collect();
+        Some(format!("...{kept}"))
+    } else {
+        Some(tail)
+    }
+}
+
+pub fn check_detail(outcome: &WatchOutcome, report: Option<&Report>) -> String {
+    let exit = describe(outcome);
+    match report.and_then(|report| output_tail(&report.text)) {
+        Some(tail) => format!("{exit}; last output: {tail}"),
+        None => exit,
+    }
+}
+
 impl StopReason {
+    pub fn check_failed(step: usize) -> Self {
+        StopReason::CheckFailed { step, detail: None }
+    }
+
     pub fn notice(self, run: &Run, kept: Option<&RunFile>) -> String {
         let why = match self {
             StopReason::Off => return OFF_NOTICE.to_string(),
@@ -596,7 +633,12 @@ impl StopReason {
                 "step {step} was still not met after the last judge round: {}",
                 evidence.trim_end_matches('.')
             ),
-            StopReason::CheckFailed { step } => format!("step {step} check did not exit 0"),
+            StopReason::CheckFailed { step, detail } => {
+                let detail = detail.map_or(String::new(), |detail| {
+                    format!(" ({})", detail.trim_end_matches('.'))
+                });
+                format!("step {step} check did not exit 0{detail}")
+            }
             StopReason::PlanChanged => "the run plan changed or lost its approval".to_string(),
             StopReason::NoReply => "a turn ended without a reply".to_string(),
             StopReason::NeedsYou => "a schedule waits for your approval".to_string(),

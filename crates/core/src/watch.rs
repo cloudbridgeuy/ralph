@@ -8,7 +8,7 @@ pub const WATCH_ID_PREFIX: &str = "watch:";
 pub const TAIL_MAX_LINES: usize = 50;
 pub const TAIL_MAX_BYTES: usize = 8 * 1024;
 const TRUNCATED_MARKER: &str = "[earlier output truncated]";
-const NO_OUTPUT: &str = "(no output)";
+pub const NO_OUTPUT: &str = "(no output)";
 
 pub fn watch_id(raw: &str) -> String {
     if raw.starts_with(WATCH_ID_PREFIX) {
@@ -174,7 +174,7 @@ fn clip_end(line: &str, max_bytes: usize) -> &str {
     &line[start..]
 }
 
-fn describe(outcome: &WatchOutcome) -> String {
+pub fn describe(outcome: &WatchOutcome) -> String {
     match outcome {
         WatchOutcome::Exited(code) => format!("exited with code {code}"),
         WatchOutcome::Signaled(signal) => format!("was killed by signal {signal}"),

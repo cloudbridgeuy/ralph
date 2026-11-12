@@ -616,7 +616,7 @@ fn a_tick_takes_the_outcome_the_watch_left_in_its_slot() {
         (WatchOutcome::Exited(0), Next::Done),
         (
             WatchOutcome::Exited(1),
-            Next::Stop(StopReason::CheckFailed { step: 1 }),
+            Next::Stop(StopReason::check_failed(1)),
         ),
     ] {
         let active = Active {

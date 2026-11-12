@@ -123,10 +123,7 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             if *outcome == WatchOutcome::Exited(0) {
                 step_met(plan, progress)
             } else {
-                (
-                    progress,
-                    Next::Stop(StopReason::CheckFailed { step: number }),
-                )
+                (progress, Next::Stop(StopReason::check_failed(number)))
             }
         }
         (Event::Verdict(Some(result)), Criterion::Judge { .. }) if result.met => {
@@ -416,7 +413,12 @@ pub fn awaits_check(driving: &Driving) -> bool {
     matches!(&driving.awaiting, Awaiting::Report(source) if is_check_watch_id(source))
 }
 
-pub fn settle_check(driving: &Driving, file: Option<&RunFile>, outcome: &WatchOutcome) -> Ticked {
+pub fn settle_check(
+    driving: &Driving,
+    file: Option<&RunFile>,
+    outcome: &WatchOutcome,
+    reports: &[Report],
+) -> Ticked {
     let finish = |progress: Progress, next: Next, met: Option<String>| Ticked {
         driving: Driving {
             hash: driving.hash.clone(),
@@ -432,6 +434,17 @@ pub fn settle_check(driving: &Driving, file: Option<&RunFile>, outcome: &WatchOu
         Err(reason) => return finish(driving.progress, Next::Stop(reason), None),
     };
     let (progress, decided) = advance(plan, driving.progress, Event::Watched(outcome));
+    let source = check_watch_id(driving.progress.step);
+    let decided = match decided {
+        Next::Stop(StopReason::CheckFailed { step, .. }) => {
+            let report = reports.iter().find(|report| report.worker == source);
+            Next::Stop(StopReason::CheckFailed {
+                step,
+                detail: Some(check_detail(outcome, report)),
+            })
+        }
+        other => other,
+    };
     let met = (progress.step > driving.progress.step || decided == Next::Done)
         .then(|| met_line(plan, driving.progress.step, None));
     let next = match decided {

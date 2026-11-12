@@ -267,10 +267,10 @@ impl SendIt {
             *sending = Some(active);
             return Ok(Some(read));
         };
-        monitor.drain(Selection::At(position))?;
+        let reports = monitor.drain(Selection::At(position))?;
         monitor.refresh(true);
         let file = self.load().ok().flatten();
-        let ticked = settle_check(&active.driving, file.as_ref(), &outcome);
+        let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
         if let Some(met) = &ticked.met {
             self.log_notice(met);
         }
@@ -322,7 +322,7 @@ impl SendIt {
                     Err(error) => {
                         println!("{error}");
                         let step = driving.progress.step + 1;
-                        self.stopped(StopReason::CheckFailed { step }, &driving, monitor)
+                        self.stopped(StopReason::check_failed(step), &driving, monitor)
                     }
                 }
             }

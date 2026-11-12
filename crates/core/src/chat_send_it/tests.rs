@@ -28,7 +28,7 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
             step: 2,
             evidence: "tests fail".to_string(),
         },
-        StopReason::CheckFailed { step: 2 },
+        StopReason::check_failed(2),
         StopReason::PlanChanged,
         StopReason::NoReply,
         StopReason::NeedsYou,
@@ -395,7 +395,7 @@ fn each_watch_outcome_settles_a_check_as_met_or_failed() {
     ] {
         assert_eq!(
             advance(&plan, at(2), Event::Watched(&failed)),
-            (at(2), Next::Stop(StopReason::CheckFailed { step: 3 })),
+            (at(2), Next::Stop(StopReason::check_failed(3))),
             "{failed:?}"
         );
     }
@@ -481,10 +481,7 @@ fn new_stop_notices_name_the_step() {
         format!("send-it stopped: step 4 was still not met after the last judge round: finding 2 is open. {RESTART}")
     );
     for (reason, why) in [
-        (
-            StopReason::CheckFailed { step: 3 },
-            "step 3 check did not exit 0",
-        ),
+        (StopReason::check_failed(3), "step 3 check did not exit 0"),
         (StopReason::PlanChanged, "the run plan changed"),
         (StopReason::NoReply, "a turn ended without a reply"),
         (StopReason::NeedsYou, "a schedule waits for your approval"),
@@ -699,10 +696,7 @@ fn the_watched_outcome_settles_a_check_step() {
     let failed = WatchOutcome::Exited(2);
     for (watched, next) in [
         (Some(&passed), Next::Send(STEP_4.to_string())),
-        (
-            Some(&failed),
-            Next::Stop(StopReason::CheckFailed { step: 3 }),
-        ),
+        (Some(&failed), Next::Stop(StopReason::check_failed(3))),
         (None, Next::Check("cargo xtask lint".to_string())),
     ] {
         let ended = Ended {

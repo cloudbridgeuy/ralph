@@ -197,10 +197,7 @@ fn a_resumed_check_step_runs_the_check_first_and_a_failure_stops_the_run() {
             ..ended(&file)
         },
     );
-    assert_eq!(
-        stopped.next,
-        Next::Stop(StopReason::CheckFailed { step: 3 })
-    );
+    assert_eq!(stopped.next, Next::Stop(StopReason::check_failed(3)));
 }
 
 #[test]
@@ -296,6 +293,7 @@ fn a_passing_check_settles_into_the_next_step_with_a_met_line_and_no_turn() {
         &checking(&file, 2, run.clone()),
         Some(&file),
         &WatchOutcome::Exited(0),
+        &[],
     );
     assert_eq!(settled.next, Next::Send(STEP_4.to_string()));
     assert_eq!(settled.driving.progress, at(3));
@@ -316,6 +314,7 @@ fn a_passing_last_check_finishes_the_run() {
         &checking(&file, 2, Run::default()),
         Some(&file),
         &WatchOutcome::Exited(0),
+        &[],
     );
     assert_eq!(settled.next, Next::Done);
     assert_eq!(
@@ -331,6 +330,7 @@ fn a_passing_watch_chains_into_a_following_check_without_a_turn() {
         &checking(&file, 1, Run::default()),
         Some(&file),
         &WatchOutcome::Exited(0),
+        &[],
     );
     assert_eq!(settled.next, Next::Check("cargo xtask lint".to_string()));
     assert_eq!(
@@ -350,10 +350,11 @@ fn any_other_outcome_stops_the_run_with_check_failed_and_no_turn() {
         WatchOutcome::Stopped,
         WatchOutcome::WaitFailed("gone".to_string()),
     ] {
-        let settled = settle_check(&checking(&file, 2, run.clone()), Some(&file), &outcome);
+        let settled = settle_check(&checking(&file, 2, run.clone()), Some(&file), &outcome, &[]);
+        let detail = Some(check_detail(&outcome, None));
         assert_eq!(
             settled.next,
-            Next::Stop(StopReason::CheckFailed { step: 3 }),
+            Next::Stop(StopReason::CheckFailed { step: 3, detail }),
             "{outcome:?}"
         );
         assert_eq!(settled.driving.run, run);
@@ -365,10 +366,11 @@ fn any_other_outcome_stops_the_run_with_check_failed_and_no_turn() {
 fn a_failed_resume_probe_stops_with_check_failed() {
     let file = stopped_on(3);
     let started = start(&file, &[], &[]).unwrap();
-    let settled = settle_check(&started.driving, Some(&file), &WatchOutcome::Exited(1));
+    let settled = settle_check(&started.driving, Some(&file), &WatchOutcome::Exited(1), &[]);
+    let detail = Some("exited with code 1".to_string());
     assert_eq!(
         settled.next,
-        Next::Stop(StopReason::CheckFailed { step: 3 })
+        Next::Stop(StopReason::CheckFailed { step: 3, detail })
     );
 }
 
@@ -386,6 +388,7 @@ fn a_changed_unapproved_or_deleted_plan_stops_a_settling_check() {
             &checking(&file, 2, Run::default()),
             current,
             &WatchOutcome::Exited(0),
+            &[],
         );
         assert_eq!(settled.next, Next::Stop(StopReason::PlanChanged));
         assert_eq!(settled.driving.progress, at(2));
@@ -394,6 +397,7 @@ fn a_changed_unapproved_or_deleted_plan_stops_a_settling_check() {
         &checking(&file, 2, Run::default()),
         None,
         &WatchOutcome::Exited(0),
+        &[],
     );
     assert_eq!(off.next, Next::Stop(StopReason::Off));
 }
@@ -405,6 +409,7 @@ fn a_settled_check_at_the_turn_cap_stops_before_sending_the_next_step() {
         &checking(&file, 2, spent(30, 0.5)),
         Some(&file),
         &WatchOutcome::Exited(0),
+        &[],
     );
     assert_eq!(settled.next, Next::Stop(StopReason::TurnCap));
 }
@@ -416,4 +421,123 @@ fn only_a_run_waiting_on_a_generated_check_watch_awaits_a_check() {
     assert!(!awaits_check(&held(&file)));
     assert!(!awaits_check(&state(&file, 2, Awaiting::Turn)));
     assert!(!awaits_check(&state(&file, 3, Awaiting::Verdict)));
+}
+
+fn watch_report(id: &str, text: &str) -> Report {
+    Report {
+        worker: id.to_string(),
+        text: text.to_string(),
+        ..report("watch")
+    }
+}
+
+fn output_report(output: &str) -> Report {
+    watch_report(
+        "watch:send-it-3",
+        &format!(
+            "Watch `watch:send-it-3` exited with code 1.\nCommand: cargo xtask lint\n\nOutput:\n{output}"
+        ),
+    )
+}
+
+#[test]
+fn a_check_failure_detail_gives_the_exit_code_and_the_last_output_lines() {
+    let report = output_report("one\ntwo\nthree\nfour\nfive");
+    assert_eq!(
+        check_detail(&WatchOutcome::Exited(1), Some(&report)),
+        "exited with code 1; last output: three / four / five"
+    );
+}
+
+#[test]
+fn a_check_failure_detail_skips_the_follow_up_blank_lines_and_a_missing_output() {
+    let followed = watch_report(
+        "watch:send-it-3",
+        "Watch `x` exited with code 2.\nCommand: c\n\nOutput:\nboom\n\n\nFollow-up: tell me",
+    );
+    assert_eq!(
+        check_detail(&WatchOutcome::Exited(2), Some(&followed)),
+        "exited with code 2; last output: boom"
+    );
+    let silent = output_report("(no output)");
+    assert_eq!(
+        check_detail(&WatchOutcome::Exited(1), Some(&silent)),
+        "exited with code 1"
+    );
+    assert_eq!(
+        check_detail(&WatchOutcome::Signaled(9), None),
+        "was killed by signal 9"
+    );
+    let unrelated = watch_report("watch:send-it-3", "no output section here");
+    assert_eq!(
+        check_detail(&WatchOutcome::Exited(1), Some(&unrelated)),
+        "exited with code 1"
+    );
+}
+
+#[test]
+fn a_long_output_tail_keeps_only_its_last_characters() {
+    let report = output_report(&format!("{}END", "x".repeat(500)));
+    let detail = check_detail(&WatchOutcome::Exited(1), Some(&report));
+    let tail = detail
+        .strip_prefix("exited with code 1; last output: ")
+        .unwrap();
+    assert!(tail.starts_with("..."), "{tail}");
+    assert!(tail.ends_with("xxEND"), "{tail}");
+    assert_eq!(tail.chars().count(), 203);
+}
+
+#[test]
+fn a_check_failed_notice_carries_its_detail_in_brackets_and_stays_the_same_without_one() {
+    let run = Run::default();
+    let plain = StopReason::check_failed(3);
+    assert_eq!(
+        plain.notice(&run, None),
+        format!("send-it stopped: step 3 check did not exit 0. {RESTART}")
+    );
+    let detailed = StopReason::CheckFailed {
+        step: 3,
+        detail: Some("exited with code 1; last output: oops.".to_string()),
+    };
+    assert_eq!(
+        detailed.notice(&run, None),
+        format!(
+            "send-it stopped: step 3 check did not exit 0 (exited with code 1; last output: oops). {RESTART}"
+        )
+    );
+}
+
+#[test]
+fn a_settled_check_failure_carries_the_exit_code_and_output_from_its_report() {
+    let file = approved(plan());
+    let reports = [
+        watch_report("watch:send-it-1", "other"),
+        output_report("lint error: bad"),
+    ];
+    let settled = settle_check(
+        &checking(&file, 2, Run::default()),
+        Some(&file),
+        &WatchOutcome::Exited(1),
+        &reports,
+    );
+    assert_eq!(
+        settled.next,
+        Next::Stop(StopReason::CheckFailed {
+            step: 3,
+            detail: Some("exited with code 1; last output: lint error: bad".to_string())
+        })
+    );
+    let without = settle_check(
+        &checking(&file, 2, Run::default()),
+        Some(&file),
+        &WatchOutcome::Exited(1),
+        &[],
+    );
+    assert_eq!(
+        without.next,
+        Next::Stop(StopReason::CheckFailed {
+            step: 3,
+            detail: Some("exited with code 1".to_string())
+        })
+    );
 }
