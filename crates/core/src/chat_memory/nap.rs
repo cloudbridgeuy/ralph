@@ -60,6 +60,7 @@ pub fn check_summary(text: &str) -> Result<String, String> {
     Ok(text.to_string())
 }
 
+pub const NAP_TARGET_BYTES: usize = 480;
 pub const MAX_NAP_ATTEMPTS: usize = 5;
 pub const FALLBACK_MARK: &str = "[raw excerpt] ";
 
@@ -99,7 +100,7 @@ pub fn fallback_summary(source: &str) -> String {
 pub fn nap_system() -> String {
     format!(
         "You write one line of a chat memory tree.\n\
-         Summarize the input in ONE line of at most {SUMMARY_BYTES} bytes, about 70 words. Use the space up to the limit. Non-ASCII characters cost 2-4 bytes.\n\
+         Summarize the input in ONE line of at most {NAP_TARGET_BYTES} bytes, about 70 words. Use the space up to the limit. Non-ASCII characters cost 2-4 bytes.\n\
          Keep, in priority order: 1) the user's words (orders, decisions, corrections, preferences, reasons), kept close to verbatim; 2) lasting effects, commit SHAs, Linear ids and worker outcomes, copied exactly, and what failed and why; 3) findings and open questions; 4) least: steps taken and outcomes.\n\
          Lines with role worker come from agents working for the user. Never attribute their words to the user.\n\
          Name a minor item in a word or two rather than drop it.\n\
