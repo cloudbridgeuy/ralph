@@ -77,7 +77,7 @@ Each run has a turn cap and a cost cap. When the run reaches a cap, it stops.
 - A grant (`turn_cap` or `cost_cap`) replaces that cap. The plan shows grants in a separate "You pre-approve" block, so you see them before you approve.
 - These turns count toward the turn cap: step turns, judge turns, and report turns that settle nothing.
 - The turn that reads a worker or watch report and settles its step does not count.
-- The cost of every run turn counts toward the cost cap, also the free report turns.
+- The cost of every run turn counts toward the cost cap, also the free report turns. A turn costs its own spend, not the running total of the claude process, so the run cost equals the rise of the status bar total over the run turns. Keepalive pings, naps and workers do not count.
 
 Usage rows of run turns have the trigger `send_it`.
 
@@ -112,7 +112,7 @@ A run stops when:
 - the model uses a tool that the plan does not allow,
 - you take over.
 
-ralph shows a notice with the reason and the step that stopped, and tells you how to resume. It also posts an alert to the inbox. When all steps are met, ralph shows how many turns and how much cost the run used.
+ralph shows a notice with the reason and the step that stopped, and tells you how to resume. It also posts an alert to the inbox. When all steps are met, ralph shows how many turns and how much cost the run used. This cost is the cost of the run turns only, with no pings, naps or workers. Worker cost shows in `ralph usage`, not in the run cost.
 
 The model sees each stop and done notice, and the result of each `/send-it off`, `go`, `edit` and `save`, before its next message (see [Local command records](ralph-chat.md#local-command-records)). `/send-it status` is not recorded.
 

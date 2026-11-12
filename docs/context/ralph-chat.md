@@ -793,6 +793,8 @@ Every row has a `role` key: `main` for a turn or a ping, `nap`, `tag` (a tag pas
 jq -s '[.[] | select((.kind == "turn" and .process_turn != null) or .kind == "ping")] | group_by(.run) | map(reduce .[] as $t ([]; if $t.process_turn == 1 or length == 0 then . + [$t.cost_usd // 0] else .[-1] = ($t.cost_usd // .[-1]) end) | add) | add' <config dir>/usage.jsonl
 ```
 
+The cost of one turn is `spend_over` (`chat_process.rs`): the turn's running total minus the previous logged total of the same process, pings included, so a ping between two turns is not charged to the next turn. The first turn of a process (`process_turn` 1) pays its whole total. A total that goes down gives no delta on the status bar. The `/send-it` run cost uses the same rule, with 0 for a turn that gives none. `Session` keeps the previous total for turns and pings and hands it to the turn shell as `cost_before`.
+
 ### Timing log
 
 `<store>/analytics/timing.jsonl` holds one JSON line per timing event, next to `analytics/workers.jsonl`. `usage.jsonl` and `workers.jsonl` are unchanged. Every row has `v` (1), `at` (RFC 3339), `store` (the canonical store path, as in usage rows), `event`, and `run` (the same `<pid>-<start RFC 3339>` id the usage rows carry; absent when the writer has none). A reader must ignore fields it does not know. Optional fields are left out when empty.
