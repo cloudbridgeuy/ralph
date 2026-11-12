@@ -12,7 +12,7 @@ use ralph_core::worker::{
     activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, decode_statuses,
     gone_path, pending_requests, sent_path, spawn_record_path, status_path, unreported_path,
     waiting_path, workers_log_path, worktree_for_branch, ActivityMark, HarnessId, Report,
-    StatusLine, Ticket,
+    StatusLine, Ticket, TicketKeys,
 };
 use ralph_core::worker_costs::args::CostsArgs;
 use ralph_core::worker_costs::views::{costs_by_view, Inputs};
@@ -326,6 +326,7 @@ pub(super) fn shown(view: &View, display: &Display) -> String {
 pub(super) fn costs(
     display: &Display,
     prices: &BTreeMap<String, PriceOverride>,
+    tickets: &TicketKeys,
     store: &Path,
     args: CostsArgs,
 ) {
@@ -349,6 +350,7 @@ pub(super) fn costs(
                     &Inputs {
                         usage: &usage,
                         workers: &workers,
+                        tickets,
                     },
                     &pricing,
                 ),

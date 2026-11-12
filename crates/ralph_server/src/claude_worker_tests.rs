@@ -432,6 +432,18 @@ fn a_turn_end_records_the_transcript_as_one_claude_row() {
 }
 
 #[test]
+fn a_headless_claude_row_carries_the_ticket_of_its_spawn_record() {
+    let mut run = run(PermissionMode::Ask, &[]);
+    let usage = with_usage(&mut run);
+    crate::ledger::fixtures::spawn_record(run.dir.path(), "w", "GUZ-9");
+    end_turn(&run);
+    let rows = rows(&usage);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["harness"], "claude");
+    assert_eq!(rows[0]["ticket"], "GUZ-9");
+}
+
+#[test]
 fn claude_exit_records_the_rows_not_yet_seen() {
     let mut run = run(PermissionMode::Ask, &[]);
     let usage = with_usage(&mut run);

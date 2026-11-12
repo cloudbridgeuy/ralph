@@ -532,6 +532,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         display: &display,
         changes: &config.changes,
         prices: &config.wire.prices,
+        tickets: &config.tickets,
         store: &store_dir,
         monitor: &monitor,
         remote: &remote,

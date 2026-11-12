@@ -91,6 +91,7 @@ pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
     let inputs = Inputs {
         usage: &usage,
         workers: &workers,
+        tickets: &config.tickets,
     };
     let view = view_of(args.command);
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();

@@ -108,7 +108,8 @@ impl CodexUsage {
                         self.store
                             .as_ref()
                             .map(|store| store.to_string_lossy().into_owned()),
-                    );
+                    )
+                    .with_ticket(ledger::worker_ticket(self.store.as_deref(), &self.worker));
             ledger::record(usage_file, &usage)?;
         }
         Ok(())
@@ -247,5 +248,25 @@ mod tests {
         let rows = replay_subagent_frames();
         let models: Vec<&str> = rows.iter().map(|row| row.model.as_str()).collect();
         assert_eq!(models, ["gpt-6-luna", "gpt-6.1-sol"]);
+    }
+
+    #[test]
+    fn a_codex_row_carries_the_ticket_of_its_spawn_record() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::ledger::fixtures::spawn_record(dir.path(), "w1", "GUZ-9");
+        let file = dir.path().join("usage.jsonl");
+        let usage = CodexUsage::new("w1", Some(dir.path()));
+        usage.bind("parent", Some("gpt".into()));
+        usage.start_turn();
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("parent", 100, 100),
+            true,
+        );
+        let rows = usage.bound.lock().unwrap().turn.take();
+        usage.append("parent", &rows, None, &file).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        let row: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(row["ticket"], "GUZ-9");
     }
 }
