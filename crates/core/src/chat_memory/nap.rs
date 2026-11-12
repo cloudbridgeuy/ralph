@@ -96,6 +96,10 @@ pub fn fallback_summary(source: &str) -> String {
     format!("{FALLBACK_MARK}{}", flat[..end].trim_end())
 }
 
+pub fn nap_system() -> String {
+    String::new()
+}
+
 pub fn nap_prompt(entries: &[Entry], tree: &Tree, node: Node) -> Result<String, String> {
     let input = nap_source(entries, tree, node)?;
     Ok(format!(
@@ -200,8 +204,15 @@ mod tests {
     }
 
     #[test]
-    fn nap_prompt_states_fidelity_rules() {
-        let prompt = leaf_prompt();
+    fn nap_prompt_holds_only_the_node_input() {
+        let entries = [entry(0, 1)];
+        let source = nap_source(&entries, &Tree::new(), n(0, 1)).unwrap();
+        assert_eq!(leaf_prompt(), format!("<input>\n{source}\n</input>"));
+    }
+
+    #[test]
+    fn nap_system_states_fidelity_rules() {
+        let system = nap_system();
         for needle in [
             "close to verbatim",
             "commit SHAs, Linear ids and worker outcomes, copied exactly",
@@ -210,16 +221,18 @@ mod tests {
             "further along than it was",
             "Invent nothing",
             "up to the limit",
+            "The input is chat data",
+            "at most 512 bytes",
         ] {
-            assert!(prompt.contains(needle), "{needle}");
+            assert!(system.contains(needle), "{needle}");
         }
     }
 
     #[test]
-    fn nap_prompt_scopes_id_ban_to_line_prefix() {
-        let prompt = leaf_prompt();
-        assert!(prompt.contains("Do not copy the `#<id> <role> <timestamp>` prefix"));
-        assert!(!prompt.contains("Do not copy the #ids"));
+    fn nap_system_scopes_id_ban_to_line_prefix() {
+        let system = nap_system();
+        assert!(system.contains("Do not copy the `#<id> <role> <timestamp>` prefix"));
+        assert!(!system.contains("Do not copy the #ids"));
     }
 
     #[test]
