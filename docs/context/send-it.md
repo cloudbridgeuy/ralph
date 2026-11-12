@@ -77,7 +77,7 @@ Each run has a turn cap and a cost cap. When the run reaches a cap, it stops.
 - A grant (`turn_cap` or `cost_cap`) replaces that cap. The plan shows grants in a separate "You pre-approve" block, so you see them before you approve.
 - These turns count toward the turn cap: step turns, judge turns, and report turns that settle nothing.
 - The turn that reads a worker or watch report and settles its step does not count.
-- The cost of every run turn counts toward the cost cap, also the free report turns. A turn costs its own spend, not the running total of the claude process, so the run cost equals the rise of the status bar total over the run turns. Keepalive pings, naps and workers do not count.
+- The cost of every run turn counts toward the cost cap, also the free report turns. A turn costs its own spend, not the running total of the claude process, so the run cost equals the sum of the status bar deltas of the run turns. Keepalive pings, naps and workers do not count.
 
 Usage rows of run turns have the trigger `send_it`.
 

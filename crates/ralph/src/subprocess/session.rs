@@ -66,6 +66,7 @@ pub struct Session {
     reaped: bool,
     config: SpinnerSubprocessConfig,
     model_usage: BTreeMap<String, ModelTotals>,
+    /// Running cost of this process. It starts at 0, so the first call pays its whole total.
     cost_usd: Option<f64>,
 }
 
@@ -82,7 +83,7 @@ impl Session {
             reaped: false,
             config: config.clone(),
             model_usage: BTreeMap::new(),
-            cost_usd: None,
+            cost_usd: Some(0.0),
         })
     }
 

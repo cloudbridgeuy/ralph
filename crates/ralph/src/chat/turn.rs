@@ -381,6 +381,10 @@ impl Turn<'_> {
                 "Failed to record subagent usage",
             );
         }
+        *locked(&self.last_cost_usd) = recorded(&result).and_then(|turn| {
+            let total = turn.stream_result.costs.cost_usd?;
+            Some(spend_over(total, turn.cost_before, process_turns == 1).unwrap_or(0.0))
+        });
         match end {
             TurnEnd::Exit => return Ok(TurnOutcome::Exit),
             TurnEnd::Cancelled => {
@@ -402,9 +406,6 @@ impl Turn<'_> {
         };
         self.print_rule();
         let costs = &result.stream_result.costs;
-        *locked(&self.last_cost_usd) = costs
-            .cost_usd
-            .map(|total| spend_over(total, result.cost_before, process_turns == 1).unwrap_or(0.0));
         let blocked = hit_blocking_limit(costs);
         match extract_response_text(&result.stream_result.output_blocks) {
             Some(reply) if result.exit_code == 0 && !blocked => {
