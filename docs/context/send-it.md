@@ -58,7 +58,7 @@ The hash follows the content of the plan, not its layout. Any change to the cont
 Each step has one criterion. The run goes to the next step only when the criterion is met.
 
 - `worker_done { worker }`: the worker reports `done`. Any other report status from that worker stops the run.
-- `check_passes { command }` and `watch_passes { command }`: ralph runs the command as a watch. The step is met when the command exits 0. Any other result stops the run.
+- `check_passes { command }` and `watch_passes { command }`: ralph alone runs the command as a watch, with no model turn. The model never sees the step line and does not run the command. The step is met when the command exits 0. Any other result stops the run as `CheckFailed`, and the notice names the exit code and the last lines of the output. Put any work the check needs in an earlier step.
 - `judge { question }`: the model answers the question with "met" or "not met" and one line of evidence. See [Judge steps](#judge-steps).
 
 A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it. If the plan does not allow `reply`, ralph refuses the model's reply, so the worker gets no answer, and the run stops.
@@ -76,7 +76,8 @@ Each run has a turn cap and a cost cap. When the run reaches a cap, it stops.
 - The plan sets the caps in `[caps]`. A plan with no caps uses `[chat] send_it_max_turns` (default 15) and `[chat] send_it_max_usd` (default 5.0). See [configuration](../configuration.md).
 - A grant (`turn_cap` or `cost_cap`) replaces that cap. The plan shows grants in a separate "You pre-approve" block, so you see them before you approve.
 - These turns count toward the turn cap: step turns, judge turns, and report turns that settle nothing.
-- The turn that reads a worker or watch report and settles its step does not count.
+- The turn that reads a worker report and settles its step does not count.
+- A check or watch step has no turn at all. ralph settles it from the watch outcome, so it adds no turn and no cost to the run.
 - The cost of every run turn counts toward the cost cap, also the free report turns. A turn costs its own spend, not the running total of the claude process, so the run cost equals the sum of the status bar deltas of the run turns. Keepalive pings, naps and workers do not count.
 
 Usage rows of run turns have the trigger `send_it`.
@@ -118,7 +119,7 @@ The model sees each stop and done notice, and the result of each `/send-it off`,
 
 After a stop or a finished run, the plan stays in `run.toml` without its approval, until you type `/send-it off`. You can save it as a template or propose a new plan.
 
-To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The status line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. ralph first checks if step N is already met. For a worker step, a `done` report from the worker moves the run to the next step; a worker that is running, or that last reported anything else, makes the run wait for its report and does not send the step again; a worker ralph does not know gets the step again. A check or watch step runs its command first: exit 0 moves on, any other result sends the step again. A judge step is judged first: not met sends the step again, and this first judgement does not count as a judge round. A met step prints `send-it: step N/M met`. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
+To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The status line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. ralph first checks if step N is already met. For a worker step, a `done` report from the worker moves the run to the next step; a worker that is running, or that last reported anything else, makes the run wait for its report and does not send the step again; a worker ralph does not know gets the step again. A check or watch step runs its command first: exit 0 moves on, any other result stops the run with `CheckFailed`. A judge step is judged first: not met sends the step again, and this first judgement does not count as a judge round. A met step prints `send-it: step N/M met`. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
 
 For the exact notices, see [ralph chat: /send-it](ralph-chat.md#send-it).
 
