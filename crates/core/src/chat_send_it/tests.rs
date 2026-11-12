@@ -251,9 +251,11 @@ fn the_restatement_numbers_steps_and_keeps_grants_in_their_own_block() {
            1. collect evidence\n     \
               exit: worker E1 reports done\n  \
            2. wait for CI\n     \
-              exit: watch `gh pr checks --watch` exits 0\n  \
+              exit: watch `gh pr checks --watch` exits 0\n     \
+              ralph runs this check alone: put any work in an earlier step\n  \
            3. run the checks\n     \
-              exit: `cargo xtask lint` exits 0\n  \
+              exit: `cargo xtask lint` exits 0\n     \
+              ralph runs this check alone: put any work in an earlier step\n  \
            4. address review\n     \
               exit: judged: are all findings resolved?\n\
          Allowed: spawn codex workers, merge, paid runs up to $2.50\n\

@@ -176,7 +176,17 @@ pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
     })
 }
 
+const RUN_BY_RALPH_NOTE: &str = "ralph runs this check alone: put any work in an earlier step";
+const RUN_BY_RALPH_RULE: &str = "A watch_passes or check_passes step is run by ralph alone, with no model turn: put any work it needs in an earlier step.";
+
 impl Criterion {
+    fn runs_in_ralph(&self) -> bool {
+        matches!(
+            self,
+            Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. }
+        )
+    }
+
     fn label(&self) -> String {
         match self {
             Criterion::WorkerDone { worker } => format!("worker {worker} reports done"),
@@ -217,6 +227,9 @@ pub fn render_run(plan: &RunPlan) -> String {
     for (index, step) in plan.steps.iter().enumerate() {
         lines.push(format!("  {}. {}", index + 1, step.task));
         lines.push(format!("     exit: {}", step.criterion.label()));
+        if step.criterion.runs_in_ralph() {
+            lines.push(format!("     {RUN_BY_RALPH_NOTE}"));
+        }
     }
     let allowed: Vec<String> = plan.allowed.iter().map(Action::label).collect();
     lines.push(if allowed.is_empty() {
@@ -428,7 +441,7 @@ pub fn propose_refusal(existing: Option<&RunFile>) -> Option<String> {
 
 pub fn propose_prompt(text: &str) -> String {
     format!(
-        "/send-it: restate these instructions as a run plan. Call `propose_run` once with the plan, then stop. Do not start the work: ralph shows the plan and the person approves it with /send-it go.\n\n{text}"
+        "/send-it: restate these instructions as a run plan. Call `propose_run` once with the plan, then stop. Do not start the work: ralph shows the plan and the person approves it with /send-it go. {RUN_BY_RALPH_RULE}\n\n{text}"
     )
 }
 
@@ -449,7 +462,7 @@ pub fn propose_run_tool() -> Value {
                             "do": {"type": "string", "description": "What the step does."},
                             "criterion": {
                                 "type": "object",
-                                "description": "Exit check. worker_done needs worker; watch_passes and check_passes need a command that exits 0; judge needs a question.",
+                                "description": format!("Exit check. worker_done needs worker; watch_passes and check_passes need a command that exits 0; judge needs a question. {RUN_BY_RALPH_RULE}"),
                                 "properties": {
                                     "kind": {"type": "string", "enum": ["worker_done", "watch_passes", "check_passes", "judge"]},
                                     "worker": {"type": "string"},

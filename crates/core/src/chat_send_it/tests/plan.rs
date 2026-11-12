@@ -271,3 +271,29 @@ fn a_wide_screen_shows_the_plan_unchanged() {
         )
     );
 }
+
+const CHECK_RULE: &str = "run by ralph alone, with no model turn";
+
+#[test]
+fn the_propose_prompt_and_tool_say_a_check_step_is_run_by_ralph_alone() {
+    let prompt = propose_prompt("ship GUZ-1");
+    assert!(prompt.contains(CHECK_RULE), "{prompt}");
+    assert!(prompt.contains("earlier step"), "{prompt}");
+    let tool = propose_run_tool();
+    let criterion = tool["inputSchema"]["properties"]["steps"]["items"]["properties"]["criterion"]
+        ["description"]
+        .as_str()
+        .unwrap();
+    assert!(criterion.contains(CHECK_RULE), "{criterion}");
+    assert!(criterion.contains("earlier step"), "{criterion}");
+}
+
+#[test]
+fn only_a_check_or_watch_step_carries_the_run_by_ralph_note() {
+    let text = render_run(&plan());
+    assert_eq!(text.matches("ralph runs this check alone").count(), 2);
+    let first_note = text.find("ralph runs this check alone").unwrap();
+    assert!(first_note > text.find("2. wait for CI").unwrap());
+    assert!(text.find("1. collect evidence").unwrap() < first_note);
+    assert!(!text[..text.find("2. wait for CI").unwrap()].contains("ralph runs this check alone"));
+}
