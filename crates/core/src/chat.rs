@@ -97,7 +97,7 @@ const PROMPT_REPLY_FORMAT: &str = "\
 Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options.";
 
 const PROMPT_CONTRACT: &str = "\
-When the reply will end with a Next step the user can say, call `suggest_reply` first, before you write any reply text, with the exact quoted words of that line. Then write the reply once and never mention the suggestion.
+End the reply with a final line `Next step: <the exact words the person can say, on one line, 200 characters at most>`. Write the reply once; ralph pre-fills that line as the person's next prompt.
 
 Ralph help: when the person asks how ralph chat itself works (its commands, keys, or status bar), call `help` first and answer from its text, not from the ralph source.
 
@@ -474,8 +474,8 @@ mod tests {
         };
         let prompt = turn_system_prompt(&custom, ReplyImages::Inline, &[]);
         assert!(prompt.starts_with(PROMPT_HEAD));
-        assert!(prompt.contains("\n\nBe terse.\n\nWhen the reply will end"));
-        assert!(prompt.contains("call `suggest_reply` first"));
+        assert!(prompt.contains("\n\nBe terse.\n\nEnd the reply with a final line"));
+        assert!(prompt.contains("a final line `Next step:"));
         assert!(prompt.contains("call `help` first"));
         assert!(prompt.contains("Ralph config:"));
         assert!(prompt.ends_with(PROMPT_TAIL));
@@ -532,8 +532,8 @@ mod tests {
         for needle in [
             "lead with the answer",
             "one recommended next step",
-            "call `suggest_reply` first, before you write any reply text",
-            "never mention the suggestion",
+            "End the reply with a final line `Next step:",
+            "ralph pre-fills that line as the person's next prompt",
             "call `help` first and answer from its text",
             "call `help` with topic `config`, then `config <section>`",
             "asks to change how ralph behaves or looks",

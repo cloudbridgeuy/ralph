@@ -28,6 +28,7 @@ use ralph_core::chat_memory::{
 };
 use ralph_core::chat_process::ResetReason;
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
+use ralph_core::chat_suggestion::from_reply;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
 use ralph_server::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
@@ -413,6 +414,9 @@ impl Turn<'_> {
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
                 *locked(&self.seen_len) = self.store.log_len().ok();
+                if let Some(suggestion) = from_reply(&reply) {
+                    self.suggestions.set(suggestion);
+                }
                 self.warn_if_err(
                     spawn_nap(self.store_dir, self.run),
                     "Failed to start chat memory nap",

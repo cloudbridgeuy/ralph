@@ -1,4 +1,5 @@
 use crate::chat_hold::{hold_targets, HoldFilter};
+use crate::chat_recap::next_step;
 use crate::chat_status::Status;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -23,6 +24,10 @@ pub fn parse_suggestion(args: &Value) -> Result<String, String> {
     let Some(raw) = args.get("text").and_then(Value::as_str) else {
         return Err("Missing string argument 'text'.".to_string());
     };
+    checked(raw)
+}
+
+fn checked(raw: &str) -> Result<String, String> {
     let text = raw.trim();
     let length = text.chars().count();
     if text.is_empty() {
@@ -44,8 +49,15 @@ pub fn parse_suggestion(args: &Value) -> Result<String, String> {
     }
 }
 
-pub fn from_reply(_reply: &str) -> Option<String> {
-    None
+fn unquoted(text: &str) -> &str {
+    ['"', '`']
+        .iter()
+        .find_map(|quote| text.strip_prefix(*quote)?.strip_suffix(*quote))
+        .unwrap_or(text)
+}
+
+pub fn from_reply(reply: &str) -> Option<String> {
+    checked(unquoted(next_step(reply)?)).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
