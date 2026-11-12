@@ -1,5 +1,4 @@
 use crate::chat::send_it::SendIt;
-use crate::chat::suggestion::SuggestionSlot;
 use crate::schedule_store::ScheduleStore;
 use crate::watch_requests;
 use chrono::{Local, Utc};
@@ -9,7 +8,6 @@ use ralph_core::chat_socket::{
     check_socket_path, decode_line, encode_line, orphan_sidecar_fate, runtime_dir_pid, sidecar_pid,
     socket_fate, SocketFacts, SocketFate, SocketOwner, SocketRequest, SocketResponse, StoreKey,
 };
-use ralph_core::chat_suggestion::parse_suggestion;
 use ralph_core::schedule_request::{
     duplicate_message, proposed_message, ScheduleRequest, SCHEDULE_DIR,
 };
@@ -35,7 +33,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-const SUGGEST_REPLY: &str = "suggest_reply";
 const PROPOSE_RUN: &str = "propose_run";
 type Roster = Box<dyn Fn() -> String + Send + Sync>;
 const WORKERS: &str = "workers";
@@ -47,7 +44,6 @@ const ACCEPT_RETRY: Duration = Duration::from_millis(50);
 pub(crate) struct Shared {
     pub(crate) store: Store,
     pub(crate) workers: Workers,
-    pub(crate) suggestions: SuggestionSlot,
     pub(crate) send_it: SendIt,
     pub(crate) watches: Watches,
 }
@@ -225,16 +221,9 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
     let Shared {
         store,
         workers,
-        suggestions,
         send_it,
         watches,
     } = shared;
-    if request.tool == SUGGEST_REPLY {
-        suggestions.set(parse_suggestion(&request.args)?);
-        return Ok(
-            "Suggested reply set. Now write your reply; do not mention the suggestion.".to_string(),
-        );
-    }
     if request.tool == WATCH_LIST {
         return Ok(watch_requests::list_text(watches, store.dir(), Utc::now()));
     }
@@ -383,7 +372,6 @@ mod tests {
         Shared {
             store: Store::new(dir.to_path_buf()),
             workers: workers(),
-            suggestions: SuggestionSlot::default(),
             send_it: SendIt::new(
                 dir,
                 Limits {
@@ -593,36 +581,6 @@ mod tests {
         let unknown = respond(&shared(store.dir()), &request("zoom", json!({})));
         assert!(unknown.is_error);
         assert!(unknown.text.contains("Unknown tool"));
-    }
-
-    #[test]
-    fn suggest_reply_stores_the_newest_text_without_a_pending_turn() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::new(dir.path().to_path_buf());
-        let shared = shared(store.dir());
-        for text in ["first", " second "] {
-            let call = request("suggest_reply", json!({"text": text}));
-            let response = respond(&shared, &call);
-            assert!(!response.is_error);
-            assert_eq!(
-                response.text,
-                "Suggested reply set. Now write your reply; do not mention the suggestion."
-            );
-        }
-        assert_eq!(shared.suggestions.take(), Some("second".to_string()));
-    }
-
-    #[test]
-    fn invalid_suggest_reply_is_an_error_and_keeps_the_slot() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::new(dir.path().to_path_buf());
-        let shared = shared(store.dir());
-        shared.suggestions.set("kept".to_string());
-        let call = request("suggest_reply", json!({"text": "a\nb"}));
-        let response = respond(&shared, &call);
-        assert!(response.is_error);
-        assert!(response.text.contains("line break"));
-        assert_eq!(shared.suggestions.take(), Some("kept".to_string()));
     }
 
     #[test]
