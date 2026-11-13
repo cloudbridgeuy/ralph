@@ -58,7 +58,7 @@ The hash follows the content of the plan, not its layout. Any change to the cont
 Each step has one criterion. The run goes to the next step only when the criterion is met.
 
 - `worker_done { worker }`: the worker reports `done`. Any other report status from that worker stops the run.
-- `check_passes { command }` and `watch_passes { command }`: ralph alone runs the command as a watch, with no model turn. The model never sees the step line and does not run the command. The step is met when the command exits 0. Any other result stops the run as `CheckFailed`, and the notice names the exit code and the last lines of the output. Put any work the check needs in an earlier step.
+- `check_passes { command }` and `watch_passes { command }`: ralph alone runs the command as a watch, with no model turn. The model never sees the step line and does not run the command. The step is met when the command exits 0. Any other result stops the run as `CheckFailed`, and the notice names the exit code and the last lines of the output. If the watch cannot start, the run stops with a notice that says the check could not start and names the error. Put any work the check needs in an earlier step.
 - `judge { question }`: the model answers the question with "met" or "not met" and one line of evidence. See [Judge steps](#judge-steps).
 
 A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it. If the plan does not allow `reply`, ralph refuses the model's reply, so the worker gets no answer, and the run stops.

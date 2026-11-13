@@ -322,7 +322,14 @@ impl SendIt {
                     Err(error) => {
                         println!("{error}");
                         let step = driving.progress.step + 1;
-                        self.stopped(StopReason::check_failed(step), &driving, monitor)
+                        self.stopped(
+                            StopReason::CheckNotStarted {
+                                step,
+                                error: error.to_string(),
+                            },
+                            &driving,
+                            monitor,
+                        )
                     }
                 }
             }

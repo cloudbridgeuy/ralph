@@ -646,3 +646,17 @@ fn a_run_already_briefed_sends_later_steps_bare() {
     );
     assert_eq!(settled.next, Next::Send(STEP_4.to_string()));
 }
+
+#[test]
+fn a_check_that_could_not_start_says_so_and_names_the_error() {
+    let notice = StopReason::CheckNotStarted {
+        step: 3,
+        error: "no such file".to_string(),
+    }
+    .notice(&Run::default(), None);
+    assert_eq!(
+        notice,
+        format!("send-it stopped: step 3 check could not start: no such file. {RESTART}")
+    );
+    assert!(!notice.contains("did not exit 0"), "{notice}");
+}

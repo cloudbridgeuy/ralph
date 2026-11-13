@@ -589,6 +589,7 @@ pub enum StopReason {
     WorkerFlagged,
     JudgeRounds { step: usize, evidence: String },
     CheckFailed { step: usize, detail: Option<String> },
+    CheckNotStarted { step: usize, error: String },
     Off,
     PlanChanged,
     NoReply,
@@ -652,6 +653,10 @@ impl StopReason {
                 });
                 format!("step {step} check did not exit 0{detail}")
             }
+            StopReason::CheckNotStarted { step, error } => format!(
+                "step {step} check could not start: {}",
+                error.trim_end_matches('.')
+            ),
             StopReason::PlanChanged => "the run plan changed or lost its approval".to_string(),
             StopReason::NoReply => "a turn ended without a reply".to_string(),
             StopReason::NeedsYou => "a schedule waits for your approval".to_string(),
