@@ -1,7 +1,10 @@
 use crate::chat_help::{wrap, Command};
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
-use crate::watch::{describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT};
+use crate::watch::{
+    describe, watch_id, WatchKind, WatchOutcome, WatchSpec, FOLLOW_UP_HEADER, NO_OUTPUT,
+    OUTPUT_HEADER,
+};
 use crate::worker::{HarnessId, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -601,8 +604,6 @@ pub enum StopReason {
 const DETAIL_LINES: usize = 3;
 const DETAIL_CHARS: usize = 200;
 const ELLIPSIS: &str = "...";
-const OUTPUT_HEADER: &str = "\nOutput:\n";
-const FOLLOW_UP_HEADER: &str = "\n\nFollow-up: ";
 
 fn output_tail(text: &str) -> Option<String> {
     let output = text.split_once(OUTPUT_HEADER)?.1;

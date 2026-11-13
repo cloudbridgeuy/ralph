@@ -186,6 +186,9 @@ pub fn describe(outcome: &WatchOutcome) -> String {
     }
 }
 
+pub const OUTPUT_HEADER: &str = "\n\nOutput:\n";
+pub const FOLLOW_UP_HEADER: &str = "\n\nFollow-up: ";
+
 pub fn report_text(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail) -> String {
     let rendered = tail.render();
     let output = if rendered.is_empty() {
@@ -194,13 +197,13 @@ pub fn report_text(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail) -> Str
         rendered
     };
     let mut text = format!(
-        "Watch `{}` {}.\nCommand: {}\n\nOutput:\n{output}",
+        "Watch `{}` {}.\nCommand: {}{OUTPUT_HEADER}{output}",
         spec.id,
         describe(outcome),
         spec.command
     );
     if let Some(follow_up) = &spec.follow_up {
-        text.push_str(&format!("\n\nFollow-up: {follow_up}"));
+        text.push_str(&format!("{FOLLOW_UP_HEADER}{follow_up}"));
     }
     text
 }
@@ -465,6 +468,21 @@ mod tests {
         assert!(text.ends_with("\n\nFollow-up: Merge the PR."));
         let without = report_text(&spec(None), &WatchOutcome::Exited(0), &tail_of(&["ok"]));
         assert!(!without.contains("Follow-up"));
+    }
+
+    #[test]
+    fn a_built_report_gives_its_output_tail_to_the_check_detail_without_the_follow_up() {
+        let outcome = WatchOutcome::Exited(2);
+        let report = build_report(
+            &spec(Some("Merge the PR.")),
+            &outcome,
+            &tail_of(&["first", "boom"]),
+            "t1",
+        );
+        assert_eq!(
+            crate::chat_send_it::check_detail(&outcome, Some(&report)),
+            "exited with code 2; last output: first / boom"
+        );
     }
 
     #[test]
