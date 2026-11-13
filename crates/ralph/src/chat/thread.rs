@@ -535,10 +535,11 @@ mod tests {
             ..ViewSplit::default()
         };
         let split = fork_view(&fork, own).unwrap();
-        assert_eq!(split.older.len(), 4, "{:?}", split.older);
-        assert!(split.older[1].starts_with("#0 user"), "{:?}", split.older);
+        assert_eq!(split.older.len(), 5, "{:?}", split.older);
+        assert!(split.older[1].starts_with("--- "), "{:?}", split.older);
+        assert!(split.older[2].starts_with("#0 user"), "{:?}", split.older);
         assert!(
-            split.older[2].starts_with("#1 assistant"),
+            split.older[3].starts_with("#1 assistant"),
             "{:?}",
             split.older
         );
@@ -783,8 +784,9 @@ mod tests {
         let auth = name("auth");
         let log_before = Store::new(main.clone()).log_len().unwrap();
         let printed = view_thread(&main, &auth, &[]).unwrap();
-        let head = "[thread auth · view]\nThread auth, forked from main at #2, with its memory view posted to main:\n#auth:0 user";
+        let head = "[thread auth · view]\nThread auth, forked from main at #2, with its memory view posted to main:\n--- ";
         assert!(printed.starts_with(head), "{printed}");
+        assert!(printed.contains("\n#auth:0 user"), "{printed}");
         let merged = read_meta(&dir).unwrap().merged.unwrap();
         assert!(printed.ends_with(&merged.digest), "{printed}");
         assert!(Inbox::new(main.join(INBOX_DIR))

@@ -2,13 +2,53 @@ use super::*;
 use crate::chat_memory::fixtures::{entry, n, texted};
 use crate::chat_memory::{Role, FALLBACK_MARK};
 
+fn unheaded(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .filter(|l| !l.starts_with("--- "))
+        .collect()
+}
+
+fn bare_view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
+    unheaded(view(entries, tree, budget))
+}
+
+fn bare_tail(entries: &[Entry], tree: &Tree, from: usize, budget: usize) -> Vec<String> {
+    unheaded(tail_lines(entries, tree, from, budget))
+}
+
+fn bare_split(entries: &[Entry], tree: &Tree, budget: usize, recent: usize) -> ViewSplit {
+    let split = split_view(entries, tree, budget, recent);
+    ViewSplit {
+        older: unheaded(split.older),
+        middle: unheaded(split.middle),
+        tail: unheaded(split.tail),
+    }
+}
+
+fn plain(i: usize, entry: &Entry, body: &str) -> String {
+    format!("#{i} {} {body}", entry.role.as_str())
+}
+
+fn plain_leaf(i: usize, entry: &Entry, tree: &Tree) -> String {
+    plain(i, entry, &leaf_body(i, entry, tree).unwrap())
+}
+
+fn plain_node(entries: &[Entry], tree: &Tree, node: Node) -> String {
+    if node.size() == 1 {
+        plain_leaf(node.lo, &entries[node.lo], tree)
+    } else {
+        node_line(entries, tree, node).unwrap()
+    }
+}
+
 fn mixed(count: usize) -> Vec<Entry> {
     (0..count)
         .map(|i| entry(i, if i.is_multiple_of(3) { 600 } else { 5 }))
         .collect()
 }
 
-fn summarized(entries: &[Entry]) -> Tree {
+pub(super) fn summarized(entries: &[Entry]) -> Tree {
     let mut tree = Tree::new();
     loop {
         let todo = pending(entries, &tree);
@@ -138,7 +178,7 @@ fn the_view_falls_back_to_children_for_a_skipped_range() {
     let tree = summarized(&entries);
     assert!(!tree.contains_key(&n(4, 6)) && !tree.contains_key(&n(0, 8)));
     assert!(tree.contains_key(&n(0, 4)) && tree.contains_key(&n(6, 8)));
-    let lines = view(&entries, &tree, 4);
+    let lines = bare_view(&entries, &tree, 4);
     assert_eq!(lines.len(), 4, "{lines:?}");
     assert!(lines[0].starts_with("#0-3 ") && lines[1].starts_with("#4 "));
     assert_eq!(lines[2], "[#5: unreadable log line, skipped]");
@@ -153,12 +193,12 @@ fn marked(count: usize, at: &[usize]) -> Vec<Entry> {
 #[test]
 fn the_view_collapses_a_run_of_placeholders_into_one_notice() {
     let entries = marked(8, &[5, 6]);
-    let lines = view(&entries, &summarized(&entries), 8);
+    let lines = bare_view(&entries, &summarized(&entries), 8);
     assert_eq!(lines.len(), 7, "{lines:?}");
     assert!(lines[4].starts_with("#4 "));
     assert_eq!(lines[5], "[#5-6: unreadable log lines, skipped]");
     assert!(lines[6].starts_with("#7 "));
-    let lines = view(&marked(8, &[5, 6, 7]), &Tree::new(), 8);
+    let lines = bare_view(&marked(8, &[5, 6, 7]), &Tree::new(), 8);
     assert_eq!(lines.len(), 6, "{lines:?}");
     assert!(lines[4].starts_with("#4 "));
     assert_eq!(lines[5], "[#5-7: unreadable log lines, skipped]");
@@ -167,7 +207,7 @@ fn the_view_collapses_a_run_of_placeholders_into_one_notice() {
 #[test]
 fn the_view_shows_a_placeholder_at_the_start_as_a_notice() {
     let entries = marked(4, &[0, 1]);
-    let lines = view(&entries, &Tree::new(), 4);
+    let lines = bare_view(&entries, &Tree::new(), 4);
     assert_eq!(lines.len(), 3, "{lines:?}");
     assert_eq!(lines[0], "[#0-1: unreadable log lines, skipped]");
     assert!(lines[1].starts_with("#2 ") && lines[2].starts_with("#3 "));
@@ -177,14 +217,14 @@ fn the_view_shows_a_placeholder_at_the_start_as_a_notice() {
 fn the_tail_collapses_placeholders_and_keeps_other_ids() {
     let entries = marked(6, &[0, 3, 4]);
     for budget in [0, 100] {
-        let lines = tail_lines(&entries, &Tree::new(), 0, budget);
+        let lines = bare_tail(&entries, &Tree::new(), 0, budget);
         assert_eq!(lines.len(), 5, "{lines:?}");
         assert_eq!(lines[0], "[#0: unreadable log line, skipped]");
         assert!(lines[1].starts_with("#1 ") && lines[2].starts_with("#2 "));
         assert_eq!(lines[3], "[#3-4: unreadable log lines, skipped]");
         assert!(lines[4].starts_with("#5 "));
     }
-    let at_end = tail_lines(&marked(3, &[2]), &Tree::new(), 1, 100);
+    let at_end = bare_tail(&marked(3, &[2]), &Tree::new(), 1, 100);
     assert_eq!(at_end.len(), 2, "{at_end:?}");
     assert!(at_end[0].starts_with("#1 "));
     assert_eq!(at_end[1], "[#2: unreadable log line, skipped]");
@@ -206,7 +246,7 @@ fn pending_parent_shows_committed_halves_and_raw_excerpts() {
     let mut tree = Tree::new();
     tree.insert(n(0, 1), "leaf zero".into());
     tree.insert(n(0, 2), "pair zero".into());
-    let lines = view(&entries, &tree, 3);
+    let lines = bare_view(&entries, &tree, 3);
     assert_eq!(lines.len(), 3);
     assert_eq!(lines[0], "#0-1 pair zero");
     assert!(lines[1].starts_with("#2 user ") && lines[1].contains(FALLBACK_MARK));
@@ -219,12 +259,12 @@ fn pending_parent_shows_committed_halves_and_raw_excerpts() {
 #[test]
 fn tail_shows_a_pending_long_leaf_as_raw_excerpt() {
     let entries = vec![entry(0, 600), entry(1, 5)];
-    let lines = tail_lines(&entries, &Tree::new(), 0, 0);
+    let lines = bare_tail(&entries, &Tree::new(), 0, 0);
     assert_eq!(lines.len(), 2);
     assert!(lines[0].contains(FALLBACK_MARK));
     let mut tree = Tree::new();
     tree.insert(n(0, 1), "done".into());
-    assert!(tail_lines(&entries, &tree, 0, 0)[0].ends_with(" done"));
+    assert!(bare_tail(&entries, &tree, 0, 0)[0].ends_with(" done"));
 }
 
 #[test]
@@ -268,7 +308,7 @@ fn verbatim_start_stops_at_the_first_entry_that_does_not_fit() {
 #[test]
 fn tail_keeps_multiline_messages_verbatim_within_budget() {
     let entries = texted(2, |i| format!("line one\n\n  line two {i}"));
-    let lines = tail_lines(&entries, &Tree::new(), 0, 100);
+    let lines = bare_tail(&entries, &Tree::new(), 0, 100);
     assert_eq!(lines.len(), 2);
     assert!(lines[0].starts_with("#0 user ") && lines[0].ends_with("line one\n\n  line two 0"));
     assert!(lines[1].ends_with("line one\n\n  line two 1"));
@@ -277,38 +317,38 @@ fn tail_keeps_multiline_messages_verbatim_within_budget() {
 #[test]
 fn tail_rolls_older_messages_into_settled_form() {
     let entries = texted(4, |i| format!("a\nb {i}"));
-    let lines = tail_lines(&entries, &Tree::new(), 0, 4);
-    assert_eq!(lines[0], entry_line(0, &entries[0], "a b 0"));
-    assert_eq!(lines[1], entry_line(1, &entries[1], "a b 1"));
-    assert_eq!(lines[2], entry_line(2, &entries[2], "a\nb 2"));
-    assert_eq!(lines[3], entry_line(3, &entries[3], "a\nb 3"));
+    let lines = bare_tail(&entries, &Tree::new(), 0, 4);
+    assert_eq!(lines[0], plain(0, &entries[0], "a b 0"));
+    assert_eq!(lines[1], plain(1, &entries[1], "a b 1"));
+    assert_eq!(lines[2], plain(2, &entries[2], "a\nb 2"));
+    assert_eq!(lines[3], plain(3, &entries[3], "a\nb 3"));
 }
 
 #[test]
 fn tail_settles_an_oversized_newest_message() {
     let entries = vec![entry(0, 5), entry(1, 600)];
-    let lines = tail_lines(&entries, &Tree::new(), 0, 10);
+    let lines = bare_tail(&entries, &Tree::new(), 0, 10);
     assert_eq!(lines.len(), 2);
     assert!(lines[1].contains(FALLBACK_MARK));
     let mut tree = Tree::new();
     tree.insert(n(1, 2), "short summary".into());
-    assert!(tail_lines(&entries, &tree, 0, 10)[1].ends_with(" short summary"));
+    assert!(bare_tail(&entries, &tree, 0, 10)[1].ends_with(" short summary"));
 }
 
 #[test]
 fn tail_with_zero_budget_settles_every_message() {
     let entries = texted(4, |i| format!("a\nb {i}"));
-    let lines = tail_lines(&entries, &Tree::new(), 1, 0);
+    let lines = bare_tail(&entries, &Tree::new(), 1, 0);
     assert_eq!(lines.len(), 3);
     assert!(lines.iter().all(|line| !line.contains('\n')));
-    assert!(tail_lines(&[], &Tree::new(), 0, 100).is_empty());
+    assert!(bare_tail(&[], &Tree::new(), 0, 100).is_empty());
 }
 
 #[test]
 fn tail_shows_each_entry_once_in_order() {
     let entries = mixed(9);
     for budget in [0, 5, 60, 400, 10_000] {
-        let lines = tail_lines(&entries, &Tree::new(), 2, budget);
+        let lines = bare_tail(&entries, &Tree::new(), 2, budget);
         let ids: Vec<usize> = lines
             .iter()
             .map(|line| line[1..line.find(' ').unwrap()].parse().unwrap())
@@ -372,8 +412,8 @@ fn view_opening_after_one_append() {
         for node in pending(&entries, &tree) {
             tree.insert(node, format!("sum {}", node.id()));
         }
-        let before = view(&entries[..count], &tree, VIEW_BUDGET);
-        let after = view(&entries, &tree, VIEW_BUDGET);
+        let before = bare_view(&entries[..count], &tree, VIEW_BUDGET);
+        let after = bare_view(&entries, &tree, VIEW_BUDGET);
         let same = |k: usize| before.iter().take(k).eq(after.iter().take(k));
         assert_eq!(same(1), first_same, "first line at {count}");
         assert_eq!(same(10), ten_same, "first 10 lines at {count}");
@@ -388,10 +428,10 @@ fn split_view_covers_every_entry_once() {
         let start = verbatim_start(&entries, 0, recent);
         let frozen = stable_cut(start, OLDER_VIEW_STEP);
         let cut = stable_cut(start, TAIL_STEP);
-        let split = split_view(&entries, &tree, 200, recent);
+        let split = bare_split(&entries, &tree, 200, recent);
         assert_eq!(
             split.older,
-            view(&entries[..frozen], &tree, 200),
+            bare_view(&entries[..frozen], &tree, 200),
             "r={recent}"
         );
         assert_eq!(split.tail.len(), 300 - cut, "r={recent}");
@@ -452,10 +492,10 @@ fn turn_system_prompt_is_identical_for_every_length_inside_one_frozen_step() {
     });
     assert!(spans_tail_cuts);
     for (frozen, lens) in groups {
-        let first = split_view(&entries[..lens[0]], &tree, 200, LONG_RECENT);
+        let first = bare_split(&entries[..lens[0]], &tree, 200, LONG_RECENT);
         assert!(!first.older.is_empty(), "frozen={frozen}");
         for len in lens {
-            let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+            let split = bare_split(&entries[..len], &tree, 200, LONG_RECENT);
             assert_eq!(split.older, first.older, "len={len}");
             assert_eq!(prompt(&split.older), prompt(&first.older), "len={len}");
         }
@@ -466,7 +506,7 @@ fn turn_system_prompt_is_identical_for_every_length_inside_one_frozen_step() {
 fn middle_and_tail_cover_from_the_frozen_cut_once() {
     let (entries, tree) = long_list();
     for len in 300..=700 {
-        let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+        let split = bare_split(&entries[..len], &tree, 200, LONG_RECENT);
         let mut next = frozen_at(&entries[..len]);
         for line in split.middle.iter().chain(&split.tail) {
             let (lo, last) = line_ids(line);
@@ -482,7 +522,7 @@ fn middle_has_one_line_per_32_block() {
     let (entries, tree) = long_list();
     let mut seen_seven = false;
     for len in 300..=700 {
-        let middle = split_view(&entries[..len], &tree, 200, LONG_RECENT).middle;
+        let middle = bare_split(&entries[..len], &tree, 200, LONG_RECENT).middle;
         assert!(middle.len() <= 7, "len={len} {middle:?}");
         seen_seven |= middle.len() == 7;
         for line in &middle {
@@ -506,8 +546,8 @@ fn middle_only_grows_inside_one_frozen_step() {
     }
     for lens in groups.values() {
         for pair in lens.windows(2) {
-            let earlier = split_view(&entries[..pair[0]], &tree, 200, LONG_RECENT).middle;
-            let later = split_view(&entries[..pair[1]], &tree, 200, LONG_RECENT).middle;
+            let earlier = bare_split(&entries[..pair[0]], &tree, 200, LONG_RECENT).middle;
+            let later = bare_split(&entries[..pair[1]], &tree, 200, LONG_RECENT).middle;
             assert!(
                 later.starts_with(&earlier),
                 "len={} {earlier:?} {later:?}",
@@ -527,7 +567,7 @@ fn corrupt_entry_in_middle_block_splits_to_the_damaged_leaf() {
     let damaged = frozen + 5;
     entries[damaged] = Entry::corrupt();
     let tree = summarized(&entries);
-    let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+    let split = bare_split(&entries[..len], &tree, 200, LONG_RECENT);
     let block = Node {
         lo: frozen,
         hi: frozen + TAIL_STEP,
@@ -541,7 +581,7 @@ fn corrupt_entry_in_middle_block_splits_to_the_damaged_leaf() {
         } else {
             (left, right)
         };
-        expected.push((sibling.lo, node_line(&entries, &tree, sibling).unwrap()));
+        expected.push((sibling.lo, plain_node(&entries, &tree, sibling)));
         node = inner;
     }
     expected.sort_by_key(|(lo, _)| *lo);
@@ -566,9 +606,9 @@ fn middle_falls_back_to_leaf_lines_without_a_block_summary() {
     let frozen = frozen_at(&entries[..len]);
     let cut = tail_cut_at(&entries[..len]);
     tree.retain(|node, _| node.size() == 1 || node.hi <= frozen || node.lo >= cut);
-    let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+    let split = bare_split(&entries[..len], &tree, 200, LONG_RECENT);
     let leaves: Vec<String> = (frozen..cut)
-        .map(|i| leaf_line(i, &entries[i], &tree).unwrap())
+        .map(|i| plain_leaf(i, &entries[i], &tree))
         .collect();
     assert_eq!(split.middle, leaves);
 }
@@ -600,8 +640,8 @@ fn split_view_older_is_identical_when_appends_stay_in_one_step() {
         stable_cut(a, OLDER_VIEW_STEP),
         stable_cut(b, OLDER_VIEW_STEP)
     );
-    let before = split_view(&shorter, &tree, 200, recent);
-    let after = split_view(&longer, &tree, 200, recent);
+    let before = bare_split(&shorter, &tree, 200, recent);
+    let after = bare_split(&longer, &tree, 200, recent);
     assert!(!before.older.is_empty());
     assert_eq!(before.older, after.older);
 }
@@ -609,8 +649,8 @@ fn split_view_older_is_identical_when_appends_stay_in_one_step() {
 #[test]
 fn turn_system_prompt_is_identical_when_appends_stay_in_one_step() {
     let (shorter, longer, tree) = stable_lists();
-    let before = split_view(&shorter, &tree, 200, 100);
-    let after = split_view(&longer, &tree, 200, 100);
+    let before = bare_split(&shorter, &tree, 200, 100);
+    let after = bare_split(&longer, &tree, 200, 100);
     let prompt = |older: &[String]| {
         crate::chat::turn_system_prompt(
             &crate::chat::CustomPrompt::default(),
@@ -627,7 +667,7 @@ fn split_view_tail_keeps_newest_verbatim_and_bounds_settled_lines() {
     let recent = 100;
     let start = verbatim_start(&entries, 0, recent);
     let cut = stable_cut(start, TAIL_STEP);
-    let split = split_view(&entries, &tree, 200, recent);
+    let split = bare_split(&entries, &tree, 200, recent);
     let settled = start - cut;
     assert_eq!(split.tail.len(), entries.len() - cut);
     assert!(settled < TAIL_STEP);
@@ -635,9 +675,9 @@ fn split_view_tail_keeps_newest_verbatim_and_bounds_settled_lines() {
     for (offset, line) in split.tail.iter().enumerate() {
         let i = cut + offset;
         let expected = if i < start {
-            leaf_line(i, &entries[i], &tree).unwrap()
+            plain_leaf(i, &entries[i], &tree)
         } else {
-            entry_line(i, &entries[i], &entries[i].text)
+            plain(i, &entries[i], &entries[i].text)
         };
         assert_eq!(line, &expected);
     }
@@ -651,7 +691,7 @@ fn split_view_tail_keeps_newest_verbatim_and_bounds_settled_lines() {
 #[test]
 fn split_view_tail_respects_token_budget() {
     let entries: Vec<Entry> = (0..50).map(|i| entry(i, 30)).collect();
-    let split = split_view(&entries, &Tree::new(), 200, 100);
+    let split = bare_split(&entries, &Tree::new(), 200, 100);
     let verbatim = verbatim_start(&entries, 0, 100);
     let used: usize = (50 - verbatim) * estimate_tokens(&entries[0].text);
     assert!(verbatim < 50 && used <= 100);
@@ -664,7 +704,7 @@ fn split_view_tail_respects_token_budget() {
 #[test]
 fn split_view_of_empty_store_is_empty() {
     assert_eq!(
-        split_view(&[], &Tree::new(), 200, 8192),
+        bare_split(&[], &Tree::new(), 200, 8192),
         ViewSplit::default()
     );
 }
@@ -706,7 +746,7 @@ fn tree_of(nodes: &[Node]) -> Tree {
 fn view_merges_an_older_summarized_pair_to_expand_a_missing_parent() {
     let entries = short(9);
     let tree = tree_of(&[n(0, 2), n(2, 4), n(0, 4)]);
-    let lines = view(&entries, &tree, 6);
+    let lines = bare_view(&entries, &tree, 6);
     assert_eq!(ids(&lines), ["0-3", "4", "5", "6", "7", "8"]);
     assert_eq!(lines[0], "#0-3 s0-3");
     assert!(lines.iter().all(|line| !is_marker(line)));
@@ -716,7 +756,7 @@ fn view_merges_an_older_summarized_pair_to_expand_a_missing_parent() {
 #[test]
 fn view_with_nothing_mergeable_shows_a_marker_for_a_missing_parent() {
     let entries = short(9);
-    let lines = view(&entries, &Tree::new(), 4);
+    let lines = bare_view(&entries, &Tree::new(), 4);
     assert_eq!(ids(&lines), ["0-3", "4-5", "6-7", "8"]);
     assert_eq!(lines[0], "#0-3 [not summarized] zoom 0-3 for its parts");
     assert_eq!(lines.iter().filter(|l| is_marker(l)).count(), 3);
@@ -726,7 +766,7 @@ fn view_with_nothing_mergeable_shows_a_marker_for_a_missing_parent() {
 #[test]
 fn view_shows_a_raw_excerpt_for_a_missing_long_leaf_summary() {
     let entries: Vec<Entry> = (0..3).map(|i| entry(i, 600)).collect();
-    let lines = view(&entries, &Tree::new(), 3);
+    let lines = bare_view(&entries, &Tree::new(), 3);
     assert!(lines.iter().all(|line| line.contains(FALLBACK_MARK)));
     assert_view_invariants(&lines, 3, 3);
 }
@@ -735,14 +775,14 @@ fn view_shows_a_raw_excerpt_for_a_missing_long_leaf_summary() {
 fn view_expands_a_missing_node_with_one_summarized_half() {
     let entries = short(9);
     let tree = tree_of(&[n(0, 2), n(6, 8)]);
-    let lines = view(&entries, &tree, 5);
+    let lines = bare_view(&entries, &tree, 5);
     assert_eq!(ids(&lines), ["0-3", "4", "5", "6-7", "8"]);
     assert!(is_marker(&lines[0]));
     assert_eq!(lines[3], "#6-7 s6-7");
     assert_view_invariants(&lines, 9, 5);
 
     let full = tree_of(&[n(0, 2), n(2, 4), n(4, 6), n(6, 8)]);
-    let lines = view(&entries, &full, 5);
+    let lines = bare_view(&entries, &full, 5);
     assert_eq!(ids(&lines), ["0-1", "2-3", "4-5", "6-7", "8"]);
     assert!(lines.iter().all(|line| !is_marker(line)));
 }
@@ -750,7 +790,7 @@ fn view_expands_a_missing_node_with_one_summarized_half() {
 #[test]
 fn view_of_a_fully_summarized_tree_is_one_line_per_cover_node() {
     let entries = mixed(40);
-    let lines = view(&entries, &summarized(&entries), 10);
+    let lines = bare_view(&entries, &summarized(&entries), 10);
     assert_eq!(lines.len(), cover(40, 10).len());
     assert!(lines
         .iter()
@@ -765,7 +805,7 @@ fn view_keeps_invariants_when_every_kth_summary_is_dropped() {
     for k in 2..=5 {
         let tree = drop_every(&full, k);
         for budget in [1, 5, 10, 40, 200] {
-            let lines = view(&entries, &tree, budget);
+            let lines = bare_view(&entries, &tree, budget);
             assert_view_invariants(&lines, 100, budget);
             assert_markers_older_than_splits(&lines, 100, budget);
         }
@@ -775,7 +815,7 @@ fn view_keeps_invariants_when_every_kth_summary_is_dropped() {
 #[test]
 fn view_under_a_tight_budget_marks_old_ranges_and_keeps_new_messages() {
     let entries = short(16);
-    let lines = view(&entries, &Tree::new(), 3);
+    let lines = bare_view(&entries, &Tree::new(), 3);
     assert_eq!(ids(&lines), ["0-7", "8-11", "12-13", "14", "15"]);
     assert!(lines[..3].iter().all(|line| is_marker(line)));
     assert!(lines[3].ends_with("m14 xxxxx") && lines[4].ends_with("m15 xxxxx"));
@@ -785,7 +825,7 @@ fn view_under_a_tight_budget_marks_old_ranges_and_keeps_new_messages() {
 fn view_splits_the_newest_missing_node_first() {
     let entries = short(10);
     let tree = tree_of(&[n(8, 10)]);
-    let lines = view(&entries, &tree, 5);
+    let lines = bare_view(&entries, &tree, 5);
     assert_eq!(ids(&lines), ["0-3", "4-5", "6", "7", "8-9"]);
     assert!(is_marker(&lines[0]) && is_marker(&lines[1]));
     assert!(!is_marker(&lines[2]) && !is_marker(&lines[3]));
@@ -825,7 +865,7 @@ fn view_keeps_markers_older_than_every_split_under_tight_budgets() {
     let entries = mixed(100);
     let tree = drop_every(&summarized(&entries), 2);
     for budget in [1, 5] {
-        let lines = view(&entries, &tree, budget);
+        let lines = bare_view(&entries, &tree, budget);
         assert!(lines.iter().any(|line| is_marker(line)), "b={budget}");
         assert!(assert_markers_older_than_splits(&lines, 100, budget) > 0);
     }
@@ -875,7 +915,7 @@ fn consecutive_user_entries_need_no_assistant_pair() {
     assert_eq!(entries[5].role, Role::User);
     let tree = summarized(&entries);
     assert!(pending(&entries, &tree).is_empty());
-    let lines = view(&entries, &tree, 100_000);
+    let lines = bare_view(&entries, &tree, 100_000);
     assert!(lines.iter().any(|l| l.contains("@w1 first")));
     assert!(lines.iter().any(|l| l.contains("@w1 second")));
 }

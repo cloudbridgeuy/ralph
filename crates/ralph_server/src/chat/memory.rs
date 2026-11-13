@@ -678,9 +678,10 @@ mod tests {
         let flags: Vec<_> = entries.iter().map(|e| e.is_corrupt()).collect();
         assert_eq!(flags, [false, true, false, false]);
         let lines = split_view(&entries, &tree, 10, 0).tail;
-        assert_eq!(lines.len(), 4, "{lines:?}");
-        assert_eq!(lines[1], "[#1: unreadable log line, skipped]");
-        assert!(lines[3].starts_with("#3 user "), "{lines:?}");
+        assert_eq!(lines.len(), 5, "{lines:?}");
+        assert!(lines[0].starts_with("--- "), "{lines:?}");
+        assert_eq!(lines[2], "[#1: unreadable log line, skipped]");
+        assert!(lines[4].starts_with("#3 user "), "{lines:?}");
     }
 
     #[test]

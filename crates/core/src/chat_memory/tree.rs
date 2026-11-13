@@ -1,3 +1,4 @@
+use super::lookup::date_of;
 use super::nap::fallback_summary;
 use super::notice::{merge_notices, Shown};
 use super::{Entry, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
@@ -99,12 +100,23 @@ pub(super) fn entry_line(i: usize, entry: &Entry, body: &str) -> String {
     format!("#{i} {} {} {body}", entry.role.as_str(), entry.at)
 }
 
-pub(super) fn leaf_line(i: usize, entry: &Entry, tree: &Tree) -> Option<String> {
-    if is_long(entry) {
-        tree.get(&Node::leaf(i)).map(|s| entry_line(i, entry, s))
-    } else {
-        Some(entry_line(i, entry, &collapse(&entry.text)))
+fn view_leaf(i: usize, entry: &Entry, body: &str) -> Shown {
+    Shown::Leaf {
+        day: date_of(&entry.at).to_string(),
+        line: format!("#{i} {} {body}", entry.role.as_str()),
     }
+}
+
+fn leaf_body(i: usize, entry: &Entry, tree: &Tree) -> Option<String> {
+    if is_long(entry) {
+        tree.get(&Node::leaf(i)).cloned()
+    } else {
+        Some(collapse(&entry.text))
+    }
+}
+
+pub(super) fn leaf_line(i: usize, entry: &Entry, tree: &Tree) -> Option<String> {
+    leaf_body(i, entry, tree).map(|body| entry_line(i, entry, &body))
 }
 
 pub(super) fn block_line(tree: &Tree, node: Node) -> Option<String> {
@@ -119,24 +131,19 @@ pub(super) fn node_line(entries: &[Entry], tree: &Tree, node: Node) -> Option<St
     }
 }
 
-fn display_line(entries: &[Entry], tree: &Tree, node: Node) -> String {
-    node_line(entries, tree, node).unwrap_or_else(|| {
-        if node.size() == 1 {
-            let entry = &entries[node.lo];
-            entry_line(node.lo, entry, &fallback_summary(&entry.text))
-        } else {
+fn shown_node(entries: &[Entry], tree: &Tree, node: Node) -> Shown {
+    if node.size() > 1 {
+        return Shown::Line(block_line(tree, node).unwrap_or_else(|| {
             let id = node.id();
             format!("#{id} {UNAVAILABLE_MARK}zoom {id} for its parts")
-        }
-    })
-}
-
-fn shown_node(entries: &[Entry], tree: &Tree, node: Node) -> Shown {
-    if node.size() == 1 && entries[node.lo].is_corrupt() {
-        Shown::Unreadable(node.lo)
-    } else {
-        Shown::Line(display_line(entries, tree, node))
+        }));
     }
+    let entry = &entries[node.lo];
+    if entry.is_corrupt() {
+        return Shown::Unreadable(node.lo);
+    }
+    let body = leaf_body(node.lo, entry, tree).unwrap_or_else(|| fallback_summary(&entry.text));
+    view_leaf(node.lo, entry, &body)
 }
 
 fn split_target(entries: &[Entry], tree: &Tree, nodes: &[Node]) -> Option<Node> {
@@ -269,10 +276,12 @@ pub fn tail_lines(entries: &[Entry], tree: &Tree, from: usize, budget: usize) ->
     let settled = (from..start).map(|i| shown_node(entries, tree, Node::leaf(i)));
     let verbatim = (start..entries.len()).map(|i| match &entries[i] {
         entry if entry.is_corrupt() => Shown::Unreadable(i),
-        entry => Shown::Line(entry_line(i, entry, &entry.text)),
+        entry => view_leaf(i, entry, &entry.text),
     });
     merge_notices(settled.chain(verbatim))
 }
 
+#[cfg(test)]
+mod day_tests;
 #[cfg(test)]
 mod tests;

@@ -1,5 +1,6 @@
 pub(super) enum Shown {
     Line(String),
+    Leaf { day: String, line: String },
     Unreadable(usize),
 }
 
@@ -14,8 +15,9 @@ fn notice(first: usize, last: usize) -> String {
 pub(super) fn merge_notices(shown: impl IntoIterator<Item = Shown>) -> Vec<String> {
     let mut lines = Vec::new();
     let mut run: Option<(usize, usize)> = None;
+    let mut shown_day: Option<String> = None;
     for item in shown {
-        match item {
+        let (line, day) = match item {
             Shown::Unreadable(id) => {
                 run = match run {
                     Some((first, last)) if last + 1 == id => Some((first, id)),
@@ -25,14 +27,19 @@ pub(super) fn merge_notices(shown: impl IntoIterator<Item = Shown>) -> Vec<Strin
                     }
                     None => Some((id, id)),
                 };
+                continue;
             }
-            Shown::Line(line) => {
-                if let Some((first, last)) = run.take() {
-                    lines.push(notice(first, last));
-                }
-                lines.push(line);
-            }
+            Shown::Line(line) => (line, None),
+            Shown::Leaf { day, line } => (line, Some(day)),
+        };
+        if let Some((first, last)) = run.take() {
+            lines.push(notice(first, last));
         }
+        if let Some(day) = day.filter(|day| shown_day.as_ref() != Some(day)) {
+            lines.push(format!("--- {day}"));
+            shown_day = Some(day);
+        }
+        lines.push(line);
     }
     if let Some((first, last)) = run {
         lines.push(notice(first, last));

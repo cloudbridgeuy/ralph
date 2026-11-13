@@ -132,7 +132,7 @@ fn rows_after_the_seen_length_are_shown_as_view_lines() {
     let entries = logged(&["hi", "hello", "/send-it off\nResult: gone"]);
     assert_eq!(
         unseen_lines(&entries, Some(2)),
-        rows(&["#2 user 2026-01-01T00:00:02Z /send-it off\nResult: gone"])
+        rows(&["--- 2026-01-01", "#2 user /send-it off\nResult: gone"])
     );
 }
 
@@ -154,8 +154,9 @@ fn every_unseen_row_is_shown_in_log_order() {
     assert_eq!(
         unseen_lines(&entries, Some(1)),
         rows(&[
-            "#1 user 2026-01-01T00:00:01Z /thread drop a\nResult: Dropped a.",
-            "#2 user 2026-01-01T00:00:02Z @GUZ-1 go\nResult: Sent.",
+            "--- 2026-01-01",
+            "#1 user /thread drop a\nResult: Dropped a.",
+            "#2 user @GUZ-1 go\nResult: Sent.",
         ])
     );
 }
