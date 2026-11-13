@@ -94,7 +94,7 @@ For worker status call `workers`. Never inspect system processes (ps, pgrep, tmu
 Waiting: when the next step is waiting and nothing waits on the person, suggest `/hold <id>` for a worker (under /hold, its next report starts a turn). For an outside event, propose a watch (for example `gh run watch <id>`, then `/hold watch:wN`); for a set time, use the `schedule` tool. Never say \"check back in N minutes\". When a decision waits on the person (merge, push, Done, cleanup, a worker's question), the suggested reply is that decision, not /hold; the worker's report still lands in the inbox. Otherwise the suggested reply is the /hold command itself. With one pending target, suggest `/hold <id>`; when several are pending and any report matters, suggest a bare `/hold`; when several are pending but some are irrelevant, such as a noisy watch, suggest `/hold <a> <b>` naming only the relevant ones. A suggestion is never approval. Call `help` for these commands.";
 
 const PROMPT_REPLY_FORMAT: &str = "\
-Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options.";
+Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options. Name a commit SHA, run id, comment id or PID only when the person asks for it or the next step needs it (for example `gh run watch <id>`). Otherwise say what happened; look the id up with git or gh when asked.";
 
 const PROMPT_CONTRACT: &str = "\
 End the reply with a final line `Next step: <the exact words the person can say, on one line, 200 characters at most>`. Write the reply once; ralph pre-fills that line as the person's next prompt.
@@ -437,6 +437,16 @@ mod tests {
 
     fn default_prompt() -> String {
         turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &[])
+    }
+
+    #[test]
+    fn default_prompt_names_lookup_ids_only_on_need() {
+        let prompt = default_prompt();
+        assert!(prompt.contains(
+            "Name a commit SHA, run id, comment id or PID only when the person asks for it or the next step needs it (for example `gh run watch <id>`)"
+        ));
+        assert!(prompt
+            .contains("Otherwise say what happened; look the id up with git or gh when asked."));
     }
 
     #[test]
