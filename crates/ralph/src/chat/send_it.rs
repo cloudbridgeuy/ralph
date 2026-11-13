@@ -8,10 +8,10 @@ use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
 use ralph_core::chat_send_it::{
-    approve, awaits_check, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt,
-    parse_run, plan_hash, propose_refusal, read_run, render_status, running_line, settle_check,
-    start_run, step_line, stop_file, tick, write_run, Action, Driving, Ended, Limits, Next,
-    RunFile, Seen, StepResult, StopReason, Ticked,
+    approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_notice,
+    judge_prompt, parse_run, plan_hash, propose_refusal, read_run, render_status, running_line,
+    settle_check, start_run, step_line, stop_file, tick, write_run, Action, Driving, Ended, Limits,
+    Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -295,8 +295,11 @@ impl SendIt {
                 println!("{line}");
                 Driven::keep(driving, Route::Send(line), None)
             }
-            Next::Judge => match plan.and_then(|plan| judge_prompt(&plan, driving.progress)) {
-                Some(prompt) => {
+            Next::Judge => match plan.and_then(|plan| {
+                let prompt = judge_prompt(&plan, driving.progress)?;
+                Some(briefed_turn(&plan, driving.clone(), &prompt))
+            }) {
+                Some((driving, prompt)) => {
                     println!("{prompt}");
                     Driven::keep(driving, Route::Send(prompt), None)
                 }

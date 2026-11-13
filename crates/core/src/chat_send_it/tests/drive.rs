@@ -674,3 +674,30 @@ fn a_check_that_could_not_start_says_so_and_names_the_error() {
     );
     assert!(!notice.contains("did not exit 0"), "{notice}");
 }
+
+#[test]
+fn a_resume_on_a_judge_step_briefs_the_judge_prompt_and_marks_the_run_briefed() {
+    let file = stopped_on(4);
+    let started = start(&file, &[], &[]).unwrap();
+    assert!(!started.driving.briefed);
+    let prompt = judge_prompt(&file.plan, started.driving.progress).unwrap();
+    let (driving, text) = briefed_turn(&file.plan, started.driving, &prompt);
+    assert!(driving.briefed);
+    assert!(text.starts_with("send-it run "), "{text}");
+    assert!(text.contains("Allowed:"), "{text}");
+    assert!(text.ends_with(&prompt), "{text}");
+}
+
+#[test]
+fn an_already_briefed_run_sends_the_judge_prompt_bare() {
+    let file = stopped_on(4);
+    let started = start(&file, &[], &[]).unwrap();
+    let briefed = Driving {
+        briefed: true,
+        ..started.driving
+    };
+    let prompt = judge_prompt(&file.plan, briefed.progress).unwrap();
+    let (driving, text) = briefed_turn(&file.plan, briefed.clone(), &prompt);
+    assert_eq!(driving, briefed);
+    assert_eq!(text, prompt);
+}

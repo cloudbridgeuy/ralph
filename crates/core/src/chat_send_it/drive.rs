@@ -279,20 +279,31 @@ pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
 impl Ticked {
     fn briefed_by(self, plan: &RunPlan) -> Ticked {
         match self.next {
-            Next::Send(line) if !self.driving.briefed => {
-                let next = Next::Send(brief(plan, &self.driving.hash, &line));
+            Next::Send(line) => {
+                let (driving, line) = briefed_turn(plan, self.driving, &line);
                 Ticked {
-                    driving: Driving {
-                        briefed: true,
-                        ..self.driving
-                    },
-                    next,
+                    driving,
+                    next: Next::Send(line),
                     met: self.met,
                 }
             }
             next => Ticked { next, ..self },
         }
     }
+}
+
+pub fn briefed_turn(plan: &RunPlan, driving: Driving, line: &str) -> (Driving, String) {
+    if driving.briefed {
+        return (driving, line.to_string());
+    }
+    let text = brief(plan, &driving.hash, line);
+    (
+        Driving {
+            briefed: true,
+            ..driving
+        },
+        text,
+    )
 }
 
 fn brief(plan: &RunPlan, hash: &str, line: &str) -> String {
