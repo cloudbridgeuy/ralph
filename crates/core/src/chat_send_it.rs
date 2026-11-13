@@ -224,6 +224,21 @@ impl Grant {
     }
 }
 
+pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
+    let may_reply = plan.allowed.contains(&Action::Reply);
+    plan.steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| match &step.criterion {
+            Criterion::WorkerDone { worker } if !may_reply => Some(format!(
+                "Warning: step {} waits for worker {worker}, but the plan does not allow `reply`. A question from that worker stops the run.",
+                index + 1
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
 pub fn render_run(plan: &RunPlan) -> String {
     let mut lines = vec![format!("Goal: {}", plan.goal), "Steps:".to_string()];
     for (index, step) in plan.steps.iter().enumerate() {
@@ -239,6 +254,7 @@ pub fn render_run(plan: &RunPlan) -> String {
     } else {
         format!("Allowed: {}", allowed.join(", "))
     });
+    lines.extend(plan_warnings(plan));
     lines.push(format!(
         "Caps: {} turns, ${:.2}, {} judge rounds",
         plan.limits.max_turns, plan.limits.max_usd, plan.judge_rounds
@@ -479,7 +495,7 @@ pub fn propose_run_tool() -> Value {
                 },
                 "allowed": {
                     "type": "array",
-                    "description": "Actions the run may take. spawn needs harness; paid_run needs max_usd.",
+                    "description": "Actions the run may take. spawn needs harness; paid_run needs max_usd. A worker_done step needs reply, or a question from that worker stops the run.",
                     "items": {
                         "type": "object",
                         "properties": {
