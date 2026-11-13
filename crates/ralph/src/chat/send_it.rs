@@ -255,20 +255,19 @@ impl SendIt {
         monitor: &Monitor,
     ) -> io::Result<Option<Route>> {
         let read = Route::ReadInbox(Selection::At(position));
-        let Some(active) = sending.take() else {
-            return Ok(Some(read));
-        };
-        let outcome = active
-            .watched
+        let outcome = sending
             .as_ref()
-            .and_then(|slot| locked(slot).clone())
-            .filter(|_| awaits_check(&active.driving));
+            .filter(|active| awaits_check(&active.driving))
+            .and_then(|active| active.watched.as_ref())
+            .and_then(|slot| locked(slot).clone());
         let Some(outcome) = outcome else {
-            *sending = Some(active);
             return Ok(Some(read));
         };
         let reports = monitor.drain(Selection::At(position))?;
         monitor.refresh(true);
+        let Some(active) = sending.take() else {
+            return Ok(Some(read));
+        };
         let file = self.load().ok().flatten();
         let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
         if let Some(met) = &ticked.met {

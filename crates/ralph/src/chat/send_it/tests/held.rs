@@ -124,3 +124,19 @@ fn a_settled_check_dispatches_with_no_inbox_read() {
     assert!(!reads_inbox(route));
     assert!(sending.is_none());
 }
+
+#[test]
+fn a_settle_that_cannot_drain_the_inbox_keeps_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = started(dir.path());
+    let monitor = monitor(dir.path());
+    let inbox = dir.path().join("inbox");
+    let _ = fs::remove_dir_all(&inbox);
+    fs::write(&inbox, "not a directory").unwrap();
+    let settled = with_outcome(&active, WatchOutcome::Exited(0));
+    let expected = settled.driving.clone();
+    let mut sending = Some(settled);
+    let result = send_it.held_item(&mut sending, Position::FIRST, &monitor);
+    assert!(result.is_err());
+    assert_eq!(sending.unwrap().driving, expected);
+}
