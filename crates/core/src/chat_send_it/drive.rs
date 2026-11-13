@@ -354,6 +354,7 @@ fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
     match awaiting {
         Awaiting::Turn => Vec::new(),
         Awaiting::Verdict => vec![Event::Verdict(ended.step_result)],
+        // Reached when a resume finds a stale report from a stopped run's check; do not delete as dead code.
         Awaiting::Report(source) => ended
             .watched
             .map(Event::Watched)
