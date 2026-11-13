@@ -1,9 +1,13 @@
 use crate::chat::editor::open_in_editor;
+use crate::chat::inbox::{self, Display};
+use crate::chat::keys::Keys;
 use crate::chat::monitor::Monitor;
+use crate::chat::queue::Queue;
+use crate::chat::turn::{Turn, TurnOutcome};
 use crate::inbox_alert;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_local::notice_record;
-use ralph_core::chat_memory::Role;
+use ralph_core::chat_memory::{Role, Trigger};
 use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
@@ -16,8 +20,10 @@ use ralph_core::chat_send_it::{
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
+use ralph_core::worker::Report;
 use ralph_core::worker_check::logged_states;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::{locked, OutcomeSlot};
 use ralph_server::workers::running_workers;
@@ -281,6 +287,18 @@ impl SendIt {
         Ok(driven.route)
     }
 
+    pub(super) fn brief_unread(&self, sending: &mut Option<Active>, message: String) -> String {
+        let Some(active) = sending.as_mut().filter(|active| !active.driving.briefed) else {
+            return message;
+        };
+        let Some(file) = self.load().ok().flatten() else {
+            return message;
+        };
+        let (driving, text) = briefed_turn(&file.plan, active.driving.clone(), &message);
+        active.driving = driving;
+        text
+    }
+
     pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
         if let Some(met) = &ticked.met {
             println!("{met}");
@@ -481,6 +499,47 @@ impl SendIt {
             Ok(None) => Screen::text(NO_RUN),
             Err(text) => Screen::text(format!("{text}\nFix it with /send-it edit.")),
         }
+    }
+}
+
+pub(super) struct InboxTurn<'a> {
+    pub(super) turn: &'a Turn<'a>,
+    pub(super) snapshots: &'a TurnSnapshots,
+    pub(super) keys: &'a Keys<'a>,
+    pub(super) monitor: &'a Monitor,
+}
+
+pub(super) struct Read {
+    pub(super) outcome: TurnOutcome,
+    pub(super) queue: Queue,
+    pub(super) drained: Vec<Report>,
+}
+
+impl InboxTurn<'_> {
+    pub(super) fn read(
+        &self,
+        send_it: &SendIt,
+        selection: Selection,
+        display: &Display,
+        sending: &mut Option<Active>,
+    ) -> Result<Option<Read>, Box<dyn std::error::Error>> {
+        self.monitor.set_phase(Phase::Turn);
+        let drained = self.monitor.drain(selection)?;
+        self.monitor.refresh(true);
+        let Some(unread) = inbox::read(selection, &drained, display) else {
+            self.monitor.set_phase(Phase::Prompt);
+            return Ok(None);
+        };
+        let message = send_it.brief_unread(sending, unread.message);
+        let (result, queue) = self.snapshots.around(|| {
+            self.keys
+                .during(|| self.turn.run(Trigger::Worker, &unread.logged, &message))
+        });
+        Ok(Some(Read {
+            outcome: result?,
+            queue,
+            drained,
+        }))
     }
 }
 

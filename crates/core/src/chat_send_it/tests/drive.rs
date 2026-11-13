@@ -707,3 +707,20 @@ fn check_output_that_contains_the_follow_up_header_text_is_kept() {
         "exited with code 1; last output: step one / Follow-up: rerun with --force / last line"
     );
 }
+
+#[test]
+fn a_held_worker_report_turn_is_briefed_once_for_an_unbriefed_run() {
+    let file = stopped_on(1);
+    let held = start(&file, &[], &["E1"]).unwrap();
+    assert_eq!(held.next, Next::Hold("E1".to_string()));
+    assert!(!held.driving.briefed);
+    let report = "[E1] done: opened the PR";
+    let (driving, text) = briefed_turn(&file.plan, held.driving, report);
+    assert!(driving.briefed);
+    assert!(text.starts_with("send-it run "), "{text}");
+    assert!(text.contains("Allowed:"), "{text}");
+    assert!(text.ends_with(report), "{text}");
+    let (again, bare) = briefed_turn(&file.plan, driving.clone(), report);
+    assert_eq!(again, driving);
+    assert_eq!(bare, report);
+}

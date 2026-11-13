@@ -52,7 +52,7 @@ use crate::chat::queue::{
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
-use crate::chat::send_it::{worker_states, Active, SendIt};
+use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
@@ -548,6 +548,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         store: &store_dir,
         editor: &prompt.editor,
     };
+    let inbox_turn = InboxTurn {
+        turn: &turn,
+        snapshots: &snapshots,
+        keys: &keys,
+        monitor: &monitor,
+    };
     let schedule_store = monitor.schedule.clone();
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Submitted> = None;
@@ -675,19 +681,13 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 (outcome, draft_after(outcome, message))
             }
             Route::ReadInbox(selection) => {
-                monitor.set_phase(Phase::Turn);
-                let reports = monitor.drain(selection)?;
-                monitor.refresh(true);
-                let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
-                    monitor.set_phase(Phase::Prompt);
+                let display = inbox_display(color);
+                let Some(read) = inbox_turn.read(&send_it, selection, &display, &mut sending)?
+                else {
                     continue;
                 };
-                let (result, queued) = snapshots.around(|| {
-                    keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
-                });
-                queue = queued;
-                drained = reports;
-                (result?, None)
+                (queue, drained) = (read.queue, read.drained);
+                (read.outcome, None)
             }
             Route::Hold(filter) => {
                 idle.store(true, Ordering::SeqCst);

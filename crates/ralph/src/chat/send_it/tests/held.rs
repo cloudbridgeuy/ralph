@@ -140,3 +140,27 @@ fn a_settle_that_cannot_drain_the_inbox_keeps_the_run() {
     assert!(result.is_err());
     assert_eq!(sending.unwrap().driving, expected);
 }
+
+#[test]
+fn an_unread_message_is_briefed_once_and_marks_the_run_briefed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, mut active) = started(dir.path());
+    active.driving.briefed = false;
+    let mut sending = Some(active);
+    let first = send_it.brief_unread(&mut sending, "[w] done".to_string());
+    assert!(first.starts_with("send-it run "), "{first}");
+    assert!(first.ends_with("[w] done"), "{first}");
+    assert!(sending.as_ref().unwrap().driving.briefed);
+    let second = send_it.brief_unread(&mut sending, "[w] done".to_string());
+    assert_eq!(second, "[w] done");
+}
+
+#[test]
+fn an_unread_message_with_no_run_is_left_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, _) = started(dir.path());
+    let mut sending = None;
+    let message = send_it.brief_unread(&mut sending, "[w] done".to_string());
+    assert_eq!(message, "[w] done");
+    assert!(sending.is_none());
+}
