@@ -1,28 +1,11 @@
 use crate::chat_hold::{hold_targets, HoldFilter};
+use crate::chat_recap::next_step;
 use crate::chat_status::Status;
 use serde::Serialize;
-use serde_json::{json, Value};
 
 pub const SUGGESTION_MAX_CHARS: usize = 200;
 
-pub fn suggest_reply_tool() -> Value {
-    json!({
-        "name": "suggest_reply",
-        "description": "Pre-fill the user's next prompt. Call it before any reply text and never mention it. A later call replaces it. A reply of exactly `/hold [<target> ...]` naming listed targets can start that hold at once.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "maxLength": SUGGESTION_MAX_CHARS, "description": "The exact reply, on one line."}
-            },
-            "required": ["text"]
-        }
-    })
-}
-
-pub fn parse_suggestion(args: &Value) -> Result<String, String> {
-    let Some(raw) = args.get("text").and_then(Value::as_str) else {
-        return Err("Missing string argument 'text'.".to_string());
-    };
+fn checked(raw: &str) -> Result<String, String> {
     let text = raw.trim();
     let length = text.chars().count();
     if text.is_empty() {
@@ -42,6 +25,17 @@ pub fn parse_suggestion(args: &Value) -> Result<String, String> {
     } else {
         Ok(text.to_string())
     }
+}
+
+fn unquoted(text: &str) -> &str {
+    ['"', '`']
+        .iter()
+        .find_map(|quote| text.strip_prefix(*quote)?.strip_suffix(*quote))
+        .unwrap_or(text)
+}
+
+pub fn from_reply(reply: &str) -> Option<String> {
+    checked(unquoted(next_step(reply)?)).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

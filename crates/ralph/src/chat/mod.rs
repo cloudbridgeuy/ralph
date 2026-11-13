@@ -55,7 +55,7 @@ use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::StatusBar;
-use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
+use crate::chat::suggestion::{SuggestionCell, SuggestionHighlighter};
 use crate::chat::switch::{check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
@@ -199,8 +199,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     )?;
     sweep_stale_server_records();
     let chat_socket = ChatSocket::bind(&store_dir, &runtime_root(current_uid()))?;
-    let suggestions = SuggestionSlot::default();
-    let shown = SuggestionSlot::default();
+    let suggestions = SuggestionCell::default();
+    let shown = SuggestionCell::default();
     let socket_files = chat_socket.files().clone();
     let _socket_guard = SocketGuard(socket_files.clone());
     let imported = select_servers(
@@ -390,7 +390,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 permission_mode.clone(),
                 args.worktree_dir.clone(),
             ),
-            suggestions: suggestions.clone(),
             send_it: send_it.clone(),
             watches: monitor.watches.clone(),
         },

@@ -2,9 +2,10 @@ use super::*;
 use crate::chat_status::{ScheduleState, WatchState, WorkerState};
 use crate::inbox::Entry;
 use crate::worker::Report;
+use serde_json::json;
 
 fn parse(text: &str) -> Result<String, String> {
-    parse_suggestion(&json!({"text": text}))
+    checked(text)
 }
 
 #[test]
@@ -39,29 +40,6 @@ fn length_limit_counts_characters_and_never_truncates() {
     assert!(error.contains("201") && error.contains("200"));
     assert_eq!(parse(&"é".repeat(200)).map(|t| t.chars().count()), Ok(200));
     assert!(parse(&"é".repeat(201)).is_err());
-}
-
-#[test]
-fn missing_or_non_string_text_is_an_error() {
-    assert!(parse_suggestion(&json!({})).is_err());
-    assert!(parse_suggestion(&json!({"text": 5})).is_err());
-    assert!(parse_suggestion(&json!({"text": null})).is_err());
-    assert!(parse_suggestion(&json!({"other": "x"})).is_err());
-}
-
-#[test]
-fn tool_schema_names_the_tool_and_requires_text() {
-    let tool = suggest_reply_tool();
-    assert_eq!(tool["name"], "suggest_reply");
-    assert_eq!(tool["inputSchema"]["required"], json!(["text"]));
-    assert_eq!(tool["inputSchema"]["properties"]["text"]["maxLength"], 200);
-    let description = tool["description"].as_str().unwrap();
-    assert!(description.chars().count() <= 300);
-    assert!(description.contains("before any reply text"));
-    assert!(description.contains("never mention it"));
-    assert!(description.contains(
-        "exactly `/hold [<target> ...]` naming listed targets can start that hold at once"
-    ));
 }
 
 fn some(text: &str) -> Option<String> {
@@ -417,12 +395,70 @@ fn the_notice_names_a_set_or_anyone() {
 }
 
 #[test]
-fn the_schema_takes_only_the_text() {
-    let tool = suggest_reply_tool();
+fn from_reply_takes_the_last_next_step_line() {
+    assert_eq!(from_reply("a\nNext step: run it"), some("run it"));
     assert_eq!(
-        tool["inputSchema"]["properties"].as_object().unwrap().len(),
-        1
+        from_reply("Next step: first\nmore\nNext step: second"),
+        some("second")
     );
-    assert_eq!(tool["inputSchema"]["required"], json!(["text"]));
-    assert!(!tool["description"].as_str().unwrap().contains("step"));
+    assert_eq!(
+        from_reply("Next step: go\n\nThanks for reading."),
+        some("go")
+    );
+}
+
+#[test]
+fn from_reply_accepts_next_and_markup() {
+    assert_eq!(from_reply("Next: run it"), some("run it"));
+    assert_eq!(from_reply("**Next step:** run it"), some("run it"));
+    assert_eq!(from_reply("- next step: run it"), some("run it"));
+}
+
+#[test]
+fn from_reply_strips_one_outer_pair_of_quotes_or_backticks() {
+    assert_eq!(from_reply("Next step: \"run it\""), some("run it"));
+    assert_eq!(from_reply("Next step: `run it`"), some("run it"));
+    assert_eq!(from_reply("Next step: \"\"run it\"\""), some("\"run it\""));
+    assert_eq!(from_reply("Next step: \"run it"), some("\"run it"));
+    assert_eq!(
+        from_reply("Next step: say \"yes\" now"),
+        some("say \"yes\" now")
+    );
+}
+
+#[test]
+fn from_reply_is_none_without_a_usable_line() {
+    assert_eq!(from_reply("Nothing to do."), None);
+    assert_eq!(from_reply(""), None);
+    assert_eq!(from_reply("Next step:"), None);
+    assert_eq!(from_reply("Next step: \"\""), None);
+    assert_eq!(from_reply("Next step: ``"), None);
+    assert_eq!(from_reply("The next steps are unclear"), None);
+}
+
+#[test]
+fn from_reply_never_truncates_and_never_errors() {
+    let fits = "a".repeat(SUGGESTION_MAX_CHARS);
+    let long = "a".repeat(SUGGESTION_MAX_CHARS + 1);
+    assert_eq!(from_reply(&format!("Next step: {fits}")), Some(fits));
+    assert_eq!(from_reply(&format!("Next step: {long}")), None);
+    assert_eq!(
+        from_reply(&format!("Next step: \"{}\"", "é".repeat(200))),
+        Some("é".repeat(200))
+    );
+}
+
+#[test]
+fn from_reply_drops_text_with_control_characters() {
+    assert_eq!(from_reply("Next step: a\tb"), None);
+    assert_eq!(from_reply("Next step: a\u{2028}b"), None);
+}
+
+#[test]
+fn a_hold_in_the_next_step_line_keeps_the_exact_hold_text() {
+    assert_eq!(from_reply("Next step: `/hold`"), some("/hold"));
+    assert_eq!(
+        from_reply("Next step: /hold worker-a"),
+        some("/hold worker-a")
+    );
 }
