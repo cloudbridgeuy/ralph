@@ -54,7 +54,7 @@ fn render_run_shows_the_warning_after_the_allowed_line() {
 }
 
 #[test]
-fn render_run_without_a_gap_has_no_warning_line() {
+fn render_run_with_reply_has_no_warning_line() {
     let text = render_run(&worker_plan(serde_json::json!([{"kind": "reply"}])));
     assert!(!text.contains("Warning:"), "{text}");
 }
