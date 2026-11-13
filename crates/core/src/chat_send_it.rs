@@ -2,8 +2,7 @@ use crate::chat_help::{wrap, Command};
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{
-    describe, watch_id, WatchKind, WatchOutcome, WatchSpec, FOLLOW_UP_HEADER, NO_OUTPUT,
-    OUTPUT_HEADER,
+    describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT, OUTPUT_HEADER,
 };
 use crate::worker::{HarnessId, Report};
 use serde::{Deserialize, Serialize};
@@ -607,7 +606,6 @@ const ELLIPSIS: &str = "...";
 
 fn output_tail(text: &str) -> Option<String> {
     let output = text.split_once(OUTPUT_HEADER)?.1;
-    let output = output.split(FOLLOW_UP_HEADER).next().unwrap_or(output);
     let lines: Vec<&str> = output
         .lines()
         .map(str::trim)

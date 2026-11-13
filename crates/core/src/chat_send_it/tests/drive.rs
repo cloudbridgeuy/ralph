@@ -455,12 +455,9 @@ fn a_check_failure_detail_gives_the_exit_code_and_the_last_output_lines() {
 
 #[test]
 fn a_check_failure_detail_skips_the_follow_up_blank_lines_and_a_missing_output() {
-    let followed = watch_report(
-        "watch:send-it-3",
-        "Watch `x` exited with code 2.\nCommand: c\n\nOutput:\nboom\n\n\nFollow-up: tell me",
-    );
+    let spaced = output_report("boom\n\n\n");
     assert_eq!(
-        check_detail(&WatchOutcome::Exited(2), Some(&followed)),
+        check_detail(&WatchOutcome::Exited(2), Some(&spaced)),
         "exited with code 2; last output: boom"
     );
     let silent = output_report("(no output)");
@@ -700,4 +697,13 @@ fn an_already_briefed_run_sends_the_judge_prompt_bare() {
     let (driving, text) = briefed_turn(&file.plan, briefed.clone(), &prompt);
     assert_eq!(driving, briefed);
     assert_eq!(text, prompt);
+}
+
+#[test]
+fn check_output_that_contains_the_follow_up_header_text_is_kept() {
+    let report = output_report("step one\n\nFollow-up: rerun with --force\nlast line");
+    assert_eq!(
+        check_detail(&WatchOutcome::Exited(1), Some(&report)),
+        "exited with code 1; last output: step one / Follow-up: rerun with --force / last line"
+    );
 }

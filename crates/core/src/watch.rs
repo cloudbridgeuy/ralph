@@ -471,14 +471,9 @@ mod tests {
     }
 
     #[test]
-    fn a_built_report_gives_its_output_tail_to_the_check_detail_without_the_follow_up() {
+    fn a_built_report_gives_its_output_tail_to_the_check_detail() {
         let outcome = WatchOutcome::Exited(2);
-        let report = build_report(
-            &spec(Some("Merge the PR.")),
-            &outcome,
-            &tail_of(&["first", "boom"]),
-            "t1",
-        );
+        let report = build_report(&spec(None), &outcome, &tail_of(&["first", "boom"]), "t1");
         assert_eq!(
             crate::chat_send_it::check_detail(&outcome, Some(&report)),
             "exited with code 2; last output: first / boom"
