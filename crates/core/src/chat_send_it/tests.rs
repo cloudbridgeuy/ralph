@@ -6,6 +6,7 @@ use crate::worker::Report;
 mod drive;
 mod plan;
 mod template;
+mod warnings;
 
 fn limits() -> Limits {
     Limits {
@@ -258,7 +259,7 @@ fn the_restatement_numbers_steps_and_keeps_grants_in_their_own_block() {
               ralph runs this check alone: put any work in an earlier step\n  \
            4. address review\n     \
               exit: judged: are all findings resolved?\n\
-         Allowed: spawn codex workers, merge, paid runs up to $2.50\n\
+         Allowed: spawn codex workers, merge, paid runs up to $2.50\nWarning: step 1 waits for worker E1, but the plan does not allow `reply`. A question from that worker stops the run.\n\
          Caps: 3 turns, $4.00, 2 judge rounds\n\
          You pre-approve:\n  \
            - raise the turn cap to 30"

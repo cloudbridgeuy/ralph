@@ -13,9 +13,9 @@ use ralph_core::chat_send_it::template::{
 };
 use ralph_core::chat_send_it::{
     approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_notice,
-    judge_prompt, parse_run, plan_hash, propose_refusal, read_run, render_status, running_line,
-    settle_check, start_run, step_line, stop_file, tick, write_run, Action, Driving, Ended, Limits,
-    Next, RunFile, Seen, StepResult, StopReason, Ticked,
+    judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
+    running_line, settle_check, start_run, step_line, stop_file, tick, write_run, Action, Driving,
+    Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -175,14 +175,19 @@ impl SendIt {
         }
         let plan = parse_run(args, self.limits)?;
         let hash = plan_hash(&plan);
+        let warnings = plan_warnings(&plan);
         self.save(&RunFile {
             plan,
             approved: None,
             stopped: None,
         })?;
-        Ok(format!(
+        let stored = format!(
             "Stored run plan {hash}. Stop here: ralph shows the plan and the person approves it with /send-it go."
-        ))
+        );
+        Ok(std::iter::once(stored)
+            .chain(warnings)
+            .collect::<Vec<_>>()
+            .join("\n"))
     }
 
     pub(crate) fn status(&self) -> Screen {

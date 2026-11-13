@@ -58,6 +58,24 @@ fn propose_stores_the_plan_under_the_store() {
 }
 
 #[test]
+fn propose_adds_the_warning_line_after_the_stored_line_for_a_worker_done_plan_without_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_it = SendIt::new(dir.path(), LIMITS);
+    let mut args = plan_args();
+    args["steps"] = json!([{"do": "wait", "criterion": {"kind": "worker_done", "worker": "E1"}}]);
+    let stored = send_it.propose(&args).unwrap();
+    let lines: Vec<&str> = stored.lines().collect();
+    assert!(lines[0].starts_with("Stored run plan "), "{stored}");
+    assert_eq!(lines.len(), 2, "{stored}");
+    assert!(
+        lines[1].starts_with("Warning: step 1 waits for worker E1"),
+        "{stored}"
+    );
+    let clean = SendIt::new(tempfile::tempdir().unwrap().path(), LIMITS);
+    assert!(!clean.propose(&plan_args()).unwrap().contains("Warning:"));
+}
+
+#[test]
 fn propose_rejects_a_step_without_a_criterion_and_stores_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = SendIt::new(dir.path(), LIMITS);
