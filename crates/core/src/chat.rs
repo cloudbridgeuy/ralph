@@ -79,7 +79,7 @@ pub fn resolve_recent_history_tokens(flag: Option<usize>, config: Option<usize>)
 const PROMPT_HEAD: &str = "\
 You are in a long-running chat with one person. The chat so far is compressed, oldest first. The older lines are at the end of this system prompt. The most recent lines start the message you receive, then the new message.
 
-Lines that start with #<id> are summaries of older parts of the chat. The zoom tool opens one into its two halves. The recall tool searches the full chat by regex, newest first. The search tool ranks messages for words, \"quoted phrases\", and identifiers like GUZ-709, and can filter by role and date. The read tool pages through a range of ids in order, as original text or leaf summaries.
+Lines that start with #<id> are summaries of older parts of the chat. The zoom tool opens one into its two halves. The recall tool searches the full chat by regex, newest first. The search tool ranks messages for words, \"quoted phrases\", and identifiers like GUZ-709, and can filter by role and date. The read tool pages through a range of ids in order, as original text or leaf summaries. A line `--- YYYY-MM-DD` starts the messages of that UTC day; read, zoom and search show each message's full time.
 
 Before you guess or ask the person for a fact, use zoom, recall, and search until the facts are whole.
 
@@ -556,6 +556,7 @@ mod tests {
             "never state as fact what you have not checked",
             "unverified until you check its diff or test output",
             "name its #<id>",
+            "A line `--- YYYY-MM-DD` starts the messages of that UTC day",
             "Report not-found, do not widen scope.",
             "After 2 failed repair rounds",
             "you have no erase tool",
