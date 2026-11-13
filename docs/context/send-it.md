@@ -63,6 +63,8 @@ Each step has one criterion. The run goes to the next step only when the criteri
 
 A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it. If the plan does not allow `reply`, ralph refuses the model's reply, so the worker gets no answer, and the run stops.
 
+A plan with a `worker_done` step and no `reply` action shows one `Warning:` line per such step, after the `Allowed:` line, in the plan view and in the `propose_run` result. The warning does not block approval.
+
 ## Judge steps
 
 A judge step uses the chat model to decide if the step is met. The model must give a yes or no answer and one line of evidence of at most 300 characters.
