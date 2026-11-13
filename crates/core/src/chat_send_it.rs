@@ -600,6 +600,7 @@ pub enum StopReason {
 
 const DETAIL_LINES: usize = 3;
 const DETAIL_CHARS: usize = 200;
+const ELLIPSIS: &str = "...";
 const OUTPUT_HEADER: &str = "\nOutput:\n";
 const FOLLOW_UP_HEADER: &str = "\n\nFollow-up: ";
 
@@ -616,8 +617,9 @@ fn output_tail(text: &str) -> Option<String> {
     if tail.is_empty() || tail == NO_OUTPUT {
         None
     } else if chars > DETAIL_CHARS {
-        let kept: String = tail.chars().skip(chars - DETAIL_CHARS).collect();
-        Some(format!("...{kept}"))
+        let keep = DETAIL_CHARS - ELLIPSIS.len();
+        let kept: String = tail.chars().skip(chars - keep).collect();
+        Some(format!("{ELLIPSIS}{kept}"))
     } else {
         Some(tail)
     }

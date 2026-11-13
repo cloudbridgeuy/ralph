@@ -488,7 +488,21 @@ fn a_long_output_tail_keeps_only_its_last_characters() {
         .unwrap();
     assert!(tail.starts_with("..."), "{tail}");
     assert!(tail.ends_with("xxEND"), "{tail}");
-    assert_eq!(tail.chars().count(), 203);
+    assert_eq!(tail.chars().count(), 200);
+}
+
+#[test]
+fn an_output_tail_of_exactly_the_cap_is_kept_whole_and_one_more_is_cut_to_the_cap() {
+    let tail_of = |text: &str| {
+        check_detail(&WatchOutcome::Exited(1), Some(&output_report(text)))
+            .strip_prefix("exited with code 1; last output: ")
+            .unwrap()
+            .to_string()
+    };
+    let whole = "y".repeat(200);
+    assert_eq!(tail_of(&whole), whole);
+    let cut = tail_of(&"y".repeat(201));
+    assert_eq!(cut, format!("...{}", "y".repeat(197)));
 }
 
 #[test]
