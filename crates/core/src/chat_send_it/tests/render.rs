@@ -67,13 +67,11 @@ fn the_restatement_gives_each_step_a_header_a_brief_and_an_exit_line() {
 }
 
 #[test]
-fn a_restatement_without_grants_or_actions_says_so() {
+fn a_restatement_without_actions_says_so() {
     let mut plan = plan();
     plan.allowed.clear();
-    plan.grants.clear();
     let text = render_run(&plan);
     assert!(text.contains("\nAllowed: none\n"), "{text}");
-    assert!(text.ends_with("You pre-approve:\n  - nothing"), "{text}");
 }
 
 #[test]

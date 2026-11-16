@@ -43,7 +43,7 @@ After you approve, the file also has an `approved` line with the hash. Do not wr
 ## Review and approve
 
 - `/send-it status` shows the stored plan, its hash and its approval.
-- Each step shows a header line with its kind and title, for example `1. spawn · collect evidence`. The kind follows the exit criterion: `spawn` for a worker step, `check` for a check or watch step, `judge` for a judge step. A worker step whose task starts with `merge` or `reply` shows that kind. The title is the first line of the task. Under the header, the full task shows as an indented block of short lines. The `exit:` line follows on its own line. In the terminal, ralph styles the headers and shows commands in code style. The model and the log see the same text without styles.
+- Each step shows a header line with its kind and title, for example `1. spawn · collect evidence`. The kind follows the exit criterion: `spawn` for a worker step, `check` for a check or watch step, `judge` for a judge step. A worker step whose task starts with `merge` or `reply` shows that kind. The title is the first line of the task. Under the header, the full task shows as an indented block of short lines. The `exit:` line follows on its own line. In the terminal, ralph styles the headers, dims the plan hash in the last line, and shows commands in code style. The model and the log see the same text without styles.
 - `/send-it edit` opens the plan in the chat editor (`[chat] editor`, `$VISUAL`, `$EDITOR`). After you save, ralph removes the approval and shows the plan again. If the file does not parse, ralph shows the error. Run `/send-it edit` again to fix it.
 - `/send-it go` approves the plan and starts the run.
 - `/send-it off` deletes the plan.
@@ -70,14 +70,14 @@ A plan with a `worker_done` step and no `reply` action shows one `Warning:` line
 
 A judge step uses the chat model to decide if the step is met. The model must give a yes or no answer and one line of evidence of at most 300 characters.
 
-If the answer is "not met", or the model gives no answer, that is a failed round. ralph sends the step again with the evidence. When the judge rounds are used up, the run stops. The default is 2 rounds. Set `judge_rounds` in `[caps]` to change it.
+If the answer is "not met", or the model gives no answer, that is a failed round. ralph sends the step again with the evidence. When the judge rounds are used up, the run stops. The default is 2 rounds. Set `judge_rounds` in `[caps]` to change it. The `Caps:` line of the plan shows the judge rounds only when the plan has a judge step.
 
 ## Caps and what counts
 
 Each run has a turn cap and a cost cap. When the run reaches a cap, it stops.
 
 - The plan sets the caps in `[caps]`. A plan with no caps uses `[chat] send_it_max_turns` (default 15) and `[chat] send_it_max_usd` (default 5.0). See [configuration](../configuration.md).
-- A grant (`turn_cap` or `cost_cap`) replaces that cap. The plan shows grants in a separate "You pre-approve" block, so you see them before you approve.
+- A grant (`turn_cap` or `cost_cap`) replaces that cap. The plan shows grants in a separate "You pre-approve" block, so you see them before you approve. A plan with no grants has no such block.
 - These turns count toward the turn cap: step turns, judge turns, and report turns that settle nothing.
 - The turn that reads a worker report and settles its step does not count.
 - A check or watch step has no turn at all. ralph settles it from the watch outcome, so it adds no turn and no cost to the run.

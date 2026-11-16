@@ -16,6 +16,7 @@ enum Role {
     Brief,
     Exit,
     Note,
+    Footer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +90,22 @@ fn step_rows(index: usize, step: &Step, width: usize) -> Vec<Row> {
     rows
 }
 
+fn caps_line(plan: &RunPlan) -> String {
+    let caps = format!(
+        "Caps: {} turns, ${:.2}",
+        plan.limits.max_turns, plan.limits.max_usd
+    );
+    let judged = plan
+        .steps
+        .iter()
+        .any(|step| matches!(step.criterion, Criterion::Judge { .. }));
+    if judged {
+        format!("{caps}, {} judge rounds", plan.judge_rounds)
+    } else {
+        caps
+    }
+}
+
 fn plan_rows(plan: &RunPlan, width: usize) -> Vec<Row> {
     let mut rows = vec![
         Row::new(Role::Plain, format!("Goal: {}", plan.goal)),
@@ -111,22 +128,15 @@ fn plan_rows(plan: &RunPlan, width: usize) -> Vec<Row> {
             .into_iter()
             .map(|warning| Row::new(Role::Plain, warning)),
     );
-    rows.push(Row::new(
-        Role::Plain,
-        format!(
-            "Caps: {} turns, ${:.2}, {} judge rounds",
-            plan.limits.max_turns, plan.limits.max_usd, plan.judge_rounds
-        ),
-    ));
-    rows.push(Row::new(Role::Plain, "You pre-approve:"));
-    if plan.grants.is_empty() {
-        rows.push(Row::new(Role::Plain, "  - nothing"));
+    rows.push(Row::new(Role::Plain, caps_line(plan)));
+    if !plan.grants.is_empty() {
+        rows.push(Row::new(Role::Plain, "You pre-approve:"));
+        rows.extend(
+            plan.grants
+                .iter()
+                .map(|grant| Row::new(Role::Plain, format!("  - {}", grant.label()))),
+        );
     }
-    rows.extend(
-        plan.grants
-            .iter()
-            .map(|grant| Row::new(Role::Plain, format!("  - {}", grant.label()))),
-    );
     rows
 }
 
@@ -146,7 +156,7 @@ fn state_line(file: &RunFile) -> String {
 
 fn status_rows(file: &RunFile, width: usize) -> Vec<Row> {
     let mut rows = plan_rows(&file.plan, width);
-    rows.push(Row::new(Role::Plain, state_line(file)));
+    rows.push(Row::new(Role::Footer, state_line(file)));
     rows
 }
 
@@ -206,12 +216,23 @@ fn paint_exit(line: &str, first: bool, open: &mut bool) -> String {
     }
 }
 
+fn paint_footer(line: &str, first: bool) -> String {
+    line.strip_prefix("Plan ")
+        .filter(|_| first)
+        .and_then(|rest| rest.split_once(':'))
+        .map_or_else(
+            || line.to_string(),
+            |(hash, tail)| format!("Plan {DIM}{hash}{RESET}:{tail}"),
+        )
+}
+
 fn paint(role: Role, line: &str, first: bool, open: &mut bool) -> String {
     match role {
         Role::Plain | Role::Brief => line.to_string(),
         Role::Header => paint_header(line, first),
         Role::Exit => paint_exit(line, first, open),
         Role::Note => format!("{DIM}{line}{RESET}"),
+        Role::Footer => paint_footer(line, first),
     }
 }
 
