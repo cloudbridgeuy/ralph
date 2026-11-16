@@ -72,6 +72,13 @@ impl Screen {
             shown: None,
         }
     }
+
+    pub(crate) fn for_terminal(&self, color: bool) -> &str {
+        match color {
+            true => &self.styled,
+            false => &self.text,
+        }
+    }
 }
 
 pub(super) struct Active {

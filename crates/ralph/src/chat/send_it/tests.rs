@@ -11,6 +11,7 @@ use serde_json::json;
 use std::sync::Mutex;
 
 mod held;
+mod screen;
 
 const LIMITS: Limits = Limits {
     max_turns: 3,
