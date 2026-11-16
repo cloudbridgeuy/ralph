@@ -5,6 +5,7 @@ use crate::worker::Report;
 
 mod drive;
 mod footer;
+mod header_wrap;
 mod noise;
 mod plan;
 mod render;
