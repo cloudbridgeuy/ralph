@@ -17,8 +17,6 @@ pub const MAX_VIEW_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_DIGEST_BYTES: usize = 2048;
 pub const MAX_MERGE_ATTEMPTS: usize = 3;
 const MAIN: &str = "main";
-pub const FORK_USAGE: &str =
-    "usage: /fork <name> opens thread <name> in a new Rex block next to this chat.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThreadName(String);
@@ -308,25 +306,8 @@ pub fn drop_message(name: &ThreadName, records: usize) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ForkCommand {
-    Open(ThreadName),
-    Usage(String),
-}
-
-pub fn parse_fork_args(args: &str) -> ForkCommand {
-    let mut words = args.split_whitespace();
-    match (words.next(), words.next()) {
-        (Some(word), None) => match ThreadName::parse(word) {
-            Ok(name) => ForkCommand::Open(name),
-            Err(e) => ForkCommand::Usage(format!("{e}\n{FORK_USAGE}")),
-        },
-        _ => ForkCommand::Usage(FORK_USAGE.to_string()),
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
-pub struct ForkSpawn<'a> {
+pub struct OpenSpawn<'a> {
     pub name: &'a ThreadName,
     pub exe: &'a str,
     pub main: &'a str,
@@ -336,12 +317,12 @@ pub struct ForkSpawn<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ForkLaunch {
+pub enum OpenLaunch {
     Rex(Vec<String>),
     Manual(String),
 }
 
-pub fn fork_launch(spawn: ForkSpawn) -> ForkLaunch {
+pub fn open_launch(spawn: OpenSpawn) -> OpenLaunch {
     let config = spawn
         .config_dir
         .map(|dir| ["env".to_string(), format!("RALPH_CONFIG_DIR={dir}")]);
@@ -361,7 +342,7 @@ pub fn fork_launch(spawn: ForkSpawn) -> ForkLaunch {
             let split = [
                 "split", "-b", block, "--label", &label, "-c", spawn.cwd, "--",
             ];
-            ForkLaunch::Rex(
+            OpenLaunch::Rex(
                 split
                     .map(str::to_string)
                     .into_iter()
@@ -371,8 +352,8 @@ pub fn fork_launch(spawn: ForkSpawn) -> ForkLaunch {
         }
         None => {
             let quoted: Vec<String> = command.iter().map(|word| shell_quote(word)).collect();
-            ForkLaunch::Manual(format!(
-                "not in a Rex block, so /fork opens nothing; run this in another terminal:\n  {}",
+            OpenLaunch::Manual(format!(
+                "not in a Rex block, so /thread open opens nothing; run this in another terminal:\n  {}",
                 quoted.join(" ")
             ))
         }
@@ -771,28 +752,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fork_args_take_one_thread_name() {
-        assert_eq!(parse_fork_args(" auth "), ForkCommand::Open(name("auth")));
-        assert_eq!(
-            parse_fork_args(""),
-            ForkCommand::Usage(FORK_USAGE.to_string())
-        );
-        assert_eq!(
-            parse_fork_args("auth fix"),
-            ForkCommand::Usage(FORK_USAGE.to_string())
-        );
-        for bad in ["Bad", "main"] {
-            let ForkCommand::Usage(text) = parse_fork_args(bad) else {
-                panic!("{bad} opened");
-            };
-            assert!(text.ends_with(FORK_USAGE), "{text}");
-            assert!(text.len() > FORK_USAGE.len(), "{text}");
-        }
-    }
-
-    fn spawn<'a>(auth: &'a ThreadName, block: Option<&'a str>) -> ForkSpawn<'a> {
-        ForkSpawn {
+    fn spawn<'a>(auth: &'a ThreadName, block: Option<&'a str>) -> OpenSpawn<'a> {
+        OpenSpawn {
             name: auth,
             exe: "/bin/ralph",
             main: "/s/chat",
@@ -803,12 +764,12 @@ mod tests {
     }
 
     #[test]
-    fn fork_splits_a_rex_block_running_the_thread_on_the_main_store() {
+    fn open_splits_a_rex_block_running_the_thread_on_the_main_store() {
         let auth = name("auth");
         let words = |argv: &[&str]| -> Vec<String> { argv.iter().map(|w| w.to_string()).collect() };
         assert_eq!(
-            fork_launch(spawn(&auth, Some("block:1"))),
-            ForkLaunch::Rex(words(&[
+            open_launch(spawn(&auth, Some("block:1"))),
+            OpenLaunch::Rex(words(&[
                 "split",
                 "-b",
                 "block:1",
@@ -825,11 +786,11 @@ mod tests {
                 "/s/chat",
             ]))
         );
-        let configured = ForkSpawn {
+        let configured = OpenSpawn {
             config_dir: Some("/cfg"),
             ..spawn(&auth, Some("block:1"))
         };
-        let ForkLaunch::Rex(argv) = fork_launch(configured) else {
+        let OpenLaunch::Rex(argv) = open_launch(configured) else {
             panic!("expected rex");
         };
         assert_eq!(
@@ -839,13 +800,13 @@ mod tests {
     }
 
     #[test]
-    fn fork_outside_rex_prints_the_command_to_run() {
+    fn open_outside_rex_prints_the_command_to_run() {
         let auth = name("auth");
         for block in [None, Some("")] {
             assert_eq!(
-                fork_launch(spawn(&auth, block)),
-                ForkLaunch::Manual(
-                    "not in a Rex block, so /fork opens nothing; run this in another terminal:\n  '/bin/ralph' 'chat' '--thread' 'auth' '--store' '/s/chat'"
+                open_launch(spawn(&auth, block)),
+                OpenLaunch::Manual(
+                    "not in a Rex block, so /thread open opens nothing; run this in another terminal:\n  '/bin/ralph' 'chat' '--thread' 'auth' '--store' '/s/chat'"
                         .to_string()
                 )
             );

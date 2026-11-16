@@ -22,7 +22,7 @@ mod tests {
     fn leading_command_accepts_names_and_preserves_byte_offsets() {
         for (text, expected) in [
             ("/hold GUZ-1457", 0..5),
-            ("/fork", 0..5),
+            ("/diff", 0..5),
             ("/merge", 0..6),
             (" \t/Custom_12-name args", 2..17),
             ("\n\u{2003}/x\targ", 4..6),
@@ -47,7 +47,7 @@ mod tests {
             "/-name",
             "/é",
             "/hold!",
-            "/fork.args",
+            "/hold.args",
             "/holdé",
             " /tmp/x args",
         ] {

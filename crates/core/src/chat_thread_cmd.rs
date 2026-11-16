@@ -14,12 +14,15 @@ const PULL_USAGE: &str =
     "usage: /thread pull <name> moves thread <name> to main's end; run it in main's chat.";
 const REVIVE_USAGE: &str =
     "usage: /thread revive <name> lets parked thread <name> open again; run it in main's chat.";
+const OPEN_USAGE: &str =
+    "usage: /thread open <name> opens thread <name> in a new Rex block next to this chat.";
 const DROP_USAGE: &str =
     "usage: /thread drop <name> deletes thread <name> after a y/n; run it in main's chat.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadOp {
     Ls,
+    Open(ThreadName),
     Pull(ThreadName),
     Park(ThreadName),
     Revive(ThreadName),
@@ -43,6 +46,7 @@ pub fn parse_thread_args(args: &str) -> ThreadLine {
         Some((&"switch", rest)) => {
             ThreadLine::Switch(one_name(rest, SWITCH_USAGE).map(SwitchTarget::Thread))
         }
+        Some((&"open", rest)) => ThreadLine::Op(one_name(rest, OPEN_USAGE).map(ThreadOp::Open)),
         Some((&"pull", rest)) => ThreadLine::Op(one_name(rest, PULL_USAGE).map(ThreadOp::Pull)),
         Some((&"park", rest)) => ThreadLine::Op(one_name(rest, PARK_USAGE).map(ThreadOp::Park)),
         Some((&"revive", rest)) => {
@@ -56,7 +60,7 @@ pub fn parse_thread_args(args: &str) -> ThreadLine {
 
 pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
     match op {
-        ThreadOp::Ls => None,
+        ThreadOp::Ls | ThreadOp::Open(_) => None,
         ThreadOp::Pull(_) => in_thread.then(|| main_only("pull")),
         ThreadOp::Park(_) => in_thread.then(|| main_only("park")),
         ThreadOp::Revive(_) => in_thread.then(|| main_only("revive")),
@@ -67,7 +71,7 @@ pub fn op_refusal(in_thread: bool, op: &ThreadOp) -> Option<String> {
 
 fn thread_usage() -> String {
     format!(
-        "usage: /thread <ls | switch <name> | main | pull <name> | park <name> | revive <name> | drop <name> | merge <name> [{VIEW_FLAG}]>"
+        "usage: /thread <ls | open <name> | switch <name> | main | pull <name> | park <name> | revive <name> | drop <name> | merge <name> [{VIEW_FLAG}]>"
     )
 }
 
@@ -212,6 +216,22 @@ mod tests {
     }
 
     #[test]
+    fn open_takes_one_thread_name() {
+        assert_eq!(op(" open auth "), Ok(ThreadOp::Open(auth())));
+    }
+
+    #[test]
+    fn open_refuses_no_name_two_names_or_a_bad_name_with_usage() {
+        let usage =
+            "usage: /thread open <name> opens thread <name> in a new Rex block next to this chat.";
+        assert_eq!(op("open"), Err(usage.to_string()));
+        assert_eq!(op("open auth now"), Err(usage.to_string()));
+        let bad = op("open Bad_Name").unwrap_err();
+        assert!(bad.starts_with("'Bad_Name' is not a thread name."), "{bad}");
+        assert!(bad.ends_with(usage), "{bad}");
+    }
+
+    #[test]
     fn merge_squashes_without_the_flag_and_posts_the_view_with_it() {
         assert_eq!(op("merge  auth "), Ok(merge(false)));
         for line in [
@@ -314,9 +334,11 @@ mod tests {
     }
 
     #[test]
-    fn ls_is_never_refused() {
-        assert_eq!(op_refusal(true, &ThreadOp::Ls), None);
-        assert_eq!(op_refusal(false, &ThreadOp::Ls), None);
+    fn ls_and_open_are_never_refused() {
+        for op in [ThreadOp::Ls, ThreadOp::Open(auth())] {
+            assert_eq!(op_refusal(true, &op), None);
+            assert_eq!(op_refusal(false, &op), None);
+        }
     }
 
     #[test]

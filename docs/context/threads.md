@@ -9,13 +9,15 @@ It describes the behaviour of the current release.
 A thread has no separate create command. Open it by name and ralph creates it on first use.
 
 - In a terminal: `ralph chat --thread <name>`.
-- In main's chat inside Rex: `/fork <name>`. It opens the thread in a new Rex block next to main.
-- In a thread's chat inside Rex: `/fork <name>`. It opens a new thread forked from main, next to this one.
-- In any chat (main or a thread) outside Rex: `/fork <name>` opens nothing. It prints a command. Run that command in another terminal.
+- In main's chat inside Rex: `/thread open <name>`. It opens the thread in a new Rex block next to main.
+- In a thread's chat inside Rex: `/thread open <name>`. It opens a new thread forked from main, next to this one.
+- In any chat (main or a thread) outside Rex: `/thread open <name>` opens nothing. It prints a command. Run that command in another terminal.
+
+`open` is chat-only. The CLI has no `ralph thread open`; use `ralph chat --thread <name>`. `/thread open <name>` refuses a merged, parked or open thread. For an open one it says to close that chat, then `/thread switch <name>`. For a parked one it points to `/thread revive <name>`.
 
 A name has 1 to 32 lowercase letters, digits or dashes. It cannot start with a dash. `main` is not a valid name.
 
-`/fork` creates nothing itself. The chat it starts creates the thread. Inside a thread, `/fork <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
+`/thread open` creates nothing itself. The chat it starts creates the thread. Inside a thread, `/thread open <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
 
 The thread starts from main's memory as it was at that moment. This point is the fork point. The thread does not see main messages that come later until you pull them.
 
@@ -34,7 +36,7 @@ Type `/thread switch <name>` to move this chat to another thread in the same ter
 - `/thread switch <name>` takes one thread name; `/thread switch main` is refused. `/thread main` takes no arguments. A bare `/thread <name>` gets the usage refusal. Subcommand words such as `ls` or `drop` are valid thread names: `/thread switch ls` switches to the thread `ls`.
 - Tab after `/thread ` completes the subcommands (`main` only inside a thread). Tab after `/thread switch ` completes the names of threads that are not merged or parked. Other subcommands complete no names.
 - An unknown name creates the thread, like `ralph chat --thread <name>`.
-- The switch is refused when you are already in the target, when the thread is merged or parked, or when the target chat is open elsewhere. Main counts as a target: after `/fork`, `/thread main` from the thread is refused while main's chat is open.
+- The switch is refused when you are already in the target, when the thread is merged or parked, or when the target chat is open elsewhere. Main counts as a target: after `/thread open`, `/thread main` from the thread is refused while main's chat is open.
 - The switch is refused while workers or watches run. The message names them. Stop them first.
 - Type the switch during a turn and it waits in the queue. It runs when the turn ends.
 - A refused switch, or a failed save, puts the switch line, then the entries queued after it, then any text already in the prompt, back in the prompt. Nothing is lost and the order stays. A typed switch that is refused comes back to the prompt the same way.
@@ -145,7 +147,7 @@ ralph chat history zoom auth:0 # the merged thread is still readable
 
 ## What the model sees
 
-`/thread pull`, `park`, `revive`, `drop` and `merge`, refused or not, and `/fork <name>` add the typed line and the printed result to the log of the chat where you typed them. They are never added to the thread's log. The model sees them before its next message. `/thread ls` is not recorded. See [Local command records](ralph-chat.md#local-command-records).
+`/thread pull`, `park`, `revive`, `drop` and `merge`, refused or not, and `/thread open <name>` add the typed line and the printed result to the log of the chat where you typed them. They are never added to the thread's log. The model sees them before its next message. `/thread ls` is not recorded. See [Local command records](ralph-chat.md#local-command-records).
 
 ## Refusals
 
@@ -154,7 +156,7 @@ Each message is quoted in its stable part. `<name>` is the thread. The checks ar
 | Refusal (start of message) | Cause | Fix |
 | --- | --- | --- |
 | `store <path> is in use` | `ralph chat --thread <name>` found a chat that has the store open (`crates/core/src/chat_memory/claim.rs`). | Quit the other chat. |
-| `thread <name> is in use` | `pull`, `/thread pull`, `drop`, `/thread drop`, `park`, `/thread park`, `revive`, `/thread revive`, `merge`, `/thread merge` or `/fork` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
+| `thread <name> is in use` | `pull`, `/thread pull`, `drop`, `/thread drop`, `park`, `/thread park`, `revive`, `/thread revive`, `merge`, `/thread merge` or `/thread open` found an open chat of the thread (`crates/ralph/src/chat/thread.rs`). | Quit the thread chat. |
 | `thread <name> has running workers` | `drop`, `/thread drop`, `park`, `/thread park`, `merge` or `/thread merge` found a running worker (`guard_check`). | Close the workers from the thread's chat. |
 | `thread <name> has N saved watch` | `merge` found a saved watch or schedule (`guard_check`). | Stop it from the thread's chat. |
 | `thread <name> is merged into main` | You opened, forked, dropped, parked, revived, pulled or merged a merged thread (`merged_check`). | None. Read it with `history`. |

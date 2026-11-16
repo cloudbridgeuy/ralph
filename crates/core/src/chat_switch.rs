@@ -4,8 +4,8 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 const SWITCH: &str = "switch";
-const SUBCOMMANDS: [&str; 8] = [
-    "drop", "ls", "main", "merge", "park", "pull", "revive", SWITCH,
+const SUBCOMMANDS: [&str; 9] = [
+    "drop", "ls", "main", "merge", "open", "park", "pull", "revive", SWITCH,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,12 +325,18 @@ mod tests {
         assert_eq!(
             complete("/thread ", Some("side")),
             Some(
-                ["drop", "ls", "main", "merge", "park", "pull", "revive", "switch"]
+                ["drop", "ls", "main", "merge", "open", "park", "pull", "revive", "switch"]
                     .map(String::from)
                     .to_vec()
             )
         );
         assert_eq!(complete("/thread m", None), Some(vec!["merge".into()]));
+    }
+
+    #[test]
+    fn subcommand_completion_offers_open() {
+        assert_eq!(complete("/thread o", None), Some(vec!["open".into()]));
+        assert!(complete("/thread ", None).is_some_and(|all| all.contains(&"open".to_string())));
     }
 
     #[test]
@@ -345,7 +351,7 @@ mod tests {
         assert_eq!(complete("/thread park ", None), None);
         assert_eq!(complete("/thread", None), None);
         assert_eq!(complete("/main ", None), None);
-        assert_eq!(complete("/fork a", None), None);
+        assert_eq!(complete("/thread open ", None), None);
     }
 
     #[test]

@@ -35,7 +35,7 @@ mod tests {
     fn submit_style_keeps_arguments_and_unknown_command_names() {
         let color = Color::Rgb(17, 34, 51);
         let style = SentStyle::new(Some(color));
-        for name in ["/hold", "/fork", "/merge", "/Custom_12-name"] {
+        for name in ["/hold", "/send-it", "/merge", "/Custom_12-name"] {
             let text = format!(" \t{name} GUZ-1457\n/merge");
             let styled = style.highlight(&text, 0);
             assert_eq!(styled.raw_string(), text);

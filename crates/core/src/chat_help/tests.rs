@@ -84,7 +84,6 @@ fn lists_hold_every_variant() {
             Hold,
             Nudge,
             SendIt,
-            Fork,
             Thread,
             Config,
             View,
@@ -125,9 +124,9 @@ fn the_merge_view_row_uses_the_view_flag_constant() {
 }
 
 #[test]
-fn the_fork_row_says_it_opens_a_rex_block() {
+fn the_thread_open_row_says_it_opens_a_rex_block() {
     let wide = help_text(2_000);
-    assert!(wide.contains("/fork <name>"), "{wide}");
+    assert!(wide.contains("/thread open <name>"), "{wide}");
     assert!(wide.contains("new Rex block"), "{wide}");
 }
 

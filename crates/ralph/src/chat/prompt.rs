@@ -250,10 +250,10 @@ mod tests {
                 "bar\n",
                 ">>> ",
                 "::: ",
-                "/fork name",
+                "/hold name",
                 crate::chat::sent::SentStyle::new(None)
             ),
-            "bar\n>>> /fork name\n"
+            "bar\n>>> /hold name\n"
         );
     }
 

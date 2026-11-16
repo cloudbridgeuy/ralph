@@ -63,7 +63,7 @@ pub(super) fn excerpt(text: &str, match_start: usize, lead_chars: usize, width: 
     format!("{head}{body}{tail}")
 }
 
-fn date_of(at: &str) -> &str {
+pub(super) fn date_of(at: &str) -> &str {
     at.split('T').next().unwrap_or(at)
 }
 

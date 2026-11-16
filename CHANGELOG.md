@@ -4,6 +4,7 @@
 
 ### Breaking changes
 
+- The `/fork <name>` chat command is removed, with no alias. Use `/thread open <name>`; typing `/fork` now sends the text as a normal message. (GUZ-1619)
 - The headless Claude worker is now the default `claude` harness, and the tmux Claude worker is now `claude-tmux`. The `claude-headless` and `tmux` names are no longer accepted, and the old `cursor: true/false` worker records no longer load. Store dirs `claude-headless*` are now `claude*`. (GUZ-1538)
 
 ### Upgrade
