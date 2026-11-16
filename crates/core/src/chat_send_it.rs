@@ -202,6 +202,34 @@ impl Criterion {
 }
 
 impl Action {
+    const KINDS: [Action; 9] = [
+        Action::Spawn {
+            harness: HarnessId::Codex,
+        },
+        Action::Reply,
+        Action::Close,
+        Action::Watch,
+        Action::Merge,
+        Action::Push,
+        Action::Pr,
+        Action::LinearWrite,
+        Action::PaidRun { max_usd: 0.0 },
+    ];
+
+    fn kind_label(&self) -> &'static str {
+        match self {
+            Action::Spawn { .. } => "spawn workers",
+            Action::Reply => "reply to workers",
+            Action::Close => "close workers",
+            Action::Watch => "start watches",
+            Action::Merge => "merge",
+            Action::Push => "push",
+            Action::Pr => "open PRs",
+            Action::LinearWrite => "write to Linear",
+            Action::PaidRun { .. } => "paid runs",
+        }
+    }
+
     fn label(&self) -> String {
         match self {
             Action::Spawn { harness } => format!("spawn {} workers", harness.as_str()),

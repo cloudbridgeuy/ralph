@@ -4,6 +4,7 @@ use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
 
 mod drive;
+mod footer;
 mod noise;
 mod plan;
 mod render;

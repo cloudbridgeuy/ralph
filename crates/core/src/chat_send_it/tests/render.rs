@@ -59,7 +59,9 @@ fn the_restatement_gives_each_step_a_header_a_brief_and_an_exit_line() {
            4. judge · address review\n       \
                 address review\n     \
               exit: judged: are all findings resolved?\n\
-         Allowed: spawn codex workers, merge, paid runs up to $2.50\nWarning: step 1 waits for worker E1, but the plan does not allow `reply`. A question from that worker stops the run.\n\
+         Allowed: spawn codex workers, merge, paid runs up to $2.50\n\
+         Not allowed: reply to workers, close workers, start watches, push, open PRs, write to Linear\n\
+         Warning: step 1 waits for worker E1, but the plan does not allow `reply`. A question from that worker stops the run.\n\
          Caps: 3 turns, $4.00, 2 judge rounds\n\
          You pre-approve:\n  \
            - raise the turn cap to 30"

@@ -138,11 +138,9 @@ fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
     let hash = plan_hash(&file.plan);
     let status = render_status(&file, WIDE);
     assert!(status.starts_with(&render_run(&file.plan)), "{status}");
-    assert!(status.ends_with(&format!(
-        "Plan {hash}: not approved. Type /send-it go to approve this plan."
-    )));
+    assert!(status.ends_with(&format!("\n{hash} · not approved · /send-it go to approve")));
     let approved = approve(&file, Some(&hash), true).unwrap();
-    assert!(render_status(&approved, WIDE).ends_with(&format!("Plan {hash}: approved.")));
+    assert!(render_status(&approved, WIDE).ends_with(&format!("\n{hash} · approved")));
     let stopped = RunFile {
         stopped: Some(Stopped {
             step: 2,
@@ -151,7 +149,7 @@ fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
         ..file
     };
     assert!(render_status(&stopped, WIDE).ends_with(&format!(
-        "Plan {hash}: stopped at step 2/4. Type /send-it go to resume from step 2."
+        "\n{hash} · stopped at step 2/4 · /send-it go to resume from step 2"
     )));
 }
 
@@ -269,7 +267,7 @@ fn a_wide_screen_shows_the_plan_unchanged() {
     assert_eq!(
         render_status(&file, WIDE),
         format!(
-            "{}\nPlan {hash}: not approved. Type /send-it go to approve this plan.",
+            "{}\n{hash} · not approved · /send-it go to approve",
             render_run(&file.plan)
         )
     );

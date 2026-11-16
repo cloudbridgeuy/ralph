@@ -45,12 +45,14 @@ fn each_worker_done_step_without_reply_gets_its_own_warning() {
 }
 
 #[test]
-fn render_run_shows_the_warning_after_the_allowed_line() {
+fn render_run_shows_the_warning_after_the_not_allowed_line() {
     let text = render_run(&worker_plan(serde_json::json!([{"kind": "merge"}])));
     let lines: Vec<&str> = text.lines().collect();
-    let allowed = lines.iter().position(|line| line.starts_with("Allowed:"));
+    let denied = lines
+        .iter()
+        .position(|line| line.starts_with("Not allowed:"));
     let warning = lines.iter().position(|line| *line == WARNING);
-    assert_eq!(warning, allowed.map(|index| index + 1), "{text}");
+    assert_eq!(warning, denied.map(|index| index + 1), "{text}");
 }
 
 #[test]

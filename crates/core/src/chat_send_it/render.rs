@@ -1,8 +1,8 @@
 use super::{
-    hang_wrapped, plan_hash, plan_warnings, resume_step, Criterion, RunFile, RunPlan, Step,
+    hang_wrapped, plan_hash, plan_warnings, resume_step, Action, Criterion, RunFile, RunPlan, Step,
     RUN_BY_RALPH_NOTE,
 };
-use crate::ansi::{BOLD, CYAN as CODE, DIM, RESET};
+use crate::ansi::{BOLD, CYAN as CODE, DIM, GREEN, RESET, YELLOW};
 use crate::chat_help::wrap;
 
 const BRIEF_WIDTH: usize = 68;
@@ -15,8 +15,9 @@ enum Role {
     Header,
     Brief,
     Exit,
-    Note,
-    Footer,
+    Dim,
+    Warning,
+    Footer(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,9 +86,26 @@ fn step_rows(index: usize, step: &Step, width: usize) -> Vec<Row> {
         format!("     exit: {}", step.criterion.label()),
     ));
     if step.criterion.runs_in_ralph() {
-        rows.push(Row::new(Role::Note, format!("     {RUN_BY_RALPH_NOTE}")));
+        rows.push(Row::new(Role::Dim, format!("     {RUN_BY_RALPH_NOTE}")));
     }
     rows
+}
+
+fn denied_line(allowed: &[Action]) -> String {
+    let denied: Vec<&str> = Action::KINDS
+        .iter()
+        .filter(|kind| {
+            !allowed
+                .iter()
+                .any(|action| std::mem::discriminant(action) == std::mem::discriminant(*kind))
+        })
+        .map(Action::kind_label)
+        .collect();
+    if denied.is_empty() {
+        "Not allowed: none".to_string()
+    } else {
+        format!("Not allowed: {}", denied.join(", "))
+    }
 }
 
 fn caps_line(plan: &RunPlan) -> String {
@@ -114,7 +132,7 @@ fn plan_rows(plan: &RunPlan, width: usize) -> Vec<Row> {
     for (index, step) in plan.steps.iter().enumerate() {
         rows.extend(step_rows(index, step, width));
     }
-    let allowed: Vec<String> = plan.allowed.iter().map(super::Action::label).collect();
+    let allowed: Vec<String> = plan.allowed.iter().map(Action::label).collect();
     rows.push(Row::new(
         Role::Plain,
         if allowed.is_empty() {
@@ -123,10 +141,11 @@ fn plan_rows(plan: &RunPlan, width: usize) -> Vec<Row> {
             format!("Allowed: {}", allowed.join(", "))
         },
     ));
+    rows.push(Row::new(Role::Dim, denied_line(&plan.allowed)));
     rows.extend(
         plan_warnings(plan)
             .into_iter()
-            .map(|warning| Row::new(Role::Plain, warning)),
+            .map(|warning| Row::new(Role::Warning, warning)),
     );
     rows.push(Row::new(Role::Plain, caps_line(plan)));
     if !plan.grants.is_empty() {
@@ -140,23 +159,29 @@ fn plan_rows(plan: &RunPlan, width: usize) -> Vec<Row> {
     rows
 }
 
-fn state_line(file: &RunFile) -> String {
+fn state_row(file: &RunFile) -> Row {
     let hash = plan_hash(&file.plan);
     if file.is_approved() {
-        format!("Plan {hash}: approved.")
+        Row::new(Role::Footer(GREEN), format!("{hash} · approved"))
     } else if let Some(step) = resume_step(file) {
-        format!(
-            "Plan {hash}: stopped at step {step}/{}. Type /send-it go to resume from step {step}.",
-            file.plan.steps.len()
+        Row::new(
+            Role::Footer(YELLOW),
+            format!(
+                "{hash} · stopped at step {step}/{} · /send-it go to resume from step {step}",
+                file.plan.steps.len()
+            ),
         )
     } else {
-        format!("Plan {hash}: not approved. Type /send-it go to approve this plan.")
+        Row::new(
+            Role::Footer(YELLOW),
+            format!("{hash} · not approved · /send-it go to approve"),
+        )
     }
 }
 
 fn status_rows(file: &RunFile, width: usize) -> Vec<Row> {
     let mut rows = plan_rows(&file.plan, width);
-    rows.push(Row::new(Role::Footer, state_line(file)));
+    rows.push(state_row(file));
     rows
 }
 
@@ -216,14 +241,11 @@ fn paint_exit(line: &str, first: bool, open: &mut bool) -> String {
     }
 }
 
-fn paint_footer(line: &str, first: bool) -> String {
-    line.strip_prefix("Plan ")
-        .filter(|_| first)
-        .and_then(|rest| rest.split_once(':'))
-        .map_or_else(
-            || line.to_string(),
-            |(hash, tail)| format!("Plan {DIM}{hash}{RESET}:{tail}"),
-        )
+fn paint_footer(line: &str, first: bool, tone: &str) -> String {
+    match line.split_once(' ').filter(|_| first) {
+        Some((hash, rest)) => format!("{DIM}{hash}{RESET} {tone}{rest}{RESET}"),
+        None => format!("{tone}{line}{RESET}"),
+    }
 }
 
 fn paint(role: Role, line: &str, first: bool, open: &mut bool) -> String {
@@ -231,8 +253,9 @@ fn paint(role: Role, line: &str, first: bool, open: &mut bool) -> String {
         Role::Plain | Role::Brief => line.to_string(),
         Role::Header => paint_header(line, first),
         Role::Exit => paint_exit(line, first, open),
-        Role::Note => format!("{DIM}{line}{RESET}"),
-        Role::Footer => paint_footer(line, first),
+        Role::Dim => format!("{DIM}{line}{RESET}"),
+        Role::Warning => format!("{YELLOW}{line}{RESET}"),
+        Role::Footer(tone) => paint_footer(line, first, tone),
     }
 }
 

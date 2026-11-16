@@ -6,7 +6,7 @@ It describes the behaviour of the current release.
 
 ## Propose a plan
 
-Type `/send-it <instructions>` in the chat. This sends one turn to the model. The model writes the plan and does not start the work. ralph stores the plan as `<store>/send-it/run.toml` and shows it with its hash. The plan is not approved yet.
+Type `/send-it <instructions>` in the chat. This sends one turn to the model. The model writes the plan and does not start the work. ralph stores the plan as `<store>/send-it/run.toml` and shows it. The last line of the view shows the hash and the state. The plan is not approved yet.
 
 - If the turn stores no plan, ralph tells you. Ask again with clearer instructions.
 - A step with no exit criterion is refused. The model must give each step a check that ralph can measure.
@@ -42,8 +42,8 @@ After you approve, the file also has an `approved` line with the hash. Do not wr
 
 ## Review and approve
 
-- `/send-it status` shows the stored plan, its hash and its approval.
-- Each step shows a header line with its kind and title, for example `1. spawn · collect evidence`. The kind follows the exit criterion: `spawn` for a worker step, `check` for a check or watch step, `judge` for a judge step. A worker step whose task starts with `merge` or `reply` shows that kind. The title is the first line of the task. Under the header, the full task shows as an indented block of short lines. The `exit:` line follows on its own line. In the terminal, ralph styles the headers, dims the plan hash in the last line, and shows commands in code style. The model and the log see the same text without styles.
+- `/send-it status` shows the stored plan. The last line shows its hash and its approval: `<hash> · not approved · /send-it go to approve`, `<hash> · approved`, or `<hash> · stopped at step N/M · /send-it go to resume from step N`.
+- Each step shows a header line with its kind and title, for example `1. spawn · collect evidence`. The kind follows the exit criterion: `spawn` for a worker step, `check` for a check or watch step, `judge` for a judge step. A worker step whose task starts with `merge` or `reply` shows that kind. The title is the first line of the task. Under the header, the full task shows as an indented block of short lines. The `exit:` line follows on its own line. In the terminal, ralph styles the headers, dims the plan hash and colours the state in the last line, and shows commands in code style. The model and the log see the same text without styles.
 - `/send-it edit` opens the plan in the chat editor (`[chat] editor`, `$VISUAL`, `$EDITOR`). After you save, ralph removes the approval and shows the plan again. If the file does not parse, ralph shows the error. Run `/send-it edit` again to fix it.
 - `/send-it go` approves the plan and starts the run.
 - `/send-it off` deletes the plan.
@@ -64,7 +64,7 @@ Each step has one criterion. The run goes to the next step only when the criteri
 
 A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it. If the plan does not allow `reply`, ralph refuses the model's reply, so the worker gets no answer, and the run stops.
 
-A plan with a `worker_done` step and no `reply` action shows one `Warning:` line per such step, after the `Allowed:` line, in the plan view and in the `propose_run` result. The warning does not block approval.
+A plan with a `worker_done` step and no `reply` action shows one `Warning:` line per such step, after the `Allowed:` and `Not allowed:` lines, before `Caps:`, in the plan view and in the `propose_run` result. The warning does not block approval.
 
 ## Judge steps
 
@@ -87,7 +87,7 @@ Usage rows of run turns have the trigger `send_it`.
 
 ## Allowed actions
 
-The plan lists the actions the run can do. Read this list before you approve.
+The plan lists the actions the run can do. Read this list before you approve. The plan view shows it as `Allowed:`, and shows every action kind not on the list as `Not allowed:`.
 
 - ralph enforces some actions: spawn a worker (only with the listed harness), reply to workers, close workers (not with abandon or force), and start watches. A run can never create a schedule.
 - Other actions (merge, push, open PRs, write to Linear, paid runs) depend only on the instructions. ralph does not block them.
@@ -122,7 +122,7 @@ The model sees each stop and done notice, and the result of each `/send-it off`,
 
 After a stop or a finished run, the plan stays in `run.toml` without its approval, until you type `/send-it off`. You can save it as a template or propose a new plan.
 
-To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The status line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. ralph first checks if step N is already met. For a worker step, a `done` report from the worker moves the run to the next step; a worker that is running, or that last reported anything else, makes the run wait for its report and does not send the step again; a worker ralph does not know gets the step again. A check or watch step runs its command first: exit 0 moves on, any other result stops the run with `CheckFailed`. A judge step is judged first: not met sends the step again, and this first judgement does not count as a judge round. A met step prints `send-it: step N/M met`. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
+To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The last line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. ralph first checks if step N is already met. For a worker step, a `done` report from the worker moves the run to the next step; a worker that is running, or that last reported anything else, makes the run wait for its report and does not send the step again; a worker ralph does not know gets the step again. A check or watch step runs its command first: exit 0 moves on, any other result stops the run with `CheckFailed`. A judge step is judged first: not met sends the step again, and this first judgement does not count as a judge round. A met step prints `send-it: step N/M met`. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
 
 For the exact notices, see [ralph chat: /send-it](ralph-chat.md#send-it).
 

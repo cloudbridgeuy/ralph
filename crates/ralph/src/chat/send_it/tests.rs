@@ -192,12 +192,12 @@ fn go_needs_the_prompt_and_the_hash_on_screen() {
     assert!(send_it
         .status()
         .text
-        .ends_with("not approved. Type /send-it go to approve this plan."));
+        .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
     go(&send_it, Some(&hash), true);
     assert!(send_it
         .status()
         .text
-        .ends_with(&format!("Plan {hash}: approved.")));
+        .ends_with(&format!("{hash} · approved")));
 }
 
 #[test]
@@ -227,10 +227,10 @@ fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
     let (send_it, hash) = proposed(dir.path());
     go(&send_it, Some(&hash), true);
     let screen = send_it.clear_approval();
-    assert_eq!(screen.shown, Some(hash));
+    assert_eq!(screen.shown, Some(hash.clone()));
     assert!(screen
         .text
-        .ends_with("not approved. Type /send-it go to approve this plan."));
+        .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
     fs::write(&send_it.path, "goal = ").unwrap();
     let broken = send_it.clear_approval();
     assert_eq!(broken.shown, None);
@@ -547,7 +547,7 @@ fn release_drops_the_run_s_approval_and_keeps_the_plan_for_save_and_reuse() {
     assert!(send_it
         .status()
         .text
-        .ends_with("not approved. Type /send-it go to approve this plan."));
+        .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
     assert!(send_it
         .save_template("ship", None)
         .starts_with("Template ship saved"));
@@ -579,7 +579,7 @@ fn a_stop_keeps_the_plan_until_off_and_go_resumes_at_the_stopped_step() {
     assert!(
         screen
             .text
-            .ends_with("stopped at step 2/2. Type /send-it go to resume from step 2."),
+            .ends_with("stopped at step 2/2 · /send-it go to resume from step 2"),
         "{}",
         screen.text
     );
