@@ -295,7 +295,7 @@ fn only_a_check_or_watch_step_carries_the_run_by_ralph_note() {
     assert_eq!(text.matches("ralph runs this check alone").count(), 2);
     let first_note = text.find("ralph runs this check alone").unwrap();
     assert!(first_note > text.find("2. check · wait for CI").unwrap());
-    assert!(text.find("1. spawn · collect evidence").unwrap() < first_note);
+    assert!(text.find("1. worker · collect evidence").unwrap() < first_note);
     assert!(!text[..text.find("2. check · wait for CI").unwrap()]
         .contains("ralph runs this check alone"));
 }

@@ -37,19 +37,7 @@ impl Row {
 
 fn step_kind(step: &Step) -> &'static str {
     match &step.criterion {
-        Criterion::WorkerDone { .. } => {
-            match step
-                .task
-                .split_whitespace()
-                .next()
-                .map(str::to_lowercase)
-                .as_deref()
-            {
-                Some("merge") => "merge",
-                Some("reply") => "reply",
-                _ => "spawn",
-            }
-        }
+        Criterion::WorkerDone { .. } => "worker",
         Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. } => "check",
         Criterion::Judge { .. } => "judge",
     }

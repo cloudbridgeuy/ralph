@@ -45,7 +45,7 @@ fn the_restatement_gives_each_step_a_header_a_brief_and_an_exit_line() {
         render_run(&plan()),
         "Goal: ship GUZ-1\n\
          Steps:\n  \
-           1. spawn · collect evidence\n       \
+           1. worker · collect evidence\n       \
                 collect evidence\n     \
               exit: worker E1 reports done\n  \
            2. check · wait for CI\n       \
@@ -83,7 +83,7 @@ fn the_header_kind_follows_the_exit_criterion() {
     let check = serde_json::json!({"kind": "check_passes", "command": "make"});
     let judge = serde_json::json!({"kind": "judge", "question": "ok?"});
     for (criterion, kind) in [
-        (worker, "spawn"),
+        (worker, "worker"),
         (watch, "check"),
         (check, "check"),
         (judge, "judge"),
@@ -94,16 +94,23 @@ fn the_header_kind_follows_the_exit_criterion() {
 }
 
 #[test]
-fn a_worker_step_that_starts_with_merge_or_reply_has_that_kind() {
+fn a_worker_step_shows_worker_whatever_its_task_says() {
     let worker = serde_json::json!({"kind": "worker_done", "worker": "E1"});
-    for (task, kind) in [
-        ("merge the branch", "merge"),
-        ("Reply to the worker", "reply"),
-        ("merger of ideas", "spawn"),
-    ] {
+    for task in ["merge the branch", "Reply to the worker", "wait for E1"] {
         let text = header(&step_plan(task, worker.clone()));
-        assert!(text.starts_with(&format!("  1. {kind} · ")), "{text}");
+        assert_eq!(text, format!("  1. worker · {task}"));
     }
+}
+
+#[test]
+fn no_spawn_header_shows_for_a_plan_that_does_not_allow_spawn() {
+    let worker = serde_json::json!({"kind": "worker_done", "worker": "E1"});
+    let mut plan = step_plan("wait for E1", worker);
+    plan.allowed
+        .retain(|action| !matches!(action, Action::Spawn { .. }));
+    let text = render_run(&plan);
+    assert!(!text.contains("spawn ·"), "{text}");
+    assert!(text.contains("1. worker · wait for E1"), "{text}");
 }
 
 #[test]
@@ -211,7 +218,7 @@ fn the_brief_the_model_sees_has_no_escape_character() {
     let Next::Send(brief) = started.next else {
         panic!("{:?}", started.next)
     };
-    assert!(brief.contains("1. spawn · collect evidence"), "{brief}");
+    assert!(brief.contains("1. worker · collect evidence"), "{brief}");
     assert!(!brief.contains('\x1b'), "{brief:?}");
 }
 
