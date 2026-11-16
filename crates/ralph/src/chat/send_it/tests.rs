@@ -222,6 +222,19 @@ fn the_status_screen_has_a_plain_text_and_a_styled_copy_of_it() {
 }
 
 #[test]
+fn the_screens_after_a_proposal_and_a_template_use_carry_a_styled_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, _) = proposed(dir.path());
+    let after_proposal = send_it.proposed(None);
+    assert!(after_proposal.styled.contains('\x1b'));
+    assert!(!after_proposal.text.contains('\x1b'));
+    send_it.save_template("ship", Some("GUZ-1"));
+    let after_template = send_it.use_template("GUZ-2", "ship");
+    assert!(after_template.styled.contains('\x1b'));
+    assert!(!after_template.text.contains('\x1b'));
+}
+
+#[test]
 fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, hash) = proposed(dir.path());

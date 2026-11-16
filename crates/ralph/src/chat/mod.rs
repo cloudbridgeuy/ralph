@@ -711,7 +711,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             Route::SendIt(SendItCommand::Propose(text)) => {
                 if let Some((ticket, name)) = send_it.template_use(&text) {
                     let screen = send_it.use_template(&ticket, &name);
-                    println!("{}", screen.text);
+                    println!("{}", screen.styled);
                     note(&screen.text);
                     shown_plan = screen.shown;
                     continue;
@@ -730,7 +730,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 queue = queued;
                 let outcome = result?;
                 let screen = send_it.proposed(before);
-                println!("{}", screen.text);
+                println!("{}", screen.styled);
                 shown_plan = screen.shown;
                 (outcome, None)
             }
