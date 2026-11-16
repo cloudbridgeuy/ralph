@@ -49,13 +49,13 @@ mod tests {
     fn recap_styles_only_the_user_command() {
         let style = SentStyle::new(Some(reedline::Color::Magenta));
         assert_eq!(
-            paint_recap_line("  you: /fork topic", style),
+            paint_recap_line("  you: /hold topic", style),
             format!(
                 "  you: {} topic",
-                reedline::Color::Magenta.bold().paint("/fork")
+                reedline::Color::Magenta.bold().paint("/hold")
             )
         );
-        for line in ["  next: /fork topic", "  you: text /fork", "  you: /tmp/x"] {
+        for line in ["  next: /hold topic", "  you: text /hold", "  you: /tmp/x"] {
             assert_eq!(paint_recap_line(line, style), line);
         }
         assert_eq!(

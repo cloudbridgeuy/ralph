@@ -2,7 +2,6 @@ use crate::chat_memory::{tail_lines, Entry, Tree};
 use crate::chat_nudge::NudgeCommand;
 use crate::chat_send_it::SendItCommand;
 use crate::chat_status::Route;
-use crate::chat_thread::ForkCommand;
 use crate::chat_thread_cmd::ThreadOp;
 use crate::schedule_command::ScheduleCommand;
 use crate::watch_command::WatchCommand;
@@ -17,7 +16,6 @@ fn recorded(route: &Route) -> bool {
             SendItCommand::Status | SendItCommand::Templates | SendItCommand::Usage
         ),
         Route::ThreadOp { op, .. } => !matches!(op, Ok(ThreadOp::Ls)),
-        Route::Fork(command) => matches!(command, ForkCommand::Open(_)),
         Route::Watch(command) => matches!(command, WatchCommand::Start(_) | WatchCommand::Stop(_)),
         Route::Schedule(command) => matches!(command, ScheduleCommand::Cancel(_)),
         Route::Nudge(command) => matches!(command, NudgeCommand::Send { .. }),

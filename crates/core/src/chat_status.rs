@@ -8,7 +8,6 @@ use crate::chat_process::ProcessCell;
 use crate::chat_rerender::parse_rerender_args;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
 use crate::chat_switch::SwitchTarget;
-use crate::chat_thread::{parse_fork_args, ForkCommand};
 use crate::chat_thread_cmd::{parse_thread_args, ThreadLine, ThreadOp};
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
@@ -105,7 +104,6 @@ pub enum Route {
     Nudge(NudgeCommand),
     Direct(Direct),
     SendIt(SendItCommand),
-    Fork(ForkCommand),
     Switch {
         parsed: Result<SwitchTarget, String>,
         line: String,
@@ -144,7 +142,6 @@ impl Route {
             | Route::Nudge(_)
             | Route::Direct(_)
             | Route::SendIt(_)
-            | Route::Fork(_)
             | Route::Switch { .. }
             | Route::ThreadOp { .. }
             | Route::View(_)
@@ -193,7 +190,6 @@ pub fn route_input(
                 Command::Hold => hold_route(args, line, hold_targets),
                 Command::Nudge => Route::Nudge(parse_nudge_args(args)),
                 Command::SendIt => Route::SendIt(parse_send_it_args(args)),
-                Command::Fork => Route::Fork(parse_fork_args(args)),
                 Command::Thread => match parse_thread_args(args) {
                     ThreadLine::Switch(parsed) => Route::Switch {
                         parsed,

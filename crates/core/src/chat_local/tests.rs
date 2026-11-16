@@ -24,7 +24,7 @@ fn commands_that_change_state_are_recorded() {
         "/thread revive auth",
         "/thread pull auth",
         "/thread merge",
-        "/fork auth",
+        "/thread open auth",
         "/watch start ci -- cargo test",
         "/watch stop w1",
         "/schedule cancel s1",
@@ -43,7 +43,6 @@ fn read_only_commands_and_messages_are_not_recorded() {
         "/send-it",
         "/thread ls",
         "/thread auth",
-        "/fork",
         "/watch list",
         "/watch",
         "/schedule list",
@@ -61,12 +60,6 @@ fn read_only_commands_and_messages_are_not_recorded() {
     ] {
         assert!(!recorded(&route(line)), "{line}");
     }
-}
-
-#[test]
-#[ignore = "GUZ-1619 red until next commit"]
-fn a_thread_open_is_recorded() {
-    assert!(recorded(&route("/thread open auth")));
 }
 
 #[test]

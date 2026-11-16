@@ -1,8 +1,8 @@
 use crate::chat::inbox::Display;
 use crate::chat::schedule::{ask_answer, read_answer};
 use crate::chat::thread::{
-    config_root, drop_precheck, drop_thread, listing, merge_precheck, merge_thread, park_thread,
-    pull_thread, revive_thread, rows, thread_dir, view_thread,
+    config_root, drop_precheck, drop_thread, listing, merge_precheck, merge_thread, open_thread,
+    park_thread, pull_thread, revive_thread, rows, thread_dir, view_thread,
 };
 use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
@@ -42,6 +42,7 @@ pub(super) fn run(
                 .map_err(|e| format!("could not list threads: {e}"))?;
             Ok(listing(&listed, env.display, env.width, "no threads"))
         }
+        ThreadOp::Open(name) => open_thread(env.store_dir, name),
         ThreadOp::Pull(name) => pull_thread(&main, name),
         ThreadOp::Park(name) => {
             park_thread(&main, name, &running_of(name)).map(|()| parked_message(name))

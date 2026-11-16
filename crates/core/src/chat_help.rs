@@ -20,7 +20,6 @@ pub enum Command {
     Hold,
     Nudge,
     SendIt,
-    Fork,
     Thread,
     Config,
     View,
@@ -32,7 +31,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 18] = [
+    pub const ALL: [Command; 17] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -42,7 +41,6 @@ impl Command {
         Command::Hold,
         Command::Nudge,
         Command::SendIt,
-        Command::Fork,
         Command::Thread,
         Command::Config,
         Command::View,
@@ -64,7 +62,6 @@ impl Command {
             Command::Hold => "/hold",
             Command::Nudge => "/nudge",
             Command::SendIt => "/send-it",
-            Command::Fork => "/fork",
             Command::Thread => "/thread",
             Command::Config => "/config",
             Command::View => "/view",
@@ -212,14 +209,14 @@ impl Command {
                     "fill template <name> with <ticket> and store it as the plan, not approved; only an exact template name counts, other text is instructions; refused while an approved run is active; starts no turn",
                 ),
             ],
-            Command::Fork => &[(
-                "/fork <name>",
-                "open thread <name> in a new Rex block next to this chat, on this chat's store; from a thread's chat it forks a sibling from main; refused when the thread is merged, parked or already open; outside Rex it prints the command to run instead; while a turn runs it waits in the queue",
-            )],
             Command::Thread => &[
                 (
                     "/thread ls",
                     "list the threads with their fork point, message count, running workers and unread reports, like ralph thread ls; works in main's chat and in a thread's chat; takes no other arguments; starts no turn",
+                ),
+                (
+                    "/thread open <name>",
+                    "open thread <name> in a new Rex block next to this chat, on this chat's store; from a thread's chat it forks a sibling from main; refused when the thread is merged, parked or already open (use /thread switch <name> to move this chat instead); outside Rex it prints the command to run instead; with no model call; while a turn runs it waits in the queue",
                 ),
                 (
                     "/thread switch <name>",
