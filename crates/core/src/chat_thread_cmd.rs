@@ -212,6 +212,27 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GUZ-1619 red until next commit"]
+    fn open_takes_one_thread_name() {
+        assert!(matches!(
+            parse_thread_args(" open auth "),
+            ThreadLine::Op(Ok(_))
+        ));
+    }
+
+    #[test]
+    #[ignore = "GUZ-1619 red until next commit"]
+    fn open_refuses_no_name_two_names_or_a_bad_name_with_usage() {
+        let usage =
+            "usage: /thread open <name> opens thread <name> in a new Rex block next to this chat.";
+        assert_eq!(op("open"), Err(usage.to_string()));
+        assert_eq!(op("open auth now"), Err(usage.to_string()));
+        let bad = op("open Bad_Name").unwrap_err();
+        assert!(bad.starts_with("'Bad_Name' is not a thread name."), "{bad}");
+        assert!(bad.ends_with(usage), "{bad}");
+    }
+
+    #[test]
     fn merge_squashes_without_the_flag_and_posts_the_view_with_it() {
         assert_eq!(op("merge  auth "), Ok(merge(false)));
         for line in [

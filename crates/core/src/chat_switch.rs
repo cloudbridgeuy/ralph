@@ -334,6 +334,13 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GUZ-1619 red until next commit"]
+    fn subcommand_completion_offers_open() {
+        assert_eq!(complete("/thread o", None), Some(vec!["open".into()]));
+        assert!(complete("/thread ", None).is_some_and(|all| all.contains(&"open".to_string())));
+    }
+
+    #[test]
     fn subcommand_completion_offers_drop_and_revive() {
         assert_eq!(complete("/thread d", None), Some(vec!["drop".into()]));
         assert_eq!(complete("/thread r", None), Some(vec!["revive".into()]));

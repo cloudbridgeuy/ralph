@@ -64,6 +64,12 @@ fn read_only_commands_and_messages_are_not_recorded() {
 }
 
 #[test]
+#[ignore = "GUZ-1619 red until next commit"]
+fn a_thread_open_is_recorded() {
+    assert!(recorded(&route("/thread open auth")));
+}
+
+#[test]
 fn a_record_holds_the_typed_line_and_its_result() {
     assert_eq!(
         local_record(

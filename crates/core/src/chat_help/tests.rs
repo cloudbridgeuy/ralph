@@ -132,6 +132,13 @@ fn the_fork_row_says_it_opens_a_rex_block() {
 }
 
 #[test]
+#[ignore = "GUZ-1619 red until next commit"]
+fn the_thread_open_row_says_it_opens_a_rex_block() {
+    let wide = help_text(2_000);
+    assert!(wide.contains("/thread open <name>"), "{wide}");
+}
+
+#[test]
 fn the_send_it_rows_cover_every_form_including_templates() {
     let wide = help_text(2_000);
     for form in [

@@ -146,6 +146,23 @@ fn only_the_thread_command_is_a_cell_command() {
 }
 
 #[test]
+#[ignore = "GUZ-1619 red until next commit"]
+fn thread_open_routes_to_a_thread_op_and_waits_for_the_turn() {
+    let routed = route("/thread open auth");
+    assert!(
+        matches!(routed, Route::ThreadOp { op: Ok(_), .. }),
+        "{routed:?}"
+    );
+    assert!(!routed.runs_mid_turn());
+}
+
+#[test]
+#[ignore = "GUZ-1619 red until next commit"]
+fn the_removed_fork_command_is_an_ordinary_message() {
+    assert_eq!(route("/fork auth"), Route::Send("/fork auth".into()));
+}
+
+#[test]
 fn the_thread_chat_refusal_points_at_the_thread_subcommands() {
     assert_eq!(
         op_refusal(true, &ThreadOp::Park(name("auth"))),
