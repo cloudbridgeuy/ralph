@@ -44,7 +44,11 @@ fn step_kind(step: &Step) -> &'static str {
 }
 
 fn step_title(step: &Step) -> &str {
-    step.task.lines().next().unwrap_or_default().trim()
+    step.task
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
 }
 
 fn brief_rows(task: &str, width: usize) -> Vec<Row> {

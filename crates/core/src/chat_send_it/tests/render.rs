@@ -140,6 +140,15 @@ fn the_title_is_the_first_line_and_the_brief_keeps_every_line_indented() {
     assert_eq!(words, 3 + 1 + 40 + 1, "{text}");
 }
 
+#[test]
+fn a_task_that_starts_with_a_blank_line_is_titled_by_its_first_text_line() {
+    let judge = serde_json::json!({"kind": "judge", "question": "ok?"});
+    let mut plan = step_plan("x", judge);
+    plan.steps[0].task = "\n  \n  fix the bug  \nmore".to_string();
+    let text = render_run(&plan);
+    assert_eq!(header_of(&text), "  1. judge · fix the bug");
+}
+
 fn header_of(text: &str) -> &str {
     text.lines().find(|line| line.starts_with("  1. ")).unwrap()
 }
