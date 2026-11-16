@@ -43,6 +43,7 @@ After you approve, the file also has an `approved` line with the hash. Do not wr
 ## Review and approve
 
 - `/send-it status` shows the stored plan, its hash and its approval.
+- Each step shows a header line with its kind and title, for example `1. spawn · collect evidence`. The kind follows the exit criterion: `spawn` for a worker step, `check` for a check or watch step, `judge` for a judge step. A worker step whose task starts with `merge` or `reply` shows that kind. The title is the first line of the task. Under the header, the full task shows as an indented block of short lines. The `exit:` line follows on its own line. In the terminal, ralph styles the headers and shows commands in code style. The model and the log see the same text without styles.
 - `/send-it edit` opens the plan in the chat editor (`[chat] editor`, `$VISUAL`, `$EDITOR`). After you save, ralph removes the approval and shows the plan again. If the file does not parse, ralph shows the error. Run `/send-it edit` again to fix it.
 - `/send-it go` approves the plan and starts the run.
 - `/send-it off` deletes the plan.

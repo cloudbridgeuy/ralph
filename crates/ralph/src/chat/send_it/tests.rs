@@ -201,6 +201,27 @@ fn go_needs_the_prompt_and_the_hash_on_screen() {
 }
 
 #[test]
+fn the_status_screen_has_a_plain_text_and_a_styled_copy_of_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, _) = proposed(dir.path());
+    let screen = send_it.status();
+    assert!(screen.styled.contains('\x1b'), "{:?}", screen.styled);
+    assert!(!screen.text.contains('\x1b'), "{:?}", screen.text);
+    let mut plain = String::new();
+    let mut chars = screen.styled.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            chars.by_ref().find(|next| *next == 'm');
+        } else {
+            plain.push(c);
+        }
+    }
+    assert_eq!(plain, screen.text);
+    let text = Screen::text("hello");
+    assert_eq!(text.styled, text.text);
+}
+
+#[test]
 fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, hash) = proposed(dir.path());
@@ -224,10 +245,7 @@ fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
 fn without_a_run_every_command_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = SendIt::new(dir.path(), LIMITS);
-    let none = Screen {
-        text: NO_RUN.to_string(),
-        shown: None,
-    };
+    let none = Screen::text(NO_RUN);
     assert_eq!(send_it.status(), none);
     assert_eq!(send_it.clear_approval(), none);
     assert_eq!(go(&send_it, Some("x"), true), (NO_RUN.to_string(), None));

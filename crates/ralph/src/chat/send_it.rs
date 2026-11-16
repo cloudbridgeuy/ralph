@@ -14,8 +14,8 @@ use ralph_core::chat_send_it::template::{
 use ralph_core::chat_send_it::{
     approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_notice,
     judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
-    running_line, settle_check, start_run, step_line, stop_file, tick, write_run, Action, Driving,
-    Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
+    render_status_styled, running_line, settle_check, start_run, step_line, stop_file, tick,
+    write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -59,13 +59,16 @@ pub(crate) struct SendIt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Screen {
     pub(crate) text: String,
+    pub(crate) styled: String,
     pub(crate) shown: Option<String>,
 }
 
 impl Screen {
     fn text(text: impl Into<String>) -> Self {
+        let text = text.into();
         Self {
-            text: text.into(),
+            styled: text.clone(),
+            text,
             shown: None,
         }
     }
@@ -194,6 +197,7 @@ impl SendIt {
         match self.load() {
             Ok(Some(file)) => Screen {
                 text: render_status(&file, super::prompt::screen_columns()),
+                styled: render_status_styled(&file, super::prompt::screen_columns()),
                 shown: Some(plan_hash(&file.plan)),
             },
             Ok(None) => Screen::text(NO_RUN),
@@ -430,6 +434,7 @@ impl SendIt {
             Ok(()) => screen,
             Err(error) => Screen {
                 text: format!("Editor failed: {error}\n{}", screen.text),
+                styled: format!("Editor failed: {error}\n{}", screen.styled),
                 ..screen
             },
         }

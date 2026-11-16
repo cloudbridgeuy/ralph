@@ -777,7 +777,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 } else {
                     send_it.status()
                 };
-                println!("{}", screen.text);
+                println!("{}", screen.styled);
                 note(&screen.text);
                 shown_plan = screen.shown;
                 continue;

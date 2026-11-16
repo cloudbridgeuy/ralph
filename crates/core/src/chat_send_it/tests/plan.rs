@@ -213,12 +213,15 @@ fn long_file() -> RunFile {
     }
 }
 
-fn continuations<'a>(status: &'a str, first: &str) -> Vec<&'a str> {
+fn continuations<'a>(status: &'a str, first: &str, indent: usize) -> Vec<&'a str> {
     status
         .lines()
         .skip_while(|line| !line.starts_with(first))
         .skip(1)
-        .take_while(|line| line.starts_with("  ") && !line.trim_start().starts_with("exit:"))
+        .take_while(|line| {
+            line.len() - line.trim_start().len() == indent
+                && !line.trim_start().starts_with("exit:")
+        })
         .collect()
 }
 
@@ -242,7 +245,7 @@ fn status_wraps_long_steps_at_word_boundaries() {
 #[test]
 fn a_wrapped_step_continues_under_its_text() {
     let status = render_status(&long_file(), NARROW);
-    let rest = continuations(&status, "  1. ");
+    let rest = continuations(&status, "  1. ", 5);
     assert!(!rest.is_empty(), "{status}");
     for line in rest {
         assert_eq!(line.len() - line.trim_start().len(), 5, "{status}");
@@ -252,7 +255,7 @@ fn a_wrapped_step_continues_under_its_text() {
 #[test]
 fn a_wrapped_exit_continues_under_its_criterion() {
     let status = render_status(&long_file(), NARROW);
-    let rest = continuations(&status, "     exit: ");
+    let rest = continuations(&status, "     exit: ", 11);
     assert!(!rest.is_empty(), "{status}");
     for line in rest {
         assert_eq!(line.len() - line.trim_start().len(), 11, "{status}");
@@ -293,7 +296,8 @@ fn only_a_check_or_watch_step_carries_the_run_by_ralph_note() {
     let text = render_run(&plan());
     assert_eq!(text.matches("ralph runs this check alone").count(), 2);
     let first_note = text.find("ralph runs this check alone").unwrap();
-    assert!(first_note > text.find("2. wait for CI").unwrap());
-    assert!(text.find("1. collect evidence").unwrap() < first_note);
-    assert!(!text[..text.find("2. wait for CI").unwrap()].contains("ralph runs this check alone"));
+    assert!(first_note > text.find("2. check · wait for CI").unwrap());
+    assert!(text.find("1. spawn · collect evidence").unwrap() < first_note);
+    assert!(!text[..text.find("2. check · wait for CI").unwrap()]
+        .contains("ralph runs this check alone"));
 }

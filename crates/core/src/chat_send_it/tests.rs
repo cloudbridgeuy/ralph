@@ -5,6 +5,7 @@ use crate::worker::Report;
 
 mod drive;
 mod plan;
+mod render;
 mod template;
 mod warnings;
 
@@ -241,39 +242,6 @@ fn zero_caps_and_unknown_kinds_are_rejected() {
     args["allowed"] = serde_json::json!([{"kind": "deploy"}]);
     let error = parse_run(&args, limits()).unwrap_err();
     assert!(error.contains("deploy"), "{error}");
-}
-
-#[test]
-fn the_restatement_numbers_steps_and_keeps_grants_in_their_own_block() {
-    assert_eq!(
-        render_run(&plan()),
-        "Goal: ship GUZ-1\n\
-         Steps:\n  \
-           1. collect evidence\n     \
-              exit: worker E1 reports done\n  \
-           2. wait for CI\n     \
-              exit: watch `gh pr checks --watch` exits 0\n     \
-              ralph runs this check alone: put any work in an earlier step\n  \
-           3. run the checks\n     \
-              exit: `cargo xtask lint` exits 0\n     \
-              ralph runs this check alone: put any work in an earlier step\n  \
-           4. address review\n     \
-              exit: judged: are all findings resolved?\n\
-         Allowed: spawn codex workers, merge, paid runs up to $2.50\nWarning: step 1 waits for worker E1, but the plan does not allow `reply`. A question from that worker stops the run.\n\
-         Caps: 3 turns, $4.00, 2 judge rounds\n\
-         You pre-approve:\n  \
-           - raise the turn cap to 30"
-    );
-}
-
-#[test]
-fn a_restatement_without_grants_or_actions_says_so() {
-    let mut plan = plan();
-    plan.allowed.clear();
-    plan.grants.clear();
-    let text = render_run(&plan);
-    assert!(text.contains("\nAllowed: none\n"), "{text}");
-    assert!(text.ends_with("You pre-approve:\n  - nothing"), "{text}");
 }
 
 fn at(step: usize) -> Progress {

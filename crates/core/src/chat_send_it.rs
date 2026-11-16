@@ -12,9 +12,11 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
 mod drive;
+mod render;
 pub mod template;
 
 pub use drive::*;
+pub use render::*;
 
 pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
 pub const STEP_RESULT: &str = "step_result";
@@ -239,38 +241,6 @@ pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
         .collect()
 }
 
-pub fn render_run(plan: &RunPlan) -> String {
-    let mut lines = vec![format!("Goal: {}", plan.goal), "Steps:".to_string()];
-    for (index, step) in plan.steps.iter().enumerate() {
-        lines.push(format!("  {}. {}", index + 1, step.task));
-        lines.push(format!("     exit: {}", step.criterion.label()));
-        if step.criterion.runs_in_ralph() {
-            lines.push(format!("     {RUN_BY_RALPH_NOTE}"));
-        }
-    }
-    let allowed: Vec<String> = plan.allowed.iter().map(Action::label).collect();
-    lines.push(if allowed.is_empty() {
-        "Allowed: none".to_string()
-    } else {
-        format!("Allowed: {}", allowed.join(", "))
-    });
-    lines.extend(plan_warnings(plan));
-    lines.push(format!(
-        "Caps: {} turns, ${:.2}, {} judge rounds",
-        plan.limits.max_turns, plan.limits.max_usd, plan.judge_rounds
-    ));
-    lines.push("You pre-approve:".to_string());
-    if plan.grants.is_empty() {
-        lines.push("  - nothing".to_string());
-    }
-    lines.extend(
-        plan.grants
-            .iter()
-            .map(|grant| format!("  - {}", grant.label())),
-    );
-    lines.join("\n")
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendItCommand {
     Usage,
@@ -427,25 +397,6 @@ fn hang_wrapped(line: &str, width: usize) -> String {
         }
         _ => line.to_string(),
     }
-}
-
-pub fn render_status(file: &RunFile, width: usize) -> String {
-    let hash = plan_hash(&file.plan);
-    let state = if file.is_approved() {
-        format!("Plan {hash}: approved.")
-    } else if let Some(step) = resume_step(file) {
-        format!(
-            "Plan {hash}: stopped at step {step}/{}. Type /send-it go to resume from step {step}.",
-            file.plan.steps.len()
-        )
-    } else {
-        format!("Plan {hash}: not approved. Type /send-it go to approve this plan.")
-    };
-    format!("{}\n{state}", render_run(&file.plan))
-        .lines()
-        .map(|line| hang_wrapped(line, width))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 pub fn propose_refusal(existing: Option<&RunFile>) -> Option<String> {
