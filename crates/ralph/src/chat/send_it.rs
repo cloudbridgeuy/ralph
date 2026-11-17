@@ -89,6 +89,7 @@ pub(super) struct Active {
     watched: Option<OutcomeSlot>,
 }
 
+// A Driven never carries both a route and a prefill: stopped() builds on ended() (route None), so enter cannot leave text in the buffer while a turn runs.
 pub(super) struct Driven {
     pub(super) active: Option<Active>,
     pub(super) route: Option<Route>,
