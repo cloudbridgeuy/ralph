@@ -73,7 +73,6 @@ fn a_ping_then_a_cache_read_turn_is_warm() {
     assert_eq!(found[0].last_ping_at, instant(4));
     assert_eq!(found[0].next_turn_at, instant(8));
     assert_eq!(found[0].context_tokens, Some(18_004));
-    assert_eq!(found[0].run.as_deref(), Some("r"));
 }
 
 #[test]
@@ -179,15 +178,10 @@ fn interleaved_runs_make_separate_periods() {
     ];
     let found = idle_periods(&entries(&rows));
     assert_eq!(found.len(), 2);
-    let a = found.iter().find(|p| p.run.as_deref() == Some("a"));
-    let b = found.iter().find(|p| p.run.as_deref() == Some("b"));
+    assert_eq!((found[0].pings, found[0].outcome), (1, PeriodOutcome::Warm));
     assert_eq!(
-        a.map(|p| (p.pings, p.outcome)),
-        Some((1, PeriodOutcome::Warm))
-    );
-    assert_eq!(
-        b.map(|p| (p.pings, p.outcome)),
-        Some((2, PeriodOutcome::NoNextTurn))
+        (found[1].pings, found[1].outcome),
+        (2, PeriodOutcome::NoNextTurn)
     );
 }
 
@@ -213,7 +207,6 @@ fn a_turn_followed_by_a_turn_makes_no_period() {
 #[test]
 fn outcome_counts_total_periods_pings_and_cost() {
     let period = |pings, ping_cost, outcome| IdlePeriod {
-        run: None,
         pings,
         ping_cost,
         last_turn_at: None,

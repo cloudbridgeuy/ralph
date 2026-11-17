@@ -34,10 +34,8 @@ fn close(actual: f64, expected: f64) -> bool {
 
 fn cost(cost: f64, turns: u64, start: ProcessStart) -> ProcessCost {
     ProcessCost {
-        run: None,
         cost,
         turns,
-        pings: 0,
         start,
         complete: start != ProcessStart::Cut,
     }
@@ -53,10 +51,9 @@ fn old_rows_sum_to_the_final_running_total() {
     let found = process_costs(&entries(&rows));
     assert_eq!(found.len(), 1);
     assert!(close(found[0].cost, 0.55));
-    assert_eq!((found[0].turns, found[0].pings), (2, 1));
+    assert_eq!(found[0].turns, 2);
     assert_eq!(found[0].start, ProcessStart::NewRun);
     assert!(found[0].complete);
-    assert_eq!(found[0].run.as_deref(), Some("r"));
 }
 
 #[test]
@@ -69,7 +66,7 @@ fn new_rows_sum_their_own_costs() {
     let found = process_costs(&entries(&rows));
     assert_eq!(found.len(), 1);
     assert!(close(found[0].cost, 0.55));
-    assert_eq!((found[0].turns, found[0].pings), (2, 1));
+    assert_eq!(found[0].turns, 2);
 }
 
 #[test]
@@ -96,9 +93,7 @@ fn interleaved_runs_stay_separate() {
     ];
     let found = process_costs(&entries(&rows));
     assert_eq!(found.len(), 2);
-    assert_eq!(found[0].run.as_deref(), Some("a"));
     assert!(close(found[0].cost, 0.40));
-    assert_eq!(found[1].run.as_deref(), Some("b"));
     assert!(close(found[1].cost, 0.60));
 }
 
@@ -149,7 +144,7 @@ fn rows_without_a_process_turn_are_cut() {
     let found = process_costs(&entries(&[row("ping", "r", None, 0.05, true)]));
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].start, ProcessStart::Cut);
-    assert_eq!((found[0].turns, found[0].pings), (0, 1));
+    assert_eq!(found[0].turns, 0);
 }
 
 #[test]

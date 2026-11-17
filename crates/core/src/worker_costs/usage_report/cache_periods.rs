@@ -14,7 +14,6 @@ pub enum PeriodOutcome {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IdlePeriod {
-    pub run: Option<String>,
     pub pings: u64,
     pub ping_cost: f64,
     pub last_turn_at: Option<DateTime<Utc>>,
@@ -35,8 +34,8 @@ pub struct OutcomeCounts {
     pub no_next: usize,
 }
 
-struct Row<'a> {
-    line: &'a UsageLine,
+pub(super) struct Row<'a> {
+    pub(super) line: &'a UsageLine,
     at: DateTime<Utc>,
 }
 
@@ -50,7 +49,7 @@ impl Row<'_> {
     }
 }
 
-fn main_runs(entries: &[Entry]) -> BTreeMap<Option<String>, Vec<Row<'_>>> {
+pub(super) fn main_runs(entries: &[Entry]) -> BTreeMap<Option<String>, Vec<Row<'_>>> {
     let mut runs: BTreeMap<Option<String>, Vec<Row>> = BTreeMap::new();
     for entry in entries
         .iter()
@@ -66,12 +65,12 @@ fn main_runs(entries: &[Entry]) -> BTreeMap<Option<String>, Vec<Row<'_>>> {
 
 pub fn idle_periods(entries: &[Entry]) -> Vec<IdlePeriod> {
     main_runs(entries)
-        .iter()
-        .flat_map(|(run, rows)| run_periods(run, rows))
+        .values()
+        .flat_map(|rows| run_periods(rows))
         .collect()
 }
 
-fn run_periods(run: &Option<String>, rows: &[Row]) -> Vec<IdlePeriod> {
+fn run_periods(rows: &[Row]) -> Vec<IdlePeriod> {
     let mut periods = Vec::new();
     let mut last_turn: Option<&Row> = None;
     let mut pings: Vec<&Row> = Vec::new();
@@ -80,7 +79,7 @@ fn run_periods(run: &Option<String>, rows: &[Row]) -> Vec<IdlePeriod> {
             "turn" => {
                 if let Some(turn) = last_turn {
                     if !pings.is_empty() {
-                        periods.push(period(run, turn, &pings, Some(row)));
+                        periods.push(period(turn, &pings, Some(row)));
                     }
                 }
                 pings.clear();
@@ -92,15 +91,14 @@ fn run_periods(run: &Option<String>, rows: &[Row]) -> Vec<IdlePeriod> {
     }
     if let Some(turn) = last_turn {
         if !pings.is_empty() {
-            periods.push(period(run, turn, &pings, None));
+            periods.push(period(turn, &pings, None));
         }
     }
     periods
 }
 
-fn period(run: &Option<String>, turn: &Row, pings: &[&Row], next: Option<&Row>) -> IdlePeriod {
+fn period(turn: &Row, pings: &[&Row], next: Option<&Row>) -> IdlePeriod {
     IdlePeriod {
-        run: run.clone(),
         pings: pings.len() as u64,
         ping_cost: pings
             .iter()

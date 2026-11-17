@@ -20,7 +20,6 @@ fn period(
     model: Option<&str>,
 ) -> IdlePeriod {
     IdlePeriod {
-        run: None,
         pings: 1,
         ping_cost: 0.02,
         last_turn_at: Some(base()),

@@ -1,7 +1,7 @@
+use super::cache_periods::main_runs;
 use super::{Entry, Role};
 use crate::chat_process::{processes, ResetReason, UsageLine};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessStart {
@@ -12,10 +12,8 @@ pub enum ProcessStart {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessCost {
-    pub run: Option<String>,
     pub cost: f64,
     pub turns: u64,
-    pub pings: u64,
     pub start: ProcessStart,
     pub complete: bool,
 }
@@ -40,25 +38,19 @@ pub fn runless_rows(entries: &[Entry]) -> usize {
 }
 
 pub fn process_costs(entries: &[Entry]) -> Vec<ProcessCost> {
-    let mut runs: BTreeMap<Option<String>, Vec<UsageLine>> = BTreeMap::new();
-    for entry in entries
-        .iter()
-        .filter(|entry| entry.role == Role::Main && entry.line.run.is_some())
-    {
-        runs.entry(entry.line.run.clone())
-            .or_default()
-            .push(entry.line.clone());
-    }
-    runs.iter()
-        .flat_map(|(run, lines)| {
-            processes(lines)
+    main_runs(entries)
+        .values()
+        .flat_map(|rows| {
+            let lines: Vec<UsageLine> = rows.iter().map(|row| row.line.clone()).collect();
+            processes(&lines)
                 .into_iter()
-                .map(|rows| process_cost(run, rows))
+                .map(process_cost)
+                .collect::<Vec<_>>()
         })
         .collect()
 }
 
-fn process_cost(run: &Option<String>, rows: &[UsageLine]) -> ProcessCost {
+fn process_cost(rows: &[UsageLine]) -> ProcessCost {
     let start = match rows.first() {
         Some(first) if first.kind == "turn" && first.process_turn == Some(1) => first
             .reset
@@ -66,17 +58,11 @@ fn process_cost(run: &Option<String>, rows: &[UsageLine]) -> ProcessCost {
         _ => ProcessStart::Cut,
     };
     ProcessCost {
-        run: run.clone(),
         cost: rows.iter().map(|row| row.cost_usd.unwrap_or(0.0)).sum(),
-        turns: count_kind(rows, "turn"),
-        pings: count_kind(rows, "ping"),
+        turns: rows.iter().filter(|row| row.kind == "turn").count() as u64,
         start,
         complete: start != ProcessStart::Cut,
     }
-}
-
-fn count_kind(rows: &[UsageLine], kind: &str) -> u64 {
-    rows.iter().filter(|row| row.kind == kind).count() as u64
 }
 
 fn sorted<T: PartialOrd + Copy>(values: impl Iterator<Item = T>) -> Vec<T> {
