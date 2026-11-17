@@ -1,4 +1,4 @@
-use crate::subprocess::{Session, StreamingSubprocessResult};
+use crate::subprocess::{Session, StreamingSubprocessResult, SubprocessError};
 use chrono::{DateTime, Utc};
 use ralph_core::chat_keepalive::{
     keepalive_action, keeps_after, keeps_for_turn, ping_follow_up, Keepalive, KeepaliveInput,
@@ -93,7 +93,7 @@ impl KeepaliveWatch {
                 self.live.store(false, Ordering::SeqCst);
             }
         }
-        self.record(&result.ok()?);
+        self.record(recorded_ping(&result)?);
         Some(())
     }
 
@@ -120,6 +120,16 @@ impl KeepaliveWatch {
             ledger::record_all(&usage_path(), subagents),
             "Failed to record keepalive subagent usage",
         );
+    }
+}
+
+fn recorded_ping(
+    result: &Result<StreamingSubprocessResult, SubprocessError>,
+) -> Option<&StreamingSubprocessResult> {
+    match result {
+        Ok(done) => Some(done),
+        Err(SubprocessError::Timeout { partial_result, .. }) => Some(partial_result),
+        Err(_) => None,
     }
 }
 

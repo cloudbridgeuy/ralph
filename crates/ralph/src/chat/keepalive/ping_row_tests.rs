@@ -52,3 +52,46 @@ fn a_ping_without_usage_has_no_row() {
     bare.stream_result.costs.usage = None;
     assert!(ping_row("t".into(), &bare, &IterationMetadata::new()).is_none());
 }
+
+fn timed_out(
+    partial: StreamingSubprocessResult,
+) -> Result<StreamingSubprocessResult, SubprocessError> {
+    Err(SubprocessError::Timeout {
+        timeout_secs: 1,
+        partial_result: Box::new(partial),
+    })
+}
+
+#[test]
+fn a_timed_out_ping_with_usage_writes_one_row_for_its_own_spend() {
+    let outcome = timed_out(result(Some(1.5), Some(1.0)));
+    let rows: Vec<Value> = recorded_ping(&outcome)
+        .and_then(|partial| ping_row("t".into(), partial, &IterationMetadata::new()))
+        .into_iter()
+        .map(|row| serde_json::to_value(row).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["cost_usd"], 0.5);
+    assert_eq!(rows[0]["ledger_v"], 2);
+    assert_eq!(rows[0]["kind"], "ping");
+}
+
+#[test]
+fn a_timed_out_ping_without_usage_has_no_row() {
+    let mut bare = result(Some(1.5), Some(1.0));
+    bare.stream_result.costs.usage = None;
+    let outcome = timed_out(bare);
+    let row = recorded_ping(&outcome)
+        .and_then(|partial| ping_row("t".into(), partial, &IterationMetadata::new()));
+    assert!(row.is_none());
+}
+
+#[test]
+fn a_ping_that_ended_in_any_other_error_has_no_record() {
+    assert!(recorded_ping(&Err(SubprocessError::Signaled)).is_none());
+}
+
+#[test]
+fn a_finished_ping_is_recorded() {
+    assert!(recorded_ping(&Ok(result(Some(1.0), Some(0.0)))).is_some());
+}

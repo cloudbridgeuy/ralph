@@ -405,6 +405,20 @@ mod tests {
     }
 
     #[test]
+    fn a_timed_out_partial_with_usage_is_written_and_keeps_the_total_whole() {
+        let exchanges = [exchange(1.0, true), exchange(1.5, true)];
+        let rows = written_rows(&CallSite::Ping, &exchanges);
+        let running = exchanges
+            .iter()
+            .fold(RunningCosts::start(), |running, costs| {
+                running.advance(costs)
+            });
+        assert_eq!(rows.len(), 2);
+        assert_eq!(sum(&rows), 1.5);
+        assert_eq!(running.logged, Some(1.5));
+    }
+
+    #[test]
     fn the_logged_total_starts_at_zero_and_follows_written_rows() {
         let start = RunningCosts::start();
         assert_eq!(start.logged, Some(0.0));
