@@ -442,8 +442,27 @@ impl Ticked {
 
 pub fn run_end_prefill(next: &Next) -> Option<String> {
     match next {
-        Next::Stop(StopReason::Off) => None,
-        Next::Stop(_) => Some("/send-it go".to_string()),
-        _ => None,
+        Next::Send(_)
+        | Next::Hold(_)
+        | Next::Watch(_)
+        | Next::Check(_)
+        | Next::Judge
+        | Next::Wait
+        | Next::Done => None,
+        Next::Stop(reason) => match reason {
+            StopReason::Off => None,
+            StopReason::PlanChanged => Some("/send-it status".to_string()),
+            StopReason::TurnCap
+            | StopReason::CostCap
+            | StopReason::Unmet { .. }
+            | StopReason::WorkerFlagged { .. }
+            | StopReason::JudgeRounds { .. }
+            | StopReason::CheckFailed { .. }
+            | StopReason::CheckNotStarted { .. }
+            | StopReason::NoReply
+            | StopReason::NeedsYou
+            | StopReason::TookOver
+            | StopReason::Refused { .. } => Some("/send-it go".to_string()),
+        },
     }
 }

@@ -122,7 +122,6 @@ fn every_stop_but_off_prefills_send_it_go() {
             step: 3,
             detail: None,
         },
-        StopReason::PlanChanged,
         StopReason::NoReply,
         StopReason::TookOver,
     ];
@@ -139,4 +138,12 @@ fn every_stop_but_off_prefills_send_it_go() {
 fn done_and_off_prefill_nothing() {
     assert_eq!(run_end_prefill(&Next::Done), None);
     assert_eq!(run_end_prefill(&Next::Stop(StopReason::Off)), None);
+}
+
+#[test]
+fn a_changed_plan_prefills_send_it_status() {
+    assert_eq!(
+        run_end_prefill(&Next::Stop(StopReason::PlanChanged)).as_deref(),
+        Some("/send-it status")
+    );
 }
