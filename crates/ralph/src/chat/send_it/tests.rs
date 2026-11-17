@@ -1,6 +1,7 @@
 use super::*;
 use crate::chat::socket::{respond, Shared};
 use ralph_core::chat_memory::Trigger;
+use ralph_core::chat_send_it::VerifyMode;
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
 use ralph_server::chat::memory::Store;
@@ -16,6 +17,7 @@ mod screen;
 const LIMITS: Limits = Limits {
     max_turns: 3,
     max_usd: 1.0,
+    verify: VerifyMode::Off,
 };
 
 fn plan_args() -> Value {

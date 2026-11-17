@@ -358,7 +358,7 @@ pub(crate) fn forward(socket: &Path, request: &SocketRequest) -> Result<SocketRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::chat_send_it::Limits;
+    use ralph_core::chat_send_it::{Limits, VerifyMode};
     use ralph_core::chat_socket::sidecar_name;
     use ralph_server::worker_mcp::Inbox;
     use serde_json::{json, Value};
@@ -377,6 +377,7 @@ mod tests {
                 Limits {
                     max_turns: 3,
                     max_usd: 1.0,
+                    verify: VerifyMode::Off,
                 },
             ),
             watches: Watches::new(

@@ -217,6 +217,7 @@ pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
     let limits = Limits {
         max_turns: raw.caps.turns.unwrap_or(defaults.max_turns),
         max_usd: raw.caps.usd.unwrap_or(defaults.max_usd),
+        verify: defaults.verify,
     };
     let judge_rounds = raw.caps.judge_rounds.unwrap_or(DEFAULT_JUDGE_ROUNDS);
     if limits.max_turns == 0
@@ -635,6 +636,7 @@ const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted."
 pub struct Limits {
     pub max_turns: u32,
     pub max_usd: f64,
+    pub verify: VerifyMode,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

@@ -306,6 +306,7 @@ pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
     let hash = plan_hash(&file.plan);
     let start = Progress {
         step: resume_step(file).map_or(0, |step| step - 1),
+        verify: file.plan.limits.verify,
         ..Progress::default()
     };
     let first = match resume_step(file) {

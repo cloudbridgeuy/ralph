@@ -40,7 +40,14 @@ pub fn clamp_send_it(max_turns: u32, max_usd: f64) -> (Limits, Vec<String>) {
         ));
         SEND_IT_DEFAULT_MAX_USD
     };
-    (Limits { max_turns, max_usd }, warnings)
+    (
+        Limits {
+            max_turns,
+            max_usd,
+            verify: VerifyMode::default(),
+        },
+        warnings,
+    )
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -84,7 +91,10 @@ impl ChatSection {
     }
 
     pub fn send_it_setting(&self) -> (Limits, Vec<String>) {
-        clamp_send_it(self.send_it_max_turns, self.send_it_max_usd)
+        let (limits, mut warnings) = clamp_send_it(self.send_it_max_turns, self.send_it_max_usd);
+        let (verify, warning) = self.send_it_verify_setting();
+        warnings.extend(warning);
+        (Limits { verify, ..limits }, warnings)
     }
 
     pub fn send_it_verify_setting(&self) -> (VerifyMode, Option<String>) {
@@ -153,7 +163,8 @@ mod tests {
             (
                 Limits {
                     max_turns: 1,
-                    max_usd: 0.01
+                    max_usd: 0.01,
+                    verify: VerifyMode::Observe
                 },
                 Vec::new()
             )
@@ -163,7 +174,8 @@ mod tests {
             settings,
             Limits {
                 max_turns: 15,
-                max_usd: 5.0
+                max_usd: 5.0,
+                verify: VerifyMode::Observe
             }
         );
         assert!(warnings.is_empty());
@@ -224,13 +236,43 @@ mod tests {
     }
 
     #[test]
+    fn send_it_setting_carries_the_verify_mode() {
+        for (text, mode) in [
+            ("off", VerifyMode::Off),
+            ("observe", VerifyMode::Observe),
+            ("enforce", VerifyMode::Enforce),
+        ] {
+            let section = ChatSection {
+                send_it_verify: Some(text.to_string()),
+                ..ChatSection::default()
+            };
+            let (limits, warnings) = section.send_it_setting();
+            assert_eq!(limits.verify, mode);
+            assert!(warnings.is_empty());
+        }
+    }
+
+    #[test]
+    fn send_it_setting_warns_about_a_bad_verify_value_and_uses_observe() {
+        let section = ChatSection {
+            send_it_verify: Some("strict".to_string()),
+            ..ChatSection::default()
+        };
+        let (limits, warnings) = section.send_it_setting();
+        assert_eq!(limits.verify, VerifyMode::Observe);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("send_it_verify"));
+    }
+
+    #[test]
     fn send_it_each_bad_key_warns_separately() {
         let (settings, warnings) = clamp_send_it(0, 0.0);
         assert_eq!(
             settings,
             Limits {
                 max_turns: 15,
-                max_usd: 5.0
+                max_usd: 5.0,
+                verify: VerifyMode::Observe
             }
         );
         assert_eq!(warnings.len(), 2);

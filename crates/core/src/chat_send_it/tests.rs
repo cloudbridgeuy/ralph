@@ -16,6 +16,7 @@ mod steer;
 mod template;
 mod verify;
 mod verify_drive;
+mod verify_limits;
 mod verify_mode;
 mod warnings;
 
@@ -23,6 +24,7 @@ fn limits() -> Limits {
     Limits {
         max_turns: 3,
         max_usd: 1.0,
+        verify: VerifyMode::Off,
     }
 }
 
@@ -201,7 +203,8 @@ fn missing_caps_fall_back_to_the_defaults() {
         plan.limits,
         Limits {
             max_turns: 3,
-            max_usd: 4.0
+            max_usd: 4.0,
+            verify: VerifyMode::Off
         }
     );
     assert_eq!(plan.judge_rounds, DEFAULT_JUDGE_ROUNDS);
