@@ -1,6 +1,6 @@
 use crate::chat_hold::{hold_targets, HoldFilter};
 use crate::chat_recap::next_step;
-use crate::chat_send_it::{run_end_prefill, Next as RunNext, StopReason};
+use crate::chat_send_it::is_run_end_line;
 use crate::chat_status::Status;
 use serde::Serialize;
 
@@ -45,17 +45,11 @@ pub enum Prefill {
     Suggestion(String),
 }
 
-fn run_end_line(line: &str) -> bool {
-    [StopReason::PlanChanged, StopReason::TookOver]
-        .into_iter()
-        .any(|reason| run_end_prefill(&RunNext::Stop(reason)).as_deref() == Some(line))
-}
-
 fn prefill(replied: bool, draft: Option<String>, suggestion: Option<String>) -> Option<Prefill> {
     match draft {
         Some(draft) => Some(Prefill::Draft(draft)),
         None => suggestion
-            .filter(|line| replied || run_end_line(line))
+            .filter(|line| replied || is_run_end_line(line))
             .map(Prefill::Suggestion),
     }
 }

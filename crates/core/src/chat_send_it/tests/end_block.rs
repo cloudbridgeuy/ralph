@@ -131,6 +131,7 @@ fn every_stop_but_off_prefills_send_it_go() {
             Some("/send-it go"),
             "{stop:?}"
         );
+        assert!(is_run_end_line("/send-it go"), "{stop:?}");
     }
 }
 
@@ -146,4 +147,13 @@ fn a_changed_plan_prefills_send_it_status() {
         run_end_prefill(&Next::Stop(StopReason::PlanChanged)).as_deref(),
         Some("/send-it status")
     );
+}
+
+#[test]
+fn only_the_run_end_lines_are_run_end_lines() {
+    assert!(is_run_end_line("/send-it go"));
+    assert!(is_run_end_line("/send-it status"));
+    assert!(!is_run_end_line("/send-it"));
+    assert!(!is_run_end_line("run the tests"));
+    assert!(!is_run_end_line(""));
 }

@@ -440,6 +440,13 @@ impl Ticked {
     }
 }
 
+const GO_LINE: &str = "/send-it go";
+const STATUS_LINE: &str = "/send-it status";
+
+pub fn is_run_end_line(line: &str) -> bool {
+    [GO_LINE, STATUS_LINE].contains(&line)
+}
+
 pub fn run_end_prefill(next: &Next) -> Option<String> {
     match next {
         Next::Send(_)
@@ -451,7 +458,7 @@ pub fn run_end_prefill(next: &Next) -> Option<String> {
         | Next::Done => None,
         Next::Stop(reason) => match reason {
             StopReason::Off => None,
-            StopReason::PlanChanged => Some("/send-it status".to_string()),
+            StopReason::PlanChanged => Some(STATUS_LINE.to_string()),
             StopReason::TurnCap
             | StopReason::CostCap
             | StopReason::Unmet { .. }
@@ -462,7 +469,7 @@ pub fn run_end_prefill(next: &Next) -> Option<String> {
             | StopReason::NoReply
             | StopReason::NeedsYou
             | StopReason::TookOver
-            | StopReason::Refused { .. } => Some("/send-it go".to_string()),
+            | StopReason::Refused { .. } => Some(GO_LINE.to_string()),
         },
     }
 }
