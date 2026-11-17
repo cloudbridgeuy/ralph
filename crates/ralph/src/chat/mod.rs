@@ -129,7 +129,7 @@ use session::{
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 pub(crate) use switch::ChatExit;
@@ -410,7 +410,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color.then(|| crate::input_theme::to_reedline(theme_config.ui().ask_header)),
     );
     if chat_config.resume_summary && !args.skip_summary {
-        recap::print_recap(&store, running.len(), sent_style);
+        let width = prompt::screen_columns();
+        recap::print_recap(&store, running.len(), sent_style, width, &mut io::stdout())?;
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
@@ -883,11 +884,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             local => {
-                if let Some(output) =
-                    run_local(local, &local_route, &mut std::io::stdout(), || {
-                        monitor.refresh(true);
-                    })?
-                {
+                if let Some(output) = run_local(local, &local_route, &mut io::stdout(), || {
+                    monitor.refresh(true);
+                })? {
                     note(&output);
                 }
                 continue;
