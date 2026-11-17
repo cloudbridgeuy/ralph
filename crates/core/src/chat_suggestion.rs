@@ -54,8 +54,12 @@ fn prefill(replied: bool, draft: Option<String>, suggestion: Option<String>) -> 
     }
 }
 
-pub fn driven_fill(_buffer: &str, driven: Option<&str>) -> Option<String> {
-    driven.map(str::to_string)
+pub fn driven_fill(buffer: &str, driven: Option<&str>) -> Option<String> {
+    let draft = (!buffer.is_empty()).then(|| buffer.to_string());
+    match prefill(false, draft, driven.map(str::to_string)) {
+        Some(Prefill::Suggestion(line)) => Some(line),
+        Some(Prefill::Draft(_)) | None => None,
+    }
 }
 
 #[derive(Debug)]

@@ -139,7 +139,6 @@ fn retryable_stops_prefill_send_it_go() {
 }
 
 #[test]
-#[ignore = "GUZ-1681 red until the fix"]
 fn done_off_and_take_over_prefill_nothing() {
     assert_eq!(run_end_prefill(&Next::Done), None);
     assert_eq!(run_end_prefill(&Next::Stop(StopReason::Off)), None);

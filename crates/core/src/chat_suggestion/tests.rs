@@ -69,7 +69,6 @@ fn a_suggestion_fills_only_after_a_reply_without_a_draft() {
 }
 
 #[test]
-#[ignore = "GUZ-1681 red until the fix"]
 fn a_driven_line_fills_an_empty_buffer_only() {
     assert_eq!(
         driven_fill("", Some("/send-it go")),

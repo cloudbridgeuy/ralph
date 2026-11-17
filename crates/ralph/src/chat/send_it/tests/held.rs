@@ -195,7 +195,6 @@ fn a_settled_passing_check_on_the_last_step_finishes_with_no_prefill() {
 }
 
 #[test]
-#[ignore = "GUZ-1681 red until the fix"]
 fn taking_over_a_run_carries_no_prefill() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active) = started(dir.path());
@@ -251,7 +250,6 @@ fn a_check_that_cannot_start_carries_the_go_prefill() {
 }
 
 #[test]
-#[ignore = "GUZ-1681 red until the fix"]
 fn a_typed_draft_is_kept_over_the_driven_prefill() {
     let mut editor = Reedline::create();
     editor.run_edit_commands(&prefill_commands(Some("my draft")));
