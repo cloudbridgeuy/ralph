@@ -10,7 +10,7 @@ use ralph_server::workers::Workers;
 use serde_json::json;
 use std::sync::Mutex;
 
-mod held;
+pub(in crate::chat) mod held;
 mod screen;
 
 const LIMITS: Limits = Limits {

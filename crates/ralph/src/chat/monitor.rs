@@ -2,6 +2,7 @@ use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
 use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
 use crate::chat::term_status::TermStatus;
+use crate::chat::thread::settle;
 use crate::inbox_alert;
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
@@ -16,6 +17,7 @@ use ralph_core::chat_process::{process_cell, process_usage, ProcessEnv, ProcessU
 use ralph_core::chat_status::{
     latest_states, schedule_states, watch_states, worker_states, RunningWorker, Status,
 };
+use ralph_core::chat_thread_auto::split_close_reports;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::program_status::{self, report_for, Phase};
@@ -132,7 +134,7 @@ impl Monitor {
     }
 
     pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
-        let reports = self.inbox.drain(selection)?;
+        let (_, reports) = split_close_reports(self.inbox.drain(selection)?);
         self.note_scheduled(&reports);
         locked(&self.seen).extend(latest_states(&reports));
         locked(&self.check).reports.extend(last_reports(&reports));
@@ -322,7 +324,7 @@ impl Monitor {
             self.alert_fresh(pending);
             self.note_scheduled(pending);
         }
-        let pending = peeked.unwrap_or_default();
+        let (_, pending) = split_close_reports(peeked.unwrap_or_default());
         locked(&self.check).reports.extend(last_reports(&pending));
         let seen = {
             let mut seen = locked(&self.seen);
@@ -371,6 +373,7 @@ impl Monitor {
         let mut status = locked(&self.status);
         let next = Status {
             unread: pending.len(),
+            closes: settle::pending(&self.store_dir),
             workers,
             watches: watch_states(&self.watches.list(), chrono::Utc::now()),
             schedule: schedule_states(

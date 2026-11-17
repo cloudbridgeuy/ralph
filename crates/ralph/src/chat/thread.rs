@@ -14,7 +14,7 @@ use ralph_core::chat_thread::{
     Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE, VIEW_BLOCK_LINES,
 };
 use ralph_core::chat_thread_cmd::{
-    merge_posted_message, parked_message, revived_message, view_posted_message,
+    merge_posted_message, parked_message, revived_message, view_posted_message, OpenOpts,
 };
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
@@ -30,7 +30,10 @@ use std::path::{Path, PathBuf};
 
 use ralph_server::chat::memory::Reach;
 
+pub(crate) mod close;
 mod list;
+pub(super) mod open;
+pub(super) mod settle;
 pub use list::rows;
 pub(super) use list::{default_listing, listing};
 
@@ -183,6 +186,8 @@ pub fn ensure(main: &Path, name: &ThreadName) -> io::Result<ThreadMeta> {
         created: chrono::Utc::now().to_rfc3339(),
         merged: None,
         parked: None,
+        auto: None,
+        closed: false,
     };
     fs::create_dir_all(&dir)?;
     write_meta(&dir, &meta)?;
@@ -312,8 +317,9 @@ fn open_ready(store: &Path, name: &ThreadName) -> Result<PathBuf, String> {
         .map_err(|e| format!("{e} Once it is closed, /thread switch {name} moves this chat there."))
 }
 
-pub fn open_thread(store: &Path, name: &ThreadName) -> Result<String, String> {
-    let main = open_ready(store, name)?;
+pub fn open_thread(store: &Path, opts: &OpenOpts) -> Result<String, String> {
+    let name = &opts.name;
+    let main = open::prepare_open(store, opts)?;
     let (exe, cwd) = match (std::env::current_exe(), std::env::current_dir()) {
         (Ok(exe), Ok(cwd)) => (exe, cwd),
         (Err(e), _) | (_, Err(e)) => return Err(format!("could not open thread {name}: {e}")),

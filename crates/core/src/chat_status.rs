@@ -8,6 +8,7 @@ use crate::chat_process::ProcessCell;
 use crate::chat_rerender::parse_rerender_args;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
 use crate::chat_switch::SwitchTarget;
+use crate::chat_thread_auto::PendingClose;
 use crate::chat_thread_cmd::{parse_thread_args, ThreadLine, ThreadOp};
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
@@ -77,6 +78,7 @@ impl RunningWorker {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Status {
     pub unread: usize,
+    pub closes: Vec<PendingClose>,
     pub workers: Vec<WorkerState>,
     pub watches: Vec<WatchState>,
     pub schedule: Vec<ScheduleState>,
@@ -432,7 +434,7 @@ fn fit(candidates: Vec<String>, width: usize) -> String {
         .unwrap_or_default()
 }
 
-fn truncate_to_width(line: &str, width: usize) -> String {
+pub(crate) fn truncate_to_width(line: &str, width: usize) -> String {
     let mut used = 0;
     line.chars()
         .take_while(|c| {

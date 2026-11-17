@@ -5,6 +5,7 @@ use crate::chat_status::{ScheduleState, WatchState, WorkerState};
 pub(super) fn status() -> Status {
     Status {
         unread: 2,
+        closes: Vec::new(),
         workers: vec![
             WorkerState {
                 id: "GUZ-416".into(),
