@@ -1,6 +1,7 @@
 use crate::chat::terminal::{poll_input, read_input, Input, POLL_MS};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
+use ralph_core::cancel::CancelToken;
 use ralph_core::schedule::{
     approval_question, parse_answer, plan_restore, plan_tick, proposed, to_watch_spec, Answer,
     Task, TaskStatus,
@@ -15,14 +16,13 @@ use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
 use std::io::{self, Write};
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 pub(super) fn read_answer() -> Option<String> {
-    let interrupt = signal::interrupt_flag();
-    interrupt.store(false, Ordering::SeqCst);
+    let cancel = CancelToken::default();
+    let _armed = signal::arm(&cancel);
     loop {
-        if signal::is_terminated() || interrupt.swap(false, Ordering::SeqCst) {
+        if signal::is_terminated() || cancel.is_cancelled() {
             return None;
         }
         match poll_input(POLL_MS) {

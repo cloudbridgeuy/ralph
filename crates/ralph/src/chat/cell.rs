@@ -1,5 +1,6 @@
 use crate::ansi::{DIM, RESET};
 use crate::signal;
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat_cell::{
     bang, build_message, diff_snapshots, display_results, parse_cells, parse_snapshots, shell_cell,
     shell_stdin, strip_shell_preamble, Bang, Cell, CellLimits, CellRun, SavedState, ShellKind,
@@ -16,7 +17,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
@@ -198,7 +198,8 @@ fn route_to_snapshot_fd(command: &mut Command, write_fd: i32) {
 }
 
 fn run_cell(launch: &Launch, cell: &Cell, color: bool) -> io::Result<Option<Finished>> {
-    signal::interrupt_flag().store(false, Ordering::SeqCst);
+    let cancel = CancelToken::default();
+    let _armed = signal::arm(&cancel);
     let mut command = Command::new(launch.program);
     let (stdout_reader, stdout_writer) = io::pipe()?;
     let (stderr_reader, stderr_writer) = io::pipe()?;
@@ -239,7 +240,7 @@ fn run_cell(launch: &Launch, cell: &Cell, color: bool) -> io::Result<Option<Fini
     let stderr = spawn_read(stderr_reader, Some(echo()));
     let snapshot = snapshot_reader.map(|reader| spawn_read(reader, None));
     let status = loop {
-        if signal::is_interrupted() {
+        if cancel.is_cancelled() || signal::is_terminated() {
             kill_process_group(&mut child);
             break None;
         }
@@ -255,7 +256,6 @@ fn run_cell(launch: &Launch, cell: &Cell, color: bool) -> io::Result<Option<Fini
         .and_then(|reader| reader.join().ok())
         .unwrap_or_default();
     screen.end_line();
-    signal::interrupt_flag().store(false, Ordering::SeqCst);
     Ok(status.map(|status| Finished {
         run: CellRun {
             cell: cell.clone(),

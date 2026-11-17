@@ -6,6 +6,7 @@ use crate::cli::{
     WireArgs, WireCommand, WireDiffArgs, WireLsArgs, WireProvider, WireSessionsArgs, WireShowArgs,
 };
 use chrono::Utc;
+use ralph_core::cancel::CancelToken;
 use ralph_core::wire::diff::{check_pair, diff_table, diff_view, pick_base, DiffInput};
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::read::{find_call, pick_session, Calls};
@@ -161,6 +162,8 @@ pub fn run(args: WireArgs) -> Result<(), Box<dyn Error>> {
 
 fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
     crate::signal::init()?;
+    let interrupt = CancelToken::default();
+    let _armed = crate::signal::arm(&interrupt);
     let provider = provider(args.provider.into());
     let upstream = args
         .upstream
@@ -199,7 +202,7 @@ fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
     ));
     let accept_wait = Duration::from_millis(100);
     loop {
-        if crate::signal::is_interrupted() {
+        if interrupt.is_cancelled() || crate::signal::is_terminated() {
             break;
         }
         match server.recv_timeout(accept_wait) {
