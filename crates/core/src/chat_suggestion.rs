@@ -54,6 +54,10 @@ fn prefill(replied: bool, draft: Option<String>, suggestion: Option<String>) -> 
     }
 }
 
+pub fn driven_fill(_buffer: &str, driven: Option<&str>) -> Option<String> {
+    driven.map(str::to_string)
+}
+
 #[derive(Debug)]
 pub struct TurnEnd<'a> {
     pub auto_hold: bool,

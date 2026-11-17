@@ -195,11 +195,12 @@ fn a_settled_passing_check_on_the_last_step_finishes_with_no_prefill() {
 }
 
 #[test]
-fn taking_over_a_run_carries_the_go_prefill() {
+#[ignore = "GUZ-1681 red until the fix"]
+fn taking_over_a_run_carries_no_prefill() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active) = started(dir.path());
     let driven = send_it.took_over(&active, &monitor(dir.path()));
-    assert_eq!(driven.prefill.as_deref(), Some("/send-it go"));
+    assert_eq!(driven.prefill, None);
     assert!(driven.route.is_none());
     assert!(driven.active.is_none());
 }
@@ -224,6 +225,53 @@ fn a_judge_turn_whose_plan_is_gone_carries_the_status_prefill() {
     let driven = send_it.dispatch(ticked, &monitor(dir.path()));
     assert_eq!(driven.prefill.as_deref(), Some("/send-it status"));
     assert!(driven.route.is_none());
+}
+
+#[test]
+fn a_check_that_cannot_start_carries_the_go_prefill() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_it = SendIt::new(dir.path(), super::LIMITS);
+    let mut args = super::plan_args();
+    args["steps"] = serde_json::json!([{"do": "wait", "criterion": {"kind": "check_passes", "command": "sleep 30"}}]);
+    send_it.propose(&args).unwrap();
+    let hash = send_it.status().shown.unwrap();
+    let ticked = super::go(&send_it, Some(&hash), true).1.unwrap();
+    let Next::Check(command) = ticked.next.clone() else {
+        panic!("expected a check, got {:?}", ticked.next);
+    };
+    let monitor = monitor(dir.path());
+    monitor
+        .watches
+        .start(check_spec(ticked.driving.progress.step, &command))
+        .unwrap();
+    let driven = send_it.dispatch(ticked, &monitor);
+    assert_eq!(driven.prefill.as_deref(), Some("/send-it go"));
+    assert!(driven.route.is_none());
+    assert!(driven.active.is_none());
+}
+
+#[test]
+#[ignore = "GUZ-1681 red until the fix"]
+fn a_typed_draft_is_kept_over_the_driven_prefill() {
+    let mut editor = Reedline::create();
+    editor.run_edit_commands(&prefill_commands(Some("my draft")));
+    let driven = Driven {
+        prefill: Some("/send-it go".to_string()),
+        ..Driven::ended()
+    };
+    assert!(driven.enter(&mut editor).is_none());
+    assert_eq!(editor.current_buffer_contents(), "my draft");
+}
+
+#[test]
+fn an_empty_buffer_takes_the_driven_prefill() {
+    let mut editor = Reedline::create();
+    let driven = Driven {
+        prefill: Some("/send-it go".to_string()),
+        ..Driven::ended()
+    };
+    assert!(driven.enter(&mut editor).is_none());
+    assert_eq!(editor.current_buffer_contents(), "/send-it go");
 }
 
 #[test]

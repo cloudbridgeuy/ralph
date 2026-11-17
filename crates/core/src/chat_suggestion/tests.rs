@@ -69,6 +69,17 @@ fn a_suggestion_fills_only_after_a_reply_without_a_draft() {
 }
 
 #[test]
+#[ignore = "GUZ-1681 red until the fix"]
+fn a_driven_line_fills_an_empty_buffer_only() {
+    assert_eq!(
+        driven_fill("", Some("/send-it go")),
+        Some("/send-it go".to_string())
+    );
+    assert_eq!(driven_fill("my draft", Some("/send-it go")), None);
+    assert_eq!(driven_fill("", None), None);
+}
+
+#[test]
 fn nothing_in_nothing_out() {
     assert_eq!(prefill(true, None, None), None);
     assert_eq!(prefill(false, None, None), None);
