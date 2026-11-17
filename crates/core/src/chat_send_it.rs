@@ -12,10 +12,12 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
 mod drive;
+mod end_block;
 mod render;
 pub mod template;
 
 pub use drive::*;
+pub use end_block::*;
 pub use render::*;
 
 pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
@@ -583,7 +585,7 @@ pub enum StopReason {
     TurnCap,
     CostCap,
     Unmet { step: usize },
-    WorkerFlagged,
+    WorkerFlagged { worker: String, line: String },
     JudgeRounds { step: usize, evidence: String },
     CheckFailed { step: usize, detail: Option<String> },
     CheckNotStarted { step: usize, error: String },
@@ -638,7 +640,9 @@ impl StopReason {
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Unmet { step } => format!("step {step} missed its exit criterion"),
-            StopReason::WorkerFlagged => "a worker asked a question or is blocked".to_string(),
+            StopReason::WorkerFlagged { .. } => {
+                "a worker asked a question or is blocked".to_string()
+            }
             StopReason::JudgeRounds { step, evidence } => format!(
                 "step {step} was still not met after the last judge round: {}",
                 evidence.trim_end_matches('.')

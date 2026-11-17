@@ -425,10 +425,10 @@ fn the_next_tick_takes_the_answered_workers_once() {
         send_it.tick(&active, with_question()).next,
         Next::Check("cargo xtask lint".to_string())
     );
-    assert_eq!(
+    assert!(matches!(
         send_it.tick(&active, with_question()).next,
-        Next::Stop(StopReason::WorkerFlagged)
-    );
+        Next::Stop(StopReason::WorkerFlagged { .. })
+    ));
 }
 
 #[test]
@@ -673,4 +673,27 @@ fn a_tick_takes_the_outcome_the_watch_left_in_its_slot() {
         };
         assert_eq!(send_it.tick(&active, ended()).next, next);
     }
+}
+
+#[test]
+fn a_replied_tick_collects_the_pending_lines_of_the_last_assistant_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = judging(dir.path());
+    Store::new(dir.path().to_path_buf())
+        .append(Role::Assistant, "done.\nPending: push main")
+        .unwrap();
+    send_it.record(StepResult {
+        met: false,
+        evidence: "open".to_string(),
+    });
+    let ticked = send_it.tick(&active, ended());
+    assert_eq!(ticked.driving.tally.pending, ["push main"]);
+    let silent = send_it.tick(
+        &active,
+        Ended {
+            replied: false,
+            ..ended()
+        },
+    );
+    assert!(silent.driving.tally.pending.is_empty());
 }

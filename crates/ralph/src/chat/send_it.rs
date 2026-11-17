@@ -15,8 +15,8 @@ use ralph_core::chat_send_it::{
     approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_notice,
     judge_echo, judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal, read_run,
     render_status, render_status_styled, running_line, settle_check, start_run, step_line,
-    stop_file, tick, write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult,
-    StopReason, Ticked,
+    stop_file, tick, with_reply, write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen,
+    StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -258,7 +258,8 @@ impl SendIt {
         let refused = locked(&self.refused).take();
         let judged = locked(&self.judged).take();
         let answered = std::mem::take(&mut *locked(&self.answered));
-        tick(
+        let reply = ended.replied.then(|| self.last_reply()).flatten();
+        let ticked = tick(
             &active.driving,
             &Ended {
                 file: file.as_ref(),
@@ -268,7 +269,20 @@ impl SendIt {
                 step_result: judged.as_ref(),
                 ..ended
             },
-        )
+        );
+        match reply {
+            Some(reply) => with_reply(ticked, &reply),
+            None => ticked,
+        }
+    }
+
+    fn last_reply(&self) -> Option<String> {
+        let (entries, _) = Store::new(self.log.clone()).load().ok()?;
+        entries
+            .into_iter()
+            .rev()
+            .find(|entry| entry.role == Role::Assistant)
+            .map(|entry| entry.text)
     }
 
     pub(super) fn held_item(

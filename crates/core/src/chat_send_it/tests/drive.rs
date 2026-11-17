@@ -23,7 +23,9 @@ fn answered_ids(ids: &[&str]) -> Vec<String> {
     ids.iter().map(ToString::to_string).collect()
 }
 
-const FLAGGED: Next = Next::Stop(StopReason::WorkerFlagged);
+fn is_flagged(next: &Next) -> bool {
+    matches!(next, Next::Stop(StopReason::WorkerFlagged { .. }))
+}
 
 #[test]
 fn an_answered_question_the_plan_allows_keeps_the_held_run_holding() {
@@ -52,7 +54,7 @@ fn an_unanswered_question_stops_the_run() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
@@ -68,7 +70,7 @@ fn an_answer_the_plan_does_not_allow_still_stops_the_run() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
@@ -87,7 +89,7 @@ fn one_unanswered_flagged_report_among_answered_ones_stops_the_run() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
@@ -103,7 +105,7 @@ fn an_unread_question_stops_the_run_even_when_that_worker_was_answered() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
