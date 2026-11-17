@@ -713,12 +713,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 match held {
                     Held::Item(position) => {
                         let driven = send_it.held_item(&mut sending, position, &monitor)?;
-                        pending = driven.route.map(Submitted::internal);
+                        pending = driven.enter(&mut editor);
                     }
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);
                         if let Some(active) = sending.take() {
-                            send_it.took_over(&active, &monitor);
+                            send_it.took_over(&active, &monitor).enter(&mut editor);
                         }
                     }
                     Held::Quit => {
@@ -779,8 +779,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 note(&text);
                 if let Some(started) = started {
                     shown_plan = None;
-                    let driven = send_it.dispatch(started, &monitor);
-                    (sending, pending) = (driven.active, driven.route.map(Submitted::internal));
+                    let mut driven = send_it.dispatch(started, &monitor);
+                    (sending, pending) = (driven.active.take(), driven.enter(&mut editor));
                 }
                 continue;
             }

@@ -212,3 +212,16 @@ fn a_judge_turn_whose_plan_is_gone_carries_the_status_prefill() {
     assert_eq!(driven.prefill.as_deref(), Some("/send-it status"));
     assert!(driven.route.is_none());
 }
+
+#[test]
+fn a_prefill_becomes_one_insert_command() {
+    assert_eq!(
+        prefill_commands(Some("/send-it go")),
+        vec![EditCommand::InsertString("/send-it go".to_string())]
+    );
+}
+
+#[test]
+fn no_prefill_makes_no_command() {
+    assert_eq!(prefill_commands(None), Vec::new());
+}

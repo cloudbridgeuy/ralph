@@ -2,7 +2,7 @@ use crate::chat::editor::open_in_editor;
 use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
 use crate::chat::monitor::Monitor;
-use crate::chat::prompt::screen_columns;
+use crate::chat::prompt::{screen_columns, Submitted};
 use crate::chat::queue::Queue;
 use crate::chat::turn::{Turn, TurnOutcome};
 use crate::inbox_alert;
@@ -29,6 +29,7 @@ use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::{locked, OutcomeSlot};
 use ralph_server::workers::running_workers;
+use reedline::{EditCommand, Reedline};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -94,7 +95,19 @@ pub(super) struct Driven {
     pub(super) prefill: Option<String>,
 }
 
+pub(super) fn prefill_commands(prefill: Option<&str>) -> Vec<EditCommand> {
+    prefill
+        .map(|line| EditCommand::InsertString(line.to_string()))
+        .into_iter()
+        .collect()
+}
+
 impl Driven {
+    pub(super) fn enter(self, editor: &mut Reedline) -> Option<Submitted> {
+        editor.run_edit_commands(&prefill_commands(self.prefill.as_deref()));
+        self.route.map(Submitted::internal)
+    }
+
     fn keep(driving: Driving, route: Route, watched: Option<OutcomeSlot>) -> Self {
         Self {
             active: Some(Active { driving, watched }),
