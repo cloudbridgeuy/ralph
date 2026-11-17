@@ -27,7 +27,8 @@ pub fn tombstone_line(name: &ThreadName, meta: &ThreadMeta, dropped_at: &str) ->
 
 pub fn parse_tombstones(text: &str) -> Vec<Tombstone> {
     text.lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
+        .filter_map(|line| serde_json::from_str::<Tombstone>(line).ok())
+        .filter(|tombstone| ThreadName::parse(&tombstone.name).is_ok())
         .collect()
 }
 
@@ -145,6 +146,17 @@ mod tests {
             .map(|t| t.name)
             .collect();
         assert_eq!(names, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn drops_a_tombstone_whose_name_is_not_a_thread_name() {
+        let hand_edited = r#"{"name":"\u001b[31mx","base":1,"created":"c","dropped_at":"d"}"#;
+        let text = format!("{hand_edited}\n{}", line("ok", 2));
+        let names: Vec<_> = parse_tombstones(&text)
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names, vec!["ok"]);
     }
 
     #[test]
