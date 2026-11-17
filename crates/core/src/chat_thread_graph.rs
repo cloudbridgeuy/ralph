@@ -1,4 +1,6 @@
 use crate::ansi::{GREEN, RED, RESET, YELLOW};
+use crate::chat_thread::ThreadMeta;
+use crate::chat_thread_log::Tombstone;
 use std::collections::BTreeSet;
 use unicode_width::UnicodeWidthChar;
 
@@ -21,6 +23,37 @@ pub struct Lane {
 pub struct GraphOpts {
     pub width: usize,
     pub color: bool,
+}
+
+pub fn graph_opts(color: bool, columns: usize) -> GraphOpts {
+    GraphOpts {
+        width: if color { columns } else { usize::MAX },
+        color,
+    }
+}
+
+fn end_of(meta: &ThreadMeta) -> LaneEnd {
+    match (&meta.merged, &meta.parked) {
+        (Some(merged), _) => LaneEnd::Merged {
+            landed: merged.landed,
+        },
+        (None, Some(_)) => LaneEnd::Parked,
+        (None, None) => LaneEnd::Open,
+    }
+}
+
+pub fn lanes_from(threads: &[(String, ThreadMeta)], tombstones: &[Tombstone]) -> Vec<Lane> {
+    let live = threads.iter().map(|(name, meta)| Lane {
+        name: name.clone(),
+        base: meta.base,
+        end: end_of(meta),
+    });
+    let dropped = tombstones.iter().map(|tombstone| Lane {
+        name: tombstone.name.clone(),
+        base: tombstone.base,
+        end: LaneEnd::Dropped,
+    });
+    live.chain(dropped).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +344,7 @@ pub fn graph_lines(head: usize, lanes: &[Lane], opts: &GraphOpts) -> Vec<String>
 mod tests {
     use super::*;
     use crate::ansi::{GREEN, RED, YELLOW};
+    use crate::chat_thread::{Merged, Parked};
     use unicode_width::UnicodeWidthStr;
 
     fn lane(name: &str, base: usize, end: LaneEnd) -> Lane {
@@ -464,6 +498,80 @@ mod tests {
     #[test]
     fn an_empty_history_is_just_the_trunk() {
         assert_eq!(graph_lines(0, &[], &plain(80)), vec!["●  #0 main"]);
+    }
+
+    fn meta(base: usize) -> ThreadMeta {
+        ThreadMeta {
+            base,
+            created: "c".to_string(),
+            merged: None,
+            parked: None,
+        }
+    }
+
+    fn tombstone(name: &str, base: usize) -> Tombstone {
+        Tombstone {
+            name: name.to_string(),
+            base,
+            created: "c".to_string(),
+            dropped_at: "d".to_string(),
+        }
+    }
+
+    #[test]
+    fn lanes_come_from_each_thread_state_and_each_tombstone() {
+        let merged = ThreadMeta {
+            merged: Some(Merged {
+                at: "t".to_string(),
+                digest: "d".to_string(),
+                landed: Some(9),
+            }),
+            ..meta(2)
+        };
+        let unknown = ThreadMeta {
+            merged: Some(Merged {
+                at: "t".to_string(),
+                digest: "d".to_string(),
+                landed: None,
+            }),
+            ..meta(3)
+        };
+        let parked = ThreadMeta {
+            parked: Some(Parked {
+                at: "t".to_string(),
+            }),
+            ..meta(4)
+        };
+        let threads = [
+            ("m".to_string(), merged),
+            ("u".to_string(), unknown),
+            ("p".to_string(), parked),
+            ("o".to_string(), meta(5)),
+        ];
+        let lanes = lanes_from(&threads, &[tombstone("x", 6)]);
+        assert_eq!(
+            lanes,
+            vec![
+                lane("m", 2, LaneEnd::Merged { landed: Some(9) }),
+                lane("u", 3, LaneEnd::Merged { landed: None }),
+                lane("p", 4, LaneEnd::Parked),
+                lane("o", 5, LaneEnd::Open),
+                lane("x", 6, LaneEnd::Dropped),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_threads_and_no_tombstones_give_no_lanes() {
+        assert_eq!(lanes_from(&[], &[]), Vec::new());
+    }
+
+    #[test]
+    fn colour_fits_the_terminal_and_plain_output_keeps_every_column() {
+        let tty = graph_opts(true, 80);
+        assert_eq!((tty.width, tty.color), (80, true));
+        let piped = graph_opts(false, 80);
+        assert_eq!((piped.width, piped.color), (usize::MAX, false));
     }
 
     fn strip(line: &str) -> String {

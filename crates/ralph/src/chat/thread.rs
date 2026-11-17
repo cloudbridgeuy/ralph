@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use ralph_server::chat::memory::Reach;
 
+mod graph;
 pub(super) mod landing;
 mod list;
 mod tombstone;
@@ -149,6 +150,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             revive_thread(&main, &name)?;
             println!("{}", revived_message(&name));
         }
+        ThreadCommand::Log => graph::print_log(&main, screen_columns())?,
         ThreadCommand::Pull { name } => println!("{}", pull_thread(&main, &name)?),
     }
     Ok(())

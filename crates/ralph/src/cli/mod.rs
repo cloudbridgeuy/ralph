@@ -277,6 +277,10 @@ pub enum ThreadCommand {
         name: ThreadName,
     },
     #[command(
+        about = "Draw main and the threads forked from it as a graph: fork points, merge landings, and parked, dropped and open threads. No model call."
+    )]
+    Log,
+    #[command(
         about = "Move a thread's fork point to main's current end; its next chat starts with main's newer messages. Refuses while its chat is open."
     )]
     Pull {
