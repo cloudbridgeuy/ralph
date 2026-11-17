@@ -12,14 +12,20 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
 mod drive;
+mod end_block;
 mod render;
 pub mod template;
 
 pub use drive::*;
+pub use end_block::*;
 pub use render::*;
 
 pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
 pub const STEP_RESULT: &str = "step_result";
+
+pub fn is_step_result_tool(name: &str) -> bool {
+    name.rsplit("__").next() == Some(STEP_RESULT)
+}
 pub const STEP_RESULT_MAX_CHARS: usize = 300;
 const NO_STEP_RESULT: &str = "the judge turn made no step_result call";
 
@@ -555,8 +561,6 @@ pub fn parse_step_result(args: &Value) -> Result<StepResult, String> {
 }
 
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
-const RESTART_HINT: &str =
-    "To run it again, show the plan with /send-it status, then type /send-it go.";
 const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -583,7 +587,7 @@ pub enum StopReason {
     TurnCap,
     CostCap,
     Unmet { step: usize },
-    WorkerFlagged,
+    WorkerFlagged { worker: String, line: String },
     JudgeRounds { step: usize, evidence: String },
     CheckFailed { step: usize, detail: Option<String> },
     CheckNotStarted { step: usize, error: String },
@@ -598,6 +602,8 @@ pub enum StopReason {
 const DETAIL_LINES: usize = 3;
 const DETAIL_CHARS: usize = 200;
 const ELLIPSIS: &str = "...";
+const LAST_OUTPUT: &str = "; last output: ";
+const OUTPUT_JOIN: &str = " / ";
 
 fn output_tail(text: &str) -> Option<String> {
     let output = text.split_once(OUTPUT_HEADER)?.1;
@@ -606,7 +612,7 @@ fn output_tail(text: &str) -> Option<String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect();
-    let tail = lines[lines.len().saturating_sub(DETAIL_LINES)..].join(" / ");
+    let tail = lines[lines.len().saturating_sub(DETAIL_LINES)..].join(OUTPUT_JOIN);
     let chars = tail.chars().count();
     if tail.is_empty() || tail == NO_OUTPUT {
         None
@@ -622,7 +628,7 @@ fn output_tail(text: &str) -> Option<String> {
 pub fn check_detail(outcome: &WatchOutcome, report: Option<&Report>) -> String {
     let exit = describe(outcome);
     match report.and_then(|report| output_tail(&report.text)) {
-        Some(tail) => format!("{exit}; last output: {tail}"),
+        Some(tail) => format!("{exit}{LAST_OUTPUT}{tail}"),
         None => exit,
     }
 }
@@ -632,19 +638,21 @@ impl StopReason {
         StopReason::CheckFailed { step, detail: None }
     }
 
-    pub fn notice(self, run: &Run, kept: Option<&RunFile>) -> String {
+    pub fn notice(&self, run: &Run, kept: Option<&RunFile>) -> String {
         let why = match self {
             StopReason::Off => return OFF_NOTICE.to_string(),
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Unmet { step } => format!("step {step} missed its exit criterion"),
-            StopReason::WorkerFlagged => "a worker asked a question or is blocked".to_string(),
+            StopReason::WorkerFlagged { .. } => {
+                "a worker asked a question or is blocked".to_string()
+            }
             StopReason::JudgeRounds { step, evidence } => format!(
                 "step {step} was still not met after the last judge round: {}",
                 evidence.trim_end_matches('.')
             ),
             StopReason::CheckFailed { step, detail } => {
-                let detail = detail.map_or(String::new(), |detail| {
+                let detail = detail.as_ref().map_or(String::new(), |detail| {
                     format!(" ({})", detail.trim_end_matches('.'))
                 });
                 format!("step {step} check did not exit 0{detail}")
@@ -660,10 +668,8 @@ impl StopReason {
             StopReason::Refused { tool } => format!("the plan does not allow `{tool}`"),
         };
         match kept.and_then(|file| Some((resume_step(file)?, file.plan.steps.len()))) {
-            Some((step, steps)) => format!(
-                "send-it stopped at step {step}/{steps}: {why}. The plan is kept. Fix the cause, show it with /send-it status, then type /send-it go to resume from step {step}. /send-it off deletes it."
-            ),
-            None => format!("send-it stopped: {why}. {RESTART_HINT}"),
+            Some((step, steps)) => format!("send-it stopped at step {step}/{steps}: {why}."),
+            None => format!("send-it stopped: {why}."),
         }
     }
 }
@@ -682,15 +688,24 @@ pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {
         return None;
     };
     Some(format!(
-        "{}\n/send-it judge: {question}\nAnswer from what this chat already shows and take no other actions. Call `{STEP_RESULT}` once with `met` and one line of `evidence`, then reply in one short line.",
-        step_line(plan, progress.step, step)
+        "[send-it {}/{}] /send-it judge: {question}\nAnswer from what this chat already shows and take no other actions. Call `{STEP_RESULT}` once with `met` and one line of `evidence`, then reply `met` or `not met` only.",
+        progress.step + 1,
+        plan.steps.len()
     ))
+}
+
+pub fn judge_echo(plan: &RunPlan, progress: Progress) -> String {
+    format!(
+        "send-it {}/{} · judge ...",
+        progress.step + 1,
+        plan.steps.len()
+    )
 }
 
 pub fn done_notice(plan: &RunPlan, run: &Run) -> String {
     let steps = plan.steps.len();
     format!(
-        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}. {RESTART_HINT}",
+        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}.",
         run.turns, run.spent_usd
     )
 }

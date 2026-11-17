@@ -4,7 +4,7 @@ use ralph_core::chat_keepalive::{
     keepalive_action, keeps_after, keeps_for_turn, ping_follow_up, Keepalive, KeepaliveInput,
     PingFollowUp, KEEPALIVE_PING_PROMPT,
 };
-use ralph_core::chat_memory::{subagent_records, usage_record, CallSite};
+use ralph_core::chat_memory::{subagent_records, usage_record, CallSite, LedgerRow};
 use ralph_core::stream::IterationMetadata;
 use ralph_server::chat::memory::usage_path;
 use ralph_server::ledger;
@@ -100,16 +100,10 @@ impl KeepaliveWatch {
     fn record(&self, result: &StreamingSubprocessResult) {
         let identity = locked(&self.identity).clone();
         let at = Utc::now().to_rfc3339();
-        let Some(record) = usage_record(
-            CallSite::Ping,
-            at.clone(),
-            &result.stream_result.costs,
-            &identity,
-        ) else {
+        let Some(record) = ping_row(at.clone(), result, &identity) else {
             return;
         };
         let record = record
-            .with_request_at(result.request_at.map(|at| at.to_rfc3339()))
             .with_run(Some(self.run.clone()))
             .with_store(Some(self.store.clone()));
         warn_if_err(
@@ -128,3 +122,18 @@ impl KeepaliveWatch {
         );
     }
 }
+
+fn ping_row(
+    at: String,
+    result: &StreamingSubprocessResult,
+    identity: &IterationMetadata,
+) -> Option<LedgerRow> {
+    usage_record(CallSite::Ping, at, &result.stream_result.costs, identity).map(|record| {
+        record
+            .with_turn_cost(result.logged_before)
+            .with_request_at(result.request_at.map(|at| at.to_rfc3339()))
+    })
+}
+
+#[cfg(test)]
+mod ping_row_tests;

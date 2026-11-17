@@ -1,6 +1,6 @@
 use crate::chat::claim::ChatClaim;
 use crate::chat::index_files::{
-    open_archive, save_stale, sweep_index_temps, update_index, FileSource,
+    log_count, open_archive, save_stale, sweep_index_temps, update_index, FileSource,
 };
 use crate::private_file::check_path;
 use crate::warn::warn;
@@ -20,6 +20,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+mod append_tests;
 mod nap;
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
@@ -323,6 +325,10 @@ impl Store {
     }
 
     pub fn append(&self, role: Role, text: &str) -> io::Result<()> {
+        self.append_id(role, text).map(|_| ())
+    }
+
+    pub fn append_id(&self, role: Role, text: &str) -> io::Result<usize> {
         let _lock = self.lock()?;
         let entry = NewEntry {
             role,
@@ -338,6 +344,7 @@ impl Store {
             .append(true)
             .open(path)?;
         trim_torn_tail(&mut file)?;
+        let id = log_count(&self.dir)?;
         file.write_all(line.as_bytes())?;
         file.sync_all()?;
         // The line is committed; `log.idx` is a cache the next reader rebuilds.
@@ -349,7 +356,7 @@ impl Store {
         if let Err(e) = sweep_index_temps(&self.dir) {
             warn(format!("chat index temp files not removed: {e}"));
         }
-        Ok(())
+        Ok(id)
     }
 
     fn put(&self, node: Node, text: &str) -> io::Result<()> {

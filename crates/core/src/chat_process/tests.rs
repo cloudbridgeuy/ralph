@@ -359,7 +359,8 @@ fn two_absorbs_equal_one_full_parse() {
     );
     assert_eq!(tail, full);
     assert_eq!(tail.offset, all.len() as u64);
-    assert_eq!(costs(&tail), vec![Some(1.0), Some(1.2), Some(2.0)]);
+    assert_eq!(costs(&tail).len(), 3);
+    assert!((costs(&tail).iter().flatten().sum::<f64>() - 2.0).abs() < 1e-9);
 }
 
 #[test]
@@ -371,7 +372,7 @@ fn a_torn_last_line_waits_for_the_next_read() {
     assert_eq!(costs(&tail), vec![Some(1.0)]);
     assert_eq!(tail.offset, whole.find('\n').unwrap() as u64 + 1);
     let tail = read_all(tail, FILE, &whole);
-    assert_eq!(costs(&tail), vec![Some(1.0), Some(2.0)]);
+    assert_eq!(costs(&tail), vec![Some(1.0), Some(1.0)]);
     assert_eq!(tail.offset, whole.len() as u64);
 }
 
@@ -401,7 +402,7 @@ fn a_new_inode_resets_and_rereads() {
         }
     );
     let tail = read_all(tail, other, &new);
-    assert_eq!(costs(&tail), vec![Some(4.0), Some(6.0)]);
+    assert_eq!(costs(&tail), vec![Some(4.0), Some(2.0)]);
     assert_eq!(tail.file, other);
 }
 
@@ -435,7 +436,7 @@ fn interleaved_runs_keep_only_the_own_rows_across_absorbs() {
         &first,
     );
     let tail = read_all(tail, FILE, &all);
-    assert_eq!(costs(&tail), vec![Some(2.0), Some(3.0)]);
+    assert_eq!(costs(&tail), vec![Some(2.0), Some(1.0)]);
 }
 
 #[test]
@@ -706,39 +707,4 @@ fn cost_variants_show_the_delta_first() {
         ..cost
     };
     assert_eq!(cost_variants(&flat), ["$4.12"]);
-}
-
-#[test]
-fn spend_is_the_total_on_the_first_turn_of_a_process() {
-    assert_eq!(spend_over(0.4, None, true), Some(0.4));
-    assert_eq!(spend_over(0.4, Some(9.0), true), Some(0.4));
-}
-
-#[test]
-fn spend_is_the_rise_over_the_previous_total_of_the_same_process() {
-    let spends: Vec<f64> = [0.2, 0.5, 0.8]
-        .iter()
-        .scan(None, |previous, total| {
-            let spend = spend_over(*total, *previous, previous.is_none());
-            *previous = Some(*total);
-            spend
-        })
-        .collect();
-    assert!((spends.iter().sum::<f64>() - 0.8).abs() < 1e-9);
-}
-
-#[test]
-fn spend_after_a_ping_excludes_the_ping() {
-    let spend = spend_over(0.8, Some(0.5), false).unwrap();
-    assert!((spend - 0.3).abs() < 1e-9);
-}
-
-#[test]
-fn spend_is_unknown_without_a_previous_total_mid_process() {
-    assert_eq!(spend_over(0.8, None, false), None);
-}
-
-#[test]
-fn spend_is_unknown_when_the_total_goes_down() {
-    assert_eq!(spend_over(0.3, Some(0.5), false), None);
 }

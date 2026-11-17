@@ -1,4 +1,4 @@
-use crate::chat_process::ResetReason;
+use crate::chat_process::{turn_cost, ResetReason, OWN_COST_LEDGER};
 use crate::stream::{IterationCosts, IterationMetadata, ModelTotals};
 use crate::wire::usage::{FIVE_MIN, ONE_HOUR};
 use crate::worker::ModelUsage;
@@ -166,6 +166,8 @@ pub struct LedgerRow {
     long_prompt: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     per_thread_usage: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ledger_v: Option<u8>,
     #[serde(flatten)]
     view: Option<ViewStats>,
 }
@@ -212,6 +214,14 @@ impl LedgerRow {
         }
     }
 
+    pub fn with_turn_cost(self, before: Option<f64>) -> LedgerRow {
+        LedgerRow {
+            cost_usd: self.cost_usd.and_then(|total| turn_cost(total, before)),
+            ledger_v: Some(OWN_COST_LEDGER),
+            ..self
+        }
+    }
+
     pub fn with_harness_cost(self, cost_usd: Option<f64>) -> LedgerRow {
         LedgerRow {
             cost_usd,
@@ -221,12 +231,19 @@ impl LedgerRow {
     }
 }
 
+pub fn writes_usage_row(costs: &IterationCosts) -> bool {
+    costs.usage.is_some()
+}
+
 pub fn usage_record(
     kind: CallSite,
     at: String,
     costs: &IterationCosts,
     metadata: &IterationMetadata,
 ) -> Option<LedgerRow> {
+    if !writes_usage_row(costs) {
+        return None;
+    }
     let usage = costs.usage.as_ref()?;
     Some(LedgerRow {
         at,
@@ -263,6 +280,7 @@ pub fn usage_record(
             .map(|tiers| tiers.ephemeral_1h_input_tokens),
         long_prompt: None,
         per_thread_usage: None,
+        ledger_v: None,
         view: None,
     })
 }
@@ -308,6 +326,7 @@ pub fn worker_usage_record(
         cache_write_1h: written(ONE_HOUR),
         long_prompt: Some(row.long_prompt),
         per_thread_usage: None,
+        ledger_v: None,
         view: None,
     }
 }
@@ -398,3 +417,7 @@ pub fn encode_usage(record: &LedgerRow) -> Result<String, String> {
 #[cfg(test)]
 #[path = "usage_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "turn_cost_tests.rs"]
+mod turn_cost_tests;

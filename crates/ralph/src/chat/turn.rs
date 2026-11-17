@@ -26,7 +26,7 @@ use ralph_core::chat_memory::{
     carry_metadata, reply_entries, split_view, subagent_records, trigger_entries, turn_row,
     usage_record, view_stats, CallSite, Trigger, TurnTiming, ViewSplit,
 };
-use ralph_core::chat_process::{spend_over, ResetReason};
+use ralph_core::chat_process::{turn_cost, ResetReason};
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::chat_suggestion::from_reply;
 use ralph_core::sanitize::strip_controls;
@@ -363,6 +363,7 @@ impl Turn<'_> {
             }
             self.note_timing(|held| held.with_model_ms(turn.stream_result.costs.duration_ms));
             let record = record
+                .with_turn_cost(turn.logged_before)
                 .with_process_turn(process_turns)
                 .with_request_at(turn.request_at.map(|at| at.to_rfc3339()))
                 .with_reset(launch.as_ref().and_then(|spawned| spawned.reset))
@@ -385,7 +386,7 @@ impl Turn<'_> {
         }
         *locked(&self.last_cost_usd) = recorded(&result).and_then(|turn| {
             let total = turn.stream_result.costs.cost_usd?;
-            Some(spend_over(total, turn.cost_before, process_turns == 1).unwrap_or(0.0))
+            Some(turn_cost(total, turn.cost_before).map_or(0.0, |cost| cost.max(0.0)))
         });
         match end {
             TurnEnd::Exit => return Ok(TurnOutcome::Exit),
@@ -637,6 +638,7 @@ mod tests {
             },
             request_at: None,
             cost_before: None,
+            logged_before: None,
         }
     }
 
@@ -657,6 +659,7 @@ mod tests {
             stream_result: processor.finish(),
             request_at: None,
             cost_before: None,
+            logged_before: None,
         });
         let identity = carry_metadata(&IterationMetadata::new(), true, &turn_metadata(&result));
         let costs = &result.as_ref().unwrap().stream_result.costs;
@@ -685,6 +688,7 @@ mod tests {
             stream_result: processor.finish(),
             request_at: None,
             cost_before: None,
+            logged_before: None,
         }
     }
 

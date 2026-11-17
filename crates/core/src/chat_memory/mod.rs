@@ -57,7 +57,8 @@ pub use tree::{
 pub(crate) use usage::MAIN_HARNESS;
 pub use usage::{
     carry_metadata, encode_usage, model_usage_since, reply_entries, subagent_records,
-    trigger_entries, usage_record, view_stats, worker_usage_record, CallSite, LedgerRow, Trigger,
+    trigger_entries, usage_record, view_stats, worker_usage_record, writes_usage_row, CallSite,
+    LedgerRow, Trigger,
 };
 
 pub const SUMMARY_BYTES: usize = 512;

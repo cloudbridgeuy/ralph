@@ -1,4 +1,4 @@
-use super::usage_report::model_view::{baseline, cells, cost_rows, costs_view, total_row, CostRow};
+use super::usage_report::model_view::{cells, cost_rows, costs_view, total_row, CostRow};
 use super::*;
 use crate::wire::price::PriceOverride;
 use crate::wire::provider::{provider, ProviderId};
@@ -621,28 +621,6 @@ fn the_total_row_marks_a_partial_tier_from_any_group() {
     ]));
     let total = cells(&total_row(&rows));
     assert_eq!((total[7].as_str(), total[8].as_str()), ("20+", "30+"));
-}
-
-fn costed(at: &str, cost: Option<f64>) -> UsageLine {
-    UsageLine {
-        at: at.to_string(),
-        cost_usd: cost,
-        ..UsageLine::default()
-    }
-}
-
-#[test]
-fn the_baseline_is_the_last_cost_before_the_window() {
-    let since = window::instant("2026-11-06T00:00:00Z");
-    let rows = [
-        costed("2026-11-05T10:00:00Z", Some(1.0)),
-        costed("2026-11-05T11:00:00Z", Some(2.0)),
-        costed("2026-11-05T12:00:00Z", None),
-        costed("2026-11-06T01:00:00Z", Some(3.0)),
-    ];
-    assert!((baseline(&rows, since) - 2.0).abs() < 1e-9);
-    assert!(baseline(&rows[3..], since).abs() < 1e-9);
-    assert!(baseline(&rows, None).abs() < 1e-9);
 }
 
 fn with_reasoning(mut row: Value, tokens: u64) -> Value {

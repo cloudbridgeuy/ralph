@@ -67,6 +67,7 @@ fn curator_outcome(
         stream_result: processor.finish(),
         request_at: None,
         cost_before: None,
+        logged_before: None,
     })))
 }
 

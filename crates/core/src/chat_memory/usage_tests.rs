@@ -610,3 +610,29 @@ fn view_hash_is_stable_and_head_ignores_the_tail() {
     assert_ne!(s.view_hash, l.view_hash);
     assert_eq!(view_stats(&[]).view_hash, "cbf29ce484222325");
 }
+
+#[test]
+fn a_usage_row_exists_exactly_when_writes_usage_row_holds() {
+    let usage = Some(crate::stream::Usage::default());
+    for costs in [
+        costs(None),
+        IterationCosts {
+            cost_usd: Some(1.0),
+            usage: usage.clone(),
+            ..Default::default()
+        },
+        IterationCosts {
+            cost_usd: Some(1.0),
+            usage: None,
+            ..Default::default()
+        },
+    ] {
+        let row = usage_record(
+            CallSite::Ping,
+            "t".into(),
+            &costs,
+            &IterationMetadata::new(),
+        );
+        assert_eq!(row.is_some(), writes_usage_row(&costs));
+    }
+}

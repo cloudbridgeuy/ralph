@@ -84,7 +84,7 @@ use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_local::CommandRecord;
-use ralph_core::chat_memory::{store_in_use_message, Role, Trigger};
+use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
 use ralph_core::chat_send_it::{
     propose_prompt, usage as send_it_usage, Ended, Seen, SendItCommand,
@@ -635,12 +635,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         }
         let record = CommandRecord::for_route(&route, &typed_line);
         let note = |output: &str| {
-            if let Some(row) = record.row(output) {
-                warn_if_err(
-                    store.append(Role::User, &row),
-                    "Failed to record the command",
-                );
-            }
+            record
+                .row(output)
+                .and_then(|row| thread_cmd::append_row(&store, &row))
         };
         let mut queue = Queue::default();
         let mut drained = Vec::new();
@@ -864,6 +861,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 break;
             }
             Route::ThreadOp { op, line } => {
+                let merged = thread_cmd::merging(&op);
                 match op.and_then(|op| {
                     let env = thread_cmd::ThreadEnv {
                         store_dir: &store_dir,
@@ -877,7 +875,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 }) {
                     Ok(text) => {
                         println!("{text}");
-                        note(&text);
+                        let id = note(&text);
+                        thread_cmd::land(&thread::config_root(&store_dir), merged, id);
                         monitor.refresh(true);
                         if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
                             carried = rest;
@@ -941,6 +940,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             if driven.route.is_some() {
                 pending = driven.route.map(Submitted::internal);
                 continue;
+            }
+            suggestions.clear();
+            if let Some(line) = driven.prefill {
+                suggestions.set(line);
             }
         }
         let suggestion = suggestions.take();

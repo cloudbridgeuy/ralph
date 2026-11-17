@@ -350,6 +350,7 @@ impl Pump {
             stream_result,
             request_at: self.request_at,
             cost_before: None,
+            logged_before: None,
         }
     }
 }

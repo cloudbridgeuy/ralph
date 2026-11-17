@@ -41,6 +41,8 @@ pub mod chat_switch;
 pub mod chat_thread;
 pub mod chat_thread_auto;
 pub mod chat_thread_cmd;
+pub mod chat_thread_graph;
+pub mod chat_thread_log;
 pub mod chat_thread_model;
 mod chat_thread_root;
 pub mod chat_thread_table;
