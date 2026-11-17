@@ -27,7 +27,11 @@ pub struct GraphOpts {
 
 pub fn graph_opts(color: bool, columns: usize) -> GraphOpts {
     GraphOpts {
-        width: if color { columns } else { usize::MAX },
+        width: if color && columns > 0 {
+            columns
+        } else {
+            usize::MAX
+        },
         color,
     }
 }
@@ -572,6 +576,12 @@ mod tests {
         assert_eq!((tty.width, tty.color), (80, true));
         let piped = graph_opts(false, 80);
         assert_eq!((piped.width, piped.color), (usize::MAX, false));
+    }
+
+    #[test]
+    fn a_terminal_that_reports_no_width_is_not_clipped_to_nothing() {
+        let opts = graph_opts(true, 0);
+        assert_eq!((opts.width, opts.color), (usize::MAX, true));
     }
 
     fn strip(line: &str) -> String {
