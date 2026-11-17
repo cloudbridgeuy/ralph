@@ -123,6 +123,7 @@ pub fn saving_lines(estimate: &SavingEstimate) -> Vec<String> {
             estimate.ping_cost,
             estimate.counted - estimate.unpriced
         ),
+        None if estimate.counted == 0 => "saving estimate (est.): no qualifying period".to_string(),
         None => "saving estimate (est.): no price".to_string(),
     };
     let mut lines = vec![first, format!("rule: {SAVING_RULE}")];

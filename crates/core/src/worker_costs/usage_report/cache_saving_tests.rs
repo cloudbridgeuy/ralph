@@ -140,6 +140,29 @@ fn unpriced_model_gives_no_saved_value() {
 }
 
 #[test]
+fn no_context_tokens_says_no_qualifying_period() {
+    let mut warm = period(2, 61, PeriodOutcome::Warm, Some("m"));
+    warm.context_tokens = None;
+    let lines = saving_lines(&saving_estimate(&[warm], rates));
+    assert_eq!(lines[0], "saving estimate (est.): no qualifying period");
+}
+
+#[test]
+fn no_periods_says_no_qualifying_period() {
+    let lines = saving_lines(&saving_estimate(&[], rates));
+    assert_eq!(lines[0], "saving estimate (est.): no qualifying period");
+}
+
+#[test]
+fn qualifying_period_with_unpriced_model_says_no_price() {
+    let lines = saving_lines(&saving_estimate(
+        &[period(2, 61, PeriodOutcome::Warm, Some("other"))],
+        rates,
+    ));
+    assert_eq!(lines[0], "saving estimate (est.): no price");
+}
+
+#[test]
 fn mixed_periods_sum_the_priced_ones_and_report_the_rest() {
     let estimate = saving_estimate(
         &[
