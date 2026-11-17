@@ -130,7 +130,7 @@ fn the_thread_open_row_says_it_opens_a_rex_block() {
     assert!(wide.contains("/thread open <name>"), "{wide}");
     assert!(wide.contains("new Rex block"), "{wide}");
     assert!(
-        wide.contains("/thread open <name> [--auto-merge|--auto-drop]"),
+        wide.contains("/thread open <name> [--auto-merge|--auto-drop] [--model <m>]"),
         "{wide}"
     );
 }

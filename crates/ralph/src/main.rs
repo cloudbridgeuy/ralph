@@ -63,6 +63,7 @@ fn main() -> ExitCode {
         store: None,
         name: None,
         thread: None,
+        model: None,
         recent_history_tokens: None,
         wrap_width: None,
         skills: Vec::new(),

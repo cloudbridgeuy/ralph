@@ -1,6 +1,7 @@
 use crate::chat_help::Command;
 use crate::chat_switch::SwitchTarget;
 use crate::chat_thread::{AutoMode, ThreadName};
+use crate::chat_thread_model::validate_thread_model;
 
 pub const VIEW_FLAG: &str = "--view";
 const VIEW_ALIAS: &str = "--rebase";
@@ -15,7 +16,7 @@ const PULL_USAGE: &str =
 const REVIVE_USAGE: &str =
     "usage: /thread revive <name> lets parked thread <name> open again; run it in main's chat.";
 const OPEN_USAGE: &str =
-    "usage: /thread open <name> [--auto-merge | --auto-drop] opens thread <name> in a new Rex block next to this chat; --auto-merge or --auto-drop (one at most) finishes it on its own.";
+    "usage: /thread open <name> [--auto-merge | --auto-drop] [--model <model>] opens thread <name> in a new Rex block next to this chat; --auto-merge or --auto-drop (one at most) finishes it on its own; --model <model> (sonnet, opus, haiku or claude-*) sets the model its chat runs on.";
 const DROP_USAGE: &str =
     "usage: /thread drop <name> deletes thread <name> after a y/n; run it in main's chat.";
 
@@ -34,6 +35,7 @@ pub enum ThreadOp {
 pub struct OpenOpts {
     pub name: ThreadName,
     pub auto: Option<AutoMode>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,21 +106,33 @@ fn parse_merge(words: &[&str]) -> Result<ThreadOp, String> {
 
 fn parse_open(words: &[&str]) -> Result<ThreadOp, String> {
     let mut auto = None;
+    let mut model = None;
     let mut names = Vec::new();
-    for word in words {
-        let flag = match *word {
-            "--auto-merge" => Some(AutoMode::Merge),
-            "--auto-drop" => Some(AutoMode::Drop),
+    let mut words = words.iter().copied();
+    while let Some(word) = words.next() {
+        match word {
+            "--model" => {
+                let value = words.next().ok_or_else(|| OPEN_USAGE.to_string())?;
+                validate_thread_model(value).map_err(|e| format!("{e}\n{OPEN_USAGE}"))?;
+                if model.replace(value.to_string()).is_some() {
+                    return Err(OPEN_USAGE.to_string());
+                }
+            }
+            "--auto-merge" | "--auto-drop" => {
+                let mode = if word == "--auto-merge" {
+                    AutoMode::Merge
+                } else {
+                    AutoMode::Drop
+                };
+                if auto.replace(mode).is_some() {
+                    return Err(OPEN_USAGE.to_string());
+                }
+            }
             other if other.starts_with("--") => return Err(OPEN_USAGE.to_string()),
-            _ => None,
-        };
-        match flag {
-            Some(_) if auto.is_some() => return Err(OPEN_USAGE.to_string()),
-            Some(mode) => auto = Some(mode),
-            None => names.push(*word),
+            _ => names.push(word),
         }
     }
-    one_name(&names, OPEN_USAGE).map(|name| ThreadOp::Open(OpenOpts { name, auto }))
+    one_name(&names, OPEN_USAGE).map(|name| ThreadOp::Open(OpenOpts { name, auto, model }))
 }
 
 fn one_name(words: &[&str], usage: &str) -> Result<ThreadName, String> {
@@ -246,7 +260,11 @@ mod tests {
     }
 
     fn open(auto: Option<AutoMode>) -> ThreadOp {
-        ThreadOp::Open(OpenOpts { name: auth(), auto })
+        ThreadOp::Open(OpenOpts {
+            name: auth(),
+            auto,
+            model: None,
+        })
     }
 
     #[test]
@@ -258,6 +276,42 @@ mod tests {
             ("open --auto-drop auth", AutoMode::Drop),
         ] {
             assert_eq!(op(line), Ok(open(Some(auto))), "{line}");
+        }
+    }
+
+    fn open_with_model(model: &str) -> ThreadOp {
+        ThreadOp::Open(OpenOpts {
+            name: auth(),
+            auto: None,
+            model: Some(model.to_string()),
+        })
+    }
+
+    #[test]
+    fn open_takes_a_model_before_or_after_the_name_and_with_an_auto_flag() {
+        for line in ["open auth --model haiku", "open --model haiku auth"] {
+            assert_eq!(op(line), Ok(open_with_model("haiku")), "{line}");
+        }
+        assert_eq!(
+            op("open auth --auto-drop --model claude-haiku-4-5"),
+            Ok(ThreadOp::Open(OpenOpts {
+                name: auth(),
+                auto: Some(AutoMode::Drop),
+                model: Some("claude-haiku-4-5".to_string()),
+            }))
+        );
+    }
+
+    #[test]
+    fn open_refuses_a_missing_repeated_or_invalid_model_with_usage() {
+        for line in [
+            "open auth --model",
+            "open auth --model haiku --model opus",
+            "open auth --model gpt-5",
+            "open auth --model claude-",
+        ] {
+            let err = op(line).unwrap_err();
+            assert!(err.ends_with(OPEN_USAGE), "{line}: {err}");
         }
     }
 

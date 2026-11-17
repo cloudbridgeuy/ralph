@@ -103,6 +103,7 @@ mod tests {
             merged: None,
             parked: None,
             auto: None,
+            model: None,
             closed: false,
         }
     }

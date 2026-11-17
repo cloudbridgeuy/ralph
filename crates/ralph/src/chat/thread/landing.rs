@@ -31,6 +31,7 @@ mod tests {
             }),
             parked: None,
             auto: None,
+            model: None,
             closed: false,
         };
         write_meta(&dir, &meta).unwrap();
