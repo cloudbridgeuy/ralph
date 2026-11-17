@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub const CACHE_TTL_SECS: i64 = 3600;
+pub const OWN_COST_LEDGER: u8 = 2;
 const SEPARATOR: &str = " · ";
 const MISSING: &str = "–";
 
@@ -51,6 +52,7 @@ pub struct UsageLine {
     pub cache_write_1h: Option<u64>,
     pub long_prompt: Option<bool>,
     pub per_thread_usage: Option<bool>,
+    pub ledger_v: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -176,6 +178,10 @@ pub(crate) fn processes(rows: &[UsageLine]) -> Vec<&[UsageLine]> {
         .enumerate()
         .map(|(n, start)| &rows[*start..starts.get(n + 1).copied().unwrap_or(rows.len())])
         .collect()
+}
+
+pub fn turn_cost(total: f64, before: Option<f64>) -> Option<f64> {
+    Some(total - before?)
 }
 
 /// What one turn cost, from the running total of its claude process.
@@ -332,5 +338,7 @@ pub fn cost_variants(cost: &SessionCost) -> Vec<String> {
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod cost_tests;
 #[cfg(test)]
 mod old_rows_tests;
