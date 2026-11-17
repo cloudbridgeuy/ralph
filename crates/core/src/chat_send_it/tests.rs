@@ -12,6 +12,7 @@ mod noise;
 mod plan;
 mod render;
 mod resume;
+mod steer;
 mod template;
 mod warnings;
 

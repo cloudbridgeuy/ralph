@@ -189,6 +189,8 @@ pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
 const RUN_BY_RALPH_NOTE: &str = "ralph runs this check alone: put any work in an earlier step";
 const RUN_BY_RALPH_RULE: &str = "A watch_passes or check_passes step is run by ralph alone, with no model turn: put any work it needs in an earlier step.";
 
+const CRITERION_PREFERENCE: &str = "Prefer check_passes or watch_passes: ralph runs them for $0. Use judge only as a fallback: it costs one model turn per round.";
+
 impl Criterion {
     fn runs_in_ralph(&self) -> bool {
         matches!(
@@ -452,7 +454,7 @@ pub fn propose_refusal(existing: Option<&RunFile>) -> Option<String> {
 
 pub fn propose_prompt(text: &str) -> String {
     format!(
-        "/send-it: restate these instructions as a run plan. Call `propose_run` once with the plan, then stop. Do not start the work: ralph shows the plan and the person approves it with /send-it go. {RUN_BY_RALPH_RULE}\n\n{text}"
+        "/send-it: restate these instructions as a run plan. Call `propose_run` once with the plan, then stop. Do not start the work: ralph shows the plan and the person approves it with /send-it go. {RUN_BY_RALPH_RULE} {CRITERION_PREFERENCE}\n\n{text}"
     )
 }
 
@@ -470,10 +472,10 @@ pub fn propose_run_tool() -> Value {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "do": {"type": "string", "description": "What the step does."},
+                            "do": {"type": "string", "description": "What the step does. Plan it so a check_passes or watch_passes command can prove it is done."},
                             "criterion": {
                                 "type": "object",
-                                "description": format!("Exit check. worker_done needs worker; watch_passes and check_passes need a command that exits 0; judge needs a question. {RUN_BY_RALPH_RULE}"),
+                                "description": format!("Exit check. worker_done needs worker; watch_passes and check_passes need a command that exits 0; judge needs a question. {RUN_BY_RALPH_RULE} {CRITERION_PREFERENCE}"),
                                 "properties": {
                                     "kind": {"type": "string", "enum": ["worker_done", "watch_passes", "check_passes", "judge"]},
                                     "worker": {"type": "string"},
