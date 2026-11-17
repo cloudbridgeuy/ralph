@@ -36,12 +36,22 @@ pub struct StepResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Criterion {
-    WorkerDone { worker: String },
-    WatchPasses { command: String },
-    CheckPasses { command: String },
-    Judge { question: String },
+    WorkerDone {
+        worker: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify: Option<String>,
+    },
+    WatchPasses {
+        command: String,
+    },
+    CheckPasses {
+        command: String,
+    },
+    Judge {
+        question: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -142,6 +152,24 @@ fn parse_step(number: usize, step: RawStep) -> Result<Step, String> {
     let criterion = step.criterion.ok_or_else(|| {
         format!("Step {number} has no exit criterion. Give each step a check ralph can measure.")
     })?;
+    let criterion = match criterion {
+        Criterion::WorkerDone {
+            worker,
+            verify: Some(command),
+        } => {
+            let command = command.trim();
+            if command.is_empty() {
+                return Err(format!(
+                    "Step {number} has an empty verify command. Give a command that exits 0, or drop verify."
+                ));
+            }
+            Criterion::WorkerDone {
+                worker,
+                verify: Some(command.to_string()),
+            }
+        }
+        other => other,
+    };
     Ok(Step {
         task: task.to_string(),
         criterion,
@@ -201,7 +229,14 @@ impl Criterion {
 
     fn label(&self) -> String {
         match self {
-            Criterion::WorkerDone { worker } => format!("worker {worker} reports done"),
+            Criterion::WorkerDone {
+                worker,
+                verify: None,
+            } => format!("worker {worker} reports done"),
+            Criterion::WorkerDone {
+                worker,
+                verify: Some(command),
+            } => format!("worker {worker} reports done, then `{command}` exits 0"),
             Criterion::WatchPasses { command } => format!("watch `{command}` exits 0"),
             Criterion::CheckPasses { command } => format!("`{command}` exits 0"),
             Criterion::Judge { question } => format!("judged: {question}"),
@@ -275,7 +310,7 @@ pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
         .iter()
         .enumerate()
         .filter_map(|(index, step)| match &step.criterion {
-            Criterion::WorkerDone { worker } if !may_reply => Some(format!(
+            Criterion::WorkerDone { worker, .. } if !may_reply => Some(format!(
                 "Warning: step {} waits for worker {worker}, but the plan does not allow `reply`. A question from that worker stops the run.",
                 index + 1
             )),
@@ -479,6 +514,7 @@ pub fn propose_run_tool() -> Value {
                                 "properties": {
                                     "kind": {"type": "string", "enum": ["worker_done", "watch_passes", "check_passes", "judge"]},
                                     "worker": {"type": "string"},
+                                    "verify": {"type": "string", "description": "Optional, worker_done only: a command that exits 0 to confirm the worker's claim."},
                                     "command": {"type": "string"},
                                     "question": {"type": "string"}
                                 },

@@ -60,7 +60,7 @@ pub fn step_line(plan: &RunPlan, index: usize, step: &Step) -> String {
 
 fn wait_on(criterion: &Criterion) -> Next {
     match criterion {
-        Criterion::WorkerDone { worker } => Next::Hold(worker.clone()),
+        Criterion::WorkerDone { worker, .. } => Next::Hold(worker.clone()),
         Criterion::WatchPasses { command } => Next::Watch(command.clone()),
         Criterion::CheckPasses { command } => Next::Check(command.clone()),
         Criterion::Judge { .. } => Next::Judge,
@@ -109,7 +109,9 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             };
             (progress, next)
         }
-        (Event::Report(report), Criterion::WorkerDone { worker }) if report.worker == *worker => {
+        (Event::Report(report), Criterion::WorkerDone { worker, .. })
+            if report.worker == *worker =>
+        {
             if report.status == "done" {
                 step_met(plan, progress)
             } else {
@@ -233,7 +235,7 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
         return (progress, Next::Done);
     };
     match &step.criterion {
-        Criterion::WorkerDone { worker } => match seen.last.get(worker) {
+        Criterion::WorkerDone { worker, .. } => match seen.last.get(worker) {
             Some(status) if status == "done" => step_met(plan, progress),
             known if known.is_some() || seen.running.contains(worker) => {
                 (progress, Next::Hold(worker.clone()))

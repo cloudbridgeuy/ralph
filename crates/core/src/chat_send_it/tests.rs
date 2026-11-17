@@ -14,6 +14,7 @@ mod render;
 mod resume;
 mod steer;
 mod template;
+mod verify;
 mod warnings;
 
 fn limits() -> Limits {
@@ -173,7 +174,8 @@ fn a_run_plan_parses_with_typed_steps_actions_and_grants() {
         Step {
             task: "collect evidence".to_string(),
             criterion: Criterion::WorkerDone {
-                worker: "E1".to_string()
+                worker: "E1".to_string(),
+                verify: None,
             },
         }
     );
