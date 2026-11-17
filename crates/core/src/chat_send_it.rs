@@ -22,6 +22,10 @@ pub use render::*;
 
 pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
 pub const STEP_RESULT: &str = "step_result";
+
+pub fn is_step_result_tool(name: &str) -> bool {
+    name.rsplit("__").next() == Some(STEP_RESULT)
+}
 pub const STEP_RESULT_MAX_CHARS: usize = 300;
 const NO_STEP_RESULT: &str = "the judge turn made no step_result call";
 

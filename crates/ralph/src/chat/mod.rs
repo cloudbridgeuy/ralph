@@ -936,6 +936,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 pending = driven.route.map(Submitted::internal);
                 continue;
             }
+            drop(suggestions.take());
         }
         let suggestion = suggestions.take();
         let typed = std::mem::take(&mut queue.typed);

@@ -6,6 +6,7 @@
 use std::fs;
 
 use crate::render::{render_text_block, RenderContext};
+use ralph_core::chat_send_it::is_step_result_tool;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
@@ -125,6 +126,9 @@ impl StreamProcessor {
                         }
                     }
 
+                    if is_step_result_tool(&invocation.name) {
+                        continue;
+                    }
                     let formatted = tool_display::format_tool_invocation(self, invocation);
                     output_parts.push(formatted);
                     let block = build_tool_invocation_block(invocation);
@@ -154,6 +158,14 @@ impl StreamProcessor {
                             tool_use_id.and_then(|id| self.pending_write_snapshots.remove(id));
                         let notebook_snapshot =
                             tool_use_id.and_then(|id| self.pending_notebook_snapshots.remove(id));
+
+                        if !result.is_error
+                            && invocation
+                                .as_ref()
+                                .is_some_and(|inv| is_step_result_tool(&inv.name))
+                        {
+                            continue;
+                        }
 
                         // Route to dedicated handlers based on tool type.
                         // Bash/TodoWrite handle both success and error; file-modifying tools
