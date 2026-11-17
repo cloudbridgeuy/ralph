@@ -76,7 +76,7 @@ If the answer is "not met", or the model gives no answer, that is a failed round
 
 Each run has a turn cap and a cost cap. When the run reaches a cap, it stops.
 
-- The plan sets the caps in `[caps]`. A plan with no caps uses `[chat] send_it_max_turns` (default 15) and `[chat] send_it_max_usd` (default 5.0). See [configuration](../configuration.md).
+- The plan sets the caps in `[caps]`. A plan with no caps uses `[chat] send_it_max_turns` (default 15) and `[chat] send_it_max_usd` (default 5.0). `[chat] send_it_verify` (`off`, `observe` or `enforce`, default `observe`) sets how `verify` commands count; a bad value is an error in `ralph config check`. See [configuration](../configuration.md).
 - A grant (`turn_cap` or `cost_cap`) replaces that cap. The plan shows grants in a separate "You pre-approve" block, so you see them before you approve. A plan with no grants has no such block.
 - These turns count toward the turn cap: step turns, judge turns, and report turns that settle nothing.
 - The turn that reads a worker report and settles its step does not count.

@@ -44,6 +44,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(chat.worker_quiet_setting().1)
         .chain(chat.reset_limits_setting().1)
         .chain(chat.send_it_setting().1)
+        .chain(chat.send_it_verify_setting().1)
         .chain(chat.empty_submit_setting().1)
         .chain(chat.editor_setting().1)
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)
@@ -123,6 +124,16 @@ mod tests {
     fn warning_only_values_are_errors() {
         assert_eq!(errors("[chat]\nedit_mode = \"nano\"\n").len(), 1);
         assert_eq!(errors("[theme.agent]\nbad = \"x\"\n").len(), 1);
+    }
+
+    #[test]
+    fn a_bad_send_it_verify_is_an_error_and_a_good_one_is_not() {
+        let bad = errors("[chat]\nsend_it_verify = \"strict\"\n");
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(bad[0].contains("send_it_verify"), "{bad:?}");
+        for mode in ["off", "observe", "enforce"] {
+            assert!(errors(&format!("[chat]\nsend_it_verify = \"{mode}\"\n")).is_empty());
+        }
     }
 
     #[test]

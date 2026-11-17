@@ -1,7 +1,7 @@
 use super::empty_submit;
 use super::{ChatSection, EditorSetting, WORKER_QUIET_SECS};
 use ralph_core::chat::{ResetLimits, RESET_TOKENS, RESET_TURNS};
-use ralph_core::chat_send_it::Limits;
+use ralph_core::chat_send_it::{Limits, VerifyMode};
 use ralph_core::chat_skills::expand_home;
 use ralph_core::chat_status::EmptySubmit;
 use std::path::{Path, PathBuf};
@@ -85,6 +85,19 @@ impl ChatSection {
 
     pub fn send_it_setting(&self) -> (Limits, Vec<String>) {
         clamp_send_it(self.send_it_max_turns, self.send_it_max_usd)
+    }
+
+    pub fn send_it_verify_setting(&self) -> (VerifyMode, Option<String>) {
+        match self.send_it_verify.as_deref().map(str::parse) {
+            None => (VerifyMode::default(), None),
+            Some(Ok(mode)) => (mode, None),
+            Some(Err(error)) => (
+                VerifyMode::default(),
+                Some(format!(
+                    "[chat] send_it_verify = {error}; using \"observe\""
+                )),
+            ),
+        }
     }
 
     pub fn empty_submit_setting(&self) -> (EmptySubmit, Option<String>) {
@@ -172,6 +185,42 @@ mod tests {
         assert_eq!(settings.max_turns, 15);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("send_it_max_turns"));
+    }
+
+    #[test]
+    fn send_it_verify_defaults_to_observe_without_a_warning() {
+        assert_eq!(
+            ChatSection::default().send_it_verify_setting(),
+            (VerifyMode::Observe, None)
+        );
+    }
+
+    #[test]
+    fn send_it_verify_reads_each_mode() {
+        for (text, mode) in [
+            ("off", VerifyMode::Off),
+            ("observe", VerifyMode::Observe),
+            ("enforce", VerifyMode::Enforce),
+        ] {
+            let section = ChatSection {
+                send_it_verify: Some(text.to_string()),
+                ..ChatSection::default()
+            };
+            assert_eq!(section.send_it_verify_setting(), (mode, None));
+        }
+    }
+
+    #[test]
+    fn send_it_verify_bad_value_warns_and_uses_observe() {
+        let section = ChatSection {
+            send_it_verify: Some("strict".to_string()),
+            ..ChatSection::default()
+        };
+        let (mode, warning) = section.send_it_verify_setting();
+        assert_eq!(mode, VerifyMode::Observe);
+        let warning = warning.unwrap();
+        assert!(warning.starts_with("[chat] send_it_verify"), "{warning}");
+        assert!(warning.contains("\"strict\""), "{warning}");
     }
 
     #[test]

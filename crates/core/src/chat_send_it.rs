@@ -35,6 +35,28 @@ pub struct StepResult {
     pub evidence: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerifyMode {
+    Off,
+    #[default]
+    Observe,
+    Enforce,
+}
+
+impl std::str::FromStr for VerifyMode {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text.trim() {
+            "off" => Ok(VerifyMode::Off),
+            "observe" => Ok(VerifyMode::Observe),
+            "enforce" => Ok(VerifyMode::Enforce),
+            other => Err(format!("{other:?} is not off, observe or enforce")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Criterion {
