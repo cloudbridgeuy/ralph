@@ -15,6 +15,7 @@ mod resume;
 mod steer;
 mod template;
 mod verify;
+mod verify_drive;
 mod verify_mode;
 mod warnings;
 
