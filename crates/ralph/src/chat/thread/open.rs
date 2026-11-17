@@ -41,6 +41,7 @@ mod tests {
         OpenOpts {
             name: name(n),
             auto,
+            model: None,
         }
     }
 

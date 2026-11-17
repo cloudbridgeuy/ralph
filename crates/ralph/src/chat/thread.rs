@@ -187,6 +187,7 @@ pub fn ensure(main: &Path, name: &ThreadName) -> io::Result<ThreadMeta> {
         merged: None,
         parked: None,
         auto: None,
+        model: None,
         closed: false,
     };
     fs::create_dir_all(&dir)?;

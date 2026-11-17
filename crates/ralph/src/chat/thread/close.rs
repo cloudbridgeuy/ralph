@@ -73,6 +73,7 @@ mod tests {
             merged: None,
             parked: None,
             auto,
+            model: None,
             closed: false,
         };
         write_meta(&dir, &meta).unwrap();

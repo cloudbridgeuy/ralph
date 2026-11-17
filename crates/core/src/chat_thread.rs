@@ -59,6 +59,8 @@ pub struct ThreadMeta {
     pub parked: Option<Parked>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<AutoMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub closed: bool,
 }
@@ -478,6 +480,7 @@ mod tests {
             merged: None,
             parked: None,
             auto: None,
+            model: None,
             closed: false,
         };
         let text = serde_json::to_string(&meta).unwrap();
@@ -529,6 +532,7 @@ mod tests {
                 merged: None,
                 parked: None,
                 auto: Some(auto),
+                model: None,
                 closed: true,
             };
             let text = serde_json::to_string(&meta).unwrap();
@@ -550,6 +554,7 @@ mod tests {
             }),
             parked: None,
             auto: None,
+            model: None,
             closed: false,
         }
     }
