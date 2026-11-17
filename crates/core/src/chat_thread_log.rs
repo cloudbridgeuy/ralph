@@ -1,4 +1,4 @@
-use crate::chat_thread::{ThreadMeta, ThreadName};
+use crate::chat_thread::{Merged, ThreadMeta, ThreadName};
 use serde::{Deserialize, Serialize};
 
 pub const DROPPED_FILE: &str = "dropped.jsonl";
@@ -31,9 +31,69 @@ pub fn parse_tombstones(text: &str) -> Vec<Tombstone> {
         .collect()
 }
 
+pub fn with_landing(meta: &ThreadMeta, id: usize) -> Option<ThreadMeta> {
+    let merged = meta
+        .merged
+        .as_ref()
+        .filter(|merged| merged.landed.is_none())?;
+    Some(ThreadMeta {
+        merged: Some(Merged {
+            landed: Some(id),
+            ..merged.clone()
+        }),
+        ..meta.clone()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn merged(landed: Option<usize>) -> ThreadMeta {
+        ThreadMeta {
+            merged: Some(Merged {
+                at: "t".to_string(),
+                digest: "d".to_string(),
+                landed,
+            }),
+            ..meta(3)
+        }
+    }
+
+    #[test]
+    fn a_merged_thread_without_a_landing_takes_the_id() {
+        let patched = with_landing(&merged(None), 9).unwrap();
+        assert_eq!(patched, merged(Some(9)));
+    }
+
+    #[test]
+    fn an_unmerged_thread_is_left_alone() {
+        assert_eq!(with_landing(&meta(3), 9), None);
+    }
+
+    #[test]
+    fn a_known_landing_is_never_replaced() {
+        assert_eq!(with_landing(&merged(Some(4)), 9), None);
+    }
+
+    #[test]
+    fn a_thread_file_without_landed_reads_as_unknown() {
+        let old = r#"{"base":3,"created":"2026-01-01T00:00:00Z","merged":{"at":"t","digest":"d"}}"#;
+        let meta: ThreadMeta = serde_json::from_str(old).unwrap();
+        assert_eq!(meta, merged(None));
+    }
+
+    #[test]
+    fn landed_round_trips_and_unknown_is_not_written() {
+        let known = serde_json::to_string(&merged(Some(12))).unwrap();
+        assert!(known.contains(r#""landed":12"#));
+        assert_eq!(
+            serde_json::from_str::<ThreadMeta>(&known).unwrap(),
+            merged(Some(12))
+        );
+        let unknown = serde_json::to_string(&merged(None)).unwrap();
+        assert!(!unknown.contains("landed"));
+    }
 
     fn meta(base: usize) -> ThreadMeta {
         ThreadMeta {

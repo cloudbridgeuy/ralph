@@ -204,6 +204,7 @@ mod tests {
             merged: Some(Merged {
                 at: "t".to_string(),
                 digest: "d".to_string(),
+                landed: None,
             }),
             ..meta()
         };

@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use ralph_server::chat::memory::Reach;
 
+pub(super) mod landing;
 mod list;
 pub use list::rows;
 pub(super) use list::{default_listing, listing};
@@ -238,6 +239,7 @@ fn merge_with(
         merged: Some(Merged {
             at,
             digest: report.text.clone(),
+            landed: None,
         }),
         parked: None,
         ..meta

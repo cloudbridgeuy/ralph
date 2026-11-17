@@ -1,5 +1,6 @@
 use crate::chat::inbox::Display;
 use crate::chat::schedule::{ask_answer, read_answer};
+use crate::chat::thread::landing::set_landed;
 use crate::chat::thread::{
     config_root, drop_precheck, drop_thread, listing, merge_precheck, merge_thread, open_thread,
     park_thread, pull_thread, revive_thread, rows, thread_dir, view_thread,
@@ -89,13 +90,40 @@ pub(super) fn merge_line(name: &ThreadName, view: bool) -> String {
 
 pub(super) fn record_cli_merge(main: &Path, name: &ThreadName, line: &str, output: &str) {
     let kept = Path::new(THREADS_DIR).join(name.as_str()).join(THREAD_FILE);
+    let store = Store::new(main.to_path_buf());
+    let appended = store.append_id(Role::User, &local_record(line, output));
+    let id = appended.as_ref().ok().copied();
     warn_if_err(
-        Store::new(main.to_path_buf()).append(Role::User, &local_record(line, output)),
+        appended,
         format!(
             "Failed to record the thread merge; the merge text is in {} under the store",
             kept.display()
         ),
     );
+    land(main, Some(name.clone()), id);
+}
+
+pub(super) fn merging(op: &Result<ThreadOp, String>) -> Option<ThreadName> {
+    match op {
+        Ok(ThreadOp::Merge { name, .. }) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+pub(super) fn append_row(store: &Store, row: &str) -> Option<usize> {
+    let appended = store.append_id(Role::User, row);
+    let id = appended.as_ref().ok().copied();
+    warn_if_err(appended, "Failed to record the command");
+    id
+}
+
+pub(super) fn land(main: &Path, merged: Option<ThreadName>, id: Option<usize>) {
+    if let (Some(name), Some(id)) = (merged, id) {
+        warn_if_err(
+            set_landed(main, &name, id),
+            "Failed to record where the merge landed",
+        );
+    }
 }
 
 pub(super) fn confirm(question: &str) -> Option<bool> {
@@ -106,7 +134,7 @@ pub(super) fn confirm(question: &str) -> Option<bool> {
 mod tests {
     use super::*;
     use crate::ansi::fg;
-    use crate::chat::thread::ensure;
+    use crate::chat::thread::{ensure, read_meta};
     use crate::chat::workers::{paint_tones, table_theme};
     use crate::highlight::Highlighter;
     use crate::markdown::MarkdownTheme;
@@ -144,6 +172,47 @@ mod tests {
             assert!(row.starts_with(&line), "{row}");
             assert!(row.contains("Picked x. #auth:0"), "{row}");
         }
+    }
+
+    #[test]
+    fn a_cli_merge_records_the_row_it_landed_on() {
+        let auth = ThreadName::parse("auth").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let store = Store::new(main.clone());
+        store.append(Role::User, "one").unwrap();
+        store.append(Role::User, "two").unwrap();
+        ensure(&main, &auth).unwrap();
+        Store::new(thread_dir(&main, &auth))
+            .append(Role::User, "side")
+            .unwrap();
+        let message = view_thread(&main, &auth, &[]).unwrap();
+        record_cli_merge(
+            &main,
+            &auth,
+            &merge_line(&auth, true),
+            &view_posted_message(&auth, &message),
+        );
+        let landed = read_meta(&thread_dir(&main, &auth))
+            .unwrap()
+            .merged
+            .unwrap()
+            .landed;
+        assert_eq!(landed, Some(2));
+        assert_eq!(store.log_len().unwrap(), 3);
+    }
+
+    #[test]
+    fn only_a_merge_op_names_a_thread_to_land() {
+        let auth = ThreadName::parse("auth").unwrap();
+        let merge = Ok(ThreadOp::Merge {
+            name: auth.clone(),
+            view: false,
+        });
+        assert_eq!(merging(&merge), Some(auth.clone()));
+        assert_eq!(merging(&Ok(ThreadOp::Drop(auth.clone()))), None);
+        assert_eq!(merging(&Ok(ThreadOp::Ls)), None);
+        assert_eq!(merging(&Err("bad".to_string())), None);
     }
 
     #[test]
