@@ -331,3 +331,6 @@ pub fn cost_variants(cost: &SessionCost) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod old_rows_tests;
