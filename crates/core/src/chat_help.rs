@@ -216,7 +216,7 @@ impl Command {
                 ),
                 (
                     "/thread open <name> [--auto-merge|--auto-drop]",
-                    "open thread <name> in a new Rex block next to this chat, on this chat's store; from a thread's chat it forks a sibling from main; refused when the thread is merged, parked or already open (use /thread switch <name> to move this chat instead); outside Rex it prints the command to run instead; --auto-merge or --auto-drop (one at most) stores the choice on the thread (nothing acts on it yet); with no model call; while a turn runs it waits in the queue",
+                    "open thread <name> in a new Rex block next to this chat, on this chat's store; from a thread's chat it forks a sibling from main; refused when the thread is merged, parked or already open (use /thread switch <name> to move this chat instead); outside Rex it prints the command to run instead; --auto-merge or --auto-drop (one at most) stores the choice on the thread; when its chat is closed, main asks to merge or drop it; with no model call; while a turn runs it waits in the queue",
                 ),
                 (
                     "/thread switch <name>",

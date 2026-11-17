@@ -17,7 +17,7 @@ A thread has no separate create command. Open it by name and ralph creates it on
 
 A name has 1 to 32 lowercase letters, digits or dashes. It cannot start with a dash. `main` is not a valid name.
 
-`/thread open` creates nothing itself, except with `--auto-merge` or `--auto-drop` (one at most): it then creates the thread and stores the choice in `thread.json`. Nothing acts on the choice yet. The chat it starts creates the thread. Inside a thread, `/thread open <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
+`/thread open` creates nothing itself, except with `--auto-merge` or `--auto-drop`: it then creates the thread and stores the choice in `thread.json` (see [Auto-merge and auto-drop](#auto-merge-and-auto-drop)). The chat it starts creates the thread otherwise. Inside a thread, `/thread open <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
 
 The thread starts from main's memory as it was at that moment. This point is the fork point. The thread does not see main messages that come later until you pull them.
 
@@ -26,8 +26,9 @@ The thread starts from main's memory as it was at that moment. This point is the
 Switch back in the same terminal, or quit the thread chat.
 
 - Type `/thread main` to switch this chat to main. See [Switching threads](#switching-threads).
-- Press Ctrl-D on an empty prompt to quit. Main's chat, if open, stays in its own terminal or Rex block.
-- Press Ctrl-C at the prompt to quit. It quits also when the draft has text. During a turn, Ctrl-C cancels the turn. It clears the draft only inside the queue editor.
+- Press Ctrl-D at the prompt to quit. Main's chat, if open, stays in its own terminal or Rex block.
+- Press Ctrl-C at an empty prompt to quit. With text in the box, Ctrl-C clears the draft instead, in every chat (main too). During a turn, Ctrl-C cancels the turn.
+- In a thread with `--auto-merge` or `--auto-drop`, Ctrl-D or Ctrl-C at an empty prompt is a close; see [Auto-merge and auto-drop](#auto-merge-and-auto-drop).
 
 ## Switching threads
 
@@ -70,9 +71,29 @@ This moves the fork point of the thread to the end of main. The next `ralph chat
 - Pull works on a parked thread.
 - Pull prints `already at main's end` and changes nothing when the thread is up to date.
 
+## Auto-merge and auto-drop
+
+```text
+/thread open <name> --auto-merge
+/thread open <name> --auto-drop
+```
+
+The flag asks main to finish the thread for you once you close it. The two flags are mutually exclusive. The same flag twice, or both, is a usage error. There is no `ralph chat --thread` flag.
+
+- `/thread open` in main writes the choice to `thread.json` (`auto`) before the new block starts. It survives restarts. A `thread.json` without it still loads.
+- Opening an existing thread with a flag replaces the stored choice. Opening it without a flag leaves the choice as it is. Merged, parked and in-use threads are refused as before.
+- A close is Ctrl-D, or Ctrl-C at an empty idle prompt, in the thread chat. A turn in progress is not a close: Ctrl-C there cancels the turn.
+- SIGTERM, SIGHUP, a crash, a kill and `ralph chat --thread <name> history` never trigger anything. Leaving the thread with `/thread switch` or `/thread main` sets only the mark: no report.
+- On a close the thread chat sets `closed` in `thread.json` and posts a `thread-closed` report (worker `thread:<name>`) to main's inbox. If main is not running, it waits on disk until main next opens. This report is new. It is not one of the merge reports that GUZ-1620 removed: those repeated a merge that had worked; this one announces a decision that is pending.
+- Main, not a thread chat, shows the notice in the prompt footer while a closed auto thread is pending: `<name> closed · Enter to merge or keep it` (`... drop or keep it` for `--auto-drop`). With several: `N threads closed · <first notice>`. Main scans at start and on an empty Enter at the idle prompt. The prompt never leaves its wait by itself.
+- The scan takes the thread-closed reports out of the inbox. They never become a model turn.
+- Then ralph itself asks `merge <name>? [y/n]` or `drop <name>? [y/n]`, with no model turn. Only `y` or `yes` counts. `n`, an empty line, other text and a closed input all mean no.
+- Yes on merge runs the same path as `/thread merge <name>`, with no second confirm. It is the only paid call: one digest call, up to 3 attempts. Yes on drop drops the thread with no second confirm.
+- No, a closed input, an invalid answer or a refusal (saved records, running workers, a lock held, a rejected digest) keeps the thread and its content and clears the mark. `auto` stays. A refusal prints the reason and the manual command: `ralph thread merge <name>` or `ralph thread drop <name>`.
+
 ## Finish a thread: merge
 
-Merge writes the result of a thread to main's log as one row. Main reads it on its next turn. No inbox report is queued and no alert is raised. The thread becomes read-only.
+Merge writes the result of a thread to main's log as one row. Main reads it on its next turn. No inbox report is queued and no alert is raised. A close of an auto thread is the one report that exists; see [Auto-merge and auto-drop](#auto-merge-and-auto-drop). The thread becomes read-only.
 
 Squash merge:
 
