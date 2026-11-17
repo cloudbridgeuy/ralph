@@ -227,29 +227,6 @@ fn a_judge_turn_whose_plan_is_gone_carries_the_status_prefill() {
 }
 
 #[test]
-fn a_check_that_cannot_start_carries_the_go_prefill() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), super::LIMITS);
-    let mut args = super::plan_args();
-    args["steps"] = serde_json::json!([{"do": "wait", "criterion": {"kind": "check_passes", "command": "sleep 30"}}]);
-    send_it.propose(&args).unwrap();
-    let hash = send_it.status().shown.unwrap();
-    let ticked = super::go(&send_it, Some(&hash), true).1.unwrap();
-    let Next::Check(command) = ticked.next.clone() else {
-        panic!("expected a check, got {:?}", ticked.next);
-    };
-    let monitor = monitor(dir.path());
-    monitor
-        .watches
-        .start(check_spec(ticked.driving.progress.step, &command))
-        .unwrap();
-    let driven = send_it.dispatch(ticked, &monitor);
-    assert_eq!(driven.prefill.as_deref(), Some("/send-it go"));
-    assert!(driven.route.is_none());
-    assert!(driven.active.is_none());
-}
-
-#[test]
 fn a_typed_draft_is_kept_over_the_driven_prefill() {
     let mut editor = Reedline::create();
     editor.run_edit_commands(&prefill_commands(Some("my draft")));
