@@ -141,6 +141,7 @@ mod tests {
     use crate::render::text::render_prose;
     use crate::render::RenderContext;
     use crate::ui_theme::UiColors;
+    use ralph_core::chat_thread_log::DROPPED_FILE;
     use ralph_core::chat_thread_table::{threads_view, ThreadTableOpts};
     use ralph_core::workers_view::View;
 
@@ -200,6 +201,26 @@ mod tests {
             .landed;
         assert_eq!(landed, Some(2));
         assert_eq!(store.log_len().unwrap(), 3);
+    }
+
+    #[test]
+    fn a_chat_drop_leaves_a_tombstone() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let dropped = with_env(&main, false, |env| {
+            run(
+                &ThreadOp::Drop(auth.clone()),
+                env,
+                &mut |_| Some(true),
+                &|_| Vec::new(),
+            )
+        });
+        assert!(dropped.unwrap().contains("auth"));
+        let text = std::fs::read_to_string(main.join(THREADS_DIR).join(DROPPED_FILE)).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.contains(r#""name":"auth""#));
     }
 
     #[test]
