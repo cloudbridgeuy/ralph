@@ -462,3 +462,28 @@ fn a_hold_in_the_next_step_line_keeps_the_exact_hold_text() {
         some("/hold worker-a")
     );
 }
+
+#[test]
+fn a_run_end_line_is_filled_after_a_turn_with_no_reply() {
+    assert_eq!(
+        end_with(true, false, None, "/send-it go"),
+        fill("/send-it go")
+    );
+    assert_eq!(
+        end_with(true, false, None, "/send-it status"),
+        fill("/send-it status")
+    );
+}
+
+#[test]
+fn a_typed_draft_wins_over_a_run_end_line() {
+    assert_eq!(
+        end_with(true, false, Some("mine"), "/send-it go"),
+        Next::Prefill(Prefill::Draft("mine".to_string()))
+    );
+}
+
+#[test]
+fn other_suggestions_stay_hidden_after_a_turn_with_no_reply() {
+    assert_eq!(end_with(true, false, None, "run the tests"), Next::Nothing);
+}
