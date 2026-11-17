@@ -48,14 +48,23 @@ fn group_signal_safe(state: ChildState) -> bool {
     state != ChildState::Reaped
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Interrupts {
-    Honor,
+#[derive(Debug, Clone, Copy)]
+enum Interrupts<'a> {
+    Honor(&'a CancelToken),
     Ignore,
 }
 
-fn interrupt_requested(policy: Interrupts, cancelled: bool, terminated: bool) -> bool {
-    policy == Interrupts::Honor && (cancelled || terminated)
+impl Interrupts<'_> {
+    fn cancelled(self) -> bool {
+        matches!(self, Interrupts::Honor(cancel) if cancel.is_cancelled())
+    }
+}
+
+fn interrupt_requested(policy: Interrupts, terminated: bool) -> bool {
+    match policy {
+        Interrupts::Honor(cancel) => cancel.is_cancelled() || terminated,
+        Interrupts::Ignore => false,
+    }
 }
 
 pub struct Session {
@@ -132,8 +141,12 @@ impl Session {
         self.alive
     }
 
-    pub fn turn(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
-        let result = self.drive(prompt, Display::Shown, None, Interrupts::Honor);
+    pub fn turn(
+        &mut self,
+        prompt: &str,
+        cancel: &CancelToken,
+    ) -> Result<StreamingSubprocessResult, SubprocessError> {
+        let result = self.drive(prompt, Display::Shown, None, Interrupts::Honor(cancel));
         if matches!(&result, Err(e) if !matches!(e, SubprocessError::Interrupted { .. })) {
             self.alive = false;
         }
@@ -218,14 +231,8 @@ impl Session {
                 };
                 break pump.finish(&self.readers, exit_code, true);
             }
-            let cancelled = self
-                .config
-                .cancel
-                .as_ref()
-                .is_some_and(CancelToken::is_cancelled);
-            if interrupt.is_none()
-                && interrupt_requested(interrupts, cancelled, signal::is_terminated())
-            {
+            let cancelled = interrupts.cancelled();
+            if interrupt.is_none() && interrupt_requested(interrupts, signal::is_terminated()) {
                 let _ = self.send(&interrupt_line(INTERRUPT_REQUEST_ID));
                 interrupt = Some((Instant::now(), cancelled));
             }
@@ -428,15 +435,28 @@ mod tests {
     }
 
     #[test]
-    fn honored_interrupts_follow_the_cancel_flag_or_termination() {
-        assert!(interrupt_requested(Interrupts::Honor, true, false));
-        assert!(interrupt_requested(Interrupts::Honor, false, true));
-        assert!(!interrupt_requested(Interrupts::Honor, false, false));
+    fn honored_interrupts_follow_the_turn_token_or_termination() {
+        let cancelled = CancelToken::default();
+        cancelled.cancel();
+        let running = CancelToken::default();
+        assert!(interrupt_requested(Interrupts::Honor(&cancelled), false));
+        assert!(interrupt_requested(Interrupts::Honor(&running), true));
+        assert!(!interrupt_requested(Interrupts::Honor(&running), false));
     }
 
     #[test]
     fn ignored_interrupts_never_request() {
-        assert!(!interrupt_requested(Interrupts::Ignore, true, true));
+        assert!(!interrupt_requested(Interrupts::Ignore, true));
+    }
+
+    #[test]
+    fn a_reused_session_honors_the_token_of_the_turn_it_runs() {
+        let first_turn = CancelToken::default();
+        let second_turn = CancelToken::default();
+        second_turn.cancel();
+        assert!(!Interrupts::Honor(&first_turn).cancelled());
+        assert!(Interrupts::Honor(&second_turn).cancelled());
+        assert!(interrupt_requested(Interrupts::Honor(&second_turn), false));
     }
 
     #[test]

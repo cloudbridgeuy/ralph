@@ -209,7 +209,6 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
         verbose_tools: config.verbose_tools,
         session_info: SpinnerSessionInfo::default(),
         gate: None,
-        cancel: None,
         interrupt: Some(config.interrupt),
         stdin: Some(prompt_stdin(&config.prompt)),
     })

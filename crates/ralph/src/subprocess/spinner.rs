@@ -39,7 +39,6 @@ pub struct SpinnerSubprocessConfig {
     /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
     pub gate: Option<Arc<OutputGate>>,
-    pub cancel: Option<CancelToken>,
     pub interrupt: Option<CancelToken>,
     /// Prompt text written to the child's stdin, then closed. `Session` ignores
     /// it: it owns stdin for stream-json.
@@ -96,7 +95,6 @@ fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Opti
 ///     verbose_tools: VerboseToolsConfig::new(),
 ///     session_info: SpinnerSessionInfo::default(),
 ///     gate: None,
-///     cancel: None,
 ///     interrupt: None,
 ///     stdin: None,
 /// };
@@ -410,67 +408,27 @@ fn run_subprocess_with_spinner(
             });
         }
 
-        let cancelled = config
-            .cancel
-            .as_ref()
-            .is_some_and(CancelToken::is_cancelled);
         let interrupted = config
             .interrupt
             .as_ref()
             .is_some_and(CancelToken::is_cancelled)
             || signal::is_terminated();
-        if let Some(stop) = stop_for(cancelled, interrupted) {
+        if interrupted {
             pump.stop_spinner();
             kill_process_group(&mut child);
             readers.join();
-            let partial = pump.finish(&readers, EXIT_CODE_INTERRUPTED, false);
-            return match stop {
-                Stop::Cancelled => Ok(partial),
-                Stop::Interrupted => Err(SubprocessError::Interrupted {
-                    partial_result: Box::new(partial),
-                }),
-            };
+            return Err(SubprocessError::Interrupted {
+                partial_result: Box::new(pump.finish(&readers, EXIT_CODE_INTERRUPTED, false)),
+            });
         }
 
         pump.step(&readers, pump.gate_paused())?;
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Stop {
-    Cancelled,
-    Interrupted,
-}
-
-fn stop_for(cancelled: bool, interrupted: bool) -> Option<Stop> {
-    if cancelled {
-        Some(Stop::Cancelled)
-    } else if interrupted {
-        Some(Stop::Interrupted)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_cancel_stops_the_run_with_its_partial_result() {
-        assert_eq!(stop_for(true, false), Some(Stop::Cancelled));
-        assert_eq!(stop_for(true, true), Some(Stop::Cancelled));
-    }
-
-    #[test]
-    fn an_interrupt_without_a_cancel_fails_the_run() {
-        assert_eq!(stop_for(false, true), Some(Stop::Interrupted));
-    }
-
-    #[test]
-    fn no_cancel_and_no_interrupt_keeps_the_run_going() {
-        assert_eq!(stop_for(false, false), None);
-    }
 
     fn failed(kind: io::ErrorKind) -> PromptWrite {
         Ok(Err(io::Error::from(kind)))

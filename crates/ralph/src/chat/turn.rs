@@ -470,7 +470,7 @@ impl Turn<'_> {
         let was_reused = reused.is_some();
         let started = match reused {
             Some(live) => Ok(live),
-            None => self.start(pre_log_len, input, launch),
+            None => self.start(pre_log_len, input.sent, launch),
         };
         let (session, result, ran) = match started {
             Err(e) => (None, Err(e), false),
@@ -478,7 +478,7 @@ impl Turn<'_> {
                 let prompt = launch
                     .as_ref()
                     .map_or(input.live, |spawned| spawned.first_prompt.as_str());
-                let result = live.turn(prompt);
+                let result = live.turn(prompt, input.cancel);
                 (Some(live), result, true)
             }
         };
@@ -493,22 +493,17 @@ impl Turn<'_> {
     fn start(
         &self,
         pre_log_len: Option<usize>,
-        input: &TurnInput,
+        sent: &str,
         launch: &mut Option<Launch>,
     ) -> Result<Session, SubprocessError> {
-        let mut spawned = self.launch(pre_log_len, input)?;
+        let mut spawned = self.launch(pre_log_len, sent)?;
         let live = Session::spawn(&spawned.config)?;
         spawned.reset = locked(&self.reset).take();
         *launch = Some(spawned);
         Ok(live)
     }
 
-    fn launch(
-        &self,
-        pre_log_len: Option<usize>,
-        input: &TurnInput,
-    ) -> Result<Launch, SubprocessError> {
-        let sent = input.sent;
+    fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
         let waited_from = Instant::now();
         let loaded = self.store.load_after_nap(NAP_WAIT_LIMIT, || {
             let mut spinner = Spinner::with_session_context(0, chat_session_info())
@@ -560,7 +555,6 @@ impl Turn<'_> {
             verbose_tools: VerboseToolsConfig::new(),
             session_info: chat_session_info(),
             gate: Some(Arc::clone(&self.gate)),
-            cancel: Some(input.cancel.clone()),
             interrupt: None,
             stdin: None,
         };

@@ -562,7 +562,6 @@ fn run_memory_command(
                         persona: Some("chat memory".into()),
                     },
                     gate: None,
-                    cancel: None,
                     interrupt: None,
                     stdin: Some(stdin.clone()),
                 },
