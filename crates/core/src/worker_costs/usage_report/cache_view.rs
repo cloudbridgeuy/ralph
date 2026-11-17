@@ -117,7 +117,7 @@ pub fn summarize(costs: &[ProcessCost]) -> ProcessSummary {
     }
 }
 
-const START_ORDER: [(&str, ProcessStart); 4] = [
+pub(super) const START_ORDER: [(&str, ProcessStart); 4] = [
     ("tokens", ProcessStart::Reset(ResetReason::Tokens)),
     ("turns", ProcessStart::Reset(ResetReason::Turns)),
     ("restart", ProcessStart::Reset(ResetReason::Restart)),
