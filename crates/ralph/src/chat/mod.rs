@@ -661,16 +661,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             Route::Send(message) => {
-                if let Some(images) = crate::render::image::enabled() {
-                    print!(
-                        "{}",
-                        crate::render::image::render_attachments(
-                            &message,
-                            images,
-                            crate::render::image::ImageBounds::current()
-                        )
-                    );
-                }
+                crate::render::image::print_attachments(&message);
                 monitor.set_phase(Phase::Cell);
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
