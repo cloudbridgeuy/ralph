@@ -458,8 +458,8 @@ impl SendIt {
         }
     }
 
-    pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) {
-        self.stopped(StopReason::TookOver, &active.driving, monitor);
+    pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) -> Driven {
+        self.stopped(StopReason::TookOver, &active.driving, monitor)
     }
 
     pub(crate) fn off(&self) -> String {
