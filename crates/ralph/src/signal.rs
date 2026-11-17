@@ -1,4 +1,5 @@
 use ralph_core::cancel::CancelToken;
+use ralph_server::warn::warn;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::flag::register;
 use signal_hook::low_level::unregister;
@@ -9,7 +10,6 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Once};
 
-static INTERRUPTED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 static TERMINATED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 static SIGINT_SINK: Once = Once::new();
 
@@ -21,13 +21,15 @@ impl Drop for Armed {
     }
 }
 
-pub fn arm(token: &CancelToken) -> io::Result<Armed> {
-    register(SIGINT, token.flag()).map(Armed)
+pub fn arm(token: &CancelToken) -> Option<Armed> {
+    register(SIGINT, token.flag())
+        .map(Armed)
+        .inspect_err(|e| warn(format!("Failed to arm the Ctrl-C handler: {e}")))
+        .ok()
 }
 
 pub fn init() -> io::Result<()> {
     install_sigint_sink()?;
-    register(SIGINT, Arc::clone(&INTERRUPTED))?;
     register(SIGTERM, Arc::clone(&TERMINATED))?;
     register(SIGHUP, Arc::clone(&TERMINATED))?;
     Ok(())
@@ -43,16 +45,8 @@ fn install_sigint_sink() -> io::Result<()> {
     installed
 }
 
-pub fn is_interrupted() -> bool {
-    INTERRUPTED.load(Ordering::SeqCst) || is_terminated()
-}
-
 pub fn is_terminated() -> bool {
     TERMINATED.load(Ordering::SeqCst)
-}
-
-pub fn interrupt_flag() -> Arc<AtomicBool> {
-    Arc::clone(&INTERRUPTED)
 }
 
 /// Backstop for `ralph chat`: if ralph ends up in a background process group,

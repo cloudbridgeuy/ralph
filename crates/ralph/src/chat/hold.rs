@@ -4,12 +4,12 @@ use crate::chat::prompt::screen_columns;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
 use crate::signal;
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat_hold::{first_match, hold_key, HoldFilter};
 use ralph_core::chat_status::Status;
 use ralph_core::inbox::Position;
 use ralph_server::warn::warn;
 use std::io::{self, IsTerminal, Write};
-use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
@@ -66,8 +66,8 @@ fn wait(
     bar: &StatusBar,
     panel: &mut HoldPanel,
 ) -> io::Result<Held> {
-    let interrupt = signal::interrupt_flag();
-    interrupt.store(false, Ordering::SeqCst);
+    let cancel = CancelToken::default();
+    let _armed = signal::arm(&cancel);
     let mut shown: Option<Status> = None;
     loop {
         let mut status = monitor.status();
@@ -81,7 +81,7 @@ fn wait(
         if signal::is_terminated() {
             return Ok(Held::Quit);
         }
-        if interrupt.swap(false, Ordering::SeqCst) {
+        if cancel.is_cancelled() {
             return Ok(Held::Left);
         }
         if let Some(position) = matching_item(monitor, filter)? {

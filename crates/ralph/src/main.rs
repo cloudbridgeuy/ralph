@@ -199,8 +199,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
 
     let config = build_invocation_config(&args)?;
-    let _armed = signal::arm(&config.interrupt)
-        .inspect_err(|e| warn(format!("Failed to arm the Ctrl-C handler: {e}")));
+    let _armed = signal::arm(&config.interrupt);
     let ui = *config.theme_config.ui();
 
     if !args.no_prompt {

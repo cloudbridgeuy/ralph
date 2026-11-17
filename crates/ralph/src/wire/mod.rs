@@ -163,7 +163,7 @@ pub fn run(args: WireArgs) -> Result<(), Box<dyn Error>> {
 fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
     crate::signal::init()?;
     let interrupt = CancelToken::default();
-    let _armed = crate::signal::arm(&interrupt)?;
+    let _armed = crate::signal::arm(&interrupt);
     let provider = provider(args.provider.into());
     let upstream = args
         .upstream

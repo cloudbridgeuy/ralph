@@ -14,7 +14,7 @@ use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
-use ralph_server::warn::{warn, warn_if_err};
+use ralph_server::warn::warn_if_err;
 use ralph_server::watches::locked;
 use reedline::{EditCommand, Reedline, Signal};
 use std::io::IsTerminal;
@@ -135,8 +135,7 @@ impl Keys<'_> {
 
     pub(super) fn during<R>(&self, run: impl FnOnce(&CancelToken) -> R) -> (R, Queue) {
         let watch = TurnWatch::default();
-        let _armed = signal::arm(&watch.cancel)
-            .inspect_err(|e| warn(format!("Failed to arm the Ctrl-C handler: {e}")));
+        let _armed = signal::arm(&watch.cancel);
         let Some(_mode) = std::io::stdin()
             .is_terminal()
             .then(PartialMode::enter)
