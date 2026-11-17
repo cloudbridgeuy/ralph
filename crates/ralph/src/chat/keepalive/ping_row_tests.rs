@@ -1,5 +1,6 @@
 use super::*;
 use crate::stream_processor::StreamProcessorResult;
+use crate::subprocess::SubprocessError;
 use ralph_core::stream::{IterationCosts, Usage};
 use serde_json::Value;
 
@@ -65,7 +66,7 @@ fn timed_out(
 #[test]
 fn a_timed_out_ping_with_usage_writes_one_row_for_its_own_spend() {
     let outcome = timed_out(result(Some(1.5), Some(1.0)));
-    let rows: Vec<Value> = recorded_ping(&outcome)
+    let rows: Vec<Value> = recorded(&outcome)
         .and_then(|partial| ping_row("t".into(), partial, &IterationMetadata::new()))
         .into_iter()
         .map(|row| serde_json::to_value(row).unwrap())
@@ -81,17 +82,30 @@ fn a_timed_out_ping_without_usage_has_no_row() {
     let mut bare = result(Some(1.5), Some(1.0));
     bare.stream_result.costs.usage = None;
     let outcome = timed_out(bare);
-    let row = recorded_ping(&outcome)
+    let row = recorded(&outcome)
         .and_then(|partial| ping_row("t".into(), partial, &IterationMetadata::new()));
     assert!(row.is_none());
 }
 
 #[test]
 fn a_ping_that_ended_in_any_other_error_has_no_record() {
-    assert!(recorded_ping(&Err(SubprocessError::Signaled)).is_none());
+    assert!(recorded(&Err(SubprocessError::Signaled)).is_none());
+}
+
+#[test]
+fn an_interrupted_partial_is_returned_by_the_shared_recorder() {
+    let outcome = Err(SubprocessError::Interrupted {
+        partial_result: Box::new(result(Some(1.0), Some(0.0))),
+    });
+    assert!(recorded(&outcome).is_some());
+}
+
+#[test]
+fn a_stale_ping_has_no_record() {
+    assert!(recorded(&Err(SubprocessError::Stale)).is_none());
 }
 
 #[test]
 fn a_finished_ping_is_recorded() {
-    assert!(recorded_ping(&Ok(result(Some(1.0), Some(0.0)))).is_some());
+    assert!(recorded(&Ok(result(Some(1.0), Some(0.0)))).is_some());
 }
