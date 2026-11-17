@@ -182,6 +182,19 @@ fn a_settled_failing_check_that_stops_the_run_carries_the_go_prefill() {
 }
 
 #[test]
+fn a_settled_passing_check_on_the_last_step_finishes_with_no_prefill() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = started(dir.path());
+    let mut sending = Some(with_outcome(&active, WatchOutcome::Exited(0)));
+    let driven = send_it
+        .held_item(&mut sending, Position::FIRST, &monitor(dir.path()))
+        .unwrap();
+    assert!(driven.prefill.is_none());
+    assert!(driven.route.is_none());
+    assert!(driven.active.is_none());
+}
+
+#[test]
 fn taking_over_a_run_carries_the_go_prefill() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active) = started(dir.path());
