@@ -198,7 +198,7 @@ Prints cost reports from the usage ledger (`<config dir>/usage.jsonl`, or the fi
 | `--text` | Print text even on a terminal that can draw images. Conflicts with `--png` |
 | `--png PATH` | Write the chart to a PNG file and print `Wrote PATH`. Conflicts with `--text` |
 
-With neither `--text` nor `--png`, a terminal that can draw images shows the chart inline; otherwise (piped output, no image support) the command prints text. `ralph usage cache --png` exits 1 with `the cache view has no chart` and writes no file. A missing ledger prints `No usage ledger at <path>.` and exits 0.
+With neither `--text` nor `--png`, a terminal that can draw images shows the chart inline; otherwise (piped output, no image support) the command prints text. `ralph usage cache` prints the per-model hit table, then sections for cost per claude process, keepalive idle periods, the first turn after a reset, cache misses by cause and a labelled saving estimate (see [ralph usage](context/ralph-chat.md#ralph-usage)). `ralph usage cache --png` exits 1 with `the cache view has no chart` and writes no file. A missing ledger prints `No usage ledger at <path>.` and exits 0.
 
 ---
 
