@@ -40,6 +40,7 @@ fn process(reset: Option<ResetReason>) -> ProcessCell {
 fn full_status() -> Status {
     Status {
         unread: 2,
+        closes: Vec::new(),
         workers: vec![WorkerState {
             id: "w1".into(),
             state: "running".into(),
@@ -128,6 +129,10 @@ fn the_thread_open_row_says_it_opens_a_rex_block() {
     let wide = help_text(2_000);
     assert!(wide.contains("/thread open <name>"), "{wide}");
     assert!(wide.contains("new Rex block"), "{wide}");
+    assert!(
+        wide.contains("/thread open <name> [--auto-merge|--auto-drop]"),
+        "{wide}"
+    );
 }
 
 #[test]

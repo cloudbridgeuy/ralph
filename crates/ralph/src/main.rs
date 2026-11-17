@@ -102,8 +102,12 @@ fn main() -> ExitCode {
 }
 
 fn execute_chat(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
-    match chat::run(args)? {
-        chat::ChatExit::Quit => Ok(()),
+    let store = args.store.clone();
+    let thread = args.thread.clone();
+    let exit = chat::run(args)?;
+    chat::thread::close::record_exit(store, thread.as_ref(), &exit);
+    match exit {
+        chat::ChatExit::Quit | chat::ChatExit::Closed => Ok(()),
         chat::ChatExit::Switch(target, opts) => {
             use std::os::unix::process::CommandExt;
             let exe = std::env::current_exe()?;

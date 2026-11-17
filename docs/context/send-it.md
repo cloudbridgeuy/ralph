@@ -50,7 +50,7 @@ After you approve, the file also has an `approved` line with the hash. Do not wr
 
 None of these starts a model turn, except the run that `/send-it go` starts.
 
-`/send-it go` approves only the plan whose hash the last `/send-it` output showed. Type it at the prompt. ralph refuses a `/send-it go` that you queue while a turn runs.
+`/send-it go` approves only the plan whose hash the last `/send-it` output showed, or a stopped plan whose hash is unchanged since the stop (see [Stops](#stops)). Type it at the prompt. ralph refuses a `/send-it go` that you queue while a turn runs.
 
 The hash follows the content of the plan, not its layout. Any change to the content clears the approval, also an edit made outside ralph. A started run uses up the hash that ralph showed. To run the plan again, show it with `/send-it status`, then type `/send-it go`.
 
@@ -122,7 +122,7 @@ The model sees each stop and done notice, and the result of each `/send-it off`,
 
 After a stop or a finished run, the plan stays in `run.toml` without its approval, until you type `/send-it off`. You can save it as a template or propose a new plan.
 
-To resume after a stop, fix the cause (for example, answer the worker), show the plan with `/send-it status`, then type `/send-it go`. The last line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. ralph first checks if step N is already met. For a worker step, a `done` report from the worker moves the run to the next step; a worker that is running, or that last reported anything else, makes the run wait for its report and does not send the step again; a worker ralph does not know gets the step again. A check or watch step runs its command first: exit 0 moves on, any other result stops the run with `CheckFailed`. A judge step is judged first: not met sends the step again, and this first judgement does not count as a judge round. A met step prints `send-it: step N/M met`. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, `/send-it go` starts at step 1.
+To resume after a stop, fix the cause (for example, answer the worker), then type `/send-it go`. You do not need `/send-it status` first: the plan is the one you approved before the stop. If the plan changed since the stop, even an edit made outside ralph, show it with `/send-it status` first. The last line says `stopped at step N/M`, and the run starts again at step N, with fresh caps. Steps before N do not run again. ralph first checks if step N is already met. For a worker step, a `done` report from the worker moves the run to the next step; a worker that is running, or that last reported anything else, makes the run wait for its report and does not send the step again; a worker ralph does not know gets the step again. A check or watch step runs its command first: exit 0 moves on, any other result stops the run with `CheckFailed`. A judge step is judged first: not met sends the step again, and this first judgement does not count as a judge round. A met step prints `send-it: step N/M met`. If you edit the plan, its hash changes, and `/send-it go` starts at step 1. After a finished run, show the plan with `/send-it status`, then `/send-it go` starts at step 1.
 
 For the exact notices, see [ralph chat: /send-it](ralph-chat.md#send-it).
 
@@ -150,7 +150,7 @@ ralph refuses:
 
 - a new plan, or a template fill, while an approved plan is active,
 - a step with no exit criterion,
-- a `/send-it go` for a plan whose hash was not shown last, or a queued `/send-it go`,
+- a `/send-it go` for a plan whose hash was not shown last, unless the plan is stopped and its hash is unchanged, or a queued `/send-it go`,
 - a tool that the approved plan does not allow, during a run. This includes a reply to a worker question in the turn that reads the report.
 
 For the exact messages, see [ralph chat: /send-it](ralph-chat.md#send-it).

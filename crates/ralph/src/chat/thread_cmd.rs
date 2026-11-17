@@ -42,7 +42,7 @@ pub(super) fn run(
                 .map_err(|e| format!("could not list threads: {e}"))?;
             Ok(listing(&listed, env.display, env.width, "no threads"))
         }
-        ThreadOp::Open(name) => open_thread(env.store_dir, name),
+        ThreadOp::Open(opts) => open_thread(env.store_dir, opts),
         ThreadOp::Pull(name) => pull_thread(&main, name),
         ThreadOp::Park(name) => {
             park_thread(&main, name, &running_of(name)).map(|()| parked_message(name))

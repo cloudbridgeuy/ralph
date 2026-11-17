@@ -1,6 +1,6 @@
 use super::editor::{
     edit_mode, emacs_keybindings, esc_esc, queue_bindings, vi_keybindings, visual_reset,
-    OPEN_EDITOR,
+    IDLE_CTRL_C, OPEN_EDITOR,
 };
 use super::resolve_store;
 use super::turn::{draft_after, logged_before_reply, rule, rule_skin, shown_output, TurnOutcome};
@@ -12,7 +12,7 @@ use ralph_core::chat_memory::Trigger;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     EditCommand, EditMode, KeyCode, KeyModifiers, Keybindings, PromptEditMode, PromptViMode,
-    ReedlineEvent, ReedlineRawEvent,
+    ReedlineEvent, ReedlineRawEvent, Signal,
 };
 use std::path::{Path, PathBuf};
 use termimad::MadSkin;
@@ -323,4 +323,18 @@ fn rule_uses_the_configured_color() {
         ..crate::ui_theme::UiColors::default()
     };
     assert!(rule(&rule_skin(&ui), 4).contains("38;2;1;2;3"));
+}
+
+#[test]
+fn idle_signals_map_to_the_close_signals() {
+    use super::prompt::idle_signal;
+    use ralph_core::chat_close::IdleSignal;
+    assert_eq!(idle_signal(&Signal::CtrlC), Some(IdleSignal::CtrlC));
+    assert_eq!(idle_signal(&Signal::CtrlD), Some(IdleSignal::CtrlD));
+    assert_eq!(
+        idle_signal(&Signal::HostCommand(IDLE_CTRL_C.into())),
+        Some(IdleSignal::CtrlC)
+    );
+    assert_eq!(idle_signal(&Signal::HostCommand(OPEN_EDITOR.into())), None);
+    assert_eq!(idle_signal(&Signal::ExternalBreak(String::new())), None);
 }
