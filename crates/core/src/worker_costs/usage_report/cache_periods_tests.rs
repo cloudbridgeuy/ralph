@@ -313,6 +313,24 @@ fn a_reset_turn_write_is_a_reset_miss() {
 }
 
 #[test]
+fn a_read_heavy_reset_turn_is_still_a_reset_miss() {
+    let mut row = turn("a", 0, 1, (4, 100, 50_000));
+    row["reset"] = json!("tokens");
+    let causes = misses(&[row]);
+    assert_eq!(
+        (causes.misses, causes.reset, causes.new_run, causes.turns),
+        (1, 1, 0, 1)
+    );
+}
+
+#[test]
+fn a_read_heavy_first_launch_is_not_a_miss() {
+    let rows = [turn("a", 0, 1, (4, 100, 50_000))];
+    let causes = misses(&rows);
+    assert_eq!((causes.misses, causes.new_run, causes.turns), (0, 0, 1));
+}
+
+#[test]
 fn a_new_run_first_turn_write_has_its_own_bucket() {
     let rows = [reset_turn("a", 0, None, 10_000, Some(10_004))];
     let causes = misses(&rows);

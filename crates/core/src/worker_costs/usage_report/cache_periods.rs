@@ -217,11 +217,13 @@ pub fn miss_causes(entries: &[Entry]) -> MissCauses {
             let now = row.happened();
             if line.kind == "turn" {
                 causes.turns += 1;
-                if restart_write(
+                let after_reset = line.process_turn == Some(1) && line.reset.is_some();
+                let write_heavy = restart_write(
                     line.input_tokens,
                     line.cache_creation_input_tokens,
                     line.cache_read_input_tokens,
-                ) {
+                );
+                if after_reset || write_heavy {
                     causes.misses += 1;
                     match (line.process_turn, line.reset) {
                         (Some(1), Some(_)) => causes.reset += 1,
