@@ -11,6 +11,7 @@ use ralph_core::chat_close::{idle_step, IdleSignal, IdleStep};
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
+use ralph_core::chat_thread_auto::close_footer;
 use ralph_core::status_queue::QueueCell;
 use ralph_core::worker::ATTACHMENTS_DIR;
 use reedline::{
@@ -143,7 +144,11 @@ impl Prompt for ChatPrompt {
         if let Some(notice) = self.notice.borrow().as_deref() {
             return Cow::Owned(self.dim(notice));
         }
-        let hints = footer(self.monitor.status().unread, screen_columns());
+        let status = self.monitor.status();
+        if let Some(closed) = close_footer(&status.closes, screen_columns()) {
+            return Cow::Owned(self.dim(&closed));
+        }
+        let hints = footer(status.unread, screen_columns());
         Cow::Owned(self.dim(hints.trim_end_matches('\n')))
     }
 

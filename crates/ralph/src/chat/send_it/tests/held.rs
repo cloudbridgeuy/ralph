@@ -12,7 +12,7 @@ use ralph_server::chat::check::CheckState;
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 
-fn monitor(dir: &Path) -> Monitor {
+pub(in crate::chat) fn monitor(dir: &Path) -> Monitor {
     let inbox = Arc::new(Inbox::new(dir.join("inbox")));
     let store = Store::new(dir.to_path_buf());
     Monitor {

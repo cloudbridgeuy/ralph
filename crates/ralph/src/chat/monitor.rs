@@ -2,6 +2,7 @@ use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
 use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
 use crate::chat::term_status::TermStatus;
+use crate::chat::thread::settle;
 use crate::inbox_alert;
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
@@ -323,7 +324,7 @@ impl Monitor {
             self.alert_fresh(pending);
             self.note_scheduled(pending);
         }
-        let pending = peeked.unwrap_or_default();
+        let (_, pending) = split_close_reports(peeked.unwrap_or_default());
         locked(&self.check).reports.extend(last_reports(&pending));
         let seen = {
             let mut seen = locked(&self.seen);
@@ -372,6 +373,7 @@ impl Monitor {
         let mut status = locked(&self.status);
         let next = Status {
             unread: pending.len(),
+            closes: settle::pending(&self.store_dir),
             workers,
             watches: watch_states(&self.watches.list(), chrono::Utc::now()),
             schedule: schedule_states(

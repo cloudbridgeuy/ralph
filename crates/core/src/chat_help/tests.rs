@@ -40,6 +40,7 @@ fn process(reset: Option<ResetReason>) -> ProcessCell {
 fn full_status() -> Status {
     Status {
         unread: 2,
+        closes: Vec::new(),
         workers: vec![WorkerState {
             id: "w1".into(),
             state: "running".into(),

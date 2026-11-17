@@ -549,4 +549,4 @@ impl InboxTurn<'_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::chat) mod tests;

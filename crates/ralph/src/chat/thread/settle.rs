@@ -62,13 +62,17 @@ fn closed_threads(main: &Path) -> Vec<(ThreadName, ThreadMeta)> {
     threads
 }
 
+pub(in crate::chat) fn pending(main: &Path) -> Vec<PendingClose> {
+    pending_closes(&closed_threads(main))
+}
+
 pub(super) fn settle(
     main: &Path,
     ask: &mut impl FnMut(&str) -> Option<String>,
     curate: &mut impl FnMut(&ThreadName, &str) -> Result<String, String>,
     running_of: &impl Fn(&ThreadName) -> Vec<String>,
 ) -> Vec<String> {
-    pending_closes(&closed_threads(main))
+    pending(main)
         .into_iter()
         .map(|close| settle_one(main, &close, ask, curate, running_of))
         .collect()
@@ -125,9 +129,12 @@ fn clear_mark(main: &Path, name: &ThreadName) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::send_it::tests::held::monitor;
     use crate::chat::thread::tests::{forked, name};
     use crate::chat::thread::{read_meta, thread_dir, write_meta};
     use ralph_core::chat_thread::{AutoMode, ThreadMeta};
+    use ralph_core::chat_thread_auto::{thread_closed_report, PendingClose};
+    use ralph_core::inbox::Selection;
     use ralph_server::chat::memory::Store;
     use std::path::PathBuf;
 
@@ -249,5 +256,34 @@ mod tests {
         let empty = tempfile::tempdir().unwrap();
         assert!(run(empty.path(), Some("y"), &[]).asked.is_empty());
         assert!(thread_dir(&main, &name("auth")).exists());
+    }
+
+    #[test]
+    fn a_main_store_with_a_closed_auto_thread_has_that_pending_close() {
+        let (_root, main, _dir) = closed_auth(AutoMode::Drop);
+        assert_eq!(
+            pending(&main),
+            [PendingClose {
+                name: name("auth"),
+                auto: AutoMode::Drop
+            }]
+        );
+        let (_root, main, _dir) = forked();
+        assert!(pending(&main).is_empty());
+    }
+
+    #[test]
+    fn a_thread_chat_store_has_no_pending_close() {
+        let (_root, _main, dir) = closed_auth(AutoMode::Merge);
+        assert!(pending(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_close_report_is_never_drained_into_a_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let monitor = monitor(dir.path());
+        let closed = thread_closed_report(&name("auth"), AutoMode::Merge, "t");
+        monitor.inbox.post(&closed, 0).unwrap();
+        assert!(monitor.drain(Selection::All).unwrap().is_empty());
     }
 }

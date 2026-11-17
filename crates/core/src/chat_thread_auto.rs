@@ -1,3 +1,4 @@
+use crate::chat_status::truncate_to_width;
 use crate::chat_thread::{AutoMode, ThreadMeta, ThreadName, THREAD_REPORT_PREFIX};
 use crate::worker::Report;
 
@@ -87,6 +88,16 @@ pub fn pending_closes(threads: &[(ThreadName, ThreadMeta)]) -> Vec<PendingClose>
             })
         })
         .collect()
+}
+
+pub fn close_footer(closes: &[PendingClose], width: usize) -> Option<String> {
+    let first = closes.first()?;
+    let notice = thread_closed_notice(&first.name, first.auto);
+    let line = match closes.len() {
+        1 => notice,
+        count => format!("{count} threads closed \u{b7} {notice}"),
+    };
+    Some(truncate_to_width(&line, width))
 }
 
 fn verb(auto: AutoMode) -> &'static str {
@@ -218,6 +229,44 @@ mod tests {
         assert_eq!(report.at, "2026-01-01T00:00:00Z");
         assert_eq!(report.status, "thread-closed");
         assert_eq!(report.text, "side closed \u{b7} Enter to drop or keep it");
+    }
+
+    fn pending(name: &str, auto: AutoMode) -> PendingClose {
+        PendingClose {
+            name: ThreadName::parse(name).unwrap(),
+            auto,
+        }
+    }
+
+    #[test]
+    fn close_footer_is_the_notice_for_one_pending_close_in_both_modes() {
+        assert_eq!(
+            close_footer(&[pending("auth", AutoMode::Merge)], 200).unwrap(),
+            "auth closed \u{b7} Enter to merge or keep it"
+        );
+        assert_eq!(
+            close_footer(&[pending("auth", AutoMode::Drop)], 200).unwrap(),
+            "auth closed \u{b7} Enter to drop or keep it"
+        );
+    }
+
+    #[test]
+    fn close_footer_counts_several_and_names_the_first() {
+        let closes = [
+            pending("auth", AutoMode::Merge),
+            pending("db", AutoMode::Drop),
+        ];
+        assert_eq!(
+            close_footer(&closes, 200).unwrap(),
+            "2 threads closed \u{b7} auth closed \u{b7} Enter to merge or keep it"
+        );
+    }
+
+    #[test]
+    fn close_footer_is_absent_with_nothing_pending_and_fits_the_width() {
+        assert_eq!(close_footer(&[], 200), None);
+        let one = [pending("auth", AutoMode::Merge)];
+        assert!((1..60).all(|w| close_footer(&one, w).unwrap().chars().count() <= w));
     }
 
     fn closed_meta(auto: Option<AutoMode>) -> ThreadMeta {
