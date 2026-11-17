@@ -79,8 +79,10 @@ pub struct StreamingSubprocessResult {
     /// Processed stream result with chunks, metadata, and tool interactions.
     pub stream_result: StreamProcessorResult,
     pub request_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Running claude cost logged before this call in the same process, set by `Session`.
+    /// Last seen running total of the process before this call, used for `last_cost_usd`. Set by `Session`.
     pub cost_before: Option<f64>,
+    /// Running total of the last row written for this process, the base of `with_turn_cost`. It advances only when `writes_usage_row` holds.
+    pub logged_before: Option<f64>,
 }
 
 #[cfg(test)]
@@ -100,6 +102,7 @@ mod tests {
             stream_result: processor.finish(),
             request_at: None,
             cost_before: None,
+            logged_before: None,
         }
     }
 

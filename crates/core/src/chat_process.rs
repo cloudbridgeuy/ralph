@@ -2,8 +2,10 @@ use crate::chat::ResetLimits;
 use crate::worker_costs::window::instant;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const CACHE_TTL_SECS: i64 = 3600;
+pub const OWN_COST_LEDGER: u8 = 2;
 const SEPARATOR: &str = " · ";
 const MISSING: &str = "–";
 
@@ -51,6 +53,7 @@ pub struct UsageLine {
     pub cache_write_1h: Option<u64>,
     pub long_prompt: Option<bool>,
     pub per_thread_usage: Option<bool>,
+    pub ledger_v: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -95,13 +98,17 @@ pub fn run_id(pid: u32, started: DateTime<Utc>) -> String {
     format!("{pid}-{}", started.to_rfc3339())
 }
 
-pub fn session_rows(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
+fn main_rows(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
     usage_jsonl
         .lines()
         .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
         .filter(|usage| matches!(usage.kind.as_str(), "turn" | "ping"))
         .filter(|usage| usage.run.as_deref() == Some(run))
         .collect()
+}
+
+pub fn session_rows(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
+    normalize_costs(main_rows(usage_jsonl, run))
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -153,14 +160,11 @@ pub fn absorb_usage(
         .rposition(|byte| *byte == b'\n')
         .map_or(0, |at| at + 1);
     let mut rows = if read.reset { Vec::new() } else { tail.rows };
-    rows.extend(session_rows(
-        &String::from_utf8_lossy(&chunk[..consumed]),
-        run,
-    ));
+    rows.extend(main_rows(&String::from_utf8_lossy(&chunk[..consumed]), run));
     UsageTail {
         file: stamp.id,
         offset: read.from + consumed as u64,
-        rows,
+        rows: normalize_costs(rows),
     }
 }
 
@@ -178,30 +182,50 @@ pub(crate) fn processes(rows: &[UsageLine]) -> Vec<&[UsageLine]> {
         .collect()
 }
 
-/// What one turn cost, from the running total of its claude process.
-///
-/// `previous` is the last logged total of the same process, a ping row
-/// included, so a ping between two turns is not charged to the next turn.
-/// The first turn of a process pays its whole total. A missing previous
-/// total or a total that went down gives `None`.
-pub fn spend_over(total: f64, previous: Option<f64>, first_of_process: bool) -> Option<f64> {
-    let base = if first_of_process { 0.0 } else { previous? };
-    Some(total - base).filter(|spend| *spend >= 0.0)
+pub fn turn_cost(total: f64, before: Option<f64>) -> Option<f64> {
+    Some(total - before?)
+}
+
+fn is_main(row: &UsageLine) -> bool {
+    matches!(row.kind.as_str(), "turn" | "ping")
+}
+
+pub fn normalize_costs(rows: Vec<UsageLine>) -> Vec<UsageLine> {
+    let mut running: BTreeMap<Option<String>, f64> = BTreeMap::new();
+    rows.into_iter()
+        .map(|row| {
+            if !is_main(&row) {
+                return row;
+            }
+            let total = running.entry(row.run.clone()).or_insert(0.0);
+            if row.process_turn == Some(1) {
+                *total = 0.0;
+            }
+            let own_cost = row.ledger_v.is_some_and(|v| v >= OWN_COST_LEDGER);
+            let own = row.cost_usd.map(|cost| {
+                if own_cost {
+                    *total += cost;
+                    cost
+                } else {
+                    let own = cost - *total;
+                    *total = cost;
+                    own
+                }
+            });
+            UsageLine {
+                cost_usd: own,
+                ledger_v: Some(OWN_COST_LEDGER),
+                ..row
+            }
+        })
+        .collect()
 }
 
 fn last_delta(rows: &[UsageLine]) -> Option<f64> {
-    let at = rows.iter().rposition(|row| row.kind == "turn")?;
-    let own = rows[at].cost_usd?;
-    let previous = rows[..at]
-        .iter()
-        .rev()
-        .scan(false, |done, row| {
-            let previous = (!*done).then_some(row);
-            *done = row.process_turn == Some(1);
-            previous
-        })
-        .find_map(|row| row.cost_usd);
-    spend_over(own, previous, rows[at].process_turn == Some(1))
+    rows.iter()
+        .rfind(|row| row.kind == "turn")?
+        .cost_usd
+        .filter(|cost| *cost >= 0.0)
 }
 
 fn carries_tokens(row: &UsageLine) -> bool {
@@ -211,12 +235,8 @@ fn carries_tokens(row: &UsageLine) -> bool {
         || row.output_tokens > 0
 }
 
-fn process_total(process: &[UsageLine]) -> Option<f64> {
-    process.iter().rev().find_map(|turn| turn.cost_usd)
-}
-
 fn process_missing(process: &[UsageLine]) -> bool {
-    process_total(process).is_none()
+    process.iter().all(|row| row.cost_usd.is_none())
         || process
             .iter()
             .rfind(|row| carries_tokens(row))
@@ -224,15 +244,17 @@ fn process_missing(process: &[UsageLine]) -> bool {
 }
 
 pub fn session_cost(rows: &[UsageLine]) -> Option<SessionCost> {
-    let processes = processes(rows);
-    let totals: Vec<f64> = processes
+    let costs: Vec<f64> = rows
         .iter()
-        .filter_map(|process| process_total(process))
+        .filter(|row| is_main(row))
+        .filter_map(|row| row.cost_usd)
         .collect();
-    (!totals.is_empty()).then(|| SessionCost {
-        total: totals.iter().sum(),
+    (!costs.is_empty()).then(|| SessionCost {
+        total: costs.iter().sum(),
         delta: last_delta(rows),
-        missing: processes.iter().any(|process| process_missing(process)),
+        missing: processes(rows)
+            .iter()
+            .any(|process| process_missing(process)),
     })
 }
 
@@ -331,3 +353,10 @@ pub fn cost_variants(cost: &SessionCost) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod cost_tests;
+#[cfg(test)]
+mod normalize_tests;
+#[cfg(test)]
+mod old_rows_tests;

@@ -16,7 +16,7 @@ mod types;
 
 // Re-export public API
 pub use gate::OutputGate;
-pub use session::Session;
+pub use session::{RunningCosts, Session};
 pub use spinner::{
     invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,
 };
