@@ -598,6 +598,8 @@ pub enum StopReason {
 const DETAIL_LINES: usize = 3;
 const DETAIL_CHARS: usize = 200;
 const ELLIPSIS: &str = "...";
+const LAST_OUTPUT: &str = "; last output: ";
+const OUTPUT_JOIN: &str = " / ";
 
 fn output_tail(text: &str) -> Option<String> {
     let output = text.split_once(OUTPUT_HEADER)?.1;
@@ -606,7 +608,7 @@ fn output_tail(text: &str) -> Option<String> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect();
-    let tail = lines[lines.len().saturating_sub(DETAIL_LINES)..].join(" / ");
+    let tail = lines[lines.len().saturating_sub(DETAIL_LINES)..].join(OUTPUT_JOIN);
     let chars = tail.chars().count();
     if tail.is_empty() || tail == NO_OUTPUT {
         None
@@ -622,7 +624,7 @@ fn output_tail(text: &str) -> Option<String> {
 pub fn check_detail(outcome: &WatchOutcome, report: Option<&Report>) -> String {
     let exit = describe(outcome);
     match report.and_then(|report| output_tail(&report.text)) {
-        Some(tail) => format!("{exit}; last output: {tail}"),
+        Some(tail) => format!("{exit}{LAST_OUTPUT}{tail}"),
         None => exit,
     }
 }

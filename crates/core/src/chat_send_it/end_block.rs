@@ -91,6 +91,7 @@ impl Ticked {
 const LABEL_WIDTH: usize = 10;
 const RULE: &str = "━";
 const MODEL_TAG: &str = "[model]";
+const CHECK_LABEL: &str = "CHECK FAILED";
 
 type Row = (&'static str, String);
 
@@ -196,6 +197,8 @@ pub fn done_block(plan: &RunPlan, driving: &Driving, columns: usize) -> String {
 }
 
 struct StopView {
+    label: &'static str,
+    output: Vec<String>,
     why: String,
     tail: String,
     mark: &'static str,
@@ -207,6 +210,30 @@ struct StopView {
 
 fn unquoted_stop(text: &str) -> String {
     text.trim_end_matches('.').to_string()
+}
+
+fn check_command(plan: Option<&RunPlan>, step: usize) -> String {
+    plan.and_then(|plan| plan.steps.get(step - 1))
+        .and_then(|step| match &step.criterion {
+            Criterion::CheckPasses { command } | Criterion::WatchPasses { command } => {
+                Some(command.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| "the check".to_string())
+}
+
+fn split_detail(detail: Option<&str>) -> (String, Vec<String>) {
+    let Some(detail) = detail else {
+        return ("did not exit 0".to_string(), Vec::new());
+    };
+    match detail.split_once(LAST_OUTPUT) {
+        Some((exit, output)) => (
+            unquoted_stop(exit),
+            output.split(OUTPUT_JOIN).map(str::to_string).collect(),
+        ),
+        None => (unquoted_stop(detail), Vec::new()),
+    }
 }
 
 fn stop_view(
@@ -224,6 +251,8 @@ fn stop_view(
         None => "/send-it status, then /send-it go".to_string(),
     };
     let view = |why: String, mark, detail: String, own: Vec<String>, next: String| StopView {
+        label: "STOPPED",
+        output: Vec::new(),
         why,
         tail: both.clone(),
         mark,
@@ -298,20 +327,30 @@ fn stop_view(
                 resume,
             )
         }
-        StopReason::CheckFailed { .. } => view(
-            format!("step {step} check did not exit 0"),
-            "✗",
-            "check did not exit 0".to_string(),
-            vec!["fix the check failure".to_string()],
-            rerun,
-        ),
-        StopReason::CheckNotStarted { error, .. } => view(
-            format!("step {step} check could not start"),
-            "✗",
-            unquoted_stop(error),
-            vec!["fix the check command".to_string()],
-            rerun,
-        ),
+        StopReason::CheckFailed { detail, .. } => {
+            let (exit, output) = split_detail(detail.as_deref());
+            StopView {
+                label: CHECK_LABEL,
+                output,
+                ..view(
+                    format!("`{}` {exit}", check_command(plan, step)),
+                    "✗",
+                    String::new(),
+                    vec!["fix the check failure".to_string()],
+                    rerun,
+                )
+            }
+        }
+        StopReason::CheckNotStarted { error, .. } => StopView {
+            label: CHECK_LABEL,
+            ..view(
+                format!("`{}` could not start", check_command(plan, step)),
+                "✗",
+                unquoted_stop(error),
+                vec!["fix the check command".to_string()],
+                rerun,
+            )
+        },
         StopReason::PlanChanged => view(
             "the plan changed or lost its approval".to_string(),
             "…",
@@ -366,13 +405,19 @@ pub fn stop_block(
     let place = known.map_or(String::new(), |(plan, step)| {
         format!(" at {step}/{}", plan.steps.len())
     });
-    let title = format!("send-it STOPPED{place} · {} · {}", view.why, view.tail);
+    let title = format!(
+        "send-it {}{place} · {} · {}",
+        view.label, view.why, view.tail
+    );
     let changed = known.map_or_else(Vec::new, |(plan, step)| {
         let task = plan
             .steps
             .get(step - 1)
             .map_or("", |step| step.task.as_str());
-        let failed = format!("{} {step} {task} — {}", view.mark, view.detail);
+        let failed = match view.detail.as_str() {
+            "" => format!("{} {step} {task}", view.mark),
+            detail => format!("{} {step} {task} — {detail}", view.mark),
+        };
         let texts = Some(steps_line(step - 1))
             .filter(|_| step > 1)
             .into_iter()
@@ -382,6 +427,7 @@ pub fn stop_block(
     });
     let rows: Vec<Row> = changed
         .into_iter()
+        .chain(labelled("Output", "", view.output))
         .chain(pending_rows(&view.own, &driving.tally.pending, view.idle))
         .chain([("Next", view.next)])
         .collect();

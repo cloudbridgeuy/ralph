@@ -257,3 +257,83 @@ fn an_off_stop_has_no_block_only_its_notice() {
         "send-it off: the run stopped and its plan is deleted."
     );
 }
+
+fn check_failed_at_three(detail: Option<&str>) -> StopReason {
+    StopReason::CheckFailed {
+        step: 3,
+        detail: detail.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_check_failed_block_names_the_command_and_shows_its_output_lines() {
+    let reason = check_failed_at_three(Some(
+        "exited with code 101; last output: error[E0308]: mismatched types / --> crates/core/src/x.rs:41:9",
+    ));
+    let block = stopped_block(&reason, 3, 3, 0.48, &[]);
+    assert!(
+        header_of(&block).starts_with(
+            "━━ send-it CHECK FAILED at 3/4 · `cargo xtask lint` exited with code 101 · 3 turns · $0.48 ━"
+        ),
+        "{block}"
+    );
+    assert_eq!(
+        body(&block),
+        [
+            "Changed   ✓ 1-2 (2 steps)",
+            "          ✗ 3 run the checks",
+            "Output    error[E0308]: mismatched types",
+            "          --> crates/core/src/x.rs:41:9",
+            "Pending   1. fix the check failure",
+            "Next      /send-it go · runs the check again at step 3",
+        ]
+    );
+}
+
+#[test]
+fn a_check_failed_block_without_detail_has_no_output_row() {
+    let block = stopped_block(&check_failed_at_three(None), 3, 3, 0.48, &[]);
+    assert!(
+        header_of(&block)
+            .contains("CHECK FAILED at 3/4 · `cargo xtask lint` did not exit 0 · 3 turns"),
+        "{block}"
+    );
+    assert!(!block.contains("Output"), "{block}");
+    assert!(body(&block)[1].ends_with("✗ 3 run the checks"), "{block}");
+}
+
+#[test]
+fn a_check_that_never_started_has_a_check_failed_header_and_its_error() {
+    let reason = StopReason::CheckNotStarted {
+        step: 3,
+        error: "no such file.".to_string(),
+    };
+    let block = stopped_block(&reason, 3, 2, 0.3, &[]);
+    assert!(
+        header_of(&block).contains("CHECK FAILED at 3/4 · `cargo xtask lint` could not start"),
+        "{block}"
+    );
+    assert_eq!(
+        body(&block),
+        [
+            "Changed   ✓ 1-2 (2 steps)",
+            "          ✗ 3 run the checks — no such file",
+            "Pending   1. fix the check command",
+            "Next      /send-it go · runs the check again at step 3",
+        ]
+    );
+}
+
+#[test]
+fn a_failed_watch_step_names_the_watch_command() {
+    let reason = StopReason::CheckFailed {
+        step: 2,
+        detail: Some("exited with code 1".to_string()),
+    };
+    let block = stopped_block(&reason, 2, 2, 0.3, &[]);
+    assert!(
+        header_of(&block)
+            .contains("CHECK FAILED at 2/4 · `gh pr checks --watch` exited with code 1"),
+        "{block}"
+    );
+}
