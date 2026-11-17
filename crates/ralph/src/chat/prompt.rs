@@ -1,18 +1,21 @@
 use crate::ansi::{DIM, RESET};
-use crate::chat::editor::{edit_draft, OPEN_EDITOR};
+use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR};
 use crate::chat::monitor::Monitor;
 use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
+use crate::chat::switch::ChatExit;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
+use crate::signal::is_terminated;
+use ralph_core::chat_close::{idle_step, IdleSignal, IdleStep};
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
 use ralph_core::status_queue::QueueCell;
 use ralph_core::worker::ATTACHMENTS_DIR;
 use reedline::{
-    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, Reedline,
-    Signal, DEFAULT_MULTILINE_INDICATOR,
+    EditCommand, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
+    PromptViMode, Reedline, Signal, DEFAULT_MULTILINE_INDICATOR,
 };
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -188,7 +191,7 @@ impl Submitted {
 pub(super) fn next_route(
     editor: &mut Reedline,
     prompt: &ChatPrompt,
-) -> io::Result<Option<Submitted>> {
+) -> io::Result<Result<Submitted, ChatExit>> {
     let attachments = prompt.monitor.store_dir.join(ATTACHMENTS_DIR);
     loop {
         match retry_interrupted(|| editor.read_line(prompt))? {
@@ -201,7 +204,7 @@ pub(super) fn next_route(
                     &prompt.empty_submit,
                     &hold_targets(&status),
                 );
-                return Ok(Some(Submitted { line, route }));
+                return Ok(Ok(Submitted { line, route }));
             }
             Signal::HostCommand(command) if command == PASTE_IMAGE => {
                 *prompt.notice.borrow_mut() = paste_image(editor, &attachments)
@@ -212,8 +215,30 @@ pub(super) fn next_route(
                         .err()
                         .map(|error| format!("Editor failed: {error}"))
             }
-            _ => return Ok(None),
+            other => {
+                let step = idle_signal(&other).map(|signal| {
+                    idle_step(
+                        signal,
+                        editor.current_buffer_contents().is_empty(),
+                        is_terminated(),
+                    )
+                });
+                match step {
+                    Some(IdleStep::ClearDraft) => editor.run_edit_commands(&[EditCommand::Clear]),
+                    Some(IdleStep::Closed) => return Ok(Err(ChatExit::Closed)),
+                    Some(IdleStep::Quit) | None => return Ok(Err(ChatExit::Quit)),
+                }
+            }
         }
+    }
+}
+
+pub(super) fn idle_signal(signal: &Signal) -> Option<IdleSignal> {
+    match signal {
+        Signal::CtrlC => Some(IdleSignal::CtrlC),
+        Signal::CtrlD => Some(IdleSignal::CtrlD),
+        Signal::HostCommand(command) if command == IDLE_CTRL_C => Some(IdleSignal::CtrlC),
+        _ => None,
     }
 }
 

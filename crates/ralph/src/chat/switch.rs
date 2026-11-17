@@ -8,6 +8,7 @@ use std::path::Path;
 
 pub(crate) enum ChatExit {
     Quit,
+    Closed,
     Switch(SwitchTarget, SwitchArgv),
 }
 

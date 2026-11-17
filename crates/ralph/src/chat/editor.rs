@@ -28,6 +28,7 @@ use std::sync::Arc;
 pub(super) const OPEN_EDITOR: &str = "open-editor";
 pub(super) const BACK_OUT: &str = "back-out-queue";
 pub(super) const QUEUE_CTRL_C: &str = "queue-ctrl-c";
+pub(super) const IDLE_CTRL_C: &str = "idle-ctrl-c";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
@@ -197,7 +198,7 @@ pub(super) fn vi_keybindings() -> (Keybindings, Keybindings) {
 }
 
 pub(super) fn edit_mode(mode: EditModeConfig) -> ChatEditMode {
-    edit_mode_with(mode, |_| {})
+    edit_mode_with(mode, idle_bindings)
 }
 
 pub(super) fn queue_bindings(keybindings: &mut Keybindings) {
@@ -211,6 +212,14 @@ pub(super) fn queue_bindings(keybindings: &mut Keybindings) {
         KeyModifiers::CONTROL,
         KeyCode::Char('c'),
         ReedlineEvent::ExecuteHostCommand(QUEUE_CTRL_C.to_string()),
+    );
+}
+
+fn idle_bindings(keybindings: &mut Keybindings) {
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('c'),
+        ReedlineEvent::ExecuteHostCommand(IDLE_CTRL_C.to_string()),
     );
 }
 

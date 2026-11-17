@@ -580,21 +580,28 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 at_prompt.store(false, Ordering::SeqCst);
                 idle.store(false, Ordering::SeqCst);
                 monitor.set_phase(Phase::Prompt);
-                submitted?.inspect(|submitted| {
-                    if let Some((suggestion, turn_number)) = offered.take() {
-                        let record = SuggestionRecord::new(
-                            chrono::Utc::now().to_rfc3339(),
-                            &run,
-                            turn_number,
-                            &suggestion,
-                            &submitted.line,
-                        );
-                        warn_if_err(
-                            store.append_suggestion(&record),
-                            "Failed to record suggestion outcome",
-                        );
-                    }
-                })
+                submitted?
+                    .map_err(|exit| {
+                        if matches!(exit, ChatExit::Closed) {
+                            leaving = Some(exit);
+                        }
+                    })
+                    .ok()
+                    .inspect(|submitted| {
+                        if let Some((suggestion, turn_number)) = offered.take() {
+                            let record = SuggestionRecord::new(
+                                chrono::Utc::now().to_rfc3339(),
+                                &run,
+                                turn_number,
+                                &suggestion,
+                                &submitted.line,
+                            );
+                            warn_if_err(
+                                store.append_suggestion(&record),
+                                "Failed to record suggestion outcome",
+                            );
+                        }
+                    })
             }
         };
         let Some(Submitted {
