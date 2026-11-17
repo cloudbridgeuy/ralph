@@ -78,6 +78,12 @@ pub fn open_archive(dir: &Path) -> io::Result<Archive<FileSource>> {
     Archive::open(log, stored(dir)?, tree, stored(dir)?)
 }
 
+pub fn log_count(dir: &Path) -> io::Result<usize> {
+    let mut log = FileSource::open(&dir.join(<u64 as Slot>::FILE))?;
+    let (index, _) = refresh(stored::<u64>(dir)?, &mut log)?;
+    Ok(index.count())
+}
+
 /// Writes each index a reader had to extend or rebuild, so the next reader
 /// does not repeat the work. The caller holds a shared `LOCK`: no writer runs,
 /// and every reader that holds it sees the same file lengths, so two readers

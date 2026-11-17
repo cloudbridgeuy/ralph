@@ -1,6 +1,6 @@
 use crate::chat::claim::ChatClaim;
 use crate::chat::index_files::{
-    open_archive, save_stale, sweep_index_temps, update_index, FileSource,
+    log_count, open_archive, save_stale, sweep_index_temps, update_index, FileSource,
 };
 use crate::private_file::check_path;
 use crate::warn::warn;
@@ -344,7 +344,7 @@ impl Store {
             .append(true)
             .open(path)?;
         trim_torn_tail(&mut file)?;
-        let id = open_archive(&self.dir)?.count();
+        let id = log_count(&self.dir)?;
         file.write_all(line.as_bytes())?;
         file.sync_all()?;
         // The line is committed; `log.idx` is a cache the next reader rebuilds.
