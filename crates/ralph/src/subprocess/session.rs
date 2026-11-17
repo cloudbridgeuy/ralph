@@ -3,8 +3,8 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
 use crate::signal;
-use ralph_core::chat_memory::model_usage_since;
-use ralph_core::stream::{interrupt_line, result_is_error, user_line, ModelTotals};
+use ralph_core::chat_memory::{model_usage_since, writes_usage_row};
+use ralph_core::stream::{interrupt_line, result_is_error, user_line, IterationCosts, ModelTotals};
 use ralph_server::subprocess::{exited_unreaped, signal_group};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -67,7 +67,7 @@ pub struct Session {
     config: SpinnerSubprocessConfig,
     model_usage: BTreeMap<String, ModelTotals>,
     /// Running cost of this process. It starts at 0, so the first call pays its whole total.
-    cost_usd: Option<f64>,
+    running: RunningCosts,
 }
 
 impl Session {
@@ -83,7 +83,7 @@ impl Session {
             reaped: false,
             config: config.clone(),
             model_usage: BTreeMap::new(),
-            cost_usd: Some(0.0),
+            running: RunningCosts::start(),
         })
     }
 
@@ -173,8 +173,9 @@ impl Session {
     }
 
     fn advance_usage(&mut self, run: &mut StreamingSubprocessResult) {
-        run.cost_before = self.cost_usd;
-        self.cost_usd = next_running(self.cost_usd, run.stream_result.costs.cost_usd);
+        run.cost_before = self.running.seen;
+        run.logged_before = self.running.logged;
+        self.running = self.running.advance(&run.stream_result.costs);
         self.advance_model_usage(run);
     }
 
@@ -284,6 +285,31 @@ impl Drop for Session {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunningCosts {
+    pub seen: Option<f64>,
+    pub logged: Option<f64>,
+}
+
+impl RunningCosts {
+    pub fn start() -> RunningCosts {
+        RunningCosts {
+            seen: Some(0.0),
+            logged: Some(0.0),
+        }
+    }
+
+    pub fn advance(self, costs: &IterationCosts) -> RunningCosts {
+        let seen = next_running(self.seen, costs.cost_usd);
+        let logged = if writes_usage_row(costs) {
+            next_running(self.logged, costs.cost_usd)
+        } else {
+            self.logged
+        };
+        RunningCosts { seen, logged }
+    }
+}
+
 pub fn next_running(previous: Option<f64>, reported: Option<f64>) -> Option<f64> {
     reported.or(previous)
 }
@@ -291,6 +317,99 @@ pub fn next_running(previous: Option<f64>, reported: Option<f64>) -> Option<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::chat_memory::{usage_record, CallSite, Trigger};
+    use ralph_core::chat_process::{normalize_costs, UsageLine};
+    use ralph_core::stream::{IterationMetadata, Usage};
+
+    fn exchange(total: f64, with_usage: bool) -> IterationCosts {
+        IterationCosts {
+            cost_usd: Some(total),
+            usage: with_usage.then(Usage::default),
+            ..Default::default()
+        }
+    }
+
+    fn written_rows(site: &CallSite, exchanges: &[IterationCosts]) -> Vec<UsageLine> {
+        let mut running = RunningCosts::start();
+        let mut rows = Vec::new();
+        for (index, costs) in exchanges.iter().enumerate() {
+            let before = running;
+            running = running.advance(costs);
+            if !writes_usage_row(costs) {
+                continue;
+            }
+            let row = usage_record(site.clone(), "t".into(), costs, &IterationMetadata::new())
+                .unwrap()
+                .with_turn_cost(before.logged)
+                .with_process_turn(index as u64 + 1);
+            rows.push(serde_json::from_value(serde_json::to_value(row).unwrap()).unwrap());
+        }
+        rows
+    }
+
+    fn sum(rows: &[UsageLine]) -> f64 {
+        rows.iter().filter_map(|row| row.cost_usd).sum()
+    }
+
+    #[test]
+    fn a_skipped_exchange_between_two_turns_stays_in_the_written_total() {
+        let site = CallSite::Turn {
+            trigger: Trigger::User,
+        };
+        let rows = written_rows(
+            &site,
+            &[
+                exchange(1.0, true),
+                exchange(1.5, false),
+                exchange(1.75, true),
+            ],
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(sum(&rows), 1.75);
+        assert_eq!(sum(&normalize_costs(rows)), 1.75);
+    }
+
+    #[test]
+    fn a_ping_without_usage_between_two_turns_stays_in_the_written_total() {
+        let mut rows = written_rows(
+            &CallSite::Ping,
+            &[
+                exchange(1.0, true),
+                exchange(1.5, false),
+                exchange(1.75, true),
+            ],
+        );
+        rows[0].process_turn = Some(1);
+        assert_eq!(sum(&rows), 1.75);
+        assert_eq!(sum(&normalize_costs(rows)), 1.75);
+    }
+
+    #[test]
+    fn a_ping_that_reports_no_cost_leaves_its_spend_to_the_next_turn() {
+        let ping = IterationCosts {
+            usage: Some(Usage::default()),
+            ..Default::default()
+        };
+        let after_turn = RunningCosts::start().advance(&exchange(1.0, true));
+        let after_ping = after_turn.advance(&ping);
+        assert_eq!(after_ping.seen, Some(1.0));
+        assert_eq!(after_ping.logged, Some(1.0));
+    }
+
+    #[test]
+    fn a_timed_out_partial_with_cost_advances_the_seen_total() {
+        let after_turn = RunningCosts::start().advance(&exchange(1.0, true));
+        let after_timeout = after_turn.advance(&exchange(1.5, false));
+        assert_eq!(after_timeout.seen, Some(1.5));
+        assert_eq!(after_timeout.logged, Some(1.0));
+    }
+
+    #[test]
+    fn the_logged_total_starts_at_zero_and_follows_written_rows() {
+        let start = RunningCosts::start();
+        assert_eq!(start.logged, Some(0.0));
+        assert_eq!(start.advance(&exchange(0.5, true)).logged, Some(0.5));
+    }
 
     #[test]
     fn a_reported_total_replaces_the_running_total() {

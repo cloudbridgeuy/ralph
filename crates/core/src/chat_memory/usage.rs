@@ -231,12 +231,19 @@ impl LedgerRow {
     }
 }
 
+pub fn writes_usage_row(costs: &IterationCosts) -> bool {
+    costs.usage.is_some()
+}
+
 pub fn usage_record(
     kind: CallSite,
     at: String,
     costs: &IterationCosts,
     metadata: &IterationMetadata,
 ) -> Option<LedgerRow> {
+    if !writes_usage_row(costs) {
+        return None;
+    }
     let usage = costs.usage.as_ref()?;
     Some(LedgerRow {
         at,

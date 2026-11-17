@@ -81,6 +81,7 @@ pub struct StreamingSubprocessResult {
     pub request_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Running claude cost logged before this call in the same process, set by `Session`.
     pub cost_before: Option<f64>,
+    pub logged_before: Option<f64>,
 }
 
 #[cfg(test)]
@@ -100,6 +101,7 @@ mod tests {
             stream_result: processor.finish(),
             request_at: None,
             cost_before: None,
+            logged_before: None,
         }
     }
 

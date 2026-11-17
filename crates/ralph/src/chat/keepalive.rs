@@ -130,7 +130,7 @@ fn ping_row(
 ) -> Option<LedgerRow> {
     usage_record(CallSite::Ping, at, &result.stream_result.costs, identity).map(|record| {
         record
-            .with_turn_cost(result.cost_before)
+            .with_turn_cost(result.logged_before)
             .with_request_at(result.request_at.map(|at| at.to_rfc3339()))
     })
 }

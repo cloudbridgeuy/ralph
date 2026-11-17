@@ -168,6 +168,7 @@ mod tests {
             stream_result: Default::default(),
             request_at: None,
             cost_before: None,
+            logged_before: None,
         }
     }
 
