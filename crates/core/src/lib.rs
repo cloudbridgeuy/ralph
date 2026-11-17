@@ -38,6 +38,7 @@ pub mod chat_status;
 pub mod chat_suggestion;
 pub mod chat_switch;
 pub mod chat_thread;
+pub mod chat_thread_auto;
 pub mod chat_thread_cmd;
 mod chat_thread_root;
 pub mod chat_thread_table;

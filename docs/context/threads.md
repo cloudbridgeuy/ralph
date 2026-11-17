@@ -17,7 +17,7 @@ A thread has no separate create command. Open it by name and ralph creates it on
 
 A name has 1 to 32 lowercase letters, digits or dashes. It cannot start with a dash. `main` is not a valid name.
 
-`/thread open` creates nothing itself. The chat it starts creates the thread. Inside a thread, `/thread open <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
+`/thread open` creates nothing itself, except with `--auto-merge` or `--auto-drop` (one at most): it then creates the thread and stores the choice in `thread.json`. Nothing acts on the choice yet. The chat it starts creates the thread. Inside a thread, `/thread open <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
 
 The thread starts from main's memory as it was at that moment. This point is the fork point. The thread does not see main messages that come later until you pull them.
 
