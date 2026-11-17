@@ -9,6 +9,7 @@ mod header_wrap;
 mod noise;
 mod plan;
 mod render;
+mod resume;
 mod template;
 mod warnings;
 
