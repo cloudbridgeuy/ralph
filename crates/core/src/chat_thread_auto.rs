@@ -196,6 +196,7 @@ mod tests {
                 merged: Some(crate::chat_thread::Merged {
                     at: "t".to_string(),
                     digest: "d".to_string(),
+                    landed: None,
                 }),
                 ..merge.clone()
             };
@@ -284,6 +285,7 @@ mod tests {
             merged: Some(crate::chat_thread::Merged {
                 at: "t".to_string(),
                 digest: "d".to_string(),
+                landed: None,
             }),
             ..closed_meta(Some(AutoMode::Merge))
         };

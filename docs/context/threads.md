@@ -149,11 +149,38 @@ Park stops a thread from opening. Its saved watches and schedules wait. They kee
 ralph thread drop <name>
 ```
 
-Drop deletes the thread folder. It cannot be undone. It also deletes the saved watches and schedules of the thread, and it prints their count.
+Drop deletes the thread folder. It cannot be undone. It also deletes the saved watches and schedules of the thread, and it prints their count. It leaves one line (name, fork point, creation and drop time) in `<store>/threads/dropped.jsonl`, so [`ralph thread log`](#thread-log) can still draw the thread. No thread content is kept.
 
 Drop refuses an open chat and running workers. It refuses a merged thread, because a merged thread is read-only. It does not refuse saved watches or schedules.
 
 In main's chat, type `/thread drop <name>`. It checks the refusals first (unknown or merged thread, running workers, an open chat: `drop_precheck`) and prints them with no question. Then it asks `Drop thread <name>? This deletes its folder and cannot be undone. [y/n]`; `n` or `no` cancels with `drop cancelled.` and the queued lines go on. Ctrl-C or a closed input aborts: it prints `drop aborted; the command stays in the prompt.` and puts the command and the rest of the queue back in the prompt. After `y` it reads the running workers again, then deletes with the same `drop_thread` as the shell command and prints its text. It makes no model call and does not leave the chat. In a thread's chat it refuses with `Run /thread main, then /thread drop <name>.`
+
+## Thread log
+
+```bash
+ralph thread log [--store <DIR>]
+```
+
+Log draws main and its threads as a unicode graph, newest on top, with no model call and no cost. Main is the trunk with `#N` row ids: its last row (marked `main`), each fork point, each merge landing and `#0`. A fork at the end of main shows its `#N` without the `main` mark; an empty main is a bare `●`. Each thread is a column that branches off at its fork point. Threads sort by fork point, then name.
+
+| Mark | Thread |
+|------|--------|
+| `○ <name>  open` | open thread (default colour) |
+| `○ <name>  parked` | parked thread (yellow) |
+| `<name>  merged -> #N` | merged thread; the column joins main at row `#N` (green) |
+| `<name>  merged, landing unknown` | merged thread whose landing row was not recorded (green) |
+| `✕ <name>  dropped` | dropped thread, drawn at its old fork point (red) |
+
+The landing id `#N` is the main row that holds the merge digest. A merge records it when `ralph thread merge` or `/thread merge` appends that row.
+
+On a terminal, colour is on unless `NO_COLOR` is set, and each line fits the terminal width: labels shorten and names end in `…`. Piped or with `NO_COLOR`, the output has no colour and no width limit.
+
+Limits:
+
+- Only threads forked from main are drawn: the folders under `<store>/threads/`. A fork made inside a thread (`--store` on a thread folder) is not shown.
+- A thread dropped before this feature is gone for good; it leaves no line.
+- Park and revive history is not kept. Only the current state shows.
+- A thread merged before this feature shows `merged, landing unknown`.
 
 ## Example
 

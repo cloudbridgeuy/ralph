@@ -31,9 +31,12 @@ use std::path::{Path, PathBuf};
 use ralph_server::chat::memory::Reach;
 
 pub(crate) mod close;
+mod graph;
+pub(super) mod landing;
 mod list;
 pub(super) mod open;
 pub(super) mod settle;
+mod tombstone;
 pub use list::rows;
 pub(super) use list::{default_listing, listing};
 
@@ -150,6 +153,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             revive_thread(&main, &name)?;
             println!("{}", revived_message(&name));
         }
+        ThreadCommand::Log => graph::print_log(&main, screen_columns())?,
         ThreadCommand::Pull { name } => println!("{}", pull_thread(&main, &name)?),
     }
     Ok(())
@@ -243,6 +247,7 @@ fn merge_with(
         merged: Some(Merged {
             at,
             digest: report.text.clone(),
+            landed: None,
         }),
         parked: None,
         ..meta
@@ -369,11 +374,13 @@ pub fn open_names(main: &Path) -> Vec<String> {
 
 pub fn drop_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<String, String> {
     let dir = thread_dir(main, name);
-    merged_check(name, &known_meta(&dir, name)?)?;
+    let meta = known_meta(&dir, name)?;
+    merged_check(name, &meta)?;
     let live = live(&dir, running);
     guard_check(name, Guarded::Drop, live)?;
     let _claim = claim_closed(&dir, name)?;
     fs::remove_dir_all(&dir).map_err(|e| format!("could not drop thread {name}: {e}"))?;
+    tombstone::record_drop(main, name, &meta);
     Ok(drop_message(name, live.records))
 }
 

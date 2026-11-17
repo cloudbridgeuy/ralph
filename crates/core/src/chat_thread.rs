@@ -78,6 +78,8 @@ fn is_false(value: &bool) -> bool {
 pub struct Merged {
     pub at: String,
     pub digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -487,6 +489,7 @@ mod tests {
             merged: Some(Merged {
                 at: "2026-11-03T10:00:00Z".to_string(),
                 digest: "Picked x. #auth:0".to_string(),
+                landed: None,
             }),
             ..meta.clone()
         };
@@ -547,6 +550,7 @@ mod tests {
             merged: Some(Merged {
                 at: "a".to_string(),
                 digest: "d".to_string(),
+                landed: None,
             }),
             parked: None,
             auto: None,
