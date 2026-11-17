@@ -1,5 +1,6 @@
 pub mod cache_periods;
 pub mod cache_saving;
+pub mod cache_text;
 pub mod cache_view;
 pub mod chart;
 pub mod model_view;
@@ -344,7 +345,7 @@ fn wants(wanted: Option<&str>, actual: Option<&str>) -> bool {
     wanted.is_none_or(|wanted| actual == Some(wanted))
 }
 
-fn admits(entry: &Entry, filter: &Filter, windows: &[WorkerWindow]) -> bool {
+pub(super) fn admits(entry: &Entry, filter: &Filter, windows: &[WorkerWindow]) -> bool {
     filter.since.is_none_or(|since| entry.at >= since)
         && filter.until.is_none_or(|until| entry.at < until)
         && wants(filter.store.as_deref(), entry.line.store.as_deref())

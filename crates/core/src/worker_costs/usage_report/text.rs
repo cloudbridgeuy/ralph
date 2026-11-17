@@ -1,9 +1,14 @@
+use super::cache_saving::saving_rates;
+use super::cache_text::sections;
 use super::chart::{bars_svg, daily_svg, pad_days, Heading};
-use super::{daily, group_by, parse, weekday, Dim, Filter, Group, Report, NO_DATA};
+use super::{
+    admits, daily, group_by, parse, weekday, Dim, Entry, Filter, Group, Ledger, Report, Role,
+    NO_DATA,
+};
 use crate::wire::view::Pricing;
 use crate::worker::TicketKeys;
-use crate::worker_costs::tickets::parse_windows;
-use crate::worker_costs::{count, NO_USAGE};
+use crate::worker_costs::tickets::{parse_windows, WorkerWindow};
+use crate::worker_costs::{builtin_prices, count, NO_USAGE};
 use chrono::TimeZone;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -97,12 +102,16 @@ fn page(title: String, body: Vec<String>, malformed: usize) -> String {
     lines.join("\n")
 }
 
-fn table(report: &Report, title: String, extra: impl Fn(&Group) -> Option<String>) -> String {
+fn table_body(report: &Report, extra: impl Fn(&Group) -> Option<String>) -> Vec<String> {
     if report.groups.is_empty() {
-        return page(title, vec![NO_USAGE.to_string()], report.malformed);
+        return vec![NO_USAGE.to_string()];
     }
     let all: Vec<&Group> = report.groups.iter().chain([&report.total]).collect();
-    page(title, columns(&all, extra), report.malformed)
+    columns(&all, extra)
+}
+
+fn table(report: &Report, title: String, extra: impl Fn(&Group) -> Option<String>) -> String {
+    page(title, table_body(report, extra), report.malformed)
 }
 
 fn daily_text(report: &Report) -> String {
@@ -143,20 +152,46 @@ fn cache(group: &Group) -> Option<String> {
     })
 }
 
+fn ledger_of(inputs: &Inputs) -> (Vec<WorkerWindow>, Ledger) {
+    let windows = parse_windows(inputs.workers);
+    let ledger = parse(inputs.usage, &windows, inputs.tickets);
+    (windows, ledger)
+}
+
 fn report_of<Tz: TimeZone>(
     view: View,
-    inputs: &Inputs,
+    scope: (&Ledger, &[WorkerWindow]),
     filter: &Filter,
     zone: &Tz,
     pricing: &Pricing,
 ) -> Report {
-    let windows = parse_windows(inputs.workers);
-    let ledger = parse(inputs.usage, &windows, inputs.tickets);
+    let (ledger, windows) = scope;
     match view {
-        View::Daily => daily(&ledger, &windows, filter, zone, pricing),
-        View::By(dim) => group_by(dim, &ledger, &windows, filter, pricing),
-        View::Cache => group_by(Dim::Model, &ledger, &windows, filter, pricing),
+        View::Daily => daily(ledger, windows, filter, zone, pricing),
+        View::By(dim) => group_by(dim, ledger, windows, filter, pricing),
+        View::Cache => group_by(Dim::Model, ledger, windows, filter, pricing),
     }
+}
+
+fn cache_text(
+    report: &Report,
+    scope: (&Ledger, &[WorkerWindow]),
+    filter: &Filter,
+    pricing: &Pricing,
+) -> String {
+    let (ledger, windows) = scope;
+    let admitted: Vec<Entry> = ledger
+        .entries
+        .iter()
+        .filter(|entry| entry.role == Role::Main && admits(entry, filter, windows))
+        .cloned()
+        .collect();
+    let prices = builtin_prices(pricing.provider);
+    let mut body = table_body(report, cache);
+    body.extend(sections(&admitted, |model| {
+        saving_rates(model, pricing, &prices)
+    }));
+    page("usage cache by model".to_string(), body, report.malformed)
 }
 
 pub fn render<Tz: TimeZone>(
@@ -166,11 +201,13 @@ pub fn render<Tz: TimeZone>(
     zone: &Tz,
     pricing: &Pricing,
 ) -> String {
-    let report = report_of(view, inputs, filter, zone, pricing);
+    let (windows, ledger) = ledger_of(inputs);
+    let scope = (&ledger, windows.as_slice());
+    let report = report_of(view, scope, filter, zone, pricing);
     match view {
         View::Daily => daily_text(&report),
         View::By(dim) => table(&report, format!("usage by {}", dim_name(dim)), tokens),
-        View::Cache => table(&report, "usage cache by model".to_string(), cache),
+        View::Cache => cache_text(&report, scope, filter, pricing),
     }
 }
 
@@ -181,7 +218,8 @@ pub fn chart<Tz: TimeZone>(
     zone: &Tz,
     pricing: &Pricing,
 ) -> Option<String> {
-    let report = report_of(view, inputs, filter, zone, pricing);
+    let (windows, ledger) = ledger_of(inputs);
+    let report = report_of(view, (&ledger, &windows), filter, zone, pricing);
     let subtitle = if report.malformed > 0 {
         format!("malformed lines skipped: {}", report.malformed)
     } else {
