@@ -2,7 +2,7 @@ use super::{ensure, open_ready, thread_dir, write_meta};
 use ralph_core::chat_thread::{open_check, ThreadName};
 use ralph_core::chat_thread_auto::{clear_closed, with_auto};
 use ralph_core::chat_thread_cmd::OpenOpts;
-use ralph_core::chat_thread_model::with_model;
+use ralph_core::chat_thread_model::{build_model_args, with_model};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -34,6 +34,17 @@ pub(in crate::chat) fn reopen(
         write_meta(&thread_dir(main, name), updated)?;
     }
     Ok(updated.unwrap_or(meta).model)
+}
+
+pub(in crate::chat) fn model_args(
+    store: &Path,
+    thread: Option<&ThreadName>,
+    model: Option<&str>,
+) -> io::Result<Vec<String>> {
+    thread.map_or(Ok(Vec::new()), |name| {
+        let stored = reopen(&super::config_root(store), name, model)?;
+        Ok(build_model_args(stored.as_deref()))
+    })
 }
 
 #[cfg(test)]

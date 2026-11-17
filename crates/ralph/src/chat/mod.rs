@@ -96,7 +96,6 @@ use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
 use ralph_core::chat_switch::SwitchArgv;
-use ralph_core::chat_thread_model::build_model_args;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{status_enabled, Phase};
@@ -158,13 +157,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let _chat = store
         .claim_chat()?
         .map_err(|holder| store_in_use_message(&store_root, holder))?;
-    let model_args = match &args.thread {
-        Some(name) => {
-            let main = thread::config_root(&store_dir);
-            build_model_args(thread::open::reopen(&main, name, args.model.as_deref())?.as_deref())
-        }
-        None => Vec::new(),
-    };
+    let model_args =
+        thread::open::model_args(&store_dir, args.thread.as_ref(), args.model.as_deref())?;
     let fork = thread::open_fork(&store_dir)?;
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir()?;
