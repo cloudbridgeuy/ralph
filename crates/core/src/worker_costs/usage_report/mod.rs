@@ -1,3 +1,4 @@
+pub mod cache_view;
 pub mod chart;
 pub mod model_view;
 pub mod text;
