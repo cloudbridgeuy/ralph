@@ -174,7 +174,7 @@ impl Session {
 
     fn advance_usage(&mut self, run: &mut StreamingSubprocessResult) {
         run.cost_before = self.cost_usd;
-        self.cost_usd = run.stream_result.costs.cost_usd.or(self.cost_usd);
+        self.cost_usd = next_running(self.cost_usd, run.stream_result.costs.cost_usd);
         self.advance_model_usage(run);
     }
 
@@ -284,9 +284,25 @@ impl Drop for Session {
     }
 }
 
+pub fn next_running(previous: Option<f64>, reported: Option<f64>) -> Option<f64> {
+    reported.or(previous)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reported_total_replaces_the_running_total() {
+        assert_eq!(next_running(Some(1.0), Some(1.5)), Some(1.5));
+        assert_eq!(next_running(None, Some(2.0)), Some(2.0));
+    }
+
+    #[test]
+    fn no_reported_total_keeps_the_running_total() {
+        assert_eq!(next_running(Some(1.0), None), Some(1.0));
+        assert_eq!(next_running(None, None), None);
+    }
 
     fn lines(raw: &[&str]) -> Vec<String> {
         raw.iter().map(ToString::to_string).collect()

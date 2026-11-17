@@ -362,6 +362,7 @@ impl Turn<'_> {
             }
             self.note_timing(|held| held.with_model_ms(turn.stream_result.costs.duration_ms));
             let record = record
+                .with_turn_cost(turn.cost_before)
                 .with_process_turn(process_turns)
                 .with_request_at(turn.request_at.map(|at| at.to_rfc3339()))
                 .with_reset(launch.as_ref().and_then(|spawned| spawned.reset))
