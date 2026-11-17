@@ -52,7 +52,10 @@ impl Row<'_> {
 
 fn main_runs(entries: &[Entry]) -> BTreeMap<Option<String>, Vec<Row<'_>>> {
     let mut runs: BTreeMap<Option<String>, Vec<Row>> = BTreeMap::new();
-    for entry in entries.iter().filter(|entry| entry.role == Role::Main) {
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.role == Role::Main && entry.line.run.is_some())
+    {
         runs.entry(entry.line.run.clone()).or_default().push(Row {
             line: &entry.line,
             at: entry.at,

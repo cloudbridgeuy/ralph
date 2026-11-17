@@ -30,9 +30,21 @@ pub struct ProcessSummary {
     pub by_start: Vec<(String, usize, f64)>,
 }
 
+pub fn runless_rows(entries: &[Entry]) -> usize {
+    entries
+        .iter()
+        .filter(|entry| entry.role == Role::Main)
+        .filter(|entry| matches!(entry.line.kind.as_str(), "turn" | "ping"))
+        .filter(|entry| entry.line.run.is_none())
+        .count()
+}
+
 pub fn process_costs(entries: &[Entry]) -> Vec<ProcessCost> {
     let mut runs: BTreeMap<Option<String>, Vec<UsageLine>> = BTreeMap::new();
-    for entry in entries.iter().filter(|entry| entry.role == Role::Main) {
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.role == Role::Main && entry.line.run.is_some())
+    {
         runs.entry(entry.line.run.clone())
             .or_default()
             .push(entry.line.clone());

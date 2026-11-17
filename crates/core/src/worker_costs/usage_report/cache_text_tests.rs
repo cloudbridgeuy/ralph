@@ -1,4 +1,4 @@
-use super::{miss_lines, period_lines, process_lines, reset_lines};
+use super::{miss_lines, period_lines, process_lines, reset_lines, skipped_lines};
 use crate::chat_process::ResetReason;
 use crate::wire::provider::{provider, ProviderId};
 use crate::wire::view::Pricing;
@@ -269,5 +269,54 @@ fn miss_lines_name_every_cause() {
     assert_eq!(
         miss_lines(&causes),
         vec!["4 misses in 9 turns: reset 1  ttl expiry 2  unexplained 0  new run 1".to_string()]
+    );
+}
+
+fn runless_ping(minute: u32) -> Value {
+    let mut row = ping(minute);
+    row.as_object_mut().unwrap().remove("run");
+    row
+}
+
+#[test]
+fn render_says_how_many_main_rows_without_a_run_it_skipped() {
+    let mut rows = fixture();
+    rows.extend([runless_ping(300), runless_ping(301), runless_ping(302)]);
+    let out = shown(&text_of(&rows), &Filter::default());
+    assert!(
+        out.contains("3 main rows without a run skipped (no chat to join them to)"),
+        "{out}"
+    );
+    assert!(out.contains("cache misses"), "{out}");
+    assert!(out.contains(SAVING_RULE), "{out}");
+}
+
+#[test]
+fn render_uses_the_singular_for_one_runless_row() {
+    let mut rows = fixture();
+    rows.push(runless_ping(300));
+    let out = shown(&text_of(&rows), &Filter::default());
+    assert!(
+        out.contains("1 main row without a run skipped (no chat to join them to)"),
+        "{out}"
+    );
+}
+
+#[test]
+fn render_without_runless_rows_has_no_skipped_line() {
+    let out = shown(&text_of(&fixture()), &Filter::default());
+    assert!(!out.contains("without a run skipped"), "{out}");
+}
+
+#[test]
+fn skipped_lines_pluralize_and_vanish_at_zero() {
+    assert!(skipped_lines(0).is_empty());
+    assert_eq!(
+        skipped_lines(1),
+        vec!["1 main row without a run skipped (no chat to join them to)".to_string()]
+    );
+    assert_eq!(
+        skipped_lines(2),
+        vec!["2 main rows without a run skipped (no chat to join them to)".to_string()]
     );
 }

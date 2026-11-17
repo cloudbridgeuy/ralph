@@ -407,3 +407,45 @@ fn period_carries_the_model_of_the_last_turn() {
     let periods = idle_periods(&entries(&rows));
     assert_eq!(periods[0].model.as_deref(), Some("claude-opus-5-5"));
 }
+
+fn runless(mut row: Value) -> Value {
+    row.as_object_mut().unwrap().remove("run");
+    row
+}
+
+fn runless_rows_fixture() -> Vec<Value> {
+    vec![
+        runless(turn("x", 0, 1, (4, 100, 0))),
+        runless(ping("x", 10, 0.01)),
+        runless(turn("x", 20, 2, (4, 100, 0))),
+        runless(ping("x", 30, 0.01)),
+    ]
+}
+
+#[test]
+fn rows_without_a_run_make_no_period_and_no_miss_turns() {
+    let rows = runless_rows_fixture();
+    assert!(idle_periods(&entries(&rows)).is_empty());
+    assert_eq!(misses(&rows).turns, 0);
+    assert!(reset_writes(&entries(&rows)).is_empty());
+}
+
+#[test]
+fn runless_rows_do_not_change_the_run_only_results() {
+    let run_rows = vec![
+        turn("a", 0, 1, (4, 100, 0)),
+        ping("a", 10, 0.01),
+        turn("a", 20, 2, (4, 100, 0)),
+    ];
+    let mut mixed = run_rows.clone();
+    mixed.extend(runless_rows_fixture());
+    assert_eq!(
+        idle_periods(&entries(&mixed)),
+        idle_periods(&entries(&run_rows))
+    );
+    assert_eq!(misses(&mixed), misses(&run_rows));
+    assert_eq!(
+        reset_writes(&entries(&mixed)),
+        reset_writes(&entries(&run_rows))
+    );
+}

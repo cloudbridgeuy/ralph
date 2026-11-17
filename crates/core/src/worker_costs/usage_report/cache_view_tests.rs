@@ -1,4 +1,4 @@
-use super::{process_costs, summarize, ProcessCost, ProcessStart};
+use super::{process_costs, runless_rows, summarize, ProcessCost, ProcessStart};
 use crate::chat_process::ResetReason;
 use crate::worker::TicketKeys;
 use crate::worker_costs::usage_report::{parse, Entry};
@@ -220,4 +220,45 @@ fn summarize_groups_by_start_in_fixed_order() {
         ]
     );
     assert!(close(summary.total, 15.0));
+}
+
+fn runless(mut row: Value) -> Value {
+    row.as_object_mut().unwrap().remove("run");
+    row
+}
+
+fn runless_fixture() -> Vec<Value> {
+    vec![
+        runless(row("turn", "x", Some(1), 0.5, true)),
+        runless(row("turn", "x", Some(2), 0.5, true)),
+        runless(row("ping", "x", None, 0.01, true)),
+    ]
+}
+
+#[test]
+fn rows_without_a_run_make_no_process() {
+    assert!(process_costs(&entries(&runless_fixture())).is_empty());
+}
+
+#[test]
+fn runless_rows_do_not_change_the_run_only_processes() {
+    let mut rows = vec![
+        row("turn", "r", Some(1), 0.5, true),
+        row("ping", "r", None, 0.01, true),
+    ];
+    let only_run = process_costs(&entries(&rows));
+    rows.extend(runless_fixture());
+    let mixed = entries(&rows);
+    assert_eq!(process_costs(&mixed), only_run);
+    assert_eq!(runless_rows(&mixed), 3);
+}
+
+#[test]
+fn runless_rows_counts_only_main_turns_and_pings_without_a_run() {
+    assert_eq!(runless_rows(&entries(&runless_fixture())), 3);
+    let rows = [
+        row("turn", "r", Some(1), 0.5, true),
+        runless(row("ask", "x", None, 0.5, true)),
+    ];
+    assert_eq!(runless_rows(&entries(&rows)), 0);
 }

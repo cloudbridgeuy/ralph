@@ -2,7 +2,9 @@ use super::cache_periods::{
     idle_periods, miss_causes, outcome_counts, reset_writes, MissCauses, OutcomeCounts, ResetWrites,
 };
 use super::cache_saving::{saving_estimate, saving_lines, SavingRates};
-use super::cache_view::{process_costs, summarize, ProcessStart, ProcessSummary, START_ORDER};
+use super::cache_view::{
+    process_costs, runless_rows, summarize, ProcessStart, ProcessSummary, START_ORDER,
+};
 use super::{Entry, Role};
 use crate::worker_costs::count;
 
@@ -75,6 +77,14 @@ pub fn reset_lines(groups: &[ResetWrites]) -> Vec<String> {
         .collect()
 }
 
+pub fn skipped_lines(count: usize) -> Vec<String> {
+    let noun = if count == 1 { "row" } else { "rows" };
+    (count > 0)
+        .then(|| format!("{count} main {noun} without a run skipped (no chat to join them to)"))
+        .into_iter()
+        .collect()
+}
+
 pub fn miss_lines(causes: &MissCauses) -> Vec<String> {
     vec![format!(
         "{} misses in {} turns: reset {}  ttl expiry {}  unexplained {}  new run {}",
@@ -117,6 +127,7 @@ pub fn sections(entries: &[Entry], rates: impl Fn(&str) -> Option<SavingRates>) 
             saving_lines(&saving_estimate(&periods, rates)),
         ]
         .concat(),
+        skipped_lines(runless_rows(entries)),
     ]
     .concat()
 }
