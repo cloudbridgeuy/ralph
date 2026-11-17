@@ -162,15 +162,17 @@ fn changed_rows(plan: &RunPlan, met: usize, evidence: Option<&str>) -> Vec<Row> 
     labelled("Changed", "", texts)
 }
 
-fn pending_rows(items: &[String]) -> Vec<Row> {
-    if items.is_empty() {
-        return vec![("Pending", "nothing".to_string())];
-    }
-    let texts = items
+fn pending_rows(own: &[String], model: &[String], idle: &str) -> Vec<Row> {
+    let texts: Vec<String> = own
         .iter()
+        .cloned()
+        .chain(model.iter().map(|item| format!("{item} {MODEL_TAG}")))
         .enumerate()
-        .map(|(index, item)| format!("{}. {item} {MODEL_TAG}", index + 1))
+        .map(|(index, item)| format!("{}. {item}", index + 1))
         .collect();
+    if texts.is_empty() {
+        return vec![("Pending", idle.to_string())];
+    }
     labelled("Pending", "on you", texts)
 }
 
@@ -187,8 +189,201 @@ pub fn done_block(plan: &RunPlan, driving: &Driving, columns: usize) -> String {
     };
     let rows: Vec<Row> = changed_rows(plan, steps, driving.tally.last_met.as_deref())
         .into_iter()
-        .chain(pending_rows(&driving.tally.pending))
+        .chain(pending_rows(&[], &driving.tally.pending, "nothing"))
         .chain([("Next", next)])
+        .collect();
+    render_block(&title, &rows, columns)
+}
+
+struct StopView {
+    why: String,
+    tail: String,
+    mark: &'static str,
+    detail: String,
+    own: Vec<String>,
+    idle: &'static str,
+    next: String,
+}
+
+fn unquoted_stop(text: &str) -> String {
+    text.trim_end_matches('.').to_string()
+}
+
+fn stop_view(
+    reason: &StopReason,
+    plan: Option<&RunPlan>,
+    step: usize,
+    driving: &Driving,
+) -> StopView {
+    let run = &driving.run;
+    let turns = count(run.turns, "turn");
+    let spent = format!("${:.2}", run.spent_usd);
+    let both = format!("{turns} · {spent}");
+    let resume = match plan {
+        Some(_) => format!("/send-it go · resumes at step {step}"),
+        None => "/send-it status, then /send-it go".to_string(),
+    };
+    let view = |why: String, mark, detail: String, own: Vec<String>, next: String| StopView {
+        why,
+        tail: both.clone(),
+        mark,
+        detail,
+        own,
+        idle: "nothing",
+        next,
+    };
+    let unfinished = || "not finished".to_string();
+    let rerun = match plan {
+        Some(_) => format!("/send-it go · runs the check again at step {step}"),
+        None => resume.clone(),
+    };
+    match reason {
+        StopReason::TurnCap => StopView {
+            tail: spent.clone(),
+            idle: "nothing; the cause is the cap",
+            ..view(
+                format!("turn cap reached ({turns})"),
+                "…",
+                unfinished(),
+                vec![],
+                format!("{resume} with fresh caps"),
+            )
+        },
+        StopReason::CostCap => StopView {
+            tail: turns.clone(),
+            idle: "nothing; the cause is the cap",
+            ..view(
+                format!("cost cap reached ({spent})"),
+                "…",
+                unfinished(),
+                vec![],
+                format!("{resume} with fresh caps"),
+            )
+        },
+        StopReason::Unmet { .. } => view(
+            format!("step {step} missed its exit criterion"),
+            "✗",
+            "exit criterion not met".to_string(),
+            vec![format!("fix step {step} or edit it")],
+            resume,
+        ),
+        StopReason::WorkerFlagged { worker, line } => {
+            let said = if line.is_empty() {
+                worker.clone()
+            } else {
+                format!("{worker}: \"{line}\"")
+            };
+            let then = match plan {
+                Some(_) => format!("then /send-it go resumes at step {step}"),
+                None => "then /send-it go".to_string(),
+            };
+            view(
+                format!("worker {worker} needs an answer"),
+                "✗",
+                said,
+                vec![format!("answer {worker}")],
+                format!("@{worker} <your answer> · {then}"),
+            )
+        }
+        StopReason::JudgeRounds { evidence, .. } => {
+            let rounds = plan.map_or_else(
+                || "the last judge round".to_string(),
+                |plan| format!("{} judge rounds", plan.judge_rounds),
+            );
+            view(
+                format!("not met after {rounds}"),
+                "✗",
+                unquoted_stop(evidence),
+                vec![format!("act on the judge evidence or edit step {step}")],
+                resume,
+            )
+        }
+        StopReason::CheckFailed { .. } => view(
+            format!("step {step} check did not exit 0"),
+            "✗",
+            "check did not exit 0".to_string(),
+            vec!["fix the check failure".to_string()],
+            rerun,
+        ),
+        StopReason::CheckNotStarted { error, .. } => view(
+            format!("step {step} check could not start"),
+            "✗",
+            unquoted_stop(error),
+            vec!["fix the check command".to_string()],
+            rerun,
+        ),
+        StopReason::PlanChanged => view(
+            "the plan changed or lost its approval".to_string(),
+            "…",
+            unfinished(),
+            vec!["review the plan".to_string()],
+            "/send-it status, then /send-it go".to_string(),
+        ),
+        StopReason::NoReply => view(
+            "a turn ended without a reply".to_string(),
+            "…",
+            unfinished(),
+            vec!["check the last turn".to_string()],
+            resume,
+        ),
+        StopReason::NeedsYou => view(
+            "a schedule waits for your approval".to_string(),
+            "…",
+            unfinished(),
+            vec!["approve the schedule".to_string()],
+            resume,
+        ),
+        StopReason::TookOver => view(
+            "you took over".to_string(),
+            "…",
+            unfinished(),
+            vec![],
+            resume,
+        ),
+        StopReason::Refused { tool } => view(
+            format!("the plan does not allow `{tool}`"),
+            "…",
+            unfinished(),
+            vec![format!("allow `{tool}` in the plan or edit it")],
+            "/send-it edit, then /send-it go".to_string(),
+        ),
+        StopReason::Off => view(String::new(), "…", unfinished(), vec![], resume),
+    }
+}
+
+pub fn stop_block(
+    reason: &StopReason,
+    kept: Option<&RunFile>,
+    driving: &Driving,
+    columns: usize,
+) -> String {
+    if *reason == StopReason::Off {
+        return OFF_NOTICE.to_string();
+    }
+    let known = kept.and_then(|file| Some((&file.plan, resume_step(file)?)));
+    let step = known.map_or(driving.progress.step + 1, |(_, step)| step);
+    let view = stop_view(reason, known.map(|(plan, _)| plan), step, driving);
+    let place = known.map_or(String::new(), |(plan, step)| {
+        format!(" at {step}/{}", plan.steps.len())
+    });
+    let title = format!("send-it STOPPED{place} · {} · {}", view.why, view.tail);
+    let changed = known.map_or_else(Vec::new, |(plan, step)| {
+        let task = plan
+            .steps
+            .get(step - 1)
+            .map_or("", |step| step.task.as_str());
+        let failed = format!("{} {step} {task} — {}", view.mark, view.detail);
+        let texts = Some(steps_line(step - 1))
+            .filter(|_| step > 1)
+            .into_iter()
+            .chain([failed])
+            .collect();
+        labelled("Changed", "", texts)
+    });
+    let rows: Vec<Row> = changed
+        .into_iter()
+        .chain(pending_rows(&view.own, &driving.tally.pending, view.idle))
+        .chain([("Next", view.next)])
         .collect();
     render_block(&title, &rows, columns)
 }

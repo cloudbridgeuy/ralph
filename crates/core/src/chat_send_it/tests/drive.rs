@@ -510,7 +510,7 @@ fn a_check_failed_notice_carries_its_detail_in_brackets_and_stays_the_same_witho
     let plain = StopReason::check_failed(3);
     assert_eq!(
         plain.notice(&run, None),
-        format!("send-it stopped: step 3 check did not exit 0. {RESTART}")
+        "send-it stopped: step 3 check did not exit 0.".to_string()
     );
     let detailed = StopReason::CheckFailed {
         step: 3,
@@ -518,9 +518,8 @@ fn a_check_failed_notice_carries_its_detail_in_brackets_and_stays_the_same_witho
     };
     assert_eq!(
         detailed.notice(&run, None),
-        format!(
-            "send-it stopped: step 3 check did not exit 0 (exited with code 1; last output: oops). {RESTART}"
-        )
+        "send-it stopped: step 3 check did not exit 0 (exited with code 1; last output: oops)."
+            .to_string()
     );
 }
 
@@ -669,7 +668,7 @@ fn a_check_that_could_not_start_says_so_and_names_the_error() {
     .notice(&Run::default(), None);
     assert_eq!(
         notice,
-        format!("send-it stopped: step 3 check could not start: no such file. {RESTART}")
+        "send-it stopped: step 3 check could not start: no such file.".to_string()
     );
     assert!(!notice.contains("did not exit 0"), "{notice}");
 }

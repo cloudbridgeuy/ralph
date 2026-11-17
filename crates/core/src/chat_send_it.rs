@@ -557,8 +557,6 @@ pub fn parse_step_result(args: &Value) -> Result<StepResult, String> {
 }
 
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
-const RESTART_HINT: &str =
-    "To run it again, show the plan with /send-it status, then type /send-it go.";
 const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -634,7 +632,7 @@ impl StopReason {
         StopReason::CheckFailed { step, detail: None }
     }
 
-    pub fn notice(self, run: &Run, kept: Option<&RunFile>) -> String {
+    pub fn notice(&self, run: &Run, kept: Option<&RunFile>) -> String {
         let why = match self {
             StopReason::Off => return OFF_NOTICE.to_string(),
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
@@ -648,7 +646,7 @@ impl StopReason {
                 evidence.trim_end_matches('.')
             ),
             StopReason::CheckFailed { step, detail } => {
-                let detail = detail.map_or(String::new(), |detail| {
+                let detail = detail.as_ref().map_or(String::new(), |detail| {
                     format!(" ({})", detail.trim_end_matches('.'))
                 });
                 format!("step {step} check did not exit 0{detail}")
@@ -664,10 +662,8 @@ impl StopReason {
             StopReason::Refused { tool } => format!("the plan does not allow `{tool}`"),
         };
         match kept.and_then(|file| Some((resume_step(file)?, file.plan.steps.len()))) {
-            Some((step, steps)) => format!(
-                "send-it stopped at step {step}/{steps}: {why}. The plan is kept. Fix the cause, show it with /send-it status, then type /send-it go to resume from step {step}. /send-it off deletes it."
-            ),
-            None => format!("send-it stopped: {why}. {RESTART_HINT}"),
+            Some((step, steps)) => format!("send-it stopped at step {step}/{steps}: {why}."),
+            None => format!("send-it stopped: {why}."),
         }
     }
 }

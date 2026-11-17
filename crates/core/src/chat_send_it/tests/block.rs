@@ -100,3 +100,160 @@ fn the_final_met_line_is_not_shown_when_the_run_is_done() {
     assert_eq!(mid.shown_met(), mid.met.as_deref());
     assert!(mid.shown_met().is_some());
 }
+
+fn kept_at(step: usize) -> RunFile {
+    RunFile {
+        plan: plan(),
+        approved: None,
+        stopped: stopped_at(step),
+    }
+}
+
+fn stopped_block(
+    reason: &StopReason,
+    step: usize,
+    turns: u32,
+    usd: f64,
+    pending: &[&str],
+) -> String {
+    stop_block(
+        reason,
+        Some(&kept_at(step)),
+        &finished(turns, usd, None, pending),
+        80,
+    )
+}
+
+fn header_of(block: &str) -> &str {
+    block.lines().next().unwrap()
+}
+
+#[test]
+fn a_flagged_stop_block_names_the_worker_and_how_to_answer_it() {
+    let reason = StopReason::WorkerFlagged {
+        worker: "E1".to_string(),
+        line: "Keep the old flag name?".to_string(),
+    };
+    let block = stopped_block(&reason, 2, 4, 0.61, &[]);
+    assert!(
+        header_of(&block).starts_with(
+            "━━ send-it STOPPED at 2/4 · worker E1 needs an answer · 4 turns · $0.61 ━"
+        ),
+        "{block}"
+    );
+    assert_eq!(header_of(&block).width(), 80);
+    assert_eq!(
+        body(&block),
+        [
+            "Changed   ✓ 1 (1 step)",
+            "          ✗ 2 wait for CI — E1: \"Keep the old flag name?\"",
+            "Pending   1. answer E1",
+            "Next      @E1 <your answer> · then /send-it go resumes at step 2",
+        ]
+    );
+}
+
+#[test]
+fn a_judge_rounds_stop_block_shows_the_evidence_once() {
+    let reason = StopReason::JudgeRounds {
+        step: 4,
+        evidence: "finding 2 is open.".to_string(),
+    };
+    let block = stopped_block(&reason, 4, 7, 1.4, &[]);
+    assert!(
+        header_of(&block)
+            .contains("STOPPED at 4/4 · not met after 2 judge rounds · 7 turns · $1.40"),
+        "{block}"
+    );
+    assert_eq!(
+        body(&block),
+        [
+            "Changed   ✓ 1-3 (3 steps)",
+            "          ✗ 4 address review — finding 2 is open",
+            "Pending   1. act on the judge evidence or edit step 4",
+            "Next      /send-it go · resumes at step 4",
+        ]
+    );
+    assert_eq!(block.matches("finding 2 is open").count(), 1);
+}
+
+#[test]
+fn a_cap_stop_block_names_the_cap_and_resumes_with_fresh_caps() {
+    let block = stopped_block(&StopReason::TurnCap, 3, 15, 3.1, &[]);
+    assert!(
+        header_of(&block).contains("STOPPED at 3/4 · turn cap reached (15 turns) · $3.10"),
+        "{block}"
+    );
+    assert_eq!(
+        body(&block),
+        [
+            "Changed   ✓ 1-2 (2 steps)",
+            "          … 3 run the checks — not finished",
+            "Pending   nothing; the cause is the cap",
+            "Next      /send-it go · resumes at step 3 with fresh caps",
+        ]
+    );
+    let cost = stopped_block(&StopReason::CostCap, 3, 6, 4.0, &[]);
+    assert!(
+        header_of(&cost).contains("cost cap reached ($4.00)"),
+        "{cost}"
+    );
+}
+
+#[test]
+fn a_stop_block_lists_its_own_item_before_the_model_items() {
+    let block = stopped_block(&StopReason::Unmet { step: 2 }, 2, 3, 0.5, &["push main"]);
+    assert_eq!(
+        body(&block),
+        [
+            "Changed   ✓ 1 (1 step)",
+            "          ✗ 2 wait for CI — exit criterion not met",
+            "Pending   1. fix step 2 or edit it",
+            "on you    2. push main [model]",
+            "Next      /send-it go · resumes at step 2",
+        ]
+    );
+}
+
+#[test]
+fn a_took_over_stop_at_step_one_has_no_collapsed_line_and_nothing_pending() {
+    let block = stopped_block(&StopReason::TookOver, 1, 1, 0.1, &[]);
+    assert_eq!(
+        body(&block),
+        [
+            "Changed   … 1 collect evidence — not finished",
+            "Pending   nothing",
+            "Next      /send-it go · resumes at step 1",
+        ]
+    );
+}
+
+#[test]
+fn a_stop_block_without_a_kept_plan_points_at_status_and_go() {
+    let block = stop_block(
+        &StopReason::TookOver,
+        None,
+        &finished(2, 0.2, None, &[]),
+        80,
+    );
+    assert!(
+        header_of(&block).starts_with("━━ send-it STOPPED · you took over · 2 turns · $0.20 ━"),
+        "{block}"
+    );
+    assert_eq!(
+        body(&block),
+        [
+            "Pending   nothing",
+            "Next      /send-it status, then /send-it go"
+        ]
+    );
+}
+
+#[test]
+fn an_off_stop_has_no_block_only_its_notice() {
+    let block = stop_block(&StopReason::Off, None, &finished(2, 0.2, None, &[]), 80);
+    assert_eq!(
+        block,
+        "send-it off: the run stopped and its plan is deleted."
+    );
+}

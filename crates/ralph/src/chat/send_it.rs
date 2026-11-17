@@ -16,8 +16,8 @@ use ralph_core::chat_send_it::{
     approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_block,
     done_notice, judge_echo, judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal,
     read_run, render_status, render_status_styled, running_line, settle_check, start_run,
-    step_line, stop_file, tick, with_reply, write_run, Action, Driving, Ended, Limits, Next,
-    RunFile, Seen, StepResult, StopReason, Ticked,
+    step_line, stop_block, stop_file, tick, with_reply, write_run, Action, Driving, Ended, Limits,
+    Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -428,8 +428,12 @@ impl SendIt {
 
     fn stopped(&self, reason: StopReason, driving: &Driving, monitor: &Monitor) -> Driven {
         let kept = self.release(&driving.hash, Some(driving.progress.step + 1));
-        let notice = reason.notice(&driving.run, kept.as_ref().ok().and_then(Option::as_ref));
-        println!("{notice}");
+        let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
+        let notice = reason.notice(&driving.run, kept_file);
+        println!(
+            "{}",
+            stop_block(&reason, kept_file, driving, screen_columns())
+        );
         self.log_notice(&notice);
         if let Err(error) = kept {
             println!("{error}");

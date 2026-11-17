@@ -22,8 +22,6 @@ fn limits() -> Limits {
     }
 }
 
-const RESTART: &str = "To run it again, show the plan with /send-it status, then type /send-it go.";
-
 #[test]
 fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
     let run = Run::default();
@@ -47,7 +45,8 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
     ] {
         let notice = reason.notice(&run, None);
         assert!(notice.starts_with("send-it stopped: "), "{notice}");
-        assert!(notice.ends_with(RESTART), "{notice}");
+        assert!(notice.ends_with('.'), "{notice}");
+        assert!(!notice.contains("/send-it"), "{notice}");
         assert!(!notice.contains("send-it off"), "{notice}");
         assert!(!notice.contains("Turn it on again"), "{notice}");
     }
@@ -60,7 +59,7 @@ fn a_refused_stop_names_the_tool() {
     };
     assert_eq!(
         refused.notice(&Run::default(), None),
-        format!("send-it stopped: the plan does not allow `spawn_worker codex`. {RESTART}")
+        "send-it stopped: the plan does not allow `spawn_worker codex`.".to_string()
     );
 }
 
@@ -451,7 +450,7 @@ fn new_stop_notices_name_the_step() {
     let run = Run::default();
     assert_eq!(
         StopReason::Unmet { step: 2 }.notice(&run, None),
-        format!("send-it stopped: step 2 missed its exit criterion. {RESTART}")
+        "send-it stopped: step 2 missed its exit criterion.".to_string()
     );
     assert!(flagged_stop()
         .notice(&run, None)
@@ -462,7 +461,8 @@ fn new_stop_notices_name_the_step() {
             evidence: "finding 2 is open.".to_string()
         }
         .notice(&run, None),
-        format!("send-it stopped: step 4 was still not met after the last judge round: finding 2 is open. {RESTART}")
+        "send-it stopped: step 4 was still not met after the last judge round: finding 2 is open."
+            .to_string()
     );
     for (reason, why) in [
         (StopReason::check_failed(3), "step 3 check did not exit 0"),
@@ -930,7 +930,7 @@ fn a_kept_stop_names_the_step_and_how_to_resume() {
     };
     assert_eq!(
         flagged_stop().notice(&Run::default(), Some(&kept)),
-        "send-it stopped at step 2/4: a worker asked a question or is blocked. The plan is kept. Fix the cause, show it with /send-it status, then type /send-it go to resume from step 2. /send-it off deletes it."
+        "send-it stopped at step 2/4: a worker asked a question or is blocked."
     );
     assert_eq!(
         StopReason::Off.notice(&Run::default(), Some(&kept)),
@@ -942,7 +942,7 @@ fn a_kept_stop_names_the_step_and_how_to_resume() {
     };
     assert_eq!(
         StopReason::TookOver.notice(&Run::default(), Some(&unstopped)),
-        format!("send-it stopped: you took over. {RESTART}")
+        "send-it stopped: you took over.".to_string()
     );
 }
 
