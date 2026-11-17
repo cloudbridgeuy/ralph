@@ -568,6 +568,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             crate::render::image::render_cell_display(&ctx, shown, &agent_theme)
         );
     };
+    let settles_closes = fork.is_none();
+    if settles_closes {
+        thread::settle::scan(&store_dir, &monitor.inbox);
+    }
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
         let typed_at_prompt = pending.is_none();
@@ -613,6 +617,16 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         else {
             break;
         };
+        let asked = settles_closes
+            && typed_at_prompt
+            && typed_line.trim().is_empty()
+            && thread::settle::scan(&store_dir, &monitor.inbox);
+        if asked {
+            monitor.refresh(true);
+            if !(matches!(route, Route::ReadInbox(_)) && monitor.status().unread > 0) {
+                continue;
+            }
+        }
         let record = CommandRecord::for_route(&route, &typed_line);
         let note = |output: &str| {
             if let Some(row) = record.row(output) {

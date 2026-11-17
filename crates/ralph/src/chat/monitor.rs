@@ -16,6 +16,7 @@ use ralph_core::chat_process::{process_cell, process_usage, ProcessEnv, ProcessU
 use ralph_core::chat_status::{
     latest_states, schedule_states, watch_states, worker_states, RunningWorker, Status,
 };
+use ralph_core::chat_thread_auto::split_close_reports;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::program_status::{self, report_for, Phase};
@@ -132,7 +133,7 @@ impl Monitor {
     }
 
     pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
-        let reports = self.inbox.drain(selection)?;
+        let (_, reports) = split_close_reports(self.inbox.drain(selection)?);
         self.note_scheduled(&reports);
         locked(&self.seen).extend(latest_states(&reports));
         locked(&self.check).reports.extend(last_reports(&reports));

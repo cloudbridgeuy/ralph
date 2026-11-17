@@ -33,6 +33,7 @@ use ralph_server::chat::memory::Reach;
 pub(crate) mod close;
 mod list;
 pub(super) mod open;
+pub(super) mod settle;
 pub use list::rows;
 pub(super) use list::{default_listing, listing};
 

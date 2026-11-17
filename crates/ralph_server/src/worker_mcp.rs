@@ -177,6 +177,14 @@ impl Inbox {
         })
     }
 
+    pub fn drain_closes(&self) -> io::Result<Vec<Report>> {
+        self.sync(|ledger| {
+            let reports = ledger.take_closes();
+            let changed = !reports.is_empty();
+            (reports, changed)
+        })
+    }
+
     pub fn drop_report(&self, position: Position) -> io::Result<Option<Entry>> {
         let log = self.dir.with_file_name(DROP_LOG);
         self.sync(|ledger| match ledger.get(position).cloned() {
