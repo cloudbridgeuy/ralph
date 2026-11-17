@@ -70,6 +70,55 @@ pub fn clear_closed(meta: &ThreadMeta) -> Option<ThreadMeta> {
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingClose {
+    pub name: ThreadName,
+    pub auto: AutoMode,
+}
+
+pub fn pending_closes(threads: &[(ThreadName, ThreadMeta)]) -> Vec<PendingClose> {
+    threads
+        .iter()
+        .filter(|(_, meta)| meta.closed && meta.merged.is_none() && meta.parked.is_none())
+        .filter_map(|(name, meta)| {
+            meta.auto.map(|auto| PendingClose {
+                name: name.clone(),
+                auto,
+            })
+        })
+        .collect()
+}
+
+fn verb(auto: AutoMode) -> &'static str {
+    match auto {
+        AutoMode::Merge => "merge",
+        AutoMode::Drop => "drop",
+    }
+}
+
+pub fn close_question(name: &ThreadName, auto: AutoMode) -> String {
+    format!("{} {name}? [y/n]", verb(auto))
+}
+
+pub fn close_answer(line: Option<&str>) -> bool {
+    line.is_some_and(|line| matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
+}
+
+pub fn is_close_report(report: &Report) -> bool {
+    report.status == THREAD_CLOSED_STATUS && report.worker.starts_with(THREAD_REPORT_PREFIX)
+}
+
+pub fn split_close_reports(reports: Vec<Report>) -> (Vec<Report>, Vec<Report>) {
+    reports.into_iter().partition(is_close_report)
+}
+
+pub fn close_refusal(name: &ThreadName, auto: AutoMode, reason: &str) -> String {
+    format!(
+        "{reason}\nthread {name} is kept; `ralph thread {} {name}` retries it.",
+        verb(auto)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +218,107 @@ mod tests {
         assert_eq!(report.at, "2026-01-01T00:00:00Z");
         assert_eq!(report.status, "thread-closed");
         assert_eq!(report.text, "side closed \u{b7} Enter to drop or keep it");
+    }
+
+    fn closed_meta(auto: Option<AutoMode>) -> ThreadMeta {
+        ThreadMeta {
+            closed: true,
+            ..meta_with(auto, false)
+        }
+    }
+
+    #[test]
+    fn pending_closes_table() {
+        let side = name();
+        let other = ThreadName::parse("other").unwrap();
+        let merged = ThreadMeta {
+            merged: Some(crate::chat_thread::Merged {
+                at: "t".to_string(),
+                digest: "d".to_string(),
+            }),
+            ..closed_meta(Some(AutoMode::Merge))
+        };
+        let parked = ThreadMeta {
+            parked: Some(crate::chat_thread::Parked {
+                at: "t".to_string(),
+            }),
+            ..closed_meta(Some(AutoMode::Merge))
+        };
+        let threads = vec![
+            (side.clone(), closed_meta(Some(AutoMode::Drop))),
+            (other.clone(), closed_meta(Some(AutoMode::Merge))),
+            (
+                ThreadName::parse("open").unwrap(),
+                live(Some(AutoMode::Merge)),
+            ),
+            (ThreadName::parse("plain").unwrap(), closed_meta(None)),
+            (ThreadName::parse("done").unwrap(), merged),
+            (ThreadName::parse("away").unwrap(), parked),
+        ];
+        assert_eq!(
+            pending_closes(&threads),
+            vec![
+                PendingClose {
+                    name: side,
+                    auto: AutoMode::Drop
+                },
+                PendingClose {
+                    name: other,
+                    auto: AutoMode::Merge
+                },
+            ]
+        );
+        assert!(pending_closes(&[]).is_empty());
+    }
+
+    #[test]
+    fn close_question_is_exact_for_both_modes() {
+        assert_eq!(
+            close_question(&name(), AutoMode::Merge),
+            "merge side? [y/n]"
+        );
+        assert_eq!(close_question(&name(), AutoMode::Drop), "drop side? [y/n]");
+    }
+
+    #[test]
+    fn only_an_explicit_yes_is_yes() {
+        for yes in ["y", "yes", " Y\n", "YES"] {
+            assert!(close_answer(Some(yes)), "{yes}");
+        }
+        for no in ["n", "no", "", "\n", "maybe", "yy"] {
+            assert!(!close_answer(Some(no)), "{no}");
+        }
+        assert!(!close_answer(None));
+    }
+
+    fn report(worker: &str, status: &str) -> Report {
+        Report {
+            worker: worker.to_string(),
+            at: "t".to_string(),
+            status: status.to_string(),
+            text: "x".to_string(),
+        }
+    }
+
+    #[test]
+    fn close_reports_split_from_digests_and_workers() {
+        let closed = thread_closed_report(&name(), AutoMode::Merge, "t");
+        let digest = report("thread:side", "merged");
+        let worker = report("w1", "done");
+        assert!(is_close_report(&closed));
+        assert!(!is_close_report(&digest));
+        let (closes, rest) =
+            split_close_reports(vec![digest.clone(), closed.clone(), worker.clone()]);
+        assert_eq!(closes, vec![closed]);
+        assert_eq!(rest, vec![digest, worker]);
+    }
+
+    #[test]
+    fn a_refusal_names_the_reason_and_the_manual_command() {
+        let merge = close_refusal(&name(), AutoMode::Merge, "thread side is in use");
+        assert!(merge.contains("thread side is in use"), "{merge}");
+        assert!(merge.contains("ralph thread merge side"), "{merge}");
+        let drop = close_refusal(&name(), AutoMode::Drop, "no thread side");
+        assert!(drop.contains("ralph thread drop side"), "{drop}");
     }
 }
