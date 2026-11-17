@@ -66,7 +66,7 @@ pub struct Session {
     reaped: bool,
     config: SpinnerSubprocessConfig,
     model_usage: BTreeMap<String, ModelTotals>,
-    /// Running cost of this process. It starts at 0, so the first call pays its whole total.
+    /// Seen and logged running totals of this process. Both start at 0, so the first call pays its whole total.
     running: RunningCosts,
 }
 
@@ -285,6 +285,7 @@ impl Drop for Session {
     }
 }
 
+/// `seen` is the last total claude reported, for the live spend. `logged` is the total of the last row written, so a call that writes no row leaves its spend to the next row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RunningCosts {
     pub seen: Option<f64>,
@@ -371,7 +372,7 @@ mod tests {
 
     #[test]
     fn a_ping_without_usage_between_two_turns_stays_in_the_written_total() {
-        let mut rows = written_rows(
+        let rows = written_rows(
             &CallSite::Ping,
             &[
                 exchange(1.0, true),
@@ -379,7 +380,6 @@ mod tests {
                 exchange(1.75, true),
             ],
         );
-        rows[0].process_turn = Some(1);
         assert_eq!(sum(&rows), 1.75);
         assert_eq!(sum(&normalize_costs(rows)), 1.75);
     }
