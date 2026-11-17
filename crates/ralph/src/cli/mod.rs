@@ -76,7 +76,7 @@ harness; ralph never sets it."
     #[command(
         about = "Manage chat threads: ls, drop, merge, park, revive, pull.",
         long_about = "A thread is a named side chat forked from the main chat: `ralph chat --thread <NAME>` \
-creates or opens it under <store>/threads/<NAME>. These subcommands work without starting a chat."
+creates or opens it under <store>/threads/<NAME>; add `--model <MODEL>` to run its chat on a different model. These subcommands work without starting a chat."
     )]
     Thread(ThreadArgs),
 

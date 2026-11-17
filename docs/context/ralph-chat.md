@@ -8,7 +8,7 @@
 ralph chat [--skill <PATH>]... [--permission-mode <MODE>] [--worktree-dir <DIR>] [--no-inbox-sound] [--no-inbox-notification] [--skip-summary]
 ralph                      # same as ralph chat with defaults
 ralph chat history <read|zoom|recall|search> <words>... [--cursor <C>] [--store <DIR>]
-ralph chat --thread <NAME>  # create or open a thread; see Threads
+ralph chat --thread <NAME> [--model <MODEL>]  # create or open a thread; see Threads
 ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pull <NAME>> [--store <DIR>]
 ```
 
@@ -60,7 +60,7 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 - `crates/core/src/chat_socket.rs`: socket request/response lines, owner record, `socket_fate` and `orphan_sidecar_fate`.
 - `crates/ralph/src/invoke.rs`: `build_chat_command`, `build_memory_command`, `build_nap_command`.
 - `crates/ralph/src/cli/mod.rs` and `main.rs`: arguments, default dispatch, `chat-mcp` and `chat-nap` handlers.
-- `crates/core/src/chat_thread.rs`: pure thread rules: `ThreadName`, `ThreadMeta`, `Scope`, `split_scope`, `label_item`, `fork_check`, `thread_split`, `guard_check`, `drop_message`, `open_launch`, `merged_check`, `open_check`, `revive_check`, `pull_message`, `merge_prompt`, `digest_with`, `merged_report`, `view_block`, `view_report`. `crates/core/src/chat_thread_table.rs`: the pure thread table (`ThreadRow`, `ThreadState`, `sort_rows`, `threads_view`). `crates/ralph/src/chat/thread.rs`: `Memory` (routes a `MemoryCall` to main or a thread store), `config_root`, `ensure`, `open_thread` (the `/thread open` shell), `ralph thread ls|drop|merge|park|revive|pull`.
+- `crates/core/src/chat_thread.rs`: pure thread rules: `ThreadName`, `ThreadMeta`, `Scope`, `split_scope`, `label_item`, `fork_check`, `thread_split`, `guard_check`, `drop_message`, `open_launch`, `merged_check`, `open_check`, `revive_check`, `pull_message`, `merge_prompt`, `digest_with`, `merged_report`, `view_block`, `view_report`. `crates/core/src/chat_thread_model.rs`: the thread model rules (`validate_thread_model`, `with_model`, `build_model_args`). `crates/core/src/chat_thread_table.rs`: the pure thread table (`ThreadRow`, `ThreadState`, `sort_rows`, `threads_view`). `crates/ralph/src/chat/thread.rs`: `Memory` (routes a `MemoryCall` to main or a thread store), `config_root`, `ensure`, `open_thread` (the `/thread open` shell), `ralph thread ls|drop|merge|park|revive|pull`.
 
 ## Single instance
 
@@ -88,6 +88,7 @@ A thread is a named side chat forked from the main chat. `ralph chat --thread <N
 - `/thread open <NAME>` opens the thread in a new Rex block: it runs `rex split -b $REX_BLOCK --label "thread <NAME>" -c <cwd> -- <ralph> chat --thread <NAME> --store <main>`, with `env RALPH_CONFIG_DIR=<dir>` before `<ralph>` only when that variable is set. From a thread's chat it forks a sibling from main (`config_root`), not a nested thread. It refuses a bad name or a word count other than one (usage), and a merged, parked or open thread (the `ralph chat --thread` and `pull` messages, plus a pointer to `/thread switch` or `/thread revive`); an unknown name is fine, the new chat creates it. Without `REX_BLOCK` it opens nothing and prints the shell-quoted command to run in another terminal. It is local, starts no turn and waits in the queue while a turn runs. The status bar of the new chat shows the session name, then a thread cell (`thread <NAME>`, `⑂ <NAME>` when narrow); `/thread open` passes no `--name`. `open_launch` is pure; `thread::open_thread` reads the environment and runs `rex`.
 
 - `/thread open <NAME> --auto-merge|--auto-drop` stores `auto` in `thread.json`; closing the thread chat (Ctrl-D, or Ctrl-C at an empty prompt) sets `closed` and posts a `thread-closed` report, and main then asks to merge or drop it. Code: `crates/core/src/chat_thread_auto.rs`, `chat/thread/close.rs`, `chat/thread/settle.rs`. Details in [Auto-merge and auto-drop](threads.md#auto-merge-and-auto-drop).
+- `/thread open <NAME> --model <m>` and `ralph chat --thread <NAME> --model <m>` (`--model` requires `--thread`) store `model` in `thread.json` (`prepare_open`, `reopen`). The chat start reads it after `reopen` and adds `--model <m>` to the turn's extra `claude` args (`Turn.model_args`); main chat adds none. A usage error on a missing, repeated or invalid value. An open thread chat refuses a change through `open_ready`'s claim. Nap, the merge curator and the tag pass keep `haiku`. Why and how to use it: [Run a thread on another model](threads.md#run-a-thread-on-another-model).
 
 For a task-first walkthrough of these commands, see the [Threads Guide](threads.md).
 

@@ -15,11 +15,23 @@ A thread has no separate create command. Open it by name and ralph creates it on
 
 `open` is chat-only. The CLI has no `ralph thread open`; use `ralph chat --thread <name>`. `/thread open <name>` refuses a merged, parked or open thread. For an open one it says to close that chat, then `/thread switch <name>`. For a parked one it points to `/thread revive <name>`.
 
+To run the thread's chat on another model, add `--model <m>` to either form: `ralph chat --thread <name> --model haiku` or `/thread open <name> --model haiku`. See [Run a thread on another model](#run-a-thread-on-another-model).
+
 A name has 1 to 32 lowercase letters, digits or dashes. It cannot start with a dash. `main` is not a valid name.
 
-`/thread open` creates nothing itself, except with `--auto-merge` or `--auto-drop`: it then creates the thread and stores the choice in `thread.json` (see [Auto-merge and auto-drop](#auto-merge-and-auto-drop)). The chat it starts creates the thread otherwise. Inside a thread, `/thread open <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
+`/thread open` creates nothing itself, except with `--auto-merge`, `--auto-drop` or `--model`: it then creates the thread and stores the choice in `thread.json` (see [Auto-merge and auto-drop](#auto-merge-and-auto-drop)). The chat it starts creates the thread otherwise. Inside a thread, `/thread open <name>` forks a sibling thread from main, not a nested thread. It opens as it does from main.
 
 The thread starts from main's memory as it was at that moment. This point is the fork point. The thread does not see main messages that come later until you pull them.
+
+## Run a thread on another model
+
+The purpose is to let a thread run a less frontier model, to test whether it is as useful as Opus 5.5 for the main chat. Saving money is a side effect. `ralph usage by model` separates the two.
+
+- Accepted values: `sonnet`, `opus`, `haiku`, or an id that starts with `claude-`. Anything else is an error; there is no fallback.
+- The model is chosen at open or reopen and stored in `thread.json`. A later `--model` replaces it. Without `--model`, the stored one stays.
+- It is refused while the thread's chat is open. Close that chat first.
+- Revive, switch, pull and park keep it.
+- Only the thread's chat turns use it. Nap, the merge curator and the tag pass stay on haiku. Main chat is unchanged.
 
 ## Return to main
 
