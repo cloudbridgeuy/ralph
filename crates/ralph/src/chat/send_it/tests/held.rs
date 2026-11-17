@@ -79,7 +79,8 @@ fn with_no_run_the_held_item_is_read_from_the_inbox() {
     let mut sending = None;
     let route = send_it
         .held_item(&mut sending, Position::FIRST, &monitor(dir.path()))
-        .unwrap();
+        .unwrap()
+        .route;
     assert!(reads_inbox(route));
     assert!(sending.is_none());
 }
@@ -94,7 +95,8 @@ fn a_run_not_awaiting_a_check_keeps_its_state_and_reads_the_inbox() {
     let mut sending = Some(turn);
     let route = send_it
         .held_item(&mut sending, Position::FIRST, &monitor(dir.path()))
-        .unwrap();
+        .unwrap()
+        .route;
     assert!(reads_inbox(route));
     assert_eq!(sending.unwrap().driving, expected);
 }
@@ -107,7 +109,8 @@ fn a_check_with_no_outcome_yet_keeps_its_state_and_reads_the_inbox() {
     let mut sending = Some(active);
     let route = send_it
         .held_item(&mut sending, Position::FIRST, &monitor(dir.path()))
-        .unwrap();
+        .unwrap()
+        .route;
     assert!(reads_inbox(route));
     assert_eq!(sending.unwrap().driving, expected);
 }
@@ -120,7 +123,8 @@ fn a_settled_check_dispatches_with_no_inbox_read() {
     let mut sending = Some(with_outcome(&active, WatchOutcome::Exited(0)));
     let route = send_it
         .held_item(&mut sending, Position::FIRST, &monitor)
-        .unwrap();
+        .unwrap()
+        .route;
     assert!(!reads_inbox(route));
     assert!(sending.is_none());
 }
@@ -163,4 +167,16 @@ fn an_unread_message_with_no_run_is_left_as_it_is() {
     let message = send_it.brief_unread(&mut sending, "[w] done".to_string());
     assert_eq!(message, "[w] done");
     assert!(sending.is_none());
+}
+
+#[test]
+fn a_settled_failing_check_that_stops_the_run_carries_the_go_prefill() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = started(dir.path());
+    let mut sending = Some(with_outcome(&active, WatchOutcome::Exited(1)));
+    let driven = send_it
+        .held_item(&mut sending, Position::FIRST, &monitor(dir.path()))
+        .unwrap();
+    assert_eq!(driven.prefill.as_deref(), Some("/send-it go"));
+    assert!(driven.route.is_none());
 }

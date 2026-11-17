@@ -712,8 +712,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 idle.store(false, Ordering::SeqCst);
                 match held {
                     Held::Item(position) => {
-                        let route = send_it.held_item(&mut sending, position, &monitor)?;
-                        pending = route.map(Submitted::internal);
+                        let driven = send_it.held_item(&mut sending, position, &monitor)?;
+                        pending = driven.route.map(Submitted::internal);
                     }
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);
