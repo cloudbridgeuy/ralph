@@ -523,6 +523,8 @@ mod tests {
             created: "c".to_string(),
             merged: None,
             parked: None,
+            auto: None,
+            closed: false,
         }
     }
 

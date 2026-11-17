@@ -57,6 +57,21 @@ pub struct ThreadMeta {
     pub merged: Option<Merged>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parked: Option<Parked>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<AutoMode>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub closed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoMode {
+    Merge,
+    Drop,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -464,6 +479,8 @@ mod tests {
             created: "2026-11-02T10:00:00Z".to_string(),
             merged: None,
             parked: None,
+            auto: None,
+            closed: false,
         };
         let text = serde_json::to_string(&meta).unwrap();
         assert_eq!(text, r#"{"base":42,"created":"2026-11-02T10:00:00Z"}"#);
@@ -498,6 +515,34 @@ mod tests {
         assert_eq!(serde_json::from_str::<ThreadMeta>(&text).unwrap(), parked);
     }
 
+    #[test]
+    fn thread_meta_without_auto_or_closed_loads_with_defaults() {
+        let meta: ThreadMeta =
+            serde_json::from_str(r#"{"base":42,"created":"2026-11-02T10:00:00Z"}"#).unwrap();
+        assert_eq!(meta.auto, None);
+        assert!(!meta.closed);
+    }
+
+    #[test]
+    fn thread_meta_round_trips_auto_and_closed() {
+        for (auto, word) in [(AutoMode::Merge, "merge"), (AutoMode::Drop, "drop")] {
+            let meta = ThreadMeta {
+                base: 1,
+                created: "t".to_string(),
+                merged: None,
+                parked: None,
+                auto: Some(auto),
+                closed: true,
+            };
+            let text = serde_json::to_string(&meta).unwrap();
+            assert_eq!(
+                text,
+                format!(r#"{{"base":1,"created":"t","auto":"{word}","closed":true}}"#)
+            );
+            assert_eq!(serde_json::from_str::<ThreadMeta>(&text).unwrap(), meta);
+        }
+    }
+
     fn merged_meta() -> ThreadMeta {
         ThreadMeta {
             base: 4,
@@ -508,6 +553,8 @@ mod tests {
                 landed: None,
             }),
             parked: None,
+            auto: None,
+            closed: false,
         }
     }
 

@@ -30,6 +30,8 @@ mod tests {
                 landed,
             }),
             parked: None,
+            auto: None,
+            closed: false,
         };
         write_meta(&dir, &meta).unwrap();
     }

@@ -375,7 +375,7 @@ pub fn approve(
     if !typed_at_prompt {
         return Err("/send-it go counts only when you type it at the prompt.".to_string());
     }
-    if shown != Some(hash.as_str()) {
+    if shown != Some(hash.as_str()) && resume_step(file).is_none() {
         return Err(format!(
             "Plan {hash} is not the plan on screen. Show it with /send-it status, then type /send-it go."
         ));

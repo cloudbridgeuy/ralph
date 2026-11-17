@@ -1,3 +1,4 @@
+use crate::chat_thread_auto::is_close_report;
 use crate::worker::{chat_message, Report};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -99,6 +100,14 @@ impl Ledger {
 
     pub fn reports(&self) -> Vec<Report> {
         self.entries.iter().map(|e| e.report.clone()).collect()
+    }
+
+    pub fn take_closes(&mut self) -> Vec<Report> {
+        let (closes, rest): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
+            .into_iter()
+            .partition(|e| is_close_report(&e.report));
+        self.entries = rest;
+        closes.into_iter().map(|e| e.report).collect()
     }
 
     pub fn take(&mut self, selection: Selection) -> Vec<Report> {
@@ -425,5 +434,26 @@ mod tests {
         assert_eq!(at("2026-01-07T00:00:00Z"), "3d");
         assert_eq!(at("2026-01-10T01:00:00Z"), "0s");
         assert_eq!(at("t"), "?");
+    }
+
+    #[test]
+    fn take_closes_removes_only_thread_closed_reports() {
+        use crate::chat_thread::{AutoMode, ThreadName};
+        use crate::chat_thread_auto::{split_close_reports, thread_closed_report};
+        let closed =
+            thread_closed_report(&ThreadName::parse("side").unwrap(), AutoMode::Merge, "t");
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![
+            arrival("a"),
+            ("c".to_string(), closed.clone()),
+            arrival("b"),
+        ]);
+        assert_eq!(ledger.take_closes(), vec![closed.clone()]);
+        assert_eq!(sources(&ledger), ["a", "b"]);
+
+        let mut only = Ledger::default();
+        only.ingest(vec![("c".to_string(), closed)]);
+        let (_, rest) = split_close_reports(only.take(Selection::All));
+        assert!(unread_turn(Selection::All, &rest).is_err());
     }
 }
