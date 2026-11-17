@@ -183,6 +183,8 @@ pub fn ensure(main: &Path, name: &ThreadName) -> io::Result<ThreadMeta> {
         created: chrono::Utc::now().to_rfc3339(),
         merged: None,
         parked: None,
+        auto: None,
+        closed: false,
     };
     fs::create_dir_all(&dir)?;
     write_meta(&dir, &meta)?;

@@ -132,6 +132,8 @@ mod tests {
             created: "now".to_string(),
             merged: None,
             parked: None,
+            auto: None,
+            closed: false,
         }
     }
 

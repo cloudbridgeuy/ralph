@@ -1,6 +1,6 @@
 use crate::chat_help::Command;
 use crate::chat_switch::SwitchTarget;
-use crate::chat_thread::ThreadName;
+use crate::chat_thread::{AutoMode, ThreadName};
 
 pub const VIEW_FLAG: &str = "--view";
 const VIEW_ALIAS: &str = "--rebase";
@@ -15,19 +15,25 @@ const PULL_USAGE: &str =
 const REVIVE_USAGE: &str =
     "usage: /thread revive <name> lets parked thread <name> open again; run it in main's chat.";
 const OPEN_USAGE: &str =
-    "usage: /thread open <name> opens thread <name> in a new Rex block next to this chat.";
+    "usage: /thread open <name> [--auto-merge | --auto-drop] opens thread <name> in a new Rex block next to this chat; --auto-merge or --auto-drop (one at most) finishes it on its own.";
 const DROP_USAGE: &str =
     "usage: /thread drop <name> deletes thread <name> after a y/n; run it in main's chat.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadOp {
     Ls,
-    Open(ThreadName),
+    Open(OpenOpts),
     Pull(ThreadName),
     Park(ThreadName),
     Revive(ThreadName),
     Drop(ThreadName),
     Merge { name: ThreadName, view: bool },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenOpts {
+    pub name: ThreadName,
+    pub auto: Option<AutoMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +52,7 @@ pub fn parse_thread_args(args: &str) -> ThreadLine {
         Some((&"switch", rest)) => {
             ThreadLine::Switch(one_name(rest, SWITCH_USAGE).map(SwitchTarget::Thread))
         }
-        Some((&"open", rest)) => ThreadLine::Op(one_name(rest, OPEN_USAGE).map(ThreadOp::Open)),
+        Some((&"open", rest)) => ThreadLine::Op(parse_open(rest)),
         Some((&"pull", rest)) => ThreadLine::Op(one_name(rest, PULL_USAGE).map(ThreadOp::Pull)),
         Some((&"park", rest)) => ThreadLine::Op(one_name(rest, PARK_USAGE).map(ThreadOp::Park)),
         Some((&"revive", rest)) => {
@@ -94,6 +100,25 @@ fn parse_merge(words: &[&str]) -> Result<ThreadOp, String> {
             .map_err(|e| format!("{e}\n{}", merge_usage())),
         _ => Err(merge_usage()),
     }
+}
+
+fn parse_open(words: &[&str]) -> Result<ThreadOp, String> {
+    let mut auto = None;
+    let mut names = Vec::new();
+    for word in words {
+        let flag = match *word {
+            "--auto-merge" => Some(AutoMode::Merge),
+            "--auto-drop" => Some(AutoMode::Drop),
+            other if other.starts_with("--") => return Err(OPEN_USAGE.to_string()),
+            _ => None,
+        };
+        match flag {
+            Some(_) if auto.is_some() => return Err(OPEN_USAGE.to_string()),
+            Some(mode) => auto = Some(mode),
+            None => names.push(*word),
+        }
+    }
+    one_name(&names, OPEN_USAGE).map(|name| ThreadOp::Open(OpenOpts { name, auto }))
 }
 
 fn one_name(words: &[&str], usage: &str) -> Result<ThreadName, String> {
@@ -217,13 +242,42 @@ mod tests {
 
     #[test]
     fn open_takes_one_thread_name() {
-        assert_eq!(op(" open auth "), Ok(ThreadOp::Open(auth())));
+        assert_eq!(op(" open auth "), Ok(open(None)));
+    }
+
+    fn open(auto: Option<AutoMode>) -> ThreadOp {
+        ThreadOp::Open(OpenOpts { name: auth(), auto })
+    }
+
+    #[test]
+    fn open_takes_one_auto_flag_before_or_after_the_name() {
+        for (line, auto) in [
+            ("open auth --auto-merge", AutoMode::Merge),
+            ("open --auto-merge auth", AutoMode::Merge),
+            ("open auth --auto-drop", AutoMode::Drop),
+            ("open --auto-drop auth", AutoMode::Drop),
+        ] {
+            assert_eq!(op(line), Ok(open(Some(auto))), "{line}");
+        }
+    }
+
+    #[test]
+    fn open_refuses_both_repeated_or_unknown_flags_with_usage() {
+        for line in [
+            "open auth --auto-merge --auto-drop",
+            "open auth --auto-merge --auto-merge",
+            "open auth --auto-drop --auto-drop",
+            "open auth --auto",
+            "open --auto-merge",
+            "open auth other --auto-merge",
+        ] {
+            assert_eq!(op(line), Err(OPEN_USAGE.to_string()), "{line}");
+        }
     }
 
     #[test]
     fn open_refuses_no_name_two_names_or_a_bad_name_with_usage() {
-        let usage =
-            "usage: /thread open <name> opens thread <name> in a new Rex block next to this chat.";
+        let usage = OPEN_USAGE;
         assert_eq!(op("open"), Err(usage.to_string()));
         assert_eq!(op("open auth now"), Err(usage.to_string()));
         let bad = op("open Bad_Name").unwrap_err();
@@ -335,7 +389,7 @@ mod tests {
 
     #[test]
     fn ls_and_open_are_never_refused() {
-        for op in [ThreadOp::Ls, ThreadOp::Open(auth())] {
+        for op in [ThreadOp::Ls, open(None)] {
             assert_eq!(op_refusal(true, &op), None);
             assert_eq!(op_refusal(false, &op), None);
         }
