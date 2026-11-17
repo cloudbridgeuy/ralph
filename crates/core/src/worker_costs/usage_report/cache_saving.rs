@@ -1,4 +1,4 @@
-use super::cache_periods::{IdlePeriod, PeriodOutcome};
+use super::cache_periods::{outcome_counts, IdlePeriod, PeriodOutcome};
 use crate::chat_process::{UsageLine, CACHE_TTL_SECS};
 use crate::wire::price::PriceTable;
 use crate::wire::view::Pricing;
@@ -19,6 +19,7 @@ pub struct SavingEstimate {
     pub counted: usize,
     pub unpriced: usize,
     pub saved: Option<f64>,
+    pub ping_cost: f64,
     pub rates_used: Vec<(String, SavingRates)>,
 }
 
@@ -63,7 +64,6 @@ pub fn saving_rates(model: &str, pricing: &Pricing, table: &PriceTable) -> Optio
 
 struct Counted<'a> {
     context: u64,
-    cost: f64,
     model: Option<&'a str>,
 }
 
@@ -78,7 +78,6 @@ fn counted(period: &IdlePeriod) -> Option<Counted<'_>> {
         && (next - last_turn).num_seconds() > CACHE_TTL_SECS;
     saved.then(|| Counted {
         context: period.context_tokens.unwrap_or(0),
-        cost: period.ping_cost,
         model: period.model.as_deref(),
     })
 }
@@ -105,12 +104,14 @@ pub fn saving_estimate(
         };
         used.insert(model.to_string(), rate);
         let gain = item.context as f64 / 1e6 * (rate.write_per_mtok - rate.read_per_mtok);
-        saved = Some(saved.unwrap_or(0.0) + gain - item.cost);
+        saved = Some(saved.unwrap_or(0.0) + gain);
     }
+    let ping_cost = outcome_counts(periods).ping_cost;
     SavingEstimate {
         counted: count,
         unpriced,
-        saved,
+        saved: saved.map(|gross| gross - ping_cost),
+        ping_cost,
         rates_used: used.into_iter().collect(),
     }
 }
@@ -118,7 +119,8 @@ pub fn saving_estimate(
 pub fn saving_lines(estimate: &SavingEstimate) -> Vec<String> {
     let first = match estimate.saved {
         Some(saved) => format!(
-            "saving estimate (est.): ${saved:.2} over {} periods",
+            "saving estimate (est.): ${saved:.2} net of ${:.2} ping cost, over {} periods",
+            estimate.ping_cost,
             estimate.counted - estimate.unpriced
         ),
         None => "saving estimate (est.): no price".to_string(),

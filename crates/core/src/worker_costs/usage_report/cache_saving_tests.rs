@@ -32,6 +32,10 @@ fn period(
     }
 }
 
+fn close(left: f64, right: f64) {
+    assert!((left - right).abs() < 1e-9, "left: {left} right: {right}");
+}
+
 fn rates(model: &str) -> Option<SavingRates> {
     (model == "m").then_some(SavingRates {
         write_per_mtok: 10.0,
@@ -90,13 +94,32 @@ fn saving_is_context_times_rate_gap_minus_ping_cost() {
 }
 
 #[test]
+fn saving_is_net_of_ping_cost_of_uncounted_periods() {
+    let mut counted_period = period(2, 61, PeriodOutcome::Warm, Some("m"));
+    counted_period.pings = 1;
+    let mut cold = period(2, 61, PeriodOutcome::Cold, Some("m"));
+    cold.ping_cost = 0.5;
+    let estimate = saving_estimate(&[counted_period, cold], rates);
+    close(estimate.saved.unwrap(), 0.9 - 0.02 - 0.5);
+    assert_eq!(estimate.counted, 1);
+    close(estimate.ping_cost, 0.52);
+}
+
+#[test]
+fn lone_uncounted_ping_gives_no_figure() {
+    let mut cold = period(2, 61, PeriodOutcome::Cold, Some("m"));
+    cold.ping_cost = 0.5;
+    assert_eq!(saving_estimate(&[cold], rates).saved, None);
+}
+
+#[test]
 fn savings_sum_and_negative_terms_stay() {
     let mut small = period(2, 61, PeriodOutcome::Warm, Some("m"));
     small.context_tokens = Some(1_000);
     small.ping_cost = 0.5;
     let big = period(2, 61, PeriodOutcome::Warm, Some("m"));
     let estimate = saving_estimate(&[big, small], rates);
-    assert!((estimate.saved.unwrap() - (0.88 + (0.009 - 0.5))).abs() < 1e-9);
+    assert!((estimate.saved.unwrap() - (0.9 + 0.009 - 0.02 - 0.5)).abs() < 1e-9);
 }
 
 #[test]
@@ -125,7 +148,7 @@ fn mixed_periods_sum_the_priced_ones_and_report_the_rest() {
         ],
         rates,
     );
-    assert!((estimate.saved.unwrap() - 0.88).abs() < 1e-9);
+    close(estimate.saved.unwrap(), 0.9 - 0.04);
     assert_eq!(estimate.unpriced, 1);
 }
 
@@ -133,7 +156,10 @@ fn mixed_periods_sum_the_priced_ones_and_report_the_rest() {
 fn lines_show_total_rule_and_rates() {
     let estimate = saving_estimate(&[period(2, 61, PeriodOutcome::Warm, Some("m"))], rates);
     let lines = saving_lines(&estimate);
-    assert_eq!(lines[0], "saving estimate (est.): $0.88 over 1 periods");
+    assert_eq!(
+        lines[0],
+        "saving estimate (est.): $0.88 net of $0.02 ping cost, over 1 periods"
+    );
     assert_eq!(lines[1], format!("rule: {SAVING_RULE}"));
     assert_eq!(
         lines[2],
