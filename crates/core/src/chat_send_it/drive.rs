@@ -491,14 +491,13 @@ pub fn settle_check(
 }
 
 fn met_line(plan: &RunPlan, step: usize, evidence: Option<&str>) -> String {
-    let label = plan
-        .steps
-        .get(step)
-        .map(|step| step.criterion.label())
-        .unwrap_or_default();
+    let label = match plan.steps.get(step).map(|step| &step.criterion) {
+        Some(Criterion::Judge { .. }) | None => String::new(),
+        Some(criterion) => format!(" ({})", criterion.label()),
+    };
     let evidence = evidence.map_or(String::new(), |evidence| format!(": {evidence}"));
     format!(
-        "send-it: step {}/{} met ({label}){evidence}",
+        "send-it: step {}/{} met{label}{evidence}",
         step + 1,
         plan.steps.len()
     )

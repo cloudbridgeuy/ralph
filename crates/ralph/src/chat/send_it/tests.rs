@@ -339,7 +339,7 @@ fn the_next_tick_takes_the_recorded_step_result_once() {
     assert_eq!(ticked.next, Next::Done);
     assert_eq!(
         ticked.met.as_deref(),
-        Some("send-it: step 1/1 met (judged: all fixed?): all 3 fixed")
+        Some("send-it: step 1/1 met: all 3 fixed")
     );
     let Next::Send(line) = send_it.tick(&active, ended()).next else {
         panic!("a second tick must not see the old result")

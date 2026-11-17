@@ -724,3 +724,8 @@ fn a_held_worker_report_turn_is_briefed_once_for_an_unbriefed_run() {
     assert_eq!(again, driving);
     assert_eq!(bare, report);
 }
+
+#[test]
+fn the_judge_echo_is_one_short_line() {
+    assert_eq!(judge_echo(&plan(), at(3)), "send-it 4/4 · judge ...");
+}

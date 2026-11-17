@@ -682,15 +682,24 @@ pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {
         return None;
     };
     Some(format!(
-        "{}\n/send-it judge: {question}\nAnswer from what this chat already shows and take no other actions. Call `{STEP_RESULT}` once with `met` and one line of `evidence`, then reply in one short line.",
-        step_line(plan, progress.step, step)
+        "[send-it {}/{}] /send-it judge: {question}\nAnswer from what this chat already shows and take no other actions. Call `{STEP_RESULT}` once with `met` and one line of `evidence`, then reply `met` or `not met` only.",
+        progress.step + 1,
+        plan.steps.len()
     ))
+}
+
+pub fn judge_echo(plan: &RunPlan, progress: Progress) -> String {
+    format!(
+        "send-it {}/{} · judge ...",
+        progress.step + 1,
+        plan.steps.len()
+    )
 }
 
 pub fn done_notice(plan: &RunPlan, run: &Run) -> String {
     let steps = plan.steps.len();
     format!(
-        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}. {RESTART_HINT}",
+        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}.",
         run.turns, run.spent_usd
     )
 }

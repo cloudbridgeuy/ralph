@@ -756,7 +756,7 @@ fn caps_stop_before_a_send_but_not_before_the_finish() {
     assert_eq!(finished.next, Next::Done);
     assert_eq!(
         finished.met.as_deref(),
-        Some("send-it: step 4/4 met (judged: are all findings resolved?): all 3 findings fixed")
+        Some("send-it: step 4/4 met: all 3 findings fixed")
     );
 }
 
@@ -816,6 +816,13 @@ fn the_judge_prompt_asks_the_step_question_for_one_step_result_call() {
     assert!(prompt.contains("are all findings resolved?"), "{prompt}");
     assert!(prompt.contains("Call `step_result` once"), "{prompt}");
     assert!(!prompt.contains("verdict:"), "{prompt}");
+    assert_eq!(
+        prompt.matches("are all findings resolved?").count(),
+        1,
+        "{prompt}"
+    );
+    assert!(!prompt.contains("exit:"), "{prompt}");
+    assert!(prompt.contains("reply `met` or `not met` only"), "{prompt}");
     assert_eq!(judge_prompt(&plan(), at(0)), None);
 }
 
@@ -823,7 +830,7 @@ fn the_judge_prompt_asks_the_step_question_for_one_step_result_call() {
 fn the_done_notice_counts_steps_turns_and_cost() {
     assert_eq!(
         done_notice(&plan(), &spent(7, 1.25)),
-        format!("send-it done: 4/4 steps in 7 turns, $1.25. {RESTART}")
+        "send-it done: 4/4 steps in 7 turns, $1.25.".to_string()
     );
 }
 
