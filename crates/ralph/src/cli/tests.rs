@@ -2,6 +2,8 @@
 
 #[path = "tests/ask.rs"]
 mod ask;
+#[path = "tests/chat_model.rs"]
+mod chat_model;
 
 use super::*;
 

@@ -5,6 +5,7 @@
 
 use clap::{Parser, Subcommand};
 use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread_model::parse_thread_model;
 use ralph_core::inbox_post::validate_source;
 use std::path::PathBuf;
 
@@ -510,6 +511,15 @@ pub struct ChatArgs {
         help = "Create or open the side chat <NAME>, forked from main"
     )]
     pub thread: Option<ThreadName>,
+
+    #[arg(
+        long,
+        value_name = "MODEL",
+        requires = "thread",
+        value_parser = parse_thread_model,
+        help = "Model the thread's chat runs on: sonnet, opus, haiku or a claude-* id; stored with the thread"
+    )]
+    pub model: Option<String>,
 
     #[arg(
         long,

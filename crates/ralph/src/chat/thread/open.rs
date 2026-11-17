@@ -21,13 +21,19 @@ pub(super) fn prepare_open(store: &Path, opts: &OpenOpts) -> Result<PathBuf, Str
     Ok(main)
 }
 
-pub(in crate::chat) fn reopen(main: &Path, name: &ThreadName) -> io::Result<Option<String>> {
+pub(in crate::chat) fn reopen(
+    main: &Path,
+    name: &ThreadName,
+    model: Option<&str>,
+) -> io::Result<Option<String>> {
     let meta = ensure(main, name)?;
     open_check(name, &meta).map_err(io::Error::other)?;
-    if let Some(updated) = clear_closed(&meta) {
-        write_meta(&thread_dir(main, name), &updated)?;
+    let cleared = clear_closed(&meta);
+    let updated = with_model(cleared.as_ref().unwrap_or(&meta), model).or(cleared);
+    if let Some(updated) = &updated {
+        write_meta(&thread_dir(main, name), updated)?;
     }
-    Ok(meta.model)
+    Ok(updated.unwrap_or(meta).model)
 }
 
 #[cfg(test)]
@@ -153,12 +159,19 @@ mod tests {
     #[test]
     fn reopen_returns_the_stored_model() {
         let root = tempfile::tempdir().unwrap();
-        assert_eq!(reopen(root.path(), &name("plain")).unwrap(), None);
+        assert_eq!(reopen(root.path(), &name("plain"), None).unwrap(), None);
         prepare_open(root.path(), &model_opts("t", Some("haiku"))).unwrap();
         assert_eq!(
-            reopen(root.path(), &name("t")).unwrap().as_deref(),
+            reopen(root.path(), &name("t"), None).unwrap().as_deref(),
             Some("haiku")
         );
+        assert_eq!(
+            reopen(root.path(), &name("t"), Some("opus"))
+                .unwrap()
+                .as_deref(),
+            Some("opus")
+        );
+        assert_eq!(stored(root.path(), "t").model.as_deref(), Some("opus"));
     }
 
     #[test]

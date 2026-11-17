@@ -158,11 +158,13 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let _chat = store
         .claim_chat()?
         .map_err(|holder| store_in_use_message(&store_root, holder))?;
-    let thread_model = match &args.thread {
-        Some(name) => thread::open::reopen(&thread::config_root(&store_dir), name)?,
-        None => None,
+    let model_args = match &args.thread {
+        Some(name) => {
+            let main = thread::config_root(&store_dir);
+            build_model_args(thread::open::reopen(&main, name, args.model.as_deref())?.as_deref())
+        }
+        None => Vec::new(),
     };
-    let model_args = build_model_args(thread_model.as_deref());
     let fork = thread::open_fork(&store_dir)?;
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir()?;

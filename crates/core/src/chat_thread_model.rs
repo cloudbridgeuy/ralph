@@ -15,6 +15,10 @@ pub fn build_model_args(model: Option<&str>) -> Vec<String> {
     })
 }
 
+pub fn parse_thread_model(model: &str) -> Result<String, String> {
+    validate_thread_model(model).map(|()| model.to_string())
+}
+
 pub fn validate_thread_model(model: &str) -> Result<(), String> {
     let known_id = model
         .strip_prefix("claude-")
