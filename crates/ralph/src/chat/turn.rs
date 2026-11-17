@@ -135,6 +135,7 @@ pub(super) struct Turn<'a> {
     pub(super) system_prompt_file: &'a Path,
     pub(super) permission_mode: &'a str,
     pub(super) plugin_args: &'a [String],
+    pub(super) model_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
     pub(super) custom_prompt: &'a CustomPrompt,
     pub(super) reply_images: ReplyImages,
@@ -530,6 +531,7 @@ impl Turn<'_> {
             build_attachments_args(self.store_dir),
             build_agents_args(),
             self.plugin_args.to_vec(),
+            self.model_args.to_vec(),
         ]
         .concat();
         let config = SpinnerSubprocessConfig {

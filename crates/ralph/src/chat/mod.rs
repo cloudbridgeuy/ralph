@@ -96,6 +96,7 @@ use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
 use ralph_core::chat_switch::SwitchArgv;
+use ralph_core::chat_thread_model::build_model_args;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{status_enabled, Phase};
@@ -157,9 +158,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let _chat = store
         .claim_chat()?
         .map_err(|holder| store_in_use_message(&store_root, holder))?;
-    if let Some(name) = &args.thread {
-        thread::open::reopen(&thread::config_root(&store_dir), name)?;
-    }
+    let thread_model = match &args.thread {
+        Some(name) => thread::open::reopen(&thread::config_root(&store_dir), name)?,
+        None => None,
+    };
+    let model_args = build_model_args(thread_model.as_deref());
     let fork = thread::open_fork(&store_dir)?;
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir()?;
@@ -272,6 +275,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         system_prompt_file: &system_prompt_file,
         permission_mode: &permission_mode,
         plugin_args: &plugin_args,
+        model_args: &model_args,
         skills: &skills,
         custom_prompt: &custom_prompt,
         reply_images,

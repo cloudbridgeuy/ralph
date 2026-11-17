@@ -1,3 +1,20 @@
+use crate::chat_thread::ThreadMeta;
+
+pub fn with_model(meta: &ThreadMeta, model: Option<&str>) -> Option<ThreadMeta> {
+    model
+        .filter(|model| meta.model.as_deref() != Some(*model))
+        .map(|model| ThreadMeta {
+            model: Some(model.to_string()),
+            ..meta.clone()
+        })
+}
+
+pub fn build_model_args(model: Option<&str>) -> Vec<String> {
+    model.map_or_else(Vec::new, |model| {
+        vec!["--model".to_string(), model.to_string()]
+    })
+}
+
 pub fn validate_thread_model(model: &str) -> Result<(), String> {
     let known_id = model
         .strip_prefix("claude-")
@@ -16,7 +33,6 @@ pub fn validate_thread_model(model: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat_thread::ThreadMeta;
 
     #[test]
     fn thread_meta_round_trips_model_and_reads_files_without_one() {
@@ -26,6 +42,39 @@ mod tests {
         assert_eq!(serde_json::to_string(&meta).unwrap(), text);
         let old: ThreadMeta = serde_json::from_str(r#"{"base":1,"created":"t"}"#).unwrap();
         assert_eq!(old.model, None);
+    }
+
+    fn meta(model: Option<&str>) -> ThreadMeta {
+        ThreadMeta {
+            base: 1,
+            created: "t".to_string(),
+            merged: None,
+            parked: None,
+            auto: None,
+            model: model.map(str::to_string),
+            closed: false,
+        }
+    }
+
+    #[test]
+    fn with_model_changes_only_when_a_different_model_is_given() {
+        assert_eq!(with_model(&meta(None), None), None);
+        assert_eq!(with_model(&meta(Some("opus")), None), None);
+        assert_eq!(with_model(&meta(Some("opus")), Some("opus")), None);
+        assert_eq!(
+            with_model(&meta(Some("opus")), Some("haiku")),
+            Some(meta(Some("haiku")))
+        );
+        assert_eq!(
+            with_model(&meta(None), Some("haiku")),
+            Some(meta(Some("haiku")))
+        );
+    }
+
+    #[test]
+    fn model_args_are_a_flag_pair_only_when_a_model_is_set() {
+        assert_eq!(build_model_args(None), Vec::<String>::new());
+        assert_eq!(build_model_args(Some("haiku")), ["--model", "haiku"]);
     }
 
     #[test]
