@@ -11,6 +11,7 @@
 pub mod ansi;
 pub mod attachment;
 pub mod bounded_command;
+pub mod cancel;
 pub mod changes;
 pub mod chat;
 pub mod chat_cell;
