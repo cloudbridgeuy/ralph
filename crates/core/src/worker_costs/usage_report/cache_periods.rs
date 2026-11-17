@@ -20,6 +20,7 @@ pub struct IdlePeriod {
     pub last_turn_at: Option<DateTime<Utc>>,
     pub last_ping_at: Option<DateTime<Utc>>,
     pub context_tokens: Option<u64>,
+    pub model: Option<String>,
     pub next_turn_at: Option<DateTime<Utc>>,
     pub outcome: PeriodOutcome,
 }
@@ -105,6 +106,7 @@ fn period(run: &Option<String>, turn: &Row, pings: &[&Row], next: Option<&Row>) 
         last_turn_at: Some(turn.happened()),
         last_ping_at: pings.last().map(|ping| ping.happened()),
         context_tokens: turn.line.context_tokens,
+        model: turn.line.model.clone(),
         next_turn_at: next.map(Row::happened),
         outcome: next.map_or(PeriodOutcome::NoNextTurn, |next| outcome_of(next.line)),
     }

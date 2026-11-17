@@ -1,4 +1,5 @@
 pub mod cache_periods;
+pub mod cache_saving;
 pub mod cache_view;
 pub mod chart;
 pub mod model_view;

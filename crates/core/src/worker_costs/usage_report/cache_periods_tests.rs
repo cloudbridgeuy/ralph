@@ -219,6 +219,7 @@ fn outcome_counts_total_periods_pings_and_cost() {
         last_turn_at: None,
         last_ping_at: None,
         context_tokens: None,
+        model: None,
         next_turn_at: None,
         outcome,
     };
@@ -376,4 +377,15 @@ fn interleaved_runs_do_not_share_the_clock() {
     ];
     let causes = misses(&rows);
     assert_eq!((causes.misses, causes.ttl, causes.unexplained), (2, 1, 1));
+}
+
+#[test]
+fn period_carries_the_model_of_the_last_turn() {
+    let rows = [
+        turn("r", 0, 1, (1, 10, 90)),
+        ping("r", 30, 0.01),
+        turn("r", 40, 2, (1, 0, 100)),
+    ];
+    let periods = idle_periods(&entries(&rows));
+    assert_eq!(periods[0].model.as_deref(), Some("claude-opus-5-5"));
 }
