@@ -60,9 +60,15 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
 
 fn run_shown(route: Route, ctx: &LocalRoute) -> io::Result<()> {
     match route {
-        Route::ListInbox => inbox::list(ctx.inbox)?,
-        Route::PeekInbox(id) => inbox::peek(ctx.inbox, id, ctx.display)?,
-        Route::InboxUsage => inbox::usage(),
+        Route::ListInbox => inbox::list(ctx.inbox, &mut io::stdout())?,
+        Route::PeekInbox(id) => inbox::peek(
+            ctx.inbox,
+            id,
+            ctx.display,
+            screen_columns(),
+            &mut io::stdout(),
+        )?,
+        Route::InboxUsage => inbox::usage(&mut io::stdout())?,
         Route::Diff(DiffArgs::Target(target)) => diff::run(
             &DiffContext {
                 changes: ctx.changes,
