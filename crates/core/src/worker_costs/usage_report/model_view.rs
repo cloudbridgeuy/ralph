@@ -2,7 +2,7 @@ use super::{label_excluded, parse, partition, Entry};
 use crate::chat_process::{processes, session_cost, UsageLine};
 use crate::wire::view::Pricing;
 use crate::worker::TicketKeys;
-use crate::worker_costs::window::{in_window, instant};
+use crate::worker_costs::window::in_window;
 use crate::worker_costs::{
     builtin_prices, computed_usd, count, summed, tier, Source, Tokens, Usd, NO_USAGE, UNKNOWN,
 };
@@ -39,17 +39,6 @@ pub(crate) struct CostRow {
 struct MainProcess {
     run: Option<String>,
     rows: Vec<UsageLine>,
-    baseline: f64,
-}
-
-pub(crate) fn baseline(rows: &[UsageLine], since: Option<DateTime<Utc>>) -> f64 {
-    since
-        .and_then(|since| {
-            rows.iter()
-                .rev()
-                .find_map(|row| instant(&row.at).filter(|at| *at < since).and(row.cost_usd))
-        })
-        .unwrap_or(0.0)
 }
 
 fn main_runs(processes: &[MainProcess]) -> (usize, Usd) {
@@ -63,7 +52,7 @@ fn main_runs(processes: &[MainProcess]) -> (usize, Usd) {
             session_cost(&process.rows).map_or_else(
                 || Usd::of(None),
                 |cost| Usd {
-                    known: Some((cost.total - process.baseline).max(0.0)),
+                    known: Some(cost.total.max(0.0)),
                     missing: cost.missing,
                     estimate: false,
                     reported: false,
@@ -147,7 +136,6 @@ fn main_processes(
                     model,
                     MainProcess {
                         run: run.clone(),
-                        baseline: baseline(process, since),
                         rows: within,
                     },
                 ))

@@ -5,7 +5,7 @@ pub mod text;
 use super::tickets::{window_position, WorkerWindow};
 use super::window::instant;
 use super::{builtin_prices, computed_usd, Source, Tokens, Usd, UNKNOWN};
-use crate::chat_process::UsageLine;
+use crate::chat_process::{normalize_costs, UsageLine};
 use crate::wire::price::{strip_openai_prefix, PriceTable};
 use crate::wire::view::Pricing;
 use crate::worker::{resolve_ticket, HarnessId, TicketKeys};
@@ -310,6 +310,16 @@ pub fn parse(usage: &str, windows: &[WorkerWindow], keys: &TicketKeys) -> Ledger
             Parsed::Malformed => ledger.malformed += 1,
         }
     }
+    let lines = normalize_costs(
+        ledger
+            .entries
+            .iter_mut()
+            .map(|entry| std::mem::take(&mut entry.line))
+            .collect(),
+    );
+    for (entry, line) in ledger.entries.iter_mut().zip(lines) {
+        entry.line = line;
+    }
     ledger
 }
 
@@ -513,3 +523,6 @@ pub fn daily<Tz: TimeZone>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod normalize_view_tests;
