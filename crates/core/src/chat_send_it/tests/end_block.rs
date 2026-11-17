@@ -106,3 +106,37 @@ fn the_run_brief_asks_for_pending_lines_and_no_next_step() {
     assert!(text.contains("`Pending: <one line>`"), "{text}");
     assert!(text.contains("no `Next step:` line"), "{text}");
 }
+
+#[test]
+fn every_stop_but_off_prefills_send_it_go() {
+    let stops = [
+        StopReason::TurnCap,
+        StopReason::CostCap,
+        StopReason::Unmet { step: 2 },
+        flagged_stop(),
+        StopReason::JudgeRounds {
+            step: 1,
+            evidence: "no".to_string(),
+        },
+        StopReason::CheckFailed {
+            step: 3,
+            detail: None,
+        },
+        StopReason::PlanChanged,
+        StopReason::NoReply,
+        StopReason::TookOver,
+    ];
+    for stop in stops {
+        assert_eq!(
+            run_end_prefill(&Next::Stop(stop.clone())).as_deref(),
+            Some("/send-it go"),
+            "{stop:?}"
+        );
+    }
+}
+
+#[test]
+fn done_and_off_prefill_nothing() {
+    assert_eq!(run_end_prefill(&Next::Done), None);
+    assert_eq!(run_end_prefill(&Next::Stop(StopReason::Off)), None);
+}

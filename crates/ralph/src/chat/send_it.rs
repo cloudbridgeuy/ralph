@@ -15,9 +15,9 @@ use ralph_core::chat_send_it::template::{
 use ralph_core::chat_send_it::{
     approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_block,
     done_notice, judge_echo, judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal,
-    read_run, render_status, render_status_styled, running_line, settle_check, start_run,
-    step_line, stop_block, stop_file, tick, with_reply, write_run, Action, Driving, Ended, Limits,
-    Next, RunFile, Seen, StepResult, StopReason, Ticked,
+    read_run, render_status, render_status_styled, run_end_prefill, running_line, settle_check,
+    start_run, step_line, stop_block, stop_file, tick, with_reply, write_run, Action, Driving,
+    Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -91,6 +91,7 @@ pub(super) struct Active {
 pub(super) struct Driven {
     pub(super) active: Option<Active>,
     pub(super) route: Option<Route>,
+    pub(super) prefill: Option<String>,
 }
 
 impl Driven {
@@ -98,6 +99,7 @@ impl Driven {
         Self {
             active: Some(Active { driving, watched }),
             route: Some(route),
+            prefill: None,
         }
     }
 
@@ -105,6 +107,7 @@ impl Driven {
         Self {
             active: None,
             route: None,
+            prefill: None,
         }
     }
 }
@@ -442,7 +445,10 @@ impl SendIt {
             inbox_alert::deliver(&alert);
         }
         monitor.term.send(&blocked_report(&notice));
-        Driven::ended()
+        Driven {
+            prefill: run_end_prefill(&Next::Stop(reason)),
+            ..Driven::ended()
+        }
     }
 
     pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) {

@@ -439,3 +439,11 @@ impl Ticked {
         self.met.as_deref().filter(|_| self.next != Next::Done)
     }
 }
+
+pub fn run_end_prefill(next: &Next) -> Option<String> {
+    match next {
+        Next::Stop(StopReason::Off) => None,
+        Next::Stop(_) => Some("/send-it go".to_string()),
+        _ => None,
+    }
+}
