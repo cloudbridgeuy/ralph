@@ -5,6 +5,7 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
     SubprocessError,
 };
+use ralph_core::cancel::CancelToken;
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::worker::inbox_env;
@@ -24,6 +25,7 @@ pub struct InvocationConfig {
     pub verbose_tools: VerboseToolsConfig,
     pub permission_mode: String,
     pub config_dir: Option<PathBuf>,
+    pub interrupt: CancelToken,
 }
 
 /// Shell-quote a string for embedding in a single-quoted argument.
@@ -208,6 +210,7 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
         session_info: SpinnerSessionInfo::default(),
         gate: None,
         cancel: None,
+        interrupt: Some(config.interrupt),
         stdin: Some(prompt_stdin(&config.prompt)),
     })
 }

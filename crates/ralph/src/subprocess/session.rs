@@ -54,8 +54,8 @@ enum Interrupts {
     Ignore,
 }
 
-fn interrupt_requested(policy: Interrupts, cancelled: bool, sigint: bool) -> bool {
-    policy == Interrupts::Honor && (cancelled || sigint)
+fn interrupt_requested(policy: Interrupts, cancelled: bool, terminated: bool) -> bool {
+    policy == Interrupts::Honor && (cancelled || terminated)
 }
 
 pub struct Session {
@@ -224,7 +224,7 @@ impl Session {
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::SeqCst));
             if interrupt.is_none()
-                && interrupt_requested(interrupts, cancelled, signal::is_interrupted())
+                && interrupt_requested(interrupts, cancelled, signal::is_terminated())
             {
                 let _ = self.send(&interrupt_line(INTERRUPT_REQUEST_ID));
                 interrupt = Some((Instant::now(), cancelled));
@@ -428,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn honored_interrupts_follow_the_cancel_flag_or_sigint() {
+    fn honored_interrupts_follow_the_cancel_flag_or_termination() {
         assert!(interrupt_requested(Interrupts::Honor, true, false));
         assert!(interrupt_requested(Interrupts::Honor, false, true));
         assert!(!interrupt_requested(Interrupts::Honor, false, false));

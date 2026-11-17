@@ -1,11 +1,3 @@
-//! Subprocess invocation with spinner display and gap detection.
-//!
-//! This module handles subprocess invocation with interactive features:
-//! - Animated spinner during wait periods
-//! - Gap detection to show spinner when LLM is thinking
-//!
-//! `Ctrl+C` kills the child process via the cancel flag or the signal path (`signal::is_interrupted()`).
-
 use super::gate::{write_direct, OutputGate, Stream};
 use super::timeout::try_wait_child;
 use super::types::{
@@ -16,6 +8,7 @@ use crate::highlight::ThemeConfig;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
+use ralph_core::cancel::CancelToken;
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_server::subprocess::kill_process_group;
 use std::io::IsTerminal;
@@ -48,6 +41,7 @@ pub struct SpinnerSubprocessConfig {
     pub session_info: SpinnerSessionInfo,
     pub gate: Option<Arc<OutputGate>>,
     pub cancel: Option<Arc<AtomicBool>>,
+    pub interrupt: Option<CancelToken>,
     /// Prompt text written to the child's stdin, then closed. `Session` ignores
     /// it: it owns stdin for stream-json.
     pub stdin: Option<String>,
@@ -104,6 +98,7 @@ fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Opti
 ///     session_info: SpinnerSessionInfo::default(),
 ///     gate: None,
 ///     cancel: None,
+///     interrupt: None,
 ///     stdin: None,
 /// };
 /// let result = invoke_subprocess_with_spinner_config(&config);
@@ -420,26 +415,63 @@ fn run_subprocess_with_spinner(
             .cancel
             .as_ref()
             .is_some_and(|flag| flag.load(Ordering::SeqCst));
-        if cancelled || signal::is_interrupted() {
+        let interrupted = config
+            .interrupt
+            .as_ref()
+            .is_some_and(CancelToken::is_cancelled)
+            || signal::is_terminated();
+        if let Some(stop) = stop_for(cancelled, interrupted) {
             pump.stop_spinner();
             kill_process_group(&mut child);
             readers.join();
             let partial = pump.finish(&readers, EXIT_CODE_INTERRUPTED, false);
-            if cancelled {
-                return Ok(partial);
-            }
-            return Err(SubprocessError::Interrupted {
-                partial_result: Box::new(partial),
-            });
+            return match stop {
+                Stop::Cancelled => Ok(partial),
+                Stop::Interrupted => Err(SubprocessError::Interrupted {
+                    partial_result: Box::new(partial),
+                }),
+            };
         }
 
         pump.step(&readers, pump.gate_paused())?;
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Stop {
+    Cancelled,
+    Interrupted,
+}
+
+fn stop_for(cancelled: bool, interrupted: bool) -> Option<Stop> {
+    if cancelled {
+        Some(Stop::Cancelled)
+    } else if interrupted {
+        Some(Stop::Interrupted)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cancel_stops_the_run_with_its_partial_result() {
+        assert_eq!(stop_for(true, false), Some(Stop::Cancelled));
+        assert_eq!(stop_for(true, true), Some(Stop::Cancelled));
+    }
+
+    #[test]
+    fn an_interrupt_without_a_cancel_fails_the_run() {
+        assert_eq!(stop_for(false, true), Some(Stop::Interrupted));
+    }
+
+    #[test]
+    fn no_cancel_and_no_interrupt_keeps_the_run_going() {
+        assert_eq!(stop_for(false, false), None);
+    }
 
     fn failed(kind: io::ErrorKind) -> PromptWrite {
         Ok(Err(io::Error::from(kind)))

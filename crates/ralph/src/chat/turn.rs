@@ -553,6 +553,7 @@ impl Turn<'_> {
             session_info: chat_session_info(),
             gate: Some(Arc::clone(&self.gate)),
             cancel: Some(Arc::clone(&self.cancel)),
+            interrupt: None,
             stdin: None,
         };
         Ok(Launch {
