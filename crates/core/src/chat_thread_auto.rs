@@ -141,6 +141,7 @@ mod tests {
             merged: None,
             parked: None,
             auto,
+            model: None,
             closed,
         }
     }

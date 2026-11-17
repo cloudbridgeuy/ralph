@@ -5,6 +5,7 @@
 
 use clap::{Parser, Subcommand};
 use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread_model::parse_thread_model;
 use ralph_core::inbox_post::validate_source;
 use std::path::PathBuf;
 
@@ -75,7 +76,7 @@ harness; ralph never sets it."
     #[command(
         about = "Manage chat threads: ls, drop, merge, park, revive, pull.",
         long_about = "A thread is a named side chat forked from the main chat: `ralph chat --thread <NAME>` \
-creates or opens it under <store>/threads/<NAME>. These subcommands work without starting a chat."
+creates or opens it under <store>/threads/<NAME>; add `--model <MODEL>` to run its chat on a different model. These subcommands work without starting a chat."
     )]
     Thread(ThreadArgs),
 
@@ -514,6 +515,15 @@ pub struct ChatArgs {
         help = "Create or open the side chat <NAME>, forked from main"
     )]
     pub thread: Option<ThreadName>,
+
+    #[arg(
+        long,
+        value_name = "MODEL",
+        requires = "thread",
+        value_parser = parse_thread_model,
+        help = "Model the thread's chat runs on: sonnet, opus, haiku or a claude-* id; stored with the thread"
+    )]
+    pub model: Option<String>,
 
     #[arg(
         long,

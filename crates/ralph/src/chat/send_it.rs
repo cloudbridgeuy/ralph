@@ -2,6 +2,7 @@ use crate::chat::editor::open_in_editor;
 use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
 use crate::chat::monitor::Monitor;
+use crate::chat::prompt::screen_columns;
 use crate::chat::queue::Queue;
 use crate::chat::turn::{Turn, TurnOutcome};
 use crate::inbox_alert;
@@ -12,10 +13,11 @@ use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
 use ralph_core::chat_send_it::{
-    approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_notice,
-    judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
-    render_status_styled, running_line, settle_check, start_run, step_line, stop_file, tick,
-    write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
+    approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_block,
+    done_notice, judge_echo, judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal,
+    read_run, render_status, render_status_styled, run_end_prefill, running_line, settle_check,
+    start_run, step_line, stop_block, stop_file, tick, with_reply, write_run, Action, Driving,
+    Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -89,6 +91,7 @@ pub(super) struct Active {
 pub(super) struct Driven {
     pub(super) active: Option<Active>,
     pub(super) route: Option<Route>,
+    pub(super) prefill: Option<String>,
 }
 
 impl Driven {
@@ -96,6 +99,7 @@ impl Driven {
         Self {
             active: Some(Active { driving, watched }),
             route: Some(route),
+            prefill: None,
         }
     }
 
@@ -103,6 +107,7 @@ impl Driven {
         Self {
             active: None,
             route: None,
+            prefill: None,
         }
     }
 }
@@ -257,7 +262,8 @@ impl SendIt {
         let refused = locked(&self.refused).take();
         let judged = locked(&self.judged).take();
         let answered = std::mem::take(&mut *locked(&self.answered));
-        tick(
+        let reply = ended.replied.then(|| self.last_reply()).flatten();
+        let ticked = tick(
             &active.driving,
             &Ended {
                 file: file.as_ref(),
@@ -267,7 +273,20 @@ impl SendIt {
                 step_result: judged.as_ref(),
                 ..ended
             },
-        )
+        );
+        match reply {
+            Some(reply) => with_reply(ticked, &reply),
+            None => ticked,
+        }
+    }
+
+    fn last_reply(&self) -> Option<String> {
+        let (entries, _) = Store::new(self.log.clone()).load().ok()?;
+        entries
+            .into_iter()
+            .rev()
+            .find(|entry| entry.role == Role::Assistant)
+            .map(|entry| entry.text)
     }
 
     pub(super) fn held_item(
@@ -316,7 +335,7 @@ impl SendIt {
     }
 
     pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        if let Some(met) = &ticked.met {
+        if let Some(met) = ticked.shown_met() {
             println!("{met}");
         }
         let plan = self.load().ok().flatten().map(|file| file.plan);
@@ -331,10 +350,12 @@ impl SendIt {
             }
             Next::Judge => match plan.and_then(|plan| {
                 let prompt = judge_prompt(&plan, driving.progress)?;
-                Some(briefed_turn(&plan, driving.clone(), &prompt))
+                let echo = judge_echo(&plan, driving.progress);
+                let (driving, prompt) = briefed_turn(&plan, driving.clone(), &prompt);
+                Some((driving, prompt, echo))
             }) {
-                Some((driving, prompt)) => {
-                    println!("{prompt}");
+                Some((driving, prompt, echo)) => {
+                    println!("{echo}");
                     Driven::keep(driving, Route::Send(prompt), None)
                 }
                 None => self.stopped(StopReason::PlanChanged, &driving, monitor),
@@ -371,7 +392,11 @@ impl SendIt {
             }
             Next::Stop(reason) => self.stopped(reason, &driving, monitor),
             Next::Done => match &plan {
-                Some(plan) => self.ended(&done_notice(plan, &driving.run), &driving),
+                Some(plan) => self.ended(
+                    &done_notice(plan, &driving.run),
+                    &done_block(plan, &driving, screen_columns()),
+                    &driving,
+                ),
                 None => Driven::ended(),
             },
             Next::Wait => Driven::ended(),
@@ -395,8 +420,8 @@ impl SendIt {
         );
     }
 
-    fn ended(&self, notice: &str, driving: &Driving) -> Driven {
-        println!("{notice}");
+    fn ended(&self, notice: &str, block: &str, driving: &Driving) -> Driven {
+        println!("{block}");
         self.log_notice(notice);
         if let Err(error) = self.release(&driving.hash, None) {
             println!("{error}");
@@ -406,8 +431,12 @@ impl SendIt {
 
     fn stopped(&self, reason: StopReason, driving: &Driving, monitor: &Monitor) -> Driven {
         let kept = self.release(&driving.hash, Some(driving.progress.step + 1));
-        let notice = reason.notice(&driving.run, kept.as_ref().ok().and_then(Option::as_ref));
-        println!("{notice}");
+        let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
+        let notice = reason.notice(&driving.run, kept_file);
+        println!(
+            "{}",
+            stop_block(&reason, kept_file, driving, screen_columns())
+        );
         self.log_notice(&notice);
         if let Err(error) = kept {
             println!("{error}");
@@ -416,7 +445,10 @@ impl SendIt {
             inbox_alert::deliver(&alert);
         }
         monitor.term.send(&blocked_report(&notice));
-        Driven::ended()
+        Driven {
+            prefill: run_end_prefill(&Next::Stop(reason)),
+            ..Driven::ended()
+        }
     }
 
     pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) {

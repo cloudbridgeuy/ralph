@@ -157,9 +157,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let _chat = store
         .claim_chat()?
         .map_err(|holder| store_in_use_message(&store_root, holder))?;
-    if let Some(name) = &args.thread {
-        thread::open::reopen(&thread::config_root(&store_dir), name)?;
-    }
+    let model_args =
+        thread::open::model_args(&store_dir, args.thread.as_ref(), args.model.as_deref())?;
     let fork = thread::open_fork(&store_dir)?;
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir()?;
@@ -272,6 +271,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         system_prompt_file: &system_prompt_file,
         permission_mode: &permission_mode,
         plugin_args: &plugin_args,
+        model_args: &model_args,
         skills: &skills,
         custom_prompt: &custom_prompt,
         reply_images,
@@ -934,6 +934,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             if driven.route.is_some() {
                 pending = driven.route.map(Submitted::internal);
                 continue;
+            }
+            suggestions.clear();
+            if let Some(line) = driven.prefill {
+                suggestions.set(line);
             }
         }
         let suggestion = suggestions.take();

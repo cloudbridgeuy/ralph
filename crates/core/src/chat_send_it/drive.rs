@@ -172,6 +172,7 @@ pub struct Driving {
     pub run: Run,
     pub awaiting: Awaiting,
     pub briefed: bool,
+    pub tally: Tally,
 }
 
 pub struct Ended<'a> {
@@ -272,6 +273,7 @@ pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
         progress,
         run: Run::default(),
         briefed: false,
+        tally: Tally::default(),
     };
     Some(Ticked { driving, next, met }.briefed_by(&file.plan))
 }
@@ -308,7 +310,7 @@ pub fn briefed_turn(plan: &RunPlan, driving: Driving, line: &str) -> (Driving, S
 
 fn brief(plan: &RunPlan, hash: &str, line: &str) -> String {
     format!(
-        "send-it run {hash} is approved. Work the current step only, and take only the allowed actions; ralph checks each exit criterion and sends the next step.\n\n{}\n\n{line}",
+        "send-it run {hash} is approved. Work the current step only, and take only the allowed actions; ralph checks each exit criterion and sends the next step. End each reply with one `Pending: <one line>` line per follow-up the person must still decide or do, such as unpushed commits or unrun checks, and no `Next step:` line; ralph prints the next step.\n\n{}\n\n{line}",
         render_run(plan)
     )
 }
@@ -317,14 +319,19 @@ fn is_off(line: &str) -> bool {
     Command::SendIt.args(line.trim()).map(parse_send_it_args) == Some(SendItCommand::Off)
 }
 
-fn unanswered_flag(ended: &Ended, file: &RunFile) -> bool {
+fn unanswered_flag<'a>(ended: &Ended<'a>, file: &RunFile) -> Option<&'a Report> {
     let may_reply = file.plan.allowed.contains(&Action::Reply);
-    worker_flagged(ended.unread)
-        || ended
-            .drained
-            .iter()
-            .filter(|report| flagged(report))
-            .any(|report| !(may_reply && ended.answered.contains(&report.worker)))
+    ended
+        .unread
+        .iter()
+        .find(|report| flagged(report))
+        .or_else(|| {
+            ended
+                .drained
+                .iter()
+                .filter(|report| flagged(report))
+                .find(|report| !(may_reply && ended.answered.contains(&report.worker)))
+        })
 }
 
 fn current_plan<'a>(file: Option<&'a RunFile>, hash: &str) -> Result<&'a RunFile, StopReason> {
@@ -353,10 +360,8 @@ fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason
         Some(StopReason::TookOver)
     } else if ended.asked {
         Some(StopReason::NeedsYou)
-    } else if unanswered_flag(ended, file) {
-        Some(StopReason::WorkerFlagged)
     } else {
-        None
+        unanswered_flag(ended, file).map(StopReason::flagged_by)
     };
     stop.map_or(Ok(file), Err)
 }
@@ -405,6 +410,7 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
             run,
             awaiting: awaiting(&next, progress),
             briefed: driving.briefed,
+            tally: driving.tally.clone(),
         },
         next,
         met,
@@ -431,14 +437,16 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
     let met = (progress.step > driving.progress.step || decided == Next::Done)
         .then(|| met_line(plan, driving.progress.step, evidence));
     if matches!(decided, Next::Done | Next::Stop(_)) {
-        return finish(run, progress, decided, met);
+        return finish(run, progress, decided, met).recording(evidence);
     }
     let next = match advance(plan, progress, Event::TurnEnded(&run)).1 {
         stop @ Next::Stop(_) => stop,
         waiting if decided == Next::Wait => waiting,
         _ => decided,
     };
-    finish(run, progress, next, met).briefed_by(plan)
+    finish(run, progress, next, met)
+        .briefed_by(plan)
+        .recording(evidence)
 }
 
 pub fn awaits_check(driving: &Driving) -> bool {
@@ -458,6 +466,7 @@ pub fn settle_check(
             run: driving.run.clone(),
             awaiting: awaiting(&next, progress),
             briefed: driving.briefed,
+            tally: driving.tally.clone(),
         },
         next,
         met,
@@ -487,18 +496,17 @@ pub fn settle_check(
             _ => decided,
         },
     };
-    finish(progress, next, met).briefed_by(plan)
+    finish(progress, next, met).briefed_by(plan).recording(None)
 }
 
 fn met_line(plan: &RunPlan, step: usize, evidence: Option<&str>) -> String {
-    let label = plan
-        .steps
-        .get(step)
-        .map(|step| step.criterion.label())
-        .unwrap_or_default();
+    let label = match plan.steps.get(step).map(|step| &step.criterion) {
+        Some(Criterion::Judge { .. }) | None => String::new(),
+        Some(criterion) => format!(" ({})", criterion.label()),
+    };
     let evidence = evidence.map_or(String::new(), |evidence| format!(": {evidence}"));
     format!(
-        "send-it: step {}/{} met ({label}){evidence}",
+        "send-it: step {}/{} met{label}{evidence}",
         step + 1,
         plan.steps.len()
     )
