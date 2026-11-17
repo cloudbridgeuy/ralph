@@ -14,7 +14,7 @@ pub(in crate::chat) fn print_log(main: &Path, columns: usize) -> io::Result<()> 
 }
 
 fn log_text(main: &Path, opts: &GraphOpts) -> io::Result<String> {
-    let head = Store::new(main.to_path_buf()).log_len()?.saturating_sub(1);
+    let head = Store::new(main.to_path_buf()).log_len()?.checked_sub(1);
     let lanes = lanes_from(&live_threads(main), &tombstones(main));
     Ok(graph_lines(head, &lanes, opts).join("\n"))
 }
@@ -52,7 +52,22 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("chat");
         let text = log_text(&main, &graph_opts(false, 80)).unwrap();
-        assert_eq!(text, "●  #0 main");
+        assert_eq!(text, "●");
+    }
+
+    #[test]
+    fn a_fork_at_the_end_of_main_keeps_main_on_the_last_row() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let store = Store::new(main.clone());
+        store.append(Role::User, "one").unwrap();
+        store.append(Role::User, "two").unwrap();
+        ensure(&main, &name("a")).unwrap();
+        let lines = log_text(&main, &graph_opts(false, 80)).unwrap();
+        let rows: Vec<&str> = lines.lines().collect();
+        assert!(rows.iter().any(|r| r.ends_with("#1 main")), "{lines}");
+        let fork = rows.iter().find(|r| r.contains("#2")).unwrap();
+        assert!(!fork.contains("main"), "{lines}");
     }
 
     #[test]
@@ -77,6 +92,6 @@ mod tests {
         assert!(text.contains("c  dropped"), "{text}");
         assert!(text.contains("d  open"), "{text}");
         assert!(text.contains("a  merged, landing unknown"), "{text}");
-        assert!(text.contains("#2 main"), "{text}");
+        assert!(text.contains("#1 main"), "{text}");
     }
 }

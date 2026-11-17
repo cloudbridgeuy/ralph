@@ -142,8 +142,9 @@ fn ordered(lanes: &[Lane]) -> Vec<&Lane> {
     sorted
 }
 
-fn rows_of(head: usize, lanes: &[&Lane]) -> Vec<Row> {
-    let mut ids = BTreeSet::from([head, 0]);
+fn rows_of(head: Option<usize>, lanes: &[&Lane]) -> Vec<Row> {
+    let mut ids = BTreeSet::from([0]);
+    ids.extend(head);
     for lane in lanes {
         ids.insert(lane.base);
         ids.extend(landing_row(lane));
@@ -216,13 +217,12 @@ fn lane_label(lane: &Lane, budget: usize) -> Vec<Cell> {
     label
 }
 
-fn label_of(r: usize, row: Row, lanes: &[&Lane], budget: usize) -> Vec<Cell> {
+fn label_of(head: Option<usize>, row: Row, lanes: &[&Lane], budget: usize) -> Vec<Cell> {
     match row {
         Row::Tip(i) => lane_label(lanes[i], budget),
         Row::Trunk(id) => {
-            let first = rows_first_trunk(r, lanes);
             let mut label = cells(&format!("#{id}"), Tone::Plain);
-            if first {
+            if head == Some(id) {
                 label.extend(cells(" main", Tone::Plain));
             }
             for lane in lanes.iter().filter(|lane| landing_row(lane) == Some(id)) {
@@ -233,13 +233,6 @@ fn label_of(r: usize, row: Row, lanes: &[&Lane], budget: usize) -> Vec<Cell> {
             label
         }
     }
-}
-
-fn rows_first_trunk(r: usize, lanes: &[&Lane]) -> bool {
-    r == lanes
-        .iter()
-        .filter(|lane| landing_row(lane).is_none())
-        .count()
 }
 
 fn lane_glyph(
@@ -323,7 +316,10 @@ fn painted(line: &[Cell], color: bool) -> String {
     out
 }
 
-pub fn graph_lines(head: usize, lanes: &[Lane], opts: &GraphOpts) -> Vec<String> {
+pub fn graph_lines(head: Option<usize>, lanes: &[Lane], opts: &GraphOpts) -> Vec<String> {
+    if head.is_none() && lanes.is_empty() {
+        return vec!["●".to_string()];
+    }
     let lanes = ordered(lanes);
     let rows = rows_of(head, &lanes);
     let spans: Vec<Span> = lanes
@@ -338,7 +334,7 @@ pub fn graph_lines(head: usize, lanes: &[Lane], opts: &GraphOpts) -> Vec<String>
         .map(|(r, &row)| {
             let mut line = graph_cells(r, row, &lanes, &spans);
             line.push((' ', Tone::Plain));
-            line.extend(label_of(r, row, &lanes, budget));
+            line.extend(label_of(head, row, &lanes, budget));
             painted(&clipped(line, opts.width), opts.color)
         })
         .collect()
@@ -377,7 +373,7 @@ mod tests {
 
     #[test]
     fn a_mixed_history_draws_newest_first() {
-        let lines = graph_lines(6, &sample(), &plain(100));
+        let lines = graph_lines(Some(6), &sample(), &plain(100));
         let expected = [
             "        ○  d  open",
             "      ✕ │  c  dropped",
@@ -394,7 +390,7 @@ mod tests {
     #[test]
     fn a_merged_lane_names_its_landing() {
         let lanes = [lane("a", 3, LaneEnd::Merged { landed: Some(5) })];
-        let text = graph_lines(6, &lanes, &plain(100)).join("\n");
+        let text = graph_lines(Some(6), &lanes, &plain(100)).join("\n");
         assert!(text.contains("◄"), "{text}");
         assert!(text.contains("a  merged -> #5"), "{text}");
     }
@@ -402,7 +398,7 @@ mod tests {
     #[test]
     fn a_merged_lane_without_a_landing_says_so() {
         let lanes = [lane("a", 3, LaneEnd::Merged { landed: None })];
-        let text = graph_lines(6, &lanes, &plain(100)).join("\n");
+        let text = graph_lines(Some(6), &lanes, &plain(100)).join("\n");
         assert!(text.contains("a  merged, landing unknown"), "{text}");
         assert!(!text.contains("◄"), "{text}");
     }
@@ -410,14 +406,14 @@ mod tests {
     #[test]
     fn a_parked_lane_ends_in_a_tip() {
         let lanes = [lane("b", 3, LaneEnd::Parked)];
-        let text = graph_lines(6, &lanes, &plain(100)).join("\n");
+        let text = graph_lines(Some(6), &lanes, &plain(100)).join("\n");
         assert!(text.contains("○  b  parked"), "{text}");
     }
 
     #[test]
     fn a_dropped_lane_hangs_off_its_tombstone_base() {
         let lanes = [lane("c", 4, LaneEnd::Dropped)];
-        let lines = graph_lines(6, &lanes, &plain(100));
+        let lines = graph_lines(Some(6), &lanes, &plain(100));
         assert!(lines[0].contains("✕  c  dropped"), "{lines:?}");
         let fork = lines.iter().find(|line| line.contains("#4")).unwrap();
         assert!(fork.starts_with("●─╯"), "{fork}");
@@ -426,7 +422,7 @@ mod tests {
     #[test]
     fn an_open_lane_says_open() {
         let lanes = [lane("d", 4, LaneEnd::Open)];
-        let text = graph_lines(6, &lanes, &plain(100)).join("\n");
+        let text = graph_lines(Some(6), &lanes, &plain(100)).join("\n");
         assert!(text.contains("○  d  open"), "{text}");
     }
 
@@ -435,14 +431,14 @@ mod tests {
         let mut reversed = sample();
         reversed.reverse();
         assert_eq!(
-            graph_lines(6, &sample(), &plain(100)),
-            graph_lines(6, &reversed, &plain(100))
+            graph_lines(Some(6), &sample(), &plain(100)),
+            graph_lines(Some(6), &reversed, &plain(100))
         );
     }
 
     #[test]
     fn no_color_prints_no_escape() {
-        let text = graph_lines(6, &sample(), &plain(100)).join("\n");
+        let text = graph_lines(Some(6), &sample(), &plain(100)).join("\n");
         assert!(!text.contains('\u{1b}'));
     }
 
@@ -452,7 +448,7 @@ mod tests {
             width: 100,
             color: true,
         };
-        let lines = graph_lines(6, &sample(), &opts);
+        let lines = graph_lines(Some(6), &sample(), &opts);
         let line = |needle: &str| lines.iter().find(|l| l.contains(needle)).unwrap().clone();
         assert!(line("merged").contains(&format!("{GREEN}merged")));
         assert!(line("parked").contains(&format!("{YELLOW}parked")));
@@ -479,7 +475,7 @@ mod tests {
         ];
         for width in [30, 20, 12, 5, 1] {
             for color in [false, true] {
-                for line in graph_lines(600, &lanes, &GraphOpts { width, color }) {
+                for line in graph_lines(Some(600), &lanes, &GraphOpts { width, color }) {
                     let shown = strip(&line);
                     assert!(shown.width() <= width, "{width}: {shown:?}");
                 }
@@ -494,14 +490,31 @@ mod tests {
             2,
             LaneEnd::Merged { landed: Some(4) },
         )];
-        let text = graph_lines(5, &lanes, &plain(30)).join("\n");
+        let text = graph_lines(Some(5), &lanes, &plain(30)).join("\n");
         assert!(text.contains('…'), "{text}");
         assert!(text.contains("-> #4"), "{text}");
     }
 
     #[test]
     fn an_empty_history_is_just_the_trunk() {
-        assert_eq!(graph_lines(0, &[], &plain(80)), vec!["●  #0 main"]);
+        assert_eq!(graph_lines(None, &[], &plain(80)), vec!["●"]);
+    }
+
+    #[test]
+    fn main_labels_the_last_row_and_a_fork_at_the_end_shows_its_base_without_it() {
+        let lanes = [lane("a", 5, LaneEnd::Open)];
+        let lines = graph_lines(Some(4), &lanes, &plain(100));
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[1].ends_with("#5"), "{lines:?}");
+        assert!(lines[2].ends_with("#4 main"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_lane_on_an_empty_main_hangs_off_row_zero_without_main() {
+        let lanes = [lane("a", 0, LaneEnd::Open)];
+        let text = graph_lines(None, &lanes, &plain(100)).join("\n");
+        assert!(text.contains("#0"), "{text}");
+        assert!(!text.contains("main"), "{text}");
     }
 
     fn meta(base: usize) -> ThreadMeta {

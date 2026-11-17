@@ -140,7 +140,7 @@ In main's chat, type `/thread drop <name>`. It checks the refusals first (unknow
 ralph thread log [--store <DIR>]
 ```
 
-Log draws main and its threads as a unicode graph, newest on top, with no model call and no cost. Main is the trunk with `#N` row ids: its head, each fork point, each merge landing and `#0`. Each thread is a column that branches off at its fork point. Threads sort by fork point, then name.
+Log draws main and its threads as a unicode graph, newest on top, with no model call and no cost. Main is the trunk with `#N` row ids: its last row (marked `main`), each fork point, each merge landing and `#0`. A fork at the end of main shows its `#N` without the `main` mark; an empty main is a bare `●`. Each thread is a column that branches off at its fork point. Threads sort by fork point, then name.
 
 | Mark | Thread |
 |------|--------|
