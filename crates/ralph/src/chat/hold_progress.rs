@@ -109,7 +109,7 @@ impl HoldPanel {
     }
 }
 
-fn git_out(dir: Option<&Path>, args: &[&str]) -> Option<String> {
+pub(super) fn git_out(dir: Option<&Path>, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     command.arg("--no-optional-locks");
     if let Some(dir) = dir {

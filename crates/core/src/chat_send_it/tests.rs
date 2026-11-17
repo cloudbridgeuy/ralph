@@ -15,6 +15,7 @@ mod resume;
 mod steer;
 mod template;
 mod verify;
+mod verify_check;
 mod verify_drive;
 mod verify_limits;
 mod verify_mode;
@@ -408,6 +409,7 @@ fn a_check_runs_as_a_plain_watch_named_for_its_step() {
             kind: crate::watch::WatchKind::Normal,
             timeout: None,
             limit: None,
+            cwd: None,
         }
     );
 }

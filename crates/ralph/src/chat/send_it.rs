@@ -1,4 +1,5 @@
 use crate::chat::editor::open_in_editor;
+use crate::chat::hold_progress::git_out;
 use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
 use crate::chat::monitor::Monitor;
@@ -13,11 +14,11 @@ use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
 use ralph_core::chat_send_it::{
-    approve, awaits_check, blocked_alert, blocked_report, briefed_turn, check_spec, done_block,
-    done_notice, judge_echo, judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal,
-    read_run, render_status, render_status_styled, run_end_prefill, running_line, settle_check,
-    start_run, step_line, stop_block, stop_file, tick, with_reply, write_run, Action, Driving,
-    Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
+    approve, awaits_check, blocked_alert, blocked_report, briefed_turn, done_block, done_notice,
+    judge_echo, judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal, read_run,
+    render_status, render_status_styled, resolve_check, run_end_prefill, running_line,
+    settle_check, start_run, step_line, stop_block, stop_file, tick, verify_worker, with_reply,
+    write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::inbox::{Position, Selection};
@@ -392,7 +393,20 @@ impl SendIt {
                         println!("{}", step_line(plan, driving.progress.step, step));
                     }
                 }
-                let spec = check_spec(driving.progress.step, &command);
+                let worker = plan
+                    .as_ref()
+                    .and_then(|plan| verify_worker(plan, driving.progress));
+                let porcelain =
+                    worker.and_then(|_| git_out(None, &["worktree", "list", "--porcelain"]));
+                let spec = match resolve_check(
+                    driving.progress.step,
+                    &command,
+                    worker,
+                    porcelain.as_deref(),
+                ) {
+                    Ok(spec) => spec,
+                    Err(reason) => return self.stopped(reason, &driving, monitor),
+                };
                 let id = spec.id.clone();
                 match monitor.watches.start(spec) {
                     Ok(slot) => {

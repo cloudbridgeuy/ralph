@@ -264,7 +264,42 @@ pub fn check_spec(step: usize, command: &str) -> WatchSpec {
         kind: WatchKind::Normal,
         timeout: None,
         limit: None,
+        cwd: None,
     }
+}
+
+pub fn verify_spec(step: usize, command: &str, cwd: PathBuf) -> WatchSpec {
+    WatchSpec {
+        cwd: Some(cwd),
+        ..check_spec(step, command)
+    }
+}
+
+pub fn verify_worker(plan: &RunPlan, progress: Progress) -> Option<&str> {
+    match plan.steps.get(progress.step).map(|step| &step.criterion) {
+        Some(Criterion::WorkerDone { worker, .. }) if progress.verifying => Some(worker),
+        _ => None,
+    }
+}
+
+pub fn resolve_check(
+    step: usize,
+    command: &str,
+    worker: Option<&str>,
+    porcelain: Option<&str>,
+) -> Result<WatchSpec, StopReason> {
+    let Some(worker) = worker else {
+        return Ok(check_spec(step, command));
+    };
+    porcelain
+        .and_then(|listing| verify_cwd(listing, worker))
+        .map(|cwd| verify_spec(step, command, cwd))
+        .ok_or_else(|| StopReason::CheckNotStarted {
+            step: step + 1,
+            error: format!(
+                "No worktree found for worker {worker}, so the verify command has no place to run."
+            ),
+        })
 }
 
 fn awaiting(next: &Next, progress: Progress) -> Awaiting {

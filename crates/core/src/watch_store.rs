@@ -91,6 +91,7 @@ impl SavedWatch {
             kind: self.kind,
             timeout: self.timeout_secs.map(Duration::from_secs),
             limit: self.timeout_secs.map(Duration::from_secs),
+            cwd: None,
         }
     }
 
@@ -169,6 +170,7 @@ mod tests {
             kind,
             timeout: timeout.map(Duration::from_secs),
             limit: timeout.map(Duration::from_secs),
+            cwd: None,
         }
     }
 

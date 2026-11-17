@@ -216,6 +216,7 @@ mod tests {
                 kind,
                 timeout: timeout.map(Duration::from_secs),
                 limit: timeout.map(Duration::from_secs),
+                cwd: None,
             },
             at(0),
         )

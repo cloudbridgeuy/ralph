@@ -139,10 +139,18 @@ impl Waiter {
     }
 }
 
-fn spawn_child(command: &str) -> io::Result<(Child, io::PipeReader)> {
+fn child_command(command: &str, cwd: Option<&Path>) -> Command {
+    let mut child = Command::new("sh");
+    child.args(["-c", command]);
+    if let Some(cwd) = cwd {
+        child.current_dir(cwd);
+    }
+    child
+}
+
+fn spawn_child(command: &str, cwd: Option<&Path>) -> io::Result<(Child, io::PipeReader)> {
     let (reader, writer) = io::pipe()?;
-    let child = Command::new("sh")
-        .args(["-c", command])
+    let child = child_command(command, cwd)
         .stdin(Stdio::null())
         .stdout(writer.try_clone()?)
         .stderr(writer)
@@ -213,7 +221,7 @@ impl Watches {
         if let Some(saved) = fresh {
             self.store.save(saved)?;
         }
-        let (child, pipe) = spawn_child(&spec.command).inspect_err(|_| {
+        let (child, pipe) = spawn_child(&spec.command, spec.cwd.as_deref()).inspect_err(|_| {
             if fresh.is_some() {
                 self.store.remove(&spec.id);
             }
@@ -334,3 +342,6 @@ impl Watches {
         true
     }
 }
+
+#[cfg(test)]
+mod tests;
