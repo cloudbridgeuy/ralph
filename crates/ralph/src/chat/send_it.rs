@@ -105,6 +105,7 @@ pub(super) fn prefill_commands(prefill: Option<&str>) -> Vec<EditCommand> {
 
 impl Driven {
     pub(super) fn enter(self, editor: &mut Reedline) -> Option<Submitted> {
+        // Plain buffer insert on purpose: no dim suggestion styling and no suggestion-ledger row, since this is for check-only stops.
         editor.run_edit_commands(&prefill_commands(self.prefill.as_deref()));
         self.route.map(Submitted::internal)
     }
