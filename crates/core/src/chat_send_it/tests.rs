@@ -3,6 +3,7 @@ use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
 
+mod block;
 mod drive;
 mod end_block;
 mod footer;
