@@ -15,7 +15,6 @@ use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -40,7 +39,7 @@ pub struct SpinnerSubprocessConfig {
     /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
     pub gate: Option<Arc<OutputGate>>,
-    pub cancel: Option<Arc<AtomicBool>>,
+    pub cancel: Option<CancelToken>,
     pub interrupt: Option<CancelToken>,
     /// Prompt text written to the child's stdin, then closed. `Session` ignores
     /// it: it owns stdin for stream-json.
@@ -414,7 +413,7 @@ fn run_subprocess_with_spinner(
         let cancelled = config
             .cancel
             .as_ref()
-            .is_some_and(|flag| flag.load(Ordering::SeqCst));
+            .is_some_and(CancelToken::is_cancelled);
         let interrupted = config
             .interrupt
             .as_ref()

@@ -581,8 +581,10 @@ impl InboxTurn<'_> {
         };
         let message = send_it.brief_unread(sending, unread.message);
         let (result, queue) = self.snapshots.around(|| {
-            self.keys
-                .during(|| self.turn.run(Trigger::Worker, &unread.logged, &message))
+            self.keys.during(|cancel| {
+                self.turn
+                    .run(Trigger::Worker, &unread.logged, &message, cancel)
+            })
         });
         Ok(Some(Read {
             outcome: result?,

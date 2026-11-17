@@ -15,6 +15,7 @@ use crate::subprocess::{
 };
 use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, build_tag_args, hit_blocking_limit,
     reset_reason, turn_prompt, turn_system_prompt, CustomPrompt, ReplyImages, ResetLimits,
@@ -115,9 +116,10 @@ impl Drop for PendingTurn<'_> {
     }
 }
 
-struct Prompts<'a> {
+struct TurnInput<'a> {
     sent: &'a str,
     live: &'a str,
+    cancel: &'a CancelToken,
 }
 
 struct Launch {
@@ -147,7 +149,6 @@ pub(super) struct Turn<'a> {
     pub(super) live: Arc<AtomicBool>,
     pub(super) reset_limits: ResetLimits,
     pub(super) recent_history_tokens: usize,
-    pub(super) cancel: Arc<AtomicBool>,
     pub(super) gate: Arc<OutputGate>,
     pub(super) run: &'a str,
     pub(super) suggestions: SuggestionCell,
@@ -239,11 +240,12 @@ impl Turn<'_> {
         trigger: Trigger,
         logged: &[String],
         message: &str,
+        cancel: &CancelToken,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
         let started = Instant::now();
         *locked(&self.timing) = TurnTiming::default();
         locked(&self.last_cost_usd).take();
-        let outcome = self.run_turn(trigger, logged, message);
+        let outcome = self.run_turn(trigger, logged, message, cancel);
         let elapsed = started.elapsed();
         let turn_timing = *locked(&self.timing);
         timing::record(self.store_dir, Some(self.run), |key| {
@@ -260,8 +262,8 @@ impl Turn<'_> {
         trigger: Trigger,
         logged: &[String],
         message: &str,
+        cancel: &CancelToken,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
-        self.cancel.store(false, Ordering::SeqCst);
         self.store.set_pending_turn(trigger)?;
         let _pending = PendingTurn(self.store);
         let unseen = self.unseen().unwrap_or_else(|e| {
@@ -279,14 +281,15 @@ impl Turn<'_> {
             Trigger::Worker => Cow::Borrowed(message),
         };
         let live = catch_up_prompt(&unseen, &sent);
-        let prompts = Prompts {
+        let input = TurnInput {
             sent: &sent,
             live: &live,
+            cancel,
         };
         self.print_rule();
         let mut session = self.take_session();
         let early = turn_end(&TurnSignals {
-            cancelled: self.cancel.swap(false, Ordering::SeqCst),
+            cancelled: cancel.is_cancelled(),
             terminated: false,
         });
         if early == TurnEnd::Cancelled {
@@ -302,10 +305,10 @@ impl Turn<'_> {
                 launch = None;
                 self.suggestions.clear();
                 let (live, result, ran) =
-                    self.attempt(session.take(), pre_log_len, &prompts, &mut launch);
+                    self.attempt(session.take(), pre_log_len, &input, &mut launch);
                 session = live;
                 ran_session = ran;
-                if self.stopped() {
+                if stopped(cancel) {
                     Attempt::Done(result)
                 } else {
                     let attempt = attempt_from(result);
@@ -317,7 +320,7 @@ impl Turn<'_> {
             },
             |delay| {
                 let waited_from = Instant::now();
-                let keep_waiting = wait_unless(|| self.stopped(), delay);
+                let keep_waiting = wait_unless(|| stopped(cancel), delay);
                 self.note_timing(|held| held.with_outage_wait(waited_from.elapsed()));
                 keep_waiting
             },
@@ -330,7 +333,7 @@ impl Turn<'_> {
         );
         self.process_turns.store(process_turns, Ordering::SeqCst);
         let end = turn_end(&TurnSignals {
-            cancelled: self.cancel.swap(false, Ordering::SeqCst),
+            cancelled: cancel.is_cancelled(),
             terminated: signal::is_terminated(),
         });
         if !keeps_session(&end) {
@@ -457,7 +460,7 @@ impl Turn<'_> {
         &self,
         reused: Option<Session>,
         pre_log_len: Option<usize>,
-        prompts: &Prompts,
+        input: &TurnInput,
         launch: &mut Option<Launch>,
     ) -> (
         Option<Session>,
@@ -467,14 +470,14 @@ impl Turn<'_> {
         let was_reused = reused.is_some();
         let started = match reused {
             Some(live) => Ok(live),
-            None => self.start(pre_log_len, prompts.sent, launch),
+            None => self.start(pre_log_len, input, launch),
         };
         let (session, result, ran) = match started {
             Err(e) => (None, Err(e), false),
             Ok(mut live) => {
                 let prompt = launch
                     .as_ref()
-                    .map_or(prompts.live, |spawned| spawned.first_prompt.as_str());
+                    .map_or(input.live, |spawned| spawned.first_prompt.as_str());
                 let result = live.turn(prompt);
                 (Some(live), result, true)
             }
@@ -482,7 +485,7 @@ impl Turn<'_> {
         if relaunch(was_reused, &result) {
             drop(session);
             self.note_reset(ResetReason::Restart);
-            return self.attempt(None, pre_log_len, prompts, launch);
+            return self.attempt(None, pre_log_len, input, launch);
         }
         (session, result, ran)
     }
@@ -490,17 +493,22 @@ impl Turn<'_> {
     fn start(
         &self,
         pre_log_len: Option<usize>,
-        sent: &str,
+        input: &TurnInput,
         launch: &mut Option<Launch>,
     ) -> Result<Session, SubprocessError> {
-        let mut spawned = self.launch(pre_log_len, sent)?;
+        let mut spawned = self.launch(pre_log_len, input)?;
         let live = Session::spawn(&spawned.config)?;
         spawned.reset = locked(&self.reset).take();
         *launch = Some(spawned);
         Ok(live)
     }
 
-    fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
+    fn launch(
+        &self,
+        pre_log_len: Option<usize>,
+        input: &TurnInput,
+    ) -> Result<Launch, SubprocessError> {
+        let sent = input.sent;
         let waited_from = Instant::now();
         let loaded = self.store.load_after_nap(NAP_WAIT_LIMIT, || {
             let mut spinner = Spinner::with_session_context(0, chat_session_info())
@@ -552,7 +560,7 @@ impl Turn<'_> {
             verbose_tools: VerboseToolsConfig::new(),
             session_info: chat_session_info(),
             gate: Some(Arc::clone(&self.gate)),
-            cancel: Some(Arc::clone(&self.cancel)),
+            cancel: Some(input.cancel.clone()),
             interrupt: None,
             stdin: None,
         };
@@ -562,10 +570,6 @@ impl Turn<'_> {
             first_prompt,
             reset: None,
         })
-    }
-
-    fn stopped(&self) -> bool {
-        self.cancel.load(Ordering::SeqCst) || signal::is_terminated()
     }
 
     fn append_logged(&self, trigger: Trigger, logged: &[String]) -> io::Result<()> {
@@ -603,6 +607,10 @@ fn next_process_turns(ran: bool, launched: bool, current: u64) -> u64 {
 
 fn keeps_session(end: &TurnEnd) -> bool {
     !matches!(end, TurnEnd::Cancelled)
+}
+
+fn stopped(cancel: &CancelToken) -> bool {
+    cancel.is_cancelled() || signal::is_terminated()
 }
 
 #[cfg(test)]

@@ -3,13 +3,13 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
 use crate::signal;
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat_memory::{model_usage_since, writes_usage_row};
 use ralph_core::stream::{interrupt_line, result_is_error, user_line, IterationCosts, ModelTotals};
 use ralph_server::subprocess::{exited_unreaped, signal_group};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
-use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -222,7 +222,7 @@ impl Session {
                 .config
                 .cancel
                 .as_ref()
-                .is_some_and(|flag| flag.load(Ordering::SeqCst));
+                .is_some_and(CancelToken::is_cancelled);
             if interrupt.is_none()
                 && interrupt_requested(interrupts, cancelled, signal::is_terminated())
             {
