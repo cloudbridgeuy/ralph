@@ -532,6 +532,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
         remote: &remote,
         config: &config_snapshot,
+        columns: prompt::screen_columns,
     };
     let keys = Keys {
         gate: &turn.gate,
@@ -882,9 +883,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             local => {
-                if let Some(output) = run_local(local, &local_route, || {
-                    monitor.refresh(true);
-                })? {
+                if let Some(output) =
+                    run_local(local, &local_route, &mut std::io::stdout(), || {
+                        monitor.refresh(true);
+                    })?
+                {
                     note(&output);
                 }
                 continue;
