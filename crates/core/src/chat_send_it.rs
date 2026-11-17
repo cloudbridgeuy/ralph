@@ -260,8 +260,15 @@ impl Grant {
     }
 }
 
+const JUDGE_ONLY_WARNING: &str = "Warning: every step uses a judge. A judge costs one model turn per round. Prefer check_passes or watch_passes: ralph runs them for $0.";
+
 pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
     let may_reply = plan.allowed.contains(&Action::Reply);
+    let judge_only = !plan.steps.is_empty()
+        && plan
+            .steps
+            .iter()
+            .all(|step| matches!(step.criterion, Criterion::Judge { .. }));
     plan.steps
         .iter()
         .enumerate()
@@ -272,6 +279,7 @@ pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
             )),
             _ => None,
         })
+        .chain(judge_only.then(|| JUDGE_ONLY_WARNING.to_string()))
         .collect()
 }
 

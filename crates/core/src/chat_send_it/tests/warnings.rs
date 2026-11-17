@@ -60,3 +60,37 @@ fn render_run_with_reply_has_no_warning_line() {
     let text = render_run(&worker_plan(serde_json::json!([{"kind": "reply"}])));
     assert!(!text.contains("Warning:"), "{text}");
 }
+
+const JUDGE_WARNING: &str = "Warning: every step uses a judge. A judge costs one model turn per round. Prefer check_passes or watch_passes: ralph runs them for $0.";
+
+fn judge_only_plan(count: usize) -> RunPlan {
+    let steps: Vec<serde_json::Value> = (0..count)
+        .map(|index| {
+            serde_json::json!({"do": format!("step {index}"), "criterion": {"kind": "judge", "question": "is it done?"}})
+        })
+        .collect();
+    let mut json = plan_json();
+    json["steps"] = serde_json::Value::Array(steps);
+    json["allowed"] = serde_json::json!([]);
+    parse_run(&json, limits()).unwrap()
+}
+
+#[test]
+fn a_judge_only_plan_warns_once() {
+    assert_eq!(
+        plan_warnings(&judge_only_plan(1)),
+        vec![JUDGE_WARNING.to_string()]
+    );
+    assert_eq!(
+        plan_warnings(&judge_only_plan(3)),
+        vec![JUDGE_WARNING.to_string()]
+    );
+}
+
+#[test]
+fn a_mixed_plan_has_no_judge_warning() {
+    let plan = worker_plan(serde_json::json!([{"kind": "reply"}]));
+    assert!(!plan_warnings(&plan)
+        .iter()
+        .any(|line| line.contains("judge")));
+}

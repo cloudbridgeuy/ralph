@@ -64,7 +64,7 @@ Each step has one criterion. The run goes to the next step only when the criteri
 
 A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it. If the plan does not allow `reply`, ralph refuses the model's reply, so the worker gets no answer, and the run stops.
 
-A plan with a `worker_done` step and no `reply` action shows one `Warning:` line per such step, after the `Allowed:` and `Not allowed:` lines, before `Caps:`, in the plan view and in the `propose_run` result. The warning does not block approval.
+A plan with a `worker_done` step and no `reply` action shows one `Warning:` line per such step, after the `Allowed:` and `Not allowed:` lines, before `Caps:`, in the plan view and in the `propose_run` result. The warning does not block approval. A plan where every step uses a `judge` criterion also shows one plan-level `Warning:` line, because each judge round costs one model turn; `check_passes` and `watch_passes` cost $0. A plan that mixes criterion kinds does not get this line.
 
 ## Judge steps
 
