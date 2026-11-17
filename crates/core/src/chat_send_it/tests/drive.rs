@@ -23,7 +23,9 @@ fn answered_ids(ids: &[&str]) -> Vec<String> {
     ids.iter().map(ToString::to_string).collect()
 }
 
-const FLAGGED: Next = Next::Stop(StopReason::WorkerFlagged);
+fn is_flagged(next: &Next) -> bool {
+    matches!(next, Next::Stop(StopReason::WorkerFlagged { .. }))
+}
 
 #[test]
 fn an_answered_question_the_plan_allows_keeps_the_held_run_holding() {
@@ -52,7 +54,7 @@ fn an_unanswered_question_stops_the_run() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
@@ -68,7 +70,7 @@ fn an_answer_the_plan_does_not_allow_still_stops_the_run() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
@@ -87,7 +89,7 @@ fn one_unanswered_flagged_report_among_answered_ones_stops_the_run() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
@@ -103,7 +105,7 @@ fn an_unread_question_stops_the_run_even_when_that_worker_was_answered() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, FLAGGED);
+    assert!(is_flagged(&ticked.next), "{:?}", ticked.next);
 }
 
 #[test]
@@ -508,7 +510,7 @@ fn a_check_failed_notice_carries_its_detail_in_brackets_and_stays_the_same_witho
     let plain = StopReason::check_failed(3);
     assert_eq!(
         plain.notice(&run, None),
-        format!("send-it stopped: step 3 check did not exit 0. {RESTART}")
+        "send-it stopped: step 3 check did not exit 0.".to_string()
     );
     let detailed = StopReason::CheckFailed {
         step: 3,
@@ -516,9 +518,8 @@ fn a_check_failed_notice_carries_its_detail_in_brackets_and_stays_the_same_witho
     };
     assert_eq!(
         detailed.notice(&run, None),
-        format!(
-            "send-it stopped: step 3 check did not exit 0 (exited with code 1; last output: oops). {RESTART}"
-        )
+        "send-it stopped: step 3 check did not exit 0 (exited with code 1; last output: oops)."
+            .to_string()
     );
 }
 
@@ -667,7 +668,7 @@ fn a_check_that_could_not_start_says_so_and_names_the_error() {
     .notice(&Run::default(), None);
     assert_eq!(
         notice,
-        format!("send-it stopped: step 3 check could not start: no such file. {RESTART}")
+        "send-it stopped: step 3 check could not start: no such file.".to_string()
     );
     assert!(!notice.contains("did not exit 0"), "{notice}");
 }
@@ -723,4 +724,9 @@ fn a_held_worker_report_turn_is_briefed_once_for_an_unbriefed_run() {
     let (again, bare) = briefed_turn(&file.plan, driving.clone(), report);
     assert_eq!(again, driving);
     assert_eq!(bare, report);
+}
+
+#[test]
+fn the_judge_echo_is_one_short_line() {
+    assert_eq!(judge_echo(&plan(), at(3)), "send-it 4/4 · judge ...");
 }

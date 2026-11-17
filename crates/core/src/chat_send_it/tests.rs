@@ -3,7 +3,9 @@ use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
 
+mod block;
 mod drive;
+mod end_block;
 mod footer;
 mod header_wrap;
 mod noise;
@@ -20,8 +22,6 @@ fn limits() -> Limits {
     }
 }
 
-const RESTART: &str = "To run it again, show the plan with /send-it status, then type /send-it go.";
-
 #[test]
 fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
     let run = Run::default();
@@ -29,7 +29,7 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
         StopReason::TurnCap,
         StopReason::CostCap,
         StopReason::Unmet { step: 2 },
-        StopReason::WorkerFlagged,
+        flagged_stop(),
         StopReason::JudgeRounds {
             step: 2,
             evidence: "tests fail".to_string(),
@@ -45,7 +45,8 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
     ] {
         let notice = reason.notice(&run, None);
         assert!(notice.starts_with("send-it stopped: "), "{notice}");
-        assert!(notice.ends_with(RESTART), "{notice}");
+        assert!(notice.ends_with('.'), "{notice}");
+        assert!(!notice.contains("/send-it"), "{notice}");
         assert!(!notice.contains("send-it off"), "{notice}");
         assert!(!notice.contains("Turn it on again"), "{notice}");
     }
@@ -58,7 +59,7 @@ fn a_refused_stop_names_the_tool() {
     };
     assert_eq!(
         refused.notice(&Run::default(), None),
-        format!("send-it stopped: the plan does not allow `spawn_worker codex`. {RESTART}")
+        "send-it stopped: the plan does not allow `spawn_worker codex`.".to_string()
     );
 }
 
@@ -270,6 +271,13 @@ fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Tic
     )
 }
 
+fn flagged_stop() -> StopReason {
+    StopReason::WorkerFlagged {
+        worker: "GUZ-1".to_string(),
+        line: "text".to_string(),
+    }
+}
+
 fn worker_report(worker: &str, status: &str) -> Report {
     Report {
         worker: worker.to_string(),
@@ -442,9 +450,9 @@ fn new_stop_notices_name_the_step() {
     let run = Run::default();
     assert_eq!(
         StopReason::Unmet { step: 2 }.notice(&run, None),
-        format!("send-it stopped: step 2 missed its exit criterion. {RESTART}")
+        "send-it stopped: step 2 missed its exit criterion.".to_string()
     );
-    assert!(StopReason::WorkerFlagged
+    assert!(flagged_stop()
         .notice(&run, None)
         .contains("a worker asked a question"));
     assert_eq!(
@@ -453,7 +461,8 @@ fn new_stop_notices_name_the_step() {
             evidence: "finding 2 is open.".to_string()
         }
         .notice(&run, None),
-        format!("send-it stopped: step 4 was still not met after the last judge round: finding 2 is open. {RESTART}")
+        "send-it stopped: step 4 was still not met after the last judge round: finding 2 is open."
+            .to_string()
     );
     for (reason, why) in [
         (StopReason::check_failed(3), "step 3 check did not exit 0"),
@@ -485,6 +494,7 @@ fn driving(step: usize, awaiting: Awaiting, run: Run) -> Driving {
         run,
         awaiting,
         briefed: true,
+        tally: Tally::default(),
     }
 }
 
@@ -603,7 +613,10 @@ fn a_failed_typed_asked_or_flagged_turn_stops_the_run() {
     };
     assert_eq!(
         tick(&state, &ended).next,
-        Next::Stop(StopReason::WorkerFlagged)
+        Next::Stop(StopReason::WorkerFlagged {
+            worker: "X9".to_string(),
+            line: "text".to_string()
+        })
     );
 }
 
@@ -756,7 +769,7 @@ fn caps_stop_before_a_send_but_not_before_the_finish() {
     assert_eq!(finished.next, Next::Done);
     assert_eq!(
         finished.met.as_deref(),
-        Some("send-it: step 4/4 met (judged: are all findings resolved?): all 3 findings fixed")
+        Some("send-it: step 4/4 met: all 3 findings fixed")
     );
 }
 
@@ -816,6 +829,13 @@ fn the_judge_prompt_asks_the_step_question_for_one_step_result_call() {
     assert!(prompt.contains("are all findings resolved?"), "{prompt}");
     assert!(prompt.contains("Call `step_result` once"), "{prompt}");
     assert!(!prompt.contains("verdict:"), "{prompt}");
+    assert_eq!(
+        prompt.matches("are all findings resolved?").count(),
+        1,
+        "{prompt}"
+    );
+    assert!(!prompt.contains("exit:"), "{prompt}");
+    assert!(prompt.contains("reply `met` or `not met` only"), "{prompt}");
     assert_eq!(judge_prompt(&plan(), at(0)), None);
 }
 
@@ -823,7 +843,7 @@ fn the_judge_prompt_asks_the_step_question_for_one_step_result_call() {
 fn the_done_notice_counts_steps_turns_and_cost() {
     assert_eq!(
         done_notice(&plan(), &spent(7, 1.25)),
-        format!("send-it done: 4/4 steps in 7 turns, $1.25. {RESTART}")
+        "send-it done: 4/4 steps in 7 turns, $1.25.".to_string()
     );
 }
 
@@ -909,8 +929,8 @@ fn a_kept_stop_names_the_step_and_how_to_resume() {
         stopped: stopped_at(2),
     };
     assert_eq!(
-        StopReason::WorkerFlagged.notice(&Run::default(), Some(&kept)),
-        "send-it stopped at step 2/4: a worker asked a question or is blocked. The plan is kept. Fix the cause, show it with /send-it status, then type /send-it go to resume from step 2. /send-it off deletes it."
+        flagged_stop().notice(&Run::default(), Some(&kept)),
+        "send-it stopped at step 2/4: a worker asked a question or is blocked."
     );
     assert_eq!(
         StopReason::Off.notice(&Run::default(), Some(&kept)),
@@ -922,7 +942,7 @@ fn a_kept_stop_names_the_step_and_how_to_resume() {
     };
     assert_eq!(
         StopReason::TookOver.notice(&Run::default(), Some(&unstopped)),
-        format!("send-it stopped: you took over. {RESTART}")
+        "send-it stopped: you took over.".to_string()
     );
 }
 
