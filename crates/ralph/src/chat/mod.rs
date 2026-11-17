@@ -17,6 +17,7 @@ mod nudge;
 mod prompt;
 mod queue;
 mod recap;
+mod refusal;
 mod rerender;
 mod route;
 mod schedule;
@@ -47,16 +48,16 @@ use crate::chat::monitor::{
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
-    decide, draft_with_queue, draft_with_typed, next_batch, refusal_action, refused_draft, unsent,
-    unsent_texts, Decision, Queue, Refusal,
+    decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
 };
+use crate::chat::refusal::{refuse_or_exit, restore_prompt};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionCell, SuggestionHighlighter};
-use crate::chat::switch::{check as check_switch, Leave};
+use crate::chat::switch::{chat_exit, check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
@@ -78,6 +79,7 @@ use ralph_core::chat::{
     resolve_wrap_width, select_servers, ReplyImages,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
+use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
@@ -118,7 +120,7 @@ use ralph_server::wire::store::current_uid;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::headless::ExitCleanup;
 use ralph_server::workers::{canonical_store, running_workers, usage_store, Workers};
-use reedline::{EditCommand, ExternalPrinter, Reedline};
+use reedline::{EditCommand, ExternalPrinter};
 #[cfg(test)]
 use session::resolve_store;
 use session::{
@@ -142,7 +144,7 @@ pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
 pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     if let Some(ChatCommand::History(history)) = args.command {
         print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
-        return Ok(ChatExit::Quit);
+        return Ok(chat_exit(LoopExit::History));
     }
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     signal::ignore_sigttou();
@@ -583,7 +585,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 submitted?
                     .map_err(|exit| {
                         if matches!(exit, ChatExit::Closed) {
-                            leaving = Some(exit);
+                            leaving = Some(chat_exit(LoopExit::IdleClose));
                         }
                     })
                     .ok()
@@ -642,6 +644,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         let saved = save_unsent(&mut editor, &lost);
                         print_exit_notice(lost.len(), saved);
                         editor.sync_history()?;
+                        leaving = Some(chat_exit(LoopExit::ShellCell));
                         break;
                     }
                     Err(_) => restore_prompt(&mut editor, &line, std::mem::take(&mut carried)),
@@ -707,7 +710,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                             send_it.took_over(&active, &monitor);
                         }
                     }
-                    Held::Quit => break,
+                    Held::Quit => {
+                        leaving = Some(chat_exit(LoopExit::HeldQuit));
+                        break;
+                    }
                 }
                 continue;
             }
@@ -798,6 +804,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Err(refusal) => {
                         println!("{refusal}");
                         if refuse_or_exit(&mut editor, &line, std::mem::take(&mut carried))? {
+                            leaving = Some(chat_exit(LoopExit::SwitchRefused));
                             break;
                         }
                         continue;
@@ -809,6 +816,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     if signal::is_terminated() {
                         print_exit_notice(lost.len(), saved);
                         eprintln!("could not save the unsent text; exiting on signal.");
+                        leaving = Some(chat_exit(LoopExit::SwitchSaveFailed));
                         break;
                     }
                     eprintln!("could not save the unsent text; the switch is cancelled.");
@@ -860,6 +868,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         println!("{refusal}");
                         note(&refusal);
                         if refuse_or_exit(&mut editor, &line, std::mem::take(&mut carried))? {
+                            leaving = Some(chat_exit(LoopExit::ThreadOpRefused));
                             break;
                         }
                     }
@@ -887,6 +896,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             let saved = save_unsent(&mut editor, &lost);
             print_exit_notice(lost.len(), saved);
             editor.sync_history()?;
+            leaving = Some(chat_exit(LoopExit::TurnExit));
             break;
         }
         let asked = approve_proposed(&schedule_store, watch_timeout);
@@ -964,31 +974,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         }
     }
     Ok(leaving.unwrap_or(ChatExit::Quit))
-}
-
-fn refuse_or_exit(
-    editor: &mut Reedline,
-    line: &str,
-    carried: Vec<String>,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let buffer = editor.current_buffer_contents().to_string();
-    match refusal_action(signal::is_terminated(), line, &carried, &buffer) {
-        Refusal::Save(lost) => {
-            let saved = save_unsent(editor, &lost);
-            print_exit_notice(lost.len(), saved);
-            editor.sync_history()?;
-            Ok(true)
-        }
-        Refusal::Restore => {
-            restore_prompt(editor, line, carried);
-            Ok(false)
-        }
-    }
-}
-
-fn restore_prompt(editor: &mut Reedline, line: &str, carried: Vec<String>) {
-    let draft = refused_draft(line, &carried, editor.current_buffer_contents());
-    editor.run_edit_commands(&[EditCommand::Clear, EditCommand::InsertString(draft)]);
 }
 
 #[cfg(test)]
