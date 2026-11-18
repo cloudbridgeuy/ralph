@@ -765,7 +765,12 @@ fn a_dispatched_done_tick_logs_no_met_line() {
         notice: None,
     };
     send_it.dispatch(ticked, &held::monitor(dir.path()));
-    assert!(!logged_texts(dir.path()).contains(&notice_record("Step 1 met")));
+    let logged = logged_texts(dir.path());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert!(
+        logged[0].starts_with(&notice_record("send-it done: 1/1")),
+        "{logged:?}"
+    );
 }
 
 #[test]
