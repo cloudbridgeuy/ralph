@@ -1,4 +1,5 @@
 mod block_builders;
+mod collector;
 mod diff;
 mod files;
 mod output_block;
@@ -11,6 +12,7 @@ mod utils;
 mod test_helpers;
 
 pub use block_builders::{build_tool_invocation_block, input_str, write_result_variant};
+pub use collector::{StreamCollector, Visible};
 pub use diff::{edit_diff, notebook_diff};
 pub use files::Files;
 pub use output_block::{

@@ -25,7 +25,6 @@
 //! ```
 
 mod disk_files;
-mod event_handler;
 mod processor;
 mod render_block;
 mod tool_results;

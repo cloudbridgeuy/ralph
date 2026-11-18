@@ -252,6 +252,6 @@ fn hidden_tool_output_leaves_no_pending_invocations_or_snapshots() {
         r#"{"type":"user","message":{"id":"user_1","content":[{"type":"tool_result","tool_use_id":"edit_1","content":"ok","is_error":false},{"type":"tool_result","tool_use_id":"write_1","content":"ok","is_error":false},{"type":"tool_result","tool_use_id":"nb_1","content":"ok","is_error":false}]}}"#,
     );
 
-    assert!(processor.collector.pending_invocations.is_empty());
-    assert!(processor.collector.pending_snapshots.is_empty());
+    assert_eq!(processor.collector.pending_invocation_count(), 0);
+    assert_eq!(processor.collector.pending_snapshot_count(), 0);
 }

@@ -1,12 +1,13 @@
 use super::disk_files::DiskFiles;
-use super::event_handler::StreamCollector;
 use super::render_block::render_block;
 use crate::diff_theme::DiffColors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::markdown::MarkdownTheme;
 use crate::render::RenderContext;
 use crate::tool_theme::ToolColors;
-use ralph_core::stream::blocks::{OutputBlock, StreamProcessorResult, VerboseToolsConfig};
+use ralph_core::stream::blocks::{
+    OutputBlock, StreamCollector, StreamProcessorResult, VerboseToolsConfig,
+};
 use std::io::IsTerminal;
 
 pub struct StreamProcessor {

@@ -1,18 +1,17 @@
 use std::collections::HashMap;
 
-use ralph_core::chat_send_it::is_step_result_tool;
-use ralph_core::chunk::{
-    split_lines_preserve_trailing, ChunkType, ParsedChunk, StreamingChunkBuffer,
+use crate::chat_send_it::is_step_result_tool;
+use crate::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk, StreamingChunkBuffer};
+use crate::directive::split_text_around_directives;
+use crate::stream::{
+    extract_costs_from_events_or_default, extract_metadata_from_events_or_default,
+    parse_stream_line, ParsedLine, StreamEvent, ToolInvocation,
 };
-use ralph_core::directive::split_text_around_directives;
-use ralph_core::stream::blocks::{
+
+use super::{
     build_result_block, build_tool_invocation_block, capture_edit_snapshot,
     capture_notebook_snapshot, capture_write_snapshot, Files, OutputBlock, Snapshot,
     StreamProcessorResult, VerboseToolsConfig,
-};
-use ralph_core::stream::{
-    extract_costs_from_events_or_default, extract_metadata_from_events_or_default,
-    parse_stream_line, ParsedLine, StreamEvent, ToolInvocation,
 };
 
 pub type Visible<'a> = &'a mut dyn FnMut(&OutputBlock) -> bool;
@@ -25,8 +24,8 @@ pub struct StreamCollector {
     parse_errors: Vec<(String, String)>,
     has_emitted_output: bool,
     response_count: usize,
-    pub(super) pending_invocations: HashMap<String, ToolInvocation>,
-    pub(super) pending_snapshots: HashMap<String, Snapshot>,
+    pending_invocations: HashMap<String, ToolInvocation>,
+    pending_snapshots: HashMap<String, Snapshot>,
     output_blocks: Vec<OutputBlock>,
     show_tool_invocations: bool,
     verbose_tools_config: VerboseToolsConfig,
@@ -122,6 +121,14 @@ impl StreamCollector {
 
     pub fn verbose_tools_config(&self) -> &VerboseToolsConfig {
         &self.verbose_tools_config
+    }
+
+    pub fn pending_invocation_count(&self) -> usize {
+        self.pending_invocations.len()
+    }
+
+    pub fn pending_snapshot_count(&self) -> usize {
+        self.pending_snapshots.len()
     }
 
     fn handle_event(
@@ -250,5 +257,78 @@ impl StreamCollector {
     fn flush_pending_chunks(&mut self) -> Vec<OutputBlock> {
         let chunks = self.chunk_buffer.finish();
         self.emit_chunks(chunks)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    use super::super::{
+        Files, OutputBlock, StreamCollector, ToolResultVariant, VerboseToolsConfig,
+    };
+
+    struct FakeFiles(HashMap<&'static str, &'static str>);
+
+    impl Files for FakeFiles {
+        fn read_text(&self, path: &Path) -> Option<String> {
+            self.0
+                .get(path.to_str()?)
+                .map(|content| content.to_string())
+        }
+
+        fn exists(&self, path: &Path) -> bool {
+            path.to_str().is_some_and(|p| self.0.contains_key(p))
+        }
+    }
+
+    fn feed(collector: &mut StreamCollector, files: &FakeFiles, line: &str) -> Vec<OutputBlock> {
+        collector.process_line(line, files, &mut |_| true)
+    }
+
+    #[test]
+    fn edit_result_carries_the_diff_between_the_fake_file_versions() {
+        let mut collector = StreamCollector::new(true, VerboseToolsConfig::default());
+        let before = FakeFiles(HashMap::from([("/f.rs", "one\n")]));
+        let after = FakeFiles(HashMap::from([("/f.rs", "two\n")]));
+
+        feed(
+            &mut collector,
+            &before,
+            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/f.rs"}}]}}"#,
+        );
+        let blocks = feed(
+            &mut collector,
+            &after,
+            r#"{"type":"user","message":{"id":"u1","content":[{"type":"tool_result","tool_use_id":"e1","content":"ok","is_error":false}]}}"#,
+        );
+
+        let [OutputBlock::ToolResult(result)] = blocks.as_slice() else {
+            panic!("expected one tool result, got {blocks:?}");
+        };
+        let ToolResultVariant::EditDiff { diff_content, .. } = &result.variant else {
+            panic!("expected an edit diff, got {:?}", result.variant);
+        };
+        assert!(diff_content.contains("-one\n+two\n"), "{diff_content}");
+    }
+
+    #[test]
+    fn a_second_assistant_message_id_yields_a_separator() {
+        let mut collector = StreamCollector::new(true, VerboseToolsConfig::default());
+        let files = FakeFiles(HashMap::new());
+
+        feed(
+            &mut collector,
+            &files,
+            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"hello\n"}]}}"#,
+        );
+        let blocks = feed(
+            &mut collector,
+            &files,
+            r#"{"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"again\n"}]}}"#,
+        );
+
+        assert!(blocks.contains(&OutputBlock::Separator), "{blocks:?}");
     }
 }
