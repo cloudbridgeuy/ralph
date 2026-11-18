@@ -507,6 +507,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 name: &session_name,
                 thread: thread_name,
                 model_args: &model_args,
+                identity: Arc::clone(&turn.identity),
             },
         ),
         notice: RefCell::new(None),

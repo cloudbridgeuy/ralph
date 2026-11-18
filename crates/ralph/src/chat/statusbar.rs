@@ -3,14 +3,18 @@ use crate::status_theme::StatusColors;
 use crate::theme_slots::ResolveColors;
 use ralph_core::chat_status::Status;
 use ralph_core::status_segments::{bar, Context, Separator, Span};
+use ralph_core::stream::IterationMetadata;
 use ralph_server::config::theme::StatusTheme;
 use ralph_server::config::ChatSection;
+use ralph_server::watches::locked;
+use std::sync::{Arc, Mutex};
 
 pub struct StatusBar {
     colors: StatusColors,
     context: Context,
     separator: Separator,
     color: bool,
+    identity: Arc<Mutex<IterationMetadata>>,
 }
 
 fn separator_for(color: bool, powerline: bool) -> Separator {
@@ -44,6 +48,7 @@ pub struct BarContext<'a> {
     pub name: &'a str,
     pub thread: Option<&'a str>,
     pub model_args: &'a [String],
+    pub identity: Arc<Mutex<IterationMetadata>>,
 }
 
 fn model_alias(model_args: &[String]) -> Option<String> {
@@ -65,6 +70,7 @@ impl StatusBar {
             },
             separator: separator_for(color, chat.status_powerline),
             color,
+            identity: context.identity.clone(),
         }
     }
 
@@ -73,7 +79,11 @@ impl StatusBar {
     }
 
     pub fn line(&self, status: &Status, width: usize) -> String {
-        let spans = bar(status, &self.context, width, self.separator);
+        let context = Context {
+            resolved: locked(&self.identity).model.clone(),
+            ..self.context.clone()
+        };
+        let spans = bar(status, &context, width, self.separator);
         format!("{}\n", render_spans(&self.colors, &spans, self.color))
     }
 }
@@ -104,6 +114,7 @@ mod tests {
             name: "ralph-chat",
             thread,
             model_args,
+            identity: Arc::default(),
         }
     }
 
@@ -202,5 +213,37 @@ mod tests {
             "{shown}"
         );
         assert_eq!(model_alias(&[]), None);
+    }
+
+    #[test]
+    fn the_resolved_id_replaces_the_alias_after_a_turn() {
+        let args = ["--model".to_string(), "haiku".to_string()];
+        let context = context(Some("t1"), &args);
+        let bar = StatusBar::new(
+            &StatusTheme::default(),
+            &ChatSection::default(),
+            false,
+            &context,
+        );
+        locked(&context.identity).model = Some("claude-haiku-4-5".to_string());
+        let shown = bar.line(&status(), 100);
+        assert!(shown.contains("│ claude-haiku-4-5 │"), "{shown}");
+        assert!(!shown.contains("│ haiku │"), "{shown}");
+    }
+
+    #[test]
+    fn main_shows_its_model_only_after_the_first_turn() {
+        let context = context(None, &[]);
+        let bar = StatusBar::new(
+            &StatusTheme::default(),
+            &ChatSection::default(),
+            false,
+            &context,
+        );
+        assert!(!bar.line(&status(), 100).contains("claude"));
+        locked(&context.identity).model = Some("claude-opus-5".to_string());
+        assert!(bar
+            .line(&status(), 100)
+            .starts_with(" INBOX │ ralph-chat │ claude-opus-5 │"));
     }
 }
