@@ -14,12 +14,12 @@ use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocat
 use super::block_builders::build_tool_invocation_block;
 use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
+use super::render_block::render_invocation;
 use super::result_handlers::{
     handle_bash_result, handle_default_result, handle_edit_result, handle_glob_result,
     handle_grep_result, handle_notebook_result, handle_read_result, handle_todowrite_result,
     handle_write_result,
 };
-use super::tool_display;
 use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
 impl StreamProcessor {
@@ -129,9 +129,10 @@ impl StreamProcessor {
                     if is_step_result_tool(&invocation.name) {
                         continue;
                     }
-                    let formatted = tool_display::format_tool_invocation(self, invocation);
-                    output_parts.push(formatted);
                     let block = build_tool_invocation_block(invocation, &self.verbose_tools_config);
+                    if let OutputBlock::ToolInvocation(shown) = &block {
+                        output_parts.push(render_invocation(&self.render_context(), shown));
+                    }
                     self.output_blocks.push(block);
                 }
 
