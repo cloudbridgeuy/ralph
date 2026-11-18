@@ -200,55 +200,6 @@ pub fn build_write_result_block(
 /// Build an OutputBlock for NotebookEdit tool results.
 ///
 /// Requires a NotebookSnapshot for cell identification and the new source content.
-/// Build an OutputBlock for Read tool results (verbose mode).
-pub fn build_read_result_block(
-    file_path: &str,
-    content: &str,
-    line_count: usize,
-    truncated: bool,
-) -> OutputBlock {
-    OutputBlock::tool_result(
-        "Read",
-        false,
-        ToolResultVariant::Read {
-            file_path: file_path.to_string(),
-            content: content.to_string(),
-            line_count,
-            truncated,
-        },
-    )
-}
-
-/// Build an OutputBlock for Grep tool results (verbose mode).
-pub fn build_grep_result_block(
-    match_count: usize,
-    output_mode: &str,
-    content: &str,
-) -> OutputBlock {
-    OutputBlock::tool_result(
-        "Grep",
-        false,
-        ToolResultVariant::Grep {
-            match_count,
-            output_mode: output_mode.to_string(),
-            content: content.to_string(),
-        },
-    )
-}
-
-/// Build an OutputBlock for Glob tool results (verbose mode).
-pub fn build_glob_result_block(file_count: usize, content: &str, truncated: bool) -> OutputBlock {
-    OutputBlock::tool_result(
-        "Glob",
-        false,
-        ToolResultVariant::Glob {
-            file_count,
-            content: content.to_string(),
-            truncated,
-        },
-    )
-}
-
 pub fn build_notebook_edit_block(snapshot: &NotebookSnapshot, new_source: &str) -> OutputBlock {
     // Generate diff between old and new content
     let old_content = snapshot.content.as_deref().unwrap_or("");

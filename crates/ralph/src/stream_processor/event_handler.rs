@@ -16,8 +16,7 @@ use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
 use super::render_block::render_block;
 use super::result_handlers::{
-    build_result_block, handle_edit_result, handle_glob_result, handle_grep_result,
-    handle_notebook_result, handle_read_result, handle_write_result,
+    build_result_block, handle_edit_result, handle_notebook_result, handle_write_result,
 };
 use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
@@ -178,9 +177,6 @@ impl StreamProcessor {
                                     inv,
                                     notebook_snapshot.as_ref(),
                                 ),
-                                ("Read", false) => handle_read_result(self, result, inv),
-                                ("Grep", false) => handle_grep_result(self, result, inv),
-                                ("Glob", false) => handle_glob_result(self, result, inv),
                                 _ => {
                                     let block = build_result_block(
                                         &self.verbose_tools_config,

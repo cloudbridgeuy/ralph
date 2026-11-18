@@ -7,8 +7,7 @@ use ralph_core::stream::{ToolInvocation, ToolResult};
 
 use super::block_builders::{
     build_default_result_block, build_edit_before_after_block, build_edit_diff_block,
-    build_glob_result_block, build_grep_result_block, build_notebook_edit_block,
-    build_read_result_block, build_write_result_block,
+    build_notebook_edit_block, build_write_result_block, input_str,
 };
 use super::output_block::{OutputBlock, ToolResultVariant};
 use super::processor::StreamProcessor;
@@ -107,60 +106,6 @@ pub fn handle_notebook_result(
     }
 }
 
-/// Handle Read tool result.
-pub fn handle_read_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: &ToolInvocation,
-) -> ToolResultOutput {
-    let formatted =
-        tool_results::format_tool_result_with_context(processor, result, Some(invocation.clone()));
-    let content = result.content.as_deref().unwrap_or("");
-    let line_count = content.lines().count();
-    let truncated = is_content_truncated(content);
-    let file_path = invocation
-        .input
-        .get("file_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let block = build_read_result_block(file_path, content, line_count, truncated);
-    ToolResultOutput { formatted, block }
-}
-
-/// Handle Grep tool result.
-pub fn handle_grep_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: &ToolInvocation,
-) -> ToolResultOutput {
-    let formatted =
-        tool_results::format_tool_result_with_context(processor, result, Some(invocation.clone()));
-    let content = result.content.as_deref().unwrap_or("");
-    let match_count = count_non_empty_lines(content);
-    let output_mode = invocation
-        .input
-        .get("output_mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("files_with_matches");
-    let block = build_grep_result_block(match_count, output_mode, content);
-    ToolResultOutput { formatted, block }
-}
-
-/// Handle Glob tool result.
-pub fn handle_glob_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: &ToolInvocation,
-) -> ToolResultOutput {
-    let formatted =
-        tool_results::format_tool_result_with_context(processor, result, Some(invocation.clone()));
-    let content = result.content.as_deref().unwrap_or("");
-    let file_count = count_non_empty_lines(content);
-    let truncated = is_content_truncated(content);
-    let block = build_glob_result_block(file_count, content, truncated);
-    ToolResultOutput { formatted, block }
-}
-
 /// Handle default tool result (unknown tools or errors).
 pub fn handle_default_result(
     processor: &StreamProcessor,
@@ -180,7 +125,7 @@ pub fn build_result_block(
     invocation: Option<&ToolInvocation>,
 ) -> OutputBlock {
     let name = invocation.map_or("Unknown", |inv| inv.name.as_str());
-    let variant = plain_variant(verbose, name, result);
+    let variant = plain_variant(verbose, name, result, invocation);
     OutputBlock::tool_result(name, result.is_error, variant)
 }
 
@@ -188,6 +133,7 @@ fn plain_variant(
     verbose: &VerboseToolsConfig,
     name: &str,
     result: &ToolResult,
+    invocation: Option<&ToolInvocation>,
 ) -> ToolResultVariant {
     let content = result.content.clone();
     let text = content.as_deref().unwrap_or("");
@@ -201,6 +147,24 @@ fn plain_variant(
         "Read" | "Grep" | "Glob" if verbose_tool && result.is_error => {
             ToolResultVariant::ToolError { content }
         }
+        "Read" if verbose_tool => ToolResultVariant::Read {
+            file_path: input_str(invocation, "file_path").unwrap_or("").to_string(),
+            line_count: text.lines().count(),
+            truncated: is_content_truncated(text),
+            content: text.to_string(),
+        },
+        "Grep" if verbose_tool => ToolResultVariant::Grep {
+            match_count: count_non_empty_lines(text),
+            output_mode: input_str(invocation, "output_mode")
+                .unwrap_or("files_with_matches")
+                .to_string(),
+            content: text.to_string(),
+        },
+        "Glob" if verbose_tool => ToolResultVariant::Glob {
+            file_count: count_non_empty_lines(text),
+            truncated: is_content_truncated(text),
+            content: text.to_string(),
+        },
         "TodoWrite" if verbose_tool => ToolResultVariant::TodoWrite { message: content },
         _ => ToolResultVariant::Default { content },
     }
