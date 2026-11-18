@@ -57,6 +57,17 @@ fn a_stray_verify_names_the_step() {
 }
 
 #[test]
+fn an_empty_step_is_reported_before_a_stray_verify() {
+    let mut json = plan_json();
+    json["steps"] = serde_json::json!([
+        {"do": "  ", "criterion": {"kind": "judge", "question": "ok?"}},
+        {"do": "second", "criterion": {"kind": "check_passes", "command": "true", "verify": "true"}}
+    ]);
+    let error = parse_run(&json, limits()).unwrap_err();
+    assert!(error.starts_with("Step 1 is empty"), "{error}");
+}
+
+#[test]
 fn unrelated_keys_and_a_null_verify_are_accepted() {
     let extra = serde_json::json!({"kind": "worker_done", "worker": "E1", "command": ""});
     assert!(verify_plan(extra).is_ok());

@@ -227,13 +227,13 @@ pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
     if raw.steps.is_empty() {
         return Err("Run plan has no steps. List the steps in order.".to_string());
     }
-    refuse_stray_verify(args)?;
     let steps = raw
         .steps
         .into_iter()
         .enumerate()
         .map(|(index, step)| parse_step(index + 1, step))
         .collect::<Result<Vec<_>, _>>()?;
+    refuse_stray_verify(args)?;
     let limits = Limits {
         max_turns: raw.caps.turns.unwrap_or(defaults.max_turns),
         max_usd: raw.caps.usd.unwrap_or(defaults.max_usd),
