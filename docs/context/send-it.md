@@ -167,6 +167,7 @@ Where the command runs:
 
 - The command runs in the worktree of the worker that reported `done`. ralph finds it with one `git worktree list --porcelain` call and the branch of that worker.
 - If ralph finds no worktree for that worker, the run stops as a check that could not start. ralph does not guess a directory.
+- The check runs in the worker's worktree. If the worker was closed, the worktree is gone, and the run stops as `CheckNotStarted` even in `observe` mode.
 - The command uses the existing watch timeout. A timeout counts as a failed command.
 
 The mode is never stored in `run.toml`. A run that stops and resumes uses the mode in the config at the time of the resume. A resume that finds the worker already `done` verifies under that mode.
