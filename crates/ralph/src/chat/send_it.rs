@@ -444,7 +444,12 @@ impl SendIt {
                     &done_block(plan, &driving, screen_columns()),
                     &driving,
                 ),
-                None => Driven::ended(),
+                None => {
+                    if let Some(met) = ticked.met.as_deref() {
+                        self.log_notice(met);
+                    }
+                    Driven::ended()
+                }
             },
             Next::Wait => Driven::ended(),
         }

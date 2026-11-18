@@ -774,6 +774,21 @@ fn a_dispatched_done_tick_logs_no_met_line() {
 }
 
 #[test]
+fn a_done_tick_without_a_plan_still_logs_its_met_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = judging(dir.path());
+    send_it.off();
+    let ticked = Ticked {
+        driving: active.driving,
+        next: Next::Done,
+        met: Some("Step 1 met".to_string()),
+        notice: None,
+    };
+    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    assert_eq!(logged_texts(dir.path()), vec![notice_record("Step 1 met")]);
+}
+
+#[test]
 fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = SendIt::new(dir.path(), LIMITS);
