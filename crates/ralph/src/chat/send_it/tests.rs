@@ -809,3 +809,30 @@ fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
     assert_eq!(at("would block"), [0], "{logged:?}");
     assert_eq!(at("step 1/2 met"), [1], "{logged:?}");
 }
+
+#[test]
+fn a_settled_last_check_logs_only_the_done_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_it = SendIt::new(dir.path(), LIMITS);
+    send_it.propose(&plan_args()).unwrap();
+    let hash = send_it.status().shown.unwrap();
+    let mut driving = go(&send_it, Some(&hash), true).1.unwrap().driving;
+    driving.awaiting = Awaiting::Report("watch:send-it-1".to_string());
+    driving.progress.verify = VerifyMode::Observe;
+    driving.progress.verifying = true;
+    let mut sending = Some(Active {
+        driving,
+        watched: Some(ralph_server::watches::OutcomeSlot::new(Mutex::new(Some(
+            WatchOutcome::Exited(0),
+        )))),
+    });
+    send_it
+        .held_item(&mut sending, Position::FIRST, &held::monitor(dir.path()))
+        .unwrap();
+    let logged = logged_texts(dir.path());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert!(
+        logged[0].starts_with(&notice_record("send-it done:")),
+        "{logged:?}"
+    );
+}
