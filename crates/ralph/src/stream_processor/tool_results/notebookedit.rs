@@ -15,9 +15,9 @@ use similar::{ChangeTag, TextDiff};
 
 use crate::diff_highlight::highlight_with_basic_colors;
 
-use super::super::processor::StreamProcessor;
 use super::super::types::NotebookSnapshot;
 use crate::ansi::RESET;
+use crate::render::RenderContext;
 
 /// Maximum lines to show in a diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
@@ -91,20 +91,20 @@ fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, cell_display: &str) -
 /// It reads the current cell content, generates a diff, and formats it
 /// with syntax highlighting.
 pub fn format_notebook_result_with_snapshot(
-    processor: &StreamProcessor,
+    ctx: &RenderContext,
     snapshot: NotebookSnapshot,
 ) -> String {
     // Try to generate diff from snapshot
     if let Some(diff_content) = generate_diff_from_snapshot(&snapshot) {
-        format_diff_output(processor, &snapshot, &diff_content)
+        format_diff_output(ctx, &snapshot, &diff_content)
     } else {
         // No changes or couldn't read cell - show simple success message
         let cell_display = format!("{}:{}", snapshot.notebook_path, snapshot.cell_identifier);
-        if processor.highlighting_enabled {
+        if ctx.terminal {
             format!(
                 "{}\u{2713}{RESET} {}NotebookEdit: {} (no changes){RESET}\n",
-                processor.tool_colors.ok_fg(),
-                processor.tool_colors.label_fg(),
+                ctx.tools.ok_fg(),
+                ctx.tools.label_fg(),
                 cell_display
             )
         } else {
@@ -117,7 +117,7 @@ pub fn format_notebook_result_with_snapshot(
 ///
 /// This is the common formatting logic for NotebookEdit tool diffs.
 fn format_diff_output(
-    processor: &StreamProcessor,
+    ctx: &RenderContext,
     snapshot: &NotebookSnapshot,
     diff_content: &str,
 ) -> String {
@@ -150,10 +150,9 @@ fn format_diff_output(
         _ => "",
     };
 
-    if processor.highlighting_enabled {
+    if ctx.terminal {
         // Highlight the diff
-        let highlighted_diff =
-            highlight_with_basic_colors(&display_content, &processor.diff_colors);
+        let highlighted_diff = highlight_with_basic_colors(&display_content, &ctx.diff);
 
         // Build output with header
         let mut output = String::new();
@@ -164,14 +163,14 @@ fn format_diff_output(
                 "{name}\u{2500}\u{2500} {}{}{}{}{name} \u{2500}\u{2500}{RESET}\n",
                 cell_display,
                 cell_type_indicator,
-                processor.tool_colors.accent_fg(),
+                ctx.tools.accent_fg(),
                 edit_mode_indicator,
-                name = processor.tool_colors.name_fg()
+                name = ctx.tools.name_fg()
             ));
         } else {
             output.push_str(&format!(
                 "{}\u{2500}\u{2500} {}{} \u{2500}\u{2500}{RESET}\n",
-                processor.tool_colors.name_fg(),
+                ctx.tools.name_fg(),
                 cell_display,
                 cell_type_indicator
             ));
@@ -189,7 +188,7 @@ fn format_diff_output(
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{RESET}\n",
-                processor.tool_colors.label_fg(),
+                ctx.tools.label_fg(),
                 line_count - MAX_DIFF_LINES
             ));
         }
@@ -270,6 +269,7 @@ fn read_notebook_cell_content(notebook_path: &str, cell_identifier: &str) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream_processor::StreamProcessor;
 
     #[test]
     fn test_generate_unified_diff() {
@@ -313,7 +313,7 @@ mod tests {
         };
         let diff = "-old\n+new\n";
 
-        let output = format_diff_output(&processor, &snapshot, diff);
+        let output = format_diff_output(&processor.render_context(), &snapshot, diff);
 
         assert!(output.contains("test.ipynb:0"));
         assert!(output.contains("(code)"));
@@ -332,7 +332,7 @@ mod tests {
         };
         let diff = "+new content\n";
 
-        let output = format_diff_output(&processor, &snapshot, diff);
+        let output = format_diff_output(&processor.render_context(), &snapshot, diff);
 
         assert!(output.contains("(new cell)"));
     }
@@ -349,7 +349,7 @@ mod tests {
         };
         let diff = "-deleted content\n";
 
-        let output = format_diff_output(&processor, &snapshot, diff);
+        let output = format_diff_output(&processor.render_context(), &snapshot, diff);
 
         assert!(output.contains("(deleted)"));
         assert!(output.contains("(markdown)"));
@@ -367,7 +367,7 @@ mod tests {
         };
         let long_diff: String = (0..100).map(|i| format!("+line{}\n", i)).collect();
 
-        let output = format_diff_output(&processor, &snapshot, &long_diff);
+        let output = format_diff_output(&processor.render_context(), &snapshot, &long_diff);
 
         assert!(output.contains("... 50 more lines"));
     }
@@ -384,7 +384,7 @@ mod tests {
         };
         let short_diff = "+line1\n+line2\n";
 
-        let output = format_diff_output(&processor, &snapshot, short_diff);
+        let output = format_diff_output(&processor.render_context(), &snapshot, short_diff);
 
         assert!(!output.contains("more lines"));
     }
@@ -403,7 +403,7 @@ mod tests {
     fn diff_uses_the_configured_foregrounds() {
         let mut processor = StreamProcessor::with_highlighting(true);
         processor.diff_colors = crate::diff_theme::test_colors();
-        let out = format_diff_output(&processor, &snapshot(), "+x\n-y");
+        let out = format_diff_output(&processor.render_context(), &snapshot(), "+x\n-y");
         assert!(out.contains("\x1b[94m+x"));
         assert!(out.contains("\x1b[95m-y"));
     }
@@ -411,7 +411,10 @@ mod tests {
     #[test]
     fn plain_processor_has_no_escape_byte() {
         let processor = StreamProcessor::with_highlighting(false);
-        assert!(!format_diff_output(&processor, &snapshot(), "+x\n-y\n@@ -1 @@").contains('\x1b'));
+        assert!(
+            !format_diff_output(&processor.render_context(), &snapshot(), "+x\n-y\n@@ -1 @@")
+                .contains('\x1b')
+        );
     }
 
     #[test]
@@ -420,7 +423,7 @@ mod tests {
         processor.tool_colors = crate::tool_theme::test_colors();
         let mut inserted = snapshot();
         inserted.edit_mode = "insert".to_string();
-        let out = format_diff_output(&processor, &inserted, "+x");
+        let out = format_diff_output(&processor.render_context(), &inserted, "+x");
         assert!(out.starts_with("\x1b[94m\u{2500}\u{2500} n.ipynb:0"));
         assert!(out.contains("\x1b[91m (new cell)"));
     }

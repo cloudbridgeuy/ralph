@@ -44,7 +44,11 @@ pub fn format_tool_result_with_context(
             if let Some(ref content) = result.content {
                 // Check if content looks like a diff
                 if is_unfenced_diff(content) {
-                    return edit::format_edit_diff_result(processor, inv.clone(), content);
+                    return edit::format_edit_diff_result(
+                        &processor.render_context(),
+                        inv.clone(),
+                        content,
+                    );
                 }
             }
         }

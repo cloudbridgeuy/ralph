@@ -51,7 +51,10 @@ pub fn handle_edit_result(
             ToolResultOutput { formatted, block }
         } else {
             // No diff in result - generate from snapshot
-            let formatted = tool_results::format_edit_result_with_snapshot(processor, snap.clone());
+            let formatted = tool_results::format_edit_result_with_snapshot(
+                &processor.render_context(),
+                snap.clone(),
+            );
             let block = build_edit_before_after_block(snap);
             ToolResultOutput { formatted, block }
         }
@@ -68,7 +71,10 @@ pub fn handle_write_result(
     snapshot: Option<&WriteSnapshot>,
 ) -> ToolResultOutput {
     if let Some(snap) = snapshot {
-        let formatted = tool_results::format_write_result_with_snapshot(processor, snap.clone());
+        let formatted = tool_results::format_write_result_with_snapshot(
+            &processor.render_context(),
+            snap.clone(),
+        );
         // Read the new file content to determine which variant to use
         let new_content = std::fs::read_to_string(&snap.file_path).ok();
         let block = build_write_result_block(snap, new_content.as_deref());
@@ -86,7 +92,10 @@ pub fn handle_notebook_result(
     snapshot: Option<&NotebookSnapshot>,
 ) -> ToolResultOutput {
     if let Some(snap) = snapshot {
-        let formatted = tool_results::format_notebook_result_with_snapshot(processor, snap.clone());
+        let formatted = tool_results::format_notebook_result_with_snapshot(
+            &processor.render_context(),
+            snap.clone(),
+        );
         let new_source = invocation
             .input
             .get("new_source")
