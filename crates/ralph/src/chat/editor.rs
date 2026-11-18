@@ -10,6 +10,7 @@ use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
 use ralph_core::chat_hold::{hold_completions, HoldCompletion};
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_nudge::nudge_completions;
+use ralph_core::chat_path::{path_completion, path_word, PathRoot, MAX_READ};
 use ralph_core::chat_switch::switch_completions;
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use ralph_server::chat::memory::Store;
@@ -20,7 +21,9 @@ use reedline::{
     PromptEditMode, PromptViMode, Reedline, ReedlineEvent, ReedlineMenu, ReedlineRawEvent, Span,
     Suggestion, Vi,
 };
+use std::ffi::{CStr, OsStr};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -47,6 +50,7 @@ impl Completer for HoldCompleter {
             .or_else(|| direct_completions(line, pos, &status))
             .or_else(|| view_completions(line, pos))
             .or_else(|| self.thread_completions(line, pos))
+            .or_else(|| path_completions(line, pos))
             .map(|completion| {
                 let span = Span::new(completion.span.start, completion.span.end);
                 completion
@@ -89,6 +93,55 @@ fn view_completions(line: &str, pos: usize) -> Option<HoldCompletion> {
         })
         .collect();
     Some(view_path_completion(&query, &entries))
+}
+
+fn home_dir() -> Option<PathBuf> {
+    let mut buffer = vec![0u8; 4096];
+    let mut passwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut found: *mut libc::passwd = std::ptr::null_mut();
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            passwd.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut found,
+        )
+    };
+    if status != 0 || found.is_null() {
+        return None;
+    }
+    #[allow(
+        unsafe_code,
+        reason = "getpwuid_r succeeded, so passwd and pw_dir are valid"
+    )]
+    let dir = unsafe {
+        let passwd = passwd.assume_init();
+        if passwd.pw_dir.is_null() {
+            return None;
+        }
+        CStr::from_ptr(passwd.pw_dir).to_bytes().to_vec()
+    };
+    Some(PathBuf::from(OsStr::from_bytes(&dir)))
+}
+
+fn path_completions(line: &str, pos: usize) -> Option<HoldCompletion> {
+    let word = path_word(line, pos)?;
+    let dir = match word.root {
+        PathRoot::Cwd if word.dir().is_empty() => PathBuf::from("."),
+        PathRoot::Cwd | PathRoot::Root => PathBuf::from(word.dir()),
+        PathRoot::Home => home_dir()?.join(word.dir()),
+    };
+    let entries: Vec<DirEntry> = std::fs::read_dir(dir)
+        .ok()?
+        .take(MAX_READ)
+        .filter_map(Result::ok)
+        .map(|entry| DirEntry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_dir: std::fs::metadata(entry.path()).is_ok_and(|meta| meta.is_dir()),
+        })
+        .collect();
+    Some(path_completion(&word, &entries))
 }
 
 pub(super) struct ChatEditMode {

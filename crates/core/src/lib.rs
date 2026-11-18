@@ -30,6 +30,7 @@ pub mod chat_local;
 pub mod chat_memory;
 pub mod chat_name;
 pub mod chat_nudge;
+pub mod chat_path;
 pub mod chat_process;
 pub mod chat_recap;
 pub mod chat_rerender;
