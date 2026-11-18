@@ -11,6 +11,7 @@ pub struct Progress {
     pub verifying: bool,
 }
 
+// verify is Off here: Progress defaults are plain unit state; start_run seeds the real mode from Limits.
 impl Default for Progress {
     fn default() -> Self {
         Progress {
