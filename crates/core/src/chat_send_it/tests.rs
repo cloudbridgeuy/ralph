@@ -561,6 +561,7 @@ fn a_step_turn_counts_its_cost_and_waits_on_the_criterion() {
             driving: driving(0, Awaiting::Report("E1".to_string()), spent(2, 0.75)),
             next: Next::Hold("E1".to_string()),
             met: None,
+            notice: None,
         }
     );
     let check = tick(&driving(2, Awaiting::Turn, Run::default()), &ended(&file));

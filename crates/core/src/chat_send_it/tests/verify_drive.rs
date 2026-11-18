@@ -143,18 +143,14 @@ fn observe_logs_a_would_block_notice_with_the_detail_and_moves_on() {
     );
     assert_eq!(ticked.driving.progress.step, 1);
     assert_eq!(ticked.next, Next::Watch("gh pr checks --watch".to_string()));
-    let met = ticked.met.unwrap();
-    assert!(
-        met.starts_with(
-            "send-it: step 1 would block: verify failed: exited with code 2; last output: assertion failed"
-        ),
-        "{met}"
+    let notice = ticked.notice.unwrap();
+    assert_eq!(
+        notice,
+        "send-it: step 1 would block: verify failed: exited with code 2; last output: assertion failed"
     );
-    assert!(
-        met.ends_with(
-            "send-it: step 1/4 met (worker E1 reports done, then `cargo test -p core` exits 0)"
-        ),
-        "{met}"
+    assert_eq!(
+        ticked.met.as_deref(),
+        Some("send-it: step 1/4 met (worker E1 reports done, then `cargo test -p core` exits 0)")
     );
 }
 
@@ -168,7 +164,7 @@ fn observe_logs_a_would_block_notice_on_a_timeout() {
         &[],
     );
     assert!(ticked
-        .met
+        .notice
         .unwrap()
         .contains("would block: verify failed: timed out after 60s"),);
 }
@@ -186,6 +182,7 @@ fn observe_logs_no_notice_when_verify_passes() {
         ticked.met.as_deref(),
         Some("send-it: step 1/4 met (worker E1 reports done, then `cargo test -p core` exits 0)")
     );
+    assert_eq!(ticked.notice, None);
 }
 
 #[test]

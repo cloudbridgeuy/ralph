@@ -334,8 +334,8 @@ impl SendIt {
         };
         let file = self.load().ok().flatten();
         let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
-        if let Some(met) = &ticked.met {
-            self.log_notice(met);
+        for line in ticked.notice.iter().chain(&ticked.met) {
+            self.log_notice(line);
         }
         let mut driven = self.dispatch(ticked, monitor);
         if driven.route.is_none() {
@@ -358,8 +358,8 @@ impl SendIt {
     }
 
     pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        if let Some(met) = ticked.shown_met() {
-            println!("{met}");
+        for line in ticked.shown_lines() {
+            println!("{line}");
         }
         let plan = self.load().ok().flatten().map(|file| file.plan);
         let driving = ticked.driving;
