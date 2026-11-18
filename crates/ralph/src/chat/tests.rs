@@ -3,8 +3,9 @@ use super::editor::{
     IDLE_CTRL_C, OPEN_EDITOR,
 };
 use super::resolve_store;
-use super::turn::{draft_after, logged_before_reply, rule, rule_skin, shown_output, TurnOutcome};
+use super::turn::{draft_after, logged_before_reply, shown_output, TurnOutcome};
 use crate::stream_processor::OutputBlock;
+use crate::turn_sink::{rule, rule_skin};
 use crossterm::event::{Event, KeyEvent};
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_help::{KeyHelp, PROMPT_KEYS, QUEUE_KEYS, VI_KEYS};

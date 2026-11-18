@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Stream {
+pub(crate) enum Stream {
     Stdout,
     Stderr,
 }
@@ -55,6 +55,13 @@ pub(super) fn write_direct(stream: Stream, text: &str) {
             let _ = err.write_all(text.as_bytes());
             let _ = err.flush();
         }
+    }
+}
+
+pub(crate) fn write_to(gate: Option<&OutputGate>, stream: Stream, text: &str) {
+    match gate {
+        Some(gate) => gate.write(stream, text),
+        None => write_direct(stream, text),
     }
 }
 

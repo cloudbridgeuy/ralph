@@ -16,6 +16,7 @@ mod types;
 
 // Re-export public API
 pub use gate::OutputGate;
+pub(crate) use gate::{write_to, Stream};
 pub use session::{RunningCosts, Session};
 pub use spinner::{
     invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,

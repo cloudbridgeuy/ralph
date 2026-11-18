@@ -70,7 +70,6 @@ use crate::markdown::{MarkdownTheme, RolePalette, ThemeRole};
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
-use crate::subprocess::OutputGate;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
 use keepalive::{KeepaliveWatch, Stamp};
@@ -263,6 +262,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let last_turn_end: Stamp = Arc::default();
     let last_ping: Stamp = Arc::default();
+    let (gate, sink) = prompt::turn_output(*theme_config.ui());
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -283,7 +283,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         live: Arc::clone(&live),
         reset_limits,
         recent_history_tokens,
-        gate: Arc::new(OutputGate::new()),
+        gate,
         run: &run,
         suggestions: suggestions.clone(),
         last_turn_end: Arc::clone(&last_turn_end),
@@ -291,7 +291,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         last_cost_usd: Mutex::new(None),
         timing: Mutex::default(),
         seen_len: Mutex::new(None),
-        columns: prompt::screen_columns,
+        sink,
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -560,15 +560,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let mut offered: Option<(String, u64)> = None;
     let mut carried: Vec<String> = Vec::new();
     let mut leaving: Option<ChatExit> = None;
-    let show_cells = |shown: &str| {
-        let ctx = RenderContext::new(&agent_highlighter, color)
-            .with_diff(diff_colors)
-            .with_tools(tool_colors);
-        print!(
-            "{}",
-            crate::render::image::render_cell_display(&ctx, shown, &agent_theme)
-        );
-    };
     let settles_closes = fork.is_none();
     if settles_closes {
         thread::settle::scan(&store_dir, &monitor.inbox);
@@ -645,7 +636,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 monitor.refresh(true);
                 match ran {
                     Ok(shown) => {
-                        show_cells(&shown);
+                        cell::show(&mut std::io::stdout(), &display, &shown);
                         if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
                             carried = rest;
                             pending = Some(route_queued(text, &mut editor, &prompt));
@@ -669,7 +660,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
-                            show_cells(shown);
+                            cell::show(&mut std::io::stdout(), &display, shown);
                         }
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);

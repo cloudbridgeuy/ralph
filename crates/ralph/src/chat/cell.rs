@@ -21,7 +21,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
+use crate::chat::inbox::Display;
 use crate::chat::turn::TurnOutcome;
+use crate::render::image::render_cell_display;
 
 const POLL: Duration = Duration::from_millis(50);
 const SHELL_RUNTIME: &str = "shell";
@@ -339,6 +341,11 @@ fn expand(message: &str) -> Cow<'_, str> {
     }
 }
 
+pub(super) fn show(out: &mut dyn Write, display: &Display, shown: &str) {
+    let _ = out.write_all(render_cell_display(&display.ctx, shown, display.theme).as_bytes());
+    let _ = out.flush();
+}
+
 pub fn prepare(
     message: &str,
     limits: CellLimits,
@@ -426,5 +433,22 @@ mod tests {
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(find_on_path("tool", &path), Some(tool));
         assert_eq!(find_on_path("too", &path), None);
+    }
+
+    #[test]
+    fn show_writes_the_rendered_cell_to_the_writer() {
+        let highlighter = crate::highlight::Highlighter::new();
+        let theme = crate::markdown::MarkdownTheme::default();
+        let display = Display {
+            ctx: crate::render::RenderContext::new(&highlighter, false),
+            theme: &theme,
+            color: false,
+            ui: crate::ui_theme::UiColors::default(),
+        };
+        let mut out = Vec::new();
+        show(&mut out, &display, "**ran** `ls`");
+        let expected =
+            crate::render::image::render_cell_display(&display.ctx, "**ran** `ls`", &theme);
+        assert_eq!(String::from_utf8(out).unwrap(), expected);
     }
 }
