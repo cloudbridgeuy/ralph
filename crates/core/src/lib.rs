@@ -78,6 +78,7 @@ pub mod status_queue;
 pub mod status_segments;
 pub mod stream;
 pub mod term_title;
+pub mod turn_event;
 pub mod upgrade;
 pub mod watch;
 pub mod watch_command;

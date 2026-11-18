@@ -30,6 +30,7 @@ pub mod startup;
 mod status_theme;
 mod theme_slots;
 mod tool_theme;
+mod turn_sink;
 mod ui_theme;
 mod upgrade;
 mod usage_cmd;

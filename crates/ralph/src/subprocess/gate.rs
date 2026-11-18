@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Stream {
+pub(crate) enum Stream {
     Stdout,
     Stderr,
 }
@@ -106,7 +106,7 @@ impl OutputGate {
         self.write(Stream::Stderr, text);
     }
 
-    pub(super) fn write(&self, stream: Stream, text: &str) {
+    pub(crate) fn write(&self, stream: Stream, text: &str) {
         let mut state = self.lock();
         if state.paused {
             state.held.push(stream, text);
