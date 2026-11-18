@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn diff_uses_the_configured_foregrounds() {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.diff_colors = crate::diff_theme::test_colors();
+        processor.renderer.diff_colors = crate::diff_theme::test_colors();
         let out = format_diff_output(&processor.render_context(), &params(&snapshot()), "+x\n-y");
         assert!(out.contains("\x1b[94m+x"));
         assert!(out.contains("\x1b[95m-y"));
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn header_uses_the_configured_tool_colors() {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.tool_colors = crate::tool_theme::test_colors();
+        processor.renderer.tool_colors = crate::tool_theme::test_colors();
         let mut inserted = snapshot();
         inserted.edit_mode = "insert".to_string();
         let out = format_diff_output(&processor.render_context(), &params(&inserted), "+x");

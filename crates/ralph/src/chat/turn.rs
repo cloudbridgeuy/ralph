@@ -45,7 +45,9 @@ use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Instant;
 
 pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
-    !blocks.is_empty()
+    blocks
+        .iter()
+        .any(|block| !matches!(block, OutputBlock::Separator))
 }
 
 pub(super) fn spawn_nap(store: &Path, run: &str) -> io::Result<()> {

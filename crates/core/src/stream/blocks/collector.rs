@@ -15,30 +15,18 @@ use super::{
     StreamProcessorResult, TextBlock, VerboseToolsConfig,
 };
 
-pub type Visible<'a> = &'a mut dyn FnMut(&OutputBlock) -> bool;
-
 pub struct StreamCollector {
     events: Vec<StreamEvent>,
     chunk_buffer: StreamingChunkBuffer,
     current_message_id: Option<String>,
     collected_chunks: Vec<ParsedChunk>,
     parse_errors: Vec<(String, String)>,
-    has_emitted_output: bool,
     response_count: usize,
     pending_invocations: HashMap<String, ToolInvocation>,
     pending_snapshots: HashMap<String, Snapshot>,
     output_blocks: Vec<OutputBlock>,
     show_tool_invocations: bool,
     verbose_tools_config: VerboseToolsConfig,
-}
-
-fn record(out: &mut Vec<OutputBlock>, blocks: Vec<OutputBlock>, visible: Visible) -> bool {
-    let mut any_visible = false;
-    for block in blocks {
-        any_visible |= visible(&block);
-        out.push(block);
-    }
-    any_visible
 }
 
 fn image_files(chunk: &ParsedChunk, files: &dyn Files) -> Vec<ImageFile> {
@@ -71,7 +59,6 @@ impl StreamCollector {
             current_message_id: None,
             collected_chunks: Vec::new(),
             parse_errors: Vec::new(),
-            has_emitted_output: false,
             response_count: 0,
             pending_invocations: HashMap::new(),
             pending_snapshots: HashMap::new(),
@@ -81,18 +68,13 @@ impl StreamCollector {
         }
     }
 
-    pub fn process_line(
-        &mut self,
-        line: &str,
-        files: &dyn Files,
-        visible: Visible,
-    ) -> Vec<OutputBlock> {
+    pub fn process_line(&mut self, line: &str, files: &dyn Files) -> Vec<OutputBlock> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return Vec::new();
         }
         match parse_stream_line(trimmed) {
-            ParsedLine::Event(event) => self.handle_event(event, files, visible),
+            ParsedLine::Event(event) => self.handle_event(event, files),
             ParsedLine::Empty => Vec::new(),
             ParsedLine::Error { line: _, error } => {
                 self.parse_errors.push((trimmed.to_string(), error));
@@ -121,10 +103,6 @@ impl StreamCollector {
         self.response_count
     }
 
-    pub fn has_emitted_output(&self) -> bool {
-        self.has_emitted_output
-    }
-
     pub fn output_blocks(&self) -> &[OutputBlock] {
         &self.output_blocks
     }
@@ -145,14 +123,8 @@ impl StreamCollector {
         self.pending_snapshots.len()
     }
 
-    fn handle_event(
-        &mut self,
-        event: StreamEvent,
-        files: &dyn Files,
-        visible: Visible,
-    ) -> Vec<OutputBlock> {
+    fn handle_event(&mut self, event: StreamEvent, files: &dyn Files) -> Vec<OutputBlock> {
         let mut out = Vec::new();
-        let mut any_visible = false;
 
         match &event {
             StreamEvent::Assistant(assistant_event) => {
@@ -161,12 +133,8 @@ impl StreamCollector {
                     new_message_id != self.current_message_id && self.current_message_id.is_some();
 
                 if is_new_response {
-                    let flushed = self.flush_pending_chunks(files);
-                    any_visible |= record(&mut out, flushed, visible);
-                    if self.has_emitted_output || any_visible {
-                        let separator = vec![self.emit(OutputBlock::separator())];
-                        any_visible |= record(&mut out, separator, visible);
-                    }
+                    out.extend(self.flush_pending_chunks(files));
+                    out.push(self.emit(OutputBlock::separator()));
                     self.response_count += 1;
                 } else if self.current_message_id.is_none() {
                     self.response_count = 1;
@@ -175,8 +143,7 @@ impl StreamCollector {
 
                 let tool_invocations = assistant_event.extract_tool_invocations();
                 if !tool_invocations.is_empty() {
-                    let flushed = self.flush_pending_chunks(files);
-                    any_visible |= record(&mut out, flushed, visible);
+                    out.extend(self.flush_pending_chunks(files));
                 }
 
                 for invocation in &tool_invocations {
@@ -193,14 +160,12 @@ impl StreamCollector {
                         continue;
                     }
                     let block = build_tool_invocation_block(invocation, &self.verbose_tools_config);
-                    let emitted = vec![self.emit(block)];
-                    any_visible |= record(&mut out, emitted, visible);
+                    out.push(self.emit(block));
                 }
 
                 let text = assistant_event.extract_text();
                 if !text.is_empty() {
-                    let blocks = self.collect_text(&text, files);
-                    any_visible |= record(&mut out, blocks, visible);
+                    out.extend(self.collect_text(&text, files));
                 }
             }
             StreamEvent::User(user_event) => {
@@ -226,8 +191,7 @@ impl StreamCollector {
                             snapshot,
                             files,
                         );
-                        let emitted = vec![self.emit(block)];
-                        any_visible |= record(&mut out, emitted, visible);
+                        out.push(self.emit(block));
                     }
                 }
             }
@@ -235,7 +199,6 @@ impl StreamCollector {
         }
 
         self.events.push(event);
-        self.has_emitted_output |= any_visible;
         out
     }
 
@@ -310,7 +273,7 @@ mod tests {
     }
 
     fn feed(collector: &mut StreamCollector, files: &FakeFiles, line: &str) -> Vec<OutputBlock> {
-        collector.process_line(line, files, &mut |_| true)
+        collector.process_line(line, files)
     }
 
     #[test]

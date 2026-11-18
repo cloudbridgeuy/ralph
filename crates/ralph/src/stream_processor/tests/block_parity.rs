@@ -45,7 +45,7 @@ fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) 
             Step::Line(line) => {
                 let before = processor.output_blocks().len();
                 let shown = processor.process_line(line).unwrap_or_default();
-                let markdown = highlight.then_some(&processor.markdown);
+                let markdown = highlight.then_some(&processor.renderer.markdown);
                 let ctx = processor.render_context();
                 let rendered: String = processor.output_blocks()[before..]
                     .iter()
@@ -59,9 +59,12 @@ fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) 
         }
     }
     let before = processor.output_blocks().len();
-    let markdown_theme = processor.markdown.clone();
-    let highlighter = processor.code_highlighter.clone();
-    let (diff, tools) = (processor.diff_colors, processor.tool_colors);
+    let markdown_theme = processor.renderer.markdown.clone();
+    let highlighter = processor.renderer.code_highlighter.clone();
+    let (diff, tools) = (
+        processor.renderer.diff_colors,
+        processor.renderer.tool_colors,
+    );
     let result = processor.finish();
     let ctx = crate::render::RenderContext::new(&highlighter, highlight)
         .with_diff(diff)

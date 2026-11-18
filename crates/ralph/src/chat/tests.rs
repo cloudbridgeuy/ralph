@@ -10,6 +10,7 @@ use crossterm::event::{Event, KeyEvent};
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_help::{KeyHelp, PROMPT_KEYS, QUEUE_KEYS, VI_KEYS};
 use ralph_core::chat_memory::Trigger;
+use ralph_core::chunk::{ChunkType, ParsedChunk};
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     EditCommand, EditMode, KeyCode, KeyModifiers, Keybindings, PromptEditMode, PromptViMode,
@@ -37,7 +38,14 @@ fn unanswered_turn_restores_the_draft() {
 #[test]
 fn rule_follows_shown_output_only() {
     assert!(!shown_output(&[]));
-    assert!(shown_output(&[OutputBlock::Separator]));
+    assert!(!shown_output(&[OutputBlock::Separator]));
+    assert!(shown_output(&[
+        OutputBlock::Separator,
+        OutputBlock::text(ParsedChunk {
+            chunk_type: ChunkType::Prose,
+            content: "x".to_string(),
+        })
+    ]));
 }
 
 #[test]

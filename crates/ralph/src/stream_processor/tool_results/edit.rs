@@ -426,7 +426,7 @@ mod tests {
 
     fn colored_processor() -> StreamProcessor {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.diff_colors = crate::diff_theme::test_colors();
+        processor.renderer.diff_colors = crate::diff_theme::test_colors();
         processor
     }
 
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn headers_and_marks_use_the_configured_tool_colors() {
         let mut processor = colored_processor();
-        processor.tool_colors = crate::tool_theme::test_colors();
+        processor.renderer.tool_colors = crate::tool_theme::test_colors();
         let out =
             format_before_after_highlighted(&processor.render_context(), "a.rs", "x", "y", None);
         assert!(out.starts_with("\x1b[94m── a.rs"));

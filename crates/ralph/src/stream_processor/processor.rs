@@ -1,10 +1,7 @@
+use super::block_renderer::BlockRenderer;
 use super::disk_files::DiskFiles;
-use super::render_block::render_block;
-use crate::diff_theme::DiffColors;
-use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
-use crate::markdown::MarkdownTheme;
+use crate::highlight::{ThemeConfig, ThemeError};
 use crate::render::RenderContext;
-use crate::tool_theme::ToolColors;
 use ralph_core::stream::blocks::{
     OutputBlock, StreamCollector, StreamProcessorResult, VerboseToolsConfig,
 };
@@ -12,11 +9,7 @@ use std::io::IsTerminal;
 
 pub struct StreamProcessor {
     pub(super) collector: StreamCollector,
-    pub(super) code_highlighter: Highlighter,
-    pub(super) markdown: MarkdownTheme,
-    pub(super) diff_colors: DiffColors,
-    pub(super) tool_colors: ToolColors,
-    pub(super) highlighting_enabled: bool,
+    pub(super) renderer: BlockRenderer,
 }
 
 /// Builder for constructing StreamProcessor instances.
@@ -94,37 +87,14 @@ impl StreamProcessorBuilder {
         // Determine show_tools: explicit setting > highlighting setting
         let show_tool_invocations = self.show_tools.unwrap_or(highlighting_enabled);
 
-        let markdown = MarkdownTheme::new(
-            self.theme_config
-                .as_ref()
-                .map(|config| config.palette().clone())
-                .unwrap_or_default(),
-        );
-        let diff_colors = self
-            .theme_config
-            .as_ref()
-            .map(|config| *config.diff())
-            .unwrap_or_default();
-        let tool_colors = self
-            .theme_config
-            .as_ref()
-            .map(|config| *config.tools())
-            .unwrap_or_default();
-        let code_highlighter = match self.theme_config {
-            Some(config) => Highlighter::with_config(config)?,
-            None => Highlighter::new(),
-        };
+        let renderer = BlockRenderer::new(self.theme_config, highlighting_enabled)?;
 
         // Get verbose tools config
         let verbose_tools_config = self.verbose_tools.unwrap_or_default();
 
         Ok(StreamProcessor {
             collector: StreamCollector::new(show_tool_invocations, verbose_tools_config),
-            code_highlighter,
-            markdown,
-            diff_colors,
-            tool_colors,
-            highlighting_enabled,
+            renderer,
         })
     }
 }
@@ -265,46 +235,21 @@ impl StreamProcessor {
 
     /// Check if highlighting is enabled.
     pub fn is_highlighting_enabled(&self) -> bool {
-        self.highlighting_enabled
+        self.renderer.is_highlighting_enabled()
     }
 
     pub fn process_line(&mut self, line: &str) -> Option<String> {
-        let ctx = RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
-            .with_diff(self.diff_colors)
-            .with_tools(self.tool_colors);
-        let markdown = self.highlighting_enabled.then_some(&self.markdown);
-        let mut rendered = String::new();
-        let mut any_visible = false;
-        self.collector
-            .process_line(line, &DiskFiles, &mut |block: &OutputBlock| {
-                let output = render_block(&ctx, block, markdown);
-                let visible = !matches!(block, OutputBlock::Text(_)) || !output.is_empty();
-                rendered.push_str(&output);
-                any_visible |= visible;
-                visible
-            });
-        any_visible.then_some(rendered)
+        let blocks = self.collector.process_line(line, &DiskFiles);
+        self.renderer.render_visible(&blocks)
     }
 
     pub fn finish(self) -> StreamProcessorResult {
         let Self {
             collector,
-            code_highlighter,
-            markdown,
-            diff_colors,
-            tool_colors,
-            highlighting_enabled,
+            mut renderer,
         } = self;
-        let ctx = RenderContext::new(&code_highlighter, highlighting_enabled)
-            .with_diff(diff_colors)
-            .with_tools(tool_colors);
-        let markdown = highlighting_enabled.then_some(&markdown);
         let (flushed, mut result) = collector.finish(&DiskFiles);
-        let final_output: String = flushed
-            .iter()
-            .map(|block| render_block(&ctx, block, markdown))
-            .collect();
-        result.final_output = Some(final_output).filter(|output| !output.is_empty());
+        result.final_output = Some(renderer.render(&flushed)).filter(|output| !output.is_empty());
         result
     }
 
@@ -331,7 +276,7 @@ impl StreamProcessor {
     /// Used for visual separation logic - we only add separators between
     /// responses if there's been output to separate.
     pub fn has_emitted_output(&self) -> bool {
-        self.collector.has_emitted_output()
+        self.renderer.has_emitted_output()
     }
 
     /// Get the verbose tools configuration.
@@ -349,9 +294,7 @@ impl StreamProcessor {
     /// Returns a terminal context (with ANSI codes) when highlighting is enabled,
     /// or a plain context otherwise.
     pub fn render_context(&self) -> RenderContext<'_> {
-        RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
-            .with_diff(self.diff_colors)
-            .with_tools(self.tool_colors)
+        self.renderer.render_context()
     }
 
     /// Get the accumulated output blocks.
