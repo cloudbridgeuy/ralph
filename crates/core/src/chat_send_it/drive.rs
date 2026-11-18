@@ -520,6 +520,11 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         .map(|result| result.evidence.as_str());
     let met = (progress.step > driving.progress.step || decided == Next::Done)
         .then(|| met_line(plan, driving.progress.step, evidence));
+    let notice = ended
+        .watched
+        .filter(|_| awaits_check(driving))
+        .and_then(|outcome| would_block(driving.progress, outcome, ended.drained));
+    let met = with_notice(notice, met);
     if matches!(decided, Next::Done | Next::Stop(_)) {
         return finish(run, progress, decided, met).recording(evidence);
     }
@@ -571,19 +576,9 @@ pub fn settle_check(
         }
         other => other,
     };
-    let would_block = (driving.progress.verifying
-        && driving.progress.verify == VerifyMode::Observe
-        && *outcome != WatchOutcome::Exited(0))
-    .then(|| {
-        let report = reports.iter().find(|report| report.worker == source);
-        would_block_line(driving.progress.step, &check_detail(outcome, report))
-    });
     let met = (progress.step > driving.progress.step || decided == Next::Done)
         .then(|| met_line(plan, driving.progress.step, None));
-    let met = match (would_block, met) {
-        (Some(notice), Some(met)) => Some(format!("{notice}\n{met}")),
-        (notice, met) => notice.or(met),
-    };
+    let met = with_notice(would_block(driving.progress, outcome, reports), met);
     let next = match decided {
         Next::Done | Next::Stop(_) => decided,
         _ => match advance(plan, progress, Event::TurnEnded(&driving.run)).1 {
@@ -592,6 +587,24 @@ pub fn settle_check(
         },
     };
     finish(progress, next, met).briefed_by(plan).recording(None)
+}
+
+fn would_block(progress: Progress, outcome: &WatchOutcome, reports: &[Report]) -> Option<String> {
+    (progress.verifying
+        && progress.verify == VerifyMode::Observe
+        && *outcome != WatchOutcome::Exited(0))
+    .then(|| {
+        let source = check_watch_id(progress.step);
+        let report = reports.iter().find(|report| report.worker == source);
+        would_block_line(progress.step, &check_detail(outcome, report))
+    })
+}
+
+fn with_notice(notice: Option<String>, met: Option<String>) -> Option<String> {
+    match (notice, met) {
+        (Some(notice), Some(met)) => Some(format!("{notice}\n{met}")),
+        (notice, met) => notice.or(met),
+    }
 }
 
 pub fn would_block_line(step: usize, detail: &str) -> String {

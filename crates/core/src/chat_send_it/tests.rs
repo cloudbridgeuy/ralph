@@ -19,6 +19,7 @@ mod verify_check;
 mod verify_drive;
 mod verify_limits;
 mod verify_mode;
+mod verify_tick;
 mod warnings;
 
 fn limits() -> Limits {
