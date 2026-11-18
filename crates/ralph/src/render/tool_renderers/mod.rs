@@ -44,6 +44,5 @@ pub use invocations::{
 pub use results::{
     render_bash_result, render_content_block, render_default_result, render_edit_before_after,
     render_edit_diff, render_glob_result, render_grep_result, render_no_changes_message,
-    render_notebook_edit, render_read_result, render_todowrite_result, render_write_new_file,
-    render_write_no_changes,
+    render_read_result, render_todowrite_result, render_write_new_file, render_write_no_changes,
 };

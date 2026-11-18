@@ -17,6 +17,7 @@ use crate::diff_highlight::highlight_with_basic_colors;
 
 use super::super::types::NotebookSnapshot;
 use crate::ansi::RESET;
+use crate::render::NotebookEditParams;
 use crate::render::RenderContext;
 
 /// Maximum lines to show in a diff before truncating.
@@ -85,31 +86,35 @@ fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, cell_display: &str) -
     output
 }
 
-/// Format a NotebookEdit tool result using a generated diff from snapshot.
-///
-/// This is called when we have captured a snapshot before the edit.
-/// It reads the current cell content, generates a diff, and formats it
-/// with syntax highlighting.
 pub fn format_notebook_result_with_snapshot(
     ctx: &RenderContext,
     snapshot: NotebookSnapshot,
 ) -> String {
-    // Try to generate diff from snapshot
-    if let Some(diff_content) = generate_diff_from_snapshot(&snapshot) {
-        format_diff_output(ctx, &snapshot, &diff_content)
+    let diff_content = generate_diff_from_snapshot(&snapshot);
+    let params = NotebookEditParams {
+        notebook_path: &snapshot.notebook_path,
+        cell_identifier: &snapshot.cell_identifier,
+        cell_type: snapshot.cell_type.as_deref(),
+        edit_mode: &snapshot.edit_mode,
+        diff_content: diff_content.as_deref(),
+    };
+    format_notebook_result(ctx, &params)
+}
+
+fn format_notebook_result(ctx: &RenderContext, params: &NotebookEditParams) -> String {
+    if let Some(diff_content) = params.diff_content {
+        return format_diff_output(ctx, params, diff_content);
+    }
+    let cell_display = format!("{}:{}", params.notebook_path, params.cell_identifier);
+    if ctx.terminal {
+        format!(
+            "{}\u{2713}{RESET} {}NotebookEdit: {} (no changes){RESET}\n",
+            ctx.tools.ok_fg(),
+            ctx.tools.label_fg(),
+            cell_display
+        )
     } else {
-        // No changes or couldn't read cell - show simple success message
-        let cell_display = format!("{}:{}", snapshot.notebook_path, snapshot.cell_identifier);
-        if ctx.terminal {
-            format!(
-                "{}\u{2713}{RESET} {}NotebookEdit: {} (no changes){RESET}\n",
-                ctx.tools.ok_fg(),
-                ctx.tools.label_fg(),
-                cell_display
-            )
-        } else {
-            format!("  NotebookEdit: {} (no changes)\n", cell_display)
-        }
+        format!("  NotebookEdit: {} (no changes)\n", cell_display)
     }
 }
 
@@ -118,7 +123,7 @@ pub fn format_notebook_result_with_snapshot(
 /// This is the common formatting logic for NotebookEdit tool diffs.
 fn format_diff_output(
     ctx: &RenderContext,
-    snapshot: &NotebookSnapshot,
+    params: &NotebookEditParams,
     diff_content: &str,
 ) -> String {
     // Count lines for potential truncation
@@ -134,17 +139,17 @@ fn format_diff_output(
     };
 
     // Build cell display string
-    let cell_display = format!("{}:{}", snapshot.notebook_path, snapshot.cell_identifier);
+    let cell_display = format!("{}:{}", params.notebook_path, params.cell_identifier);
 
     // Determine cell type indicator
-    let cell_type_indicator = match snapshot.cell_type.as_deref() {
+    let cell_type_indicator = match params.cell_type {
         Some("code") => " (code)",
         Some("markdown") => " (markdown)",
         _ => "",
     };
 
     // Determine edit mode indicator
-    let edit_mode_indicator = match snapshot.edit_mode.as_str() {
+    let edit_mode_indicator = match params.edit_mode {
         "insert" => " (new cell)",
         "delete" => " (deleted)",
         _ => "",
@@ -313,7 +318,7 @@ mod tests {
         };
         let diff = "-old\n+new\n";
 
-        let output = format_diff_output(&processor.render_context(), &snapshot, diff);
+        let output = format_diff_output(&processor.render_context(), &params(&snapshot), diff);
 
         assert!(output.contains("test.ipynb:0"));
         assert!(output.contains("(code)"));
@@ -332,7 +337,7 @@ mod tests {
         };
         let diff = "+new content\n";
 
-        let output = format_diff_output(&processor.render_context(), &snapshot, diff);
+        let output = format_diff_output(&processor.render_context(), &params(&snapshot), diff);
 
         assert!(output.contains("(new cell)"));
     }
@@ -349,7 +354,7 @@ mod tests {
         };
         let diff = "-deleted content\n";
 
-        let output = format_diff_output(&processor.render_context(), &snapshot, diff);
+        let output = format_diff_output(&processor.render_context(), &params(&snapshot), diff);
 
         assert!(output.contains("(deleted)"));
         assert!(output.contains("(markdown)"));
@@ -367,7 +372,8 @@ mod tests {
         };
         let long_diff: String = (0..100).map(|i| format!("+line{}\n", i)).collect();
 
-        let output = format_diff_output(&processor.render_context(), &snapshot, &long_diff);
+        let output =
+            format_diff_output(&processor.render_context(), &params(&snapshot), &long_diff);
 
         assert!(output.contains("... 50 more lines"));
     }
@@ -384,9 +390,20 @@ mod tests {
         };
         let short_diff = "+line1\n+line2\n";
 
-        let output = format_diff_output(&processor.render_context(), &snapshot, short_diff);
+        let output =
+            format_diff_output(&processor.render_context(), &params(&snapshot), short_diff);
 
         assert!(!output.contains("more lines"));
+    }
+
+    fn params(snapshot: &NotebookSnapshot) -> NotebookEditParams<'_> {
+        NotebookEditParams {
+            notebook_path: &snapshot.notebook_path,
+            cell_identifier: &snapshot.cell_identifier,
+            cell_type: snapshot.cell_type.as_deref(),
+            edit_mode: &snapshot.edit_mode,
+            diff_content: None,
+        }
     }
 
     fn snapshot() -> NotebookSnapshot {
@@ -403,7 +420,7 @@ mod tests {
     fn diff_uses_the_configured_foregrounds() {
         let mut processor = StreamProcessor::with_highlighting(true);
         processor.diff_colors = crate::diff_theme::test_colors();
-        let out = format_diff_output(&processor.render_context(), &snapshot(), "+x\n-y");
+        let out = format_diff_output(&processor.render_context(), &params(&snapshot()), "+x\n-y");
         assert!(out.contains("\x1b[94m+x"));
         assert!(out.contains("\x1b[95m-y"));
     }
@@ -411,10 +428,12 @@ mod tests {
     #[test]
     fn plain_processor_has_no_escape_byte() {
         let processor = StreamProcessor::with_highlighting(false);
-        assert!(
-            !format_diff_output(&processor.render_context(), &snapshot(), "+x\n-y\n@@ -1 @@")
-                .contains('\x1b')
-        );
+        assert!(!format_diff_output(
+            &processor.render_context(),
+            &params(&snapshot()),
+            "+x\n-y\n@@ -1 @@"
+        )
+        .contains('\x1b'));
     }
 
     #[test]
@@ -423,7 +442,7 @@ mod tests {
         processor.tool_colors = crate::tool_theme::test_colors();
         let mut inserted = snapshot();
         inserted.edit_mode = "insert".to_string();
-        let out = format_diff_output(&processor.render_context(), &inserted, "+x");
+        let out = format_diff_output(&processor.render_context(), &params(&inserted), "+x");
         assert!(out.starts_with("\x1b[94m\u{2500}\u{2500} n.ipynb:0"));
         assert!(out.contains("\x1b[91m (new cell)"));
     }

@@ -33,9 +33,13 @@ const MAX_DIFF_LINES: usize = 50;
 /// It uses old_string/new_string for before/after display, falling back
 /// to unified diff if those are unavailable.
 pub fn format_edit_result_with_snapshot(ctx: &RenderContext, snapshot: EditSnapshot) -> String {
-    // Prefer before/after display if old_string and new_string are available
     if snapshot.old_string.is_some() || snapshot.new_string.is_some() {
-        return format_before_after_display(ctx, &snapshot);
+        return format_before_after(
+            ctx,
+            &snapshot.file_path,
+            snapshot.old_string.as_deref().unwrap_or(""),
+            snapshot.new_string.as_deref().unwrap_or(""),
+        );
     }
 
     // Fall back to unified diff from file content comparison
@@ -47,18 +51,17 @@ pub fn format_edit_result_with_snapshot(ctx: &RenderContext, snapshot: EditSnaps
     }
 }
 
-/// Format the before/after display with syntax highlighting and colored backgrounds.
-fn format_before_after_display(ctx: &RenderContext, snapshot: &EditSnapshot) -> String {
-    let old_str = snapshot.old_string.as_deref().unwrap_or("");
-    let new_str = snapshot.new_string.as_deref().unwrap_or("");
-
-    // Detect language from file path
-    let language = extract_language_from_path(&snapshot.file_path);
-
+fn format_before_after(
+    ctx: &RenderContext,
+    file_path: &str,
+    old_str: &str,
+    new_str: &str,
+) -> String {
+    let language = extract_language_from_path(file_path);
     if ctx.terminal {
-        format_before_after_highlighted(ctx, &snapshot.file_path, old_str, new_str, language)
+        format_before_after_highlighted(ctx, file_path, old_str, new_str, language)
     } else {
-        format_before_after_plain(&snapshot.file_path, old_str, new_str)
+        format_before_after_plain(file_path, old_str, new_str)
     }
 }
 
@@ -617,16 +620,9 @@ mod tests {
             !format_diff_output(&processor.render_context(), "a.rs", "+x\n-y\n@@ -1 @@")
                 .contains('\x1b')
         );
-        assert!(!format_before_after_display(
-            &processor.render_context(),
-            &EditSnapshot {
-                file_path: "a.rs".to_string(),
-                content: None,
-                old_string: Some("x".to_string()),
-                new_string: Some("y".to_string()),
-            }
-        )
-        .contains('\x1b'));
+        assert!(
+            !format_before_after(&processor.render_context(), "a.rs", "x", "y").contains('\x1b')
+        );
     }
 
     #[test]
