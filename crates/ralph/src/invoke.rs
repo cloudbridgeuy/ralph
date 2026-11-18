@@ -198,7 +198,7 @@ pub fn build_command(
 }
 
 pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, SubprocessError> {
-    let sink = Arc::new(TerminalSink::plain(*config.theme_config.ui()));
+    let sink = Arc::new(TerminalSink::plain(&config.theme_config)?);
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
         command: build_command(
             &config.permission_mode,
@@ -206,7 +206,6 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
             dirs::home_dir().as_deref(),
         ),
         timeout_secs: Some(config.timeout_secs),
-        theme_config: config.theme_config,
         verbose_tools: config.verbose_tools,
         sink,
         gate: None,

@@ -552,18 +552,21 @@ fn run_memory_command(
     let outcome = backoff::retry_on_outage(
         "chat memory curator",
         || {
-            backoff::attempt_from(subprocess::invoke_subprocess_silent(
-                &subprocess::SpinnerSubprocessConfig {
-                    command: command.to_string(),
-                    timeout_secs: Some(curator.timeout),
-                    theme_config: theme_config.clone(),
-                    verbose_tools: stream_processor::VerboseToolsConfig::new(),
-                    sink: std::sync::Arc::new(turn_sink::TerminalSink::plain(*theme_config.ui())),
-                    gate: None,
-                    interrupt: None,
-                    stdin: Some(stdin.clone()),
-                },
-            ))
+            backoff::attempt_from(
+                turn_sink::TerminalSink::plain(&theme_config)
+                    .map_err(subprocess::SubprocessError::from)
+                    .and_then(|sink| {
+                        subprocess::invoke_subprocess_silent(&subprocess::SpinnerSubprocessConfig {
+                            command: command.to_string(),
+                            timeout_secs: Some(curator.timeout),
+                            verbose_tools: stream_processor::VerboseToolsConfig::new(),
+                            sink: std::sync::Arc::new(sink),
+                            gate: None,
+                            interrupt: None,
+                            stdin: Some(stdin.clone()),
+                        })
+                    }),
+            )
         },
         |delay| backoff::wait_unless(signal::is_terminated, delay),
     );

@@ -262,7 +262,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let last_turn_end: Stamp = Arc::default();
     let last_ping: Stamp = Arc::default();
-    let (gate, sink) = prompt::turn_output(*theme_config.ui());
+    let (gate, sink) = prompt::turn_output(&theme_config)?;
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -276,7 +276,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         custom_prompt: &custom_prompt,
         reply_images,
         isolation: &isolation,
-        theme_config: &theme_config,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),

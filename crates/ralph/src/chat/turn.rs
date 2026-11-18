@@ -2,7 +2,6 @@ use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::keepalive::Stamp;
 use crate::chat::suggestion::SuggestionCell;
 use crate::chat::thread::{fork_view, Fork};
-use crate::highlight::ThemeConfig;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::signal;
 use crate::stream_processor::VerboseToolsConfig;
@@ -124,7 +123,6 @@ pub(super) struct Turn<'a> {
     pub(super) custom_prompt: &'a CustomPrompt,
     pub(super) reply_images: ReplyImages,
     pub(super) isolation: &'a Isolation,
-    pub(super) theme_config: &'a ThemeConfig,
     pub(super) session: Arc<Mutex<Option<Session>>>,
     pub(super) process_turns: AtomicU64,
     pub(super) reset: Mutex<Option<ResetReason>>,
@@ -528,7 +526,6 @@ impl Turn<'_> {
                 self.store_dir,
             )?,
             timeout_secs: None,
-            theme_config: self.theme_config.clone(),
             verbose_tools: VerboseToolsConfig::new(),
             sink: Arc::clone(&self.sink),
             gate: Some(Arc::clone(&self.gate)),

@@ -211,7 +211,7 @@ impl Session {
         if leftover_is_stale(&self.readers.take_queued()) {
             return Err(SubprocessError::LeftoverResult);
         }
-        let mut pump = Pump::start(&self.config, display)?;
+        let mut pump = Pump::start(&self.config, display);
         let deadline = timeout.map(|limit| Instant::now() + limit);
         self.send(&user_line(prompt))
             .map_err(|_| SubprocessError::Stale)?;

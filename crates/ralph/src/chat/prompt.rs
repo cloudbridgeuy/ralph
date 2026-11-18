@@ -5,12 +5,12 @@ use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::switch::ChatExit;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
+use crate::highlight::{ThemeConfig, ThemeError};
 use crate::render::wrap_width;
 use crate::signal::is_terminated;
 use crate::spinner::SpinnerSessionInfo;
 use crate::subprocess::OutputGate;
 use crate::turn_sink::TerminalSink;
-use crate::ui_theme::UiColors;
 use ralph_core::chat_close::{idle_step, IdleSignal, IdleStep};
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
 use ralph_core::chat_hold::hold_targets;
@@ -69,11 +69,13 @@ fn chat_session_info() -> SpinnerSessionInfo {
     }
 }
 
-pub(super) fn turn_output(ui: UiColors) -> (Arc<OutputGate>, Arc<dyn TurnSink>) {
+pub(super) fn turn_output(
+    theme: &ThemeConfig,
+) -> Result<(Arc<OutputGate>, Arc<dyn TurnSink>), ThemeError> {
     let gate = Arc::new(OutputGate::new());
-    let sink = TerminalSink::new(Some(Arc::clone(&gate)), ui, screen_columns)
+    let sink = TerminalSink::new(Some(Arc::clone(&gate)), theme, screen_columns)?
         .with_session(chat_session_info());
-    (gate, Arc::new(sink))
+    Ok((gate, Arc::new(sink)))
 }
 
 impl ChatPrompt {
