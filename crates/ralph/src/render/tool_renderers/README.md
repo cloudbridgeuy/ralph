@@ -25,8 +25,6 @@ tool_renderers/
 │   └── default.rs      # render_default_invocation (fallback)
 ├── results/            # Tool result renderers
 │   ├── bash.rs         # render_bash_result
-│   ├── edit.rs         # render_edit_* (before/after, diff, content_block)
-│   ├── write.rs        # render_write_* (new file, no changes)
 │   ├── read.rs         # render_read_result
 │   ├── grep.rs         # render_grep_result
 │   ├── glob.rs         # render_glob_result
