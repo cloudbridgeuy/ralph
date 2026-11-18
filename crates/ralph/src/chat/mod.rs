@@ -560,15 +560,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let mut offered: Option<(String, u64)> = None;
     let mut carried: Vec<String> = Vec::new();
     let mut leaving: Option<ChatExit> = None;
-    let show_cells = |shown: &str| {
-        let ctx = RenderContext::new(&agent_highlighter, color)
-            .with_diff(diff_colors)
-            .with_tools(tool_colors);
-        print!(
-            "{}",
-            crate::render::image::render_cell_display(&ctx, shown, &agent_theme)
-        );
-    };
     let settles_closes = fork.is_none();
     if settles_closes {
         thread::settle::scan(&store_dir, &monitor.inbox);
@@ -645,7 +636,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 monitor.refresh(true);
                 match ran {
                     Ok(shown) => {
-                        show_cells(&shown);
+                        cell::show(&mut std::io::stdout(), &display, &shown);
                         if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
                             carried = rest;
                             pending = Some(route_queued(text, &mut editor, &prompt));
@@ -669,7 +660,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
-                            show_cells(shown);
+                            cell::show(&mut std::io::stdout(), &display, shown);
                         }
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
