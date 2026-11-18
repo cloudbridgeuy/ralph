@@ -25,15 +25,3 @@ fn a_bad_verify_mode_is_refused_and_lists_the_choices() {
     assert!("Observe".parse::<VerifyMode>().is_err());
     assert!("".parse::<VerifyMode>().is_err());
 }
-
-#[test]
-fn verify_mode_serializes_lowercase() {
-    assert_eq!(
-        serde_json::to_value(VerifyMode::Enforce).unwrap(),
-        serde_json::json!("enforce")
-    );
-    assert_eq!(
-        serde_json::from_value::<VerifyMode>(serde_json::json!("off")).unwrap(),
-        VerifyMode::Off
-    );
-}

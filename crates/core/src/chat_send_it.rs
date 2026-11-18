@@ -35,8 +35,7 @@ pub struct StepResult {
     pub evidence: String,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum VerifyMode {
     Off,
     #[default]
