@@ -253,7 +253,5 @@ fn hidden_tool_output_leaves_no_pending_invocations_or_snapshots() {
     );
 
     assert!(processor.pending_invocations.is_empty());
-    assert!(processor.pending_edit_snapshots.is_empty());
-    assert!(processor.pending_write_snapshots.is_empty());
-    assert!(processor.pending_notebook_snapshots.is_empty());
+    assert!(processor.pending_snapshots.is_empty());
 }

@@ -6,15 +6,24 @@
 use ralph_core::chat_send_it::is_step_result_tool;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
-use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent};
+use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
 use super::disk_files::DiskFiles;
 use super::processor::StreamProcessor;
 use super::render_block::render_block;
 use ralph_core::stream::blocks::{
     build_result_block, build_tool_invocation_block, capture_edit_snapshot,
-    capture_notebook_snapshot, capture_write_snapshot, OutputBlock, Snapshot,
+    capture_notebook_snapshot, capture_write_snapshot, Files, OutputBlock, Snapshot,
 };
+
+fn capture_snapshot(invocation: &ToolInvocation, files: &dyn Files) -> Option<Snapshot> {
+    match invocation.name.as_str() {
+        "Edit" => capture_edit_snapshot(invocation, files).map(Snapshot::Edit),
+        "Write" => capture_write_snapshot(invocation, files).map(Snapshot::Write),
+        "NotebookEdit" => capture_notebook_snapshot(invocation, files).map(Snapshot::Notebook),
+        _ => None,
+    }
+}
 
 impl StreamProcessor {
     /// Process a single line of stream-json output.
@@ -99,25 +108,9 @@ impl StreamProcessor {
                     self.pending_invocations
                         .insert(invocation.id.clone(), invocation.clone());
 
-                    if invocation.name == "Edit" {
-                        if let Some(snapshot) = capture_edit_snapshot(invocation, &DiskFiles) {
-                            self.pending_edit_snapshots
-                                .insert(invocation.id.clone(), snapshot);
-                        }
-                    }
-
-                    if invocation.name == "Write" {
-                        if let Some(snapshot) = capture_write_snapshot(invocation, &DiskFiles) {
-                            self.pending_write_snapshots
-                                .insert(invocation.id.clone(), snapshot);
-                        }
-                    }
-
-                    if invocation.name == "NotebookEdit" {
-                        if let Some(snapshot) = capture_notebook_snapshot(invocation, &DiskFiles) {
-                            self.pending_notebook_snapshots
-                                .insert(invocation.id.clone(), snapshot);
-                        }
+                    if let Some(snapshot) = capture_snapshot(invocation, &DiskFiles) {
+                        self.pending_snapshots
+                            .insert(invocation.id.clone(), snapshot);
                     }
 
                     if is_step_result_tool(&invocation.name) {
@@ -143,7 +136,7 @@ impl StreamProcessor {
                         let tool_use_id = result.tool_use_id.as_ref();
                         let invocation =
                             tool_use_id.and_then(|id| self.pending_invocations.remove(id));
-                        let snapshot = tool_use_id.and_then(|id| self.take_snapshot(id));
+                        let snapshot = tool_use_id.and_then(|id| self.pending_snapshots.remove(id));
 
                         if !result.is_error
                             && invocation
@@ -179,16 +172,6 @@ impl StreamProcessor {
             self.has_emitted_output = true;
             Some(output_parts.join(""))
         }
-    }
-
-    fn take_snapshot(&mut self, id: &str) -> Option<Snapshot> {
-        let edit = self.pending_edit_snapshots.remove(id).map(Snapshot::Edit);
-        let write = self.pending_write_snapshots.remove(id).map(Snapshot::Write);
-        let notebook = self
-            .pending_notebook_snapshots
-            .remove(id)
-            .map(Snapshot::Notebook);
-        edit.or(write).or(notebook)
     }
 
     fn emit(&mut self, block: OutputBlock) -> String {

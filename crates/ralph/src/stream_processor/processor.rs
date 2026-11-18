@@ -17,9 +17,7 @@ use std::collections::HashMap;
 use std::io::IsTerminal;
 
 use ralph_core::stream::blocks::OutputBlock;
-use ralph_core::stream::blocks::{
-    EditSnapshot, NotebookSnapshot, StreamProcessorResult, VerboseToolsConfig, WriteSnapshot,
-};
+use ralph_core::stream::blocks::{Snapshot, StreamProcessorResult, VerboseToolsConfig};
 
 /// A streaming processor for Claude's stream-json output.
 ///
@@ -61,24 +59,7 @@ pub struct StreamProcessor {
     pub(super) pending_invocations: HashMap<String, ToolInvocation>,
     /// Verbose tools configuration.
     pub(super) verbose_tools_config: VerboseToolsConfig,
-    /// Pending Edit tool snapshots keyed by tool_use_id.
-    ///
-    /// When an Edit tool invocation is detected, we capture the file content
-    /// before the edit runs. When the result arrives, we generate a diff
-    /// by comparing the snapshot with the current file content.
-    pub(super) pending_edit_snapshots: HashMap<String, EditSnapshot>,
-    /// Pending Write tool snapshots keyed by tool_use_id.
-    ///
-    /// When a Write tool invocation is detected, we capture the file content
-    /// (if it exists) before the write runs. When the result arrives, we
-    /// generate a diff showing what changed or that a new file was created.
-    pub(super) pending_write_snapshots: HashMap<String, WriteSnapshot>,
-    /// Pending NotebookEdit tool snapshots keyed by tool_use_id.
-    ///
-    /// When a NotebookEdit tool invocation is detected, we capture the cell content
-    /// before the edit runs. When the result arrives, we generate a diff showing
-    /// what changed in the cell.
-    pub(super) pending_notebook_snapshots: HashMap<String, NotebookSnapshot>,
+    pub(super) pending_snapshots: HashMap<String, Snapshot>,
     /// Accumulated output blocks.
     ///
     /// Each output block captures the data needed to re-render a piece of output.
@@ -201,9 +182,7 @@ impl StreamProcessorBuilder {
             response_count: 0,
             pending_invocations: HashMap::new(),
             verbose_tools_config,
-            pending_edit_snapshots: HashMap::new(),
-            pending_write_snapshots: HashMap::new(),
-            pending_notebook_snapshots: HashMap::new(),
+            pending_snapshots: HashMap::new(),
             output_blocks: Vec::new(),
         })
     }
