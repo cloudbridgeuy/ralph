@@ -55,7 +55,7 @@ use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
-use crate::chat::statusbar::StatusBar;
+use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::{SuggestionCell, SuggestionHighlighter};
 use crate::chat::switch::{chat_exit, check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
@@ -501,10 +501,13 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color,
         bar: StatusBar::new(
             &config.theme.status,
-            &session_name,
-            thread_name,
             &chat_config,
             color,
+            &BarContext {
+                name: &session_name,
+                thread: thread_name,
+                model_args: &model_args,
+            },
         ),
         notice: RefCell::new(None),
         editor: editor_cmd,

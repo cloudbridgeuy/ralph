@@ -40,19 +40,27 @@ fn render_spans(colors: &StatusColors, spans: &[Span], color: bool) -> String {
     }
 }
 
+pub struct BarContext<'a> {
+    pub name: &'a str,
+    pub thread: Option<&'a str>,
+    pub model_args: &'a [String],
+}
+
+fn model_alias(model_args: &[String]) -> Option<String> {
+    model_args
+        .windows(2)
+        .find(|pair| pair[0] == "--model")
+        .map(|pair| pair[1].clone())
+}
+
 impl StatusBar {
-    pub fn new(
-        theme: &StatusTheme,
-        name: &str,
-        thread: Option<&str>,
-        chat: &ChatSection,
-        color: bool,
-    ) -> Self {
+    pub fn new(theme: &StatusTheme, chat: &ChatSection, color: bool, context: &BarContext) -> Self {
         Self {
             colors: theme.resolve().0,
             context: Context {
-                name: name.to_string(),
-                thread: thread.map(str::to_string),
+                name: context.name.to_string(),
+                thread: context.thread.map(str::to_string),
+                alias: model_alias(context.model_args),
                 ..Context::default()
             },
             separator: separator_for(color, chat.status_powerline),
@@ -88,7 +96,15 @@ mod tests {
             status_powerline: powerline,
             ..ChatSection::default()
         };
-        StatusBar::new(&StatusTheme::default(), "ralph-chat", None, &chat, color)
+        StatusBar::new(&StatusTheme::default(), &chat, color, &context(None, &[]))
+    }
+
+    fn context<'a>(thread: Option<&'a str>, model_args: &'a [String]) -> BarContext<'a> {
+        BarContext {
+            name: "ralph-chat",
+            thread,
+            model_args,
+        }
     }
 
     #[test]
@@ -119,7 +135,7 @@ mod tests {
             colors: [("mode_inbox_bg".to_string(), "red".to_string())].into(),
         };
         let chat = ChatSection::default();
-        let bar = StatusBar::new(&theme, "s", None, &chat, true);
+        let bar = StatusBar::new(&theme, &chat, true, &context(None, &[]));
         assert!(bar.line(&status(), 40).starts_with("\x1b[101m"));
     }
 
@@ -135,10 +151,9 @@ mod tests {
     fn a_thread_chat_shows_the_session_name_then_the_thread() {
         let bar = StatusBar::new(
             &StatusTheme::default(),
-            "ralph-chat",
-            Some("t1"),
             &ChatSection::default(),
             false,
+            &context(Some("t1"), &[]),
         );
         let shown = bar.line(&status(), 80);
         assert!(
@@ -161,5 +176,31 @@ mod tests {
         assert!(status_bar(true, true).line(&status(), 80).contains(glyph));
         assert!(!status_bar(true, false).line(&status(), 80).contains(glyph));
         assert!(!status_bar(false, true).line(&status(), 80).contains(glyph));
+    }
+
+    #[test]
+    fn a_thread_chat_shows_its_model_alias() {
+        let args = ["--model".to_string(), "haiku".to_string()];
+        let bar = StatusBar::new(
+            &StatusTheme::default(),
+            &ChatSection::default(),
+            false,
+            &context(Some("t1"), &args),
+        );
+        let shown = bar.line(&status(), 80);
+        assert!(
+            shown.starts_with(" INBOX │ ralph-chat │ thread t1 │ haiku │ 📬 1 unread"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn main_chat_shows_no_model_before_a_turn() {
+        let shown = status_bar(false, false).line(&status(), 80);
+        assert!(
+            shown.starts_with(" INBOX │ ralph-chat │ 📬 1 unread"),
+            "{shown}"
+        );
+        assert_eq!(model_alias(&[]), None);
     }
 }
