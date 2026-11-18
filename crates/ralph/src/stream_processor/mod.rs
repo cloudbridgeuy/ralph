@@ -24,10 +24,10 @@
 //! let result = processor.finish();
 //! ```
 
+mod disk_files;
 mod event_handler;
 mod processor;
 mod render_block;
-mod result_handlers;
 mod tool_results;
 
 pub use processor::{StreamProcessor, StreamProcessorBuilder};

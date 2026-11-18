@@ -3,19 +3,18 @@
 //! This module implements the core event processing loop including
 //! JSON line parsing, event routing, and text/chunk output generation.
 
-use std::fs;
-
 use ralph_core::chat_send_it::is_step_result_tool;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
-use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
+use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent};
 
+use super::disk_files::DiskFiles;
 use super::processor::StreamProcessor;
 use super::render_block::render_block;
-use super::result_handlers::{build_result_block, Snapshot};
-use ralph_core::stream::blocks::build_tool_invocation_block;
-use ralph_core::stream::blocks::OutputBlock;
-use ralph_core::stream::blocks::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
+use ralph_core::stream::blocks::{
+    build_result_block, build_tool_invocation_block, capture_edit_snapshot,
+    capture_notebook_snapshot, capture_write_snapshot, OutputBlock, Snapshot,
+};
 
 impl StreamProcessor {
     /// Process a single line of stream-json output.
@@ -101,21 +100,21 @@ impl StreamProcessor {
                         .insert(invocation.id.clone(), invocation.clone());
 
                     if invocation.name == "Edit" {
-                        if let Some(snapshot) = capture_edit_snapshot(invocation) {
+                        if let Some(snapshot) = capture_edit_snapshot(invocation, &DiskFiles) {
                             self.pending_edit_snapshots
                                 .insert(invocation.id.clone(), snapshot);
                         }
                     }
 
                     if invocation.name == "Write" {
-                        if let Some(snapshot) = capture_write_snapshot(invocation) {
+                        if let Some(snapshot) = capture_write_snapshot(invocation, &DiskFiles) {
                             self.pending_write_snapshots
                                 .insert(invocation.id.clone(), snapshot);
                         }
                     }
 
                     if invocation.name == "NotebookEdit" {
-                        if let Some(snapshot) = capture_notebook_snapshot(invocation) {
+                        if let Some(snapshot) = capture_notebook_snapshot(invocation, &DiskFiles) {
                             self.pending_notebook_snapshots
                                 .insert(invocation.id.clone(), snapshot);
                         }
@@ -159,6 +158,7 @@ impl StreamProcessor {
                             result,
                             invocation.as_ref(),
                             snapshot,
+                            &DiskFiles,
                         );
                         output_parts.push(self.emit(block));
                     }
@@ -225,152 +225,5 @@ impl StreamProcessor {
     pub(super) fn flush_pending_chunks(&mut self) -> Option<String> {
         let chunks = self.chunk_buffer.finish();
         Some(self.emit_chunks(chunks)).filter(|o| !o.is_empty())
-    }
-}
-
-/// Capture the current content of a file before an Edit tool modifies it.
-///
-/// This is a pure function that reads the file and returns a snapshot.
-/// Returns None if the file path cannot be extracted from the invocation input.
-///
-/// Extracts both the file content (for unified diff fallback) and
-/// old_string/new_string from the tool input (for before/after display).
-fn capture_edit_snapshot(invocation: &ToolInvocation) -> Option<EditSnapshot> {
-    // Extract file path from invocation input
-    let file_path = invocation.input.get("file_path").and_then(|v| v.as_str())?;
-
-    // Read current content - Ok(content) if file exists, None if it doesn't
-    let content = fs::read_to_string(file_path).ok();
-
-    // Extract old_string and new_string from Edit tool input
-    let old_string = invocation
-        .input
-        .get("old_string")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let new_string = invocation
-        .input
-        .get("new_string")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    Some(EditSnapshot {
-        file_path: file_path.to_string(),
-        content,
-        old_string,
-        new_string,
-    })
-}
-
-/// Capture the current content of a file before a Write tool creates/overwrites it.
-///
-/// This is a pure function that reads the file (if it exists) and returns a snapshot.
-/// Returns None if the file path cannot be extracted from the invocation input.
-fn capture_write_snapshot(invocation: &ToolInvocation) -> Option<WriteSnapshot> {
-    // Extract file path from invocation input
-    let file_path = invocation.input.get("file_path").and_then(|v| v.as_str())?;
-
-    // Check if file exists and read content
-    let file_existed = std::path::Path::new(file_path).exists();
-    let content = fs::read_to_string(file_path).ok();
-
-    Some(WriteSnapshot {
-        file_path: file_path.to_string(),
-        content,
-        file_existed,
-    })
-}
-
-/// Capture the current content of a notebook cell before a NotebookEdit tool modifies it.
-///
-/// This function reads the notebook JSON and extracts the cell content before the edit.
-/// Returns None if the notebook path cannot be extracted or the notebook cannot be parsed.
-fn capture_notebook_snapshot(invocation: &ToolInvocation) -> Option<NotebookSnapshot> {
-    // Extract notebook path from invocation input
-    let notebook_path = invocation
-        .input
-        .get("notebook_path")
-        .and_then(|v| v.as_str())?;
-
-    // Extract cell identifier - prefer cell_id, fall back to cell_number
-    let cell_identifier = invocation
-        .input
-        .get("cell_id")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .or_else(|| {
-            invocation
-                .input
-                .get("cell_number")
-                .and_then(|v| v.as_u64())
-                .map(|n| n.to_string())
-        })
-        .unwrap_or_else(|| "unknown".to_string());
-
-    // Extract edit mode (default to "replace")
-    let edit_mode = invocation
-        .input
-        .get("edit_mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("replace")
-        .to_string();
-
-    // Extract cell type if provided
-    let cell_type = invocation
-        .input
-        .get("cell_type")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    // Try to read the notebook and extract cell content
-    let content = read_notebook_cell_content(notebook_path, &cell_identifier);
-
-    Some(NotebookSnapshot {
-        notebook_path: notebook_path.to_string(),
-        cell_identifier,
-        content,
-        edit_mode,
-        cell_type,
-    })
-}
-
-/// Read the content of a specific cell from a Jupyter notebook.
-///
-/// Returns the cell content as a single string (joining source lines),
-/// or None if the notebook or cell cannot be read.
-fn read_notebook_cell_content(notebook_path: &str, cell_identifier: &str) -> Option<String> {
-    // Read and parse the notebook JSON
-    let notebook_content = fs::read_to_string(notebook_path).ok()?;
-    let notebook: serde_json::Value = serde_json::from_str(&notebook_content).ok()?;
-
-    // Get the cells array
-    let cells = notebook.get("cells")?.as_array()?;
-
-    // Try to find the cell by identifier
-    // First try to match by cell_id (string match)
-    // Then try to match by index (if identifier is numeric)
-    let cell = if let Ok(index) = cell_identifier.parse::<usize>() {
-        // Numeric identifier - use as 0-based index
-        cells.get(index)
-    } else {
-        // String identifier - try to match against cell id metadata
-        cells.iter().find(|cell| {
-            cell.get("id")
-                .and_then(|id| id.as_str())
-                .map(|id| id == cell_identifier)
-                .unwrap_or(false)
-        })
-    }?;
-
-    // Extract the source content
-    // The "source" field can be either a string or an array of strings
-    let source = cell.get("source")?;
-    if let Some(s) = source.as_str() {
-        Some(s.to_string())
-    } else if let Some(arr) = source.as_array() {
-        let lines: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
-        Some(lines.join(""))
-    } else {
-        None
     }
 }
