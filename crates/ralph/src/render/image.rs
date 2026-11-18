@@ -177,6 +177,15 @@ fn render_image(alt: &str, path: &str, images: ImageSettings, bounds: ImageBound
     draw_image(path, images, bounds).unwrap_or_else(|| fallback(alt, path))
 }
 
+pub fn print_attachments(text: &str) {
+    if let Some(images) = enabled() {
+        print!(
+            "{}",
+            render_attachments(text, images, ImageBounds::current())
+        );
+    }
+}
+
 pub fn render_attachments(text: &str, images: ImageSettings, bounds: ImageBounds) -> String {
     attachment_paths(text)
         .iter()

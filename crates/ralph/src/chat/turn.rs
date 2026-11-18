@@ -1,6 +1,6 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::keepalive::Stamp;
-use crate::chat::prompt::screen_columns;
+use crate::chat::prompt::Columns;
 use crate::chat::suggestion::SuggestionCell;
 use crate::chat::thread::{fork_view, Fork};
 use crate::highlight::ThemeConfig;
@@ -157,12 +157,13 @@ pub(super) struct Turn<'a> {
     pub(super) last_cost_usd: Mutex<Option<f64>>,
     pub(super) timing: Mutex<TurnTiming>,
     pub(super) seen_len: Mutex<Option<usize>>,
+    pub(super) columns: Columns,
 }
 
 impl Turn<'_> {
     fn print_rule(&self) {
         self.gate
-            .write_out(&rule(&rule_skin(self.theme_config.ui()), screen_columns()));
+            .write_out(&rule(&rule_skin(self.theme_config.ui()), (self.columns)()));
     }
 
     fn print_rule_after(&self, blocks: &[OutputBlock]) {

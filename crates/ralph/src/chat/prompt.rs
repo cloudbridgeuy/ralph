@@ -46,6 +46,8 @@ impl ChatPrompt {
     }
 }
 
+pub(super) type Columns = fn() -> usize;
+
 pub(super) fn terminal_columns() -> usize {
     crossterm::terminal::size()
         .map(|(w, _)| usize::from(w))
