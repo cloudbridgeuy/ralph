@@ -1,42 +1,17 @@
-//! Streaming output processor for LLM subprocess output (Imperative Shell).
-//!
-//! This module provides real-time parsing and highlighting of Claude's
-//! `--output-format stream-json` output. It parses JSON events line by line,
-//! extracts text content, applies syntax highlighting to code blocks, and
-//! outputs to the terminal while capturing data for storage.
-//!
-//! # Features
-//!
-//! - Real-time JSON parsing of stream-json events
-//! - Syntax highlighting for code blocks using syntect
-//! - Diff highlighting with delta fallback chain
-//! - Terminal detection for automatic color support
-//! - Metadata and tool call extraction from stream events
-//! - Output block accumulation for response text extraction
-//!
-//! # Example
-//!
-//! ```no_run
-//! use ralph::stream_processor::StreamProcessor;
-//!
-//! let mut processor = StreamProcessor::new();
-//! processor.process_line(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}"#);
-//! let result = processor.finish();
-//! ```
-
 mod block_renderer;
 mod disk_files;
 pub(crate) use disk_files::DiskFiles;
+#[cfg(test)]
 mod processor;
 mod render_block;
 mod tool_results;
 
 pub use block_renderer::BlockRenderer;
-pub use processor::{StreamProcessor, StreamProcessorBuilder};
+#[cfg(test)]
+pub use processor::StreamProcessor;
 pub use ralph_core::stream::blocks::{
-    extract_response_text, GrepInvocationBuilder, OutputBlock, StreamProcessorResult, TextBlock,
-    TodoItem, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
-    VerboseToolsConfig,
+    extract_response_text, OutputBlock, StreamProcessorResult, ToolInvocationBlock,
+    ToolInvocationVariant, ToolResultBlock, ToolResultVariant, VerboseToolsConfig,
 };
 
 #[cfg(test)]

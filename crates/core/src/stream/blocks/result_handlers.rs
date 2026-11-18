@@ -3,10 +3,12 @@ use std::path::Path;
 use crate::chunk::is_unfenced_diff;
 use crate::stream::{ToolInvocation, ToolResult};
 
+use super::block_builders::{input_str, write_result_variant};
+use super::diff::{edit_diff, notebook_diff};
+use super::utils::{count_non_empty_lines, is_content_truncated};
 use super::{
-    count_non_empty_lines, edit_diff, input_str, is_content_truncated, notebook_diff,
-    write_result_variant, EditSnapshot, Files, NotebookSnapshot, OutputBlock, ToolResultVariant,
-    VerboseToolsConfig, WriteSnapshot,
+    EditSnapshot, Files, NotebookSnapshot, OutputBlock, ToolResultVariant, VerboseToolsConfig,
+    WriteSnapshot,
 };
 
 pub enum Snapshot {

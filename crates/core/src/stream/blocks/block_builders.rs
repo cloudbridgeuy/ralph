@@ -1,7 +1,8 @@
-use super::{
-    extract_key_argument, GrepInvocationBuilder, GrepParams, OutputBlock, TodoItem,
-    ToolInvocationVariant, ToolResultVariant, VerboseToolsConfig, WriteSnapshot,
+use super::output_block::{
+    GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
+use super::types::{GrepParams, VerboseToolsConfig, WriteSnapshot};
+use super::utils::extract_key_argument;
 use crate::stream::ToolInvocation;
 
 pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Option<&'a str> {

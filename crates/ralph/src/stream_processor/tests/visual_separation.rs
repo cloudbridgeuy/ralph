@@ -42,9 +42,8 @@ fn test_visual_separation_between_responses() {
     assert_eq!(processor.response_count(), 2);
 
     // Second response's text comes via finish()
-    let result = processor.finish();
-    assert!(result.final_output.is_some());
-    let final_out = result.final_output.unwrap();
+    let (_, final_out) = processor.finish_rendered();
+    assert!(!final_out.is_empty());
     assert!(final_out.contains("Second response"));
 }
 
@@ -62,9 +61,8 @@ fn test_no_separator_for_first_response() {
     assert_eq!(processor.response_count(), 1);
 
     // Content appears in finish()
-    let result = processor.finish();
-    assert!(result.final_output.is_some());
-    let final_out = result.final_output.unwrap();
+    let (_, final_out) = processor.finish_rendered();
+    assert!(!final_out.is_empty());
     assert!(
         !final_out.starts_with('\n'),
         "First response should not have leading separator"
@@ -163,9 +161,8 @@ fn test_multiple_responses_with_separators() {
     assert_eq!(processor.response_count(), 3);
 
     // "Three" comes via finish()
-    let result = processor.finish();
-    assert!(result.final_output.is_some());
-    assert!(result.final_output.unwrap().contains("Three"));
+    let (_, final_out) = processor.finish_rendered();
+    assert!(final_out.contains("Three"));
 }
 
 #[test]
@@ -225,9 +222,8 @@ fn test_no_separator_if_no_output_yet() {
     assert!(output.is_none(), "prose should be buffered");
 
     // Content appears in finish() without separator
-    let result = processor.finish();
-    assert!(result.final_output.is_some());
-    let final_out = result.final_output.unwrap();
+    let (_, final_out) = processor.finish_rendered();
+    assert!(!final_out.is_empty());
     assert!(
         !final_out.starts_with('\n'),
         "Should not have separator if no prior visible output: {:?}",

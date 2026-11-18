@@ -21,7 +21,7 @@ fn test_whitespace_blank_lines_preserved_between_paragraphs() {
     );
     assert!(output.is_none(), "prose should be buffered, not emitted");
 
-    let result = processor.finish();
+    let (result, final_out) = processor.finish_rendered();
 
     // Block buffering: all prose in a single chunk
     assert_eq!(result.chunks.len(), 1);
@@ -29,8 +29,7 @@ fn test_whitespace_blank_lines_preserved_between_paragraphs() {
     assert!(matches!(result.chunks[0].chunk_type, ChunkType::Prose));
 
     // Final output should contain the rendered prose
-    assert!(result.final_output.is_some());
-    let final_out = result.final_output.as_ref().unwrap();
+    assert!(!final_out.is_empty());
     assert!(final_out.contains("Paragraph 1."));
     assert!(final_out.contains("Paragraph 2."));
 }

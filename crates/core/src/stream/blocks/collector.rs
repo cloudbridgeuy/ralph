@@ -9,11 +9,14 @@ use crate::stream::{
     parse_stream_line, ParsedLine, StreamEvent, ToolInvocation,
 };
 
-use super::{
-    build_result_block, build_tool_invocation_block, capture_edit_snapshot,
-    capture_notebook_snapshot, capture_write_snapshot, Files, ImageFile, OutputBlock, Snapshot,
-    StreamProcessorResult, TextBlock, VerboseToolsConfig,
+use super::block_builders::build_tool_invocation_block;
+use super::output_block::{ImageFile, OutputBlock, TextBlock};
+use super::result_handlers::{build_result_block, Snapshot};
+use super::snapshot_capture::{
+    capture_edit_snapshot, capture_notebook_snapshot, capture_write_snapshot,
 };
+use super::types::{StreamProcessorResult, VerboseToolsConfig};
+use super::Files;
 
 pub struct StreamCollector {
     events: Vec<StreamEvent>,
@@ -90,7 +93,6 @@ impl StreamCollector {
             metadata: extract_metadata_from_events_or_default(&self.events),
             costs: extract_costs_from_events_or_default(&self.events),
             output_blocks: self.output_blocks,
-            final_output: None,
         };
         (flushed, result)
     }

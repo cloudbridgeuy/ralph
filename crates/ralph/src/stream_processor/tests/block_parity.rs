@@ -65,7 +65,7 @@ fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) 
         processor.renderer.diff_colors,
         processor.renderer.tool_colors,
     );
-    let result = processor.finish();
+    let (result, final_output) = processor.finish_rendered();
     let ctx = crate::render::RenderContext::new(&highlighter, highlight)
         .with_diff(diff)
         .with_tools(tools);
@@ -73,7 +73,7 @@ fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) 
         .iter()
         .map(|block| render_block(&ctx, block, highlight.then_some(&markdown_theme)))
         .collect();
-    assert_eq!(result.final_output.unwrap_or_default(), rendered);
+    assert_eq!(final_output, rendered);
 }
 
 fn assert_parity_everywhere(steps: &[Step]) {

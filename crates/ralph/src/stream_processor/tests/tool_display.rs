@@ -120,12 +120,8 @@ fn test_tool_text_mixed_content() {
     assert!(out.contains("Read"));
 
     // Buffered prose appears in finish()
-    let result = processor.finish();
-    assert!(result.final_output.is_some());
-    assert!(result
-        .final_output
-        .unwrap()
-        .contains("Let me read the file"));
+    let (_, final_out) = processor.finish_rendered();
+    assert!(final_out.contains("Let me read the file"));
 }
 
 #[test]
