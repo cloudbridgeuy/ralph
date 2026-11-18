@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::chat_send_it::is_step_result_tool;
 use crate::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk, StreamingChunkBuffer};
 use crate::directive::split_text_around_directives;
+use crate::kitty::{parse_image_markers, Segment};
 use crate::stream::{
     extract_costs_from_events_or_default, extract_metadata_from_events_or_default,
     parse_stream_line, ParsedLine, StreamEvent, ToolInvocation,
@@ -10,8 +11,8 @@ use crate::stream::{
 
 use super::{
     build_result_block, build_tool_invocation_block, capture_edit_snapshot,
-    capture_notebook_snapshot, capture_write_snapshot, Files, OutputBlock, Snapshot,
-    StreamProcessorResult, VerboseToolsConfig,
+    capture_notebook_snapshot, capture_write_snapshot, Files, ImageFile, OutputBlock, Snapshot,
+    StreamProcessorResult, TextBlock, VerboseToolsConfig,
 };
 
 pub type Visible<'a> = &'a mut dyn FnMut(&OutputBlock) -> bool;
@@ -38,6 +39,19 @@ fn record(out: &mut Vec<OutputBlock>, blocks: Vec<OutputBlock>, visible: Visible
         out.push(block);
     }
     any_visible
+}
+
+fn image_files(chunk: &ParsedChunk, files: &dyn Files) -> Vec<ImageFile> {
+    match chunk.chunk_type {
+        ChunkType::Prose => parse_image_markers(&chunk.content)
+            .into_iter()
+            .filter_map(|segment| match segment {
+                Segment::Image { path, .. } => Some(files.image(&path)),
+                Segment::Text(_) => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn capture_snapshot(invocation: &ToolInvocation, files: &dyn Files) -> Option<Snapshot> {
@@ -87,8 +101,8 @@ impl StreamCollector {
         }
     }
 
-    pub fn finish(mut self) -> (Vec<OutputBlock>, StreamProcessorResult) {
-        let flushed = self.flush_pending_chunks();
+    pub fn finish(mut self, files: &dyn Files) -> (Vec<OutputBlock>, StreamProcessorResult) {
+        let flushed = self.flush_pending_chunks(files);
         let result = StreamProcessorResult {
             chunks: self.collected_chunks,
             metadata: extract_metadata_from_events_or_default(&self.events),
@@ -147,7 +161,7 @@ impl StreamCollector {
                     new_message_id != self.current_message_id && self.current_message_id.is_some();
 
                 if is_new_response {
-                    let flushed = self.flush_pending_chunks();
+                    let flushed = self.flush_pending_chunks(files);
                     any_visible |= record(&mut out, flushed, visible);
                     if self.has_emitted_output || any_visible {
                         let separator = vec![self.emit(OutputBlock::separator())];
@@ -161,7 +175,7 @@ impl StreamCollector {
 
                 let tool_invocations = assistant_event.extract_tool_invocations();
                 if !tool_invocations.is_empty() {
-                    let flushed = self.flush_pending_chunks();
+                    let flushed = self.flush_pending_chunks(files);
                     any_visible |= record(&mut out, flushed, visible);
                 }
 
@@ -185,7 +199,7 @@ impl StreamCollector {
 
                 let text = assistant_event.extract_text();
                 if !text.is_empty() {
-                    let blocks = self.collect_text(&text);
+                    let blocks = self.collect_text(&text, files);
                     any_visible |= record(&mut out, blocks, visible);
                 }
             }
@@ -230,7 +244,7 @@ impl StreamCollector {
         block
     }
 
-    fn emit_chunks(&mut self, chunks: Vec<ParsedChunk>) -> Vec<OutputBlock> {
+    fn emit_chunks(&mut self, chunks: Vec<ParsedChunk>, files: &dyn Files) -> Vec<OutputBlock> {
         let mut blocks = Vec::new();
         for chunk in chunks {
             let sub_chunks = match &chunk.chunk_type {
@@ -239,24 +253,28 @@ impl StreamCollector {
             };
             for sub_chunk in sub_chunks {
                 self.collected_chunks.push(sub_chunk.clone());
-                blocks.push(self.emit(OutputBlock::text(sub_chunk)));
+                let images = image_files(&sub_chunk, files);
+                blocks.push(self.emit(OutputBlock::Text(TextBlock {
+                    chunk: sub_chunk,
+                    images,
+                })));
             }
         }
         blocks
     }
 
-    fn collect_text(&mut self, text: &str) -> Vec<OutputBlock> {
+    fn collect_text(&mut self, text: &str, files: &dyn Files) -> Vec<OutputBlock> {
         let mut blocks = Vec::new();
         for line in split_lines_preserve_trailing(text) {
             let chunks = self.chunk_buffer.process_line(line);
-            blocks.extend(self.emit_chunks(chunks));
+            blocks.extend(self.emit_chunks(chunks, files));
         }
         blocks
     }
 
-    fn flush_pending_chunks(&mut self) -> Vec<OutputBlock> {
+    fn flush_pending_chunks(&mut self, files: &dyn Files) -> Vec<OutputBlock> {
         let chunks = self.chunk_buffer.finish();
-        self.emit_chunks(chunks)
+        self.emit_chunks(chunks, files)
     }
 }
 
@@ -266,7 +284,7 @@ mod tests {
     use std::path::Path;
 
     use super::super::{
-        Files, OutputBlock, StreamCollector, ToolResultVariant, VerboseToolsConfig,
+        Files, ImageFile, OutputBlock, StreamCollector, ToolResultVariant, VerboseToolsConfig,
     };
 
     struct FakeFiles(HashMap<&'static str, &'static str>);
@@ -281,10 +299,43 @@ mod tests {
         fn exists(&self, path: &Path) -> bool {
             path.to_str().is_some_and(|p| self.0.contains_key(p))
         }
+
+        fn image(&self, path: &str) -> ImageFile {
+            ImageFile {
+                path: path.to_string(),
+                shown: path.into(),
+                bytes: self.0.get(path).map(|content| content.as_bytes().to_vec()),
+            }
+        }
     }
 
     fn feed(collector: &mut StreamCollector, files: &FakeFiles, line: &str) -> Vec<OutputBlock> {
         collector.process_line(line, files, &mut |_| true)
+    }
+
+    #[test]
+    fn markdown_image_line_carries_the_file_bytes() {
+        let mut collector = StreamCollector::new(true, VerboseToolsConfig::default());
+        let files = FakeFiles(HashMap::from([("pic.png", "PNG")]));
+        let line = r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"![alt](pic.png)\n"}]}}"#;
+        let mut blocks = feed(&mut collector, &files, line);
+        blocks.extend(collector.finish(&files).0);
+        let images: Vec<_> = blocks
+            .into_iter()
+            .filter_map(|block| match block {
+                OutputBlock::Text(text) => Some(text.images),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(
+            images,
+            vec![ImageFile {
+                path: "pic.png".into(),
+                shown: "pic.png".into(),
+                bytes: Some(b"PNG".to_vec()),
+            }]
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::chunk::{ChunkType, ParsedChunk};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// A single block of output from an LLM interaction.
 ///
@@ -26,11 +27,24 @@ pub enum OutputBlock {
 pub struct TextBlock {
     /// The parsed chunk containing content and type.
     pub chunk: ParsedChunk,
+
+    #[serde(skip)]
+    pub images: Vec<ImageFile>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageFile {
+    pub path: String,
+    pub shown: PathBuf,
+    pub bytes: Option<Vec<u8>>,
 }
 
 impl From<ParsedChunk> for TextBlock {
     fn from(chunk: ParsedChunk) -> Self {
-        Self { chunk }
+        Self {
+            chunk,
+            images: Vec::new(),
+        }
     }
 }
 

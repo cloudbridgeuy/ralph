@@ -16,7 +16,7 @@ pub use collector::{StreamCollector, Visible};
 pub use diff::{edit_diff, notebook_diff};
 pub use files::Files;
 pub use output_block::{
-    extract_response_text, GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem,
+    extract_response_text, GrepInvocationBuilder, ImageFile, OutputBlock, TextBlock, TodoItem,
     ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
 pub use result_handlers::{build_result_block, Snapshot};

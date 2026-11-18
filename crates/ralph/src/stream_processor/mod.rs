@@ -25,6 +25,7 @@
 //! ```
 
 mod disk_files;
+pub(crate) use disk_files::DiskFiles;
 mod processor;
 mod render_block;
 mod tool_results;

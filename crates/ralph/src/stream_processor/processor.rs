@@ -299,7 +299,7 @@ impl StreamProcessor {
             .with_diff(diff_colors)
             .with_tools(tool_colors);
         let markdown = highlighting_enabled.then_some(&markdown);
-        let (flushed, mut result) = collector.finish();
+        let (flushed, mut result) = collector.finish(&DiskFiles);
         let final_output: String = flushed
             .iter()
             .map(|block| render_block(&ctx, block, markdown))
