@@ -699,3 +699,37 @@ fn a_replied_tick_collects_the_pending_lines_of_the_last_assistant_entry() {
     );
     assert!(silent.driving.tally.pending.is_empty());
 }
+
+fn logged_texts(dir: &Path) -> Vec<String> {
+    let (entries, _) = Store::new(dir.to_path_buf()).load().unwrap();
+    entries.into_iter().map(|entry| entry.text).collect()
+}
+
+#[test]
+fn a_dispatched_notice_is_logged_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = judging(dir.path());
+    let notice = "Step 1: the check would block the worker".to_string();
+    let ticked = Ticked {
+        driving: active.driving,
+        next: Next::Wait,
+        met: None,
+        notice: Some(notice.clone()),
+    };
+    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    assert_eq!(logged_texts(dir.path()), vec![notice_record(&notice)]);
+}
+
+#[test]
+fn a_dispatch_with_no_notice_logs_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = judging(dir.path());
+    let ticked = Ticked {
+        driving: active.driving,
+        next: Next::Wait,
+        met: Some("Step 1 met".to_string()),
+        notice: None,
+    };
+    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    assert!(logged_texts(dir.path()).is_empty());
+}

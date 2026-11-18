@@ -336,7 +336,7 @@ impl SendIt {
         };
         let file = self.load().ok().flatten();
         let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
-        for line in ticked.notice.iter().chain(&ticked.met) {
+        for line in ticked.met.iter() {
             self.log_notice(line);
         }
         let mut driven = self.dispatch(ticked, monitor);
@@ -362,6 +362,9 @@ impl SendIt {
     pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
         for line in ticked.shown_lines() {
             println!("{line}");
+        }
+        for line in ticked.notice.iter() {
+            self.log_notice(line);
         }
         let plan = self.load().ok().flatten().map(|file| file.plan);
         let driving = ticked.driving;
