@@ -268,7 +268,7 @@ fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, file_path: &str) -> S
     // Generate hunks
     for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
         // Hunk header
-        output.push_str(&format!("{}", hunk.header()));
+        output.push_str(&format!("{}\n", hunk.header()));
 
         // Changes
         for change in hunk.iter_changes() {
@@ -573,5 +573,16 @@ mod tests {
         assert!(
             format_no_changes_message(&processor.render_context(), "a.rs").starts_with("\x1b[97m✓")
         );
+    }
+
+    #[test]
+    fn unified_diff_breaks_line_after_hunk_header() {
+        let diff = TextDiff::from_lines("x = 1\n", "x = 2\n");
+        let out = generate_unified_diff(&diff, "a.rs");
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines.contains(&"@@ -1 +1 @@"));
+        assert!(!lines
+            .iter()
+            .any(|l| l.starts_with("@@") && !l.ends_with("@@")));
     }
 }
