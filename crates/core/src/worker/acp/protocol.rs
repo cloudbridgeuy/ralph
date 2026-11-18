@@ -125,6 +125,13 @@ pub fn acp_mcp_server(
     })
 }
 
+pub fn once_per_turn_server(mut server: Value) -> Value {
+    if let Some(args) = server["args"].as_array_mut() {
+        args.push(Value::String(super::ONCE_PER_TURN_FLAG.to_string()));
+    }
+    server
+}
+
 pub fn claude_mcp_config(server: &Value) -> Value {
     json!({"mcpServers": {SERVER_NAME: {"command": server["command"], "args": server["args"]}}})
 }
@@ -143,6 +150,15 @@ pub fn cursor_model_rejection(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn once_per_turn_server_appends_the_flag_to_the_args() {
+        let server = serde_json::json!({"command": "ralph", "args": ["worker-mcp"]});
+        assert_eq!(
+            once_per_turn_server(server)["args"],
+            serde_json::json!(["worker-mcp", "--once-per-turn"])
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -14,11 +14,11 @@ use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
-    exit_outcome, inbox_env, next_chat, print_args, print_model, print_turn_signals,
-    prompt_failure_report, reduce, task_prompt, turn_end_activity, turn_end_for, Action,
-    ActivityState, ExitOutcome, HandoffFiles, HarnessId, HeadlessState, ModelUsage,
-    PermissionAnswer, PermissionMode, PrintArgs, PrintEvent, Scope, SessionRecord, SpawnRequest,
-    TurnEnd, Turns, WorkerEvent, WorkerMarkers, CURSOR_AGENT, SERVER_NAME,
+    exit_outcome, inbox_env, next_chat, once_per_turn_server, print_args, print_model,
+    print_turn_signals, prompt_failure_report, reduce, task_prompt, turn_end_activity,
+    turn_end_for, Action, ActivityState, ExitOutcome, HandoffFiles, HarnessId, HeadlessState,
+    ModelUsage, PermissionAnswer, PermissionMode, PrintArgs, PrintEvent, Scope, SessionRecord,
+    SpawnRequest, TurnEnd, Turns, WorkerEvent, WorkerMarkers, CURSOR_AGENT, SERVER_NAME,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -177,6 +177,7 @@ impl Shared {
             match action {
                 Action::Start(text) => {
                     fs::remove_file(&self.markers.gone).ok();
+                    fs::remove_file(&self.markers.reported).ok();
                     *locked(&self.proc) = begin_start();
                     let turn = Arc::clone(self);
                     thread::spawn(move || turn.run_turn(&text));
@@ -577,6 +578,7 @@ fn write_mcp_config(id: &str, request: &SpawnRequest, files: &HandoffFiles) -> R
     );
     let path = request.worktree.join(".cursor").join("mcp.json");
     let existing = fs::read_to_string(&path).ok();
+    let server = once_per_turn_server(server);
     let entry = &claude_mcp_config(&server)["mcpServers"][SERVER_NAME];
     write_file(&path, &cursor_mcp_json(existing.as_deref(), entry))
         .map_err(|e| format!("could not write {}: {e}", path.display()))

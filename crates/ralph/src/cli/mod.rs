@@ -656,6 +656,9 @@ pub struct WorkerMcpArgs {
 
     #[arg(long, value_name = "DIR")]
     pub worktree: Option<std::path::PathBuf>,
+
+    #[arg(long)]
+    pub once_per_turn: bool,
 }
 
 #[derive(clap::Args, Debug)]
