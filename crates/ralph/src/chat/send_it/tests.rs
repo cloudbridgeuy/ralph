@@ -1,7 +1,7 @@
 use super::*;
 use crate::chat::socket::{respond, Shared};
 use ralph_core::chat_memory::Trigger;
-use ralph_core::chat_send_it::VerifyMode;
+use ralph_core::chat_send_it::{Awaiting, VerifyMode};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
 use ralph_server::chat::memory::Store;
@@ -732,4 +732,41 @@ fn a_dispatch_with_no_notice_logs_nothing() {
     };
     send_it.dispatch(ticked, &held::monitor(dir.path()));
     assert!(logged_texts(dir.path()).is_empty());
+}
+
+#[test]
+fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let send_it = SendIt::new(dir.path(), LIMITS);
+    let mut args = plan_args();
+    args["steps"] = json!([
+        {"do": "collect evidence", "criterion": {"kind": "worker_done", "worker": "E1", "verify": "cargo test"}},
+        {"do": "review", "criterion": {"kind": "judge", "question": "ok?"}}
+    ]);
+    send_it.propose(&args).unwrap();
+    let hash = send_it.status().shown.unwrap();
+    let mut driving = go(&send_it, Some(&hash), true).1.unwrap().driving;
+    driving.awaiting = Awaiting::Report("watch:send-it-1".to_string());
+    driving.progress.verify = VerifyMode::Observe;
+    driving.progress.verifying = true;
+    let mut sending = Some(Active {
+        driving,
+        watched: Some(ralph_server::watches::OutcomeSlot::new(Mutex::new(Some(
+            WatchOutcome::Exited(1),
+        )))),
+    });
+    send_it
+        .held_item(&mut sending, Position::FIRST, &held::monitor(dir.path()))
+        .unwrap();
+    let logged = logged_texts(dir.path());
+    let at = |needle: &str| {
+        logged
+            .iter()
+            .enumerate()
+            .filter(|(_, text)| text.contains(needle))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(at("would block"), [0], "{logged:?}");
+    assert_eq!(at("step 1/2 met"), [1], "{logged:?}");
 }
