@@ -131,7 +131,7 @@ impl StreamProcessor {
                     }
                     let formatted = tool_display::format_tool_invocation(self, invocation);
                     output_parts.push(formatted);
-                    let block = build_tool_invocation_block(invocation);
+                    let block = build_tool_invocation_block(invocation, &self.verbose_tools_config);
                     self.output_blocks.push(block);
                 }
 

@@ -1,126 +1,89 @@
-//! Helper functions to build OutputBlock variants from tool data.
-//!
-//! These functions extract the same data used for display formatting
-//! and structure it as OutputBlock variants.
-
 use ralph_core::stream::ToolInvocation;
 
 use super::output_block::{
     GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
-use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
+use super::types::{EditSnapshot, GrepParams, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot};
 use super::utils::{extract_key_argument, is_content_truncated};
 
-/// Build an OutputBlock from a tool invocation.
-///
-/// Extracts the relevant data from the invocation and creates the
-/// appropriate ToolInvocationVariant.
-pub fn build_tool_invocation_block(invocation: &ToolInvocation) -> OutputBlock {
-    let variant = match invocation.name.as_str() {
-        "Bash" => {
-            let command = invocation
-                .input
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let description = invocation
-                .input
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            ToolInvocationVariant::Bash {
-                command,
-                description,
-            }
-        }
-        "Grep" => {
-            let params = super::types::GrepParams::from_invocation_input(&invocation.input);
+pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Option<&'a str> {
+    invocation?.input.get(key)?.as_str()
+}
 
-            let mut builder = GrepInvocationBuilder::new(&params.pattern);
-            if let Some(path) = &params.path {
-                builder = builder.path(path);
-            }
-            if let Some(mode) = &params.output_mode {
-                builder = builder.output_mode(mode);
-            }
-            if let Some(glob) = &params.glob {
-                builder = builder.glob(glob);
-            }
-            if let Some(ft) = &params.file_type {
-                builder = builder.file_type(ft);
-            }
-            if params.case_insensitive {
-                builder = builder.case_insensitive(true);
-            }
-
-            builder.build()
+pub fn build_tool_invocation_block(
+    invocation: &ToolInvocation,
+    verbose: &VerboseToolsConfig,
+) -> OutputBlock {
+    let name = invocation.name.as_str();
+    let input = Some(invocation);
+    let variant = match name {
+        "Bash" => ToolInvocationVariant::Bash {
+            command: input_str(input, "command").unwrap_or("").to_string(),
+            description: input_str(input, "description").map(String::from),
+        },
+        "Grep" | "Read" | "Glob" | "TodoWrite" if !verbose.is_verbose(name) => {
+            default_invocation(invocation)
         }
-        "Read" => {
-            let file_path = invocation
-                .input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let offset = invocation.input.get("offset").and_then(|v| v.as_u64());
-            let limit = invocation.input.get("limit").and_then(|v| v.as_u64());
-            ToolInvocationVariant::Read {
-                file_path,
-                offset,
-                limit,
-            }
-        }
-        "Glob" => {
-            let pattern = invocation
-                .input
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let path = invocation
-                .input
-                .get("path")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            ToolInvocationVariant::Glob { pattern, path }
-        }
-        "TodoWrite" => {
-            let todos = invocation
+        "Grep" => grep_invocation(&GrepParams::from_invocation_input(&invocation.input)),
+        "Read" => ToolInvocationVariant::Read {
+            file_path: input_str(input, "file_path")
+                .unwrap_or("(unknown file)")
+                .to_string(),
+            offset: invocation.input.get("offset").and_then(|v| v.as_u64()),
+            limit: invocation.input.get("limit").and_then(|v| v.as_u64()),
+        },
+        "Glob" => ToolInvocationVariant::Glob {
+            pattern: input_str(input, "pattern").unwrap_or("*").to_string(),
+            path: input_str(input, "path").map(String::from),
+        },
+        "TodoWrite" => ToolInvocationVariant::TodoWrite {
+            todos: invocation
                 .input
                 .get("todos")
                 .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|item| {
-                            let content = item.get("content")?.as_str()?.to_string();
-                            let status = item.get("status")?.as_str()?.to_string();
-                            let active_form = item
-                                .get("activeForm")
-                                .and_then(|v| v.as_str())
-                                .map(String::from);
-                            Some(TodoItem {
-                                content,
-                                status,
-                                active_form,
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            ToolInvocationVariant::TodoWrite { todos }
-        }
-        _ => {
-            // Default: extract key argument
-            let key_arg = extract_key_argument(&invocation.name, &invocation.input);
-            ToolInvocationVariant::Default {
-                key_argument: key_arg.as_ref().map(|a| a.value.clone()),
-                is_path: key_arg.as_ref().map(|a| a.is_path).unwrap_or(false),
-            }
-        }
+                .map(|items| items.iter().map(todo_item).collect())
+                .unwrap_or_default(),
+        },
+        _ => default_invocation(invocation),
     };
+    OutputBlock::tool_invocation(name, variant)
+}
 
-    OutputBlock::tool_invocation(&invocation.name, variant)
+fn default_invocation(invocation: &ToolInvocation) -> ToolInvocationVariant {
+    let key_arg = extract_key_argument(&invocation.name, &invocation.input);
+    ToolInvocationVariant::Default {
+        is_path: key_arg.as_ref().is_some_and(|a| a.is_path),
+        key_argument: key_arg.map(|a| a.value),
+    }
+}
+
+fn grep_invocation(params: &GrepParams) -> ToolInvocationVariant {
+    let mut builder = GrepInvocationBuilder::new(&params.pattern);
+    if let Some(path) = &params.path {
+        builder = builder.path(path);
+    }
+    if let Some(mode) = &params.output_mode {
+        builder = builder.output_mode(mode);
+    }
+    if let Some(glob) = &params.glob {
+        builder = builder.glob(glob);
+    }
+    if let Some(ft) = &params.file_type {
+        builder = builder.file_type(ft);
+    }
+    if params.case_insensitive {
+        builder = builder.case_insensitive(true);
+    }
+    builder.build()
+}
+
+fn todo_item(item: &serde_json::Value) -> TodoItem {
+    let field = |key: &str| item.get(key).and_then(|v| v.as_str()).map(String::from);
+    TodoItem {
+        content: field("content").unwrap_or_default(),
+        status: field("status").unwrap_or_default(),
+        active_form: field("activeForm"),
+    }
 }
 
 /// Build a default OutputBlock for tool results.
@@ -383,7 +346,7 @@ mod tests {
             }),
         );
 
-        let block = build_tool_invocation_block(&invocation);
+        let block = build_tool_invocation_block(&invocation, &VerboseToolsConfig::all());
         let inv = expect_tool_invocation(block);
 
         assert_eq!(inv.tool_name, "Bash");
@@ -411,7 +374,7 @@ mod tests {
             }),
         );
 
-        let block = build_tool_invocation_block(&invocation);
+        let block = build_tool_invocation_block(&invocation, &VerboseToolsConfig::all());
         let inv = expect_tool_invocation(block);
 
         assert_eq!(inv.tool_name, "Grep");
@@ -441,7 +404,7 @@ mod tests {
             }),
         );
 
-        let block = build_tool_invocation_block(&invocation);
+        let block = build_tool_invocation_block(&invocation, &VerboseToolsConfig::all());
         let inv = expect_tool_invocation(block);
 
         assert_eq!(inv.tool_name, "WebFetch");
@@ -465,7 +428,7 @@ mod tests {
             }),
         );
 
-        let block = build_tool_invocation_block(&invocation);
+        let block = build_tool_invocation_block(&invocation, &VerboseToolsConfig::all());
         let inv = expect_tool_invocation(block);
 
         assert_eq!(inv.tool_name, "TodoWrite");
@@ -490,7 +453,10 @@ mod tests {
             json!({"file_path": "src/main.rs", "offset": 10, "limit": 20}),
         );
 
-        let inv = expect_tool_invocation(build_tool_invocation_block(&invocation));
+        let inv = expect_tool_invocation(build_tool_invocation_block(
+            &invocation,
+            &VerboseToolsConfig::all(),
+        ));
 
         assert_eq!(
             inv.variant,
@@ -507,7 +473,10 @@ mod tests {
         let invocation =
             create_test_invocation("Glob", json!({"pattern": "**/*.rs", "path": "crates"}));
 
-        let inv = expect_tool_invocation(build_tool_invocation_block(&invocation));
+        let inv = expect_tool_invocation(build_tool_invocation_block(
+            &invocation,
+            &VerboseToolsConfig::all(),
+        ));
 
         assert_eq!(
             inv.variant,
