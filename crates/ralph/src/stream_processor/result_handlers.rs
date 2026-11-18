@@ -3,9 +3,10 @@ use std::fs;
 use ralph_core::chunk::is_unfenced_diff;
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
-use super::block_builders::{input_str, write_result_variant};
 use super::tool_results::{edit_diff_from_snapshot, notebook_diff_from_snapshot};
-use ralph_core::stream::blocks::{count_non_empty_lines, is_content_truncated};
+use ralph_core::stream::blocks::{
+    count_non_empty_lines, input_str, is_content_truncated, write_result_variant,
+};
 use ralph_core::stream::blocks::{
     EditSnapshot, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot,
 };

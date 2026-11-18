@@ -1,4 +1,7 @@
+use crate::stream::ToolInvocation;
 use serde::{de::DeserializeOwned, Serialize};
+
+use super::{OutputBlock, ToolInvocationBlock};
 
 pub fn assert_toml_roundtrip<T>(value: &T)
 where
@@ -11,4 +14,22 @@ where
         "Round-trip serialization failed.\nOriginal: {:?}\nDeserialized: {:?}\nSerialized TOML:\n{}",
         value, deserialized, serialized
     );
+}
+
+pub fn create_test_invocation(name: &str, input: serde_json::Value) -> ToolInvocation {
+    ToolInvocation {
+        id: "test-id".to_string(),
+        name: name.to_string(),
+        input,
+    }
+}
+
+pub fn expect_tool_invocation(block: OutputBlock) -> ToolInvocationBlock {
+    match block {
+        OutputBlock::ToolInvocation(inv) => inv,
+        other => panic!(
+            "Expected ToolInvocation variant, got {:?}",
+            std::mem::discriminant(&other)
+        ),
+    }
 }

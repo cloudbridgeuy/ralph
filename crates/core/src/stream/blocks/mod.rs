@@ -1,3 +1,4 @@
+mod block_builders;
 mod output_block;
 mod types;
 mod utils;
@@ -5,6 +6,7 @@ mod utils;
 #[cfg(test)]
 mod test_helpers;
 
+pub use block_builders::{build_tool_invocation_block, input_str, write_result_variant};
 pub use output_block::{
     extract_response_text, GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem,
     ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,

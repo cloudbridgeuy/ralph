@@ -24,7 +24,6 @@
 //! let result = processor.finish();
 //! ```
 
-mod block_builders;
 mod event_handler;
 mod processor;
 mod render_block;
@@ -41,7 +40,5 @@ pub use ralph_core::stream::blocks::{
 #[cfg(test)]
 pub use ralph_core::stream::blocks::{extract_key_argument, truncate_string, KeyArgument};
 
-#[cfg(test)]
-mod test_helpers;
 #[cfg(test)]
 mod tests;

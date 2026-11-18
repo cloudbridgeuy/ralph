@@ -10,10 +10,10 @@ use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
-use super::block_builders::build_tool_invocation_block;
 use super::processor::StreamProcessor;
 use super::render_block::render_block;
 use super::result_handlers::{build_result_block, Snapshot};
+use ralph_core::stream::blocks::build_tool_invocation_block;
 use ralph_core::stream::blocks::OutputBlock;
 use ralph_core::stream::blocks::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
