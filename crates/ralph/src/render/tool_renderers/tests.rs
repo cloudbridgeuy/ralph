@@ -183,22 +183,6 @@ fn test_render_glob_result_grouped() {
 }
 
 // =========================================================================
-// Edit Before/After Tests
-// =========================================================================
-
-#[test]
-fn test_render_edit_before_after_plain() {
-    let highlighter = test_highlighter();
-    let ctx = RenderContext::plain(&highlighter);
-    let output = render_edit_before_after(&ctx, "test.rs", "let x = 1;", "let x = 2;");
-
-    assert!(output.contains("test.rs"));
-    assert!(output.contains("let x = 1;"));
-    assert!(output.contains("────────────────────"));
-    assert!(output.contains("let x = 2;"));
-}
-
-// =========================================================================
 // TodoWrite Tests
 // =========================================================================
 

@@ -279,6 +279,17 @@ mod tests {
     }
 
     #[test]
+    fn refresh_clears_closes_after_settle() {
+        let (_root, main, _dir) = closed_auth(AutoMode::Drop);
+        let monitor = monitor(&main);
+        monitor.refresh(false);
+        assert_eq!(monitor.status().closes.len(), 1);
+        run(&main, Some("y"), &[]);
+        monitor.refresh(false);
+        assert!(monitor.status().closes.is_empty());
+    }
+
+    #[test]
     fn a_close_report_is_never_drained_into_a_turn() {
         let dir = tempfile::tempdir().unwrap();
         let monitor = monitor(dir.path());

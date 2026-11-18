@@ -561,8 +561,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let mut carried: Vec<String> = Vec::new();
     let mut leaving: Option<ChatExit> = None;
     let settles_closes = fork.is_none();
-    if settles_closes {
-        thread::settle::scan(&store_dir, &monitor.inbox);
+    if settles_closes && thread::settle::scan(&store_dir, &monitor.inbox) {
+        monitor.refresh(true);
     }
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");

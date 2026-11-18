@@ -167,8 +167,7 @@ ralph/
 │           ├── invoke.rs       # Shared claude invocation
 │           ├── render/         # Terminal rendering
 │           ├── stream_processor/ # Stream handling
-│           │   ├── tool_display/  # Tool output rendering
-│           │   └── tool_results/  # Tool result processing
+│           │   └── tool_results/  # Edit, Write and NotebookEdit formatters
 │           └── subprocess/     # Process management
 ├── xtask/              # Build automation tasks
 │   └── src/
