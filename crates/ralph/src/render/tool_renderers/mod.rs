@@ -29,7 +29,7 @@ mod types;
 mod tests;
 
 // Re-export context
-pub use context::{ansi, RenderContext};
+pub use context::{ansi, RenderContext, Viewport};
 
 // Re-export types
 pub use types::{GrepInvocationParams, NotebookEditParams, TodoDisplayItem};

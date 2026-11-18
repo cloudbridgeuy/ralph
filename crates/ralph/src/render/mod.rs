@@ -51,5 +51,5 @@ pub use tool_renderers::{
     render_no_changes_message, render_read_invocation, render_read_result,
     render_todowrite_invocation, render_todowrite_result, render_write_new_file,
     render_write_no_changes, GrepInvocationParams, NotebookEditParams, RenderContext,
-    TodoDisplayItem,
+    TodoDisplayItem, Viewport,
 };

@@ -17,10 +17,9 @@ use ralph_core::kitty_image::{prepare, prepare_animation};
 
 use super::text::render_markdown;
 use super::wrap::wrap_width;
-use super::RenderContext;
+use super::{RenderContext, Viewport};
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode};
 use crate::markdown::MarkdownTheme;
-use termimad::terminal_size;
 
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const TMUX_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
@@ -165,7 +164,13 @@ pub struct ImageBounds {
 
 impl ImageBounds {
     pub fn current() -> Self {
-        let (cols, rows) = terminal_size();
+        Self::from(Viewport::Live)
+    }
+}
+
+impl From<Viewport> for ImageBounds {
+    fn from(viewport: Viewport) -> Self {
+        let (cols, rows) = viewport.termimad_size();
         Self {
             cols: wrap_width(cols.into()).try_into().unwrap_or(u32::MAX),
             rows: u32::from(rows.max(1)),
@@ -296,6 +301,16 @@ mod tests {
         cell_px: None,
     };
     const BOUNDS: ImageBounds = ImageBounds { cols: 80, rows: 50 };
+
+    #[test]
+    fn bounds_come_from_the_viewport() {
+        let bounds = ImageBounds::from(Viewport::fixed(120, 0));
+        assert_eq!(bounds.cols, wrap_width(120) as u32);
+        assert_eq!(bounds.rows, 1);
+        let fallback = ImageBounds::from(Viewport::unmeasured());
+        assert_eq!(fallback.cols, wrap_width(50) as u32);
+        assert_eq!(fallback.rows, 20);
+    }
 
     fn assert_fox_animation(placement: Placement) {
         let bytes = include_bytes!("../../tests/fixtures/guz1408-fox.gif");
