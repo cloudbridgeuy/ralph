@@ -47,7 +47,9 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph_server/src/chat/mod.rs`: `run` and shared setup.
 - `crates/ralph/src/config/view.rs`: the pure `/config` view (`config_view`, `merged_rows`, `env_settings`) and `load_for_chat`. `crates/ralph/src/chat/config.rs`: `flag_settings`, the chat env allowlist and `/config` printing.
-- `crates/ralph/src/chat/turn.rs`: turn shell and nap spawn.
+- `crates/ralph/src/chat/turn.rs`: turn shell and nap spawn. It prints nothing: the rule, warnings and waits go to `Turn::sink` as `TurnEvent`s (see [Turn events](stream-processor-architecture.md#turn-events)).
+- `crates/core/src/turn_event.rs`: `TurnEvent`, `Wait` and the `TurnSink` trait.
+- `crates/ralph/src/turn_sink.rs`: `TerminalSink`, the terminal shell for turn events, and its pure core `written` and `spin`. `chat/prompt.rs` `turn_output` builds the chat's gate and sink.
 - `crates/ralph/src/chat/editor.rs`, `prompt.rs`: reedline input and prompt.
 - `crates/ralph/src/chat/monitor.rs`: status, watch and stdin monitors.
 - `crates/ralph_server/src/chat/skills.rs`: MCP config and skill plugin setup.
