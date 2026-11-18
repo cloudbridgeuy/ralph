@@ -9,24 +9,14 @@ stream_processor/
 ├── mod.rs                 # Module exports
 ├── processor.rs           # StreamProcessor struct and builder
 ├── event_handler.rs       # Event processing logic
-├── result_handlers.rs     # Tool result handler functions
+├── result_handlers.rs     # build_result_block: tool result to output block
+├── render_block.rs        # render_block: output block to screen text
 ├── output_block.rs        # Output block types
-├── block_builders.rs      # Functions to build output blocks
-├── tool_display/          # Tool invocation formatters
+├── block_builders.rs      # Invocation blocks and the Write result variant
+├── tool_results/          # Edit, Write and NotebookEdit formatters, tool errors
 │   ├── mod.rs
-│   ├── bash.rs
-│   ├── grep.rs
-│   ├── glob.rs
-│   ├── read.rs
-│   └── todowrite.rs
-├── tool_results/          # Tool result formatters
-│   ├── mod.rs
-│   ├── bash.rs
 │   ├── edit.rs
-│   ├── grep.rs
-│   ├── glob.rs
-│   ├── read.rs
-│   ├── todowrite.rs
+│   ├── notebookedit.rs
 │   └── write.rs
 ├── types.rs               # Configuration and type definitions
 └── utils.rs               # Utility functions
@@ -74,7 +64,7 @@ let ctx = if processor.highlighting_enabled {
 
 ### ToolResultVariant Pattern
 
-The `ToolResultVariant` enum has 13 variants, one for each tool type that requires specialized result handling:
+The `ToolResultVariant` enum has 14 variants. Each holds the data that its screen text needs:
 
 | Variant | Tool | Purpose |
 |---------|------|---------|
@@ -89,7 +79,8 @@ The `ToolResultVariant` enum has 13 variants, one for each tool type that requir
 | `Grep` | Grep | Search results with match count |
 | `Glob` | Glob | File list with truncation |
 | `TodoWrite` | TodoWrite | Task list confirmation |
-| `NotebookEdit` | NotebookEdit | Jupyter cell diff |
+| `NotebookEdit` | NotebookEdit | Jupyter cell diff, or no changes |
+| `ToolError` | Read, Grep, Glob | Verbose tool error |
 | `Default` | Other | Generic content display |
 
 ### Adding a New Tool
@@ -97,28 +88,17 @@ The `ToolResultVariant` enum has 13 variants, one for each tool type that requir
 When adding support for a new tool:
 
 1. Add a variant to `ToolResultVariant` in `output_block.rs`
-2. Add a builder function in `block_builders.rs`
-3. Add a handler function in `result_handlers.rs`
-4. Add a case to the match in `event_handler.rs`
-5. Add formatter functions in `tool_display/` and `tool_results/`
+2. Fill it in `build_result_block` in `result_handlers.rs` (collect side: file reads happen here)
+3. Render it in `render_result` in `render_block.rs` (render side: no I/O)
+4. Add a case to `tests/block_parity.rs`
 
-### Result Handlers
+### Collect, Then Render
 
-Each tool type has a dedicated handler function in `result_handlers.rs`:
-
-```rust
-pub fn handle_grep_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: &ToolInvocation,
-) -> ToolResultOutput {
-    let formatted = tool_results::format_tool_result_with_context(...);
-    let block = build_grep_result_block(...);
-    ToolResultOutput { formatted, block }
-}
-```
-
-Handlers return `ToolResultOutput` containing both the formatted display string and the output block.
+`event_handler.rs` builds a block for every invocation, result and text chunk,
+then calls `emit`. `emit` renders the block with `render_block` and stores it.
+`StreamProcessor` formats only through `render_block`, so the screen text is a
+pure function of the stored blocks. `tests/block_parity.rs` checks this for every
+tool path and text chunk.
 
 ## Parameter Extraction
 

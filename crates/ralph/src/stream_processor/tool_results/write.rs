@@ -10,13 +10,10 @@
 //! 4. For overwrites: display before/after blocks with colored line numbers
 //! 5. Display with syntax highlighting
 
-use std::fs;
-
 use crate::render::ansi;
 
-use super::super::processor::StreamProcessor;
-use super::super::types::WriteSnapshot;
 use super::super::utils::extract_language_from_path;
+use crate::render::RenderContext;
 
 /// Maximum lines to show in a new file display before truncating.
 const MAX_NEW_FILE_LINES: usize = 50;
@@ -24,57 +21,17 @@ const MAX_NEW_FILE_LINES: usize = 50;
 /// Maximum lines to show in a before/after block before truncating.
 const MAX_BLOCK_LINES: usize = 30;
 
-/// Format a Write tool result using a snapshot.
-///
-/// This is called when we have captured a snapshot before the write.
-/// For new files, displays clean syntax-highlighted content with green line numbers.
-/// For overwrites, displays before/after blocks with colored line numbers.
-pub fn format_write_result_with_snapshot(
-    processor: &StreamProcessor,
-    snapshot: WriteSnapshot,
-) -> String {
-    // Handle new files: show clean syntax-highlighted content without diff markers
-    if !snapshot.file_existed {
-        // Read the newly created file content
-        if let Ok(content) = fs::read_to_string(&snapshot.file_path) {
-            if !content.is_empty() {
-                return format_new_file_display(processor, &snapshot.file_path, &content);
-            }
-        }
-        // Empty new file or couldn't read
-        return format_no_changes_message(processor, &snapshot.file_path, true);
-    }
-
-    // Handle overwrites: show before/after blocks
-    let before_content = snapshot.content.as_deref().unwrap_or("");
-    if let Ok(after_content) = fs::read_to_string(&snapshot.file_path) {
-        // Skip if no changes
-        if before_content == after_content {
-            return format_no_changes_message(processor, &snapshot.file_path, false);
-        }
-        format_before_after_display(
-            processor,
-            &snapshot.file_path,
-            before_content,
-            &after_content,
-        )
-    } else {
-        // Couldn't read file - show simple success message
-        format_no_changes_message(processor, &snapshot.file_path, false)
-    }
-}
-
 /// Format before/after display for file overwrites.
-fn format_before_after_display(
-    processor: &StreamProcessor,
+pub fn format_before_after_display(
+    ctx: &RenderContext,
     file_path: &str,
     before: &str,
     after: &str,
 ) -> String {
     let language = extract_language_from_path(file_path);
 
-    if processor.highlighting_enabled {
-        format_before_after_highlighted(processor, file_path, before, after, language)
+    if ctx.terminal {
+        format_before_after_highlighted(ctx, file_path, before, after, language)
     } else {
         format_before_after_plain(file_path, before, after)
     }
@@ -82,7 +39,7 @@ fn format_before_after_display(
 
 /// Format before/after blocks with syntax highlighting and colored backgrounds.
 fn format_before_after_highlighted(
-    processor: &StreamProcessor,
+    ctx: &RenderContext,
     file_path: &str,
     before: &str,
     after: &str,
@@ -93,34 +50,34 @@ fn format_before_after_highlighted(
     // File path header with box drawing
     output.push_str(&format!(
         "{}── {} ──{}\n",
-        processor.tool_colors.name_fg(),
+        ctx.tools.name_fg(),
         file_path,
         ansi::RESET
     ));
 
     // Before block
     output.push_str(&format_highlighted_block(
-        processor,
+        ctx,
         "Before:",
         before,
         language,
-        &ansi::bg(Some(processor.diff_colors.del_bg)),
+        &ansi::bg(Some(ctx.diff.del_bg)),
     ));
 
     // Horizontal separator
     output.push_str(&format!(
         "{}─────────────────────────{}\n",
-        processor.tool_colors.label_fg(),
+        ctx.tools.label_fg(),
         ansi::RESET
     ));
 
     // After block
     output.push_str(&format_highlighted_block(
-        processor,
+        ctx,
         "After:",
         after,
         language,
-        &ansi::bg(Some(processor.diff_colors.add_bg)),
+        &ansi::bg(Some(ctx.diff.add_bg)),
     ));
 
     output
@@ -128,7 +85,7 @@ fn format_before_after_highlighted(
 
 /// Format a single highlighted block (before or after) with background color.
 fn format_highlighted_block(
-    processor: &StreamProcessor,
+    ctx: &RenderContext,
     label: &str,
     content: &str,
     language: Option<&'static str>,
@@ -139,18 +96,14 @@ fn format_highlighted_block(
     // Label
     output.push_str(&format!(
         "{}{}{}\n",
-        processor.tool_colors.label_fg(),
+        ctx.tools.label_fg(),
         label,
         ansi::RESET
     ));
 
     // Handle empty content
     if content.is_empty() {
-        output.push_str(&format!(
-            "{}(empty){}\n",
-            processor.tool_colors.label_fg(),
-            ansi::RESET
-        ));
+        output.push_str(&format!("{}(empty){}\n", ctx.tools.label_fg(), ansi::RESET));
         return output;
     }
 
@@ -167,9 +120,7 @@ fn format_highlighted_block(
 
     // Apply syntax highlighting first (if language is detected)
     let highlighted = if let Some(lang) = language {
-        processor
-            .code_highlighter
-            .highlight(&display_content, Some(lang))
+        ctx.highlighter.highlight(&display_content, Some(lang))
     } else {
         display_content.clone()
     };
@@ -194,7 +145,7 @@ fn format_highlighted_block(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            processor.tool_colors.label_fg(),
+            ctx.tools.label_fg(),
             line_count - MAX_BLOCK_LINES,
             ansi::RESET
         ));
@@ -264,8 +215,8 @@ fn format_plain_block(label: &str, content: &str) -> String {
 }
 
 /// Format a "no changes" or success message.
-fn format_no_changes_message(
-    processor: &StreamProcessor,
+pub fn format_no_changes_message(
+    ctx: &RenderContext,
     file_path: &str,
     is_new_file: bool,
 ) -> String {
@@ -274,12 +225,12 @@ fn format_no_changes_message(
     } else {
         "(no changes)"
     };
-    if processor.highlighting_enabled {
+    if ctx.terminal {
         format!(
             "{}✓{} {}Write: {} {}{}\n",
-            processor.tool_colors.ok_fg(),
+            ctx.tools.ok_fg(),
             ansi::RESET,
-            processor.tool_colors.label_fg(),
+            ctx.tools.label_fg(),
             file_path,
             indicator,
             ansi::RESET
@@ -294,12 +245,12 @@ fn format_no_changes_message(
 /// Displays the file content without diff markers (+/-), using the same style as
 /// Edit tool's "After" block: green background on line numbers, syntax highlighting
 /// on content.
-fn format_new_file_display(processor: &StreamProcessor, file_path: &str, content: &str) -> String {
+pub fn format_new_file_display(ctx: &RenderContext, file_path: &str, content: &str) -> String {
     // Detect language from file path
     let language = extract_language_from_path(file_path);
 
-    if processor.highlighting_enabled {
-        format_new_file_highlighted(processor, file_path, content, language)
+    if ctx.terminal {
+        format_new_file_highlighted(ctx, file_path, content, language)
     } else {
         format_new_file_plain(file_path, content)
     }
@@ -307,7 +258,7 @@ fn format_new_file_display(processor: &StreamProcessor, file_path: &str, content
 
 /// Format new file content with syntax highlighting and colored line numbers.
 fn format_new_file_highlighted(
-    processor: &StreamProcessor,
+    ctx: &RenderContext,
     file_path: &str,
     content: &str,
     language: Option<&'static str>,
@@ -317,11 +268,11 @@ fn format_new_file_highlighted(
     // File path header with box drawing and (new file) indicator
     output.push_str(&format!(
         "{}── {} {}(new file){} {}──{}\n",
-        processor.tool_colors.name_fg(),
+        ctx.tools.name_fg(),
         file_path,
-        processor.tool_colors.accent_fg(),
+        ctx.tools.accent_fg(),
         ansi::RESET,
-        processor.tool_colors.name_fg(),
+        ctx.tools.name_fg(),
         ansi::RESET
     ));
 
@@ -338,9 +289,7 @@ fn format_new_file_highlighted(
 
     // Apply syntax highlighting (if language is detected)
     let highlighted = if let Some(lang) = language {
-        processor
-            .code_highlighter
-            .highlight(&display_content, Some(lang))
+        ctx.highlighter.highlight(&display_content, Some(lang))
     } else {
         display_content.clone()
     };
@@ -351,7 +300,7 @@ fn format_new_file_highlighted(
         let line_num = i + 1;
         output.push_str(&format!(
             "{}{:>width$} {}│{} {}\n",
-            ansi::bg(Some(processor.diff_colors.add_bg)),
+            ansi::bg(Some(ctx.diff.add_bg)),
             line_num,
             ansi::RESET,
             ansi::RESET,
@@ -364,7 +313,7 @@ fn format_new_file_highlighted(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            processor.tool_colors.label_fg(),
+            ctx.tools.label_fg(),
             line_count - MAX_NEW_FILE_LINES,
             ansi::RESET
         ));
@@ -415,6 +364,7 @@ fn format_new_file_plain(file_path: &str, content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream_processor::StreamProcessor;
 
     // Before/after display tests
 
@@ -458,7 +408,7 @@ mod tests {
         let processor = StreamProcessor::with_highlighting(true);
 
         let output = format_before_after_highlighted(
-            &processor,
+            &processor.render_context(),
             "test.rs",
             "let x = 1;",
             "let x = 2;",
@@ -481,8 +431,13 @@ mod tests {
     fn test_format_before_after_highlighted_has_separator() {
         let processor = StreamProcessor::with_highlighting(true);
 
-        let output =
-            format_before_after_highlighted(&processor, "test.rs", "old", "new", Some("rust"));
+        let output = format_before_after_highlighted(
+            &processor.render_context(),
+            "test.rs",
+            "old",
+            "new",
+            Some("rust"),
+        );
 
         // Should have horizontal separator (dim)
         assert!(output.contains("─────────────────────────"));
@@ -565,8 +520,12 @@ mod tests {
     fn test_format_new_file_highlighted_has_indicator() {
         let processor = StreamProcessor::with_highlighting(true);
 
-        let output =
-            format_new_file_highlighted(&processor, "new.rs", "fn main() {}", Some("rust"));
+        let output = format_new_file_highlighted(
+            &processor.render_context(),
+            "new.rs",
+            "fn main() {}",
+            Some("rust"),
+        );
 
         // Should have (new file) indicator
         assert!(output.contains("(new file)"));
@@ -578,7 +537,12 @@ mod tests {
     fn test_format_new_file_highlighted_has_green_background() {
         let processor = StreamProcessor::with_highlighting(true);
 
-        let output = format_new_file_highlighted(&processor, "new.rs", "let x = 1;", Some("rust"));
+        let output = format_new_file_highlighted(
+            &processor.render_context(),
+            "new.rs",
+            "let x = 1;",
+            Some("rust"),
+        );
 
         // Should contain green background ANSI code
         assert!(output.contains(ansi::GREEN_BG));
@@ -588,7 +552,12 @@ mod tests {
     fn test_format_new_file_highlighted_no_diff_markers() {
         let processor = StreamProcessor::with_highlighting(true);
 
-        let output = format_new_file_highlighted(&processor, "new.txt", "hello\nworld\n", None);
+        let output = format_new_file_highlighted(
+            &processor.render_context(),
+            "new.txt",
+            "hello\nworld\n",
+            None,
+        );
 
         // Should not have diff markers
         assert!(!output.contains("+hello"));
@@ -603,7 +572,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let output = format_new_file_highlighted(&processor, "test.txt", &long_content, None);
+        let output = format_new_file_highlighted(
+            &processor.render_context(),
+            "test.txt",
+            &long_content,
+            None,
+        );
 
         assert!(output.contains("... 50 more lines"));
     }
@@ -612,7 +586,7 @@ mod tests {
     fn test_format_no_changes_message_new_file() {
         let processor = StreamProcessor::with_highlighting(false);
 
-        let output = format_no_changes_message(&processor, "empty.txt", true);
+        let output = format_no_changes_message(&processor.render_context(), "empty.txt", true);
 
         assert!(output.contains("(new file)"));
         assert!(output.contains("empty.txt"));
@@ -622,7 +596,7 @@ mod tests {
     fn test_format_no_changes_message_overwrite() {
         let processor = StreamProcessor::with_highlighting(false);
 
-        let output = format_no_changes_message(&processor, "existing.txt", false);
+        let output = format_no_changes_message(&processor.render_context(), "existing.txt", false);
 
         assert!(output.contains("(no changes)"));
         assert!(!output.contains("(new file)"));
@@ -636,7 +610,13 @@ mod tests {
 
     #[test]
     fn before_after_uses_the_configured_backgrounds() {
-        let out = format_before_after_highlighted(&colored_processor(), "a.rs", "x", "y", None);
+        let out = format_before_after_highlighted(
+            &colored_processor().render_context(),
+            "a.rs",
+            "x",
+            "y",
+            None,
+        );
         assert!(out.contains("\x1b[48;2;4;5;6m"));
         assert!(out.contains("\x1b[48;2;1;2;3m"));
         assert!(!out.contains(ansi::RED_BG));
@@ -645,7 +625,8 @@ mod tests {
 
     #[test]
     fn new_file_uses_the_configured_add_background() {
-        let out = format_new_file_highlighted(&colored_processor(), "a.rs", "x", None);
+        let out =
+            format_new_file_highlighted(&colored_processor().render_context(), "a.rs", "x", None);
         assert!(out.contains("\x1b[48;2;1;2;3m"));
         assert!(!out.contains(ansi::GREEN_BG));
     }
@@ -653,22 +634,31 @@ mod tests {
     #[test]
     fn plain_processor_has_no_escape_byte() {
         let processor = StreamProcessor::with_highlighting(false);
-        assert!(!format_before_after_display(&processor, "a.rs", "x", "y").contains('\x1b'));
-        assert!(!format_new_file_display(&processor, "a.rs", "x\ny").contains('\x1b'));
+        assert!(
+            !format_before_after_display(&processor.render_context(), "a.rs", "x", "y")
+                .contains('\x1b')
+        );
+        assert!(
+            !format_new_file_display(&processor.render_context(), "a.rs", "x\ny").contains('\x1b')
+        );
     }
 
     #[test]
     fn new_file_header_uses_the_configured_tool_colors() {
         let mut processor = StreamProcessor::with_highlighting(true);
         processor.tool_colors = crate::tool_theme::test_colors();
-        let out = format_new_file_display(&processor, "a.rs", "x");
+        let out = format_new_file_display(&processor.render_context(), "a.rs", "x");
         assert!(out.starts_with("\x1b[94m── a.rs \x1b[91m(new file)"));
     }
 
     #[test]
     fn plain_processor_has_no_escape_byte_for_tool_headers() {
         let processor = StreamProcessor::with_highlighting(false);
-        assert!(!format_new_file_display(&processor, "a.rs", "x").contains('\x1b'));
-        assert!(!format_no_changes_message(&processor, "a.rs", true).contains('\x1b'));
+        assert!(
+            !format_new_file_display(&processor.render_context(), "a.rs", "x").contains('\x1b')
+        );
+        assert!(
+            !format_no_changes_message(&processor.render_context(), "a.rs", true).contains('\x1b')
+        );
     }
 }

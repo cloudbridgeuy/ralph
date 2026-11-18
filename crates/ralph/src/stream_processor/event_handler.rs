@@ -5,7 +5,6 @@
 
 use std::fs;
 
-use crate::render::{render_text_block, RenderContext};
 use ralph_core::chat_send_it::is_step_result_tool;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
@@ -14,12 +13,8 @@ use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocat
 use super::block_builders::build_tool_invocation_block;
 use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
-use super::result_handlers::{
-    handle_bash_result, handle_default_result, handle_edit_result, handle_glob_result,
-    handle_grep_result, handle_notebook_result, handle_read_result, handle_todowrite_result,
-    handle_write_result,
-};
-use super::tool_display;
+use super::render_block::render_block;
+use super::result_handlers::{build_result_block, Snapshot};
 use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
 impl StreamProcessor {
@@ -129,10 +124,8 @@ impl StreamProcessor {
                     if is_step_result_tool(&invocation.name) {
                         continue;
                     }
-                    let formatted = tool_display::format_tool_invocation(self, invocation);
-                    output_parts.push(formatted);
-                    let block = build_tool_invocation_block(invocation);
-                    self.output_blocks.push(block);
+                    let block = build_tool_invocation_block(invocation, &self.verbose_tools_config);
+                    output_parts.push(self.emit(block));
                 }
 
                 // Extract text from this event
@@ -148,16 +141,10 @@ impl StreamProcessor {
                 // Display tool results if enabled
                 if self.show_tool_invocations {
                     for result in &user_event.message.content {
-                        // Extract tool_use_id once for looking up pending data
                         let tool_use_id = result.tool_use_id.as_ref();
                         let invocation =
                             tool_use_id.and_then(|id| self.pending_invocations.remove(id));
-                        let edit_snapshot =
-                            tool_use_id.and_then(|id| self.pending_edit_snapshots.remove(id));
-                        let write_snapshot =
-                            tool_use_id.and_then(|id| self.pending_write_snapshots.remove(id));
-                        let notebook_snapshot =
-                            tool_use_id.and_then(|id| self.pending_notebook_snapshots.remove(id));
+                        let snapshot = tool_use_id.and_then(|id| self.take_snapshot(id));
 
                         if !result.is_error
                             && invocation
@@ -167,37 +154,13 @@ impl StreamProcessor {
                             continue;
                         }
 
-                        // Route to dedicated handlers based on tool type.
-                        // Bash/TodoWrite handle both success and error; file-modifying tools
-                        // fall through to default on error since their custom handlers expect success.
-                        let output = if let Some(inv) = &invocation {
-                            match (inv.name.as_str(), result.is_error) {
-                                ("Edit", false) => {
-                                    handle_edit_result(self, result, inv, edit_snapshot.as_ref())
-                                }
-                                ("Write", false) => {
-                                    handle_write_result(self, result, inv, write_snapshot.as_ref())
-                                }
-                                ("NotebookEdit", false) => handle_notebook_result(
-                                    self,
-                                    result,
-                                    inv,
-                                    notebook_snapshot.as_ref(),
-                                ),
-                                ("Bash", _) => handle_bash_result(self, result, Some(inv)),
-                                ("Read", false) => handle_read_result(self, result, inv),
-                                ("Grep", false) => handle_grep_result(self, result, inv),
-                                ("Glob", false) => handle_glob_result(self, result, inv),
-                                ("TodoWrite", _) => {
-                                    handle_todowrite_result(self, result, Some(inv))
-                                }
-                                _ => handle_default_result(self, result, Some(inv)),
-                            }
-                        } else {
-                            handle_default_result(self, result, None)
-                        };
-                        output_parts.push(output.formatted);
-                        self.output_blocks.push(output.block);
+                        let block = build_result_block(
+                            &self.verbose_tools_config,
+                            result,
+                            invocation.as_ref(),
+                            snapshot,
+                        );
+                        output_parts.push(self.emit(block));
                     }
                 }
             }
@@ -218,110 +181,50 @@ impl StreamProcessor {
         }
     }
 
-    /// Process text through the chunk buffer and generate highlighted output.
-    pub(super) fn process_text_for_output(&mut self, text: &str) -> Option<String> {
-        let mut output = String::new();
-
-        // Process line by line through chunk buffer
-        // Use split_lines_preserve_trailing to handle trailing newlines correctly
-        for line in split_lines_preserve_trailing(text) {
-            let chunks = self.chunk_buffer.process_line(line);
-
-            for chunk in chunks {
-                // Split prose containing directives into typed segments
-                let sub_chunks = match &chunk.chunk_type {
-                    ChunkType::Prose => split_text_around_directives(&chunk.content),
-                    _ => vec![chunk],
-                };
-
-                for sub_chunk in sub_chunks {
-                    // Store chunk
-                    self.collected_chunks.push(sub_chunk.clone());
-
-                    // Accumulate text block
-                    self.output_blocks
-                        .push(OutputBlock::text(sub_chunk.clone()));
-
-                    // Generate highlighted output
-                    let highlighted = self.highlight_chunk(&sub_chunk);
-                    output.push_str(&highlighted);
-
-                    // Code/diff/directive blocks need explicit trailing newline;
-                    // prose rendered by term_text() manages its own newlines
-                    match &sub_chunk.chunk_type {
-                        ChunkType::Code { .. } | ChunkType::Diff | ChunkType::Directive { .. } => {
-                            output.push('\n')
-                        }
-                        ChunkType::Prose => {}
-                    }
-                }
-            }
-        }
-
-        if output.is_empty() {
-            None
-        } else {
-            Some(output)
-        }
+    fn take_snapshot(&mut self, id: &str) -> Option<Snapshot> {
+        let edit = self.pending_edit_snapshots.remove(id).map(Snapshot::Edit);
+        let write = self.pending_write_snapshots.remove(id).map(Snapshot::Write);
+        let notebook = self
+            .pending_notebook_snapshots
+            .remove(id)
+            .map(Snapshot::Notebook);
+        edit.or(write).or(notebook)
     }
 
-    /// Apply syntax highlighting to a chunk.
-    ///
-    /// Delegates to the shared `render_text_block()` function for all chunk types,
-    /// so every rendering path produces the same output.
-    pub(super) fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
-        let ctx = self.create_render_context();
+    fn emit(&mut self, block: OutputBlock) -> String {
         let markdown = self.highlighting_enabled.then_some(&self.markdown);
-        render_text_block(&ctx, chunk, markdown)
+        let rendered = render_block(&self.render_context(), &block, markdown);
+        self.output_blocks.push(block);
+        rendered
     }
 
-    /// Create a render context for use with shared rendering functions.
-    fn create_render_context(&self) -> RenderContext<'_> {
-        RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
-            .with_diff(self.diff_colors)
-            .with_tools(self.tool_colors)
-    }
-
-    /// Flush any pending chunks from the buffer.
-    pub(super) fn flush_pending_chunks(&mut self) -> Option<String> {
-        let chunks = self.chunk_buffer.finish();
-        if chunks.is_empty() {
-            return None;
-        }
-
+    fn emit_chunks(&mut self, chunks: Vec<ParsedChunk>) -> String {
         let mut output = String::new();
         for chunk in chunks {
-            // Split prose containing directives into typed segments
             let sub_chunks = match &chunk.chunk_type {
                 ChunkType::Prose => split_text_around_directives(&chunk.content),
                 _ => vec![chunk],
             };
-
             for sub_chunk in sub_chunks {
-                let highlighted = self.highlight_chunk(&sub_chunk);
-                output.push_str(&highlighted);
-
-                // Code/diff/directive blocks need explicit trailing newline;
-                // prose rendered by term_text() manages its own newlines
-                match &sub_chunk.chunk_type {
-                    ChunkType::Code { .. } | ChunkType::Diff | ChunkType::Directive { .. } => {
-                        output.push('\n')
-                    }
-                    ChunkType::Prose => {}
-                }
-
-                // Accumulate text block
-                self.output_blocks
-                    .push(OutputBlock::text(sub_chunk.clone()));
-                self.collected_chunks.push(sub_chunk);
+                self.collected_chunks.push(sub_chunk.clone());
+                output.push_str(&self.emit(OutputBlock::text(sub_chunk)));
             }
         }
+        output
+    }
 
-        if output.is_empty() {
-            None
-        } else {
-            Some(output)
+    pub(super) fn process_text_for_output(&mut self, text: &str) -> Option<String> {
+        let mut output = String::new();
+        for line in split_lines_preserve_trailing(text) {
+            let chunks = self.chunk_buffer.process_line(line);
+            output.push_str(&self.emit_chunks(chunks));
         }
+        Some(output).filter(|o| !o.is_empty())
+    }
+
+    pub(super) fn flush_pending_chunks(&mut self) -> Option<String> {
+        let chunks = self.chunk_buffer.finish();
+        Some(self.emit_chunks(chunks)).filter(|o| !o.is_empty())
     }
 }
 
