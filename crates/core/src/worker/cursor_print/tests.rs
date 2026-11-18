@@ -432,3 +432,41 @@ fn a_late_prompt_queued_behind_a_reminder_does_not_duplicate_it() {
     assert_eq!(starts(&end_turn(&mut turns, false)), [REPORT_REMINDER]);
     assert!(starts(&end_turn(&mut turns, false)).is_empty());
 }
+
+#[test]
+fn a_start_action_is_noted_with_its_size_and_whether_it_is_the_reminder() {
+    assert_eq!(
+        print_action_note(&Action::Start("abc".to_string())).as_deref(),
+        Some("start prompt_bytes=3 reminder=false")
+    );
+    let reminder = print_action_note(&Action::Start(REPORT_REMINDER.to_string())).unwrap();
+    assert!(reminder.ends_with("reminder=true"));
+}
+
+#[test]
+fn only_unreported_and_failure_actions_are_noted_besides_start() {
+    assert_eq!(
+        print_action_note(&Action::MarkUnreported).as_deref(),
+        Some("mark-unreported")
+    );
+    assert_eq!(
+        print_action_note(&Action::PostFailure("boom".to_string())).as_deref(),
+        Some("post-failure boom")
+    );
+    assert_eq!(print_action_note(&Action::Snapshot), None);
+}
+
+#[test]
+fn the_end_note_names_the_exit_outcome_the_end_and_the_report_marker() {
+    assert_eq!(
+        print_end_note(Some(ExitOutcome::Ended), &TurnEnd::Succeeded, true),
+        "end exit=Ended end=Succeeded reported=true"
+    );
+    assert!(print_end_note(None, &TurnEnd::Succeeded, false).contains("exit=NotRun"));
+}
+
+#[test]
+fn the_spawn_note_names_the_call_and_the_chat() {
+    assert_eq!(print_spawn_note(2, Some("c1")), "spawn call=2 chat=c1");
+    assert_eq!(print_spawn_note(0, None), "spawn call=0 chat=-");
+}

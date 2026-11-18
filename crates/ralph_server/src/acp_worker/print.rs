@@ -14,11 +14,12 @@ use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
-    exit_outcome, inbox_env, next_chat, once_per_turn_server, print_args, print_model,
-    print_turn_signals, prompt_failure_report, reduce, task_prompt, turn_end_activity,
-    turn_end_for, Action, ActivityState, ExitOutcome, HandoffFiles, HarnessId, HeadlessState,
-    ModelUsage, PermissionAnswer, PermissionMode, PrintArgs, PrintEvent, Scope, SessionRecord,
-    SpawnRequest, TurnEnd, Turns, WorkerEvent, WorkerMarkers, CURSOR_AGENT, SERVER_NAME,
+    exit_outcome, inbox_env, next_chat, once_per_turn_server, print_action_note, print_args,
+    print_end_note, print_model, print_spawn_note, print_turn_signals, prompt_failure_report,
+    reduce, task_prompt, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome,
+    HandoffFiles, HarnessId, HeadlessState, ModelUsage, PermissionAnswer, PermissionMode,
+    PrintArgs, PrintEvent, Scope, SessionRecord, SpawnRequest, TurnEnd, Turns, WorkerEvent,
+    WorkerMarkers, CURSOR_AGENT, SERVER_NAME,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -147,6 +148,7 @@ struct Shared {
     id: String,
     run: Run,
     turns: Mutex<Turns>,
+    log: Arc<CappedLog>,
     events: Events,
     heartbeat: Arc<Heartbeat>,
     markers: WorkerMarkers,
@@ -169,6 +171,9 @@ impl Shared {
         let seq = self.turn_seq.fetch_add(1, Ordering::SeqCst);
         let actions = bind_started_turn(&mut turns, actions, seq);
         drop(turns);
+        for note in actions.iter().filter_map(print_action_note) {
+            self.log.append("turn", note.as_bytes());
+        }
         self.perform(actions);
     }
 
@@ -254,24 +259,23 @@ impl Shared {
     }
 
     fn run_turn(self: Arc<Self>, text: &str) {
-        let (end, gone, usage) = match self.execute(text) {
-            Ok((outcome, result, usage)) => (
-                turn_end_for(outcome, result),
-                outcome == ExitOutcome::ProcessGone,
-                usage,
-            ),
+        let (exit, end, usage) = match self.execute(text) {
+            Ok((outcome, result, usage)) => (Some(outcome), turn_end_for(outcome, result), usage),
             Err(message) => (
+                None,
                 TurnEnd::Failed {
                     message,
                     transient: false,
                 },
-                false,
                 None,
             ),
         };
+        let gone = exit == Some(ExitOutcome::ProcessGone);
         let closing = self.closing.load(Ordering::SeqCst);
         *locked(&self.snapshot) = None;
         let reported = take_reported(&self.markers.reported);
+        self.log
+            .append("turn", print_end_note(exit, &end, reported).as_bytes());
         self.drive(|turns| {
             print_turn_signals(reported, end)
                 .into_iter()
@@ -329,6 +333,8 @@ impl Shared {
             format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
         })?;
         let turn = self.spawns.fetch_add(1, Ordering::SeqCst);
+        self.log
+            .append("turn", print_spawn_note(turn, chat.as_deref()).as_bytes());
         let held = {
             let mut state = locked(&self.proc);
             let group = Group {
@@ -346,7 +352,7 @@ impl Shared {
         if let Some(group) = held {
             self.send_interrupt(group);
         }
-        drain_stderr(stderr, CappedLog::new(Some(&self.run.store), &self.id));
+        drain_stderr(stderr, Arc::clone(&self.log));
         if let Err(e) = stdin.write_all(text.as_bytes()) {
             self.release_child(&mut child);
             return Err(format!(
@@ -373,6 +379,7 @@ impl Shared {
             };
             let Some(line) = next else { break };
             self.heartbeat.touch();
+            self.log.append("stdout", line.as_bytes());
             let event = decode_print_line(&line, &self.run.model);
             self.remember_chat(&event);
             if let PrintEvent::Result { end, usage } = event {
@@ -457,8 +464,10 @@ impl PrintWorker {
                 })
             })
             .flatten();
+        let log = CappedLog::new(Some(&store), id);
         let shared = Arc::new(Shared {
             id: id.to_string(),
+            log,
             run: Run {
                 worktree: request.worktree.clone(),
                 model: print_model(request.model.as_deref()).to_string(),
