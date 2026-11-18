@@ -14,11 +14,10 @@ use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocat
 use super::block_builders::build_tool_invocation_block;
 use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
-use super::render_block::render_invocation;
+use super::render_block::render_block;
 use super::result_handlers::{
-    handle_bash_result, handle_default_result, handle_edit_result, handle_glob_result,
-    handle_grep_result, handle_notebook_result, handle_read_result, handle_todowrite_result,
-    handle_write_result,
+    build_result_block, handle_edit_result, handle_glob_result, handle_grep_result,
+    handle_notebook_result, handle_read_result, handle_write_result,
 };
 use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
@@ -130,10 +129,7 @@ impl StreamProcessor {
                         continue;
                     }
                     let block = build_tool_invocation_block(invocation, &self.verbose_tools_config);
-                    if let OutputBlock::ToolInvocation(shown) = &block {
-                        output_parts.push(render_invocation(&self.render_context(), shown));
-                    }
-                    self.output_blocks.push(block);
+                    output_parts.push(self.emit(block));
                 }
 
                 // Extract text from this event
@@ -168,9 +164,6 @@ impl StreamProcessor {
                             continue;
                         }
 
-                        // Route to dedicated handlers based on tool type.
-                        // Bash/TodoWrite handle both success and error; file-modifying tools
-                        // fall through to default on error since their custom handlers expect success.
                         let output = if let Some(inv) = &invocation {
                             match (inv.name.as_str(), result.is_error) {
                                 ("Edit", false) => {
@@ -185,17 +178,24 @@ impl StreamProcessor {
                                     inv,
                                     notebook_snapshot.as_ref(),
                                 ),
-                                ("Bash", _) => handle_bash_result(self, result, Some(inv)),
                                 ("Read", false) => handle_read_result(self, result, inv),
                                 ("Grep", false) => handle_grep_result(self, result, inv),
                                 ("Glob", false) => handle_glob_result(self, result, inv),
-                                ("TodoWrite", _) => {
-                                    handle_todowrite_result(self, result, Some(inv))
+                                _ => {
+                                    let block = build_result_block(
+                                        &self.verbose_tools_config,
+                                        result,
+                                        Some(inv),
+                                    );
+                                    output_parts.push(self.emit(block));
+                                    continue;
                                 }
-                                _ => handle_default_result(self, result, Some(inv)),
                             }
                         } else {
-                            handle_default_result(self, result, None)
+                            let block =
+                                build_result_block(&self.verbose_tools_config, result, None);
+                            output_parts.push(self.emit(block));
+                            continue;
                         };
                         output_parts.push(output.formatted);
                         self.output_blocks.push(output.block);
@@ -217,6 +217,13 @@ impl StreamProcessor {
             self.has_emitted_output = true;
             Some(output_parts.join(""))
         }
+    }
+
+    fn emit(&mut self, block: OutputBlock) -> String {
+        let markdown = self.highlighting_enabled.then_some(&self.markdown);
+        let rendered = render_block(&self.render_context(), &block, markdown);
+        self.output_blocks.push(block);
+        rendered
     }
 
     /// Process text through the chunk buffer and generate highlighted output.

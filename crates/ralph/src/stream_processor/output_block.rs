@@ -293,8 +293,11 @@ pub enum ToolResultVariant {
         cell_type: Option<String>,
         /// Edit mode (replace, insert, delete).
         edit_mode: String,
-        /// The unified diff of the cell change.
-        diff_content: String,
+        diff_content: Option<String>,
+    },
+
+    ToolError {
+        content: Option<String>,
     },
 
     /// Default result for other tools.

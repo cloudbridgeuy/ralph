@@ -6,15 +6,14 @@
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
 use super::block_builders::{
-    build_bash_result_block, build_default_result_block, build_edit_before_after_block,
-    build_edit_diff_block, build_glob_result_block, build_grep_result_block,
-    build_notebook_edit_block, build_read_result_block, build_todowrite_result_block,
-    build_write_result_block,
+    build_default_result_block, build_edit_before_after_block, build_edit_diff_block,
+    build_glob_result_block, build_grep_result_block, build_notebook_edit_block,
+    build_read_result_block, build_write_result_block,
 };
-use super::output_block::OutputBlock;
+use super::output_block::{OutputBlock, ToolResultVariant};
 use super::processor::StreamProcessor;
 use super::tool_results;
-use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
+use super::types::{EditSnapshot, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot};
 use super::utils::{count_non_empty_lines, is_content_truncated};
 
 /// Result of processing a tool result.
@@ -108,18 +107,6 @@ pub fn handle_notebook_result(
     }
 }
 
-/// Handle Bash tool result.
-pub fn handle_bash_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: Option<&ToolInvocation>,
-) -> ToolResultOutput {
-    let formatted =
-        tool_results::format_tool_result_with_context(processor, result, invocation.cloned());
-    let block = build_bash_result_block(result.content.as_deref(), result.is_error);
-    ToolResultOutput { formatted, block }
-}
-
 /// Handle Read tool result.
 pub fn handle_read_result(
     processor: &StreamProcessor,
@@ -174,18 +161,6 @@ pub fn handle_glob_result(
     ToolResultOutput { formatted, block }
 }
 
-/// Handle TodoWrite tool result.
-pub fn handle_todowrite_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: Option<&ToolInvocation>,
-) -> ToolResultOutput {
-    let formatted =
-        tool_results::format_tool_result_with_context(processor, result, invocation.cloned());
-    let block = build_todowrite_result_block(result.content.as_deref());
-    ToolResultOutput { formatted, block }
-}
-
 /// Handle default tool result (unknown tools or errors).
 pub fn handle_default_result(
     processor: &StreamProcessor,
@@ -197,4 +172,36 @@ pub fn handle_default_result(
     let tool_name = invocation.map(|i| i.name.as_str()).unwrap_or("Unknown");
     let block = build_default_result_block(tool_name, result.content.as_deref(), result.is_error);
     ToolResultOutput { formatted, block }
+}
+
+pub fn build_result_block(
+    verbose: &VerboseToolsConfig,
+    result: &ToolResult,
+    invocation: Option<&ToolInvocation>,
+) -> OutputBlock {
+    let name = invocation.map_or("Unknown", |inv| inv.name.as_str());
+    let variant = plain_variant(verbose, name, result);
+    OutputBlock::tool_result(name, result.is_error, variant)
+}
+
+fn plain_variant(
+    verbose: &VerboseToolsConfig,
+    name: &str,
+    result: &ToolResult,
+) -> ToolResultVariant {
+    let content = result.content.clone();
+    let text = content.as_deref().unwrap_or("");
+    let verbose_tool =
+        matches!(name, "Read" | "Grep" | "Glob" | "TodoWrite") && verbose.is_verbose(name);
+    match name {
+        "Bash" => ToolResultVariant::Bash {
+            truncated: is_content_truncated(text),
+            content,
+        },
+        "Read" | "Grep" | "Glob" if verbose_tool && result.is_error => {
+            ToolResultVariant::ToolError { content }
+        }
+        "TodoWrite" if verbose_tool => ToolResultVariant::TodoWrite { message: content },
+        _ => ToolResultVariant::Default { content },
+    }
 }

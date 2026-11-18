@@ -4,7 +4,7 @@ use super::output_block::{
     GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
 use super::types::{EditSnapshot, GrepParams, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot};
-use super::utils::{extract_key_argument, is_content_truncated};
+use super::utils::extract_key_argument;
 
 pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Option<&'a str> {
     invocation?.input.get(key)?.as_str()
@@ -105,20 +105,6 @@ pub fn build_default_result_block(
 // Specialized result block builders
 // =============================================================================
 
-/// Build an OutputBlock for Bash tool results.
-pub fn build_bash_result_block(content: Option<&str>, is_error: bool) -> OutputBlock {
-    let truncated = content.map(is_content_truncated).unwrap_or(false);
-
-    OutputBlock::tool_result(
-        "Bash",
-        is_error,
-        ToolResultVariant::Bash {
-            content: content.map(String::from),
-            truncated,
-        },
-    )
-}
-
 /// Build an OutputBlock for Edit tool results using before/after display.
 ///
 /// Requires an EditSnapshot captured before the edit was performed.
@@ -211,6 +197,9 @@ pub fn build_write_result_block(
     )
 }
 
+/// Build an OutputBlock for NotebookEdit tool results.
+///
+/// Requires a NotebookSnapshot for cell identification and the new source content.
 /// Build an OutputBlock for Read tool results (verbose mode).
 pub fn build_read_result_block(
     file_path: &str,
@@ -260,20 +249,6 @@ pub fn build_glob_result_block(file_count: usize, content: &str, truncated: bool
     )
 }
 
-/// Build an OutputBlock for TodoWrite tool results (verbose mode).
-pub fn build_todowrite_result_block(message: Option<&str>) -> OutputBlock {
-    OutputBlock::tool_result(
-        "TodoWrite",
-        false,
-        ToolResultVariant::TodoWrite {
-            message: message.map(String::from),
-        },
-    )
-}
-
-/// Build an OutputBlock for NotebookEdit tool results.
-///
-/// Requires a NotebookSnapshot for cell identification and the new source content.
 pub fn build_notebook_edit_block(snapshot: &NotebookSnapshot, new_source: &str) -> OutputBlock {
     // Generate diff between old and new content
     let old_content = snapshot.content.as_deref().unwrap_or("");
@@ -287,7 +262,7 @@ pub fn build_notebook_edit_block(snapshot: &NotebookSnapshot, new_source: &str) 
             cell_identifier: snapshot.cell_identifier.clone(),
             cell_type: snapshot.cell_type.clone(),
             edit_mode: snapshot.edit_mode.clone(),
-            diff_content,
+            diff_content: Some(diff_content),
         },
     )
 }
@@ -590,7 +565,9 @@ mod tests {
         };
         match build_notebook_edit_block(&snapshot, new_source) {
             OutputBlock::ToolResult(result) => match result.variant {
-                ToolResultVariant::NotebookEdit { diff_content, .. } => diff_content,
+                ToolResultVariant::NotebookEdit { diff_content, .. } => {
+                    diff_content.unwrap_or_default()
+                }
                 other => panic!("Expected NotebookEdit variant, got {other:?}"),
             },
             other => panic!("Expected ToolResult, got {other:?}"),

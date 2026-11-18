@@ -101,7 +101,7 @@ pub fn format_notebook_result_with_snapshot(
     format_notebook_result(ctx, &params)
 }
 
-fn format_notebook_result(ctx: &RenderContext, params: &NotebookEditParams) -> String {
+pub fn format_notebook_result(ctx: &RenderContext, params: &NotebookEditParams) -> String {
     if let Some(diff_content) = params.diff_content {
         return format_diff_output(ctx, params, diff_content);
     }

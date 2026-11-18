@@ -51,7 +51,7 @@ pub fn format_edit_result_with_snapshot(ctx: &RenderContext, snapshot: EditSnaps
     }
 }
 
-fn format_before_after(
+pub fn format_before_after(
     ctx: &RenderContext,
     file_path: &str,
     old_str: &str,
@@ -243,7 +243,7 @@ fn format_plain_block(label: &str, content: &str) -> String {
 }
 
 /// Format a simple "no changes" message.
-fn format_no_changes_message(ctx: &RenderContext, file_path: &str) -> String {
+pub fn format_no_changes_message(ctx: &RenderContext, file_path: &str) -> String {
     if ctx.terminal {
         format!(
             "{}✓{} {}Edit: {} (no changes){}\n",
@@ -336,7 +336,7 @@ pub fn format_edit_diff_result(
 ///
 /// This is the common formatting logic shared between generated diffs
 /// and diffs that come directly from tool results.
-fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &str) -> String {
+pub fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &str) -> String {
     // Count lines for potential truncation
     let lines: Vec<&str> = diff_content.lines().collect();
     let line_count = lines.len();

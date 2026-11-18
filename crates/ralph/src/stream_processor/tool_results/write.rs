@@ -57,7 +57,7 @@ pub fn format_write_result_with_snapshot(ctx: &RenderContext, snapshot: WriteSna
 }
 
 /// Format before/after display for file overwrites.
-fn format_before_after_display(
+pub fn format_before_after_display(
     ctx: &RenderContext,
     file_path: &str,
     before: &str,
@@ -250,7 +250,11 @@ fn format_plain_block(label: &str, content: &str) -> String {
 }
 
 /// Format a "no changes" or success message.
-fn format_no_changes_message(ctx: &RenderContext, file_path: &str, is_new_file: bool) -> String {
+pub fn format_no_changes_message(
+    ctx: &RenderContext,
+    file_path: &str,
+    is_new_file: bool,
+) -> String {
     let indicator = if is_new_file {
         "(new file)"
     } else {
@@ -276,7 +280,7 @@ fn format_no_changes_message(ctx: &RenderContext, file_path: &str, is_new_file: 
 /// Displays the file content without diff markers (+/-), using the same style as
 /// Edit tool's "After" block: green background on line numbers, syntax highlighting
 /// on content.
-fn format_new_file_display(ctx: &RenderContext, file_path: &str, content: &str) -> String {
+pub fn format_new_file_display(ctx: &RenderContext, file_path: &str, content: &str) -> String {
     // Detect language from file path
     let language = extract_language_from_path(file_path);
 

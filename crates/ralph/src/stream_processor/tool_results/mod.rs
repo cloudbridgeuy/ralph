@@ -19,11 +19,32 @@ use ralph_core::stream::{ToolInvocation, ToolResult};
 use super::processor::StreamProcessor;
 use super::utils::truncate_string;
 use crate::ansi::RESET;
+use crate::render::RenderContext;
 
-// Re-export for use in event_handler
-pub use edit::format_edit_result_with_snapshot;
-pub use notebookedit::format_notebook_result_with_snapshot;
-pub use write::format_write_result_with_snapshot;
+pub use edit::{
+    format_before_after, format_diff_output, format_edit_result_with_snapshot,
+    format_no_changes_message,
+};
+pub use notebookedit::{format_notebook_result, format_notebook_result_with_snapshot};
+pub use write::{
+    format_before_after_display as format_write_before_after, format_new_file_display,
+    format_no_changes_message as format_write_no_changes, format_write_result_with_snapshot,
+};
+
+pub fn format_tool_error(ctx: &RenderContext, tool_name: &str, content: Option<&str>) -> String {
+    let content = content.map_or_else(
+        || format!("({} failed)", tool_name.to_lowercase()),
+        |c| truncate_string(c, 200),
+    );
+    if ctx.terminal {
+        format!(
+            "{}✗ {tool_name} error:{RESET} {content}\n",
+            ctx.tools.error_fg()
+        )
+    } else {
+        format!("! {tool_name} error: {content}\n")
+    }
+}
 
 /// Format a tool result for display with optional context from the original invocation.
 ///
