@@ -212,6 +212,18 @@ impl Inbox {
         })?
     }
 
+    pub fn drop_worker(&self, worker: &str) -> io::Result<usize> {
+        let log = self.dir.with_file_name(DROP_LOG);
+        self.sync(|ledger| {
+            let dropped = ledger.drop_worker(worker);
+            let now = chrono::Utc::now();
+            let logged = dropped
+                .iter()
+                .try_for_each(|entry| append_line(&log, &drop_log_line(entry, now)));
+            (logged.map(|()| dropped.len()), !dropped.is_empty())
+        })?
+    }
+
     pub fn ledger(&self) -> io::Result<Ledger> {
         self.sync(|ledger| (ledger.clone(), false))
     }
@@ -420,6 +432,32 @@ mod tests {
         };
         run_stop_hook(&hook, payload.as_bytes(), Vec::new()).unwrap();
         fs::read_to_string(activity).unwrap()
+    }
+
+    #[test]
+    fn drop_worker_removes_its_queued_reports_and_logs_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        for (worker, seq) in [("A", 1), ("B", 1), ("A", 2)] {
+            let report = Report {
+                worker: worker.to_string(),
+                at: format!("2026-11-10T13:00:0{seq}Z"),
+                status: "done".to_string(),
+                text: "t".to_string(),
+            };
+            inbox.post(&report, seq).unwrap();
+        }
+        assert_eq!(inbox.drop_worker("A").unwrap(), 2);
+        let left: Vec<String> = inbox
+            .peek()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.worker)
+            .collect();
+        assert_eq!(left, ["B"]);
+        let log = fs::read_to_string(dir.path().join(DROP_LOG)).unwrap();
+        assert_eq!(log.lines().count(), 2);
+        assert_eq!(inbox.drop_worker("A").unwrap(), 0);
     }
 
     #[test]
