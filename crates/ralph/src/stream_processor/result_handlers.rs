@@ -5,11 +5,11 @@
 
 use std::fs;
 
+use ralph_core::chunk::is_unfenced_diff;
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
 use super::block_builders::{
-    build_default_result_block, build_edit_before_after_block, build_edit_diff_block, input_str,
-    write_result_variant,
+    build_default_result_block, build_edit_before_after_block, input_str, write_result_variant,
 };
 use super::output_block::{OutputBlock, ToolResultVariant};
 use super::processor::StreamProcessor;
@@ -34,31 +34,12 @@ pub fn handle_edit_result(
     snapshot: Option<&EditSnapshot>,
 ) -> ToolResultOutput {
     if let Some(snap) = snapshot {
-        let has_diff_content = result
-            .content
-            .as_ref()
-            .map(|c| ralph_core::chunk::is_unfenced_diff(c))
-            .unwrap_or(false);
-
-        if has_diff_content {
-            // Result contains diff - use diff formatting and block
-            let formatted = tool_results::format_tool_result_with_context(
-                processor,
-                result,
-                Some(invocation.clone()),
-            );
-            let block =
-                build_edit_diff_block(&snap.file_path, result.content.as_deref().unwrap_or(""));
-            ToolResultOutput { formatted, block }
-        } else {
-            // No diff in result - generate from snapshot
-            let formatted = tool_results::format_edit_result_with_snapshot(
-                &processor.render_context(),
-                snap.clone(),
-            );
-            let block = build_edit_before_after_block(snap);
-            ToolResultOutput { formatted, block }
-        }
+        let formatted = tool_results::format_edit_result_with_snapshot(
+            &processor.render_context(),
+            snap.clone(),
+        );
+        let block = build_edit_before_after_block(snap);
+        ToolResultOutput { formatted, block }
     } else {
         handle_default_result(processor, result, Some(invocation))
     }
@@ -89,7 +70,19 @@ pub fn build_result_block(
     snapshot: Option<Snapshot>,
 ) -> OutputBlock {
     let name = invocation.map_or("Unknown", |inv| inv.name.as_str());
+    let content = result.content.clone();
     let variant = match snapshot {
+        _ if name == "Edit"
+            && !result.is_error
+            && content.as_deref().is_some_and(is_unfenced_diff) =>
+        {
+            ToolResultVariant::EditDiff {
+                file_path: input_str(invocation, "file_path")
+                    .unwrap_or("unknown file")
+                    .to_string(),
+                diff_content: content.unwrap_or_default(),
+            }
+        }
         Some(snapshot) if !result.is_error => snapshot_variant(snapshot),
         _ => plain_variant(verbose, name, result, invocation),
     };

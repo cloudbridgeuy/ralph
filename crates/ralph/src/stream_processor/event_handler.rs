@@ -7,7 +7,7 @@ use std::fs;
 
 use crate::render::{render_text_block, RenderContext};
 use ralph_core::chat_send_it::is_step_result_tool;
-use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
+use ralph_core::chunk::{is_unfenced_diff, split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
@@ -164,6 +164,7 @@ impl StreamProcessor {
                         if let Some(inv) = invocation
                             .as_ref()
                             .filter(|inv| inv.name == "Edit" && !result.is_error)
+                            .filter(|_| !result.content.as_deref().is_some_and(is_unfenced_diff))
                         {
                             let output =
                                 handle_edit_result(self, result, inv, edit_snapshot.as_ref());

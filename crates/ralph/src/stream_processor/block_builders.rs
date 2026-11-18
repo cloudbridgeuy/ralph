@@ -136,20 +136,6 @@ pub fn build_edit_before_after_block(snapshot: &EditSnapshot) -> OutputBlock {
     )
 }
 
-/// Build an OutputBlock for Edit tool results with diff content.
-///
-/// Used when the result contains inline diff content.
-pub fn build_edit_diff_block(file_path: &str, diff_content: &str) -> OutputBlock {
-    OutputBlock::tool_result(
-        "Edit",
-        false,
-        ToolResultVariant::EditDiff {
-            file_path: file_path.to_string(),
-            diff_content: diff_content.to_string(),
-        },
-    )
-}
-
 pub fn write_result_variant(snapshot: WriteSnapshot, after: Option<String>) -> ToolResultVariant {
     let file_path = snapshot.file_path;
     let before = snapshot.content.unwrap_or_default();
