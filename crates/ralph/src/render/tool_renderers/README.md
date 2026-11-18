@@ -31,7 +31,6 @@ tool_renderers/
 │   ├── grep.rs         # render_grep_result
 │   ├── glob.rs         # render_glob_result
 │   ├── todowrite.rs    # render_todowrite_result
-│   ├── notebook.rs     # render_notebook_edit
 │   └── default.rs      # render_default_result (fallback)
 └── tests.rs            # All unit tests
 ```
@@ -54,4 +53,4 @@ All render functions:
 
 This module follows the "Splitting Large Modules" pattern documented in
 `docs/context/rust-cli-project-structure.md`. The structure mirrors
-`stream_processor/tool_display/` and `stream_processor/tool_results/`.
+`stream_processor/tool_results/`.
