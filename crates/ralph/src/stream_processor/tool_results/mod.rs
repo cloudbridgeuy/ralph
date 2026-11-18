@@ -4,13 +4,8 @@
 //! Each tool type can have specialized result formatting, with a default fallback
 //! for unknown tools.
 
-mod bash;
 mod edit;
-mod glob;
-mod grep;
 mod notebookedit;
-mod read;
-mod todowrite;
 mod write;
 
 use ralph_core::chunk::is_unfenced_diff;
@@ -72,26 +67,6 @@ pub fn format_tool_result_with_context(
                     );
                 }
             }
-        }
-        // Bash tool with output
-        if inv.name == "Bash" {
-            return bash::format_bash_tool_result(processor, result);
-        }
-        // Grep tool with verbose mode
-        if inv.name == "Grep" && processor.is_tool_verbose("Grep") {
-            return grep::format_grep_tool_result_verbose(processor, inv.clone(), result);
-        }
-        // Read tool with verbose mode
-        if inv.name == "Read" && processor.is_tool_verbose("Read") {
-            return read::format_read_tool_result_verbose(processor, inv.clone(), result);
-        }
-        // TodoWrite tool with verbose mode
-        if inv.name == "TodoWrite" && processor.is_tool_verbose("TodoWrite") {
-            return todowrite::format_todowrite_tool_result_verbose(processor, result);
-        }
-        // Glob tool with verbose mode
-        if inv.name == "Glob" && processor.is_tool_verbose("Glob") {
-            return glob::format_glob_tool_result_verbose(processor, result);
         }
     }
 
