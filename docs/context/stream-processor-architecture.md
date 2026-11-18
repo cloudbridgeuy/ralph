@@ -176,7 +176,22 @@ Buffered prose is flushed (rendered and emitted) at these points:
 
 ### final_output
 
-`StreamProcessorResult.final_output` contains the last rendered prose from `finish()`. Callers (spinner, timeout) must `print!` this value before returning the result.
+`StreamProcessorResult.final_output` contains the last rendered prose from `finish()`. `Pump::finish` emits it as `TurnEvent::Output` before it returns the result.
+
+## Turn Events
+
+`Pump` (`subprocess/spinner.rs`) does not print. It emits `ralph_core::turn_event::TurnEvent`s to the `TurnSink` in `SpinnerSubprocessConfig::sink`; `chat::turn::Turn` emits to the same sink.
+
+| Event | Sent when | `TerminalSink` does |
+| --- | --- | --- |
+| `Busy(Wait)` | a shown pump starts; Turn waits for the session lock or a nap | starts a spinner on a fresh clock |
+| `Resume(Wait)` | output stops for `DEFAULT_GAP_THRESHOLD_MS` (`Wait::after_gap`: `Tool` with a pending tool, else `Thinking`) | restarts the spinner on the same clock |
+| `Idle` | before output, on pause, at finish, on drop | stops the spinner and clears its line |
+| `Output(String)` | the processor renders text | writes it to stdout through the gate |
+| `Stderr(String)` | a shown pump reads a child stderr line | writes it to stderr through the gate |
+| `Rule`, `Warning(String)` | Turn draws a rule or warns | writes the themed rule at the chat width, or a warning line on stderr |
+
+A silent pump (pings, the memory curator) emits nothing. The spinner thread still writes stdout directly, past the gate. Pump keeps the `OutputGate` only for the hold-panel pause and settle handshake: it emits `Idle`, then settles. `Output` carries pre-rendered text for now; step 3b of GUZ-1385 replaces it with data events that the client renders.
 
 ## Directive-Aware Streaming
 

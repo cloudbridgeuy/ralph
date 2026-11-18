@@ -1,10 +1,10 @@
 use crate::highlight::ThemeConfig;
-use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
     SubprocessError,
 };
+use crate::turn_sink::TerminalSink;
 use ralph_core::cancel::CancelToken;
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
@@ -12,6 +12,7 @@ use ralph_core::worker::inbox_env;
 use ralph_server::config::ChatSection;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
 pub const ASK_PERMISSION_MODE_ENV: &str = "RALPH_ASK_PERMISSION_MODE";
@@ -197,6 +198,7 @@ pub fn build_command(
 }
 
 pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, SubprocessError> {
+    let sink = Arc::new(TerminalSink::plain(*config.theme_config.ui()));
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
         command: build_command(
             &config.permission_mode,
@@ -205,9 +207,8 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
         ),
         timeout_secs: Some(config.timeout_secs),
         theme_config: config.theme_config,
-        session_elapsed_ms: 0,
         verbose_tools: config.verbose_tools,
-        session_info: SpinnerSessionInfo::default(),
+        sink,
         gate: None,
         interrupt: Some(config.interrupt),
         stdin: Some(prompt_stdin(&config.prompt)),

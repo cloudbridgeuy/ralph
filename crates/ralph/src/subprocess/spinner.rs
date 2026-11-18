@@ -1,4 +1,4 @@
-use super::gate::{write_direct, OutputGate, Stream};
+use super::gate::OutputGate;
 use super::timeout::try_wait_child;
 use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
@@ -6,10 +6,10 @@ use super::types::{
 };
 use crate::highlight::ThemeConfig;
 use crate::signal;
-use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use ralph_core::cancel::CancelToken;
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
+use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::subprocess::kill_process_group;
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
@@ -20,87 +20,28 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Configuration for subprocess invocation with spinner.
-///
-/// Groups parameters to keep function signatures under 5 arguments.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SpinnerSubprocessConfig {
-    /// The command string to execute.
     pub command: String,
-    /// Time limit for one-shot runs. `Session` ignores it: chat turns have no
-    /// time limit.
     pub timeout_secs: Option<u64>,
-    /// Configuration for syntax highlighting theme.
     pub theme_config: ThemeConfig,
-    /// Accumulated time from previous iterations in this session.
-    pub session_elapsed_ms: u64,
-    /// Configuration for verbose tool output.
     pub verbose_tools: VerboseToolsConfig,
-    /// Session metadata for spinner display (slug, iteration info).
-    pub session_info: SpinnerSessionInfo,
+    pub sink: Arc<dyn TurnSink>,
     pub gate: Option<Arc<OutputGate>>,
     pub interrupt: Option<CancelToken>,
-    /// Prompt text written to the child's stdin, then closed. `Session` ignores
-    /// it: it owns stdin for stream-json.
     pub stdin: Option<String>,
 }
 
-fn write_to(gate: Option<&OutputGate>, stream: Stream, text: &str) {
-    match gate {
-        Some(gate) => gate.write(stream, text),
-        None => write_direct(stream, text),
-    }
-}
-
-fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Option<&OutputGate>) {
+fn drain_stderr(readers: &Readers, captured: &mut String, sink: Option<&dyn TurnSink>) {
     while let Ok(line) = readers.stderr_rx.try_recv() {
-        if show {
-            write_to(gate, Stream::Stderr, &format!("{line}\n"));
+        if let Some(sink) = sink {
+            sink.emit(TurnEvent::Stderr(format!("{line}\n")));
         }
         captured.push_str(&line);
         captured.push('\n');
     }
 }
 
-/// Invokes a command with stream processing, theme configuration, and spinner display.
-///
-/// This extends [`super::invoke_subprocess_with_timeout`] with spinner support:
-/// - Shows an animated spinner while waiting for LLM to respond
-/// - Displays elapsed time updating every second
-/// - Displays session name and iteration progress (if provided)
-/// - Automatically stops spinner when first output arrives
-/// - Only shows spinner when stdout is a terminal
-///
-/// # Arguments
-///
-/// * `config` - Configuration for the subprocess invocation
-///
-/// # Returns
-///
-/// Returns the subprocess result directly.
-///
-/// # Example
-///
-/// ```no_run
-/// use ralph::subprocess::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
-/// use ralph::highlight::ThemeConfig;
-/// use ralph::stream_processor::VerboseToolsConfig;
-/// use ralph::spinner::SpinnerSessionInfo;
-///
-/// let config = SpinnerSubprocessConfig {
-///     command: "claude --output-format stream-json -p 'hello'".to_string(),
-///     timeout_secs: Some(300),
-///     theme_config: ThemeConfig::new().with_theme("Monokai Extended"),
-///     session_elapsed_ms: 0,
-///     verbose_tools: VerboseToolsConfig::new(),
-///     session_info: SpinnerSessionInfo::default(),
-///     gate: None,
-///     interrupt: None,
-///     stdin: None,
-/// };
-/// let result = invoke_subprocess_with_spinner_config(&config);
-/// println!("{result:?}");
-/// ```
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
@@ -186,11 +127,39 @@ pub(super) enum Display {
     Silent,
 }
 
+struct Shown {
+    sink: Arc<dyn TurnSink>,
+    waiting: bool,
+}
+
+impl Shown {
+    fn wait(&mut self, event: TurnEvent) {
+        self.sink.emit(event);
+        self.waiting = true;
+    }
+
+    fn stop(&mut self) {
+        if self.waiting {
+            self.sink.emit(TurnEvent::Idle);
+            self.waiting = false;
+        }
+    }
+
+    fn show(&mut self, text: String) {
+        self.stop();
+        self.sink.emit(TurnEvent::Output(text));
+    }
+}
+
+impl Drop for Shown {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 pub(super) struct Pump {
-    display: Display,
+    shown: Option<Shown>,
     processor: StreamProcessor,
-    spinner: Spinner,
-    spinner_active: bool,
     last_output_time: Instant,
     pending_tool_count: usize,
     stderr: String,
@@ -210,18 +179,17 @@ impl Pump {
             stdout_is_terminal,
             config.verbose_tools.clone(),
         )?;
-        let mut spinner =
-            Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone())
-                .with_color(config.theme_config.ui().spinner);
-        let spinner_active = display == Display::Shown;
-        if spinner_active {
-            spinner.start();
-        }
+        let shown = (display == Display::Shown).then(|| {
+            let mut shown = Shown {
+                sink: Arc::clone(&config.sink),
+                waiting: false,
+            };
+            shown.wait(TurnEvent::Busy(Wait::Response));
+            shown
+        });
         Ok(Pump {
-            display,
+            shown,
             processor,
-            spinner,
-            spinner_active,
             last_output_time: Instant::now(),
             pending_tool_count: 0,
             stderr: String::new(),
@@ -231,9 +199,8 @@ impl Pump {
     }
 
     fn stop_spinner(&mut self) {
-        if self.spinner_active {
-            self.spinner.stop();
-            self.spinner_active = false;
+        if let Some(shown) = self.shown.as_mut() {
+            shown.stop();
         }
     }
 
@@ -264,9 +231,8 @@ impl Pump {
                     self.pending_tool_count = self.pending_tool_count.saturating_sub(1);
                 }
                 if let Some(output) = self.processor.process_line(&line) {
-                    if self.display == Display::Shown {
-                        self.stop_spinner();
-                        write_to(self.gate.as_deref(), Stream::Stdout, &output);
+                    if let Some(shown) = self.shown.as_mut() {
+                        shown.show(output);
                         self.last_output_time = Instant::now();
                     }
                 }
@@ -283,25 +249,15 @@ impl Pump {
                 )))
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                drain_stderr(
-                    readers,
-                    &mut self.stderr,
-                    self.display == Display::Shown,
-                    self.gate.as_deref(),
-                );
+                let sink = self.shown.as_ref().map(|shown| shown.sink.as_ref());
+                drain_stderr(readers, &mut self.stderr, sink);
                 let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
-                if self.display == Display::Shown
-                    && !paused
-                    && !self.spinner_active
-                    && self.last_output_time.elapsed() >= gap_threshold
-                {
-                    let context = if self.pending_tool_count > 0 {
-                        SpinnerContext::WaitingForTool
-                    } else {
-                        SpinnerContext::Thinking
-                    };
-                    self.spinner.start_with_context(context);
-                    self.spinner_active = true;
+                let gap = self.last_output_time.elapsed() >= gap_threshold;
+                let pending_tools = self.pending_tool_count;
+                if let Some(shown) = self.shown.as_mut() {
+                    if !paused && !shown.waiting && gap {
+                        shown.wait(TurnEvent::Resume(Wait::after_gap(pending_tools)));
+                    }
                 }
                 Ok(Step::Pending)
             }
@@ -316,25 +272,18 @@ impl Pump {
         show_stderr: bool,
     ) -> StreamingSubprocessResult {
         self.stop_spinner();
-        let shown = self.display == Display::Shown;
         for line in readers.take_queued() {
             if let Some(output) = self.processor.process_line(&line) {
-                if shown {
-                    write_to(self.gate.as_deref(), Stream::Stdout, &output);
+                if let Some(shown) = self.shown.as_mut() {
+                    shown.show(output);
                 }
             }
         }
-        drain_stderr(
-            readers,
-            &mut self.stderr,
-            show_stderr && shown,
-            self.gate.as_deref(),
-        );
+        let sink = self.shown.as_ref().map(|shown| shown.sink.as_ref());
+        drain_stderr(readers, &mut self.stderr, sink.filter(|_| show_stderr));
         let stream_result = self.processor.finish();
-        if let Some(ref output) = stream_result.final_output {
-            if shown {
-                write_to(self.gate.as_deref(), Stream::Stdout, output);
-            }
+        if let (Some(output), Some(shown)) = (&stream_result.final_output, self.shown.as_mut()) {
+            shown.show(output.clone());
         }
         StreamingSubprocessResult {
             exit_code,
@@ -429,6 +378,118 @@ fn run_subprocess_with_spinner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Recording(Mutex<Vec<TurnEvent>>);
+
+    impl TurnSink for Recording {
+        fn emit(&self, event: TurnEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    impl Recording {
+        fn events(&self) -> Vec<TurnEvent> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    const HELLO: &str = r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Hello, world!"}]}}"#;
+
+    fn config(sink: &Arc<Recording>) -> SpinnerSubprocessConfig {
+        SpinnerSubprocessConfig {
+            command: String::new(),
+            timeout_secs: None,
+            theme_config: ThemeConfig::new(),
+            verbose_tools: VerboseToolsConfig::new(),
+            sink: Arc::clone(sink) as Arc<dyn TurnSink>,
+            gate: None,
+            interrupt: None,
+            stdin: None,
+        }
+    }
+
+    struct Feed {
+        _lines: mpsc::Sender<io::Result<String>>,
+        _stderr: mpsc::Sender<String>,
+    }
+
+    fn feed(lines: &[&str], stderr: &[&str]) -> (Readers, Feed) {
+        let (line_tx, line_rx) = mpsc::channel();
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        lines
+            .iter()
+            .for_each(|line| line_tx.send(Ok(line.to_string())).unwrap());
+        stderr
+            .iter()
+            .for_each(|line| stderr_tx.send(line.to_string()).unwrap());
+        let readers = Readers {
+            line_rx,
+            stderr_rx,
+            threads: Vec::new(),
+        };
+        (
+            readers,
+            Feed {
+                _lines: line_tx,
+                _stderr: stderr_tx,
+            },
+        )
+    }
+
+    #[test]
+    fn a_shown_pump_waits_then_stops_the_spinner_before_its_output() {
+        let sink = Arc::new(Recording::default());
+        let (readers, _feed) = feed(&[HELLO], &[]);
+        let mut pump = Pump::start(&config(&sink), Display::Shown).unwrap();
+        pump.step(&readers, false).unwrap();
+        pump.finish(&readers, 0, true);
+        let events = sink.events();
+        assert_eq!(events.first(), Some(&TurnEvent::Busy(Wait::Response)));
+        let output = events
+            .iter()
+            .position(|event| matches!(event, TurnEvent::Output(text) if text.contains("Hello")))
+            .expect("an Output event");
+        let idle = events.iter().position(|event| *event == TurnEvent::Idle);
+        assert!(idle.is_some_and(|idle| idle < output), "{events:?}");
+    }
+
+    #[test]
+    fn a_shown_pump_passes_stderr_lines_to_the_sink() {
+        let sink = Arc::new(Recording::default());
+        let (readers, _feed) = feed(&[], &["oops"]);
+        let mut pump = Pump::start(&config(&sink), Display::Shown).unwrap();
+        pump.step(&readers, false).unwrap();
+        assert_eq!(
+            sink.events(),
+            vec![
+                TurnEvent::Busy(Wait::Response),
+                TurnEvent::Stderr("oops\n".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_silent_pump_emits_nothing() {
+        let sink = Arc::new(Recording::default());
+        let (readers, _feed) = feed(&[HELLO], &["oops"]);
+        let mut pump = Pump::start(&config(&sink), Display::Silent).unwrap();
+        pump.step(&readers, false).unwrap();
+        pump.finish(&readers, 0, true);
+        assert_eq!(sink.events(), Vec::new());
+    }
+
+    #[test]
+    fn dropping_a_waiting_pump_stops_the_spinner() {
+        let sink = Arc::new(Recording::default());
+        drop(Pump::start(&config(&sink), Display::Shown).unwrap());
+        assert_eq!(
+            sink.events(),
+            vec![TurnEvent::Busy(Wait::Response), TurnEvent::Idle]
+        );
+    }
 
     fn failed(kind: io::ErrorKind) -> PromptWrite {
         Ok(Err(io::Error::from(kind)))

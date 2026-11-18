@@ -7,12 +7,17 @@ use crate::chat::switch::ChatExit;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
 use crate::signal::is_terminated;
+use crate::spinner::SpinnerSessionInfo;
+use crate::subprocess::OutputGate;
+use crate::turn_sink::TerminalSink;
+use crate::ui_theme::UiColors;
 use ralph_core::chat_close::{idle_step, IdleSignal, IdleStep};
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
 use ralph_core::chat_thread_auto::close_footer;
 use ralph_core::status_queue::QueueCell;
+use ralph_core::turn_event::TurnSink;
 use ralph_core::worker::ATTACHMENTS_DIR;
 use reedline::{
     EditCommand, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
@@ -56,6 +61,19 @@ pub(super) fn terminal_columns() -> usize {
 
 pub(super) fn screen_columns() -> usize {
     wrap_width(terminal_columns())
+}
+
+fn chat_session_info() -> SpinnerSessionInfo {
+    SpinnerSessionInfo {
+        persona: Some("chat".into()),
+    }
+}
+
+pub(super) fn turn_output(ui: UiColors) -> (Arc<OutputGate>, Arc<dyn TurnSink>) {
+    let gate = Arc::new(OutputGate::new());
+    let sink = TerminalSink::new(Some(Arc::clone(&gate)), ui, screen_columns)
+        .with_session(chat_session_info());
+    (gate, Arc::new(sink))
 }
 
 impl ChatPrompt {
