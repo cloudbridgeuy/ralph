@@ -721,7 +721,7 @@ fn a_dispatched_notice_is_logged_once() {
 }
 
 #[test]
-fn a_dispatch_with_no_notice_logs_nothing() {
+fn a_dispatched_met_line_is_logged_once() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active) = judging(dir.path());
     let ticked = Ticked {
@@ -731,7 +731,41 @@ fn a_dispatch_with_no_notice_logs_nothing() {
         notice: None,
     };
     send_it.dispatch(ticked, &held::monitor(dir.path()));
-    assert!(logged_texts(dir.path()).is_empty());
+    assert_eq!(logged_texts(dir.path()), vec![notice_record("Step 1 met")]);
+}
+
+#[test]
+fn a_dispatched_notice_is_logged_before_its_met_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = judging(dir.path());
+    let ticked = Ticked {
+        driving: active.driving,
+        next: Next::Wait,
+        met: Some("Step 1 met".to_string()),
+        notice: Some("Step 1: the check would block the worker".to_string()),
+    };
+    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    assert_eq!(
+        logged_texts(dir.path()),
+        vec![
+            notice_record("Step 1: the check would block the worker"),
+            notice_record("Step 1 met")
+        ]
+    );
+}
+
+#[test]
+fn a_dispatched_done_tick_logs_no_met_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = judging(dir.path());
+    let ticked = Ticked {
+        driving: active.driving,
+        next: Next::Done,
+        met: Some("Step 1 met".to_string()),
+        notice: None,
+    };
+    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    assert!(!logged_texts(dir.path()).contains(&notice_record("Step 1 met")));
 }
 
 #[test]

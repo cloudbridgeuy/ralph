@@ -336,9 +336,7 @@ impl SendIt {
         };
         let file = self.load().ok().flatten();
         let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
-        for line in ticked.notice.iter().chain(ticked.met.iter()) {
-            self.log_notice(line);
-        }
+        self.log_shown(&ticked);
         let mut driven = self.route(ticked, monitor);
         if driven.route.is_none() {
             monitor.set_phase(Phase::Prompt);
@@ -360,10 +358,14 @@ impl SendIt {
     }
 
     pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        for line in ticked.notice.iter() {
+        self.log_shown(&ticked);
+        self.route(ticked, monitor)
+    }
+
+    fn log_shown(&self, ticked: &Ticked) {
+        for line in ticked.shown_lines() {
             self.log_notice(line);
         }
-        self.route(ticked, monitor)
     }
 
     fn route(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
