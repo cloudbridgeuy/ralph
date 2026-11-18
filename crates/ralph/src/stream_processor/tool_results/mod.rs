@@ -4,7 +4,6 @@ mod write;
 
 pub use edit::{format_before_after, format_diff_output, format_no_changes_message};
 pub use notebookedit::format_notebook_result;
-pub use notebookedit::generate_diff_from_snapshot as notebook_diff_from_snapshot;
 pub use write::{
     format_before_after_display as format_write_before_after, format_new_file_display,
     format_no_changes_message as format_write_no_changes,

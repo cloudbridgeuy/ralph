@@ -8,7 +8,7 @@ mod utils;
 mod test_helpers;
 
 pub use block_builders::{build_tool_invocation_block, input_str, write_result_variant};
-pub use diff::edit_diff;
+pub use diff::{edit_diff, notebook_diff};
 pub use output_block::{
     extract_response_text, GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem,
     ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,

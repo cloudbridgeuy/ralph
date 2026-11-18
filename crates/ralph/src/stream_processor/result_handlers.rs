@@ -3,9 +3,9 @@ use std::fs;
 use ralph_core::chunk::is_unfenced_diff;
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
-use super::tool_results::notebook_diff_from_snapshot;
 use ralph_core::stream::blocks::{
-    count_non_empty_lines, edit_diff, input_str, is_content_truncated, write_result_variant,
+    count_non_empty_lines, edit_diff, input_str, is_content_truncated, notebook_diff,
+    write_result_variant,
 };
 use ralph_core::stream::blocks::{
     EditSnapshot, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot,
@@ -69,13 +69,18 @@ fn snapshot_variant(snapshot: Snapshot) -> ToolResultVariant {
             let after = fs::read_to_string(&snap.file_path).ok();
             write_result_variant(snap, after)
         }
-        Snapshot::Notebook(snap) => ToolResultVariant::NotebookEdit {
-            diff_content: notebook_diff_from_snapshot(&snap),
-            notebook_path: snap.notebook_path,
-            cell_identifier: snap.cell_identifier,
-            cell_type: snap.cell_type,
-            edit_mode: snap.edit_mode,
-        },
+        Snapshot::Notebook(snap) => {
+            let notebook_json = (snap.edit_mode != "delete")
+                .then(|| fs::read_to_string(&snap.notebook_path).ok())
+                .flatten();
+            ToolResultVariant::NotebookEdit {
+                diff_content: notebook_diff(&snap, notebook_json.as_deref()),
+                notebook_path: snap.notebook_path,
+                cell_identifier: snap.cell_identifier,
+                cell_type: snap.cell_type,
+                edit_mode: snap.edit_mode,
+            }
+        }
     }
 }
 
