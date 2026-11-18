@@ -1,11 +1,3 @@
-//! Subprocess invocation with spinner display and gap detection.
-//!
-//! This module handles subprocess invocation with interactive features:
-//! - Animated spinner during wait periods
-//! - Gap detection to show spinner when LLM is thinking
-//!
-//! `Ctrl+C` kills the child process via the cancel flag or the signal path (`signal::is_interrupted()`).
-
 use super::gate::{write_direct, OutputGate, Stream};
 use super::timeout::try_wait_child;
 use super::types::{
@@ -16,13 +8,13 @@ use crate::highlight::ThemeConfig;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
+use ralph_core::cancel::CancelToken;
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_server::subprocess::kill_process_group;
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -47,7 +39,7 @@ pub struct SpinnerSubprocessConfig {
     /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
     pub gate: Option<Arc<OutputGate>>,
-    pub cancel: Option<Arc<AtomicBool>>,
+    pub interrupt: Option<CancelToken>,
     /// Prompt text written to the child's stdin, then closed. `Session` ignores
     /// it: it owns stdin for stream-json.
     pub stdin: Option<String>,
@@ -103,7 +95,7 @@ fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Opti
 ///     verbose_tools: VerboseToolsConfig::new(),
 ///     session_info: SpinnerSessionInfo::default(),
 ///     gate: None,
-///     cancel: None,
+///     interrupt: None,
 ///     stdin: None,
 /// };
 /// let result = invoke_subprocess_with_spinner_config(&config);
@@ -416,20 +408,17 @@ fn run_subprocess_with_spinner(
             });
         }
 
-        let cancelled = config
-            .cancel
+        let interrupted = config
+            .interrupt
             .as_ref()
-            .is_some_and(|flag| flag.load(Ordering::SeqCst));
-        if cancelled || signal::is_interrupted() {
+            .is_some_and(CancelToken::is_cancelled)
+            || signal::is_terminated();
+        if interrupted {
             pump.stop_spinner();
             kill_process_group(&mut child);
             readers.join();
-            let partial = pump.finish(&readers, EXIT_CODE_INTERRUPTED, false);
-            if cancelled {
-                return Ok(partial);
-            }
             return Err(SubprocessError::Interrupted {
-                partial_result: Box::new(partial),
+                partial_result: Box::new(pump.finish(&readers, EXIT_CODE_INTERRUPTED, false)),
             });
         }
 

@@ -1,4 +1,3 @@
-use crate::signal;
 use ralph_core::changes::NO_CHANGES;
 use ralph_core::diff_command::{diff_command, diff_quiet_command, range_is_empty, DiffTarget};
 use ralph_server::chat::changes::resolve_diff;
@@ -6,7 +5,6 @@ use ralph_server::config::ChangesSection;
 use ralph_server::warn::warn;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
 
 pub(super) struct DiffContext<'a> {
     pub changes: &'a ChangesSection,
@@ -78,9 +76,6 @@ fn spawn(
     let Some((program, args)) = argv.split_first() else {
         return;
     };
-    // Ctrl-C during the pager sets the chat interrupt flag. Clear it so the
-    // next turn is not treated as cancelled. exec resets the child's handler.
-    signal::interrupt_flag().store(false, Ordering::SeqCst);
     let mut command = Command::new(program);
     command
         .args(args)
@@ -89,7 +84,6 @@ fn spawn(
         .stderr(Stdio::inherit());
     configure(&mut command);
     let run = command.status();
-    signal::interrupt_flag().store(false, Ordering::SeqCst);
     if let Err(error) = run {
         warn(format!("failed to run git diff: {error}"));
     }

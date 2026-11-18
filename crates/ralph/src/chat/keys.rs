@@ -7,7 +7,9 @@ use crate::chat::queue::{on_exit, Action, EditorExit, Queue};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
+use crate::signal;
 use crate::subprocess::OutputGate;
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
@@ -29,7 +31,6 @@ const JOIN_TRIES: usize = 2;
 
 pub(super) struct Keys<'a> {
     pub(super) gate: &'a OutputGate,
-    pub(super) cancel: &'a AtomicBool,
     pub(super) monitor: &'a Monitor,
     pub(super) bar: &'a StatusBar,
     pub(super) edit_mode: EditModeConfig,
@@ -39,10 +40,9 @@ pub(super) struct Keys<'a> {
     pub(super) editor: &'a [String],
 }
 
-/// The turn's end, as the queue editor sees it: `done` feeds the status bar,
-/// and `repaint` wakes the open editor so the bar flips without a key press.
 #[derive(Default)]
 struct TurnWatch {
+    cancel: CancelToken,
     done: AtomicBool,
     repaint: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
@@ -133,24 +133,24 @@ impl Keys<'_> {
         }
     }
 
-    pub(super) fn during<R>(&self, run: impl FnOnce() -> R) -> (R, Queue) {
+    pub(super) fn during<R>(&self, run: impl FnOnce(&CancelToken) -> R) -> (R, Queue) {
+        let watch = TurnWatch::default();
+        let _armed = signal::arm(&watch.cancel);
         let Some(_mode) = std::io::stdin()
             .is_terminal()
             .then(PartialMode::enter)
             .flatten()
         else {
-            return (run(), Queue::default());
+            return (run(&watch.cancel), Queue::default());
         };
-        let watch = TurnWatch::default();
         let (result, mut queue) = thread::scope(|scope| {
             let finished = Finished(&watch);
             let listener = scope.spawn(|| self.listen(&watch));
-            let result = run();
+            let result = run(&watch.cancel);
             drop(finished);
             (result, listener.join().unwrap_or_default())
         });
         queue.typed.push_str(&drain_input());
-        self.cancel.store(false, Ordering::SeqCst);
         self.gate.resume();
         (result, queue)
     }
@@ -224,7 +224,7 @@ impl Keys<'_> {
         let (queue, action) = on_exit(queue, exit);
         self.gate.resume();
         if action == Action::Cancel {
-            self.cancel.store(true, Ordering::SeqCst);
+            watch.cancel.cancel();
         }
         queue
     }
@@ -233,6 +233,14 @@ impl Keys<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_turn_gets_its_own_cancel_token() {
+        let cancelled = TurnWatch::default();
+        let next = TurnWatch::default();
+        cancelled.cancel.cancel();
+        assert!(!next.cancel.is_cancelled());
+    }
 
     #[test]
     fn enter_submits_the_line() {

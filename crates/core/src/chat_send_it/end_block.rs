@@ -461,7 +461,7 @@ pub fn run_end_prefill(next: &Next) -> Option<String> {
         | Next::Wait
         | Next::Done => None,
         Next::Stop(reason) => match reason {
-            StopReason::Off => None,
+            StopReason::Off | StopReason::TookOver => None,
             StopReason::PlanChanged => Some(STATUS_LINE.to_string()),
             StopReason::TurnCap
             | StopReason::CostCap
@@ -472,7 +472,6 @@ pub fn run_end_prefill(next: &Next) -> Option<String> {
             | StopReason::CheckNotStarted { .. }
             | StopReason::NoReply
             | StopReason::NeedsYou
-            | StopReason::TookOver
             | StopReason::Refused { .. } => Some(GO_LINE.to_string()),
         },
     }

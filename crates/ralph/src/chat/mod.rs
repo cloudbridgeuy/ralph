@@ -283,7 +283,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         live: Arc::clone(&live),
         reset_limits,
         recent_history_tokens,
-        cancel: signal::interrupt_flag(),
         gate: Arc::new(OutputGate::new()),
         run: &run,
         suggestions: suggestions.clone(),
@@ -536,7 +535,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let keys = Keys {
         gate: &turn.gate,
-        cancel: &turn.cancel,
         monitor: &monitor,
         bar: &prompt.bar,
         edit_mode,
@@ -687,7 +685,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                             Trigger::User
                         };
                         let (result, queued) = snapshots.around(|| {
-                            keys.during(|| turn.run(trigger, std::slice::from_ref(&sent), &sent))
+                            keys.during(|cancel| {
+                                turn.run(trigger, std::slice::from_ref(&sent), &sent, cancel)
+                            })
                         });
                         queue = queued;
                         result?
@@ -745,7 +745,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 let sent = propose_prompt(&text);
                 monitor.set_phase(Phase::Turn);
                 let (result, queued) = snapshots.around(|| {
-                    keys.during(|| turn.run(Trigger::User, std::slice::from_ref(&sent), &sent))
+                    keys.during(|cancel| {
+                        turn.run(Trigger::User, std::slice::from_ref(&sent), &sent, cancel)
+                    })
                 });
                 queue = queued;
                 let outcome = result?;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::chat_send_it::{run_end_prefill, Next as SendItNext, StopReason};
 use crate::chat_status::{ScheduleState, WatchState, WorkerState};
 use crate::inbox::Entry;
 use crate::worker::Report;
@@ -66,6 +67,51 @@ fn a_draft_always_wins() {
 fn a_suggestion_fills_only_after_a_reply_without_a_draft() {
     assert_eq!(prefill(true, None, some("s")), suggestion("s"));
     assert_eq!(prefill(false, None, some("s")), None);
+}
+
+#[test]
+fn a_driven_line_fills_an_empty_buffer_only() {
+    assert_eq!(
+        driven_fill("", Some("/send-it go")),
+        Some("/send-it go".to_string())
+    );
+    assert_eq!(driven_fill("my draft", Some("/send-it go")), None);
+    assert_eq!(driven_fill("", None), None);
+}
+
+fn after_a_turn_without_a_reply(stop: StopReason) -> Next {
+    turn_end(TurnEnd {
+        auto_hold: true,
+        replied: false,
+        draft: None,
+        suggestion: run_end_prefill(&SendItNext::Stop(stop)),
+        status: &Status::default(),
+    })
+}
+
+#[test]
+fn a_no_reply_stop_still_prefills_send_it_go() {
+    assert_eq!(
+        after_a_turn_without_a_reply(StopReason::NoReply),
+        fill("/send-it go")
+    );
+}
+
+#[test]
+fn a_check_that_cannot_start_prefills_send_it_go() {
+    let stop = StopReason::CheckNotStarted {
+        step: 1,
+        error: "boom".to_string(),
+    };
+    assert_eq!(after_a_turn_without_a_reply(stop), fill("/send-it go"));
+}
+
+#[test]
+fn a_take_over_after_a_no_reply_turn_fills_nothing() {
+    assert_eq!(
+        after_a_turn_without_a_reply(StopReason::TookOver),
+        Next::Nothing
+    );
 }
 
 #[test]

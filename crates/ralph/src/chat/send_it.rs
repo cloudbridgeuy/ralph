@@ -21,6 +21,7 @@ use ralph_core::chat_send_it::{
     write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
+use ralph_core::chat_suggestion::driven_fill;
 use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
@@ -107,7 +108,8 @@ pub(super) fn prefill_commands(prefill: Option<&str>) -> Vec<EditCommand> {
 impl Driven {
     pub(super) fn enter(self, editor: &mut Reedline) -> Option<Submitted> {
         // Plain buffer insert on purpose: no dim suggestion styling and no suggestion-ledger row, since this is for check-only stops.
-        editor.run_edit_commands(&prefill_commands(self.prefill.as_deref()));
+        let fill = driven_fill(editor.current_buffer_contents(), self.prefill.as_deref());
+        editor.run_edit_commands(&prefill_commands(fill.as_deref()));
         self.route.map(Submitted::internal)
     }
 
@@ -617,8 +619,10 @@ impl InboxTurn<'_> {
         };
         let message = send_it.brief_unread(sending, unread.message);
         let (result, queue) = self.snapshots.around(|| {
-            self.keys
-                .during(|| self.turn.run(Trigger::Worker, &unread.logged, &message))
+            self.keys.during(|cancel| {
+                self.turn
+                    .run(Trigger::Worker, &unread.logged, &message, cancel)
+            })
         });
         Ok(Some(Read {
             outcome: result?,

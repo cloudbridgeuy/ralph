@@ -108,7 +108,7 @@ fn the_run_brief_asks_for_pending_lines_and_no_next_step() {
 }
 
 #[test]
-fn every_stop_but_off_prefills_send_it_go() {
+fn retryable_stops_prefill_send_it_go() {
     let stops = [
         StopReason::TurnCap,
         StopReason::CostCap,
@@ -123,7 +123,10 @@ fn every_stop_but_off_prefills_send_it_go() {
             detail: None,
         },
         StopReason::NoReply,
-        StopReason::TookOver,
+        StopReason::CheckNotStarted {
+            step: 1,
+            error: "boom".to_string(),
+        },
     ];
     for stop in stops {
         assert_eq!(
@@ -136,9 +139,10 @@ fn every_stop_but_off_prefills_send_it_go() {
 }
 
 #[test]
-fn done_and_off_prefill_nothing() {
+fn done_off_and_take_over_prefill_nothing() {
     assert_eq!(run_end_prefill(&Next::Done), None);
     assert_eq!(run_end_prefill(&Next::Stop(StopReason::Off)), None);
+    assert_eq!(run_end_prefill(&Next::Stop(StopReason::TookOver)), None);
 }
 
 #[test]

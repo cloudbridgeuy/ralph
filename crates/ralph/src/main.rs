@@ -47,6 +47,7 @@ use cli::{
     VerifyAgent, WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
 use invoke::InvocationConfig;
+use ralph_core::cancel::CancelToken;
 use ralph_core::worker::HarnessId;
 use ralph_server::version_drift::DriftRun;
 use ralph_server::warn::{warn, warn_if_err};
@@ -198,6 +199,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
 
     let config = build_invocation_config(&args)?;
+    let _armed = signal::arm(&config.interrupt);
     let ui = *config.theme_config.ui();
 
     if !args.no_prompt {
@@ -276,6 +278,7 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
                 .as_deref(),
         ),
         config_dir: app_config.claude.config_dir,
+        interrupt: CancelToken::default(),
     })
 }
 
@@ -559,7 +562,7 @@ fn run_memory_command(
                         persona: Some("chat memory".into()),
                     },
                     gate: None,
-                    cancel: None,
+                    interrupt: None,
                     stdin: Some(stdin.clone()),
                 },
             ))
