@@ -68,6 +68,10 @@ fn ceil_secs(duration: Duration) -> u64 {
 
 impl SavedWatch {
     pub fn new(spec: &WatchSpec, started_at: DateTime<Utc>) -> Self {
+        debug_assert!(
+            spec.kind != WatchKind::Persistent || spec.cwd.is_none(),
+            "a persistent watch cannot carry a cwd: the record does not store it"
+        );
         Self {
             id: spec.id.clone(),
             command: spec.command.clone(),
@@ -357,6 +361,25 @@ mod tests {
                 }
             ]
         ));
+    }
+
+    #[test]
+    #[should_panic(expected = "persistent watch cannot carry a cwd")]
+    fn a_persistent_watch_with_a_cwd_is_refused_in_debug_builds() {
+        let with_cwd = WatchSpec {
+            cwd: Some(std::path::PathBuf::from("/tmp")),
+            ..spec("tail -f log", None, WatchKind::Persistent)
+        };
+        SavedWatch::new(&with_cwd, at(0));
+    }
+
+    #[test]
+    fn a_normal_watch_may_carry_a_cwd() {
+        let with_cwd = WatchSpec {
+            cwd: Some(std::path::PathBuf::from("/tmp")),
+            ..spec("sleep 10", None, WatchKind::Normal)
+        };
+        assert_eq!(SavedWatch::new(&with_cwd, at(0)).id, "w");
     }
 
     #[test]
