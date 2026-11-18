@@ -46,6 +46,25 @@ fn verify_on_another_kind_is_refused() {
 }
 
 #[test]
+fn a_stray_verify_names_the_step() {
+    let mut json = plan_json();
+    json["steps"] = serde_json::json!([
+        {"do": "first", "criterion": {"kind": "judge", "question": "ok?"}},
+        {"do": "second", "criterion": {"kind": "check_passes", "command": "true", "verify": "true"}}
+    ]);
+    let error = parse_run(&json, limits()).unwrap_err();
+    assert_eq!(error, "Step 2: verify is only for worker_done");
+}
+
+#[test]
+fn unrelated_keys_and_a_null_verify_are_accepted() {
+    let extra = serde_json::json!({"kind": "worker_done", "worker": "E1", "command": ""});
+    assert!(verify_plan(extra).is_ok());
+    let null = serde_json::json!({"kind": "check_passes", "command": "true", "verify": null});
+    assert!(verify_plan(null).is_ok());
+}
+
+#[test]
 fn an_old_run_toml_without_verify_loads_and_keeps_its_hash() {
     let file = RunFile {
         plan: plan(),

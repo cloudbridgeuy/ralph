@@ -58,7 +58,7 @@ The hash follows the content of the plan, not its layout. Any change to the cont
 
 Each step has one criterion. The run goes to the next step only when the criterion is met.
 
-- `worker_done { worker }`: the worker reports `done`. Any other report status from that worker stops the run. It takes an optional `verify` command that should exit 0 to confirm the claim; the plan view shows it on the exit line. A blank `verify`, or `verify` on any other kind, is refused. ralph runs it after the worker reports `done`; see [Verify a done report](#verify-a-done-report).
+- `worker_done { worker }`: the worker reports `done`. Any other report status from that worker stops the run. It takes an optional `verify` command that should exit 0 to confirm the claim; the plan view shows it on the exit line. A blank `verify`, or a `verify` that is not null on any other kind, is refused with `Step N: verify is only for worker_done`. Other unknown keys in a criterion are ignored. ralph runs it after the worker reports `done`; see [Verify a done report](#verify-a-done-report).
 - `check_passes { command }` and `watch_passes { command }`: ralph alone runs the command as a watch, with no model turn. The model never sees the step line and does not run the command. The step is met when the command exits 0. Any other result stops the run as `CheckFailed`, and the notice names the exit code and the last lines of the output. If the watch cannot start, the run stops with a notice that says the check could not start and names the error. Put any work the check needs in an earlier step.
 - `judge { question }`: the model answers the question with "met" or "not met" and one line of evidence. See [Judge steps](#judge-steps).
 
