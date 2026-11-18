@@ -150,6 +150,8 @@ pub fn cursor_model_rejection(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn once_per_turn_server_appends_the_flag_to_the_args() {
         let server = serde_json::json!({"command": "ralph", "args": ["worker-mcp"]});
@@ -158,8 +160,6 @@ mod tests {
             serde_json::json!(["worker-mcp", "--once-per-turn"])
         );
     }
-
-    use super::*;
 
     #[test]
     fn cursor_model_rejection_prefers_the_agent_data_message() {
