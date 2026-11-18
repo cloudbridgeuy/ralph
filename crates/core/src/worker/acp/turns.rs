@@ -185,6 +185,14 @@ pub fn prompt_failure_report(agent: &str, id: &str, at: &str, problem: &str) -> 
     }
 }
 
+pub const REPEAT_REPORT_REFUSAL: &str = "Already reported this turn. End your turn now.";
+
+pub const ONCE_PER_TURN_FLAG: &str = "--once-per-turn";
+
+pub fn refuses_repeat_report(once_per_turn: bool, reported_this_turn: bool) -> bool {
+    once_per_turn && reported_this_turn
+}
+
 pub fn accept_report(owner_required: bool, owner_exists: bool) -> bool {
     !owner_required || owner_exists
 }
@@ -194,6 +202,13 @@ mod tests {
     use super::super::CURSOR_AGENT;
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_a_flagged_server_refuses_a_repeat_report() {
+        assert!(refuses_repeat_report(true, true));
+        assert!(!refuses_repeat_report(true, false));
+        assert!(!refuses_repeat_report(false, true));
+    }
 
     #[test]
     fn remind_queues_at_most_one_reminder() {
