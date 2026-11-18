@@ -70,7 +70,6 @@ use crate::markdown::{MarkdownTheme, RolePalette, ThemeRole};
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
-use crate::subprocess::OutputGate;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
 use keepalive::{KeepaliveWatch, Stamp};
@@ -263,6 +262,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let last_turn_end: Stamp = Arc::default();
     let last_ping: Stamp = Arc::default();
+    let (gate, sink) = prompt::turn_output(*theme_config.ui());
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -283,7 +283,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         live: Arc::clone(&live),
         reset_limits,
         recent_history_tokens,
-        gate: Arc::new(OutputGate::new()),
+        gate,
         run: &run,
         suggestions: suggestions.clone(),
         last_turn_end: Arc::clone(&last_turn_end),
@@ -291,7 +291,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         last_cost_usd: Mutex::new(None),
         timing: Mutex::default(),
         seen_len: Mutex::new(None),
-        columns: prompt::screen_columns,
+        sink,
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),

@@ -58,6 +58,13 @@ pub(super) fn write_direct(stream: Stream, text: &str) {
     }
 }
 
+pub(crate) fn write_to(gate: Option<&OutputGate>, stream: Stream, text: &str) {
+    match gate {
+        Some(gate) => gate.write(stream, text),
+        None => write_direct(stream, text),
+    }
+}
+
 fn emit(chunk: &Chunk) {
     write_direct(chunk.stream, &chunk.text);
 }
@@ -106,7 +113,7 @@ impl OutputGate {
         self.write(Stream::Stderr, text);
     }
 
-    pub(crate) fn write(&self, stream: Stream, text: &str) {
+    pub(super) fn write(&self, stream: Stream, text: &str) {
         let mut state = self.lock();
         if state.paused {
             state.held.push(stream, text);

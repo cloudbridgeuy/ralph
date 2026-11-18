@@ -1,8 +1,10 @@
-use crate::spinner::SpinnerContext;
-use crate::subprocess::Stream;
+use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
+use crate::subprocess::{write_to, OutputGate, Stream};
 use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
-use ralph_core::turn_event::{TurnEvent, Wait};
+use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
+use ralph_server::watches::locked;
+use std::sync::{Arc, Mutex};
 use termimad::MadSkin;
 
 pub(crate) fn rule(skin: &MadSkin, width: usize) -> String {
@@ -22,6 +24,78 @@ pub(crate) fn written(event: &TurnEvent, ui: &UiColors, width: usize) -> Option<
         TurnEvent::Output(text) => Some((Stream::Stdout, text.clone())),
         TurnEvent::Stderr(text) => Some((Stream::Stderr, text.clone())),
         TurnEvent::Busy(_) | TurnEvent::Resume(_) | TurnEvent::Idle => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Spin {
+    Fresh(SpinnerContext),
+    Restart(SpinnerContext),
+    Stop,
+}
+
+pub(crate) fn spin(event: &TurnEvent) -> Option<Spin> {
+    match event {
+        TurnEvent::Busy(wait) => Some(Spin::Fresh(context(*wait))),
+        TurnEvent::Resume(wait) => Some(Spin::Restart(context(*wait))),
+        TurnEvent::Idle => Some(Spin::Stop),
+        _ => None,
+    }
+}
+
+pub(crate) struct TerminalSink {
+    gate: Option<Arc<OutputGate>>,
+    ui: UiColors,
+    columns: fn() -> usize,
+    session: SpinnerSessionInfo,
+    spinner: Mutex<Option<Spinner>>,
+}
+
+impl TerminalSink {
+    pub(crate) fn new(gate: Option<Arc<OutputGate>>, ui: UiColors, columns: fn() -> usize) -> Self {
+        TerminalSink {
+            gate,
+            ui,
+            columns,
+            session: SpinnerSessionInfo::default(),
+            spinner: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn with_session(self, session: SpinnerSessionInfo) -> Self {
+        TerminalSink { session, ..self }
+    }
+
+    fn spinner(&self) -> Spinner {
+        Spinner::with_session_context(0, self.session.clone()).with_color(self.ui.spinner)
+    }
+
+    fn turn(&self, step: Spin) {
+        let mut held = locked(&self.spinner);
+        match step {
+            Spin::Fresh(context) => {
+                held.take();
+                held.insert(self.spinner()).start_with_context(context);
+            }
+            Spin::Restart(context) => held
+                .get_or_insert_with(|| self.spinner())
+                .start_with_context(context),
+            Spin::Stop => {
+                if let Some(spinner) = held.as_mut() {
+                    spinner.stop();
+                }
+            }
+        }
+    }
+}
+
+impl TurnSink for TerminalSink {
+    fn emit(&self, event: TurnEvent) {
+        if let Some(step) = spin(&event) {
+            self.turn(step);
+        } else if let Some((stream, text)) = written(&event, &self.ui, (self.columns)()) {
+            write_to(self.gate.as_deref(), stream, &text);
+        }
     }
 }
 
@@ -80,6 +154,33 @@ mod tests {
         ] {
             assert_eq!(written(&event, &ui(), 20), None);
         }
+    }
+
+    #[test]
+    fn busy_starts_a_fresh_spinner_clock() {
+        assert_eq!(
+            spin(&TurnEvent::Busy(Wait::Memory)),
+            Some(Spin::Fresh(SpinnerContext::WaitingForMemory))
+        );
+    }
+
+    #[test]
+    fn resume_restarts_the_spinner_on_the_same_clock() {
+        assert_eq!(
+            spin(&TurnEvent::Resume(Wait::Tool)),
+            Some(Spin::Restart(SpinnerContext::WaitingForTool))
+        );
+    }
+
+    #[test]
+    fn idle_stops_the_spinner() {
+        assert_eq!(spin(&TurnEvent::Idle), Some(Spin::Stop));
+    }
+
+    #[test]
+    fn written_events_leave_the_spinner_alone() {
+        assert_eq!(spin(&TurnEvent::Rule), None);
+        assert_eq!(spin(&TurnEvent::Output("x".into())), None);
     }
 
     #[test]

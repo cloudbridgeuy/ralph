@@ -1,4 +1,4 @@
-use super::gate::{write_direct, OutputGate, Stream};
+use super::gate::{write_to, OutputGate, Stream};
 use super::timeout::try_wait_child;
 use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
@@ -43,13 +43,6 @@ pub struct SpinnerSubprocessConfig {
     /// Prompt text written to the child's stdin, then closed. `Session` ignores
     /// it: it owns stdin for stream-json.
     pub stdin: Option<String>,
-}
-
-fn write_to(gate: Option<&OutputGate>, stream: Stream, text: &str) {
-    match gate {
-        Some(gate) => gate.write(stream, text),
-        None => write_direct(stream, text),
-    }
 }
 
 fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Option<&OutputGate>) {

@@ -1,19 +1,17 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::keepalive::Stamp;
-use crate::chat::prompt::Columns;
 use crate::chat::suggestion::SuggestionCell;
 use crate::chat::thread::{fork_view, Fork};
 use crate::highlight::ThemeConfig;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::signal;
-use crate::spinner::{Spinner, SpinnerSessionInfo};
+use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
     recorded, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
     SubprocessError,
 };
-use crate::turn_sink::{context, written};
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, build_tag_args, hit_blocking_limit,
@@ -31,7 +29,7 @@ use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::chat_suggestion::from_reply;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
-use ralph_core::turn_event::{TurnEvent, Wait};
+use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use ralph_server::ledger;
 use ralph_server::private_file::write_private;
@@ -146,18 +144,12 @@ pub(super) struct Turn<'a> {
     pub(super) last_cost_usd: Mutex<Option<f64>>,
     pub(super) timing: Mutex<TurnTiming>,
     pub(super) seen_len: Mutex<Option<usize>>,
-    pub(super) columns: Columns,
+    pub(super) sink: Arc<dyn TurnSink>,
 }
 
 impl Turn<'_> {
     fn print_rule(&self) {
-        self.write(&TurnEvent::Rule);
-    }
-
-    fn write(&self, event: &TurnEvent) {
-        if let Some((stream, text)) = written(event, self.theme_config.ui(), (self.columns)()) {
-            self.gate.write(stream, &text);
-        }
+        self.sink.emit(TurnEvent::Rule);
     }
 
     fn print_rule_after(&self, blocks: &[OutputBlock]) {
@@ -167,7 +159,7 @@ impl Turn<'_> {
     }
 
     fn warn(&self, message: impl std::fmt::Display) {
-        self.write(&TurnEvent::Warning(message.to_string()));
+        self.sink.emit(TurnEvent::Warning(message.to_string()));
     }
 
     fn warn_if_err<T, E: std::fmt::Display>(&self, result: Result<T, E>, context: &str) {
@@ -213,11 +205,9 @@ impl Turn<'_> {
             Ok(mut slot) => slot.take(),
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().take(),
             Err(TryLockError::WouldBlock) => {
-                let mut spinner = Spinner::with_session_context(0, chat_session_info())
-                    .with_color(self.theme_config.ui().spinner);
-                spinner.start_with_context(context(Wait::Response));
+                self.sink.emit(TurnEvent::Busy(Wait::Response));
                 let taken = locked(&self.session).take();
-                spinner.stop();
+                self.sink.emit(TurnEvent::Idle);
                 taken
             }
         };
@@ -501,11 +491,9 @@ impl Turn<'_> {
     fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
         let waited_from = Instant::now();
         let loaded = self.store.load_after_nap(NAP_WAIT_LIMIT, || {
-            let mut spinner = Spinner::with_session_context(0, chat_session_info())
-                .with_color(self.theme_config.ui().spinner);
-            spinner.start_with_context(context(Wait::Memory));
-            spinner
+            self.sink.emit(TurnEvent::Busy(Wait::Memory));
         });
+        self.sink.emit(TurnEvent::Idle);
         self.note_timing(|held| held.with_memory_wait(waited_from.elapsed()));
         let (mut entries, tree, wait) = loaded?;
         if wait == NapWait::Capped {
