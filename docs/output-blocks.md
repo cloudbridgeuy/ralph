@@ -12,15 +12,14 @@ During live execution, ralph renders content to stdout while it also accumulates
 Claude subprocess (--output-format stream-json)
         │
         ▼
-StreamProcessor::process_line() → parse_stream_line() → StreamEvent
+StreamCollector::process_line() → parse_stream_line() → StreamEvent
         │
         ▼
 handle_event()
-    ├── Render to stdout (syntax highlighting)
-    └── Build OutputBlock → push to output_blocks
+    └── Build OutputBlock → push to output_blocks, return new blocks
         │
         ▼
-StreamProcessor::finish() → StreamProcessorResult { output_blocks }
+StreamCollector::finish() → (flushed blocks, StreamProcessorResult) { output_blocks }
         │
         ▼
 extract_response_text(&output_blocks) → Option<String>
@@ -85,24 +84,14 @@ Tool results have variants to capture before/after states:
 
 | File | Responsibility |
 |------|----------------|
-| `stream_processor/output_block.rs` | OutputBlock enum and all variant definitions |
-| `stream_processor/block_builders.rs` | Helper functions to build OutputBlocks from tool data |
-| `stream_processor/processor.rs` | Accumulates blocks during streaming |
-| `stream_processor/event_handler.rs` | Pushes blocks during event processing |
+| `core/stream/blocks/output_block.rs` | OutputBlock enum and all variant definitions |
+| `core/stream/blocks/block_builders.rs` | Helper functions to build OutputBlocks from tool data |
+| `core/stream/blocks/collector.rs` | Accumulates blocks during streaming |
+| `stream_processor/block_renderer.rs` | Renders blocks to screen text |
 
 ## Live Execution
 
-For each event, `StreamProcessor` renders formatted content to stdout and pushes the matching `OutputBlock`:
-
-```rust
-// In event_handler.rs - both actions happen together
-if self.show_tool_invocations {
-    let formatted = format_tool_invocation(...);
-    output_parts.push(formatted);              // Render
-    let block = build_tool_invocation_block(...);
-    self.output_blocks.push(block);            // Accumulate
-}
-```
+For each event, `StreamCollector` builds the matching `OutputBlock`s and returns them. In a chat turn `Pump` emits them as `TurnEvent::Blocks`; `TerminalSink` renders them with `BlockRenderer`. See [stream processor architecture](context/stream-processor-architecture.md).
 
 ## Design Decisions
 
