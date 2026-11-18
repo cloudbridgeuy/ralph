@@ -53,6 +53,7 @@ impl StatusBar {
             context: Context {
                 name: name.to_string(),
                 thread: thread.map(str::to_string),
+                ..Context::default()
             },
             separator: separator_for(color, chat.status_powerline),
             color,
