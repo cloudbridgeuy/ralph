@@ -5,7 +5,6 @@
 
 use std::fs;
 
-use crate::render::{render_text_block, RenderContext};
 use ralph_core::chat_send_it::is_step_result_tool;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
@@ -199,110 +198,33 @@ impl StreamProcessor {
         rendered
     }
 
-    /// Process text through the chunk buffer and generate highlighted output.
-    pub(super) fn process_text_for_output(&mut self, text: &str) -> Option<String> {
-        let mut output = String::new();
-
-        // Process line by line through chunk buffer
-        // Use split_lines_preserve_trailing to handle trailing newlines correctly
-        for line in split_lines_preserve_trailing(text) {
-            let chunks = self.chunk_buffer.process_line(line);
-
-            for chunk in chunks {
-                // Split prose containing directives into typed segments
-                let sub_chunks = match &chunk.chunk_type {
-                    ChunkType::Prose => split_text_around_directives(&chunk.content),
-                    _ => vec![chunk],
-                };
-
-                for sub_chunk in sub_chunks {
-                    // Store chunk
-                    self.collected_chunks.push(sub_chunk.clone());
-
-                    // Accumulate text block
-                    self.output_blocks
-                        .push(OutputBlock::text(sub_chunk.clone()));
-
-                    // Generate highlighted output
-                    let highlighted = self.highlight_chunk(&sub_chunk);
-                    output.push_str(&highlighted);
-
-                    // Code/diff/directive blocks need explicit trailing newline;
-                    // prose rendered by term_text() manages its own newlines
-                    match &sub_chunk.chunk_type {
-                        ChunkType::Code { .. } | ChunkType::Diff | ChunkType::Directive { .. } => {
-                            output.push('\n')
-                        }
-                        ChunkType::Prose => {}
-                    }
-                }
-            }
-        }
-
-        if output.is_empty() {
-            None
-        } else {
-            Some(output)
-        }
-    }
-
-    /// Apply syntax highlighting to a chunk.
-    ///
-    /// Delegates to the shared `render_text_block()` function for all chunk types,
-    /// so every rendering path produces the same output.
-    pub(super) fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
-        let ctx = self.create_render_context();
-        let markdown = self.highlighting_enabled.then_some(&self.markdown);
-        render_text_block(&ctx, chunk, markdown)
-    }
-
-    /// Create a render context for use with shared rendering functions.
-    fn create_render_context(&self) -> RenderContext<'_> {
-        RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
-            .with_diff(self.diff_colors)
-            .with_tools(self.tool_colors)
-    }
-
-    /// Flush any pending chunks from the buffer.
-    pub(super) fn flush_pending_chunks(&mut self) -> Option<String> {
-        let chunks = self.chunk_buffer.finish();
-        if chunks.is_empty() {
-            return None;
-        }
-
+    fn emit_chunks(&mut self, chunks: Vec<ParsedChunk>) -> String {
         let mut output = String::new();
         for chunk in chunks {
-            // Split prose containing directives into typed segments
             let sub_chunks = match &chunk.chunk_type {
                 ChunkType::Prose => split_text_around_directives(&chunk.content),
                 _ => vec![chunk],
             };
-
             for sub_chunk in sub_chunks {
-                let highlighted = self.highlight_chunk(&sub_chunk);
-                output.push_str(&highlighted);
-
-                // Code/diff/directive blocks need explicit trailing newline;
-                // prose rendered by term_text() manages its own newlines
-                match &sub_chunk.chunk_type {
-                    ChunkType::Code { .. } | ChunkType::Diff | ChunkType::Directive { .. } => {
-                        output.push('\n')
-                    }
-                    ChunkType::Prose => {}
-                }
-
-                // Accumulate text block
-                self.output_blocks
-                    .push(OutputBlock::text(sub_chunk.clone()));
-                self.collected_chunks.push(sub_chunk);
+                self.collected_chunks.push(sub_chunk.clone());
+                output.push_str(&self.emit(OutputBlock::text(sub_chunk)));
             }
         }
+        output
+    }
 
-        if output.is_empty() {
-            None
-        } else {
-            Some(output)
+    pub(super) fn process_text_for_output(&mut self, text: &str) -> Option<String> {
+        let mut output = String::new();
+        for line in split_lines_preserve_trailing(text) {
+            let chunks = self.chunk_buffer.process_line(line);
+            output.push_str(&self.emit_chunks(chunks));
         }
+        Some(output).filter(|o| !o.is_empty())
+    }
+
+    pub(super) fn flush_pending_chunks(&mut self) -> Option<String> {
+        let chunks = self.chunk_buffer.finish();
+        Some(self.emit_chunks(chunks)).filter(|o| !o.is_empty())
     }
 }
 
