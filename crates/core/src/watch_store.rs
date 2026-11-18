@@ -363,6 +363,7 @@ mod tests {
         ));
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "persistent watch cannot carry a cwd")]
     fn a_persistent_watch_with_a_cwd_is_refused_in_debug_builds() {
