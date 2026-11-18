@@ -613,7 +613,14 @@ impl InboxTurn<'_> {
         self.monitor.set_phase(Phase::Turn);
         let drained = self.monitor.drain(selection)?;
         self.monitor.refresh(true);
-        let Some(unread) = inbox::read(selection, &drained, display) else {
+        let Some(unread) = inbox::read(
+            selection,
+            &drained,
+            display,
+            screen_columns(),
+            &mut io::stdout(),
+        )?
+        else {
             self.monitor.set_phase(Phase::Prompt);
             return Ok(None);
         };

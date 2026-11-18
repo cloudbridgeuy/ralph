@@ -1,6 +1,6 @@
 use crate::chat::hold_progress::HoldPanel;
 use crate::chat::monitor::Monitor;
-use crate::chat::prompt::screen_columns;
+use crate::chat::prompt::{screen_columns, terminal_columns};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
 use crate::signal;
@@ -47,7 +47,7 @@ pub(super) fn run(filter: &HoldFilter, monitor: &Monitor, bar: &StatusBar) -> He
             &monitor.store_dir,
         );
         let outcome = wait(filter, monitor, bar, &mut panel);
-        panel.clear();
+        panel.clear(terminal_columns(), &mut io::stdout());
         outcome
     };
     monitor.set_hold(None);
@@ -75,7 +75,12 @@ fn wait(
         panel.tick();
         let width = screen_columns();
         if shown.as_ref() != Some(&status) || width != panel.painted || panel.stale(width) {
-            panel.paint(&bar.line(&status, width), width);
+            panel.paint(
+                &bar.line(&status, width),
+                width,
+                terminal_columns(),
+                &mut io::stdout(),
+            );
             shown = Some(status);
         }
         if signal::is_terminated() {

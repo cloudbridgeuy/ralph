@@ -210,7 +210,7 @@ impl Keys<'_> {
             EditorExit::Submitted(text) => match self.instant_route(&text) {
                 Some(route) => {
                     warn_if_err(
-                        run_local(route, self.local, || {
+                        run_local(route, self.local, &mut std::io::stdout(), || {
                             self.monitor.refresh(true);
                         }),
                         "Failed to run the command",

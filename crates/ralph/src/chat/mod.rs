@@ -129,7 +129,7 @@ use session::{
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 pub(crate) use switch::ChatExit;
@@ -291,6 +291,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         last_cost_usd: Mutex::new(None),
         timing: Mutex::default(),
         seen_len: Mutex::new(None),
+        columns: prompt::screen_columns,
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -410,7 +411,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color.then(|| crate::input_theme::to_reedline(theme_config.ui().ask_header)),
     );
     if chat_config.resume_summary && !args.skip_summary {
-        recap::print_recap(&store, running.len(), sent_style);
+        let width = prompt::screen_columns();
+        recap::print_recap(&store, running.len(), sent_style, width, &mut io::stdout())?;
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
@@ -532,6 +534,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
         remote: &remote,
         config: &config_snapshot,
+        columns: prompt::screen_columns,
     };
     let keys = Keys {
         gate: &turn.gate,
@@ -661,16 +664,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             Route::Send(message) => {
-                if let Some(images) = crate::render::image::enabled() {
-                    print!(
-                        "{}",
-                        crate::render::image::render_attachments(
-                            &message,
-                            images,
-                            crate::render::image::ImageBounds::current()
-                        )
-                    );
-                }
+                crate::render::image::print_attachments(&message);
                 monitor.set_phase(Phase::Cell);
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
@@ -891,7 +885,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             local => {
-                if let Some(output) = run_local(local, &local_route, || {
+                if let Some(output) = run_local(local, &local_route, &mut io::stdout(), || {
                     monitor.refresh(true);
                 })? {
                     note(&output);
