@@ -307,7 +307,10 @@ fn ended() -> Ended<'static> {
 }
 
 fn judging(dir: &Path) -> (SendIt, Active) {
-    let send_it = SendIt::new(dir, LIMITS);
+    judging_on(SendIt::new(dir, LIMITS))
+}
+
+fn judging_on(send_it: SendIt) -> (SendIt, Active) {
     let mut args = plan_args();
     args["steps"] =
         json!([{"do": "review", "criterion": {"kind": "judge", "question": "all fixed?"}}]);
@@ -850,4 +853,77 @@ fn a_settled_last_check_logs_only_the_done_notice() {
         logged[0].starts_with(&notice_record("send-it done:")),
         "{logged:?}"
     );
+}
+
+#[derive(Clone, Default)]
+struct Printed(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for Printed {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Printed {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+fn printing(dir: &Path) -> (SendIt, Active, Printed) {
+    let printed = Printed::default();
+    let send_it = SendIt::with_output(dir, LIMITS, Arc::new(Mutex::new(printed.clone())));
+    let (send_it, active) = judging_on(send_it);
+    (send_it, active, printed)
+}
+
+fn done(active: Active, met: Option<&str>) -> Ticked {
+    Ticked {
+        driving: active.driving,
+        next: Next::Done,
+        met: met.map(str::to_string),
+        notice: None,
+    }
+}
+
+#[test]
+fn a_done_tick_without_a_plan_prints_and_logs_its_met_line_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active, printed) = printing(dir.path());
+    send_it.off();
+    send_it.dispatch(done(active, Some("Step 1 met")), &held::monitor(dir.path()));
+    assert_eq!(printed.text(), "Step 1 met\n");
+    assert_eq!(logged_texts(dir.path()), vec![notice_record("Step 1 met")]);
+}
+
+#[test]
+fn a_done_tick_without_a_plan_or_a_met_line_stays_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active, printed) = printing(dir.path());
+    send_it.off();
+    send_it.dispatch(done(active, None), &held::monitor(dir.path()));
+    assert_eq!(printed.text(), "");
+    assert!(logged_texts(dir.path()).is_empty());
+}
+
+#[test]
+fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active, printed) = printing(dir.path());
+    send_it.dispatch(done(active, Some("Step 1 met")), &held::monitor(dir.path()));
+    let logged = logged_texts(dir.path());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert!(logged[0].contains("send-it done"), "{logged:?}");
+    assert!(!logged[0].contains("Step 1 met"), "{logged:?}");
+    assert!(
+        printed.text().contains("send-it DONE"),
+        "{}",
+        printed.text()
+    );
+    assert!(!printed.text().contains("Step 1 met"), "{}", printed.text());
 }

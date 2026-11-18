@@ -34,10 +34,11 @@ use ralph_server::workers::running_workers;
 use reedline::{EditCommand, Reedline};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 const RUN_DIR: &str = "send-it";
 const RUN_FILE: &str = "run.toml";
@@ -59,6 +60,16 @@ pub(crate) struct SendIt {
     refused: Arc<Mutex<Option<String>>>,
     judged: Arc<Mutex<Option<StepResult>>>,
     answered: Arc<Mutex<Vec<String>>>,
+    out: Out,
+}
+
+#[derive(Clone)]
+struct Out(Arc<Mutex<dyn Write + Send>>);
+
+impl fmt::Debug for Out {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Out")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +164,10 @@ pub(super) fn worker_states(monitor: &Monitor) -> (HashMap<String, String>, Vec<
 
 impl SendIt {
     pub(crate) fn new(store_dir: &Path, limits: Limits) -> Self {
+        Self::with_output(store_dir, limits, Arc::new(Mutex::new(io::stdout())))
+    }
+
+    fn with_output(store_dir: &Path, limits: Limits, out: Arc<Mutex<dyn Write + Send>>) -> Self {
         Self {
             log: store_dir.to_path_buf(),
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
@@ -161,7 +176,16 @@ impl SendIt {
             refused: Arc::default(),
             judged: Arc::default(),
             answered: Arc::default(),
+            out: Out(out),
         }
+    }
+
+    fn show(&self, line: impl fmt::Display) {
+        let mut out = self.out.0.lock().unwrap_or_else(PoisonError::into_inner);
+        warn_if_err(
+            writeln!(out, "{line}").and_then(|()| out.flush()),
+            "Failed to print the send-it line",
+        );
     }
 
     fn load(&self) -> Result<Option<RunFile>, String> {
@@ -370,16 +394,16 @@ impl SendIt {
 
     fn route(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
         for line in ticked.shown_lines() {
-            println!("{line}");
+            self.show(line);
         }
         let plan = self.load().ok().flatten().map(|file| file.plan);
         let driving = ticked.driving;
         match ticked.next {
             Next::Send(line) => {
                 if let Some(plan) = &plan {
-                    println!("{}", running_line(plan, &driving));
+                    self.show(running_line(plan, &driving));
                 }
-                println!("{line}");
+                self.show(&line);
                 Driven::keep(driving, Route::Send(line), None)
             }
             Next::Judge => match plan.and_then(|plan| {
@@ -389,7 +413,7 @@ impl SendIt {
                 Some((driving, prompt, echo))
             }) {
                 Some((driving, prompt, echo)) => {
-                    println!("{echo}");
+                    self.show(echo);
                     Driven::keep(driving, Route::Send(prompt), None)
                 }
                 None => self.stopped(StopReason::PlanChanged, &driving, monitor),
@@ -399,9 +423,9 @@ impl SendIt {
             }
             Next::Watch(command) | Next::Check(command) => {
                 if let Some(plan) = &plan {
-                    println!("{}", running_line(plan, &driving));
+                    self.show(running_line(plan, &driving));
                     if let Some(step) = plan.steps.get(driving.progress.step) {
-                        println!("{}", step_line(plan, driving.progress.step, step));
+                        self.show(step_line(plan, driving.progress.step, step));
                     }
                 }
                 let worker = plan
@@ -424,7 +448,7 @@ impl SendIt {
                         Driven::keep(driving, Route::Hold(HoldFilter::Source(id)), Some(slot))
                     }
                     Err(error) => {
-                        println!("{error}");
+                        self.show(&error);
                         let step = driving.progress.step + 1;
                         self.stopped(
                             StopReason::CheckNotStarted {
@@ -446,6 +470,7 @@ impl SendIt {
                 ),
                 None => {
                     if let Some(met) = ticked.met.as_deref() {
+                        self.show(met);
                         self.log_notice(met);
                     }
                     Driven::ended()
@@ -473,10 +498,10 @@ impl SendIt {
     }
 
     fn ended(&self, notice: &str, block: &str, driving: &Driving) -> Driven {
-        println!("{block}");
+        self.show(block);
         self.log_notice(notice);
         if let Err(error) = self.release(&driving.hash, None) {
-            println!("{error}");
+            self.show(error);
         }
         Driven::ended()
     }
@@ -485,13 +510,10 @@ impl SendIt {
         let kept = self.release(&driving.hash, Some(driving.progress.step + 1));
         let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
         let notice = reason.notice(&driving.run, kept_file);
-        println!(
-            "{}",
-            stop_block(&reason, kept_file, driving, screen_columns())
-        );
+        self.show(stop_block(&reason, kept_file, driving, screen_columns()));
         self.log_notice(&notice);
         if let Err(error) = kept {
-            println!("{error}");
+            self.show(error);
         }
         if let Some(alert) = blocked_alert(&notice, &monitor.alert) {
             inbox_alert::deliver(&alert);
