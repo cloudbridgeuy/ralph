@@ -3,9 +3,9 @@ use std::fs;
 use ralph_core::chunk::is_unfenced_diff;
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
-use super::tool_results::{edit_diff_from_snapshot, notebook_diff_from_snapshot};
+use super::tool_results::notebook_diff_from_snapshot;
 use ralph_core::stream::blocks::{
-    count_non_empty_lines, input_str, is_content_truncated, write_result_variant,
+    count_non_empty_lines, edit_diff, input_str, is_content_truncated, write_result_variant,
 };
 use ralph_core::stream::blocks::{
     EditSnapshot, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot,
@@ -53,7 +53,10 @@ fn snapshot_variant(snapshot: Snapshot) -> ToolResultVariant {
                 file_path: snap.file_path,
             }
         }
-        Snapshot::Edit(snap) => match edit_diff_from_snapshot(&snap) {
+        Snapshot::Edit(snap) => match fs::read_to_string(&snap.file_path)
+            .ok()
+            .and_then(|after| edit_diff(&snap, &after))
+        {
             Some(diff_content) => ToolResultVariant::EditDiff {
                 file_path: snap.file_path,
                 diff_content,

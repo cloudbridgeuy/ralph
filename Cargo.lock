@@ -1639,6 +1639,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "similar",
  "tar",
  "toml",
  "unicode-width 0.2.2",

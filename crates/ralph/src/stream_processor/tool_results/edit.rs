@@ -9,16 +9,11 @@
 //! 3. Display after block (new_string) with green background + syntax highlighting
 //! 4. Fall back to unified diff if old_string/new_string unavailable
 
-use std::fs;
-
-use similar::{ChangeTag, TextDiff};
-
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::render::ansi;
 
 use crate::render::extract_language_from_path;
 use crate::render::RenderContext;
-use ralph_core::stream::blocks::EditSnapshot;
 
 /// Maximum lines to show in a before/after block before truncating.
 const MAX_BLOCK_LINES: usize = 30;
@@ -233,61 +228,6 @@ pub fn format_no_changes_message(ctx: &RenderContext, file_path: &str) -> String
     }
 }
 
-/// Generate a unified diff from an EditSnapshot by comparing before/after content.
-///
-/// Reads the current file content and generates a unified diff against the
-/// captured snapshot. Returns None if the file cannot be read or no changes
-/// were made.
-pub fn generate_diff_from_snapshot(snapshot: &EditSnapshot) -> Option<String> {
-    // Read current file content
-    let after_content = fs::read_to_string(&snapshot.file_path).ok()?;
-
-    // Get before content (empty string if file didn't exist)
-    let before_content = snapshot.content.as_deref().unwrap_or("");
-
-    // Skip if no changes
-    if before_content == after_content {
-        return None;
-    }
-
-    // Generate unified diff
-    let diff = TextDiff::from_lines(before_content, &after_content);
-    let unified = generate_unified_diff(&diff, &snapshot.file_path);
-
-    Some(unified)
-}
-
-/// Generate unified diff format from a TextDiff.
-fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, file_path: &str) -> String {
-    let mut output = String::new();
-
-    // Add header
-    output.push_str(&format!("--- a/{}\n", file_path));
-    output.push_str(&format!("+++ b/{}\n", file_path));
-
-    // Generate hunks
-    for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
-        // Hunk header
-        output.push_str(&format!("{}\n", hunk.header()));
-
-        // Changes
-        for change in hunk.iter_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => "-",
-                ChangeTag::Insert => "+",
-                ChangeTag::Equal => " ",
-            };
-            output.push_str(sign);
-            output.push_str(change.value());
-            if !change.value().ends_with('\n') {
-                output.push('\n');
-            }
-        }
-    }
-
-    output
-}
-
 /// Format diff output with optional highlighting and truncation.
 ///
 /// This is the common formatting logic shared between generated diffs
@@ -367,44 +307,6 @@ pub fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &s
 mod tests {
     use super::*;
     use crate::stream_processor::StreamProcessor;
-
-    #[test]
-    fn test_generate_unified_diff() {
-        let before = "line1\nline2\nline3\n";
-        let after = "line1\nmodified\nline3\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "test.txt");
-
-        assert!(unified.contains("--- a/test.txt"));
-        assert!(unified.contains("+++ b/test.txt"));
-        assert!(unified.contains("-line2"));
-        assert!(unified.contains("+modified"));
-    }
-
-    #[test]
-    fn test_generate_unified_diff_addition() {
-        let before = "line1\n";
-        let after = "line1\nline2\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "test.txt");
-
-        assert!(unified.contains("+line2"));
-        assert!(!unified.contains("-line1")); // line1 unchanged
-    }
-
-    #[test]
-    fn test_generate_unified_diff_deletion() {
-        let before = "line1\nline2\n";
-        let after = "line1\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "test.txt");
-
-        assert!(unified.contains("-line2"));
-        assert!(!unified.contains("+line2"));
-    }
 
     #[test]
     fn test_format_diff_output_truncation() {
@@ -573,16 +475,5 @@ mod tests {
         assert!(
             format_no_changes_message(&processor.render_context(), "a.rs").starts_with("\x1b[97m✓")
         );
-    }
-
-    #[test]
-    fn unified_diff_breaks_line_after_hunk_header() {
-        let diff = TextDiff::from_lines("x = 1\n", "x = 2\n");
-        let out = generate_unified_diff(&diff, "a.rs");
-        let lines: Vec<&str> = out.lines().collect();
-        assert!(lines.contains(&"@@ -1 +1 @@"));
-        assert!(!lines
-            .iter()
-            .any(|l| l.starts_with("@@") && !l.ends_with("@@")));
     }
 }
