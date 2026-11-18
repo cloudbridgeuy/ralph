@@ -1,3 +1,4 @@
+use crate::render::wrap_width;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::subprocess::{write_to, OutputGate, Stream};
 use crate::ui_theme::UiColors;
@@ -6,6 +7,10 @@ use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::watches::locked;
 use std::sync::{Arc, Mutex};
 use termimad::MadSkin;
+
+fn rendered_width() -> usize {
+    wrap_width(termimad::terminal_size().0.into())
+}
 
 pub(crate) fn rule(skin: &MadSkin, width: usize) -> String {
     skin.text("---", Some(width)).to_string()
@@ -60,6 +65,10 @@ impl TerminalSink {
             session: SpinnerSessionInfo::default(),
             spinner: Mutex::new(None),
         }
+    }
+
+    pub(crate) fn plain(ui: UiColors) -> Self {
+        TerminalSink::new(None, ui, rendered_width)
     }
 
     pub(crate) fn with_session(self, session: SpinnerSessionInfo) -> Self {

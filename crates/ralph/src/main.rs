@@ -557,11 +557,8 @@ fn run_memory_command(
                     command: command.to_string(),
                     timeout_secs: Some(curator.timeout),
                     theme_config: theme_config.clone(),
-                    session_elapsed_ms: 0,
                     verbose_tools: stream_processor::VerboseToolsConfig::new(),
-                    session_info: spinner::SpinnerSessionInfo {
-                        persona: Some("chat memory".into()),
-                    },
+                    sink: std::sync::Arc::new(turn_sink::TerminalSink::plain(*theme_config.ui())),
                     gate: None,
                     interrupt: None,
                     stdin: Some(stdin.clone()),

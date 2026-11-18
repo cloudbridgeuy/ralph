@@ -4,10 +4,10 @@ use crate::chat::monitor::Monitor;
 use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::switch::ChatExit;
-use crate::chat::turn::chat_session_info;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
 use crate::signal::is_terminated;
+use crate::spinner::SpinnerSessionInfo;
 use crate::subprocess::OutputGate;
 use crate::turn_sink::TerminalSink;
 use crate::ui_theme::UiColors;
@@ -61,6 +61,12 @@ pub(super) fn terminal_columns() -> usize {
 
 pub(super) fn screen_columns() -> usize {
     wrap_width(terminal_columns())
+}
+
+fn chat_session_info() -> SpinnerSessionInfo {
+    SpinnerSessionInfo {
+        persona: Some("chat".into()),
+    }
 }
 
 pub(super) fn turn_output(ui: UiColors) -> (Arc<OutputGate>, Arc<dyn TurnSink>) {

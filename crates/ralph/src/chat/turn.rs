@@ -5,7 +5,6 @@ use crate::chat::thread::{fork_view, Fork};
 use crate::highlight::ThemeConfig;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::signal;
-use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
@@ -67,12 +66,6 @@ pub(super) fn spawn_tag(store: &Path, run: &str) -> io::Result<()> {
                 store,
             )?)]),
     )
-}
-
-pub(super) fn chat_session_info() -> SpinnerSessionInfo {
-    SpinnerSessionInfo {
-        persona: Some("chat".into()),
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -534,9 +527,8 @@ impl Turn<'_> {
             )?,
             timeout_secs: None,
             theme_config: self.theme_config.clone(),
-            session_elapsed_ms: 0,
             verbose_tools: VerboseToolsConfig::new(),
-            session_info: chat_session_info(),
+            sink: Arc::clone(&self.sink),
             gate: Some(Arc::clone(&self.gate)),
             interrupt: None,
             stdin: None,
