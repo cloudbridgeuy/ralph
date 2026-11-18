@@ -100,8 +100,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete@0.9.2
+
       - name: Check for unused dependencies
-        uses: bnjbvr/cargo-machete@main
+        run: cargo machete
 
   typos:
     name: Check Typos
