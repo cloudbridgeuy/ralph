@@ -15,9 +15,7 @@ use super::block_builders::build_tool_invocation_block;
 use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
 use super::render_block::render_block;
-use super::result_handlers::{
-    build_result_block, handle_edit_result, handle_notebook_result, handle_write_result,
-};
+use super::result_handlers::{build_result_block, handle_edit_result, Snapshot};
 use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
 impl StreamProcessor {
@@ -163,38 +161,26 @@ impl StreamProcessor {
                             continue;
                         }
 
-                        let output = if let Some(inv) = &invocation {
-                            match (inv.name.as_str(), result.is_error) {
-                                ("Edit", false) => {
-                                    handle_edit_result(self, result, inv, edit_snapshot.as_ref())
-                                }
-                                ("Write", false) => {
-                                    handle_write_result(self, result, inv, write_snapshot.as_ref())
-                                }
-                                ("NotebookEdit", false) => handle_notebook_result(
-                                    self,
-                                    result,
-                                    inv,
-                                    notebook_snapshot.as_ref(),
-                                ),
-                                _ => {
-                                    let block = build_result_block(
-                                        &self.verbose_tools_config,
-                                        result,
-                                        Some(inv),
-                                    );
-                                    output_parts.push(self.emit(block));
-                                    continue;
-                                }
-                            }
-                        } else {
-                            let block =
-                                build_result_block(&self.verbose_tools_config, result, None);
-                            output_parts.push(self.emit(block));
+                        if let Some(inv) = invocation
+                            .as_ref()
+                            .filter(|inv| inv.name == "Edit" && !result.is_error)
+                        {
+                            let output =
+                                handle_edit_result(self, result, inv, edit_snapshot.as_ref());
+                            output_parts.push(output.formatted);
+                            self.output_blocks.push(output.block);
                             continue;
-                        };
-                        output_parts.push(output.formatted);
-                        self.output_blocks.push(output.block);
+                        }
+                        let snapshot = write_snapshot
+                            .map(Snapshot::Write)
+                            .or(notebook_snapshot.map(Snapshot::Notebook));
+                        let block = build_result_block(
+                            &self.verbose_tools_config,
+                            result,
+                            invocation.as_ref(),
+                            snapshot,
+                        );
+                        output_parts.push(self.emit(block));
                     }
                 }
             }

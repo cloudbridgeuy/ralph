@@ -3,7 +3,7 @@ use ralph_core::stream::ToolInvocation;
 use super::output_block::{
     GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
-use super::types::{EditSnapshot, GrepParams, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot};
+use super::types::{EditSnapshot, GrepParams, VerboseToolsConfig, WriteSnapshot};
 use super::utils::extract_key_argument;
 
 pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Option<&'a str> {
@@ -150,110 +150,25 @@ pub fn build_edit_diff_block(file_path: &str, diff_content: &str) -> OutputBlock
     )
 }
 
-/// Build the appropriate Write result block based on snapshot state.
-///
-/// - New file: WriteNewFile variant
-/// - Overwrite: WriteOverwrite variant with before/after
-/// - No changes: WriteNoChanges variant
-pub fn build_write_result_block(
-    snapshot: &WriteSnapshot,
-    new_content: Option<&str>,
-) -> OutputBlock {
-    let after = new_content.unwrap_or_default();
-
-    if !snapshot.file_existed {
-        // New file
-        return OutputBlock::tool_result(
-            "Write",
-            false,
-            ToolResultVariant::WriteNewFile {
-                file_path: snapshot.file_path.clone(),
-                content: after.to_string(),
-            },
-        );
-    }
-
-    // Overwrite
-    let before = snapshot.content.as_deref().unwrap_or_default();
-    if before == after {
-        return OutputBlock::tool_result(
-            "Write",
-            false,
-            ToolResultVariant::WriteNoChanges {
-                file_path: snapshot.file_path.clone(),
-                is_new_file: false,
-            },
-        );
-    }
-
-    OutputBlock::tool_result(
-        "Write",
-        false,
-        ToolResultVariant::WriteOverwrite {
-            file_path: snapshot.file_path.clone(),
-            before_content: before.to_string(),
-            after_content: after.to_string(),
+pub fn write_result_variant(snapshot: WriteSnapshot, after: Option<String>) -> ToolResultVariant {
+    let file_path = snapshot.file_path;
+    let before = snapshot.content.unwrap_or_default();
+    match after {
+        Some(content) if !snapshot.file_existed && !content.is_empty() => {
+            ToolResultVariant::WriteNewFile { file_path, content }
+        }
+        Some(after) if snapshot.file_existed && after != before => {
+            ToolResultVariant::WriteOverwrite {
+                file_path,
+                before_content: before,
+                after_content: after,
+            }
+        }
+        _ => ToolResultVariant::WriteNoChanges {
+            file_path,
+            is_new_file: !snapshot.file_existed,
         },
-    )
-}
-
-/// Build an OutputBlock for NotebookEdit tool results.
-///
-/// Requires a NotebookSnapshot for cell identification and the new source content.
-pub fn build_notebook_edit_block(snapshot: &NotebookSnapshot, new_source: &str) -> OutputBlock {
-    // Generate diff between old and new content
-    let old_content = snapshot.content.as_deref().unwrap_or("");
-    let diff_content = generate_simple_diff(old_content, new_source, &snapshot.edit_mode);
-
-    OutputBlock::tool_result(
-        "NotebookEdit",
-        false,
-        ToolResultVariant::NotebookEdit {
-            notebook_path: snapshot.notebook_path.clone(),
-            cell_identifier: snapshot.cell_identifier.clone(),
-            cell_type: snapshot.cell_type.clone(),
-            edit_mode: snapshot.edit_mode.clone(),
-            diff_content: Some(diff_content),
-        },
-    )
-}
-
-/// Generate a simple diff representation for notebook edits.
-///
-/// For replace/insert: shows old content with - prefix, new content with + prefix
-/// For delete: shows old content with - prefix only
-fn generate_simple_diff(old: &str, new: &str, edit_mode: &str) -> String {
-    let mut diff = String::new();
-
-    match edit_mode {
-        "delete" => {
-            // Delete mode: only show removed lines
-            for line in old.lines() {
-                diff.push_str(&format!("-{}\n", line));
-            }
-        }
-        "insert" => {
-            // Insert mode: only show added lines
-            for line in new.lines() {
-                diff.push_str(&format!("+{}\n", line));
-            }
-        }
-        _ => {
-            // Replace mode: show both old and new
-            if !old.is_empty() {
-                for line in old.lines() {
-                    diff.push_str(&format!("-{}\n", line));
-                }
-            }
-            if !new.is_empty() {
-                for line in new.lines() {
-                    diff.push_str(&format!("+{}\n", line));
-                }
-            }
-        }
     }
-
-    diff
 }
 
 #[cfg(test)]
@@ -463,86 +378,34 @@ mod tests {
     #[test]
     fn test_write_block_for_new_file() {
         assert_eq!(
-            build_write_result_block(&write_snapshot(None, false), Some("hi")),
-            OutputBlock::tool_result(
-                "Write",
-                false,
-                ToolResultVariant::WriteNewFile {
-                    file_path: "a.txt".to_string(),
-                    content: "hi".to_string(),
-                },
-            )
+            write_result_variant(write_snapshot(None, false), Some("hi".to_string())),
+            ToolResultVariant::WriteNewFile {
+                file_path: "a.txt".to_string(),
+                content: "hi".to_string(),
+            },
         );
     }
 
     #[test]
     fn test_write_block_with_same_content_has_no_changes() {
         assert_eq!(
-            build_write_result_block(&write_snapshot(Some("hi"), true), Some("hi")),
-            OutputBlock::tool_result(
-                "Write",
-                false,
-                ToolResultVariant::WriteNoChanges {
-                    file_path: "a.txt".to_string(),
-                    is_new_file: false,
-                },
-            )
+            write_result_variant(write_snapshot(Some("hi"), true), Some("hi".to_string())),
+            ToolResultVariant::WriteNoChanges {
+                file_path: "a.txt".to_string(),
+                is_new_file: false,
+            },
         );
     }
 
     #[test]
     fn test_write_block_for_overwrite() {
         assert_eq!(
-            build_write_result_block(&write_snapshot(Some("old"), true), Some("new")),
-            OutputBlock::tool_result(
-                "Write",
-                false,
-                ToolResultVariant::WriteOverwrite {
-                    file_path: "a.txt".to_string(),
-                    before_content: "old".to_string(),
-                    after_content: "new".to_string(),
-                },
-            )
-        );
-    }
-
-    fn notebook_diff(content: Option<&str>, edit_mode: &str, new_source: &str) -> String {
-        let snapshot = NotebookSnapshot {
-            notebook_path: "n.ipynb".to_string(),
-            cell_identifier: "1".to_string(),
-            content: content.map(String::from),
-            edit_mode: edit_mode.to_string(),
-            cell_type: None,
-        };
-        match build_notebook_edit_block(&snapshot, new_source) {
-            OutputBlock::ToolResult(result) => match result.variant {
-                ToolResultVariant::NotebookEdit { diff_content, .. } => {
-                    diff_content.unwrap_or_default()
-                }
-                other => panic!("Expected NotebookEdit variant, got {other:?}"),
+            write_result_variant(write_snapshot(Some("old"), true), Some("new".to_string())),
+            ToolResultVariant::WriteOverwrite {
+                file_path: "a.txt".to_string(),
+                before_content: "old".to_string(),
+                after_content: "new".to_string(),
             },
-            other => panic!("Expected ToolResult, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_notebook_diff_delete_shows_only_old_lines() {
-        assert_eq!(notebook_diff(Some("a\nb"), "delete", "c"), "-a\n-b\n");
-    }
-
-    #[test]
-    fn test_notebook_diff_insert_shows_only_new_lines() {
-        assert_eq!(notebook_diff(Some("a"), "insert", "c\nd"), "+c\n+d\n");
-    }
-
-    #[test]
-    fn test_notebook_diff_replace_shows_old_then_new() {
-        assert_eq!(notebook_diff(Some("a"), "replace", "b"), "-a\n+b\n");
-    }
-
-    #[test]
-    fn test_notebook_diff_replace_skips_empty_sides() {
-        assert_eq!(notebook_diff(None, "replace", "b"), "+b\n");
-        assert_eq!(notebook_diff(Some("a"), "replace", ""), "-a\n");
+        );
     }
 }

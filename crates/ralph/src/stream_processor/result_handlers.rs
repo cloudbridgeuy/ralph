@@ -3,15 +3,18 @@
 //! Each function handles a specific tool type's result processing,
 //! returning both the formatted output and the output block.
 
+use std::fs;
+
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
 use super::block_builders::{
-    build_default_result_block, build_edit_before_after_block, build_edit_diff_block,
-    build_notebook_edit_block, build_write_result_block, input_str,
+    build_default_result_block, build_edit_before_after_block, build_edit_diff_block, input_str,
+    write_result_variant,
 };
 use super::output_block::{OutputBlock, ToolResultVariant};
 use super::processor::StreamProcessor;
 use super::tool_results;
+use super::tool_results::notebook_diff_from_snapshot;
 use super::types::{EditSnapshot, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot};
 use super::utils::{count_non_empty_lines, is_content_truncated};
 
@@ -61,51 +64,6 @@ pub fn handle_edit_result(
     }
 }
 
-/// Handle Write tool result with snapshot.
-pub fn handle_write_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: &ToolInvocation,
-    snapshot: Option<&WriteSnapshot>,
-) -> ToolResultOutput {
-    if let Some(snap) = snapshot {
-        let formatted = tool_results::format_write_result_with_snapshot(
-            &processor.render_context(),
-            snap.clone(),
-        );
-        // Read the new file content to determine which variant to use
-        let new_content = std::fs::read_to_string(&snap.file_path).ok();
-        let block = build_write_result_block(snap, new_content.as_deref());
-        ToolResultOutput { formatted, block }
-    } else {
-        handle_default_result(processor, result, Some(invocation))
-    }
-}
-
-/// Handle NotebookEdit tool result with snapshot.
-pub fn handle_notebook_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: &ToolInvocation,
-    snapshot: Option<&NotebookSnapshot>,
-) -> ToolResultOutput {
-    if let Some(snap) = snapshot {
-        let formatted = tool_results::format_notebook_result_with_snapshot(
-            &processor.render_context(),
-            snap.clone(),
-        );
-        let new_source = invocation
-            .input
-            .get("new_source")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let block = build_notebook_edit_block(snap, new_source);
-        ToolResultOutput { formatted, block }
-    } else {
-        handle_default_result(processor, result, Some(invocation))
-    }
-}
-
 /// Handle default tool result (unknown tools or errors).
 pub fn handle_default_result(
     processor: &StreamProcessor,
@@ -119,14 +77,39 @@ pub fn handle_default_result(
     ToolResultOutput { formatted, block }
 }
 
+pub enum Snapshot {
+    Write(WriteSnapshot),
+    Notebook(NotebookSnapshot),
+}
+
 pub fn build_result_block(
     verbose: &VerboseToolsConfig,
     result: &ToolResult,
     invocation: Option<&ToolInvocation>,
+    snapshot: Option<Snapshot>,
 ) -> OutputBlock {
     let name = invocation.map_or("Unknown", |inv| inv.name.as_str());
-    let variant = plain_variant(verbose, name, result, invocation);
+    let variant = match snapshot {
+        Some(snapshot) if !result.is_error => snapshot_variant(snapshot),
+        _ => plain_variant(verbose, name, result, invocation),
+    };
     OutputBlock::tool_result(name, result.is_error, variant)
+}
+
+fn snapshot_variant(snapshot: Snapshot) -> ToolResultVariant {
+    match snapshot {
+        Snapshot::Write(snap) => {
+            let after = fs::read_to_string(&snap.file_path).ok();
+            write_result_variant(snap, after)
+        }
+        Snapshot::Notebook(snap) => ToolResultVariant::NotebookEdit {
+            diff_content: notebook_diff_from_snapshot(&snap),
+            notebook_path: snap.notebook_path,
+            cell_identifier: snap.cell_identifier,
+            cell_type: snap.cell_type,
+            edit_mode: snap.edit_mode,
+        },
+    }
 }
 
 fn plain_variant(

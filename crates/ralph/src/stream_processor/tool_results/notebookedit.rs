@@ -86,21 +86,6 @@ fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, cell_display: &str) -
     output
 }
 
-pub fn format_notebook_result_with_snapshot(
-    ctx: &RenderContext,
-    snapshot: NotebookSnapshot,
-) -> String {
-    let diff_content = generate_diff_from_snapshot(&snapshot);
-    let params = NotebookEditParams {
-        notebook_path: &snapshot.notebook_path,
-        cell_identifier: &snapshot.cell_identifier,
-        cell_type: snapshot.cell_type.as_deref(),
-        edit_mode: &snapshot.edit_mode,
-        diff_content: diff_content.as_deref(),
-    };
-    format_notebook_result(ctx, &params)
-}
-
 pub fn format_notebook_result(ctx: &RenderContext, params: &NotebookEditParams) -> String {
     if let Some(diff_content) = params.diff_content {
         return format_diff_output(ctx, params, diff_content);

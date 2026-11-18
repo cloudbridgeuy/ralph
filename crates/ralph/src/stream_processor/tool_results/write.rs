@@ -10,11 +10,8 @@
 //! 4. For overwrites: display before/after blocks with colored line numbers
 //! 5. Display with syntax highlighting
 
-use std::fs;
-
 use crate::render::ansi;
 
-use super::super::types::WriteSnapshot;
 use super::super::utils::extract_language_from_path;
 use crate::render::RenderContext;
 
@@ -23,38 +20,6 @@ const MAX_NEW_FILE_LINES: usize = 50;
 
 /// Maximum lines to show in a before/after block before truncating.
 const MAX_BLOCK_LINES: usize = 30;
-
-/// Format a Write tool result using a snapshot.
-///
-/// This is called when we have captured a snapshot before the write.
-/// For new files, displays clean syntax-highlighted content with green line numbers.
-/// For overwrites, displays before/after blocks with colored line numbers.
-pub fn format_write_result_with_snapshot(ctx: &RenderContext, snapshot: WriteSnapshot) -> String {
-    // Handle new files: show clean syntax-highlighted content without diff markers
-    if !snapshot.file_existed {
-        // Read the newly created file content
-        if let Ok(content) = fs::read_to_string(&snapshot.file_path) {
-            if !content.is_empty() {
-                return format_new_file_display(ctx, &snapshot.file_path, &content);
-            }
-        }
-        // Empty new file or couldn't read
-        return format_no_changes_message(ctx, &snapshot.file_path, true);
-    }
-
-    // Handle overwrites: show before/after blocks
-    let before_content = snapshot.content.as_deref().unwrap_or("");
-    if let Ok(after_content) = fs::read_to_string(&snapshot.file_path) {
-        // Skip if no changes
-        if before_content == after_content {
-            return format_no_changes_message(ctx, &snapshot.file_path, false);
-        }
-        format_before_after_display(ctx, &snapshot.file_path, before_content, &after_content)
-    } else {
-        // Couldn't read file - show simple success message
-        format_no_changes_message(ctx, &snapshot.file_path, false)
-    }
-}
 
 /// Format before/after display for file overwrites.
 pub fn format_before_after_display(
