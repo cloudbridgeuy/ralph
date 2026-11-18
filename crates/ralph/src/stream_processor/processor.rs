@@ -1,70 +1,21 @@
-//! Core StreamProcessor struct and configuration methods.
-//!
-//! This module contains the main StreamProcessor type along with all
-//! constructor methods and accessors. The actual event processing logic
-//! is in the event_handler module.
-
+use super::disk_files::DiskFiles;
+use super::event_handler::StreamCollector;
+use super::render_block::render_block;
 use crate::diff_theme::DiffColors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::markdown::MarkdownTheme;
+use crate::render::RenderContext;
 use crate::tool_theme::ToolColors;
-use ralph_core::chunk::{ParsedChunk, StreamingChunkBuffer};
-use ralph_core::stream::{
-    extract_costs_from_events_or_default, extract_metadata_from_events_or_default, StreamEvent,
-    ToolInvocation,
-};
-use std::collections::HashMap;
+use ralph_core::stream::blocks::{OutputBlock, StreamProcessorResult, VerboseToolsConfig};
 use std::io::IsTerminal;
 
-use ralph_core::stream::blocks::OutputBlock;
-use ralph_core::stream::blocks::{Snapshot, StreamProcessorResult, VerboseToolsConfig};
-
-/// A streaming processor for Claude's stream-json output.
-///
-/// This processor handles real-time parsing, highlighting, and output of
-/// LLM responses. It maintains state for:
-/// - JSON event parsing
-/// - Text accumulation across streaming events
-/// - Chunk detection (prose/code/diff boundaries)
-/// - Syntax highlighting
-/// - Metadata extraction
-/// - Tool invocation display
-/// - Visual separation between distinct assistant responses
 pub struct StreamProcessor {
-    /// Collected stream events for post-processing.
-    pub(super) events: Vec<StreamEvent>,
-    /// Chunk buffer for streaming output.
-    pub(super) chunk_buffer: StreamingChunkBuffer,
-    /// Syntax highlighter for code blocks.
+    pub(super) collector: StreamCollector,
     pub(super) code_highlighter: Highlighter,
-    /// Markdown skin for prose rendering via termimad.
     pub(super) markdown: MarkdownTheme,
     pub(super) diff_colors: DiffColors,
     pub(super) tool_colors: ToolColors,
-    /// Whether highlighting is enabled (terminal detection).
     pub(super) highlighting_enabled: bool,
-    /// Whether to display tool invocations.
-    pub(super) show_tool_invocations: bool,
-    /// Current message ID for accumulation.
-    pub(super) current_message_id: Option<String>,
-    /// Chunks collected during streaming.
-    pub(super) collected_chunks: Vec<ParsedChunk>,
-    /// Parse errors encountered.
-    pub(super) parse_errors: Vec<(String, String)>,
-    /// Whether we've emitted any output (for visual separation).
-    pub(super) has_emitted_output: bool,
-    /// Count of distinct assistant responses processed.
-    pub(super) response_count: usize,
-    /// Pending tool invocations keyed by tool_use_id (for special result formatting).
-    pub(super) pending_invocations: HashMap<String, ToolInvocation>,
-    /// Verbose tools configuration.
-    pub(super) verbose_tools_config: VerboseToolsConfig,
-    pub(super) pending_snapshots: HashMap<String, Snapshot>,
-    /// Accumulated output blocks.
-    ///
-    /// Each output block captures the data needed to re-render a piece of output.
-    /// Blocks are accumulated in order as they render to stdout during execution.
-    pub(super) output_blocks: Vec<OutputBlock>,
 }
 
 /// Builder for constructing StreamProcessor instances.
@@ -167,23 +118,12 @@ impl StreamProcessorBuilder {
         let verbose_tools_config = self.verbose_tools.unwrap_or_default();
 
         Ok(StreamProcessor {
-            events: Vec::new(),
-            chunk_buffer: StreamingChunkBuffer::with_prose_threshold(usize::MAX),
+            collector: StreamCollector::new(show_tool_invocations, verbose_tools_config),
             code_highlighter,
             markdown,
             diff_colors,
             tool_colors,
             highlighting_enabled,
-            show_tool_invocations,
-            current_message_id: None,
-            collected_chunks: Vec::new(),
-            parse_errors: Vec::new(),
-            has_emitted_output: false,
-            response_count: 0,
-            pending_invocations: HashMap::new(),
-            verbose_tools_config,
-            pending_snapshots: HashMap::new(),
-            output_blocks: Vec::new(),
         })
     }
 }
@@ -327,42 +267,54 @@ impl StreamProcessor {
         self.highlighting_enabled
     }
 
-    /// Finish processing and return the complete result.
-    ///
-    /// This method:
-    /// 1. Flushes any remaining buffered content
-    /// 2. Extracts metadata from system init event
-    /// 3. Extracts costs from result event
-    /// 4. Returns all collected data
-    ///
-    /// # Returns
-    ///
-    /// A `StreamProcessorResult` containing all extracted data.
-    pub fn finish(mut self) -> StreamProcessorResult {
-        // Flush remaining buffered content (renders + outputs prose/code blocks)
-        let final_output = self.flush_pending_chunks();
+    pub fn process_line(&mut self, line: &str) -> Option<String> {
+        let ctx = RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
+            .with_diff(self.diff_colors)
+            .with_tools(self.tool_colors);
+        let markdown = self.highlighting_enabled.then_some(&self.markdown);
+        let mut rendered = String::new();
+        let mut any_visible = false;
+        self.collector
+            .process_line(line, &DiskFiles, &mut |block: &OutputBlock| {
+                let output = render_block(&ctx, block, markdown);
+                let visible = !matches!(block, OutputBlock::Text(_)) || !output.is_empty();
+                rendered.push_str(&output);
+                any_visible |= visible;
+                visible
+            });
+        any_visible.then_some(rendered)
+    }
 
-        // Extract metadata and costs from events
-        let metadata = extract_metadata_from_events_or_default(&self.events);
-        let costs = extract_costs_from_events_or_default(&self.events);
-
-        StreamProcessorResult {
-            chunks: self.collected_chunks,
-            metadata,
-            costs,
-            output_blocks: self.output_blocks,
-            final_output,
-        }
+    pub fn finish(self) -> StreamProcessorResult {
+        let Self {
+            collector,
+            code_highlighter,
+            markdown,
+            diff_colors,
+            tool_colors,
+            highlighting_enabled,
+        } = self;
+        let ctx = RenderContext::new(&code_highlighter, highlighting_enabled)
+            .with_diff(diff_colors)
+            .with_tools(tool_colors);
+        let markdown = highlighting_enabled.then_some(&markdown);
+        let (flushed, mut result) = collector.finish();
+        let final_output: String = flushed
+            .iter()
+            .map(|block| render_block(&ctx, block, markdown))
+            .collect();
+        result.final_output = Some(final_output).filter(|output| !output.is_empty());
+        result
     }
 
     /// Get parse errors encountered during processing.
     pub fn parse_errors(&self) -> &[(String, String)] {
-        &self.parse_errors
+        self.collector.parse_errors()
     }
 
     /// Check if tool invocation display is enabled.
     pub fn is_showing_tool_invocations(&self) -> bool {
-        self.show_tool_invocations
+        self.collector.is_showing_tool_invocations()
     }
 
     /// Get the count of distinct assistant responses processed.
@@ -370,7 +322,7 @@ impl StreamProcessor {
     /// This increments each time a new message ID is seen after a previous
     /// message has started. Useful for testing and debugging.
     pub fn response_count(&self) -> usize {
-        self.response_count
+        self.collector.response_count()
     }
 
     /// Check if any output has been emitted.
@@ -378,25 +330,25 @@ impl StreamProcessor {
     /// Used for visual separation logic - we only add separators between
     /// responses if there's been output to separate.
     pub fn has_emitted_output(&self) -> bool {
-        self.has_emitted_output
+        self.collector.has_emitted_output()
     }
 
     /// Get the verbose tools configuration.
     pub fn verbose_tools_config(&self) -> &VerboseToolsConfig {
-        &self.verbose_tools_config
+        self.collector.verbose_tools_config()
     }
 
     /// Check if verbose output is enabled for a specific tool.
     pub fn is_tool_verbose(&self, tool_name: &str) -> bool {
-        self.verbose_tools_config.is_verbose(tool_name)
+        self.collector.verbose_tools_config().is_verbose(tool_name)
     }
 
     /// Create a render context based on the processor's highlighting setting.
     ///
     /// Returns a terminal context (with ANSI codes) when highlighting is enabled,
     /// or a plain context otherwise.
-    pub fn render_context(&self) -> crate::render::RenderContext<'_> {
-        crate::render::RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
+    pub fn render_context(&self) -> RenderContext<'_> {
+        RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
             .with_diff(self.diff_colors)
             .with_tools(self.tool_colors)
     }
@@ -405,6 +357,6 @@ impl StreamProcessor {
     ///
     /// These blocks capture the structured data behind the rendered output.
     pub fn output_blocks(&self) -> &[OutputBlock] {
-        &self.output_blocks
+        self.collector.output_blocks()
     }
 }
