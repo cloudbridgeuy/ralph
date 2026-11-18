@@ -26,27 +26,20 @@
 
 mod block_builders;
 mod event_handler;
-mod output_block;
 mod processor;
 mod render_block;
 mod result_handlers;
 mod tool_results;
-mod types;
-mod utils;
 
-// Re-export public API
-pub use output_block::{
-    extract_response_text, GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem,
-    ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
-};
 pub use processor::{StreamProcessor, StreamProcessorBuilder};
-pub use types::{StreamProcessorResult, VerboseToolsConfig};
+pub use ralph_core::stream::blocks::{
+    extract_response_text, GrepInvocationBuilder, OutputBlock, StreamProcessorResult, TextBlock,
+    TodoItem, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
+    VerboseToolsConfig,
+};
 
-// Re-export for tests
 #[cfg(test)]
-pub use types::KeyArgument;
-#[cfg(test)]
-pub use utils::{extract_key_argument, truncate_string};
+pub use ralph_core::stream::blocks::{extract_key_argument, truncate_string, KeyArgument};
 
 #[cfg(test)]
 mod test_helpers;

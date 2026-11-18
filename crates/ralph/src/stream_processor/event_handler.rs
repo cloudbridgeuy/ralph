@@ -11,11 +11,11 @@ use ralph_core::directive::split_text_around_directives;
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
 use super::block_builders::build_tool_invocation_block;
-use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
 use super::render_block::render_block;
 use super::result_handlers::{build_result_block, Snapshot};
-use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
+use ralph_core::stream::blocks::OutputBlock;
+use ralph_core::stream::blocks::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
 impl StreamProcessor {
     /// Process a single line of stream-json output.

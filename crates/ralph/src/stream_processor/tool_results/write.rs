@@ -12,7 +12,7 @@
 
 use crate::render::ansi;
 
-use super::super::utils::extract_language_from_path;
+use crate::render::extract_language_from_path;
 use crate::render::RenderContext;
 
 /// Maximum lines to show in a new file display before truncating.

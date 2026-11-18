@@ -4,36 +4,8 @@
 //! reducing boilerplate in tests that verify TOML round-trip behavior.
 
 use ralph_core::stream::ToolInvocation;
-use serde::{de::DeserializeOwned, Serialize};
 
-use super::output_block::{OutputBlock, ToolInvocationBlock};
-
-/// Assert that a value can round-trip through TOML serialization.
-///
-/// This helper serializes the value to TOML, deserializes it back,
-/// and asserts equality with the original.
-///
-/// # Example
-///
-/// ```ignore
-/// use crate::stream_processor::test_helpers::assert_toml_roundtrip;
-/// use crate::stream_processor::OutputBlock;
-///
-/// let block = OutputBlock::separator();
-/// assert_toml_roundtrip(&block);
-/// ```
-pub fn assert_toml_roundtrip<T>(value: &T)
-where
-    T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug,
-{
-    let serialized = toml::to_string(value).expect("Failed to serialize to TOML");
-    let deserialized: T = toml::from_str(&serialized).expect("Failed to deserialize from TOML");
-    assert_eq!(
-        value, &deserialized,
-        "Round-trip serialization failed.\nOriginal: {:?}\nDeserialized: {:?}\nSerialized TOML:\n{}",
-        value, deserialized, serialized
-    );
-}
+use ralph_core::stream::blocks::{OutputBlock, ToolInvocationBlock};
 
 /// Create a ToolInvocation for testing.
 ///

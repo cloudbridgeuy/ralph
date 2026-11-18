@@ -1,10 +1,10 @@
 use ralph_core::stream::ToolInvocation;
 
-use super::output_block::{
+use ralph_core::stream::blocks::extract_key_argument;
+use ralph_core::stream::blocks::{
     GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
-use super::types::{GrepParams, VerboseToolsConfig, WriteSnapshot};
-use super::utils::extract_key_argument;
+use ralph_core::stream::blocks::{GrepParams, VerboseToolsConfig, WriteSnapshot};
 
 pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Option<&'a str> {
     invocation?.input.get(key)?.as_str()

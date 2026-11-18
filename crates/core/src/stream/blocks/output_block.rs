@@ -1,52 +1,4 @@
-//! Output block types.
-//!
-//! This module defines the `OutputBlock` enum and its variants, which capture
-//! all data needed to render output during execution.
-//!
-//! # Design Principles
-//!
-//! - Each variant captures **data**, not rendered strings
-//! - All variants derive Serialize/Deserialize for TOML storage
-//! - Rendering is handled by separate functions that take OutputBlock variants
-//! - The enum preserves the order of output blocks
-//! - Enums are marked `#[non_exhaustive]` for forward compatibility when adding new variants
-//!
-//! # Variant Count Rationale
-//!
-//! `ToolResultVariant` has 12 variants, one for each tool type that requires
-//! specialized result handling. This is intentional:
-//!
-//! - **Type safety**: Each variant enforces the correct data structure for its tool
-//! - **Exhaustive matching**: Adding a new tool requires handling in all renderers
-//! - **Serialization stability**: Each variant serializes to a distinct TOML structure
-//!
-//! The variants are:
-//!
-//! | Variant | Tool | Purpose |
-//! |---------|------|---------|
-//! | `Bash` | Bash | Command output with truncation indicator |
-//! | `EditBeforeAfter` | Edit | Before/after text replacement |
-//! | `EditDiff` | Edit | Unified diff format |
-//! | `EditNoChanges` | Edit | No-op indicator |
-//! | `WriteNewFile` | Write | New file creation |
-//! | `WriteOverwrite` | Write | File overwrite with diff |
-//! | `WriteNoChanges` | Write | No-op indicator |
-//! | `Read` | Read | File content with metadata |
-//! | `Grep` | Grep | Search results with match count |
-//! | `Glob` | Glob | File list with truncation |
-//! | `TodoWrite` | TodoWrite | Task list confirmation |
-//! | `NotebookEdit` | NotebookEdit | Jupyter cell diff |
-//! | `Default` | Other | Generic content display |
-//!
-//! # Adding a New Tool Variant
-//!
-//! When adding support for a new tool, you need to:
-//! 1. Add a variant to `ToolResultVariant` (this file)
-//! 2. Add a builder function in `block_builders.rs`
-//! 3. Add a handler in `result_handlers.rs`
-//! 4. Add a renderer in `render/tool_renderers/results/`
-
-use ralph_core::chunk::{ChunkType, ParsedChunk};
+use crate::chunk::{ChunkType, ParsedChunk};
 use serde::{Deserialize, Serialize};
 
 /// A single block of output from an LLM interaction.
@@ -55,7 +7,6 @@ use serde::{Deserialize, Serialize};
 /// During execution, these blocks are accumulated in order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum OutputBlock {
     /// Text output from the assistant (prose, code, or diff chunks).
     Text(TextBlock),
@@ -97,7 +48,6 @@ pub struct ToolInvocationBlock {
 /// Tool-specific invocation data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "invocation_type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ToolInvocationVariant {
     /// Bash command invocation.
     Bash {
@@ -185,7 +135,6 @@ pub struct ToolResultBlock {
 /// Tool-specific result data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result_type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ToolResultVariant {
     /// Bash command result.
     Bash {
@@ -352,7 +301,7 @@ impl OutputBlock {
 /// # Example
 ///
 /// ```
-/// use ralph::stream_processor::GrepInvocationBuilder;
+/// use ralph_core::stream::blocks::GrepInvocationBuilder;
 ///
 /// let variant = GrepInvocationBuilder::new("fn main")
 ///     .path("src/")
@@ -457,8 +406,8 @@ fn fenced(language: &str, content: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_helpers::assert_toml_roundtrip;
     use super::*;
-    use crate::stream_processor::test_helpers::assert_toml_roundtrip;
 
     #[test]
     fn test_output_block_text_serialization() {
@@ -742,7 +691,7 @@ mod tests {
             OutputBlock::text(ParsedChunk::code("graph TD", Some("mermaid".to_string()))),
         ];
         let stored = extract_response_text(&blocks).unwrap();
-        let chunks = ralph_core::chunk::parse_chunks(&stored);
+        let chunks = crate::chunk::parse_chunks(&stored);
         let kinds: Vec<_> = chunks
             .iter()
             .filter_map(|chunk| match &chunk.chunk_type {

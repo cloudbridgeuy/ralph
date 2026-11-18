@@ -16,9 +16,9 @@ use similar::{ChangeTag, TextDiff};
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::render::ansi;
 
-use super::super::types::EditSnapshot;
-use super::super::utils::extract_language_from_path;
+use crate::render::extract_language_from_path;
 use crate::render::RenderContext;
+use ralph_core::stream::blocks::EditSnapshot;
 
 /// Maximum lines to show in a before/after block before truncating.
 const MAX_BLOCK_LINES: usize = 30;

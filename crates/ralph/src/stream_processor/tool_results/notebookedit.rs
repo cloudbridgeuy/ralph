@@ -15,10 +15,10 @@ use similar::{ChangeTag, TextDiff};
 
 use crate::diff_highlight::highlight_with_basic_colors;
 
-use super::super::types::NotebookSnapshot;
 use crate::ansi::RESET;
 use crate::render::NotebookEditParams;
 use crate::render::RenderContext;
+use ralph_core::stream::blocks::NotebookSnapshot;
 
 /// Maximum lines to show in a diff before truncating.
 const MAX_DIFF_LINES: usize = 50;

@@ -16,8 +16,8 @@ use ralph_core::stream::{
 use std::collections::HashMap;
 use std::io::IsTerminal;
 
-use super::output_block::OutputBlock;
-use super::types::{
+use ralph_core::stream::blocks::OutputBlock;
+use ralph_core::stream::blocks::{
     EditSnapshot, NotebookSnapshot, StreamProcessorResult, VerboseToolsConfig, WriteSnapshot,
 };
 

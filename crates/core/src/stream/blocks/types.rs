@@ -1,10 +1,5 @@
-//! Type definitions for the stream processor module.
-//!
-//! Contains configuration structs and result types used throughout
-//! the stream processing pipeline.
-
-use ralph_core::chunk::ParsedChunk;
-use ralph_core::stream::{IterationCosts, IterationMetadata};
+use crate::chunk::ParsedChunk;
+use crate::stream::{IterationCosts, IterationMetadata};
 use std::collections::HashSet;
 
 use super::output_block::OutputBlock;

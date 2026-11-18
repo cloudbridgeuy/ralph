@@ -11,9 +11,9 @@ pub use write::{
     format_no_changes_message as format_write_no_changes,
 };
 
-use super::utils::truncate_string;
 use crate::ansi::RESET;
 use crate::render::RenderContext;
+use ralph_core::stream::blocks::truncate_string;
 
 pub fn format_tool_error(ctx: &RenderContext, tool_name: &str, content: Option<&str>) -> String {
     let content = content.map_or_else(

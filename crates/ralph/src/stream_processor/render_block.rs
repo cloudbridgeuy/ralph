@@ -1,13 +1,9 @@
 use ralph_core::chunk::ChunkType;
 
-use super::output_block::{
-    OutputBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
-};
 use super::tool_results::{
     format_before_after, format_diff_output, format_new_file_display, format_no_changes_message,
     format_notebook_result, format_tool_error, format_write_before_after, format_write_no_changes,
 };
-use super::utils::{truncate_multiline, truncate_string};
 use crate::markdown::MarkdownTheme;
 use crate::render::{
     render_bash_invocation, render_bash_result, render_default_invocation, render_default_result,
@@ -15,6 +11,10 @@ use crate::render::{
     render_read_invocation, render_read_result, render_text_block, render_todowrite_invocation,
     render_todowrite_result, GrepInvocationParams, NotebookEditParams, RenderContext,
     TodoDisplayItem,
+};
+use ralph_core::stream::blocks::{truncate_multiline, truncate_string};
+use ralph_core::stream::blocks::{
+    OutputBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
 
 const MAX_BASH_LINES: usize = 30;
