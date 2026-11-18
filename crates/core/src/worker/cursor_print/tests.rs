@@ -366,3 +366,69 @@ fn a_reported_print_turn_gets_no_reminder_and_no_unreported_marker() {
         .iter()
         .any(|action| matches!(action, Action::MarkUnreported)));
 }
+
+fn starts(actions: &[Action]) -> Vec<&str> {
+    actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::Start(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn end_turn(turns: &mut Turns, reported: bool) -> Vec<Action> {
+    print_turn_signals(reported, TurnEnd::Succeeded)
+        .into_iter()
+        .flat_map(|signal| turns.signal(signal, false))
+        .collect()
+}
+
+#[test]
+fn a_worker_that_reports_in_turn_one_gets_no_turn_two() {
+    let mut turns = Turns::default();
+    turns.accept("task".to_string());
+    assert!(starts(&end_turn(&mut turns, true)).is_empty());
+}
+
+#[test]
+fn an_unreported_turn_gets_one_reminder_and_the_reminder_turn_queues_no_more() {
+    let mut turns = Turns::default();
+    turns.accept("task".to_string());
+    assert_eq!(starts(&end_turn(&mut turns, false)), [REPORT_REMINDER]);
+    let after_reminder = end_turn(&mut turns, false);
+    assert!(starts(&after_reminder).is_empty());
+    assert!(after_reminder
+        .iter()
+        .any(|action| matches!(action, Action::MarkUnreported)));
+}
+
+#[test]
+fn a_reminder_turn_that_reports_queues_nothing() {
+    let mut turns = Turns::default();
+    turns.accept("task".to_string());
+    end_turn(&mut turns, false);
+    assert!(starts(&end_turn(&mut turns, true)).is_empty());
+}
+
+#[test]
+fn each_person_prompt_earns_its_own_single_reminder() {
+    let mut turns = Turns::default();
+    turns.accept("task".to_string());
+    end_turn(&mut turns, false);
+    end_turn(&mut turns, false);
+    assert_eq!(starts(&turns.accept("reply".to_string())), ["reply"]);
+    assert_eq!(starts(&end_turn(&mut turns, false)), [REPORT_REMINDER]);
+    assert!(starts(&end_turn(&mut turns, false)).is_empty());
+}
+
+#[test]
+fn a_late_prompt_queued_behind_a_reminder_does_not_duplicate_it() {
+    let mut turns = Turns::default();
+    turns.accept("task".to_string());
+    end_turn(&mut turns, false);
+    turns.accept("reply".to_string());
+    assert!(starts(&end_turn(&mut turns, false)).contains(&"reply"));
+    assert_eq!(starts(&end_turn(&mut turns, false)), [REPORT_REMINDER]);
+    assert!(starts(&end_turn(&mut turns, false)).is_empty());
+}
