@@ -15,7 +15,6 @@ use similar::{ChangeTag, TextDiff};
 
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::render::ansi;
-use ralph_core::stream::ToolInvocation;
 
 use super::super::types::EditSnapshot;
 use super::super::utils::extract_language_from_path;
@@ -26,30 +25,6 @@ const MAX_BLOCK_LINES: usize = 30;
 
 /// Maximum lines to show in a unified diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
-
-/// Format an Edit tool result using before/after display from snapshot.
-///
-/// This is called when we have captured a snapshot before the edit.
-/// It uses old_string/new_string for before/after display, falling back
-/// to unified diff if those are unavailable.
-pub fn format_edit_result_with_snapshot(ctx: &RenderContext, snapshot: EditSnapshot) -> String {
-    if snapshot.old_string.is_some() || snapshot.new_string.is_some() {
-        return format_before_after(
-            ctx,
-            &snapshot.file_path,
-            snapshot.old_string.as_deref().unwrap_or(""),
-            snapshot.new_string.as_deref().unwrap_or(""),
-        );
-    }
-
-    // Fall back to unified diff from file content comparison
-    if let Some(diff_content) = generate_diff_from_snapshot(&snapshot) {
-        format_diff_output(ctx, &snapshot.file_path, &diff_content)
-    } else {
-        // No changes or couldn't read file - show simple success message
-        format_no_changes_message(ctx, &snapshot.file_path)
-    }
-}
 
 pub fn format_before_after(
     ctx: &RenderContext,
@@ -313,25 +288,6 @@ fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, file_path: &str) -> S
     output
 }
 
-/// Format an Edit tool result that already contains diff content.
-///
-/// This is the fallback path used when the Edit tool result already contains
-/// diff content (e.g., from older versions or custom tools).
-pub fn format_edit_diff_result(
-    ctx: &RenderContext,
-    invocation: ToolInvocation,
-    diff_content: &str,
-) -> String {
-    // Extract file path from the invocation input
-    let file_path = invocation
-        .input
-        .get("file_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown file");
-
-    format_diff_output(ctx, file_path, diff_content)
-}
-
 /// Format diff output with optional highlighting and truncation.
 ///
 /// This is the common formatting logic shared between generated diffs
@@ -541,25 +497,6 @@ mod tests {
         assert!(output.contains("After:"));
         // Should contain the background color codes
         assert!(output.contains(ansi::RED_BG) || output.contains(ansi::GREEN_BG));
-    }
-
-    #[test]
-    fn test_format_before_after_display_prefers_old_new_strings() {
-        let processor = StreamProcessor::with_highlighting(false);
-        let snapshot = EditSnapshot {
-            file_path: "test.rs".to_string(),
-            content: Some("full file content".to_string()),
-            old_string: Some("old".to_string()),
-            new_string: Some("new".to_string()),
-        };
-
-        let output = format_edit_result_with_snapshot(&processor.render_context(), snapshot);
-
-        // Should use old_string/new_string, not full file diff
-        assert!(output.contains("Before:"));
-        assert!(output.contains("old"));
-        assert!(output.contains("After:"));
-        assert!(output.contains("new"));
     }
 
     #[test]

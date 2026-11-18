@@ -7,7 +7,7 @@ use std::fs;
 
 use crate::render::{render_text_block, RenderContext};
 use ralph_core::chat_send_it::is_step_result_tool;
-use ralph_core::chunk::{is_unfenced_diff, split_lines_preserve_trailing, ChunkType, ParsedChunk};
+use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::directive::split_text_around_directives;
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
@@ -15,7 +15,7 @@ use super::block_builders::build_tool_invocation_block;
 use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
 use super::render_block::render_block;
-use super::result_handlers::{build_result_block, handle_edit_result, Snapshot};
+use super::result_handlers::{build_result_block, Snapshot};
 use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
 impl StreamProcessor {
@@ -142,16 +142,10 @@ impl StreamProcessor {
                 // Display tool results if enabled
                 if self.show_tool_invocations {
                     for result in &user_event.message.content {
-                        // Extract tool_use_id once for looking up pending data
                         let tool_use_id = result.tool_use_id.as_ref();
                         let invocation =
                             tool_use_id.and_then(|id| self.pending_invocations.remove(id));
-                        let edit_snapshot =
-                            tool_use_id.and_then(|id| self.pending_edit_snapshots.remove(id));
-                        let write_snapshot =
-                            tool_use_id.and_then(|id| self.pending_write_snapshots.remove(id));
-                        let notebook_snapshot =
-                            tool_use_id.and_then(|id| self.pending_notebook_snapshots.remove(id));
+                        let snapshot = tool_use_id.and_then(|id| self.take_snapshot(id));
 
                         if !result.is_error
                             && invocation
@@ -161,20 +155,6 @@ impl StreamProcessor {
                             continue;
                         }
 
-                        if let Some(inv) = invocation
-                            .as_ref()
-                            .filter(|inv| inv.name == "Edit" && !result.is_error)
-                            .filter(|_| !result.content.as_deref().is_some_and(is_unfenced_diff))
-                        {
-                            let output =
-                                handle_edit_result(self, result, inv, edit_snapshot.as_ref());
-                            output_parts.push(output.formatted);
-                            self.output_blocks.push(output.block);
-                            continue;
-                        }
-                        let snapshot = write_snapshot
-                            .map(Snapshot::Write)
-                            .or(notebook_snapshot.map(Snapshot::Notebook));
                         let block = build_result_block(
                             &self.verbose_tools_config,
                             result,
@@ -200,6 +180,16 @@ impl StreamProcessor {
             self.has_emitted_output = true;
             Some(output_parts.join(""))
         }
+    }
+
+    fn take_snapshot(&mut self, id: &str) -> Option<Snapshot> {
+        let edit = self.pending_edit_snapshots.remove(id).map(Snapshot::Edit);
+        let write = self.pending_write_snapshots.remove(id).map(Snapshot::Write);
+        let notebook = self
+            .pending_notebook_snapshots
+            .remove(id)
+            .map(Snapshot::Notebook);
+        edit.or(write).or(notebook)
     }
 
     fn emit(&mut self, block: OutputBlock) -> String {

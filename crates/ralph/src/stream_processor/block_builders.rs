@@ -3,7 +3,7 @@ use ralph_core::stream::ToolInvocation;
 use super::output_block::{
     GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
-use super::types::{EditSnapshot, GrepParams, VerboseToolsConfig, WriteSnapshot};
+use super::types::{GrepParams, VerboseToolsConfig, WriteSnapshot};
 use super::utils::extract_key_argument;
 
 pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Option<&'a str> {
@@ -84,56 +84,6 @@ fn todo_item(item: &serde_json::Value) -> TodoItem {
         status: field("status").unwrap_or_default(),
         active_form: field("activeForm"),
     }
-}
-
-/// Build a default OutputBlock for tool results.
-pub fn build_default_result_block(
-    tool_name: &str,
-    content: Option<&str>,
-    is_error: bool,
-) -> OutputBlock {
-    OutputBlock::tool_result(
-        tool_name,
-        is_error,
-        ToolResultVariant::Default {
-            content: content.map(String::from),
-        },
-    )
-}
-
-// =============================================================================
-// Specialized result block builders
-// =============================================================================
-
-/// Build an OutputBlock for Edit tool results using before/after display.
-///
-/// Requires an EditSnapshot captured before the edit was performed.
-/// Returns EditBeforeAfter variant with old_string and new_string,
-/// or EditNoChanges if no change occurred.
-pub fn build_edit_before_after_block(snapshot: &EditSnapshot) -> OutputBlock {
-    let old = snapshot.old_string.clone().unwrap_or_default();
-    let new = snapshot.new_string.clone().unwrap_or_default();
-
-    // If both are empty or equal, no changes
-    if old == new {
-        return OutputBlock::tool_result(
-            "Edit",
-            false,
-            ToolResultVariant::EditNoChanges {
-                file_path: snapshot.file_path.clone(),
-            },
-        );
-    }
-
-    OutputBlock::tool_result(
-        "Edit",
-        false,
-        ToolResultVariant::EditBeforeAfter {
-            file_path: snapshot.file_path.clone(),
-            old_content: old,
-            new_content: new,
-        },
-    )
 }
 
 pub fn write_result_variant(snapshot: WriteSnapshot, after: Option<String>) -> ToolResultVariant {
@@ -311,45 +261,6 @@ mod tests {
                 pattern: "**/*.rs".to_string(),
                 path: Some("crates".to_string()),
             }
-        );
-    }
-
-    fn edit_snapshot(old: &str, new: &str) -> EditSnapshot {
-        EditSnapshot {
-            file_path: "a.rs".to_string(),
-            content: None,
-            old_string: Some(old.to_string()),
-            new_string: Some(new.to_string()),
-        }
-    }
-
-    #[test]
-    fn test_edit_block_with_equal_strings_has_no_changes() {
-        assert_eq!(
-            build_edit_before_after_block(&edit_snapshot("x", "x")),
-            OutputBlock::tool_result(
-                "Edit",
-                false,
-                ToolResultVariant::EditNoChanges {
-                    file_path: "a.rs".to_string(),
-                },
-            )
-        );
-    }
-
-    #[test]
-    fn test_edit_block_with_changed_strings_shows_before_and_after() {
-        assert_eq!(
-            build_edit_before_after_block(&edit_snapshot("old", "new")),
-            OutputBlock::tool_result(
-                "Edit",
-                false,
-                ToolResultVariant::EditBeforeAfter {
-                    file_path: "a.rs".to_string(),
-                    old_content: "old".to_string(),
-                    new_content: "new".to_string(),
-                },
-            )
         );
     }
 
