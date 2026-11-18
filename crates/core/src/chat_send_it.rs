@@ -197,22 +197,21 @@ fn parse_step(number: usize, step: RawStep) -> Result<Step, String> {
     })
 }
 
-fn refuse_stray_verify(args: &Value) -> Result<(), String> {
-    let steps = args.get("steps").and_then(Value::as_array);
-    for (index, step) in steps.into_iter().flatten().enumerate() {
-        let Some(criterion) = step.get("criterion") else {
-            continue;
-        };
-        let has_verify = criterion
-            .get("verify")
-            .is_some_and(|verify| !verify.is_null());
-        let kind = criterion.get("kind").and_then(Value::as_str);
-        if has_verify && kind != Some("worker_done") {
-            return Err(format!(
-                "Step {}: verify is only for worker_done",
-                index + 1
-            ));
-        }
+fn refuse_stray_verify(number: usize, args: &Value) -> Result<(), String> {
+    let criterion = args
+        .get("steps")
+        .and_then(Value::as_array)
+        .and_then(|steps| steps.get(number - 1))
+        .and_then(|step| step.get("criterion"));
+    let Some(criterion) = criterion else {
+        return Ok(());
+    };
+    let has_verify = criterion
+        .get("verify")
+        .is_some_and(|verify| !verify.is_null());
+    let kind = criterion.get("kind").and_then(Value::as_str);
+    if has_verify && kind != Some("worker_done") {
+        return Err(format!("Step {number}: verify is only for worker_done"));
     }
     Ok(())
 }
@@ -227,13 +226,17 @@ pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
     if raw.steps.is_empty() {
         return Err("Run plan has no steps. List the steps in order.".to_string());
     }
-    refuse_stray_verify(args)?;
     let steps = raw
         .steps
         .into_iter()
         .enumerate()
-        .map(|(index, step)| parse_step(index + 1, step))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|(index, step)| {
+            let number = index + 1;
+            let parsed = parse_step(number, step)?;
+            refuse_stray_verify(number, args)?;
+            Ok(parsed)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let limits = Limits {
         max_turns: raw.caps.turns.unwrap_or(defaults.max_turns),
         max_usd: raw.caps.usd.unwrap_or(defaults.max_usd),
