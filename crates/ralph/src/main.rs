@@ -36,7 +36,6 @@ mod usage_cmd;
 pub mod stream_processor;
 mod version;
 pub mod warn;
-mod watch_requests;
 mod wire;
 
 use ask::InvocationConfig;

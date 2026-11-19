@@ -35,6 +35,7 @@ pub(crate) mod transport;
 pub(crate) mod verified_agents;
 pub mod version_drift;
 pub mod warn;
+pub mod watch_requests;
 pub mod watch_store;
 pub mod watches;
 pub mod wire;
