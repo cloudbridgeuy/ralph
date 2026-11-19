@@ -185,6 +185,17 @@ pub fn plan_worker_rearm<Tz: TimeZone>(
     }
 }
 
+pub fn repeat_stopped_text(task: &Task, end: &WorkerEnd) -> Option<String> {
+    let repeat = task.repeat.as_ref()?;
+    matches!(end, WorkerEnd::Attention).then(|| {
+        format!(
+            "Scheduled worker {} needs you; its repeat ({}) has stopped; propose it again after answering.",
+            escape_controls(&task.id),
+            repeat_label(repeat)
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +584,37 @@ mod tests {
         let task = running(None);
         let now = utc("2026-01-01T10:05:00Z");
         assert_eq!(plan_worker_rearm(&task, &WorkerEnd::Done, now, &Utc), None);
+    }
+
+    #[test]
+    fn a_repeating_worker_needing_attention_gets_a_stopped_notice() {
+        let task = running(Some(every(3600)));
+        assert_eq!(
+            repeat_stopped_text(&task, &WorkerEnd::Attention).as_deref(),
+            Some("Scheduled worker a needs you; its repeat (every 1h) has stopped; propose it again after answering.")
+        );
+    }
+
+    #[test]
+    fn the_stopped_notice_escapes_control_characters_in_the_id() {
+        let mut task = running(Some(every(3600)));
+        task.id = "a\x1bb".to_string();
+        let text = repeat_stopped_text(&task, &WorkerEnd::Attention).unwrap();
+        assert!(!text.contains('\x1b'), "{text:?}");
+    }
+
+    #[test]
+    fn a_one_shot_worker_needing_attention_has_no_stopped_notice() {
+        let task = running(None);
+        assert_eq!(repeat_stopped_text(&task, &WorkerEnd::Attention), None);
+    }
+
+    #[test]
+    fn a_repeating_worker_that_ends_otherwise_has_no_stopped_notice() {
+        let task = running(Some(every(3600)));
+        for end in [WorkerEnd::Done, WorkerEnd::TimedOut, WorkerEnd::Vanished] {
+            assert_eq!(repeat_stopped_text(&task, &end), None);
+        }
     }
 
     fn task_with(repeat: Option<Repeat>, status: TaskStatus) -> Task {

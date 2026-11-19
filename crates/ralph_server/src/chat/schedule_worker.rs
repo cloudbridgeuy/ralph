@@ -96,7 +96,7 @@ fn end_task(monitor: &Monitor, task: &Task, end: &WorkerEnd, now: chrono::DateTi
         }
         WorkerEnd::Vanished => post_report(monitor, task, vanished_text(task), now),
     }
-    crate::schedule_rearm::finish_worker(&monitor.schedule, task, end, now);
+    crate::schedule_rearm::finish_worker(&monitor.schedule, &monitor.inbox, task, end, now);
 }
 
 fn settle_done(workers: &Workers, worker: &str) {
