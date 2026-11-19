@@ -221,6 +221,7 @@ pub fn close_plan(
         steps.push(CloseStep::RemoveOpencodeSession);
     }
     match state.kind {
+        HarnessId::Agy => return Err("agy workers are not supported yet".to_string()),
         HarnessId::Cursor => steps.push(CloseStep::TerminateCursor),
         HarnessId::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
         HarnessId::Codex => steps.push(CloseStep::TerminateCodex),

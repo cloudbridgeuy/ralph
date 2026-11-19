@@ -143,6 +143,7 @@ impl Workers {
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
         let (model, model_warning) = match harness {
+            HarnessId::Agy => return Err(io::Error::other("agy workers are not supported yet")),
             HarnessId::Opencode => {
                 let (model, warning) = resolve_opencode_model(
                     model,
@@ -287,6 +288,7 @@ impl Workers {
 
     fn preflight(&self, id: &str, harness: HarnessId, shell: ClaudeShell) -> io::Result<()> {
         match harness {
+            HarnessId::Agy => Err(io::Error::other("agy workers are not supported yet")),
             HarnessId::ClaudeTmux => {
                 require_on_path("tmux")?;
                 require_on_path(shell.program())?;
@@ -341,6 +343,7 @@ impl Workers {
         }
         self.write_spawn_record(id, *harness, ticket.clone(), base_sha.clone())?;
         let command = match harness {
+            HarnessId::Agy => return Err(io::Error::other("agy workers are not supported yet")),
             HarnessId::ClaudeTmux => {
                 let settings = self.write_settings(id, &markers, *site)?;
                 let task_dir = self.write_task(id, task)?;
@@ -438,6 +441,7 @@ impl Workers {
 
     fn harness_running(&self, launch: &Launch) -> bool {
         match launch.harness {
+            HarnessId::Agy => false,
             HarnessId::ClaudeTmux => session_exists(launch.session).unwrap_or(true),
             HarnessId::Opencode => HandoffFiles::opencode(&self.store_dir, launch.id)
                 .owner

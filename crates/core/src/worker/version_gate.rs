@@ -1,21 +1,16 @@
-use crate::worker::{verify_hint, VerifiedAgents, CLAUDE_GATE, CURSOR_AGENT};
+use crate::worker::{verify_hint, VerifiedAgents, AGY_AGENT, CLAUDE_GATE, CURSOR_AGENT};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 pub const DRIFT_FILE: &str = "drift.json";
 pub const DRIFT_CHECK_INTERVAL_HOURS: i64 = 24;
 
-fn parse_version(version: &str) -> Option<(u64, u64)> {
+fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
     let mut parts = version.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
-    parts
-        .next()?
-        .split('-')
-        .next()?
-        .parse::<u64>()
-        .ok()
-        .map(|_| (major, minor))
+    let patch = parts.next()?.split('-').next()?.parse().ok()?;
+    Some((major, minor, patch))
 }
 
 pub struct VersionGate {
@@ -26,6 +21,15 @@ pub struct VersionGate {
     pub protocol: &'static str,
     pub verifiable: bool,
 }
+
+pub const AGY_GATE: VersionGate = VersionGate {
+    agent: "agy",
+    package: "agy",
+    min: (1, 5),
+    probed: AGY_AGENT.tested_version,
+    protocol: "ACP",
+    verifiable: true,
+};
 
 pub const CURSOR_GATE: VersionGate = VersionGate {
     agent: "cursor",
@@ -69,11 +73,23 @@ pub fn check_agent_version(
     } = gate;
     let parsed = parse_version(found)
         .ok_or_else(|| format!("could not read the {agent} version from `{found}`"))?;
-    let probed_pair = parse_version(probed).unwrap_or(*min);
-    match (parsed.cmp(min), parsed.cmp(&probed_pair)) {
+    let probed_version = parse_version(probed).unwrap_or((min.0, min.1, 0));
+    let (floor, tested) = if *agent == AGY_AGENT.name {
+        if found.split('.').count() != 3 {
+            return Err(format!("could not read the {agent} version from `{found}`"));
+        }
+        (parsed.cmp(&probed_version), parsed.cmp(&probed_version))
+    } else {
+        let pair = (parsed.0, parsed.1);
+        (
+            pair.cmp(min),
+            pair.cmp(&(probed_version.0, probed_version.1)),
+        )
+    };
+    match (floor, tested) {
         (std::cmp::Ordering::Less, _) => Err(format!(
-            "{agent} {found} is too old; needs {package} >= {}.{} (probed {probed})",
-            min.0, min.1
+            "{agent} {found} is too old; needs {package} >= {} (probed {probed})",
+            if *agent == AGY_AGENT.name { probed.to_string() } else { format!("{}.{}", min.0, min.1) }
         )),
         (_, std::cmp::Ordering::Greater) if *verifiable && verified.is_verified(agent, found) => {
             Ok(None)
@@ -404,5 +420,27 @@ mod tests {
             soft_version_warning(&CLAUDE_TMUX_GATE, "1.0.0", &none),
             None
         );
+    }
+
+    #[test]
+    fn agy_gate_checks_patch_floor_and_exact_verification() {
+        let parsed = serde_json::from_str::<crate::worker::HarnessId>("\"agy\"");
+        assert!(parsed.is_ok());
+        let gate = parsed.ok().and_then(crate::worker::daily_gate);
+        assert!(gate.is_some());
+        let Some(gate) = gate else { return };
+        let none = VerifiedAgents::default();
+        assert!(check_agent_version(gate, "1.5.11", &none).is_err());
+        assert_eq!(check_agent_version(gate, "1.5.12", &none), Ok(None));
+        assert!(matches!(
+            check_agent_version(gate, "1.5.13", &none),
+            Ok(Some(_))
+        ));
+        let verified = none.record(verified_entry("agy", "1.5.13", false, "d"));
+        assert_eq!(check_agent_version(gate, "1.5.13", &verified), Ok(None));
+        assert!(matches!(
+            check_agent_version(gate, "1.5.14", &verified),
+            Ok(Some(_))
+        ));
     }
 }

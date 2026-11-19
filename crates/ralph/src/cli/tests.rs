@@ -591,3 +591,8 @@ fn test_cli_chat_history_search_takes_a_tag() {
     };
     assert_eq!(history.tag.as_deref(), Some("rule"));
 }
+
+#[test]
+fn verify_accepts_agy() {
+    assert!(Cli::try_parse_from(["ralph", "worker", "verify", "agy"]).is_ok());
+}

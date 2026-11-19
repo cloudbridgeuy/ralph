@@ -105,6 +105,7 @@ impl CheckResult {
     }
 }
 
+pub const AGY_REQUIRED_CHECKS: &[&str] = &["version"];
 pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
 pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
 

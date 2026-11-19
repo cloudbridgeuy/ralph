@@ -1,6 +1,6 @@
 use crate::worker::{
     check_agent_version, drift_action, drift_check_due, DriftAction, DriftRecord, HarnessId,
-    VerifiedAgents, VersionGate, CLAUDE_TMUX_GATE, CURSOR_GATE, OPENCODE_GATE,
+    VerifiedAgents, VersionGate, AGY_GATE, CLAUDE_TMUX_GATE, CURSOR_GATE, OPENCODE_GATE,
 };
 use chrono::{DateTime, Utc};
 use std::time::Duration;
@@ -11,6 +11,7 @@ pub fn daily_gate(harness: HarnessId) -> Option<&'static VersionGate> {
     match harness {
         HarnessId::ClaudeTmux => Some(&CLAUDE_TMUX_GATE),
         HarnessId::Opencode => Some(&OPENCODE_GATE),
+        HarnessId::Agy => Some(&AGY_GATE),
         HarnessId::Cursor => Some(&CURSOR_GATE),
         HarnessId::Codex | HarnessId::Claude => None,
     }
@@ -70,6 +71,7 @@ mod tests {
         assert_eq!(
             daily_probe_plan(),
             vec![
+                HarnessId::Agy,
                 HarnessId::ClaudeTmux,
                 HarnessId::Opencode,
                 HarnessId::Cursor

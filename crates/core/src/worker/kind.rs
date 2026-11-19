@@ -9,10 +9,20 @@ pub enum HarnessId {
     Cursor,
     Opencode,
     Codex,
+    Agy,
 }
 
 impl HarnessId {
-    pub const ALL: [HarnessId; 5] = [
+    pub const ALL: [HarnessId; 6] = [
+        Self::Agy,
+        Self::ClaudeTmux,
+        Self::Opencode,
+        Self::Cursor,
+        Self::Codex,
+        Self::Claude,
+    ];
+
+    pub const SPAWNABLE: [HarnessId; 5] = [
         Self::ClaudeTmux,
         Self::Opencode,
         Self::Cursor,
@@ -27,6 +37,7 @@ impl HarnessId {
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Codex => "codex",
+            Self::Agy => "agy",
         }
     }
 }
@@ -173,5 +184,12 @@ mod tests {
                 kind
             );
         }
+    }
+
+    #[test]
+    fn agy_identity_round_trips() {
+        let parsed = serde_json::from_str::<HarnessId>("\"agy\"");
+        assert!(parsed.is_ok());
+        assert_eq!(parsed.ok().map(HarnessId::as_str), Some("agy"));
     }
 }

@@ -22,7 +22,7 @@ pub fn command_definitions() -> [Value; 5] {
                 "properties": {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
-                    "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
+                    "harness": {"type": "string", "enum": HarnessId::SPAWNABLE.map(HarnessId::as_str), "description": harness_description()},
                     "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
                     "phase": {"type": "string", "enum": WorkPhase::ALL.map(WorkPhase::as_str), "description": "What this worker does: plan, build, fix or live-check. Recorded in the lifecycle log. Omit when none fits."},
                     "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. claude-tmux: as claude."}
@@ -174,7 +174,7 @@ fn worker_id(args: &Value) -> Result<String, String> {
 }
 
 fn harness_description() -> String {
-    let headless = HarnessId::ALL
+    let headless = HarnessId::SPAWNABLE
         .into_iter()
         .filter(|harness| capabilities(*harness).headless())
         .map(|harness| {
@@ -211,7 +211,7 @@ fn harness_description() -> String {
 }
 
 fn interrupt_description() -> String {
-    let names = HarnessId::ALL
+    let names = HarnessId::SPAWNABLE
         .into_iter()
         .filter(|harness| capabilities(*harness).support(Feature::Interrupt) != Support::None)
         .map(HarnessId::as_str)
@@ -231,7 +231,7 @@ fn join_names(names: &[&str]) -> String {
 }
 
 fn harness_choices() -> String {
-    let names = HarnessId::ALL.map(HarnessId::as_str);
+    let names = HarnessId::SPAWNABLE.map(HarnessId::as_str);
     match names.split_last() {
         Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
         None => String::new(),
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn spawn_harness_model_follows_capability_matrix() {
-        for harness in HarnessId::ALL {
+        for harness in HarnessId::SPAWNABLE {
             let model = "openai/gpt-6.1-sol";
             let expected = if capabilities(harness).support(Feature::Model) != Support::None {
                 Ok((harness, Some(model.to_string())))
@@ -641,7 +641,7 @@ mod tests {
         let text = harness_description();
         let (_, list) = text.split_once("request: ").unwrap();
         let entries = list.trim_end_matches('.').split(" | ").collect::<Vec<_>>();
-        let headless = HarnessId::ALL
+        let headless = HarnessId::SPAWNABLE
             .into_iter()
             .filter(|harness| capabilities(*harness).headless())
             .collect::<Vec<_>>();
@@ -729,5 +729,17 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn agy_is_not_offered_or_accepted_for_spawn() {
+        let definition = command_definitions()[0].to_string();
+        assert!(!definition.contains("agy"));
+        assert!(!harness_choices().contains("agy"));
+        let parsed = parse_command(
+            "spawn_worker",
+            &json!({"id": "a", "task": "t", "harness": "agy"}),
+        );
+        assert!(matches!(parsed, Some(Err(_))));
     }
 }

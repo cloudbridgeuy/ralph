@@ -70,6 +70,7 @@ impl Capabilities {
         use Feature::*;
         use Support::{Full, Partial};
         match (self.harness, feature) {
+            (HarnessId::Agy, _) => Support::None,
             (HarnessId::ClaudeTmux, Model) => Full,
             (HarnessId::ClaudeTmux, _) => Support::None,
             (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report | Model | Close) => Full,

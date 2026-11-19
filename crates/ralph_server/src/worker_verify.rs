@@ -4,9 +4,10 @@ use crate::version_drift::{record_manual, DriftRun};
 use crate::watches::locked;
 use crate::{acp_worker, claude_worker, codex_worker, opencode_worker, verified_agents, workers};
 use ralph_core::worker::{
-    claude_required_checks, finish_plan, finished_probe, limit_failure, render_check,
-    render_summary, required_failure, resolve_claude_model, resolve_opencode_model, spec_passed,
-    verified_entry, verify_limit, CheckResult, HarnessId, Verdict, VerifiedAgent, VersionProbe,
+    check_agent_version, claude_required_checks, finish_plan, finished_probe, limit_failure,
+    probed_version, render_check, render_summary, required_failure, resolve_claude_model,
+    resolve_opencode_model, spec_passed, verified_entry, verify_limit, CheckResult, HarnessId,
+    Verdict, VerifiedAgent, VersionProbe, AGY_AGENT, AGY_GATE, AGY_REQUIRED_CHECKS,
     CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL,
     OPENCODE_REQUIRED_CHECKS,
 };
@@ -92,7 +93,7 @@ fn resolved_model(
     config: &Result<AppConfig, String>,
 ) -> (Option<String>, Option<String>) {
     match agent {
-        HarnessId::Cursor | HarnessId::Codex => (None, None),
+        HarnessId::Agy | HarnessId::Cursor | HarnessId::Codex => (None, None),
         HarnessId::ClaudeTmux | HarnessId::Claude => resolve_claude_model(
             None,
             config
@@ -115,7 +116,7 @@ fn resolved_model(
 
 fn model_label(agent: HarnessId, model: Option<&str>) -> Option<String> {
     match agent {
-        HarnessId::Cursor | HarnessId::Codex => None,
+        HarnessId::Agy | HarnessId::Cursor | HarnessId::Codex => None,
         HarnessId::ClaudeTmux | HarnessId::Claude => {
             Some(model.unwrap_or("claude's default model").to_string())
         }
@@ -186,6 +187,23 @@ pub fn run(
         checks.add(CheckResult::advisory("model", Verdict::Unknown, warning));
     }
     let (version, required) = match agent {
+        HarnessId::Agy => {
+            let probe = crate::version_drift::probe(AGY_AGENT.command);
+            let version = step(
+                &checks,
+                "version",
+                probed_version(&AGY_AGENT, &probe).and_then(|version| {
+                    check_agent_version(&AGY_GATE, version, &verified_agents::load())?;
+                    Ok(version.to_string())
+                }),
+                |version| version.clone(),
+            );
+            checks.add(CheckResult::fail(
+                "protocol",
+                "agy protocol verification is not available yet",
+            ));
+            (version, AGY_REQUIRED_CHECKS)
+        }
         HarnessId::Cursor => (
             acp_worker::verify(live, dir.path(), &checks),
             CURSOR_REQUIRED_CHECKS,
