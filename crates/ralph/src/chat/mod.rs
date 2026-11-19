@@ -26,6 +26,7 @@ pub(crate) mod session;
 mod statusbar;
 mod suggestion;
 mod switch;
+mod term_loop;
 mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
@@ -39,16 +40,15 @@ use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
-use crate::chat::queue::{
-    decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
-};
+use crate::chat::queue::{next_batch, unsent_texts, Queue};
 use crate::chat::refusal::{refuse_or_exit, restore_prompt};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, Keyboard};
-use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active, InboxTurn};
+use crate::chat::send_it::{dispatch, held_item, took_over, InboxTurn};
 use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::{chat_exit, check as check_switch, Leave};
+use crate::chat::term_loop::{Ending, Flow, TerminalLoop};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::workers::tool_report;
 use crate::cli::{ChatArgs, ChatCommand};
@@ -68,11 +68,8 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_process::run_id;
-use ralph_core::chat_send_it::Ended;
 use ralph_core::chat_status::{orphan_hint, Route};
-use ralph_core::chat_suggestion::{
-    auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
-};
+use ralph_core::chat_suggestion::SuggestionRecord;
 use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
@@ -85,8 +82,7 @@ use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::ready_ids;
 use ralph_server::chat::send_it::SendIt;
 use ralph_server::chat::session::{
-    open_core, phase_after, serve, trigger_for, tuning, At, CoreParts, Session, Wiring,
-    WiringConfig,
+    open_core, serve, trigger_for, tuning, At, CoreParts, Session, Wiring, WiringConfig,
 };
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::suggestion::SuggestionCell;
@@ -99,7 +95,7 @@ use ralph_server::paths::{absolute_from, config_path};
 use ralph_server::warn::{warn, warn_if_err};
 use ralph_server::workers::headless::ExitCleanup;
 use ralph_server::workers::{canonical_store, running_workers, usage_store, Workers};
-use reedline::{EditCommand, ExternalPrinter};
+use reedline::ExternalPrinter;
 #[cfg(test)]
 use session::resolve_store;
 use session::{
@@ -495,28 +491,38 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         keys: &keys,
         monitor: &monitor,
     };
-    let schedule_store = monitor.schedule.clone();
-    approve_proposed(&schedule_store, tuning.watch_timeout);
-    let mut pending: Option<Submitted> = None;
+    approve_proposed(&monitor.schedule, tuning.watch_timeout);
     let mut shown_plan: Option<String> = None;
-    let mut sending: Option<Active> = None;
-    let mut offered: Option<(String, u64)> = None;
-    let mut carried: Vec<String> = Vec::new();
-    let mut leaving: Option<ChatExit> = None;
+    let mut lp = TerminalLoop {
+        session: &session,
+        prompt: &prompt,
+        store: &store,
+        run: &run,
+        suggestions: &suggestions,
+        shown: &shown,
+        watch_timeout: tuning.watch_timeout,
+        auto_hold: chat_config.auto_hold,
+        editor,
+        pending: None,
+        sending: None,
+        offered: None,
+        carried: Vec::new(),
+        leaving: None,
+    };
     let settles_closes = fork.is_none();
     if settles_closes && thread::settle::scan(&store_dir, &monitor.inbox) {
         monitor.refresh(true);
     }
     loop {
-        warn_if_err(editor.sync_history(), "Failed to save chat history");
-        let typed_at_prompt = pending.is_none();
-        let submitted = match pending.take() {
+        warn_if_err(lp.editor.sync_history(), "Failed to save chat history");
+        let typed_at_prompt = lp.pending.is_none();
+        let submitted = match lp.pending.take() {
             Some(submitted) => Some(submitted),
             None => {
                 at_prompt.store(true, Ordering::SeqCst);
                 idle.store(true, Ordering::SeqCst);
                 print_above_prompt(Some(prompt_sink.clone()));
-                let submitted = next_route(&mut editor, &prompt);
+                let submitted = next_route(&mut lp.editor, &prompt);
                 print_above_prompt(None);
                 at_prompt.store(false, Ordering::SeqCst);
                 idle.store(false, Ordering::SeqCst);
@@ -524,12 +530,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 submitted?
                     .map_err(|exit| {
                         if matches!(exit, ChatExit::Closed) {
-                            leaving = Some(chat_exit(LoopExit::IdleClose));
+                            lp.leaving = Some(chat_exit(LoopExit::IdleClose));
                         }
                     })
                     .ok()
                     .inspect(|submitted| {
-                        if let Some((suggestion, turn_number)) = offered.take() {
+                        if let Some((suggestion, turn_number)) = lp.offered.take() {
                             let record = SuggestionRecord::new(
                                 chrono::Utc::now().to_rfc3339(),
                                 &run,
@@ -580,20 +586,22 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 match ran {
                     Ok(shown) => {
                         cell::show(&mut std::io::stdout(), &display, &shown);
-                        if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
-                            carried = rest;
-                            pending = Some(route_queued(text, &mut editor, &prompt));
+                        if let Some((text, rest)) = next_batch(std::mem::take(&mut lp.carried)) {
+                            lp.carried = rest;
+                            lp.pending = Some(route_queued(text, &mut lp.editor, &prompt));
                         }
                     }
                     Err(TurnOutcome::Exit) => {
-                        let lost = unsent_texts(&carried, editor.current_buffer_contents());
-                        let saved = save_unsent(&mut editor, &lost);
+                        let lost = unsent_texts(&lp.carried, lp.editor.current_buffer_contents());
+                        let saved = save_unsent(&mut lp.editor, &lost);
                         print_exit_notice(lost.len(), saved);
-                        editor.sync_history()?;
-                        leaving = Some(chat_exit(LoopExit::ShellCell));
+                        lp.editor.sync_history()?;
+                        lp.leaving = Some(chat_exit(LoopExit::ShellCell));
                         break;
                     }
-                    Err(_) => restore_prompt(&mut editor, &line, std::mem::take(&mut carried)),
+                    Err(_) => {
+                        restore_prompt(&mut lp.editor, &line, std::mem::take(&mut lp.carried))
+                    }
                 }
                 continue;
             }
@@ -607,7 +615,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         }
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
-                        let trigger = trigger_for(sending.is_some());
+                        let trigger = trigger_for(lp.sending.is_some());
                         let (result, queued) = snapshots.around(|| {
                             keys.during(|cancel| {
                                 turn.run(trigger, std::slice::from_ref(&sent), &sent, cancel)
@@ -622,7 +630,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             }
             Route::ReadInbox(selection) => {
                 let display = inbox_display(color);
-                let Some(read) = inbox_turn.read(&send_it, selection, &display, &mut sending)?
+                let Some(read) = inbox_turn.read(&send_it, selection, &display, &mut lp.sending)?
                 else {
                     continue;
                 };
@@ -636,17 +644,17 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 idle.store(false, Ordering::SeqCst);
                 match held {
                     Held::Item(position) => {
-                        let driven = held_item(&send_it, &mut sending, position, &monitor)?;
-                        pending = driven.enter(&mut editor);
+                        let driven = held_item(&send_it, &mut lp.sending, position, &monitor)?;
+                        lp.pending = driven.enter(&mut lp.editor);
                     }
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);
-                        if let Some(active) = sending.take() {
-                            took_over(&send_it, &active).enter(&mut editor);
+                        if let Some(active) = lp.sending.take() {
+                            took_over(&send_it, &active).enter(&mut lp.editor);
                         }
                     }
                     Held::Quit => {
-                        leaving = Some(chat_exit(LoopExit::HeldQuit));
+                        lp.leaving = Some(chat_exit(LoopExit::HeldQuit));
                         break;
                     }
                 }
@@ -672,7 +680,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     }
                     if let Some(started) = reply.started {
                         let mut driven = dispatch(&send_it, started, &monitor);
-                        (sending, pending) = (driven.active.take(), driven.enter(&mut editor));
+                        (lp.sending, lp.pending) =
+                            (driven.active.take(), driven.enter(&mut lp.editor));
                     }
                     continue;
                 };
@@ -706,31 +715,31 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Ok(target) => target,
                     Err(refusal) => {
                         println!("{refusal}");
-                        if refuse_or_exit(&mut editor, &line, std::mem::take(&mut carried))? {
-                            leaving = Some(chat_exit(LoopExit::SwitchRefused));
+                        if refuse_or_exit(&mut lp.editor, &line, std::mem::take(&mut lp.carried))? {
+                            lp.leaving = Some(chat_exit(LoopExit::SwitchRefused));
                             break;
                         }
                         continue;
                     }
                 };
-                let lost = unsent_texts(&carried, editor.current_buffer_contents());
-                let saved = save_unsent(&mut editor, &lost);
+                let lost = unsent_texts(&lp.carried, lp.editor.current_buffer_contents());
+                let saved = save_unsent(&mut lp.editor, &lost);
                 if !saved {
                     if signal::is_terminated() {
                         print_exit_notice(lost.len(), saved);
                         eprintln!("could not save the unsent text; exiting on signal.");
-                        leaving = Some(chat_exit(LoopExit::SwitchSaveFailed));
+                        lp.leaving = Some(chat_exit(LoopExit::SwitchSaveFailed));
                         break;
                     }
                     eprintln!("could not save the unsent text; the switch is cancelled.");
-                    restore_prompt(&mut editor, &line, std::mem::take(&mut carried));
+                    restore_prompt(&mut lp.editor, &line, std::mem::take(&mut lp.carried));
                     continue;
                 }
                 print_exit_notice(lost.len(), saved);
-                warn_if_err(editor.sync_history(), "Failed to save chat history");
+                warn_if_err(lp.editor.sync_history(), "Failed to save chat history");
                 idle.store(false, Ordering::SeqCst);
                 *turn.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                leaving = Some(ChatExit::Switch(
+                lp.leaving = Some(ChatExit::Switch(
                     target,
                     SwitchArgv {
                         store: thread::config_root(&store_dir),
@@ -764,16 +773,16 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         let id = note(&text);
                         thread_cmd::land(&thread::config_root(&store_dir), merged, id);
                         monitor.refresh(true);
-                        if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
-                            carried = rest;
-                            pending = Some(route_queued(text, &mut editor, &prompt));
+                        if let Some((text, rest)) = next_batch(std::mem::take(&mut lp.carried)) {
+                            lp.carried = rest;
+                            lp.pending = Some(route_queued(text, &mut lp.editor, &prompt));
                         }
                     }
                     Err(refusal) => {
                         println!("{refusal}");
                         note(&refusal);
-                        if refuse_or_exit(&mut editor, &line, std::mem::take(&mut carried))? {
-                            leaving = Some(chat_exit(LoopExit::ThreadOpRefused));
+                        if refuse_or_exit(&mut lp.editor, &line, std::mem::take(&mut lp.carried))? {
+                            lp.leaving = Some(chat_exit(LoopExit::ThreadOpRefused));
                             break;
                         }
                     }
@@ -789,96 +798,17 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        queue.entries.splice(0..0, std::mem::take(&mut carried));
-        monitor.set_phase(phase_after(outcome));
-        monitor.refresh(true);
-        if outcome == TurnOutcome::Exit {
-            let lost = unsent(&queue);
-            let saved = save_unsent(&mut editor, &lost);
-            print_exit_notice(lost.len(), saved);
-            editor.sync_history()?;
-            leaving = Some(chat_exit(LoopExit::TurnExit));
+        if lp.after_turn(Ending {
+            outcome,
+            draft,
+            queue,
+            drained,
+        })? == Flow::Stop
+        {
             break;
         }
-        let asked = approve_proposed(&schedule_store, tuning.watch_timeout);
-        if let Some(active) = sending.take() {
-            let unread = monitor.inbox.peek().unwrap_or_default();
-            let ended = Ended {
-                file: None,
-                replied: outcome == TurnOutcome::Replied,
-                asked,
-                typed: queue.held || !queue.typed.is_empty(),
-                queued: &queue.entries,
-                cost_usd: turn.take_cost().unwrap_or_default(),
-                step_result: None,
-                drained: &drained,
-                unread: &unread,
-                answered: &[],
-                watched: None,
-                refused: None,
-            };
-            let driven = dispatch(&send_it, tick(&send_it, &active, ended), &monitor);
-            sending = driven.active;
-            if driven.route.is_some() {
-                pending = driven.route.map(Submitted::internal);
-                continue;
-            }
-            suggestions.clear();
-            if let Some(line) = driven.prefill {
-                suggestions.set(line);
-            }
-        }
-        let suggestion = suggestions.take();
-        let typed = std::mem::take(&mut queue.typed);
-        let (draft, suggestion) = match decide(outcome, queue) {
-            Decision::Send { text, rest } => {
-                carried = rest;
-                pending = Some(route_queued(text, &mut editor, &prompt));
-                (draft, None)
-            }
-            Decision::Keep(entries) => (draft_with_queue(draft, &entries), suggestion),
-        };
-        let draft = draft_with_typed(draft, &typed);
-        let replied = outcome == TurnOutcome::Replied && !asked;
-        shown.clear();
-        offered = None;
-        let turn_number = turn.process_turns.load(Ordering::SeqCst);
-        let suggested = suggestion.clone();
-        let next = turn_end(TurnEnd {
-            auto_hold: chat_config.auto_hold,
-            replied,
-            draft,
-            suggestion,
-            status: &monitor.status(),
-        });
-        match next {
-            Next::Hold(filter) => {
-                print!("{}", prompt.dim(&auto_hold_notice(&filter)));
-                if let Some(suggested) = suggested {
-                    warn_if_err(
-                        store.append_suggestion(&SuggestionRecord::held(
-                            chrono::Utc::now().to_rfc3339(),
-                            &run,
-                            turn_number,
-                            &suggested,
-                        )),
-                        "Failed to record suggestion outcome",
-                    );
-                }
-                pending = Some(Submitted::internal(Route::Hold(filter)));
-            }
-            Next::Prefill(fill) => {
-                let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
-                editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
-                if let Prefill::Suggestion(text) = fill {
-                    offered = Some((text.clone(), turn_number));
-                    shown.set(text);
-                }
-            }
-            Next::Nothing => {}
-        }
     }
-    Ok(leaving.unwrap_or(ChatExit::Quit))
+    Ok(lp.leaving.unwrap_or(ChatExit::Quit))
 }
 
 #[cfg(test)]

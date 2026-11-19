@@ -1,0 +1,158 @@
+use crate::chat::prompt::{ChatPrompt, Submitted};
+use crate::chat::queue::{decide, draft_with_queue, draft_with_typed, unsent, Decision, Queue};
+use crate::chat::schedule::approve_proposed;
+use crate::chat::send_it::{dispatch, tick, Active};
+use crate::chat::session::{print_exit_notice, route_queued, save_unsent};
+use crate::chat::switch::{chat_exit, ChatExit};
+use ralph_core::chat_close::LoopExit;
+use ralph_core::chat_send_it::Ended;
+use ralph_core::chat_status::Route;
+use ralph_core::chat_suggestion::{
+    auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
+};
+use ralph_core::worker::Report;
+use ralph_server::chat::memory::Store;
+use ralph_server::chat::session::{phase_after, Session};
+use ralph_server::chat::suggestion::SuggestionCell;
+use ralph_server::chat::turn::TurnOutcome;
+use ralph_server::warn::warn_if_err;
+use reedline::{EditCommand, Reedline};
+use std::error::Error;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+pub(super) struct TerminalLoop<'a, 's> {
+    pub(super) session: &'a Session<'s>,
+    pub(super) prompt: &'a ChatPrompt,
+    pub(super) store: &'a Store,
+    pub(super) run: &'a str,
+    pub(super) suggestions: &'a SuggestionCell,
+    pub(super) shown: &'a SuggestionCell,
+    pub(super) watch_timeout: Duration,
+    pub(super) auto_hold: bool,
+    pub(super) editor: Reedline,
+    pub(super) pending: Option<Submitted>,
+    pub(super) sending: Option<Active>,
+    pub(super) offered: Option<(String, u64)>,
+    pub(super) carried: Vec<String>,
+    pub(super) leaving: Option<ChatExit>,
+}
+
+pub(super) struct Ending {
+    pub(super) outcome: TurnOutcome,
+    pub(super) draft: Option<String>,
+    pub(super) queue: Queue,
+    pub(super) drained: Vec<Report>,
+}
+
+#[derive(PartialEq, Eq)]
+pub(super) enum Flow {
+    Next,
+    Stop,
+}
+
+impl TerminalLoop<'_, '_> {
+    pub(super) fn after_turn(&mut self, ending: Ending) -> Result<Flow, Box<dyn Error>> {
+        let Ending {
+            outcome,
+            draft,
+            mut queue,
+            drained,
+        } = ending;
+        let session = self.session;
+        let monitor = &session.core;
+        queue
+            .entries
+            .splice(0..0, std::mem::take(&mut self.carried));
+        monitor.set_phase(phase_after(outcome));
+        monitor.refresh(true);
+        if outcome == TurnOutcome::Exit {
+            let lost = unsent(&queue);
+            let saved = save_unsent(&mut self.editor, &lost);
+            print_exit_notice(lost.len(), saved);
+            self.editor.sync_history()?;
+            self.leaving = Some(chat_exit(LoopExit::TurnExit));
+            return Ok(Flow::Stop);
+        }
+        let asked = approve_proposed(&monitor.schedule, self.watch_timeout);
+        if let Some(active) = self.sending.take() {
+            let unread = monitor.inbox.peek().unwrap_or_default();
+            let ended = Ended {
+                file: None,
+                replied: outcome == TurnOutcome::Replied,
+                asked,
+                typed: queue.held || !queue.typed.is_empty(),
+                queued: &queue.entries,
+                cost_usd: session.turn.take_cost().unwrap_or_default(),
+                step_result: None,
+                drained: &drained,
+                unread: &unread,
+                answered: &[],
+                watched: None,
+                refused: None,
+            };
+            let ticked = tick(&session.send_it, &active, ended);
+            let driven = dispatch(&session.send_it, ticked, monitor);
+            self.sending = driven.active;
+            if driven.route.is_some() {
+                self.pending = driven.route.map(Submitted::internal);
+                return Ok(Flow::Next);
+            }
+            self.suggestions.clear();
+            if let Some(line) = driven.prefill {
+                self.suggestions.set(line);
+            }
+        }
+        let suggestion = self.suggestions.take();
+        let typed = std::mem::take(&mut queue.typed);
+        let (draft, suggestion) = match decide(outcome, queue) {
+            Decision::Send { text, rest } => {
+                self.carried = rest;
+                self.pending = Some(route_queued(text, &mut self.editor, self.prompt));
+                (draft, None)
+            }
+            Decision::Keep(entries) => (draft_with_queue(draft, &entries), suggestion),
+        };
+        let draft = draft_with_typed(draft, &typed);
+        let replied = outcome == TurnOutcome::Replied && !asked;
+        self.shown.clear();
+        self.offered = None;
+        let turn_number = session.turn.process_turns.load(Ordering::SeqCst);
+        let suggested = suggestion.clone();
+        let next = turn_end(TurnEnd {
+            auto_hold: self.auto_hold,
+            replied,
+            draft,
+            suggestion,
+            status: &monitor.status(),
+        });
+        match next {
+            Next::Hold(filter) => {
+                print!("{}", self.prompt.dim(&auto_hold_notice(&filter)));
+                if let Some(suggested) = suggested {
+                    warn_if_err(
+                        self.store.append_suggestion(&SuggestionRecord::held(
+                            chrono::Utc::now().to_rfc3339(),
+                            self.run,
+                            turn_number,
+                            &suggested,
+                        )),
+                        "Failed to record suggestion outcome",
+                    );
+                }
+                self.pending = Some(Submitted::internal(Route::Hold(filter)));
+            }
+            Next::Prefill(fill) => {
+                let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
+                self.editor
+                    .run_edit_commands(&[EditCommand::InsertString(text.clone())]);
+                if let Prefill::Suggestion(text) = fill {
+                    self.offered = Some((text.clone(), turn_number));
+                    self.shown.set(text);
+                }
+            }
+            Next::Nothing => {}
+        }
+        Ok(Flow::Next)
+    }
+}
