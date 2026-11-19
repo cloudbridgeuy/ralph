@@ -510,7 +510,7 @@ The pure model is `crates/core/src/workers_view/remote.rs`; the shell is `crates
 - calls: calls per tool and per source (`mcp`, `slash`, `cli`, other).
 - rates: share of calls with an empty result and share that failed.
 - chains: a chain is 3 or more weak recall or search calls in a row in one turn (model or slash calls only). A gap over `--gap` seconds (default 120) ends it. A weak call has at most `--few-hits` hits (default 2).
-- unopened hits: counts hits, not calls. Each id in a search or recall `hit_ids` counts as opened when a later zoom or read in the turn covers it, and as unopened if not. A row without `hit_ids` counts as unknown: its `hits`, or 1 when it has no hit count.
+- unopened hits: counts hits, not calls. Each id in a search or recall `hit_ids` counts as opened when a later zoom or read in the turn covers it, and as unopened if not. A row without `hit_ids`, a CLI row and a row with no turn count as unknown: its `hits`, or 1 when it has no hit count.
 - no-history turns: turns with no history call. The report joins turn rows to timing rows by run and the nearest `at` within 2 s, because timing rows have no turn id. With no timing log it prints `n/a`.
 - zoom depth: how many zooms went 0, 1, 2, 3 or 4+ levels deep, and the node size.
 - old reach: a call is old when it reaches below the start of the turn's view. It is undecided when the turn has no view.
