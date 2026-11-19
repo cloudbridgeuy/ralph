@@ -105,3 +105,26 @@ fn other_scopes_are_not_reaches() {
         }
     );
 }
+
+#[test]
+fn a_recall_or_search_in_another_scope_is_not_a_reach() {
+    let main_turn = reach(&[
+        call(json!({"tool": "recall", "scope": "auth", "oldest_hit": 3})),
+        turn(json!({"view_ids": ["400-410"]})),
+    ]);
+    assert_eq!(main_turn, OldReach::default());
+    let in_scope = reach(&[
+        call(json!({"tool": "recall", "scope": "main", "oldest_hit": 3})),
+        call(json!({"tool": "search", "scope": "main", "oldest_hit": 3})),
+        call(json!({"tool": "recall", "scope": "auth", "oldest_hit": 3})),
+        turn(json!({"scope": "auth", "view_ids": ["auth:400"]})),
+    ]);
+    assert_eq!(
+        in_scope,
+        OldReach {
+            old: 1,
+            decided: 1,
+            undecided: 0
+        }
+    );
+}

@@ -45,7 +45,10 @@ fn reach_of(call: &Call, view_scope: Option<&String>) -> Option<u64> {
             let span = call_span(call)?;
             (span.scope.as_ref() == view_scope).then_some(span.lo)
         }
-        Tool::Recall | Tool::Search => call.oldest_hit,
+        Tool::Recall | Tool::Search => {
+            let scope = call.scope.as_deref().and_then(normalize_scope);
+            call.oldest_hit.filter(|_| scope.as_ref() == view_scope)
+        }
         Tool::Unknown => None,
     }
 }
