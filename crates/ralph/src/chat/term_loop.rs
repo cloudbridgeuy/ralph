@@ -1,15 +1,26 @@
+use crate::chat::cell::{self, ShellState};
+use crate::chat::hold::{self, Held};
+use crate::chat::inbox::Display;
 use crate::chat::prompt::{ChatPrompt, Submitted};
-use crate::chat::queue::{decide, draft_with_queue, draft_with_typed, unsent, Decision, Queue};
+use crate::chat::queue::{
+    decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
+};
+use crate::chat::refusal::{refuse_or_exit, restore_prompt};
 use crate::chat::schedule::approve_proposed;
-use crate::chat::send_it::{dispatch, tick, Active};
+use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active};
 use crate::chat::session::{print_exit_notice, route_queued, save_unsent};
-use crate::chat::switch::{chat_exit, ChatExit};
+use crate::chat::switch::{chat_exit, check as check_switch, ChatExit, Leave};
+use crate::signal;
 use ralph_core::chat_close::LoopExit;
+use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_send_it::Ended;
 use ralph_core::chat_status::Route;
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
+use ralph_core::chat_switch::{SwitchArgv, SwitchTarget};
+use ralph_core::chat_thread::ThreadName;
+use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::session::{phase_after, Session};
@@ -18,7 +29,8 @@ use ralph_server::chat::turn::TurnOutcome;
 use ralph_server::warn::warn_if_err;
 use reedline::{EditCommand, Reedline};
 use std::error::Error;
-use std::sync::atomic::Ordering;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 pub(super) struct TerminalLoop<'a, 's> {
@@ -30,6 +42,13 @@ pub(super) struct TerminalLoop<'a, 's> {
     pub(super) shown: &'a SuggestionCell,
     pub(super) watch_timeout: Duration,
     pub(super) auto_hold: bool,
+    pub(super) color: bool,
+    pub(super) display: &'a Display<'a>,
+    pub(super) idle: &'a AtomicBool,
+    pub(super) store_dir: &'a Path,
+    pub(super) thread: Option<&'a ThreadName>,
+    pub(super) switch_argv: SwitchArgv,
+    pub(super) shell: ShellState,
     pub(super) editor: Reedline,
     pub(super) pending: Option<Submitted>,
     pub(super) sending: Option<Active>,
@@ -52,6 +71,111 @@ pub(super) enum Flow {
 }
 
 impl TerminalLoop<'_, '_> {
+    pub(super) fn queue_next(&mut self) {
+        if let Some((text, rest)) = next_batch(std::mem::take(&mut self.carried)) {
+            self.carried = rest;
+            self.pending = Some(route_queued(text, &mut self.editor, self.prompt));
+        }
+    }
+
+    pub(super) fn shell(&mut self, line: &str) -> Result<Flow, Box<dyn Error>> {
+        let monitor = &self.session.core;
+        monitor.set_phase(Phase::Cell);
+        let ran = cell::run_local(line, &mut self.shell, self.color);
+        monitor.set_phase(Phase::Prompt);
+        monitor.refresh(true);
+        match ran {
+            Ok(shown) => {
+                cell::show(&mut std::io::stdout(), self.display, &shown);
+                self.queue_next();
+            }
+            Err(TurnOutcome::Exit) => {
+                let lost = unsent_texts(&self.carried, self.editor.current_buffer_contents());
+                let saved = save_unsent(&mut self.editor, &lost);
+                print_exit_notice(lost.len(), saved);
+                self.editor.sync_history()?;
+                self.leaving = Some(chat_exit(LoopExit::ShellCell));
+                return Ok(Flow::Stop);
+            }
+            Err(_) => restore_prompt(&mut self.editor, line, std::mem::take(&mut self.carried)),
+        }
+        Ok(Flow::Next)
+    }
+
+    pub(super) fn hold(&mut self, filter: &HoldFilter) -> Result<Flow, Box<dyn Error>> {
+        let session = self.session;
+        self.idle.store(true, Ordering::SeqCst);
+        session.core.set_phase(Phase::Turn);
+        let held = hold::run(filter, &session.core, &self.prompt.bar);
+        self.idle.store(false, Ordering::SeqCst);
+        match held {
+            Held::Item(position) => {
+                let driven =
+                    held_item(&session.send_it, &mut self.sending, position, &session.core)?;
+                self.pending = driven.enter(&mut self.editor);
+            }
+            Held::Left => {
+                session.core.set_phase(Phase::Prompt);
+                if let Some(active) = self.sending.take() {
+                    took_over(&session.send_it, &active).enter(&mut self.editor);
+                }
+            }
+            Held::Quit => {
+                self.leaving = Some(chat_exit(LoopExit::HeldQuit));
+                return Ok(Flow::Stop);
+            }
+        }
+        Ok(Flow::Next)
+    }
+
+    pub(super) fn switch(
+        &mut self,
+        parsed: Result<SwitchTarget, String>,
+        line: &str,
+    ) -> Result<Flow, Box<dyn Error>> {
+        let leave = Leave {
+            store_dir: self.store_dir,
+            current: self.thread,
+            monitor: &self.session.core,
+        };
+        let target = match parsed.and_then(|target| check_switch(&leave, &target).map(|()| target))
+        {
+            Ok(target) => target,
+            Err(refusal) => {
+                println!("{refusal}");
+                if refuse_or_exit(&mut self.editor, line, std::mem::take(&mut self.carried))? {
+                    self.leaving = Some(chat_exit(LoopExit::SwitchRefused));
+                    return Ok(Flow::Stop);
+                }
+                return Ok(Flow::Next);
+            }
+        };
+        let lost = unsent_texts(&self.carried, self.editor.current_buffer_contents());
+        let saved = save_unsent(&mut self.editor, &lost);
+        if !saved {
+            if signal::is_terminated() {
+                print_exit_notice(lost.len(), saved);
+                eprintln!("could not save the unsent text; exiting on signal.");
+                self.leaving = Some(chat_exit(LoopExit::SwitchSaveFailed));
+                return Ok(Flow::Stop);
+            }
+            eprintln!("could not save the unsent text; the switch is cancelled.");
+            restore_prompt(&mut self.editor, line, std::mem::take(&mut self.carried));
+            return Ok(Flow::Next);
+        }
+        print_exit_notice(lost.len(), saved);
+        warn_if_err(self.editor.sync_history(), "Failed to save chat history");
+        self.idle.store(false, Ordering::SeqCst);
+        *self
+            .session
+            .turn
+            .session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+        self.leaving = Some(ChatExit::Switch(target, self.switch_argv.clone()));
+        Ok(Flow::Stop)
+    }
+
     pub(super) fn after_turn(&mut self, ending: Ending) -> Result<Flow, Box<dyn Error>> {
         let Ending {
             outcome,

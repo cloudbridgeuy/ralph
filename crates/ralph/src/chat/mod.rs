@@ -36,18 +36,17 @@ mod workers;
 
 use crate::chat::client_monitor::{client_events, client_sink, watch_headless, watch_input};
 use crate::chat::editor::build_editor;
-use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
-use crate::chat::queue::{next_batch, unsent_texts, Queue};
-use crate::chat::refusal::{refuse_or_exit, restore_prompt};
+use crate::chat::queue::Queue;
+use crate::chat::refusal::refuse_or_exit;
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, Keyboard};
-use crate::chat::send_it::{dispatch, held_item, took_over, InboxTurn};
+use crate::chat::send_it::{dispatch, InboxTurn};
 use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
-use crate::chat::switch::{chat_exit, check as check_switch, Leave};
+use crate::chat::switch::chat_exit;
 use crate::chat::term_loop::{Ending, Flow, TerminalLoop};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::workers::tool_report;
@@ -86,7 +85,7 @@ use ralph_server::chat::session::{
 };
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::suggestion::SuggestionCell;
-use ralph_server::chat::turn::{draft_after, Turn, TurnOutcome};
+use ralph_server::chat::turn::{draft_after, Turn};
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
@@ -98,10 +97,7 @@ use ralph_server::workers::{canonical_store, running_workers, usage_store, Worke
 use reedline::ExternalPrinter;
 #[cfg(test)]
 use session::resolve_store;
-use session::{
-    chat_dir, load_custom_prompt, print_exit_notice, print_history, route_queued, save_unsent,
-    store_dir,
-};
+use session::{chat_dir, load_custom_prompt, print_history, store_dir};
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -459,7 +455,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         ui: *theme_config.ui(),
     };
     let remote = RemoteStatus::default();
-    let mut shell_state = cell::ShellState::default();
     let display = inbox_display(color);
     let local_route = LocalRoute {
         inbox: &monitor.inbox,
@@ -502,6 +497,23 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         shown: &shown,
         watch_timeout: tuning.watch_timeout,
         auto_hold: chat_config.auto_hold,
+        color,
+        display: &display,
+        idle: &idle,
+        store_dir: &store_dir,
+        thread: args.thread.as_ref(),
+        switch_argv: SwitchArgv {
+            store: thread::config_root(&store_dir),
+            recent_history_tokens: args.recent_history_tokens,
+            wrap_width: args.wrap_width,
+            skills: args.skills.clone(),
+            permission_mode: args.permission_mode.clone(),
+            worktree_dir: args.worktree_dir.clone(),
+            no_inbox_sound: args.no_inbox_sound,
+            no_inbox_notification: args.no_inbox_notification,
+            skip_summary: args.skip_summary,
+        },
+        shell: cell::ShellState::default(),
         editor,
         pending: None,
         sending: None,
@@ -578,37 +590,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         let mut drained = Vec::new();
         let (outcome, draft) = match route {
             Route::Ignore => continue,
-            Route::Shell(line) => {
-                monitor.set_phase(Phase::Cell);
-                let ran = cell::run_local(&line, &mut shell_state, color);
-                monitor.set_phase(Phase::Prompt);
-                monitor.refresh(true);
-                match ran {
-                    Ok(shown) => {
-                        cell::show(&mut std::io::stdout(), &display, &shown);
-                        if let Some((text, rest)) = next_batch(std::mem::take(&mut lp.carried)) {
-                            lp.carried = rest;
-                            lp.pending = Some(route_queued(text, &mut lp.editor, &prompt));
-                        }
-                    }
-                    Err(TurnOutcome::Exit) => {
-                        let lost = unsent_texts(&lp.carried, lp.editor.current_buffer_contents());
-                        let saved = save_unsent(&mut lp.editor, &lost);
-                        print_exit_notice(lost.len(), saved);
-                        lp.editor.sync_history()?;
-                        lp.leaving = Some(chat_exit(LoopExit::ShellCell));
-                        break;
-                    }
-                    Err(_) => {
-                        restore_prompt(&mut lp.editor, &line, std::mem::take(&mut lp.carried))
-                    }
-                }
-                continue;
-            }
+            Route::Shell(line) => match lp.shell(&line)? {
+                Flow::Next => continue,
+                Flow::Stop => break,
+            },
             Route::Send(message) => {
                 crate::render::image::print_attachments(&message);
                 monitor.set_phase(Phase::Cell);
-                let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
+                let outcome = match cell::prepare(&message, cell_limits, &mut lp.shell, color) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
                             cell::show(&mut std::io::stdout(), &display, shown);
@@ -637,29 +626,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 (queue, drained) = (read.queue, read.drained);
                 (read.outcome, None)
             }
-            Route::Hold(filter) => {
-                idle.store(true, Ordering::SeqCst);
-                monitor.set_phase(Phase::Turn);
-                let held = hold::run(&filter, &monitor, &prompt.bar);
-                idle.store(false, Ordering::SeqCst);
-                match held {
-                    Held::Item(position) => {
-                        let driven = held_item(&send_it, &mut lp.sending, position, &monitor)?;
-                        lp.pending = driven.enter(&mut lp.editor);
-                    }
-                    Held::Left => {
-                        monitor.set_phase(Phase::Prompt);
-                        if let Some(active) = lp.sending.take() {
-                            took_over(&send_it, &active).enter(&mut lp.editor);
-                        }
-                    }
-                    Held::Quit => {
-                        lp.leaving = Some(chat_exit(LoopExit::HeldQuit));
-                        break;
-                    }
-                }
-                continue;
-            }
+            Route::Hold(filter) => match lp.hold(&filter)? {
+                Flow::Next => continue,
+                Flow::Stop => break,
+            },
             Route::SendIt(command) => {
                 let at = At {
                     shown_plan: shown_plan.as_deref(),
@@ -703,58 +673,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 shown_plan = screen.shown;
                 (outcome, None)
             }
-            Route::Switch { parsed, line } => {
-                let leave = Leave {
-                    store_dir: &store_dir,
-                    current: args.thread.as_ref(),
-                    monitor: &monitor,
-                };
-                let target = match parsed
-                    .and_then(|target| check_switch(&leave, &target).map(|()| target))
-                {
-                    Ok(target) => target,
-                    Err(refusal) => {
-                        println!("{refusal}");
-                        if refuse_or_exit(&mut lp.editor, &line, std::mem::take(&mut lp.carried))? {
-                            lp.leaving = Some(chat_exit(LoopExit::SwitchRefused));
-                            break;
-                        }
-                        continue;
-                    }
-                };
-                let lost = unsent_texts(&lp.carried, lp.editor.current_buffer_contents());
-                let saved = save_unsent(&mut lp.editor, &lost);
-                if !saved {
-                    if signal::is_terminated() {
-                        print_exit_notice(lost.len(), saved);
-                        eprintln!("could not save the unsent text; exiting on signal.");
-                        lp.leaving = Some(chat_exit(LoopExit::SwitchSaveFailed));
-                        break;
-                    }
-                    eprintln!("could not save the unsent text; the switch is cancelled.");
-                    restore_prompt(&mut lp.editor, &line, std::mem::take(&mut lp.carried));
-                    continue;
-                }
-                print_exit_notice(lost.len(), saved);
-                warn_if_err(lp.editor.sync_history(), "Failed to save chat history");
-                idle.store(false, Ordering::SeqCst);
-                *turn.session.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                lp.leaving = Some(ChatExit::Switch(
-                    target,
-                    SwitchArgv {
-                        store: thread::config_root(&store_dir),
-                        recent_history_tokens: args.recent_history_tokens,
-                        wrap_width: args.wrap_width,
-                        skills: args.skills.clone(),
-                        permission_mode: args.permission_mode.clone(),
-                        worktree_dir: args.worktree_dir.clone(),
-                        no_inbox_sound: args.no_inbox_sound,
-                        no_inbox_notification: args.no_inbox_notification,
-                        skip_summary: args.skip_summary,
-                    },
-                ));
-                break;
-            }
+            Route::Switch { parsed, line } => match lp.switch(parsed, &line)? {
+                Flow::Next => continue,
+                Flow::Stop => break,
+            },
             Route::ThreadOp { op, line } => {
                 let merged = thread_cmd::merging(&op);
                 match op.and_then(|op| {
@@ -773,10 +695,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         let id = note(&text);
                         thread_cmd::land(&thread::config_root(&store_dir), merged, id);
                         monitor.refresh(true);
-                        if let Some((text, rest)) = next_batch(std::mem::take(&mut lp.carried)) {
-                            lp.carried = rest;
-                            lp.pending = Some(route_queued(text, &mut lp.editor, &prompt));
-                        }
+                        lp.queue_next();
                     }
                     Err(refusal) => {
                         println!("{refusal}");
