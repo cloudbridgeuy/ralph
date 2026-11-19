@@ -27,14 +27,14 @@ use futures::future::Either;
 use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
-    decide, describe, encode, gone_path, permission_content, probed_version, prompt_failure_report,
-    ready_path, reduce, request_stale, session_error, stop_problem, sweeps_permissions,
-    task_prompt, turn_outcome, AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles,
-    HarnessId, HeadlessState, HeadlessWorker, Inbound, PermissionAnswer, PermissionMode,
-    PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome,
-    WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE, CURSOR_AGENT,
-    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
+    acp_mcp_server, activity_path, agy_auto_allow_option, auth_method, auto_allow_option,
+    cancels_turn, capabilities, decide, describe, encode, gone_path, permission_content,
+    probed_version, prompt_failure_report, ready_path, reduce, request_stale, session_error,
+    stop_problem, sweeps_permissions, task_prompt, turn_outcome, AcpAgent, AcpCall, BlockedContent,
+    Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
+    PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
+    Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE,
+    CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
     CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
     CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
@@ -67,7 +67,7 @@ mod verify;
 use crate::permission_queue::{host_process_token, PermissionQueue};
 pub(crate) use agy_verify::verify as verify_agy;
 use cursor_worker::CursorWorker;
-use permissions::Permissions;
+use permissions::{Permissions, RawPermissionRequest};
 use print::PrintWorker;
 use recovery::{agent_version_warning, exit_reason};
 use transport::initialize;
@@ -268,6 +268,7 @@ impl AcpWorker {
         let permissions = Permissions::new(
             &markers,
             permission_mode,
+            agent == AGY_AGENT,
             PermissionQueue::new(
                 host_process_token(),
                 id.to_string(),
@@ -349,7 +350,7 @@ impl AcpWorker {
                 Client
                     .builder()
                     .on_receive_request(
-                        async move |request: RequestPermissionRequest, responder, _cx| {
+                        async move |request: RawPermissionRequest, responder, _cx| {
                             on_request.touch();
                             permissions.push(&request, responder);
                             Ok(())

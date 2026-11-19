@@ -234,11 +234,10 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
         Client
             .builder()
             .on_receive_request(
-                async move |request: RequestPermissionRequest, responder, _cx| {
-                    let content =
-                        permission_content(&serde_json::to_value(&request).unwrap_or_default());
-                    let option = auto_allow_option(PermissionMode::Ask, &content)
-                        .filter(|_| permission.swap(false, Ordering::SeqCst));
+                async move |request: RawPermissionRequest, responder, _cx| {
+                    let content = permission_content(&request.0);
+                    let option = agy_auto_allow_option(&request.0, &content)
+                        .filter(|_| permission.load(Ordering::SeqCst));
                     let outcome = match option {
                         Some(option) => RequestPermissionOutcome::Selected(
                             SelectedPermissionOutcome::new(option.option_id.clone()),
