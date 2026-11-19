@@ -27,3 +27,13 @@ pub fn history(lines: &[String]) -> Parsed {
 pub fn at(second: u32) -> String {
     format!("2026-11-05T10:{:02}:{:02}Z", second / 60, second % 60)
 }
+
+pub fn turn(extra: Value) -> String {
+    merged(
+        json!({
+            "v": 1, "at": "2026-11-05T10:05:00Z", "store": "/s", "run": "r1", "turn": "r1#1",
+            "event": "turn", "scope": "main", "history_calls": 1, "view_ids": ["0-3", "4"]
+        }),
+        extra,
+    )
+}
