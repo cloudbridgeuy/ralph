@@ -6,6 +6,7 @@ use ralph_core::chat_socket::{
     check_socket_path, decode_line, encode_line, orphan_sidecar_fate, runtime_dir_pid, sidecar_pid,
     socket_fate, SocketFacts, SocketFate, SocketOwner, SocketRequest, SocketResponse, StoreKey,
 };
+use ralph_core::schedule_repeat::repeating_cap_refusal;
 use ralph_core::schedule_request::{
     duplicate_message, proposed_message, ScheduleRequest, SCHEDULE_DIR,
 };
@@ -301,6 +302,11 @@ fn propose_schedule(store: &Store, request: &ScheduleRequest) -> Result<String, 
     if schedule.load_all().iter().any(|task| task.id == request.id) {
         return Err(duplicate_message(&request.id));
     }
+    if request.repeat.is_some() {
+        if let Some(refusal) = repeating_cap_refusal(&schedule.load_all()) {
+            return Err(refusal);
+        }
+    }
     let task = request.clone().into_task(Utc::now(), &Local)?;
     schedule
         .save(&task)
@@ -511,6 +517,23 @@ mod tests {
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].id, "nightly");
         assert_eq!(saved[0].status, ralph_core::schedule::TaskStatus::Proposed);
+    }
+
+    #[test]
+    fn repeating_schedules_are_capped_at_propose_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::User).unwrap();
+        let repeating = |id: &str| json!({"id": id, "command": "ls", "every": "30m"});
+        for n in 0..4 {
+            let id = format!("r{n}");
+            assert!(!schedule_response(&store, repeating(&id)).is_error);
+        }
+        assert!(!schedule_response(&store, repeating("r4")).is_error);
+        let sixth = schedule_response(&store, repeating("r5"));
+        assert!(sixth.is_error);
+        assert!(sixth.text.contains("At most"));
+        assert!(!schedule_response(&store, schedule_args()).is_error);
     }
 
     #[test]

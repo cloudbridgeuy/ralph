@@ -31,7 +31,7 @@ pub fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) {
     let offset = *chrono::Local::now().offset();
     let plan = plan_tick(&tasks, &active, now);
     for task in plan.finished {
-        store.remove(&task.id);
+        crate::schedule_rearm::finish_task(store, task, now);
     }
     for task in plan.fire {
         let Some(spec) = to_watch_spec(task, now, offset) else {

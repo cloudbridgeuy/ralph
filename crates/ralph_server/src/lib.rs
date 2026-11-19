@@ -28,6 +28,7 @@ pub mod paths;
 pub mod permission_queue;
 pub mod private_file;
 pub(crate) mod process_tree;
+pub mod schedule_rearm;
 pub mod schedule_store;
 pub mod snapshot;
 pub mod subprocess;
