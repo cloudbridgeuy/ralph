@@ -69,18 +69,13 @@ pub fn search_rank(entries: &[Entry], id: usize, words: &[&str]) -> Option<usize
         .map(|at| at + 1)
 }
 
-pub fn recall_position(entries: &[Entry], id: usize, words: &[&str]) -> Option<usize> {
+pub fn recall_hit(entries: &[Entry], id: usize, words: &[&str]) -> bool {
     let pattern = words
         .iter()
         .map(|word| regex::escape(word))
         .collect::<Vec<_>>()
         .join("|");
-    let found = recall_found(entries, &pattern).ok()?;
-    found
-        .shown
-        .iter()
-        .position(|hit| *hit == id)
-        .map(|at| at + 1)
+    recall_found(entries, &pattern).is_ok_and(|found| found.shown.contains(&id))
 }
 
 pub fn probe(anchor: &Anchor, entries: &[Entry], tree: &Tree, cover: &[Node]) -> Option<Probe> {
@@ -100,7 +95,7 @@ pub fn probe(anchor: &Anchor, entries: &[Entry], tree: &Tree, cover: &[Node]) ->
         } else {
             Outcome::Reached {
                 search: bucket(search_rank(entries, anchor.id, &words)),
-                recall: recall_position(entries, anchor.id, &words).is_some(),
+                recall: recall_hit(entries, anchor.id, &words),
             }
         }
     };

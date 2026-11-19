@@ -1,6 +1,6 @@
 use super::anchors::{Anchor, Group};
 use super::reach::{
-    bucket, cover_ancestor, probe, reach_tally, recall_position, search_rank, Bucket, Outcome,
+    bucket, cover_ancestor, probe, reach_tally, recall_hit, search_rank, Bucket, Outcome,
 };
 use super::survival::Cell;
 use super::tokens::{Class, Key};
@@ -79,17 +79,11 @@ fn search_rank_of_anchor() {
 }
 
 #[test]
-fn recall_position_or_miss() {
+fn recall_hit_or_miss() {
     let entries = entries();
-    assert_eq!(
-        recall_position(&entries, 2, &["guz-1637", "split_view"]),
-        Some(3)
-    );
-    assert_eq!(
-        recall_position(&entries, 5, &["guz-1637", "split_view"]),
-        Some(1)
-    );
-    assert_eq!(recall_position(&entries, 0, &["guz-1637"]), None);
+    assert!(recall_hit(&entries, 2, &["guz-1637", "split_view"]));
+    assert!(recall_hit(&entries, 5, &["guz-1637", "split_view"]));
+    assert!(!recall_hit(&entries, 0, &["guz-1637"]));
 }
 
 #[test]
