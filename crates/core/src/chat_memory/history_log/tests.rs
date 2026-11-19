@@ -255,9 +255,12 @@ fn readers_ignore_unknown_fields() {
 fn an_error_row_is_an_error_with_no_hits() {
     let v = value(&history_error_row(
         &key(),
-        HistoryTool::Search,
-        &json!({"query": "q", "thread": "auth", "cursor": "z"}),
-        "bad cursor",
+        &bad(
+            HistoryTool::Search,
+            json!({"query": "q", "thread": "auth", "cursor": "z"}),
+            "bad cursor",
+        ),
+        ErrorScope::AsTyped,
         CallContext {
             source: CallSource::Slash,
             ..ctx()
@@ -274,13 +277,37 @@ fn an_error_row_is_an_error_with_no_hits() {
     assert!(v.get("hits").is_none());
 }
 
+fn bad(tool: HistoryTool, raw: Value, message: &str) -> MalformedCall {
+    MalformedCall {
+        tool,
+        raw,
+        message: message.to_string(),
+    }
+}
+
+#[test]
+fn an_error_row_resolves_an_untyped_scope_through_the_fork() {
+    let auth = ThreadName::parse("auth").unwrap();
+    let scope = |raw: Value, within: ErrorScope| {
+        let row = history_error_row(&key(), &bad(HistoryTool::Zoom, raw, "x"), within, ctx());
+        value(&row)["scope"].clone()
+    };
+    assert_eq!(scope(json!({}), ErrorScope::AsTyped), "own");
+    assert_eq!(scope(json!({}), ErrorScope::Within(None)), "main");
+    assert_eq!(scope(json!({}), ErrorScope::Within(Some(&auth))), "auth");
+    assert_eq!(scope(Value::Null, ErrorScope::Within(Some(&auth))), "auth");
+    let typed = json!({"thread": "other"});
+    assert_eq!(scope(typed, ErrorScope::Within(Some(&auth))), "other");
+    let prefixed = json!({"id": "main:4"});
+    assert_eq!(scope(prefixed, ErrorScope::Within(Some(&auth))), "main");
+}
+
 #[test]
 fn an_error_row_reads_the_scope_from_an_id_prefix() {
     let v = value(&history_error_row(
         &key(),
-        HistoryTool::Zoom,
-        &json!({"id": "auth:4-7"}),
-        "nope",
+        &bad(HistoryTool::Zoom, json!({"id": "auth:4-7"}), "nope"),
+        ErrorScope::AsTyped,
         ctx(),
     ));
     assert_eq!(v["scope"], "auth");
@@ -292,9 +319,8 @@ fn long_errors_are_capped() {
     let long = "x".repeat(ERROR_CHARS + 10);
     let v = value(&history_error_row(
         &key(),
-        HistoryTool::Zoom,
-        &json!({}),
-        &long,
+        &bad(HistoryTool::Zoom, json!({}), &long),
+        ErrorScope::AsTyped,
         ctx(),
     ));
     assert_eq!(

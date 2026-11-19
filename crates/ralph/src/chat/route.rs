@@ -13,7 +13,7 @@ use crate::chat::workers;
 use crate::config::ConfigSnapshot;
 use crate::schedule_store::ScheduleStore;
 use ralph_core::chat_help::help_with_store;
-use ralph_core::chat_memory::{CallContext, CallMetrics, CallSource};
+use ralph_core::chat_memory::{CallContext, CallMetrics, CallSource, ErrorScope, MalformedCall};
 use ralph_core::chat_status::Route;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
@@ -98,11 +98,15 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
             writeln!(out, "{text}")?
         }
         Route::HistoryRefused { tool, message } => {
+            let bad = MalformedCall {
+                tool,
+                raw: Value::Null,
+                message: message.clone(),
+            };
             history_log::record_error(
                 ctx.store,
-                tool,
-                &Value::Null,
-                &message,
+                &bad,
+                ErrorScope::AsTyped,
                 CallContext {
                     source: CallSource::Slash,
                     took: Duration::ZERO,

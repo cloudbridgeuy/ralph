@@ -5,9 +5,8 @@ use crate::workers::usage_store;
 use ralph_core::chat_memory::{
     count_turn_calls, encode_history, history_call_facts, history_call_row, history_error_row,
     history_path, history_turn_row, next_turn_number, parse_turn_id, turn_id, CallContext,
-    CallSource, HistoryKey, HistoryRow, HistoryTool, MemoryCall, TurnFacts,
+    CallSource, ErrorScope, HistoryKey, HistoryRow, MalformedCall, MemoryCall, TurnFacts,
 };
-use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -134,9 +133,9 @@ pub fn record_call(
     append_call_row(store, ctx.source, |key| history_call_row(key, &facts));
 }
 
-pub fn record_error(store: &Path, tool: HistoryTool, raw: &Value, message: &str, ctx: CallContext) {
+pub fn record_error(store: &Path, bad: &MalformedCall, scope: ErrorScope, ctx: CallContext) {
     append_call_row(store, ctx.source, |key| {
-        history_error_row(key, tool, raw, message, ctx)
+        history_error_row(key, bad, scope, ctx)
     });
 }
 
@@ -144,9 +143,9 @@ pub fn record_error(store: &Path, tool: HistoryTool, raw: &Value, message: &str,
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
-        history_path, parse_tool_call, CallMetrics, CallSource, MemoryCall,
+        history_path, parse_tool_call, CallMetrics, CallSource, HistoryTool, MemoryCall,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::fs;
     use std::time::Duration;
 
@@ -155,6 +154,14 @@ mod tests {
             source,
             took: Duration::from_millis(3),
             metrics: CallMetrics::default(),
+        }
+    }
+
+    fn bad(tool: HistoryTool, raw: Value, message: &str) -> MalformedCall {
+        MalformedCall {
+            tool,
+            raw,
+            message: message.to_string(),
         }
     }
 
@@ -226,9 +233,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         record_error(
             dir.path(),
-            HistoryTool::Zoom,
-            &json!({"id": "9"}),
-            "bad id",
+            &bad(HistoryTool::Zoom, json!({"id": "9"}), "bad id"),
+            ErrorScope::AsTyped,
             ctx(CallSource::Slash),
         );
         let row = &rows(dir.path())[0];
@@ -245,9 +251,8 @@ mod tests {
         record_call(dir.path(), &zoom(), &Ok("a".into()), ctx(CallSource::Mcp));
         record_error(
             dir.path(),
-            HistoryTool::Read,
-            &Value::Null,
-            "x",
+            &bad(HistoryTool::Read, Value::Null, "x"),
+            ErrorScope::AsTyped,
             ctx(CallSource::Mcp),
         );
         assert!(dir.path().join("analytics").is_file());

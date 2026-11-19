@@ -401,6 +401,22 @@ fn raw_scope(raw: &Value) -> String {
         .map_or_else(|| "own".to_string(), |(scope, _)| scope.to_string())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorScope<'a> {
+    AsTyped,
+    Within(Option<&'a ThreadName>),
+}
+
+fn error_scope(raw: &Value, scope: ErrorScope) -> String {
+    let typed = raw_scope(raw);
+    match scope {
+        ErrorScope::Within(fork) if typed == scope_label(&Scope::Own) => {
+            scope_label(&resolve_scope(&Scope::Own, fork))
+        }
+        _ => typed,
+    }
+}
+
 pub fn history_call_facts(
     call: &MemoryCall,
     result: &Result<String, String>,
@@ -450,18 +466,17 @@ pub fn history_call_row(key: &HistoryKey, facts: &CallFacts) -> HistoryRow {
 
 pub fn history_error_row(
     key: &HistoryKey,
-    tool: HistoryTool,
-    raw: &Value,
-    message: &str,
+    bad: &MalformedCall,
+    scope: ErrorScope,
     ctx: CallContext,
 ) -> HistoryRow {
     let facts = CallFacts {
         source: ctx.source,
-        tool,
-        scope: raw_scope(raw),
-        args: raw_args(tool, raw),
+        tool: bad.tool,
+        scope: error_scope(&bad.raw, scope),
+        args: raw_args(bad.tool, &bad.raw),
         outcome: HistoryOutcome::Error,
-        error: Some(cap_text(message, ERROR_CHARS)),
+        error: Some(cap_text(&bad.message, ERROR_CHARS)),
         result_bytes: 0,
         took: ctx.took,
         metrics: CallMetrics::default(),

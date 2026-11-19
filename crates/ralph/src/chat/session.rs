@@ -5,7 +5,8 @@ use crate::cli::HistoryArgs;
 use ralph_core::chat::{prompt_text, CustomPrompt};
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_memory::{
-    history_tool, history_tool_named, CallContext, CallMetrics, CallSource,
+    history_tool, history_tool_named, CallContext, CallMetrics, CallSource, ErrorScope,
+    MalformedCall,
 };
 use ralph_core::chat_status::route_input;
 use ralph_core::chat_thread::{in_scope, ThreadName};
@@ -68,11 +69,15 @@ pub(super) fn print_history(
     });
     let call = parsed.inspect_err(|message| {
         if let Some(tool) = history_tool_named(history.tool.name()) {
+            let bad = MalformedCall {
+                tool,
+                raw: Value::Null,
+                message: message.clone(),
+            };
             history_log::record_error(
                 store_dir,
-                tool,
-                &Value::Null,
-                message,
+                &bad,
+                ErrorScope::AsTyped,
                 CallContext {
                     source: CallSource::Cli,
                     took: Duration::ZERO,
