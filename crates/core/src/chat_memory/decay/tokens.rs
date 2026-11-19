@@ -74,3 +74,9 @@ pub fn key_tokens(text: &str, frequency: &Frequency) -> Vec<Key> {
         .filter(|key| seen.insert(key.word.clone()))
         .collect()
 }
+pub fn text_words(text: &str) -> HashSet<String> {
+    tokenize(text)
+        .into_iter()
+        .flat_map(|token| std::iter::once(token.word).chain(token.parts))
+        .collect()
+}
