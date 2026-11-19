@@ -207,7 +207,7 @@ fn taking_over_a_run_carries_no_prefill() {
 #[test]
 fn a_judge_turn_whose_plan_is_gone_carries_the_status_prefill() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), super::LIMITS);
+    let send_it = super::quiet(dir.path());
     let mut args = super::plan_args();
     args["steps"] =
         serde_json::json!([{"do": "review", "criterion": {"kind": "judge", "question": "ok?"}}]);
