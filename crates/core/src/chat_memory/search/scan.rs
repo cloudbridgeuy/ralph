@@ -132,13 +132,6 @@ fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String
     lines.join("\n")
 }
 
-pub fn search<B: ByteSource>(
-    archive: &mut Archive<B>,
-    request: &SearchRequest,
-) -> io::Result<Result<String, String>> {
-    Ok(search_found(archive, request)?.map(|found| found.text))
-}
-
 pub fn search_found<B: ByteSource>(
     archive: &mut Archive<B>,
     request: &SearchRequest,

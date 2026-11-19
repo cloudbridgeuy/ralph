@@ -39,13 +39,13 @@ pub use log::{
     encode_entry, encode_record, entry_or_corrupt, log_tail, parse_log, parse_tree, LogTail,
     CORRUPT_TEXT,
 };
-pub use lookup::{recall, recall_found, zoom};
+pub use lookup::{recall_found, zoom};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
     nap_system, retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
 };
 pub use range::{read_range, Mode, RangeRequest, Read};
-pub use search::{parse_search_args, search, search_found, SearchRequest};
+pub use search::{parse_search_args, search_found, SearchRequest};
 pub use tag::{
     after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
     failure_kind, ids_with, isolated, next_size, parse_reply, restrict_decision, retake,

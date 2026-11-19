@@ -215,7 +215,7 @@ pub fn finish_call(id: Value, result: Result<String, String>) -> Value {
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::entry;
-    use crate::chat_memory::{read_range, recall, zoom, Entry, Read, Tree, Window};
+    use crate::chat_memory::{read_range, recall_found, zoom, Entry, Read, Tree, Window};
 
     fn call(name: &str, args: Value) -> Outcome {
         handle_request(
@@ -234,7 +234,7 @@ mod tests {
         let window = Window::full(entries);
         match tool {
             Tool::Zoom(node) => zoom(&window, tree, *node).map(|lines| lines.join("\n")),
-            Tool::Recall(pattern) => recall(entries, pattern),
+            Tool::Recall(pattern) => recall_found(entries, pattern).map(|found| found.text),
             Tool::Read(request) => match read_range(&window, tree, request)? {
                 Read::Page(page) => Ok(page.render()),
                 Read::More => panic!("a full window never needs more"),

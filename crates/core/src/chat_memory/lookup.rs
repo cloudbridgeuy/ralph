@@ -92,10 +92,6 @@ fn format_recall(pattern: &str, hits: &[(usize, &Entry, String)]) -> String {
     lines.join("\n")
 }
 
-pub fn recall(entries: &[Entry], pattern: &str) -> Result<String, String> {
-    recall_found(entries, pattern).map(|found| found.text)
-}
-
 pub fn recall_found(entries: &[Entry], pattern: &str) -> Result<Found, String> {
     let re = RegexBuilder::new(pattern)
         .case_insensitive(true)
@@ -159,7 +155,7 @@ mod tests {
     #[test]
     fn recall_lists_newest_first_with_footer() {
         let entries = texted(3, |i| format!("note {i} needle"));
-        let out = recall(&entries, "NEEDLE").unwrap();
+        let out = recall_found(&entries, "NEEDLE").unwrap().text;
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 4);
         assert_eq!(lines[0], "#2 · user · 2026-01-01 · note 2 needle");
@@ -175,7 +171,7 @@ mod tests {
             "b ".repeat(100)
         );
         let entries = texted(1, |_| text.clone());
-        let out = recall(&entries, "needle").unwrap();
+        let out = recall_found(&entries, "needle").unwrap().text;
         let line = out.lines().next().unwrap();
         let body = line.splitn(4, " · ").nth(3).unwrap();
         assert!(body.contains("needle") && !body.contains("START"));
@@ -186,14 +182,14 @@ mod tests {
     #[test]
     fn recall_preview_is_char_safe_and_untruncated_when_short() {
         let entries = texted(1, |_| "ñandú  needle\ncafé".into());
-        let out = recall(&entries, "needle").unwrap();
+        let out = recall_found(&entries, "needle").unwrap().text;
         assert!(out.starts_with("#0 · user · 2026-01-01 · ñandú needle café\n"));
     }
 
     #[test]
     fn recall_caps_lines_and_counts_the_rest() {
         let entries = texted(53, |i| format!("hit {i}"));
-        let out = recall(&entries, "hit").unwrap();
+        let out = recall_found(&entries, "hit").unwrap().text;
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 52);
         assert!(lines[0].starts_with("#52 · "));
@@ -205,19 +201,22 @@ mod tests {
     #[test]
     fn recall_handles_no_hits_and_bad_regex() {
         let entries = texted(2, |i| format!("m{i}"));
-        assert_eq!(recall(&entries, "zzz").unwrap(), "no hits for zzz");
-        assert!(recall(&entries, "(").is_err());
+        assert_eq!(
+            recall_found(&entries, "zzz").unwrap().text,
+            "no hits for zzz"
+        );
+        assert!(recall_found(&entries, "(").is_err());
     }
 
     #[test]
     fn recall_skips_corrupt_placeholders_and_keeps_ids() {
         let mut entries = texted(3, |i| format!("needle {i}"));
         entries[1] = Entry::corrupt();
-        let out = recall(&entries, "needle|corrupt").unwrap();
+        let out = recall_found(&entries, "needle|corrupt").unwrap().text;
         assert!(out.starts_with("#2 · "), "{out}");
         assert!(out.contains("#0 · ") && !out.contains("#1 · "), "{out}");
         assert_eq!(
-            recall(&entries[1..2], "corrupt").unwrap(),
+            recall_found(&entries[1..2], "corrupt").unwrap().text,
             "no hits for corrupt"
         );
     }
