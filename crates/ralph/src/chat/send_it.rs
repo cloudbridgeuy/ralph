@@ -6,17 +6,13 @@ use crate::chat::prompt::{screen_columns, Submitted};
 use crate::chat::queue::Queue;
 use crate::inbox_alert;
 use ralph_core::chat_hold::HoldFilter;
-use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
-use ralph_core::chat_send_it::template::{
-    fill_template, match_template, render_templates, save_notice, template_name, template_text,
-};
+use ralph_core::chat_send_it::template::fill_template;
 use ralph_core::chat_send_it::{
     approve, awaits_check, blocked_alert, blocked_report, briefed_turn, done_block, done_notice,
-    judge_echo, judge_prompt, parse_run, plan_hash, plan_warnings, propose_refusal, read_run,
-    render_status, render_status_styled, resolve_check, run_end_prefill, running_line,
-    settle_check, start_run, step_line, stop_block, stop_file, tick, verify_worker, with_reply,
-    write_run, Action, Driving, Ended, Limits, Next, RunFile, Seen, StepResult, StopReason, Ticked,
+    judge_echo, judge_prompt, plan_hash, render_status, render_status_styled, resolve_check,
+    run_end_prefill, running_line, settle_check, start_run, step_line, stop_block, tick,
+    verify_worker, with_reply, Driving, Ended, Limits, Next, RunFile, Seen, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::chat_suggestion::driven_fill;
@@ -24,32 +20,24 @@ use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_core::worker_check::logged_states;
-use ralph_server::chat::ask::{Ask, Notices};
+use ralph_server::chat::ask::Ask;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::send_it::{unreadable, SendIt as ServerSendIt, NO_RUN};
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::turn::{Turn, TurnOutcome};
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::{locked, OutcomeSlot};
 use ralph_server::workers::running_workers;
 use reedline::{EditCommand, Reedline};
-use serde_json::Value;
 use std::collections::HashMap;
-use std::fmt;
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::ops::Deref;
+use std::path::Path;
+use std::sync::Arc;
 
-const RUN_DIR: &str = "send-it";
-const RUN_FILE: &str = "run.toml";
-const TEMPLATE_DIR: &str = "templates";
-const NO_RUN: &str = "No send-it run. Start one with /send-it <instructions>.";
 const NOT_PROPOSED: &str =
     "No new run plan was stored. Try /send-it again with clearer instructions.";
-
-fn unreadable(path: &Path, error: io::Error) -> String {
-    format!("Could not read {}: {error}", path.display())
-}
 
 fn print_line(line: &str) {
     let mut out = io::stdout().lock();
@@ -60,23 +48,13 @@ fn print_line(line: &str) {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct SendIt {
-    log: PathBuf,
-    path: PathBuf,
-    templates: PathBuf,
-    limits: Limits,
-    refused: Arc<Mutex<Option<String>>>,
-    judged: Arc<Mutex<Option<StepResult>>>,
-    answered: Arc<Mutex<Vec<String>>>,
-    out: Out,
-}
+pub(crate) struct SendIt(ServerSendIt);
 
-#[derive(Clone)]
-struct Out(Notices);
+impl Deref for SendIt {
+    type Target = ServerSendIt;
 
-impl fmt::Debug for Out {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Out")
+    fn deref(&self) -> &ServerSendIt {
+        &self.0
     }
 }
 
@@ -110,7 +88,6 @@ pub(super) struct Active {
     watched: Option<OutcomeSlot>,
 }
 
-// A Driven never carries both a route and a prefill: stopped() builds on ended() (route None), so enter cannot leave text in the buffer while a turn runs.
 pub(super) struct Driven {
     pub(super) active: Option<Active>,
     pub(super) route: Option<Route>,
@@ -172,90 +149,7 @@ pub(super) fn worker_states(monitor: &Monitor) -> (HashMap<String, String>, Vec<
 
 impl SendIt {
     pub(crate) fn new(store_dir: &Path, limits: Limits) -> Self {
-        Self::with_notices(store_dir, limits, Arc::new(print_line))
-    }
-
-    fn with_notices(store_dir: &Path, limits: Limits, notices: Notices) -> Self {
-        Self {
-            log: store_dir.to_path_buf(),
-            path: store_dir.join(RUN_DIR).join(RUN_FILE),
-            templates: store_dir.join(RUN_DIR).join(TEMPLATE_DIR),
-            limits,
-            refused: Arc::default(),
-            judged: Arc::default(),
-            answered: Arc::default(),
-            out: Out(notices),
-        }
-    }
-
-    fn show(&self, line: impl fmt::Display) {
-        (self.out.0)(&line.to_string());
-    }
-
-    fn load(&self) -> Result<Option<RunFile>, String> {
-        match fs::read_to_string(&self.path) {
-            Ok(text) => read_run(&text, self.limits).map(Some),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(unreadable(&self.path, error)),
-        }
-    }
-
-    fn save(&self, file: &RunFile) -> Result<(), String> {
-        let text = write_run(file)?;
-        self.path
-            .parent()
-            .map_or(Ok(()), fs::create_dir_all)
-            .and_then(|()| fs::write(&self.path, text))
-            .map_err(|error| format!("Could not write {}: {error}", self.path.display()))
-    }
-
-    pub(crate) fn allowed(&self) -> Option<Vec<Action>> {
-        self.load()
-            .ok()
-            .flatten()
-            .filter(RunFile::is_approved)
-            .map(|file| file.plan.allowed)
-    }
-
-    pub(crate) fn refuse(&self, tool: String) {
-        *locked(&self.refused) = Some(tool);
-    }
-
-    pub(crate) fn answer(&self, worker: String) {
-        locked(&self.answered).push(worker);
-    }
-
-    pub(crate) fn record(&self, result: StepResult) {
-        *locked(&self.judged) = Some(result);
-    }
-
-    pub(crate) fn refusal(&self) -> Option<String> {
-        propose_refusal(self.load().ok().flatten().as_ref())
-    }
-
-    pub(crate) fn current_hash(&self) -> Option<String> {
-        self.load().ok().flatten().map(|file| plan_hash(&file.plan))
-    }
-
-    pub(crate) fn propose(&self, args: &Value) -> Result<String, String> {
-        if let Some(refusal) = self.refusal() {
-            return Err(refusal);
-        }
-        let plan = parse_run(args, self.limits)?;
-        let hash = plan_hash(&plan);
-        let warnings = plan_warnings(&plan);
-        self.save(&RunFile {
-            plan,
-            approved: None,
-            stopped: None,
-        })?;
-        let stored = format!(
-            "Stored run plan {hash}. Stop here: ralph shows the plan and the person approves it with /send-it go."
-        );
-        Ok(std::iter::once(stored)
-            .chain(warnings)
-            .collect::<Vec<_>>()
-            .join("\n"))
+        Self(ServerSendIt::new(store_dir, limits, Arc::new(print_line)))
     }
 
     pub(crate) fn status(&self, width: usize) -> Screen {
@@ -484,23 +378,6 @@ impl SendIt {
         }
     }
 
-    fn release(&self, hash: &str, stopped_at: Option<usize>) -> Result<Option<RunFile>, String> {
-        match self
-            .load()?
-            .and_then(|file| stop_file(&file, hash, stopped_at))
-        {
-            Some(released) => self.save(&released).map(|()| Some(released)),
-            None => Ok(None),
-        }
-    }
-
-    fn log_notice(&self, notice: &str) {
-        warn_if_err(
-            Store::new(self.log.clone()).append(Role::User, &notice_record(notice)),
-            "Failed to record the send-it notice",
-        );
-    }
-
     fn ended(&self, notice: &str, block: &str, driving: &Driving) -> Driven {
         self.show(block);
         self.log_notice(notice);
@@ -533,14 +410,6 @@ impl SendIt {
         self.stopped(StopReason::TookOver, &active.driving, monitor)
     }
 
-    pub(crate) fn off(&self) -> String {
-        match fs::remove_file(&self.path) {
-            Ok(()) => "send-it off: the run plan is deleted.".to_string(),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => NO_RUN.to_string(),
-            Err(error) => format!("Could not delete {}: {error}", self.path.display()),
-        }
-    }
-
     pub(crate) fn edit(&self, ask: &mut dyn Ask) -> Screen {
         if !self.path.exists() {
             return Screen::text(NO_RUN);
@@ -555,45 +424,6 @@ impl SendIt {
                 ..screen
             },
         }
-    }
-
-    pub(crate) fn save_template(&self, name: &str, ticket: Option<&str>) -> String {
-        let saved = template_name(name).and_then(|name| {
-            let file = self.load()?.ok_or(NO_RUN)?;
-            let text = template_text(&file.plan, ticket)?;
-            let path = self.templates.join(format!("{name}.toml"));
-            let replaced = path.exists();
-            fs::create_dir_all(&self.templates)
-                .and_then(|()| fs::write(&path, &text))
-                .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
-            Ok(save_notice(name, ticket, &text, replaced))
-        });
-        saved.unwrap_or_else(|text| text)
-    }
-
-    fn template_names(&self) -> Result<Vec<String>, String> {
-        let entries = match fs::read_dir(&self.templates) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(unreadable(&self.templates, error)),
-        };
-        let mut names: Vec<String> = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-            .filter_map(|path| Some(path.file_stem()?.to_str()?.to_string()))
-            .collect();
-        names.sort();
-        Ok(names)
-    }
-
-    pub(crate) fn templates(&self) -> String {
-        self.template_names()
-            .map_or_else(|text| text, |names| render_templates(&names))
-    }
-
-    pub(crate) fn template_use(&self, text: &str) -> Option<(String, String)> {
-        match_template(text, &self.template_names().ok()?)
     }
 
     pub(crate) fn use_template(&self, ticket: &str, name: &str) -> Screen {

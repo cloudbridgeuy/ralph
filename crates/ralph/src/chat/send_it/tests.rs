@@ -1,7 +1,8 @@
 use super::*;
 use crate::chat::socket::{respond, Shared};
+use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::Trigger;
-use ralph_core::chat_send_it::{Awaiting, VerifyMode};
+use ralph_core::chat_send_it::{Action, Awaiting, StepResult, VerifyMode};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
 use ralph_server::chat::ask::{Ask, Notices};
@@ -9,7 +10,8 @@ use ralph_server::chat::memory::Store;
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 pub(in crate::chat) mod held;
@@ -44,78 +46,6 @@ fn proposed(dir: &Path) -> (SendIt, String) {
     send_it.propose(&plan_args()).unwrap();
     let hash = send_it.status(80).shown.unwrap();
     (send_it, hash)
-}
-
-#[test]
-fn propose_stores_the_plan_under_the_store() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let stored = send_it.propose(&plan_args()).unwrap();
-    let text = fs::read_to_string(dir.path().join("send-it/run.toml")).unwrap();
-    let file = read_run(&text, LIMITS).unwrap();
-    assert_eq!(file.approved, None);
-    let hash = plan_hash(&file.plan);
-    assert!(
-        stored.starts_with(&format!("Stored run plan {hash}.")),
-        "{stored}"
-    );
-}
-
-#[test]
-fn propose_adds_the_warning_line_after_the_stored_line_for_a_worker_done_plan_without_reply() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let mut args = plan_args();
-    args["steps"] = json!([{"do": "wait", "criterion": {"kind": "worker_done", "worker": "E1"}}]);
-    let stored = send_it.propose(&args).unwrap();
-    let lines: Vec<&str> = stored.lines().collect();
-    assert!(lines[0].starts_with("Stored run plan "), "{stored}");
-    assert_eq!(lines.len(), 2, "{stored}");
-    assert!(
-        lines[1].starts_with("Warning: step 1 waits for worker E1"),
-        "{stored}"
-    );
-    let clean = quiet(tempfile::tempdir().unwrap().path());
-    assert!(!clean.propose(&plan_args()).unwrap().contains("Warning:"));
-}
-
-#[test]
-fn propose_rejects_a_step_without_a_criterion_and_stores_nothing() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let args = json!({"goal": "g", "steps": [{"do": "x"}]});
-    assert_eq!(
-        send_it.propose(&args),
-        Err("Step 1 has no exit criterion. Give each step a check ralph can measure.".into())
-    );
-    assert!(!dir.path().join("send-it").exists());
-}
-
-#[test]
-fn propose_refuses_while_an_approved_plan_exists() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let plan = parse_run(&plan_args(), LIMITS).unwrap();
-    let hash = plan_hash(&plan);
-    let draft = RunFile {
-        plan,
-        approved: None,
-        stopped: None,
-    };
-    send_it.save(&draft).unwrap();
-    assert!(send_it.propose(&plan_args()).is_ok());
-    send_it
-        .save(&RunFile {
-            approved: Some(hash.clone()),
-            ..draft
-        })
-        .unwrap();
-    assert_eq!(
-        send_it.propose(&plan_args()),
-        Err(format!(
-            "Plan {hash} is approved and active. Stop it with /send-it off first."
-        ))
-    );
 }
 
 #[test]
@@ -907,7 +837,7 @@ impl Printed {
 
 fn printing(dir: &Path) -> (SendIt, Active, Printed) {
     let printed = Printed::default();
-    let send_it = SendIt::with_notices(dir, LIMITS, printed.sink());
+    let send_it = SendIt(ServerSendIt::new(dir, LIMITS, printed.sink()));
     let (send_it, active) = judging_on(send_it);
     (send_it, active, printed)
 }
@@ -959,5 +889,5 @@ fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
 }
 
 fn quiet(dir: &Path) -> SendIt {
-    SendIt::with_notices(dir, LIMITS, Printed::default().sink())
+    SendIt(ServerSendIt::new(dir, LIMITS, Printed::default().sink()))
 }
