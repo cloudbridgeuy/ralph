@@ -43,7 +43,7 @@ use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::monitor::{
-    ready_ids, watch_headless, watch_input, watch_status, Monitor, ProcessMemo,
+    client_sink, ready_ids, watch_headless, watch_input, watch_status, Monitor, ProcessMemo,
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
@@ -330,6 +330,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         ),
         check: Mutex::new(CheckState::seeded(&store)),
         known: Mutex::new(known),
+        fresh: Mutex::new((Vec::new(), 0)),
         scheduled_reports: Mutex::new(Vec::new()),
         warned: Mutex::new(HashSet::new()),
         unrecorded: Mutex::new(HashSet::new()),
@@ -451,7 +452,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
         .with_external_printer(printer);
     let repaint = editor.repaint_signal();
-    watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
+    watch_status(
+        Arc::clone(&monitor),
+        client_sink(Arc::clone(&monitor), move || repaint.request_repaint()),
+    );
     crate::render::image::enable_images(image_settings);
     let (configured_editor, config_warning) = chat_config.editor_setting();
     let (editor_cmd, editor_warning) = editor_argv(

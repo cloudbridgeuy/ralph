@@ -32,6 +32,7 @@ use ralph_core::worker_check::{
     CHECK_STATUS, NUDGE_TEXT,
 };
 use ralph_server::chat::check::CheckState;
+use ralph_server::chat::host::{tick_events, HostEvent};
 use ralph_server::chat::memory::{self, Store};
 use ralph_server::cursor_owner::{now_secs, write_file};
 use ralph_server::subprocess::Session;
@@ -94,6 +95,7 @@ pub(super) struct Monitor {
     pub(super) workers: Workers,
     pub(super) check: Mutex<CheckState>,
     pub(super) known: Mutex<Vec<Report>>,
+    pub(super) fresh: Mutex<(Vec<Report>, usize)>,
     pub(super) scheduled_reports: Mutex<Vec<Report>>,
     pub(super) warned: Mutex<HashSet<String>>,
     pub(super) unrecorded: Mutex<HashSet<String>>,
@@ -129,8 +131,14 @@ impl Monitor {
         report_for(*locked(&self.phase), &status)
     }
 
-    fn report_terminal(&self) {
-        self.term.send(&self.terminal_report(self.status().unread));
+    fn tick_events(&self, changed: bool) -> Vec<HostEvent> {
+        let (fresh, unread) = std::mem::take(&mut *locked(&self.fresh));
+        tick_events(
+            changed,
+            self.terminal_report(self.status().unread),
+            fresh,
+            unread,
+        )
     }
 
     pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
@@ -302,12 +310,14 @@ impl Monitor {
 
     fn alert_fresh(&self, pending: &[Report]) {
         let mut known = locked(&self.known);
-        let fresh = fresh_reports(&known, pending);
-        if !fresh.is_empty() && self.alert.enabled() {
-            let terminal = self.terminal_report(pending.len()).state;
-            if let Some(alert) = inbox_alert(&fresh, inbox_alert::focus(), terminal, &self.alert) {
-                inbox_alert::deliver(&alert);
-            }
+        let fresh: Vec<Report> = fresh_reports(&known, pending)
+            .into_iter()
+            .cloned()
+            .collect();
+        if !fresh.is_empty() {
+            let mut queued = locked(&self.fresh);
+            queued.0.extend(fresh);
+            queued.1 = pending.len();
         }
         *known = pending.to_vec();
     }
@@ -392,7 +402,28 @@ impl Monitor {
     }
 }
 
-pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 'static) {
+pub(super) fn client_sink(
+    monitor: Arc<Monitor>,
+    repaint: impl Fn() + Send + 'static,
+) -> impl Fn(HostEvent) + Send + 'static {
+    move |event| match event {
+        HostEvent::Repaint => repaint(),
+        HostEvent::Status(report) => monitor.term.send(&report),
+        HostEvent::Fresh { fresh, unread } => {
+            if !monitor.alert.enabled() {
+                return;
+            }
+            let terminal = monitor.terminal_report(unread).state;
+            let fresh: Vec<&Report> = fresh.iter().collect();
+            if let Some(alert) = inbox_alert(&fresh, inbox_alert::focus(), terminal, &monitor.alert)
+            {
+                inbox_alert::deliver(&alert);
+            }
+        }
+    }
+}
+
+pub(super) fn watch_status(monitor: Arc<Monitor>, sink: impl Fn(HostEvent) + Send + 'static) {
     std::thread::spawn(move || {
         let check_every = monitor
             .worker_check_secs
@@ -407,10 +438,10 @@ pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 's
             watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
             fire_due(&monitor.schedule, &monitor.watches, &monitor.inbox);
             tick_workers(&monitor);
-            if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
-                repaint();
+            let changed = monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS));
+            for event in monitor.tick_events(changed) {
+                sink(event);
             }
-            monitor.report_terminal();
             if check_every.is_some_and(|every| tick.is_multiple_of(every)) {
                 monitor.check();
             }
