@@ -26,9 +26,9 @@ use ralph_core::worker::{
     worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles,
     HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFacts, SpawnFootprint, SpawnRecord,
     SpawnRequest, Startup, Ticket, TicketKeys, UsageSink, WorkPhase, WorkerImport, WorkerMarkers,
-    WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT,
-    FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
-    STORE_OPTION, WORKERS_DIR,
+    WorktreeBase, WorktreeVia, AGY_AGENT, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND,
+    CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -143,7 +143,10 @@ impl Workers {
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
         let (model, model_warning) = match harness {
-            HarnessId::Agy => return Err(io::Error::other("agy workers are not supported yet")),
+            HarnessId::Agy if model.is_some() => {
+                return Err(io::Error::other("agy does not accept a model yet"))
+            }
+            HarnessId::Agy => (None, None),
             HarnessId::Opencode => {
                 let (model, warning) = resolve_opencode_model(
                     model,
@@ -288,7 +291,7 @@ impl Workers {
 
     fn preflight(&self, id: &str, harness: HarnessId, shell: ClaudeShell) -> io::Result<()> {
         match harness {
-            HarnessId::Agy => Err(io::Error::other("agy workers are not supported yet")),
+            HarnessId::Agy => require_on_path(AGY_AGENT.command),
             HarnessId::ClaudeTmux => {
                 require_on_path("tmux")?;
                 require_on_path(shell.program())?;
@@ -343,7 +346,14 @@ impl Workers {
         }
         self.write_spawn_record(id, *harness, ticket.clone(), base_sha.clone())?;
         let command = match harness {
-            HarnessId::Agy => return Err(io::Error::other("agy workers are not supported yet")),
+            HarnessId::Agy => {
+                let warning =
+                    self.spawn_headless(launch, HandoffFiles::agy(&self.store_dir, id), "agy")?;
+                return Ok(with_start_warning(
+                    format!("{started} It runs headless inside ralph chat (no tmux session)."),
+                    warning.as_deref(),
+                ));
+            }
             HarnessId::ClaudeTmux => {
                 let settings = self.write_settings(id, &markers, *site)?;
                 let task_dir = self.write_task(id, task)?;
@@ -441,7 +451,7 @@ impl Workers {
 
     fn harness_running(&self, launch: &Launch) -> bool {
         match launch.harness {
-            HarnessId::Agy => false,
+            HarnessId::Agy => HandoffFiles::agy(&self.store_dir, launch.id).owner.exists(),
             HarnessId::ClaudeTmux => session_exists(launch.session).unwrap_or(true),
             HarnessId::Opencode => HandoffFiles::opencode(&self.store_dir, launch.id)
                 .owner
@@ -466,7 +476,9 @@ impl Workers {
     ) -> io::Result<Option<String>> {
         let id = launch.id;
         for path in files.all() {
-            clear_marker(path)?;
+            if harness != "agy" || path != files.owner {
+                clear_marker(path)?;
+            }
         }
         let request = SpawnRequest {
             worktree: launch.worktree.to_path_buf(),

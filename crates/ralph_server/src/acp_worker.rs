@@ -2,8 +2,8 @@ use crate::acp_log::{drain_stderr, CappedLog};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
-    now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_interrupt_result,
-    write_owner_record,
+    claim_owner, now_secs, report_start_warning, sweep_owner, take_answer, write_file,
+    write_interrupt_result, write_owner_record,
 };
 use crate::subprocess::{exited_unreaped, signal_group, unregister_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
@@ -14,9 +14,10 @@ use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{mark_prompt_lost, report_interrupt_gone, HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
-    AuthenticateRequest, CancelNotification, InitializeResponse, LoadSessionRequest, McpServer,
-    NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
+    AuthenticateRequest, CancelNotification, CloseSessionRequest, InitializeResponse,
+    LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
+    SessionNotification,
 };
 use agent_client_protocol::{Agent, Client, ConnectionTo, Responder};
 use futures::channel::mpsc as queue;
@@ -29,12 +30,13 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
     decide, describe, encode, gone_path, permission_content, probed_version, prompt_failure_report,
     ready_path, reduce, request_stale, resume_decision, session_error, stop_problem,
-    sweeps_permissions, turn_outcome, AcpAgent, AcpCall, BlockedContent, Capabilities,
+    sweeps_permissions, task_prompt, turn_outcome, AcpAgent, AcpCall, BlockedContent, Capabilities,
     HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound, PermissionAnswer,
     PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
-    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
-    CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR,
-    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE, CURSOR_AGENT,
+    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
+    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
+    CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -75,6 +77,7 @@ fn cursor_permissions() -> PermissionMode {
 }
 
 pub enum Launch {
+    Fresh,
     Resume {
         record: SessionRecord,
         store: PathBuf,
@@ -105,6 +108,15 @@ async fn open_session(
     loads_session: bool,
 ) -> Result<SessionId, String> {
     match &opening.launch {
+        Launch::Fresh => connection
+            .send_request(
+                NewSessionRequest::new(opening.cwd.clone())
+                    .mcp_servers(vec![opening.server.clone()]),
+            )
+            .block_task()
+            .await
+            .map(|response| response.session_id)
+            .map_err(|error| format!("agy session could not be started: {}", error.message)),
         Launch::Resume { record, store } => {
             if let Resume::Skip(message) = resume_decision(
                 &opening.agent,
@@ -168,17 +180,35 @@ impl AcpWorker {
             markers,
             starting,
         } = slot;
-        if let Some(warning) = agent_version_warning(&agent, &request.inbox) {
-            report_start_warning(warning, None);
+        if agent == CURSOR_AGENT {
+            if let Some(warning) = agent_version_warning(&agent, &request.inbox) {
+                report_start_warning(warning, None);
+            }
+        }
+        if agent == AGY_AGENT {
+            let version = agent_version_probe(&agent);
+            let version = probed_version(&agent, &version)?;
+            if let Some(warning) = crate::version_drift::gate(&AGY_GATE, version, &request.inbox)? {
+                report_start_warning(
+                    warning,
+                    Some(
+                        &HandoffFiles::agy(
+                            request.inbox.parent().ok_or("worker inbox has no store")?,
+                            id,
+                        )
+                        .warning,
+                    ),
+                );
+            }
         }
         let mut command = Command::new(agent.command);
-        let store = request.inbox.parent().ok_or("worker inbox has no store")?;
-        command
-            .arg("acp")
-            .current_dir(&request.worktree)
-            .envs([ralph_core::worker::inbox_env(
+        command.arg("acp").current_dir(&request.worktree);
+        if agent == CURSOR_AGENT {
+            let store = request.inbox.parent().ok_or("worker inbox has no store")?;
+            command.envs([ralph_core::worker::inbox_env(
                 &fs::canonicalize(store).map_err(|e| e.to_string())?,
             )]);
+        }
         let (child, stdin, stdout, stderr) = spawn_piped(command)
             .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
         let log = CappedLog::new(request.inbox.parent(), id);
@@ -186,7 +216,11 @@ impl AcpWorker {
         let events = Events::default();
         let permissions = Permissions::new(
             &markers,
-            cursor_permissions(),
+            if agent == AGY_AGENT {
+                PermissionMode::Ask
+            } else {
+                cursor_permissions()
+            },
             PermissionQueue::new(
                 host_process_token(),
                 id.to_string(),
@@ -208,7 +242,11 @@ impl AcpWorker {
             closing: Arc::clone(&closing),
             done: false,
             exit_seen: false,
-            caps: capabilities(HarnessId::Cursor),
+            caps: capabilities(if agent == AGY_AGENT {
+                HarnessId::Agy
+            } else {
+                HarnessId::Cursor
+            }),
             markers: markers.clone(),
             state: HeadlessState::default(),
             events: Arc::clone(&events),
@@ -280,11 +318,13 @@ impl AcpWorker {
                                 return Ok(());
                             }
                         };
-                        if let Err(e) = authenticate(&connection, &agent, &init).await {
-                            ready_tx
-                                .send(Err(session_error(&agent, i32::from(e.code), &e.message)))
-                                .ok();
-                            return Ok(());
+                        if agent == CURSOR_AGENT {
+                            if let Err(e) = authenticate(&connection, &agent, &init).await {
+                                ready_tx
+                                    .send(Err(session_error(&agent, i32::from(e.code), &e.message)))
+                                    .ok();
+                                return Ok(());
+                            }
                         }
                         let opening = Opening {
                             agent,
@@ -313,6 +353,15 @@ impl AcpWorker {
                                     events,
                                 };
                                 run_turns(&connection, &turns, prompt_rx, stop_rx).await;
+                                if agent == AGY_AGENT {
+                                    connection
+                                        .send_request(CloseSessionRequest::new(
+                                            turns.session.clone(),
+                                        ))
+                                        .block_task()
+                                        .await
+                                        .ok();
+                                }
                             }
                             Err(message) => {
                                 ready_tx.send(Err(message)).ok();
@@ -424,10 +473,10 @@ impl HeadlessWorker for AcpWorker {
             other => format!("{other:?}"),
         })?;
         match command {
-            WorkerCommand::Prompt(text) => {
-                self.prompts.unbounded_send(Inbound::Prompt(text)).ok();
-                Ok(())
-            }
+            WorkerCommand::Prompt(text) => self
+                .prompts
+                .unbounded_send(Inbound::Prompt(text))
+                .map_err(|_| format!("{} agent is not accepting prompts", self.agent.name)),
             WorkerCommand::AnswerPermission(answer) => self.permissions.answer(&answer),
             WorkerCommand::Close => {
                 self.terminate();
@@ -488,6 +537,7 @@ async fn authenticate(
 }
 
 pub struct CursorHost {
+    agy: bool,
     store_dir: PathBuf,
     workers: Mutex<HashMap<String, CursorWorker>>,
     starting: Mutex<HashMap<String, u32>>,
@@ -504,6 +554,7 @@ impl CursorHost {
         }
         fs::remove_dir_all(store_dir.join(CURSOR_INTERRUPT_RESULT_DIR)).ok();
         Arc::new(Self {
+            agy: false,
             store_dir,
             workers: Mutex::new(HashMap::new()),
             starting: Mutex::new(HashMap::new()),
@@ -511,12 +562,42 @@ impl CursorHost {
         })
     }
 
+    pub fn agy(store_dir: PathBuf) -> Arc<Self> {
+        Arc::new(Self {
+            agy: true,
+            store_dir,
+            workers: Mutex::new(HashMap::new()),
+            starting: Mutex::new(HashMap::new()),
+            closed: AtomicBool::new(false),
+        })
+    }
+
+    fn dir(&self, cursor: &'static str, agy: &'static str) -> &'static str {
+        if self.agy {
+            agy
+        } else {
+            cursor
+        }
+    }
+
     fn workers(&self) -> MutexGuard<'_, HashMap<String, CursorWorker>> {
         locked(&self.workers)
     }
 
     fn files(&self, id: &str) -> HandoffFiles {
-        HandoffFiles::cursor(&self.store_dir, id)
+        if self.agy {
+            HandoffFiles::agy(&self.store_dir, id)
+        } else {
+            HandoffFiles::cursor(&self.store_dir, id)
+        }
+    }
+
+    fn handles(&self, id: &str) -> bool {
+        !self.agy
+            || !matches!(
+                crate::workers::headless::queued_owner(&self.files(id).owner),
+                ralph_core::worker::QueuedOwner::Foreign
+            )
     }
 
     fn reap_exits(&self) {
@@ -528,13 +609,20 @@ impl CursorHost {
 
     fn poll(&self) {
         self.reap_exits();
-        for id in request_ids(&self.store_dir, CURSOR_CLOSE_DIR) {
-            self.close(&id);
+        for id in request_ids(&self.store_dir, self.dir(CURSOR_CLOSE_DIR, "agy-close")) {
+            if self.handles(&id) {
+                self.close(&id);
+            }
         }
-        for id in request_ids(&self.store_dir, CURSOR_ANSWER_DIR) {
-            self.answer(&id);
+        for id in request_ids(&self.store_dir, self.dir(CURSOR_ANSWER_DIR, "agy-answer")) {
+            if self.handles(&id) {
+                self.answer(&id);
+            }
         }
-        for id in request_ids(&self.store_dir, CURSOR_PROMPT_DIR) {
+        for id in request_ids(&self.store_dir, self.dir(CURSOR_PROMPT_DIR, "agy-prompt")) {
+            if !self.handles(&id) {
+                continue;
+            }
             self.deliver_queued(
                 &id,
                 |files| &files.prompt,
@@ -542,7 +630,13 @@ impl CursorHost {
                 |_, entry| mark_prompt_lost(entry),
             );
         }
-        for id in request_ids(&self.store_dir, CURSOR_INTERRUPT_DIR) {
+        for id in request_ids(
+            &self.store_dir,
+            self.dir(CURSOR_INTERRUPT_DIR, "agy-interrupt"),
+        ) {
+            if !self.handles(&id) {
+                continue;
+            }
             self.deliver_queued(
                 &id,
                 |files| &files.interrupt,
@@ -553,8 +647,10 @@ impl CursorHost {
                 |files, entry| report_interrupt_gone(&files.interrupt_result, entry),
             );
         }
-        for id in request_ids(&self.store_dir, CURSOR_SPAWN_DIR) {
-            self.spawn(&id);
+        for id in request_ids(&self.store_dir, self.dir(CURSOR_SPAWN_DIR, "agy-spawn")) {
+            if self.handles(&id) {
+                self.spawn(&id);
+            }
         }
     }
 
@@ -610,6 +706,9 @@ impl CursorHost {
     }
 
     fn close(&self, id: &str) {
+        if self.agy && !self.workers().contains_key(id) {
+            return;
+        }
         self.cancel_pending(id);
         let removed = self.workers().remove(id);
         if let Some(mut worker) = removed {
@@ -635,11 +734,29 @@ impl CursorHost {
             self.fail(id, "worker is already running");
             return;
         }
-        let started = PrintWorker::start(id, &request, &files, None, cursor_permissions())
-            .map(CursorWorker::Print);
+        let claim = if self.agy {
+            if claim_owner(&files.owner).is_err() {
+                return;
+            }
+            fs::read_to_string(&files.owner).ok()
+        } else {
+            None
+        };
+        let started = if self.agy {
+            self.launch(id, &request, Launch::Fresh)
+                .map(|worker| CursorWorker::Acp(Box::new(worker)))
+        } else {
+            PrintWorker::start(id, &request, &files, None, cursor_permissions())
+                .map(CursorWorker::Print)
+        };
         match started {
-            Ok(worker) => self.adopt(id, worker),
+            Ok(worker) => self.adopt(id, worker, self.agy.then(|| task_prompt(&request.task))),
             Err(message) => {
+                if claim.as_ref().is_some_and(|claim| {
+                    fs::read_to_string(&files.owner).as_ref().ok() == Some(claim)
+                }) {
+                    fs::remove_file(&files.owner).ok();
+                }
                 fs::remove_file(&files.session).ok();
                 self.fail(id, &message);
             }
@@ -656,7 +773,7 @@ impl CursorHost {
             request,
             launch,
             Slot {
-                agent: CURSOR_AGENT,
+                agent: if self.agy { AGY_AGENT } else { CURSOR_AGENT },
                 id,
                 owner: &self.files(id).owner,
                 results: &self.files(id).interrupt_result,
@@ -754,12 +871,25 @@ impl CursorHost {
         }
     }
 
-    fn adopt(&self, id: &str, worker: CursorWorker) {
+    fn adopt(&self, id: &str, mut worker: CursorWorker, task: Option<String>) {
         let files = self.files(id);
         let claimed = !self.closed.load(Ordering::SeqCst)
+            && (!self.agy
+                || matches!(
+                    crate::workers::headless::queued_owner(&files.owner),
+                    ralph_core::worker::QueuedOwner::Mine
+                ))
             && fs::remove_file(&files.spawn).is_ok()
             && write_file(&ready_path(&self.store_dir, id), "").is_ok();
         if claimed {
+            if let Some(task) = task {
+                if let Err(error) = worker.send(WorkerCommand::Prompt(task)) {
+                    drop(worker);
+                    fs::remove_file(ready_path(&self.store_dir, id)).ok();
+                    self.fail(id, &error);
+                    return;
+                }
+            }
             self.workers().insert(id.to_string(), worker);
         } else {
             drop(worker);
@@ -777,7 +907,9 @@ impl CursorHost {
 
 impl HeadlessHost for CursorHost {
     fn resume(&self) {
-        self.resume_all();
+        if !self.agy {
+            self.resume_all();
+        }
     }
 
     fn poll(&self) -> bool {

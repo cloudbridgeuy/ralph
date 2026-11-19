@@ -70,6 +70,11 @@ impl Capabilities {
         use Feature::*;
         use Support::{Full, Partial};
         match (self.harness, feature) {
+            (HarnessId::Agy, Spawn | Prompt | Close) => Full,
+            (HarnessId::Agy, PermAsk) => Partial("protocol-raised requests only"),
+            (HarnessId::Agy, PermYolo) => Partial("process flag, not yet stub-verified"),
+            (HarnessId::Agy, Report) => Partial("MCP delivery requires live verification"),
+            (HarnessId::Agy, Heartbeat) => Partial("ACP traffic only"),
             (HarnessId::Agy, _) => Support::None,
             (HarnessId::ClaudeTmux, Model) => Full,
             (HarnessId::ClaudeTmux, _) => Support::None,
@@ -455,6 +460,19 @@ mod tests {
     fn opencode_interrupt_is_full() {
         let caps = capabilities(HarnessId::Opencode);
         assert_eq!(caps.support(Feature::Interrupt), Support::Full);
+    }
+
+    #[test]
+    fn agy_support_reports_current_limits() {
+        let caps = capabilities(HarnessId::Agy);
+        assert_eq!(caps.support(Feature::Spawn), Support::Full);
+        assert_eq!(
+            caps.support(Feature::PermYolo),
+            Support::Partial("process flag, not yet stub-verified")
+        );
+        assert!(matches!(caps.support(Feature::Report), Support::Partial(_)));
+        assert_eq!(caps.support(Feature::Model), Support::None);
+        assert_eq!(caps.support(Feature::Resume), Support::None);
     }
 
     #[test]

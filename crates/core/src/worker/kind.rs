@@ -22,14 +22,6 @@ impl HarnessId {
         Self::Claude,
     ];
 
-    pub const SPAWNABLE: [HarnessId; 5] = [
-        Self::ClaudeTmux,
-        Self::Opencode,
-        Self::Cursor,
-        Self::Codex,
-        Self::Claude,
-    ];
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
