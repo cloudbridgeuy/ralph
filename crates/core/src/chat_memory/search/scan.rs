@@ -136,6 +136,14 @@ fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String
     lines.join("\n")
 }
 
+pub(crate) fn rank_ids(entries: &[Entry], request: &SearchRequest) -> Vec<usize> {
+    let mut scan = Scan::new(request);
+    for (id, entry) in entries.iter().enumerate() {
+        scan.push(id, entry);
+    }
+    scan.ranked().into_iter().map(|hit| hit.id).collect()
+}
+
 pub fn search_found<B: ByteSource>(
     archive: &mut Archive<B>,
     request: &SearchRequest,

@@ -1,5 +1,5 @@
 use super::query::{tokenize, Query};
-use super::scan::{CHUNK_ENTRIES, SNIPPET_CHARS};
+use super::scan::{rank_ids, CHUNK_ENTRIES, SNIPPET_CHARS};
 use super::{parse_search_args, search_found};
 use crate::chat_memory::archive::{Archive, ByteSource};
 use crate::chat_memory::fixtures::written;
@@ -563,4 +563,17 @@ fn decision_is_a_tag_filter() {
     let args = parse_search_args(&json!({"query": "ship", "tag": "decision"})).unwrap();
     let rule = parse_search_args(&json!({"query": "ship", "tag": "rule"})).unwrap();
     assert_ne!(args.fingerprint, rule.fingerprint);
+}
+
+#[test]
+fn rank_ids_orders_by_score_without_an_archive() {
+    let entries = vec![
+        user(0, "alpha"),
+        user(1, "split_view guz-1637 plan"),
+        user(2, "split_view only"),
+    ];
+    let request = parse_search_args(&json!({"query": "split_view guz-1637"})).unwrap();
+    assert_eq!(rank_ids(&entries, &request), [1, 2]);
+    let none = parse_search_args(&json!({"query": "absent"})).unwrap();
+    assert!(rank_ids(&entries, &none).is_empty());
 }
