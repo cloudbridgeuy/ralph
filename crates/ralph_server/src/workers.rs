@@ -31,6 +31,8 @@ mod agy;
 mod close;
 mod guard;
 pub mod headless;
+#[cfg(test)]
+mod interrupt_token_test;
 mod reply;
 mod spawn;
 mod verify;
@@ -255,12 +257,19 @@ impl Workers {
             if interrupt && caps.support(Feature::Interrupt) == Support::None {
                 Err(io::Error::other(describe(&caps, Feature::Interrupt)))
             } else if interrupt {
-                self.queue_entry(&files.interrupt, text).map(|entry| {
-                    Sent::plain(interrupt_reply(
-                        id,
-                        self.await_interrupt_result(&files.interrupt_result, &entry),
-                    ))
-                })
+                let payload = if kind == HarnessId::Agy {
+                    crate::acp_worker::journal::encode_interrupt(&self.store_dir, id, text)
+                } else {
+                    text.to_string()
+                };
+                let suffix = if kind == HarnessId::Agy { "-agy1" } else { "" };
+                self.queue_entry_with_suffix(&files.interrupt, &payload, suffix)
+                    .map(|entry| {
+                        Sent::plain(interrupt_reply(
+                            id,
+                            self.await_interrupt_result(&files.interrupt_result, &entry),
+                        ))
+                    })
             } else if self.awaits_permission(id) {
                 self.answer_permission(id, "", text).map(Sent::plain)
             } else {
@@ -293,7 +302,11 @@ impl Workers {
     }
 
     fn queue_entry(&self, dir: &Path, text: &str) -> io::Result<String> {
-        let entry = prompt_entry_name(now_nanos(), process::id());
+        self.queue_entry_with_suffix(dir, text, "")
+    }
+
+    fn queue_entry_with_suffix(&self, dir: &Path, text: &str, suffix: &str) -> io::Result<String> {
+        let entry = format!("{}{suffix}", prompt_entry_name(now_nanos(), process::id()));
         let pending = dir.join(format!(".{entry}"));
         write_file(&pending, text)?;
         fs::rename(&pending, dir.join(&entry))?;

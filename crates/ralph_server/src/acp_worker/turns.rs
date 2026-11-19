@@ -17,6 +17,7 @@ pub(super) struct Turns {
     pub(super) heartbeat: Arc<Heartbeat>,
     pub(super) events: Events,
     pub(super) generation: Arc<AtomicU64>,
+    pub(super) group: u32,
 }
 
 impl Turns {
@@ -143,8 +144,32 @@ pub(super) async fn run_turns(
             post_prompt_failure(turns, &message);
             continue;
         }
+        let mut active_token = None;
         if turns.agent == AGY_AGENT {
-            turns.generation.fetch_add(1, Ordering::SeqCst);
+            let generation = turns.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(store) = turns
+                .inbox_dir()
+                .and_then(|dir| dir.parent()?.parent().map(Path::to_path_buf))
+            {
+                match journal::publish_turn(&store, &turns.worker_id, generation, turns.group) {
+                    Ok(token) => active_token = Some((store, token)),
+                    Err(error) => {
+                        turns.generation.fetch_add(1, Ordering::SeqCst);
+                        queue.finish();
+                        let message = format!("could not publish agy turn: {error}");
+                        turns.heartbeat.set_state(ActivityState::Failed);
+                        push_event(
+                            &turns.events,
+                            WorkerEvent::TurnEnded(TurnEnd::Failed {
+                                message: message.clone(),
+                                transient: false,
+                            }),
+                        );
+                        post_prompt_failure(turns, &message);
+                        continue;
+                    }
+                }
+            }
         }
         let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
             return;
@@ -174,6 +199,9 @@ pub(super) async fn run_turns(
         };
         if turns.agent == AGY_AGENT {
             turns.generation.fetch_add(1, Ordering::SeqCst);
+            if let Some((store, token)) = active_token {
+                journal::finish_turn(&store, &turns.worker_id, &token);
+            }
         }
         let queued_interrupt = queue.finish();
         let reason = result.as_ref().map(|done| {

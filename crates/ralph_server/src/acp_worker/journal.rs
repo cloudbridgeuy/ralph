@@ -4,6 +4,86 @@ use std::sync::atomic::AtomicU64;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+fn turn_path(store: &Path, id: &str) -> PathBuf {
+    store.join("agy-turn").join(id)
+}
+
+pub(crate) fn encode_interrupt(store: &Path, id: &str, text: &str) -> String {
+    let turn = fs::read_to_string(turn_path(store, id)).ok();
+    serde_json::json!({"agy_interrupt": 1, "text": text, "turn": turn}).to_string()
+}
+
+fn decode_interrupt(text: &str, entry: &str) -> (String, Option<String>) {
+    if !entry.ends_with("-agy1") {
+        return (text.to_string(), None);
+    }
+    let parsed = serde_json::from_str::<serde_json::Value>(text).ok();
+    match parsed
+        .as_ref()
+        .filter(|value| value.get("agy_interrupt").and_then(|v| v.as_u64()) == Some(1))
+        .and_then(|value| value.get("text"))
+        .and_then(|value| value.as_str())
+    {
+        Some(message) => (
+            message.to_string(),
+            parsed
+                .as_ref()
+                .and_then(|value| value.get("turn"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+        ),
+        None => (text.to_string(), None),
+    }
+}
+
+fn token(store: &Path, id: &str, generation: u64, group: u32) -> Option<String> {
+    let owner = fs::read_to_string(HandoffFiles::agy(store, id).owner).ok()?;
+    if ralph_core::worker::OwnerRecord::parse(&owner)?.group != group {
+        return None;
+    }
+    Some(format!("{owner}#{generation}"))
+}
+
+pub(super) fn publish_turn(
+    store: &Path,
+    id: &str,
+    generation: u64,
+    group: u32,
+) -> std::io::Result<String> {
+    let owner = HandoffFiles::agy(store, id).owner;
+    let _lock = super::recovery::lock(&owner)?;
+    let token = token(store, id, generation, group)
+        .ok_or_else(|| std::io::Error::other("agy owner changed"))?;
+    crate::cursor_owner::write_file_atomic(&turn_path(store, id), &token)?;
+    Ok(token)
+}
+
+pub(super) fn finish_turn(store: &Path, id: &str, token: &str) {
+    let owner = HandoffFiles::agy(store, id).owner;
+    let Ok(_lock) = super::recovery::lock(&owner) else {
+        return;
+    };
+    let path = turn_path(store, id);
+    if fs::read_to_string(&path).ok().as_deref() == Some(token) {
+        fs::remove_file(path).ok();
+    }
+}
+
+fn interrupt_target(
+    text: &str,
+    entry: &str,
+    current: Option<String>,
+    generation: u64,
+) -> (String, u64) {
+    let (message, target) = decode_interrupt(text, entry);
+    let target = match target {
+        Some(target) if current.as_deref() == Some(&target) => generation,
+        Some(_) => u64::MAX,
+        None => 0,
+    };
+    (message, target)
+}
+
 pub(super) fn directory(store: &Path, id: &str) -> PathBuf {
     store.join("agy-pending").join(id)
 }
@@ -88,8 +168,22 @@ impl AcpWorker {
     pub(super) fn interrupt(&self, text: &str, entry: &str) -> Result<(), String> {
         let item = if let Some(dir) = &self.journal {
             let generation = self.generation.load(Ordering::SeqCst);
+            let store = dir
+                .parent()
+                .and_then(Path::parent)
+                .ok_or("invalid agy journal")?;
+            let id = dir
+                .file_name()
+                .and_then(|id| id.to_str())
+                .ok_or("invalid worker id")?;
+            let (message, target) = interrupt_target(
+                text,
+                entry,
+                token(store, id, generation, self.child.id()),
+                generation,
+            );
             let receipt = journal::record(dir)?;
-            Inbound::TrackedInterrupt(text.to_string(), entry.to_string(), receipt, generation)
+            Inbound::TrackedInterrupt(message, entry.to_string(), receipt, target)
         } else {
             Inbound::Interrupt(text.to_string(), entry.to_string())
         };
@@ -100,6 +194,45 @@ impl AcpWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sender_token_binds_interrupt_and_legacy_json_stays_raw(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let owner = HandoffFiles::agy(store.path(), "A").owner;
+        let record = ralph_core::worker::OwnerRecord {
+            chat_pid: 1,
+            chat_start: "chat".into(),
+            group: 7,
+            group_start: "agent".into(),
+        };
+        write_file(&owner, &record.render())?;
+        let old = publish_turn(store.path(), "A", 1, 7)?;
+        let payload = encode_interrupt(store.path(), "A", "stop");
+        assert_eq!(
+            interrupt_target(&payload, "1-agy1", Some(old.clone()), 1),
+            ("stop".into(), 1)
+        );
+        let new = publish_turn(store.path(), "A", 3, 7)?;
+        assert_eq!(
+            interrupt_target(&payload, "1-agy1", Some(new.clone()), 3),
+            ("stop".into(), u64::MAX)
+        );
+        finish_turn(store.path(), "A", &old);
+        assert_eq!(fs::read_to_string(turn_path(store.path(), "A"))?, new);
+        let raw = r#"{"agy_interrupt":1,"text":"do not rewrite","turn":"fake"}"#;
+        assert_eq!(
+            interrupt_target(raw, "1-123", Some(new), 3),
+            (raw.into(), 0)
+        );
+        finish_turn(
+            store.path(),
+            "A",
+            &fs::read_to_string(turn_path(store.path(), "A"))?,
+        );
+        assert!(!turn_path(store.path(), "A").exists());
+        Ok(())
+    }
 
     #[test]
     fn idle_agy_host_leaves_another_hosts_queued_work_alone(

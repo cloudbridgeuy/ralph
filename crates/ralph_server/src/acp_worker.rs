@@ -52,7 +52,7 @@ mod agy_settings;
 mod agy_verify;
 mod cancel;
 mod cursor_worker;
-mod journal;
+pub(crate) mod journal;
 mod model;
 mod permissions;
 mod print;
@@ -301,6 +301,7 @@ impl AcpWorker {
             events: Arc::clone(&events),
         };
         worker.write_owner(&agent)?;
+        let child_id = worker.child.id();
         locked(starting).insert(id.to_string(), worker.child.id());
         let server = serde_json::from_value::<McpServer>(acp_mcp_server(
             &request.exe,
@@ -427,6 +428,7 @@ impl AcpWorker {
                                     closing,
                                     changes,
                                     generation,
+                                    group: child_id,
                                     heartbeat: in_turns,
                                     events,
                                 };
