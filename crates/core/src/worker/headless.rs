@@ -71,7 +71,7 @@ impl Capabilities {
         use Support::{Full, Partial};
         match (self.harness, feature) {
             (HarnessId::Agy, Spawn | Prompt | Close | Model) => Full,
-            (HarnessId::Agy, Resume) => Partial("session/load required; unfinished turns are not recovered"),
+            (HarnessId::Agy, Resume) => Partial("session/load required; unfinished work is reported, not resent"),
             (HarnessId::Agy, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Agy, PermYolo) => Partial("process flag, not yet stub-verified"),
             (HarnessId::Agy, Report) => Partial("MCP delivery requires live verification"),

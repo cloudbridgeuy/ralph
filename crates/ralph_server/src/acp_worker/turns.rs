@@ -16,6 +16,19 @@ pub(super) struct Turns {
     pub(super) events: Events,
 }
 
+impl Turns {
+    fn inbox_dir(&self) -> Option<PathBuf> {
+        (self.agent == AGY_AGENT)
+            .then(|| {
+                self.results
+                    .parent()?
+                    .parent()
+                    .map(|store| journal::directory(store, &self.worker_id))
+            })
+            .flatten()
+    }
+}
+
 fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) {
     for step in steps {
         match step {
@@ -38,8 +51,10 @@ fn accept_inbound(
     item: Inbound,
 ) {
     let entry = match &item {
-        Inbound::Interrupt(_, entry) => Some(entry.clone()),
-        Inbound::Prompt(_) => None,
+        Inbound::Interrupt(_, entry) | Inbound::TrackedInterrupt(_, entry, _) => {
+            Some(entry.clone())
+        }
+        Inbound::Prompt(_) | Inbound::TrackedPrompt(_, _) => None,
     };
     let steps = queue.accept(item);
     if let Some(entry) = entry {
@@ -58,7 +73,7 @@ pub(super) async fn run_turns(
     let mut queue = PromptQueue::default();
     let mut stopping = false;
     loop {
-        let Some(text) = queue.start() else {
+        let Some((text, receipt)) = queue.start_tracked() else {
             match futures::future::select(inbound.next(), &mut stop).await {
                 Either::Left((Some(item), _)) => {
                     accept_inbound(connection, turns, &mut queue, item);
@@ -108,6 +123,11 @@ pub(super) async fn run_turns(
             }
         };
         let interrupted = queue.finish();
+        if result.is_ok() {
+            if let Some(store) = turns.inbox_dir() {
+                journal::finish(&store, receipt.as_deref());
+            }
+        }
         let end = turn_end(&result, interrupted);
         turns.heartbeat.set_state(turn_end_activity(&end));
         if let Some(changes) = turns

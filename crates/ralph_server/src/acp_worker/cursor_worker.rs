@@ -52,10 +52,13 @@ impl CursorWorker {
         }
     }
 
-    pub(super) fn interrupt(&self, text: &str, entry: &str) {
+    pub(super) fn interrupt(&self, text: &str, entry: &str) -> Result<(), String> {
         match self {
             Self::Acp(worker) => worker.interrupt(text, entry),
-            Self::Print(worker) => worker.interrupt(text.to_string(), entry.to_string()),
+            Self::Print(worker) => {
+                worker.interrupt(text.to_string(), entry.to_string());
+                Ok(())
+            }
         }
     }
 

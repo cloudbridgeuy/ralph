@@ -24,6 +24,8 @@ pub enum TurnOutcome {
 pub enum Inbound {
     Prompt(String),
     Interrupt(String, String),
+    TrackedPrompt(String, String),
+    TrackedInterrupt(String, String, String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +36,7 @@ pub enum Step {
 
 #[derive(Debug, Default)]
 pub struct PromptQueue {
-    pending: VecDeque<String>,
+    pending: VecDeque<(String, Option<String>)>,
     running: bool,
     interrupted: bool,
 }
@@ -43,11 +45,22 @@ impl PromptQueue {
     pub fn accept(&mut self, inbound: Inbound) -> Vec<Step> {
         match inbound {
             Inbound::Prompt(text) => {
-                self.pending.push_back(text);
+                self.pending.push_back((text, None));
                 Vec::new()
             }
+            Inbound::TrackedPrompt(text, receipt) => {
+                self.pending.push_back((text, Some(receipt)));
+                Vec::new()
+            }
+            Inbound::TrackedInterrupt(text, entry, receipt) => {
+                let steps = self.accept(Inbound::Interrupt(text, entry));
+                if let Some((_, slot)) = self.pending.front_mut() {
+                    *slot = Some(receipt);
+                }
+                steps
+            }
             Inbound::Interrupt(text, _) => {
-                self.pending.push_front(text);
+                self.pending.push_front((text, None));
                 if self.running {
                     self.interrupted = true;
                     vec![Step::CancelPermissions, Step::CancelSession]
@@ -59,16 +72,20 @@ impl PromptQueue {
     }
 
     pub fn remind(&mut self) {
-        if !self.pending.iter().any(|text| text == REPORT_REMINDER) {
-            self.pending.push_back(REPORT_REMINDER.to_string());
+        if !self.pending.iter().any(|(text, _)| text == REPORT_REMINDER) {
+            self.pending.push_back((REPORT_REMINDER.to_string(), None));
         }
     }
 
-    pub fn start(&mut self) -> Option<String> {
+    pub fn start_tracked(&mut self) -> Option<(String, Option<String>)> {
         let text = self.pending.pop_front()?;
         self.running = true;
         self.interrupted = false;
         Some(text)
+    }
+
+    pub fn start(&mut self) -> Option<String> {
+        self.start_tracked().map(|(text, _)| text)
     }
 
     pub fn finish(&mut self) -> bool {

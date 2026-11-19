@@ -30,6 +30,13 @@ pub(super) fn resume(
                     "agy session {id} not resumed: its inbox belongs to another chat store"
                 ));
             }
+            if record.cwd.exists()
+                && record.cwd.canonicalize().ok().as_deref() != Some(record.cwd.as_path())
+            {
+                return Resume::Skip(format!(
+                    "agy session {id} not resumed: its worktree path changed"
+                ));
+            }
             let mut record = record.clone();
             record.store = Some(owner);
             resume_decision(agent, id, &record, &store, loads)
@@ -65,6 +72,22 @@ pub(super) fn claim(owner: &Path) -> bool {
         return false;
     }
     claim_owner(owner).is_ok()
+}
+
+pub(super) fn claim_saved(files: &HandoffFiles, record: &SessionRecord) -> bool {
+    let Ok(_lock) = lock(&files.owner) else {
+        return false;
+    };
+    let current = fs::read_to_string(&files.session)
+        .ok()
+        .and_then(|text| SessionRecord::parse(&text));
+    if current.as_ref() != Some(record) {
+        return false;
+    }
+    if files.owner.exists() && !crate::cursor_owner::reclaim_agy(&files.owner) {
+        return false;
+    }
+    claim_owner(&files.owner).is_ok()
 }
 
 pub(super) fn owned(owner: &Path) -> bool {
@@ -161,6 +184,9 @@ impl CursorHost {
     }
 
     pub(super) fn cleanup(&self, id: &str, files: &HandoffFiles, close: bool) {
+        if self.agy && close && journal::recover(&self.store_dir, id).is_err() {
+            return;
+        }
         fs::remove_file(&files.answer).ok();
         if !self.agy || close {
             fs::remove_dir_all(&files.prompt).ok();
@@ -202,7 +228,7 @@ mod tests {
         std::os::unix::fs::symlink(&store, &alias)?;
         let record = SessionRecord {
             session_id: "s".into(),
-            cwd: store.clone(),
+            cwd: store.canonicalize()?,
             inbox: store.join("inbox"),
             store: Some(store),
             model: None,
@@ -272,7 +298,7 @@ mod tests {
         let files = HandoffFiles::agy(dir.path(), "A");
         let record = SessionRecord {
             session_id: "s".into(),
-            cwd: dir.path().into(),
+            cwd: dir.path().canonicalize()?,
             inbox: dir.path().join("inbox"),
             store: Some(dir.path().into()),
             model: None,
@@ -329,6 +355,82 @@ mod tests {
             ),
             (Some("flash-high"), Some("high"), Some(PermissionMode::Ask))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn agy_resume_rejects_a_replaced_worktree_symlink() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let base = dir.path().canonicalize()?;
+        let cwd = base.join("work");
+        let other = base.join("other");
+        fs::create_dir(&other)?;
+        std::os::unix::fs::symlink(&other, &cwd)?;
+        let record = SessionRecord {
+            session_id: "s".into(),
+            cwd,
+            inbox: dir.path().join("inbox"),
+            store: Some(dir.path().into()),
+            model: None,
+            effort: None,
+            permissions: None,
+        };
+        assert!(matches!(
+            resume(&AGY_AGENT, "A", &record, dir.path(), true),
+            Resume::Skip(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn agy_restart_reports_a_persisted_unfinished_turn() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let files = HandoffFiles::agy(dir.path(), "A");
+        let record = SessionRecord {
+            session_id: "s".into(),
+            cwd: dir.path().join("missing"),
+            inbox: dir.path().join("inbox"),
+            store: Some(dir.path().into()),
+            model: None,
+            effort: None,
+            permissions: None,
+        };
+        write_file(&files.session, &record.render())?;
+        let report = ralph_core::worker::prompt_failure_report(
+            "agy",
+            "A",
+            "2026-01-01T00:00:00Z",
+            "unfinished",
+        );
+        write_file(
+            &dir.path()
+                .join("agy-pending/A/20260101000000-000000-A.json"),
+            &serde_json::to_string(&report)?,
+        )?;
+        HeadlessHost::resume(CursorHost::agy(dir.path().into()).as_ref());
+        assert!(dir.path().join("inbox").is_dir());
+        assert_eq!(fs::read_dir(dir.path().join("inbox"))?.count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn changed_saved_session_is_not_claimed() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let files = HandoffFiles::agy(dir.path(), "A");
+        let old = SessionRecord {
+            session_id: "old".into(),
+            cwd: dir.path().canonicalize()?,
+            inbox: dir.path().join("inbox"),
+            store: Some(dir.path().into()),
+            model: None,
+            effort: None,
+            permissions: None,
+        };
+        let mut current = old.clone();
+        current.session_id = "new".into();
+        write_file(&files.session, &current.render())?;
+        assert!(!claim_saved(&files, &old));
+        assert!(!files.owner.exists());
         Ok(())
     }
 

@@ -402,8 +402,12 @@ impl Pump {
             }
             while let Ok(inbound) = self.replies.try_recv() {
                 let actions = match inbound {
-                    Inbound::Prompt(text) => self.turns.accept(text),
-                    Inbound::Interrupt(text, entry) => self.turns.interrupt(text, entry),
+                    Inbound::Prompt(text) | Inbound::TrackedPrompt(text, _) => {
+                        self.turns.accept(text)
+                    }
+                    Inbound::Interrupt(text, entry) | Inbound::TrackedInterrupt(text, entry, _) => {
+                        self.turns.interrupt(text, entry)
+                    }
                 };
                 self.settle(actions);
             }

@@ -51,6 +51,7 @@ use std::time::{Duration, Instant};
 mod agy_settings;
 mod agy_verify;
 mod cursor_worker;
+mod journal;
 mod model;
 mod permissions;
 mod print;
@@ -167,6 +168,7 @@ pub struct AcpWorker {
     finished: mpsc::Receiver<()>,
     owner: PathBuf,
     prompts: queue::UnboundedSender<Inbound>,
+    journal: Option<PathBuf>,
     closing: Arc<AtomicBool>,
     done: bool,
     exit_seen: bool,
@@ -247,6 +249,14 @@ impl AcpWorker {
                 &fs::canonicalize(store).map_err(|e| e.to_string())?,
             )]);
         }
+        let journal = if agent == AGY_AGENT {
+            Some(journal::directory(
+                request.inbox.parent().ok_or("worker inbox has no store")?,
+                id,
+            ))
+        } else {
+            None
+        };
         let (child, stdin, stdout, stderr) = spawn_piped(command)
             .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
         let log = CappedLog::new(request.inbox.parent(), id);
@@ -273,6 +283,7 @@ impl AcpWorker {
             finished: finished_rx,
             owner: owner.to_path_buf(),
             prompts: prompts.clone(),
+            journal,
             closing: Arc::clone(&closing),
             done: false,
             exit_seen: false,
@@ -457,22 +468,6 @@ impl AcpWorker {
         }
     }
 
-    fn interrupt(&self, text: &str, entry: &str) {
-        self.prompts
-            .unbounded_send(Inbound::Interrupt(text.to_string(), entry.to_string()))
-            .ok();
-    }
-
-    fn apply_events(&mut self) {
-        for event in self.poll() {
-            let (state, effects) = reduce(&self.state, &event);
-            self.state = state;
-            for effect in &effects {
-                apply_effect(&self.markers, effect);
-            }
-        }
-    }
-
     fn write_owner(&self, agent: &AcpAgent) -> Result<(), String> {
         if *agent == AGY_AGENT {
             let _lock = recovery::lock(&self.owner).map_err(|e| e.to_string())?;
@@ -545,10 +540,16 @@ impl HeadlessWorker for AcpWorker {
             other => format!("{other:?}"),
         })?;
         match command {
-            WorkerCommand::Prompt(text) => self
-                .prompts
-                .unbounded_send(Inbound::Prompt(text))
-                .map_err(|_| format!("{} agent is not accepting prompts", self.agent.name)),
+            WorkerCommand::Prompt(text) => {
+                let item = if let Some(dir) = &self.journal {
+                    Inbound::TrackedPrompt(text, journal::record(dir)?)
+                } else {
+                    Inbound::Prompt(text)
+                };
+                self.prompts
+                    .unbounded_send(item)
+                    .map_err(|_| format!("{} agent is not accepting prompts", self.agent.name))
+            }
             WorkerCommand::AnswerPermission(answer) => self.permissions.answer(&answer),
             WorkerCommand::Close => {
                 self.terminate();
@@ -667,7 +668,7 @@ impl CursorHost {
             }
         }
         for id in request_ids(&self.store_dir, self.dir(CURSOR_PROMPT_DIR, "agy-prompt")) {
-            if !self.handles(&id) {
+            if !self.handles(&id) || (self.agy && !self.workers().contains_key(&id)) {
                 continue;
             }
             self.deliver_queued(
@@ -681,16 +682,13 @@ impl CursorHost {
             &self.store_dir,
             self.dir(CURSOR_INTERRUPT_DIR, "agy-interrupt"),
         ) {
-            if !self.handles(&id) {
+            if !self.handles(&id) || (self.agy && !self.workers().contains_key(&id)) {
                 continue;
             }
             self.deliver_queued(
                 &id,
                 |files| &files.interrupt,
-                |worker, text, entry| {
-                    worker.interrupt(&text, entry);
-                    Ok(())
-                },
+                |worker, text, entry| worker.interrupt(&text, entry),
                 |files, entry| report_interrupt_gone(&files.interrupt_result, entry),
             );
         }
@@ -843,6 +841,20 @@ impl CursorHost {
             warn(message);
             return;
         }
+        if self.agy {
+            let Ok(_lock) = recovery::lock(&files.owner) else {
+                return;
+            };
+            if files.owner.exists() && !crate::cursor_owner::reclaim_agy(&files.owner) {
+                return;
+            }
+            if let Err(error) = journal::recover(&self.store_dir, id) {
+                warn(format!(
+                    "agy session {id} not resumed: could not report unfinished work: {error}"
+                ));
+                return;
+            }
+        }
         let Ok(exe) = std::env::current_exe() else {
             warn(format!(
                 "{} session {id} not resumed: could not find the ralph executable",
@@ -877,7 +889,7 @@ impl CursorHost {
             ),
             model: record.model.clone(),
         };
-        if self.agy && !recovery::claim(&files.owner) {
+        if self.agy && !recovery::claim_saved(&files, &record) {
             return;
         }
         let started = if !self.agy && record.permissions.is_some() {
