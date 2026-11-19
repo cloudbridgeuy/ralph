@@ -46,7 +46,7 @@ use crate::chat::queue::{
 };
 use crate::chat::refusal::{refuse_or_exit, restore_prompt};
 use crate::chat::route::{run_local, LocalRoute};
-use crate::chat::schedule::approve_proposed;
+use crate::chat::schedule::{approve_proposed, Keyboard};
 use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::{BarContext, StatusBar};
@@ -746,7 +746,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 });
                 queue = queued;
                 let outcome = result?;
-                let screen = send_it.proposed(before);
+                let screen = send_it.proposed(before, prompt::screen_columns());
                 println!("{}", screen.for_terminal(color));
                 shown_plan = screen.shown;
                 (outcome, None)
@@ -790,9 +790,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             }
             Route::SendIt(command @ (SendItCommand::Status | SendItCommand::Edit)) => {
                 let screen = if command == SendItCommand::Edit {
-                    send_it.edit(&prompt.editor)
+                    send_it.edit(&mut Keyboard {
+                        editor: &prompt.editor,
+                    })
                 } else {
-                    send_it.status()
+                    send_it.status(prompt::screen_columns())
                 };
                 println!("{}", screen.for_terminal(color));
                 note(&screen.text);

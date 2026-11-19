@@ -1,5 +1,4 @@
 use crate::chat::client_monitor::Monitor;
-use crate::chat::editor::open_in_editor;
 use crate::chat::hold_progress::git_out;
 use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
@@ -25,7 +24,7 @@ use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_core::worker_check::logged_states;
-use ralph_server::chat::ask::Notices;
+use ralph_server::chat::ask::{Ask, Notices};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::turn::{Turn, TurnOutcome};
@@ -259,11 +258,11 @@ impl SendIt {
             .join("\n"))
     }
 
-    pub(crate) fn status(&self) -> Screen {
+    pub(crate) fn status(&self, width: usize) -> Screen {
         match self.load() {
             Ok(Some(file)) => Screen {
-                text: render_status(&file, super::prompt::screen_columns()),
-                styled: render_status_styled(&file, super::prompt::screen_columns()),
+                text: render_status(&file, width),
+                styled: render_status_styled(&file, width),
                 shown: Some(plan_hash(&file.plan)),
             },
             Ok(None) => Screen::text(NO_RUN),
@@ -271,8 +270,8 @@ impl SendIt {
         }
     }
 
-    pub(crate) fn proposed(&self, before: Option<String>) -> Screen {
-        let screen = self.status();
+    pub(crate) fn proposed(&self, before: Option<String>, width: usize) -> Screen {
+        let screen = self.status(width);
         let stored_new = match &screen.shown {
             Some(hash) => before.as_ref() != Some(hash),
             None => screen.text != NO_RUN,
@@ -542,11 +541,11 @@ impl SendIt {
         }
     }
 
-    pub(crate) fn edit(&self, argv: &[String]) -> Screen {
+    pub(crate) fn edit(&self, ask: &mut dyn Ask) -> Screen {
         if !self.path.exists() {
             return Screen::text(NO_RUN);
         }
-        let opened = open_in_editor(argv, &self.path);
+        let opened = ask.edit(&self.path);
         let screen = self.clear_approval();
         match opened {
             Ok(()) => screen,
@@ -610,7 +609,7 @@ impl SendIt {
             })
             .and_then(|file| self.save(&file));
         match stored {
-            Ok(()) => self.status(),
+            Ok(()) => self.status(screen_columns()),
             Err(text) => Screen::text(text),
         }
     }
@@ -621,7 +620,7 @@ impl SendIt {
                 approved: None,
                 ..file
             }) {
-                Ok(()) => self.status(),
+                Ok(()) => self.status(screen_columns()),
                 Err(text) => Screen::text(text),
             },
             Ok(None) => Screen::text(NO_RUN),
