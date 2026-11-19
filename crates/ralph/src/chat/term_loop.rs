@@ -2,17 +2,19 @@ use crate::chat::cell::{self, ShellState};
 use crate::chat::hold::{self, Held};
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
-use crate::chat::prompt::{screen_columns, ChatPrompt, Submitted};
+use crate::chat::prompt::{next_route, screen_columns, ChatPrompt, Submitted};
 use crate::chat::queue::{
     decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
 };
 use crate::chat::refusal::{refuse_or_exit, restore_prompt};
+use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, Keyboard};
-use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active};
+use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active, InboxTurn};
 use crate::chat::session::{print_exit_notice, route_queued, save_unsent};
 use crate::chat::switch::{chat_exit, check as check_switch, ChatExit, Leave};
 use crate::chat::{thread, thread_cmd};
 use crate::signal;
+use crate::warn::print_above_prompt;
 use ralph_core::chat_cell::CellLimits;
 use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_hold::HoldFilter;
@@ -35,8 +37,10 @@ use ralph_server::chat::turn::{draft_after, TurnOutcome};
 use ralph_server::warn::warn_if_err;
 use reedline::{EditCommand, Reedline};
 use std::error::Error;
+use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::SyncSender;
 use std::time::Duration;
 
 pub(super) struct TerminalLoop<'a, 's> {
@@ -59,6 +63,11 @@ pub(super) struct TerminalLoop<'a, 's> {
     pub(super) cell_limits: CellLimits,
     pub(super) in_thread: bool,
     pub(super) shown_plan: Option<String>,
+    pub(super) at_prompt: &'a AtomicBool,
+    pub(super) prompt_sink: SyncSender<String>,
+    pub(super) inbox_turn: &'a InboxTurn<'a>,
+    pub(super) inbox_display: &'a dyn Fn(bool) -> Display<'a>,
+    pub(super) local: &'a LocalRoute<'a>,
     pub(super) editor: Reedline,
     pub(super) pending: Option<Submitted>,
     pub(super) sending: Option<Active>,
@@ -81,6 +90,126 @@ pub(super) enum Flow {
 }
 
 impl TerminalLoop<'_, '_> {
+    pub(super) fn run(mut self) -> Result<ChatExit, Box<dyn Error>> {
+        let session = self.session;
+        let monitor = &session.core;
+        let settles_closes = !self.in_thread;
+        if settles_closes && thread::settle::scan(self.store_dir, &monitor.inbox) {
+            monitor.refresh(true);
+        }
+        loop {
+            warn_if_err(self.editor.sync_history(), "Failed to save chat history");
+            let typed_at_prompt = self.pending.is_none();
+            let submitted = match self.pending.take() {
+                Some(submitted) => Some(submitted),
+                None => {
+                    self.at_prompt.store(true, Ordering::SeqCst);
+                    self.idle.store(true, Ordering::SeqCst);
+                    print_above_prompt(Some(self.prompt_sink.clone()));
+                    let submitted = next_route(&mut self.editor, self.prompt);
+                    print_above_prompt(None);
+                    self.at_prompt.store(false, Ordering::SeqCst);
+                    self.idle.store(false, Ordering::SeqCst);
+                    monitor.set_phase(Phase::Prompt);
+                    submitted?
+                        .map_err(|exit| {
+                            if matches!(exit, ChatExit::Closed) {
+                                self.leaving = Some(chat_exit(LoopExit::IdleClose));
+                            }
+                        })
+                        .ok()
+                        .inspect(|submitted| {
+                            if let Some((suggestion, turn_number)) = self.offered.take() {
+                                let record = SuggestionRecord::new(
+                                    chrono::Utc::now().to_rfc3339(),
+                                    self.run,
+                                    turn_number,
+                                    &suggestion,
+                                    &submitted.line,
+                                );
+                                warn_if_err(
+                                    self.store.append_suggestion(&record),
+                                    "Failed to record suggestion outcome",
+                                );
+                            }
+                        })
+                }
+            };
+            let Some(Submitted {
+                line: typed_line,
+                route,
+            }) = submitted
+            else {
+                break;
+            };
+            let asked = settles_closes
+                && typed_at_prompt
+                && typed_line.trim().is_empty()
+                && thread::settle::scan(self.store_dir, &monitor.inbox);
+            if asked {
+                monitor.refresh(true);
+                if !(matches!(route, Route::ReadInbox(_)) && monitor.status().unread > 0) {
+                    continue;
+                }
+            }
+            let record = CommandRecord::for_route(&route, &typed_line);
+            let ending = match route {
+                Route::Ignore => continue,
+                Route::Shell(line) => match self.shell(&line)? {
+                    Flow::Next => continue,
+                    Flow::Stop => break,
+                },
+                Route::Send(message) => self.send(message)?,
+                Route::ReadInbox(selection) => {
+                    let display = (self.inbox_display)(self.color);
+                    let Some(read) = self.inbox_turn.read(
+                        &session.send_it,
+                        selection,
+                        &display,
+                        &mut self.sending,
+                    )?
+                    else {
+                        continue;
+                    };
+                    Ending {
+                        outcome: read.outcome,
+                        draft: None,
+                        queue: read.queue,
+                        drained: read.drained,
+                    }
+                }
+                Route::Hold(filter) => match self.hold(&filter)? {
+                    Flow::Next => continue,
+                    Flow::Stop => break,
+                },
+                Route::SendIt(command) => match self.send_it(command, typed_at_prompt, &record)? {
+                    Some(ending) => ending,
+                    None => continue,
+                },
+                Route::Switch { parsed, line } => match self.switch(parsed, &line)? {
+                    Flow::Next => continue,
+                    Flow::Stop => break,
+                },
+                Route::ThreadOp { op, line } => match self.thread_op(op, &line, &record)? {
+                    Flow::Next => continue,
+                    Flow::Stop => break,
+                },
+                local => {
+                    if let Some(output) = run_local(local, self.local, &mut io::stdout(), || {
+                        monitor.refresh(true);
+                    })? {
+                        self.note(&record, &output);
+                    }
+                    continue;
+                }
+            };
+            if self.after_turn(ending)? == Flow::Stop {
+                break;
+            }
+        }
+        Ok(self.leaving.unwrap_or(ChatExit::Quit))
+    }
+
     pub(super) fn queue_next(&mut self) {
         if let Some((text, rest)) = next_batch(std::mem::take(&mut self.carried)) {
             self.carried = rest;

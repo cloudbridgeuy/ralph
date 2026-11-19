@@ -38,14 +38,14 @@ use crate::chat::client_monitor::{client_events, client_sink, watch_headless, wa
 use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
-use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
-use crate::chat::route::{run_local, LocalRoute};
+use crate::chat::prompt::ChatPrompt;
+use crate::chat::route::LocalRoute;
 use crate::chat::schedule::approve_proposed;
 use crate::chat::send_it::InboxTurn;
 use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::chat_exit;
-use crate::chat::term_loop::{Ending, Flow, TerminalLoop};
+use crate::chat::term_loop::TerminalLoop;
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::workers::tool_report;
 use crate::cli::{ChatArgs, ChatCommand};
@@ -56,21 +56,18 @@ use crate::markdown::{MarkdownTheme, RolePalette, ThemeRole};
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::signal;
 use crate::theme_slots::ResolveColors;
-use crate::warn::print_above_prompt;
 use ralph_core::chat::{resolve_wrap_width, ReplyImages};
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
-use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_memory::store_in_use_message;
 use ralph_core::chat_process::run_id;
-use ralph_core::chat_status::{orphan_hint, Route};
-use ralph_core::chat_suggestion::SuggestionRecord;
+use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
-use ralph_core::program_status::{status_enabled, Phase};
+use ralph_core::program_status::status_enabled;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::ATTACHMENTS_DIR;
 use ralph_server::chat::host::spawn_host;
@@ -98,7 +95,7 @@ use session::resolve_store;
 use session::{chat_dir, load_custom_prompt, print_history, store_dir};
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 pub(crate) use switch::ChatExit;
 
@@ -485,7 +482,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
     };
     approve_proposed(&monitor.schedule, tuning.watch_timeout);
-    let mut lp = TerminalLoop {
+    let lp = TerminalLoop {
         session: &session,
         prompt: &prompt,
         store: &store,
@@ -515,6 +512,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         cell_limits,
         in_thread: fork.is_some(),
         shown_plan: None,
+        at_prompt: &at_prompt,
+        prompt_sink,
+        inbox_turn: &inbox_turn,
+        inbox_display: &inbox_display,
+        local: &local_route,
         editor,
         pending: None,
         sending: None,
@@ -522,116 +524,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         carried: Vec::new(),
         leaving: None,
     };
-    let settles_closes = fork.is_none();
-    if settles_closes && thread::settle::scan(&store_dir, &monitor.inbox) {
-        monitor.refresh(true);
-    }
-    loop {
-        warn_if_err(lp.editor.sync_history(), "Failed to save chat history");
-        let typed_at_prompt = lp.pending.is_none();
-        let submitted = match lp.pending.take() {
-            Some(submitted) => Some(submitted),
-            None => {
-                at_prompt.store(true, Ordering::SeqCst);
-                idle.store(true, Ordering::SeqCst);
-                print_above_prompt(Some(prompt_sink.clone()));
-                let submitted = next_route(&mut lp.editor, &prompt);
-                print_above_prompt(None);
-                at_prompt.store(false, Ordering::SeqCst);
-                idle.store(false, Ordering::SeqCst);
-                monitor.set_phase(Phase::Prompt);
-                submitted?
-                    .map_err(|exit| {
-                        if matches!(exit, ChatExit::Closed) {
-                            lp.leaving = Some(chat_exit(LoopExit::IdleClose));
-                        }
-                    })
-                    .ok()
-                    .inspect(|submitted| {
-                        if let Some((suggestion, turn_number)) = lp.offered.take() {
-                            let record = SuggestionRecord::new(
-                                chrono::Utc::now().to_rfc3339(),
-                                &run,
-                                turn_number,
-                                &suggestion,
-                                &submitted.line,
-                            );
-                            warn_if_err(
-                                store.append_suggestion(&record),
-                                "Failed to record suggestion outcome",
-                            );
-                        }
-                    })
-            }
-        };
-        let Some(Submitted {
-            line: typed_line,
-            route,
-        }) = submitted
-        else {
-            break;
-        };
-        let asked = settles_closes
-            && typed_at_prompt
-            && typed_line.trim().is_empty()
-            && thread::settle::scan(&store_dir, &monitor.inbox);
-        if asked {
-            monitor.refresh(true);
-            if !(matches!(route, Route::ReadInbox(_)) && monitor.status().unread > 0) {
-                continue;
-            }
-        }
-        let record = CommandRecord::for_route(&route, &typed_line);
-        let ending = match route {
-            Route::Ignore => continue,
-            Route::Shell(line) => match lp.shell(&line)? {
-                Flow::Next => continue,
-                Flow::Stop => break,
-            },
-            Route::Send(message) => lp.send(message)?,
-            Route::ReadInbox(selection) => {
-                let display = inbox_display(color);
-                let Some(read) = inbox_turn.read(&send_it, selection, &display, &mut lp.sending)?
-                else {
-                    continue;
-                };
-                Ending {
-                    outcome: read.outcome,
-                    draft: None,
-                    queue: read.queue,
-                    drained: read.drained,
-                }
-            }
-            Route::Hold(filter) => match lp.hold(&filter)? {
-                Flow::Next => continue,
-                Flow::Stop => break,
-            },
-            Route::SendIt(command) => match lp.send_it(command, typed_at_prompt, &record)? {
-                Some(ending) => ending,
-                None => continue,
-            },
-            Route::Switch { parsed, line } => match lp.switch(parsed, &line)? {
-                Flow::Next => continue,
-                Flow::Stop => break,
-            },
-            Route::ThreadOp { op, line } => match lp.thread_op(op, &line, &record)? {
-                Flow::Next => continue,
-                Flow::Stop => break,
-            },
-            local => {
-                if let Some(output) = run_local(local, &local_route, &mut io::stdout(), || {
-                    monitor.refresh(true);
-                })? {
-                    lp.note(&record, &output);
-                }
-                continue;
-            }
-        };
-        if lp.after_turn(ending)? == Flow::Stop {
-            break;
-        }
-    }
-    Ok(lp.leaving.unwrap_or(ChatExit::Quit))
+    lp.run()
 }
 
 #[cfg(test)]
