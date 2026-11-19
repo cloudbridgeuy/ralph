@@ -20,7 +20,6 @@ ralph_core::stream::blocks (crates/core/src/stream/blocks/)
 ralph::stream_processor (crates/ralph/src/stream_processor/)
 ├── block_renderer.rs      # BlockRenderer: blocks to screen text, owns theme and separators
 ├── render_block.rs        # render_block: one output block to screen text
-├── disk_files.rs          # DiskFiles: the Files impl backed by the filesystem
 ├── tool_results/          # Edit, Write and NotebookEdit formatters, tool errors
 └── processor.rs           # StreamProcessor: collector + renderer (tests only)
 ```
@@ -135,7 +134,7 @@ Buffered prose is flushed (collected as blocks) at these points:
 
 ## Turn Events
 
-`Pump` (`subprocess/spinner.rs`) collects with a `StreamCollector` and does not render or print. It emits `ralph_core::turn_event::TurnEvent`s to the `TurnSink` in `SpinnerSubprocessConfig::sink`; `chat::turn::Turn` emits to the same sink.
+`Pump` (`crates/ralph_server/src/subprocess/spinner.rs`) collects with a `StreamCollector` and does not render or print. The client sets `SpinnerSubprocessConfig::show_tools` and `terminated`; `DiskFiles` (`crates/ralph_server/src/disk_files.rs`) is the `Files` impl backed by the filesystem. It emits `ralph_core::turn_event::TurnEvent`s to the `TurnSink` in `SpinnerSubprocessConfig::sink`; `ralph_server::chat::turn::Turn` emits to the same sink.
 
 | Event | Sent when | `TerminalSink` does |
 | --- | --- | --- |

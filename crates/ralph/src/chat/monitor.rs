@@ -6,7 +6,6 @@ use crate::chat::thread::settle;
 use crate::inbox_alert;
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
-use crate::subprocess::Session;
 use crate::watch_requests;
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_hold::HoldFilter;
@@ -35,6 +34,7 @@ use ralph_core::worker_check::{
 use ralph_server::chat::check::CheckState;
 use ralph_server::chat::memory::{self, Store};
 use ralph_server::cursor_owner::{now_secs, write_file};
+use ralph_server::subprocess::Session;
 use ralph_server::version_drift::DailyTick;
 use ralph_server::warn::{warn, warn_if_err};
 use ralph_server::watches::{locked, Watches};

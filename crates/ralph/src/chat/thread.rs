@@ -5,15 +5,15 @@ use crate::schedule_store::ScheduleStore;
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{
-    resolve_scope, view, CallContext, CallSite, CallSource, Entry, MemoryCall, Tree, ViewSplit,
+    resolve_scope, view, CallContext, CallSite, CallSource, Entry, MemoryCall, Tree,
 };
 pub use ralph_core::chat_thread::config_root;
 pub(super) use ralph_core::chat_thread::fork_of;
 use ralph_core::chat_thread::{
     digest_with, drop_message, empty_list_message, fork_check, guard_check, label_item,
     merge_prompt, merged_check, merged_report, open_check, open_launch, pull_message, revive_check,
-    thread_split, view_block, view_report, Guarded, Live, Merged, OpenLaunch, OpenSpawn, Parked,
-    Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE, VIEW_BLOCK_LINES,
+    view_block, view_report, Guarded, Live, Merged, OpenLaunch, OpenSpawn, Parked, Scope,
+    ThreadMeta, ThreadName, THREADS_DIR, THREAD_FILE, VIEW_BLOCK_LINES,
 };
 use ralph_core::chat_thread_cmd::{
     merge_posted_message, parked_message, revived_message, view_posted_message, OpenOpts,
@@ -22,6 +22,9 @@ use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report};
 use ralph_server::chat::claim::ChatClaim;
+pub use ralph_server::chat::fork::open_fork;
+pub(super) use ralph_server::chat::fork::read_meta;
+use ralph_server::chat::fork::Fork;
 use ralph_server::chat::memory::Store;
 use ralph_server::history_log;
 use ralph_server::private_file::check_path;
@@ -45,12 +48,6 @@ pub(super) mod settle;
 mod tombstone;
 pub use list::rows;
 pub(super) use list::{default_listing, listing};
-
-pub struct Fork {
-    pub main: Store,
-    pub name: ThreadName,
-    pub meta: ThreadMeta,
-}
 
 pub struct Memory {
     own: Store,
@@ -122,25 +119,6 @@ impl Memory {
     }
 }
 
-pub fn open_fork(store: &Path) -> Result<Option<Fork>, String> {
-    let Some((main, name)) = fork_of(store) else {
-        return Ok(None);
-    };
-    let meta = read_meta(store).map_err(|e| format!("thread {name}: {e}"))?;
-    Ok(Some(Fork {
-        main: Store::new(main),
-        name,
-        meta,
-    }))
-}
-
-pub fn fork_view(fork: &Fork, own: ViewSplit) -> io::Result<ViewSplit> {
-    let (entries, tree) = fork.main.load()?;
-    let base = fork.meta.base.min(entries.len());
-    let prefix = view(&entries[..base], &tree, MAIN_PREFIX_LINES);
-    Ok(thread_split(prefix, fork.meta.base, &fork.name, own))
-}
-
 pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
     let main = super::store_dir(args.store)?;
     match args.command {
@@ -193,11 +171,6 @@ pub(super) fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
         .into_iter()
         .map(|worker| worker.id)
         .collect()
-}
-
-pub(super) fn read_meta(dir: &Path) -> io::Result<ThreadMeta> {
-    let text = fs::read_to_string(dir.join(THREAD_FILE))?;
-    serde_json::from_str(&text).map_err(io::Error::other)
 }
 
 pub fn store_config_path(written: &Path) -> PathBuf {
@@ -460,6 +433,7 @@ pub fn pull_thread(main: &Path, name: &ThreadName) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::config::load_for_chat;
+    use ralph_core::chat_memory::ViewSplit;
     use ralph_core::chat_memory::{parse_tool_call, Role};
     use ralph_core::chat_thread_table::ThreadState;
     use ralph_core::inbox::Selection;
@@ -467,6 +441,7 @@ mod tests {
     use ralph_core::watch::WatchKind;
     use ralph_core::watch_store::SavedWatch;
     use ralph_core::worker::INBOX_DIR;
+    use ralph_server::chat::fork::fork_view;
     use ralph_server::worker_mcp::Inbox;
     use serde_json::json;
     use std::fs;

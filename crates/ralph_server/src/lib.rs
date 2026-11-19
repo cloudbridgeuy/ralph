@@ -4,6 +4,7 @@
 
 pub(crate) mod acp_log;
 pub(crate) mod acp_worker;
+pub mod backoff;
 pub mod chat;
 pub(crate) mod claude_cleanup;
 pub(crate) mod claude_worker;
@@ -14,8 +15,10 @@ pub(crate) mod cursor_cleanup;
 pub mod cursor_owner;
 pub(crate) mod cursor_sweep;
 pub(crate) mod cursor_usage;
+pub mod disk_files;
 pub mod history_log;
 pub mod hook_bridge;
+pub mod invoke;
 pub(crate) mod json_file;
 pub mod ledger;
 pub(crate) mod opencode_usage;

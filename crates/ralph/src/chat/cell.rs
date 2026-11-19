@@ -22,8 +22,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::chat::inbox::Display;
-use crate::chat::turn::TurnOutcome;
 use crate::render::image::render_cell_display;
+use ralph_server::chat::turn::TurnOutcome;
 
 const POLL: Duration = Duration::from_millis(50);
 const SHELL_RUNTIME: &str = "shell";
@@ -211,7 +211,7 @@ fn run_cell(launch: &Launch, cell: &Cell, color: bool) -> io::Result<Option<Fini
         .stdout(stdout_writer)
         .stderr(stderr_writer);
     detach_from_terminal(&mut command);
-    signal::default_sigttou_in(&mut command);
+    ralph_server::subprocess::default_sigttou_in(&mut command);
     let snapshot_pipe = if launch.snapshot {
         let (reader, writer) = io::pipe()?;
         route_to_snapshot_fd(&mut command, writer.as_raw_fd());

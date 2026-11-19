@@ -4,14 +4,13 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
     EXIT_CODE_KILLED,
 };
-use crate::signal;
-use crate::stream_processor::{DiskFiles, OutputBlock, VerboseToolsConfig};
+use super::{default_sigttou_in, kill_process_group};
+use crate::disk_files::DiskFiles;
 use ralph_core::cancel::CancelToken;
 use ralph_core::stream::blocks::StreamCollector;
+use ralph_core::stream::blocks::{OutputBlock, VerboseToolsConfig};
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
-use ralph_server::subprocess::kill_process_group;
-use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -25,6 +24,8 @@ pub struct SpinnerSubprocessConfig {
     pub command: String,
     pub timeout_secs: Option<u64>,
     pub verbose_tools: VerboseToolsConfig,
+    pub show_tools: bool,
+    pub terminated: fn() -> bool,
     pub sink: Arc<dyn TurnSink>,
     pub gate: Option<Arc<OutputGate>>,
     pub interrupt: Option<CancelToken>,
@@ -62,7 +63,7 @@ pub(super) fn spawn_piped(command_text: &str, stdin: Stdio) -> io::Result<Child>
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
-    signal::default_sigttou_in(&mut command);
+    default_sigttou_in(&mut command);
     command.spawn()
 }
 
@@ -168,10 +169,7 @@ pub(super) struct Pump {
 
 impl Pump {
     pub(super) fn start(config: &SpinnerSubprocessConfig, display: Display) -> Pump {
-        let collector = StreamCollector::new(
-            std::io::stdout().is_terminal(),
-            config.verbose_tools.clone(),
-        );
+        let collector = StreamCollector::new(config.show_tools, config.verbose_tools.clone());
         let shown = (display == Display::Shown).then(|| {
             let mut shown = Shown {
                 sink: Arc::clone(&config.sink),
@@ -304,7 +302,7 @@ fn prompt_write_warning(outcome: &PromptWrite) -> Option<String> {
 
 fn report_prompt_write(writer: Option<thread::JoinHandle<io::Result<()>>>) {
     if let Some(message) = writer.and_then(|handle| prompt_write_warning(&handle.join())) {
-        ralph_server::warn::warn(message);
+        crate::warn::warn(message);
     }
 }
 
@@ -352,7 +350,7 @@ fn run_subprocess_with_spinner(
             .interrupt
             .as_ref()
             .is_some_and(CancelToken::is_cancelled)
-            || signal::is_terminated();
+            || (config.terminated)();
         if interrupted {
             pump.stop_spinner();
             kill_process_group(&mut child);
@@ -369,7 +367,6 @@ fn run_subprocess_with_spinner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream_processor::OutputBlock;
     use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
     use std::sync::Mutex;
 
@@ -395,6 +392,8 @@ mod tests {
             command: String::new(),
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),
+            show_tools: false,
+            terminated: || false,
             sink: Arc::clone(sink) as Arc<dyn TurnSink>,
             gate: None,
             interrupt: None,
@@ -470,6 +469,21 @@ mod tests {
         pump.step(&readers, false).unwrap();
         pump.finish(&readers, 0, true);
         assert_eq!(sink.events(), Vec::new());
+    }
+
+    #[test]
+    fn the_pump_shows_tools_as_the_client_says() {
+        let sink = Arc::new(Recording::default());
+        [true, false].into_iter().for_each(|show_tools| {
+            let pump = Pump::start(
+                &SpinnerSubprocessConfig {
+                    show_tools,
+                    ..config(&sink)
+                },
+                Display::Silent,
+            );
+            assert_eq!(pump.collector.is_showing_tool_invocations(), show_tools);
+        });
     }
 
     #[test]

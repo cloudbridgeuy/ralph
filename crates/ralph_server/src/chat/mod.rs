@@ -1,12 +1,15 @@
 pub mod changes;
 pub mod check;
 pub mod claim;
+pub mod fork;
 pub mod index_files;
 pub mod memory;
 pub mod name;
 pub mod skills;
 pub mod snapshots;
 pub mod socket;
+pub mod suggestion;
 pub mod tag_store;
+pub mod turn;
 pub mod watch;
 pub mod workers_remote;

@@ -660,3 +660,30 @@ fn a_row_or_a_spawn_without_a_store_still_joins_by_worker_id() {
     let report = grouped(Dim::Ticket, &rows, &workers, &Filter::default());
     assert_eq!(keys(&report), ["GUZ-1", "GUZ-2"]);
 }
+
+#[test]
+fn a_canonical_store_filter_admits_a_row_recorded_under_the_canonical_store() {
+    let at = "2026-11-05T10:00:00Z";
+    let rows = [
+        with(row("ask", at), "store", json!("/private/tmp/x/store")),
+        with(row("ask", at), "store", json!("/tmp/x/store")),
+    ];
+    let filter = Filter {
+        store: Some("/private/tmp/x/store".into()),
+        ..Filter::default()
+    };
+    assert_eq!(grouped(Dim::Kind, &rows, &[], &filter).total.metered, 1);
+}
+
+#[test]
+fn a_canonical_store_filter_keeps_the_ticket_of_a_window_in_the_same_store() {
+    let store = "/private/tmp/x/store";
+    let rows = [worker_in(store, "w1", "2026-11-05T10:00:00Z")];
+    let workers = [spawn_in(store, "w1", "2026-11-05T09:00:00Z", "GUZ-1")];
+    let filter = Filter {
+        store: Some(store.into()),
+        ..Filter::default()
+    };
+    let report = grouped(Dim::Ticket, &rows, &workers, &filter);
+    assert_eq!(keys(&report), ["GUZ-1"]);
+}

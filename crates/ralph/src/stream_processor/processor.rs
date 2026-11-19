@@ -1,10 +1,10 @@
 use super::block_renderer::BlockRenderer;
-use super::disk_files::DiskFiles;
 use crate::highlight::{ThemeConfig, ThemeError};
 use crate::render::RenderContext;
 use ralph_core::stream::blocks::{
     OutputBlock, StreamCollector, StreamProcessorResult, VerboseToolsConfig,
 };
+use ralph_server::disk_files::DiskFiles;
 use std::io::IsTerminal;
 
 fn is_terminal_stdout() -> bool {

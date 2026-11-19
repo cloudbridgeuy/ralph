@@ -47,7 +47,7 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph_server/src/chat/mod.rs`: `run` and shared setup.
 - `crates/ralph/src/config/view.rs`: the pure `/config` view (`config_view`, `merged_rows`, `env_settings`) and `load_for_chat`. `crates/ralph/src/chat/config.rs`: `flag_settings`, the chat env allowlist and `/config` printing.
-- `crates/ralph/src/chat/turn.rs`: turn shell and nap spawn. It prints nothing: the rule, warnings and waits go to `Turn::sink` as `TurnEvent`s (see [Turn events](stream-processor-architecture.md#turn-events)).
+- `crates/ralph_server/src/chat/turn.rs`: turn shell and nap spawn. The client gives it the ralph executable (`exe`), `show_tools` and `terminated`. It prints nothing: the rule, warnings and waits go to `Turn::sink` as `TurnEvent`s (see [Turn events](stream-processor-architecture.md#turn-events)).
 - `crates/core/src/turn_event.rs`: `TurnEvent`, `Wait` and the `TurnSink` trait.
 - `crates/ralph/src/turn_sink.rs`: `TerminalSink`, the terminal shell for turn events, and its pure core `written` and `spin`. `chat/prompt.rs` `turn_output` builds the chat's gate and sink.
 - `crates/ralph/src/chat/editor.rs`, `prompt.rs`: reedline input and prompt.
@@ -58,11 +58,11 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 - `crates/ralph/src/chat/mcp.rs`: `chat-mcp` stdio loop; answers `zoom`, `recall`, `search`, `read`, `changes` and `help`, forwards socket tools to the chat socket.
 - `crates/ralph_server/src/chat/socket.rs`: chat socket bind, sweep, server and `forward` client.
 - `crates/core/src/retry.rs`: pure retry rules: `classify`, `FailureKind`, `OUTAGE_MARKERS`, `OUTAGE_BACKOFF_SECS`, `backoff`, `retry_delay`.
-- `crates/ralph/src/backoff.rs`: shell loop `retry_on_outage` with an injectable wait, `attempt_from`, `wait_unless` and `final_tag_failure_kind`; used by `turn.rs`, the nap in `main.rs` and the tag pass in `main.rs`.
+- `crates/ralph_server/src/backoff.rs`: shell loop `retry_on_outage` with an injectable wait, `attempt_from`, `wait_unless` and `final_tag_failure_kind`; used by `turn.rs`, the nap in `main.rs` and the tag pass in `main.rs`.
 - `crates/core/src/chat_socket.rs`: socket request/response lines, owner record, `socket_fate` and `orphan_sidecar_fate`.
-- `crates/ralph/src/invoke.rs`: `build_chat_command`, `build_memory_command`, `build_nap_command`.
+- `crates/ralph_server/src/invoke.rs`: `build_chat_command`, `build_memory_command`, `build_nap_command`.
 - `crates/ralph/src/cli/mod.rs` and `main.rs`: arguments, default dispatch, `chat-mcp` and `chat-nap` handlers.
-- `crates/core/src/chat_thread.rs`: pure thread rules: `ThreadName`, `ThreadMeta`, `Scope`, `split_scope`, `label_item`, `fork_check`, `thread_split`, `guard_check`, `drop_message`, `open_launch`, `merged_check`, `open_check`, `revive_check`, `pull_message`, `merge_prompt`, `digest_with`, `merged_report`, `view_block`, `view_report`. `crates/core/src/chat_thread_model.rs`: the thread model rules (`validate_thread_model`, `with_model`, `build_model_args`). `crates/core/src/chat_thread_table.rs`: the pure thread table (`ThreadRow`, `ThreadState`, `sort_rows`, `threads_view`). `crates/ralph/src/chat/thread.rs`: `Memory` (routes a `MemoryCall` to main or a thread store), `config_root`, `ensure`, `open_thread` (the `/thread open` shell), `ralph thread ls|drop|merge|park|revive|pull`.
+- `crates/core/src/chat_thread.rs`: pure thread rules: `ThreadName`, `ThreadMeta`, `Scope`, `split_scope`, `label_item`, `fork_check`, `thread_split`, `guard_check`, `drop_message`, `open_launch`, `merged_check`, `open_check`, `revive_check`, `pull_message`, `merge_prompt`, `digest_with`, `merged_report`, `view_block`, `view_report`. `crates/core/src/chat_thread_model.rs`: the thread model rules (`validate_thread_model`, `with_model`, `build_model_args`). `crates/core/src/chat_thread_table.rs`: the pure thread table (`ThreadRow`, `ThreadState`, `sort_rows`, `threads_view`). `crates/ralph_server/src/chat/fork.rs`: `Fork`, `open_fork`, `fork_view`, `read_meta`. `crates/ralph_server/src/chat/suggestion.rs`: `SuggestionCell`. `crates/ralph/src/chat/thread.rs`: `Memory` (routes a `MemoryCall` to main or a thread store), `config_root`, `ensure`, `open_thread` (the `/thread open` shell), `ralph thread ls|drop|merge|park|revive|pull`.
 
 ## Single instance
 

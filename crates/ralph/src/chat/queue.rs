@@ -1,6 +1,6 @@
-use crate::chat::turn::TurnOutcome;
 use ralph_core::chat_cell::{bang, Bang};
 use ralph_core::chat_thread_cmd::is_cell_command;
+use ralph_server::chat::turn::TurnOutcome;
 
 const JOIN: &str = "\n\n";
 
