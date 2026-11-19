@@ -118,8 +118,8 @@ impl SendIt {
         };
         let file = self.load().ok().flatten();
         let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
-        self.log_shown(&ticked);
-        let mut driven = self.route(ticked, monitor);
+        log_shown(self, &ticked);
+        let mut driven = route(self, ticked, monitor);
         if driven.route.is_none() {
             monitor.set_phase(Phase::Prompt);
         }
@@ -140,130 +140,128 @@ impl SendIt {
     }
 
     pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        self.log_shown(&ticked);
-        self.route(ticked, monitor)
-    }
-
-    fn log_shown(&self, ticked: &Ticked) {
-        for line in ticked.shown_lines() {
-            self.log_notice(line);
-        }
-    }
-
-    fn route(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        for line in ticked.shown_lines() {
-            self.show(line);
-        }
-        let plan = self.load().ok().flatten().map(|file| file.plan);
-        let driving = ticked.driving;
-        match ticked.next {
-            Next::Send(line) => {
-                if let Some(plan) = &plan {
-                    self.show(running_line(plan, &driving));
-                }
-                self.show(&line);
-                Driven::keep(driving, Route::Send(line), None)
-            }
-            Next::Judge => match plan.and_then(|plan| {
-                let prompt = judge_prompt(&plan, driving.progress)?;
-                let echo = judge_echo(&plan, driving.progress);
-                let (driving, prompt) = briefed_turn(&plan, driving.clone(), &prompt);
-                Some((driving, prompt, echo))
-            }) {
-                Some((driving, prompt, echo)) => {
-                    self.show(echo);
-                    Driven::keep(driving, Route::Send(prompt), None)
-                }
-                None => self.stopped(StopReason::PlanChanged, &driving),
-            },
-            Next::Hold(worker) => {
-                Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None)
-            }
-            Next::Watch(command) | Next::Check(command) => {
-                if let Some(plan) = &plan {
-                    self.show(running_line(plan, &driving));
-                    if let Some(step) = plan.steps.get(driving.progress.step) {
-                        self.show(step_line(plan, driving.progress.step, step));
-                    }
-                }
-                let worker = plan
-                    .as_ref()
-                    .and_then(|plan| verify_worker(plan, driving.progress));
-                let porcelain =
-                    worker.and_then(|_| git_out(None, &["worktree", "list", "--porcelain"]));
-                let spec = match resolve_check(
-                    driving.progress.step,
-                    &command,
-                    worker,
-                    porcelain.as_deref(),
-                ) {
-                    Ok(spec) => spec,
-                    Err(reason) => return self.stopped(reason, &driving),
-                };
-                let id = spec.id.clone();
-                match monitor.watches.start(spec) {
-                    Ok(slot) => {
-                        Driven::keep(driving, Route::Hold(HoldFilter::Source(id)), Some(slot))
-                    }
-                    Err(error) => {
-                        self.show(&error);
-                        let step = driving.progress.step + 1;
-                        self.stopped(
-                            StopReason::CheckNotStarted {
-                                step,
-                                error: error.to_string(),
-                            },
-                            &driving,
-                        )
-                    }
-                }
-            }
-            Next::Stop(reason) => self.stopped(reason, &driving),
-            Next::Done => match &plan {
-                Some(plan) => self.ended(
-                    &done_notice(plan, &driving.run),
-                    &done_block(plan, &driving, screen_columns()),
-                    &driving,
-                ),
-                None => {
-                    if let Some(met) = ticked.met.as_deref() {
-                        self.show(met);
-                        self.log_notice(met);
-                    }
-                    Driven::ended()
-                }
-            },
-            Next::Wait => Driven::ended(),
-        }
-    }
-
-    fn ended(&self, notice: &str, block: &str, driving: &Driving) -> Driven {
-        self.show(block);
-        self.log_notice(notice);
-        if let Err(error) = self.release(&driving.hash, None) {
-            self.show(error);
-        }
-        Driven::ended()
-    }
-
-    fn stopped(&self, reason: StopReason, driving: &Driving) -> Driven {
-        let kept = self.release(&driving.hash, Some(driving.progress.step + 1));
-        let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
-        let notice = reason.notice(&driving.run, kept_file);
-        self.show(stop_block(&reason, kept_file, driving, screen_columns()));
-        self.log_notice(&notice);
-        if let Err(error) = kept {
-            self.show(error);
-        }
-        self.blocked(&notice);
-        Driven {
-            prefill: run_end_prefill(&Next::Stop(reason)),
-            ..Driven::ended()
-        }
+        log_shown(self, &ticked);
+        route(self, ticked, monitor)
     }
 
     pub(super) fn took_over(&self, active: &Active) -> Driven {
-        self.stopped(StopReason::TookOver, &active.driving)
+        stopped(self, StopReason::TookOver, &active.driving)
+    }
+}
+
+fn log_shown(send_it: &ServerSendIt, ticked: &Ticked) {
+    for line in ticked.shown_lines() {
+        send_it.log_notice(line);
+    }
+}
+
+fn route(send_it: &ServerSendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
+    for line in ticked.shown_lines() {
+        send_it.show(line);
+    }
+    let plan = send_it.load().ok().flatten().map(|file| file.plan);
+    let driving = ticked.driving;
+    match ticked.next {
+        Next::Send(line) => {
+            if let Some(plan) = &plan {
+                send_it.show(running_line(plan, &driving));
+            }
+            send_it.show(&line);
+            Driven::keep(driving, Route::Send(line), None)
+        }
+        Next::Judge => match plan.and_then(|plan| {
+            let prompt = judge_prompt(&plan, driving.progress)?;
+            let echo = judge_echo(&plan, driving.progress);
+            let (driving, prompt) = briefed_turn(&plan, driving.clone(), &prompt);
+            Some((driving, prompt, echo))
+        }) {
+            Some((driving, prompt, echo)) => {
+                send_it.show(echo);
+                Driven::keep(driving, Route::Send(prompt), None)
+            }
+            None => stopped(send_it, StopReason::PlanChanged, &driving),
+        },
+        Next::Hold(worker) => Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None),
+        Next::Watch(command) | Next::Check(command) => {
+            if let Some(plan) = &plan {
+                send_it.show(running_line(plan, &driving));
+                if let Some(step) = plan.steps.get(driving.progress.step) {
+                    send_it.show(step_line(plan, driving.progress.step, step));
+                }
+            }
+            let worker = plan
+                .as_ref()
+                .and_then(|plan| verify_worker(plan, driving.progress));
+            let porcelain =
+                worker.and_then(|_| git_out(None, &["worktree", "list", "--porcelain"]));
+            let spec = match resolve_check(
+                driving.progress.step,
+                &command,
+                worker,
+                porcelain.as_deref(),
+            ) {
+                Ok(spec) => spec,
+                Err(reason) => return stopped(send_it, reason, &driving),
+            };
+            let id = spec.id.clone();
+            match monitor.watches.start(spec) {
+                Ok(slot) => Driven::keep(driving, Route::Hold(HoldFilter::Source(id)), Some(slot)),
+                Err(error) => {
+                    send_it.show(&error);
+                    let step = driving.progress.step + 1;
+                    stopped(
+                        send_it,
+                        StopReason::CheckNotStarted {
+                            step,
+                            error: error.to_string(),
+                        },
+                        &driving,
+                    )
+                }
+            }
+        }
+        Next::Stop(reason) => stopped(send_it, reason, &driving),
+        Next::Done => match &plan {
+            Some(plan) => ended(
+                send_it,
+                &done_notice(plan, &driving.run),
+                &done_block(plan, &driving, screen_columns()),
+                &driving,
+            ),
+            None => {
+                if let Some(met) = ticked.met.as_deref() {
+                    send_it.show(met);
+                    send_it.log_notice(met);
+                }
+                Driven::ended()
+            }
+        },
+        Next::Wait => Driven::ended(),
+    }
+}
+
+fn ended(send_it: &ServerSendIt, notice: &str, block: &str, driving: &Driving) -> Driven {
+    send_it.show(block);
+    send_it.log_notice(notice);
+    if let Err(error) = send_it.release(&driving.hash, None) {
+        send_it.show(error);
+    }
+    Driven::ended()
+}
+
+fn stopped(send_it: &ServerSendIt, reason: StopReason, driving: &Driving) -> Driven {
+    let kept = send_it.release(&driving.hash, Some(driving.progress.step + 1));
+    let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
+    let notice = reason.notice(&driving.run, kept_file);
+    send_it.show(stop_block(&reason, kept_file, driving, screen_columns()));
+    send_it.log_notice(&notice);
+    if let Err(error) = kept {
+        send_it.show(error);
+    }
+    send_it.blocked(&notice);
+    Driven {
+        prefill: run_end_prefill(&Next::Stop(reason)),
+        ..Driven::ended()
     }
 }
 
