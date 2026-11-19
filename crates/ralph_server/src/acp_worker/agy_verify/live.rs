@@ -3,14 +3,23 @@ use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{CancelNotification, PromptResponse, StopReason};
 use ralph_core::worker::{reported_path, Report};
 use serde_json::Value;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const ID: &str = "verify";
 const TEXT: &str = "verify";
 const PROMPT: &str = "Call the ralph-worker report tool exactly once with status done and text verify. Do not call any other tool. Then stop.";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
-const SHELL_PROMPT: &str =
-    "Run the shell command `date +%s > yolo.txt` in the current directory. Do not call any other tool. Then stop.";
+
+fn shell_prompt(target: &Path) -> String {
+    let path = target.display().to_string();
+    let path = if path.contains(char::is_whitespace) {
+        format!("'{path}'")
+    } else {
+        path
+    };
+    format!("Run the shell command `date +%s > {path}` exactly as written. Do not call any other tool. Then stop.")
+}
 
 fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
     if delivered
@@ -101,10 +110,17 @@ fn stop_name(
         .map_err(|error| error.message)
 }
 
-async fn shell_turn(connection: &ConnectionTo<Agent>, id: &SessionId) -> Result<String, String> {
+async fn shell_turn(
+    connection: &ConnectionTo<Agent>,
+    id: &SessionId,
+    target: &Path,
+) -> Result<String, String> {
     stop_name(
         connection
-            .send_request(PromptRequest::new(id.clone(), vec![SHELL_PROMPT.into()]))
+            .send_request(PromptRequest::new(
+                id.clone(),
+                vec![shell_prompt(target).into()],
+            ))
             .block_task()
             .await,
     )
@@ -260,9 +276,10 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
     };
     if passed && mode == PermissionMode::Yolo {
         let start = unix_seconds();
-        let stop = shell_turn(connection, &id).await;
+        let target = opening.cwd.join("yolo.txt");
+        let stop = shell_turn(connection, &id, &target).await;
         let end = unix_seconds();
-        let written = fs::read_to_string(opening.cwd.join("yolo.txt")).ok();
+        let written = fs::read_to_string(&target).ok();
         step(
             checks,
             "live yolo",
@@ -294,6 +311,15 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn shell_prompt_targets_the_absolute_path() {
+        let prompt = shell_prompt(Path::new("/x/worktree/yolo.txt"));
+        assert!(
+            prompt.contains("`date +%s > /x/worktree/yolo.txt`"),
+            "{prompt}"
+        );
+    }
 
     #[test]
     fn yolo_passes_only_with_no_requests_a_normal_end_and_a_timestamp_in_the_window() {
