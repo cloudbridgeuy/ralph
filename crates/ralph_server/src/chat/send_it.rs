@@ -1,15 +1,16 @@
-use crate::chat::ask::Notices;
+use crate::chat::ask::{Ask, Notices};
 use crate::chat::memory::Store;
 use crate::warn::warn_if_err;
-use crate::watches::locked;
+use crate::watches::{locked, OutcomeSlot};
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_send_it::template::{
-    match_template, render_templates, save_notice, template_name, template_text,
+    fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
 use ralph_core::chat_send_it::{
-    parse_run, plan_hash, plan_warnings, propose_refusal, read_run, stop_file, write_run, Action,
-    Limits, RunFile, StepResult,
+    approve, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
+    render_status_styled, start_run, stop_file, tick, with_reply, write_run, Action, Driving,
+    Ended, Limits, RunFile, Seen, StepResult, Ticked,
 };
 use serde_json::Value;
 use std::fmt;
@@ -23,19 +24,19 @@ const RUN_DIR: &str = "send-it";
 const RUN_FILE: &str = "run.toml";
 const TEMPLATE_DIR: &str = "templates";
 
-pub fn unreadable(path: &Path, error: io::Error) -> String {
+fn unreadable(path: &Path, error: io::Error) -> String {
     format!("Could not read {}: {error}", path.display())
 }
 
 #[derive(Debug, Clone)]
 pub struct SendIt {
-    pub log: PathBuf,
+    log: PathBuf,
     pub path: PathBuf,
-    pub templates: PathBuf,
-    pub limits: Limits,
-    pub refused: Arc<Mutex<Option<String>>>,
-    pub judged: Arc<Mutex<Option<StepResult>>>,
-    pub answered: Arc<Mutex<Vec<String>>>,
+    templates: PathBuf,
+    limits: Limits,
+    refused: Arc<Mutex<Option<String>>>,
+    judged: Arc<Mutex<Option<StepResult>>>,
+    answered: Arc<Mutex<Vec<String>>>,
     out: Out,
 }
 
@@ -199,13 +200,173 @@ impl SendIt {
             "Failed to record the send-it notice",
         );
     }
+
+    pub fn status(&self, width: usize) -> Screen {
+        match self.load() {
+            Ok(Some(file)) => Screen {
+                text: render_status(&file, width),
+                styled: render_status_styled(&file, width),
+                shown: Some(plan_hash(&file.plan)),
+            },
+            Ok(None) => Screen::text(NO_RUN),
+            Err(text) => Screen::text(text),
+        }
+    }
+
+    pub fn proposed(&self, before: Option<String>, width: usize) -> Screen {
+        let screen = self.status(width);
+        let stored_new = match &screen.shown {
+            Some(hash) => before.as_ref() != Some(hash),
+            None => screen.text != NO_RUN,
+        };
+        if stored_new {
+            screen
+        } else {
+            Screen::text(NOT_PROPOSED)
+        }
+    }
+
+    pub fn go(
+        &self,
+        shown: Option<&str>,
+        typed_at_prompt: bool,
+        seen: &Seen,
+    ) -> (String, Option<Ticked>) {
+        let file = match self.load() {
+            Ok(Some(file)) => file,
+            Ok(None) => return (NO_RUN.to_string(), None),
+            Err(text) => return (text, None),
+        };
+        locked(&self.answered).clear();
+        let approved = approve(&file, shown, typed_at_prompt)
+            .and_then(|approved| self.save(&approved).map(|()| approved));
+        match approved {
+            Ok(approved) => (
+                format!("Plan {} approved. Running it.", plan_hash(&approved.plan)),
+                start_run(&approved, seen),
+            ),
+            Err(text) => (text, None),
+        }
+    }
+
+    pub fn tick(&self, driving: &Driving, watched: Option<&OutcomeSlot>, ended: Ended) -> Ticked {
+        let file = self.load().ok().flatten();
+        let watched = watched.and_then(|slot| locked(slot).clone());
+        let refused = locked(&self.refused).take();
+        let judged = locked(&self.judged).take();
+        let answered = std::mem::take(&mut *locked(&self.answered));
+        let reply = ended.replied.then(|| self.last_reply()).flatten();
+        let ticked = tick(
+            driving,
+            &Ended {
+                file: file.as_ref(),
+                watched: watched.as_ref(),
+                refused: refused.as_deref(),
+                answered: &answered,
+                step_result: judged.as_ref(),
+                ..ended
+            },
+        );
+        match reply {
+            Some(reply) => with_reply(ticked, &reply),
+            None => ticked,
+        }
+    }
+
+    fn last_reply(&self) -> Option<String> {
+        let (entries, _) = Store::new(self.log.clone()).load().ok()?;
+        entries
+            .into_iter()
+            .rev()
+            .find(|entry| entry.role == Role::Assistant)
+            .map(|entry| entry.text)
+    }
+
+    pub fn edit(&self, ask: &mut dyn Ask, width: usize) -> Screen {
+        if !self.path.exists() {
+            return Screen::text(NO_RUN);
+        }
+        let opened = ask.edit(&self.path);
+        let screen = self.clear_approval(width);
+        match opened {
+            Ok(()) => screen,
+            Err(error) => Screen {
+                text: format!("Editor failed: {error}\n{}", screen.text),
+                styled: format!("Editor failed: {error}\n{}", screen.styled),
+                ..screen
+            },
+        }
+    }
+
+    pub fn use_template(&self, ticket: &str, name: &str, width: usize) -> Screen {
+        if let Some(refusal) = self.refusal() {
+            return Screen::text(refusal);
+        }
+        let path = self.templates.join(format!("{name}.toml"));
+        let stored = fs::read_to_string(&path)
+            .map_err(|error| unreadable(&path, error))
+            .and_then(|text| {
+                fill_template(&text, ticket, self.limits)
+                    .map_err(|error| format!("Template {name}: {error}"))
+            })
+            .and_then(|file| self.save(&file));
+        match stored {
+            Ok(()) => self.status(width),
+            Err(text) => Screen::text(text),
+        }
+    }
+
+    pub fn clear_approval(&self, width: usize) -> Screen {
+        match self.load() {
+            Ok(Some(file)) => match self.save(&RunFile {
+                approved: None,
+                ..file
+            }) {
+                Ok(()) => self.status(width),
+                Err(text) => Screen::text(text),
+            },
+            Ok(None) => Screen::text(NO_RUN),
+            Err(text) => Screen::text(format!("{text}\nFix it with /send-it edit.")),
+        }
+    }
+}
+
+pub const NOT_PROPOSED: &str =
+    "No new run plan was stored. Try /send-it again with clearer instructions.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Screen {
+    pub text: String,
+    pub styled: String,
+    pub shown: Option<String>,
+}
+
+impl Screen {
+    pub fn text(text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            styled: text.clone(),
+            text,
+            shown: None,
+        }
+    }
+
+    pub fn for_terminal(&self, color: bool) -> &str {
+        match color {
+            true => &self.styled,
+            false => &self.text,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::ask::Ask;
+    use ralph_core::chat_send_it::Seen;
     use ralph_core::chat_send_it::VerifyMode;
     use serde_json::json;
+    use std::collections::HashMap;
 
     const LIMITS: Limits = Limits {
         max_turns: 3,
@@ -295,5 +456,39 @@ mod tests {
                 "Plan {hash} is approved and active. Stop it with /send-it off first."
             ))
         );
+    }
+
+    struct Editor(Option<&'static str>);
+
+    impl Ask for Editor {
+        fn answer(&mut self, _prompt: &str) -> Option<String> {
+            None
+        }
+
+        fn edit(&mut self, _path: &Path) -> io::Result<()> {
+            self.0.map_or(Ok(()), |error| Err(io::Error::other(error)))
+        }
+    }
+
+    #[test]
+    fn edit_clears_approval_and_reports_editor_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = quiet(dir.path());
+        send_it.propose(&plan_args()).unwrap();
+        let hash = send_it.status(80).shown.unwrap();
+        let seen = Seen {
+            last: &HashMap::new(),
+            running: &[],
+        };
+        send_it.go(Some(&hash), true, &seen);
+        let failed = send_it.edit(&mut Editor(Some("no editor")), 80);
+        assert!(
+            failed.text.starts_with("Editor failed: no editor\n"),
+            "{}",
+            failed.text
+        );
+        assert!(failed.text.contains("not approved"), "{}", failed.text);
+        let fine = send_it.edit(&mut Editor(None), 80);
+        assert!(fine.text.contains("not approved"), "{}", fine.text);
     }
 }

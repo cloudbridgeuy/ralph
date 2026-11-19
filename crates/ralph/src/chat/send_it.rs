@@ -6,13 +6,11 @@ use crate::chat::prompt::{screen_columns, Submitted};
 use crate::chat::queue::Queue;
 use crate::inbox_alert;
 use ralph_core::chat_hold::HoldFilter;
-use ralph_core::chat_memory::{Role, Trigger};
-use ralph_core::chat_send_it::template::fill_template;
+use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{
-    approve, awaits_check, blocked_alert, blocked_report, briefed_turn, done_block, done_notice,
-    judge_echo, judge_prompt, plan_hash, render_status, render_status_styled, resolve_check,
-    run_end_prefill, running_line, settle_check, start_run, step_line, stop_block, tick,
-    verify_worker, with_reply, Driving, Ended, Limits, Next, RunFile, Seen, StopReason, Ticked,
+    awaits_check, blocked_alert, blocked_report, briefed_turn, done_block, done_notice, judge_echo,
+    judge_prompt, resolve_check, run_end_prefill, running_line, settle_check, step_line,
+    stop_block, verify_worker, Driving, Ended, Limits, Next, StopReason, Ticked,
 };
 use ralph_core::chat_status::{latest_states, Route};
 use ralph_core::chat_suggestion::driven_fill;
@@ -20,9 +18,8 @@ use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_core::worker_check::logged_states;
-use ralph_server::chat::ask::Ask;
 use ralph_server::chat::memory::Store;
-use ralph_server::chat::send_it::{unreadable, SendIt as ServerSendIt, NO_RUN};
+use ralph_server::chat::send_it::SendIt as ServerSendIt;
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::turn::{Turn, TurnOutcome};
 use ralph_server::warn::warn_if_err;
@@ -30,14 +27,10 @@ use ralph_server::watches::{locked, OutcomeSlot};
 use ralph_server::workers::running_workers;
 use reedline::{EditCommand, Reedline};
 use std::collections::HashMap;
-use std::fs;
 use std::io::{self, Write};
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
-
-const NOT_PROPOSED: &str =
-    "No new run plan was stored. Try /send-it again with clearer instructions.";
 
 fn print_line(line: &str) {
     let mut out = io::stdout().lock();
@@ -55,31 +48,6 @@ impl Deref for SendIt {
 
     fn deref(&self) -> &ServerSendIt {
         &self.0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Screen {
-    pub(crate) text: String,
-    pub(crate) styled: String,
-    pub(crate) shown: Option<String>,
-}
-
-impl Screen {
-    fn text(text: impl Into<String>) -> Self {
-        let text = text.into();
-        Self {
-            styled: text.clone(),
-            text,
-            shown: None,
-        }
-    }
-
-    pub(crate) fn for_terminal(&self, color: bool) -> &str {
-        match color {
-            true => &self.styled,
-            false => &self.text,
-        }
     }
 }
 
@@ -152,88 +120,8 @@ impl SendIt {
         Self(ServerSendIt::new(store_dir, limits, Arc::new(print_line)))
     }
 
-    pub(crate) fn status(&self, width: usize) -> Screen {
-        match self.load() {
-            Ok(Some(file)) => Screen {
-                text: render_status(&file, width),
-                styled: render_status_styled(&file, width),
-                shown: Some(plan_hash(&file.plan)),
-            },
-            Ok(None) => Screen::text(NO_RUN),
-            Err(text) => Screen::text(text),
-        }
-    }
-
-    pub(crate) fn proposed(&self, before: Option<String>, width: usize) -> Screen {
-        let screen = self.status(width);
-        let stored_new = match &screen.shown {
-            Some(hash) => before.as_ref() != Some(hash),
-            None => screen.text != NO_RUN,
-        };
-        if stored_new {
-            screen
-        } else {
-            Screen::text(NOT_PROPOSED)
-        }
-    }
-
-    pub(crate) fn go(
-        &self,
-        shown: Option<&str>,
-        typed_at_prompt: bool,
-        seen: &Seen,
-    ) -> (String, Option<Ticked>) {
-        let file = match self.load() {
-            Ok(Some(file)) => file,
-            Ok(None) => return (NO_RUN.to_string(), None),
-            Err(text) => return (text, None),
-        };
-        locked(&self.answered).clear();
-        let approved = approve(&file, shown, typed_at_prompt)
-            .and_then(|approved| self.save(&approved).map(|()| approved));
-        match approved {
-            Ok(approved) => (
-                format!("Plan {} approved. Running it.", plan_hash(&approved.plan)),
-                start_run(&approved, seen),
-            ),
-            Err(text) => (text, None),
-        }
-    }
-
     pub(super) fn tick(&self, active: &Active, ended: Ended) -> Ticked {
-        let file = self.load().ok().flatten();
-        let watched = active
-            .watched
-            .as_ref()
-            .and_then(|slot| locked(slot).clone());
-        let refused = locked(&self.refused).take();
-        let judged = locked(&self.judged).take();
-        let answered = std::mem::take(&mut *locked(&self.answered));
-        let reply = ended.replied.then(|| self.last_reply()).flatten();
-        let ticked = tick(
-            &active.driving,
-            &Ended {
-                file: file.as_ref(),
-                watched: watched.as_ref(),
-                refused: refused.as_deref(),
-                answered: &answered,
-                step_result: judged.as_ref(),
-                ..ended
-            },
-        );
-        match reply {
-            Some(reply) => with_reply(ticked, &reply),
-            None => ticked,
-        }
-    }
-
-    fn last_reply(&self) -> Option<String> {
-        let (entries, _) = Store::new(self.log.clone()).load().ok()?;
-        entries
-            .into_iter()
-            .rev()
-            .find(|entry| entry.role == Role::Assistant)
-            .map(|entry| entry.text)
+        self.0.tick(&active.driving, active.watched.as_ref(), ended)
     }
 
     pub(super) fn held_item(
@@ -408,54 +296,6 @@ impl SendIt {
 
     pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) -> Driven {
         self.stopped(StopReason::TookOver, &active.driving, monitor)
-    }
-
-    pub(crate) fn edit(&self, ask: &mut dyn Ask) -> Screen {
-        if !self.path.exists() {
-            return Screen::text(NO_RUN);
-        }
-        let opened = ask.edit(&self.path);
-        let screen = self.clear_approval();
-        match opened {
-            Ok(()) => screen,
-            Err(error) => Screen {
-                text: format!("Editor failed: {error}\n{}", screen.text),
-                styled: format!("Editor failed: {error}\n{}", screen.styled),
-                ..screen
-            },
-        }
-    }
-
-    pub(crate) fn use_template(&self, ticket: &str, name: &str) -> Screen {
-        if let Some(refusal) = self.refusal() {
-            return Screen::text(refusal);
-        }
-        let path = self.templates.join(format!("{name}.toml"));
-        let stored = fs::read_to_string(&path)
-            .map_err(|error| unreadable(&path, error))
-            .and_then(|text| {
-                fill_template(&text, ticket, self.limits)
-                    .map_err(|error| format!("Template {name}: {error}"))
-            })
-            .and_then(|file| self.save(&file));
-        match stored {
-            Ok(()) => self.status(screen_columns()),
-            Err(text) => Screen::text(text),
-        }
-    }
-
-    fn clear_approval(&self) -> Screen {
-        match self.load() {
-            Ok(Some(file)) => match self.save(&RunFile {
-                approved: None,
-                ..file
-            }) {
-                Ok(()) => self.status(screen_columns()),
-                Err(text) => Screen::text(text),
-            },
-            Ok(None) => Screen::text(NO_RUN),
-            Err(text) => Screen::text(format!("{text}\nFix it with /send-it edit.")),
-        }
     }
 }
 

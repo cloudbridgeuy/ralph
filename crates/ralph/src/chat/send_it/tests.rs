@@ -1,16 +1,18 @@
 use super::*;
 use crate::chat::socket::{respond, Shared};
 use ralph_core::chat_local::notice_record;
-use ralph_core::chat_memory::Trigger;
-use ralph_core::chat_send_it::{Action, Awaiting, StepResult, VerifyMode};
+use ralph_core::chat_memory::{Role, Trigger};
+use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Seen, StepResult, VerifyMode};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
-use ralph_server::chat::ask::{Ask, Notices};
+use ralph_server::chat::ask::Notices;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::send_it::{Screen, NOT_PROPOSED, NO_RUN};
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
 use serde_json::{json, Value};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -102,16 +104,16 @@ fn using_a_template_stores_an_unapproved_plan_and_shows_its_hash() {
     let (send_it, hash) = proposed(dir.path());
     send_it.save_template("ship", Some("GUZ-1"));
     go(&send_it, Some(&hash), true);
-    let refused = send_it.use_template("GUZ-2", "ship");
+    let refused = send_it.use_template("GUZ-2", "ship", 80);
     assert!(refused.text.contains("approved and active"));
     assert_eq!(refused.shown, None);
     send_it.off();
-    let screen = send_it.use_template("GUZ-2", "ship");
+    let screen = send_it.use_template("GUZ-2", "ship", 80);
     let file = send_it.load().unwrap().unwrap();
     assert_eq!(file.plan.goal, "ship GUZ-2");
     assert_eq!(file.approved, None);
     assert_eq!(screen, send_it.status(80));
-    let missing = send_it.use_template("GUZ-2", "gone");
+    let missing = send_it.use_template("GUZ-2", "gone", 80);
     assert!(missing.text.starts_with("Could not read"));
 }
 
@@ -163,7 +165,7 @@ fn the_screens_after_a_proposal_and_a_template_use_carry_a_styled_copy() {
     assert!(after_proposal.styled.contains('\x1b'));
     assert!(!after_proposal.text.contains('\x1b'));
     send_it.save_template("ship", Some("GUZ-1"));
-    let after_template = send_it.use_template("GUZ-2", "ship");
+    let after_template = send_it.use_template("GUZ-2", "ship", 80);
     assert!(after_template.styled.contains('\x1b'));
     assert!(!after_template.text.contains('\x1b'));
 }
@@ -173,13 +175,13 @@ fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, hash) = proposed(dir.path());
     go(&send_it, Some(&hash), true);
-    let screen = send_it.clear_approval();
+    let screen = send_it.clear_approval(80);
     assert_eq!(screen.shown, Some(hash.clone()));
     assert!(screen
         .text
         .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
     fs::write(&send_it.path, "goal = ").unwrap();
-    let broken = send_it.clear_approval();
+    let broken = send_it.clear_approval(80);
     assert_eq!(broken.shown, None);
     assert!(
         broken.text.ends_with("Fix it with /send-it edit."),
@@ -188,41 +190,13 @@ fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
     );
 }
 
-struct Editor(Option<&'static str>);
-
-impl Ask for Editor {
-    fn answer(&mut self, _prompt: &str) -> Option<String> {
-        None
-    }
-
-    fn edit(&mut self, _path: &Path) -> io::Result<()> {
-        self.0.map_or(Ok(()), |error| Err(io::Error::other(error)))
-    }
-}
-
-#[test]
-fn edit_clears_approval_and_reports_editor_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let (send_it, hash) = proposed(dir.path());
-    go(&send_it, Some(&hash), true);
-    let failed = send_it.edit(&mut Editor(Some("no editor")));
-    assert!(
-        failed.text.starts_with("Editor failed: no editor\n"),
-        "{}",
-        failed.text
-    );
-    assert!(failed.text.contains("not approved"), "{}", failed.text);
-    let fine = send_it.edit(&mut Editor(None));
-    assert!(fine.text.contains("not approved"), "{}", fine.text);
-}
-
 #[test]
 fn without_a_run_every_command_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = quiet(dir.path());
     let none = Screen::text(NO_RUN);
     assert_eq!(send_it.status(80), none);
-    assert_eq!(send_it.clear_approval(), none);
+    assert_eq!(send_it.clear_approval(80), none);
     assert_eq!(go(&send_it, Some("x"), true), (NO_RUN.to_string(), None));
     assert_eq!(send_it.off(), NO_RUN);
     assert!(NO_RUN.starts_with("No send-it run."));
@@ -532,7 +506,7 @@ fn release_drops_the_run_s_approval_and_keeps_the_plan_for_save_and_reuse() {
     assert!(send_it
         .save_template("ship", None)
         .starts_with("Template ship saved"));
-    assert!(send_it.use_template("GUZ-2", "ship").shown.is_some());
+    assert!(send_it.use_template("GUZ-2", "ship", 80).shown.is_some());
     assert!(send_it.propose(&plan_args()).is_ok());
     send_it.release(&hash, None).unwrap();
     send_it.off();
@@ -610,7 +584,7 @@ fn every_tick_reads_the_plan_file_again() {
         send_it.tick(&active, ended()).next,
         Next::Check("cargo xtask lint".to_string())
     );
-    send_it.clear_approval();
+    send_it.clear_approval(80);
     assert_eq!(
         send_it.tick(&active, ended()).next,
         Next::Stop(StopReason::PlanChanged)

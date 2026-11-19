@@ -725,7 +725,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             }
             Route::SendIt(SendItCommand::Propose(text)) => {
                 if let Some((ticket, name)) = send_it.template_use(&text) {
-                    let screen = send_it.use_template(&ticket, &name);
+                    let screen = send_it.use_template(&ticket, &name, prompt::screen_columns());
                     println!("{}", screen.for_terminal(color));
                     note(&screen.text);
                     shown_plan = screen.shown;
@@ -790,9 +790,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             }
             Route::SendIt(command @ (SendItCommand::Status | SendItCommand::Edit)) => {
                 let screen = if command == SendItCommand::Edit {
-                    send_it.edit(&mut Keyboard {
+                    let mut keyboard = Keyboard {
                         editor: &prompt.editor,
-                    })
+                    };
+                    send_it.edit(&mut keyboard, prompt::screen_columns())
                 } else {
                     send_it.status(prompt::screen_columns())
                 };
