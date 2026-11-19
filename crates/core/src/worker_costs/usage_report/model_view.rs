@@ -56,6 +56,7 @@ fn main_runs(processes: &[MainProcess]) -> (usize, Usd) {
                     missing: cost.missing,
                     estimate: false,
                     reported: false,
+                    no_price: false,
                 },
             )
         })
@@ -78,7 +79,7 @@ fn cost_row(
     main: &[MainProcess],
     priced: &dyn Fn(&UsageLine) -> Usd,
 ) -> CostRow {
-    let harness = |line: &UsageLine| Usd::of(line.cost_usd);
+    let harness = |line: &UsageLine| Usd::agy(line).unwrap_or_else(|| Usd::of(line.cost_usd));
     let (runs, usd, harness_usd) = match source {
         Source::Main => {
             let (runs, harness_usd) = main_runs(main);
