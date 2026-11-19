@@ -86,3 +86,21 @@ fn build_decay_counts_keyless_anchors_per_group() {
     assert_eq!(decay.keyless.get(&Group::Tagged), Some(&1));
     assert_eq!(decay.keyless.get(&Group::TopUp).copied().unwrap_or(0), 0);
 }
+
+#[test]
+fn keyed_anchor_past_the_frozen_cut_counts_as_recent_and_keyless_does_not() {
+    use super::{build_decay, DecayConfig};
+    use crate::chat_memory::{decode_rows, Tree};
+    let entries = texted(4, |i| {
+        if i == 0 {
+            "go on".into()
+        } else {
+            "see split_view".into()
+        }
+    });
+    let tags = decode_rows(b"");
+    let decay = build_decay(&entries, &Tree::new(), &tags, &DecayConfig::default());
+    assert_eq!(decay.recent.get(&Group::TopUp), Some(&1));
+    assert_eq!(decay.recent.get(&Group::Tagged).copied().unwrap_or(0), 0);
+    assert_eq!(decay.keyless.get(&Group::TopUp).copied().unwrap_or(0), 0);
+}

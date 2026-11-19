@@ -45,6 +45,7 @@ fn render_sample_layout() {
         ],
         uncompressed: 1,
         keyless: BTreeMap::from([(Group::Tagged, 1)]),
+        recent: BTreeMap::from([(Group::TopUp, 1)]),
         sections: BTreeMap::from([(Group::Tagged, tagged)]),
     };
     assert_eq!(
@@ -52,7 +53,7 @@ fn render_sample_layout() {
         concat!(
             "anchors 3 (tagged 2, top-up 1) uncompressed 1\n",
             "\n",
-            "== tagged (2 anchors, 1 without key tokens) ==\n",
+            "== tagged (2 anchors, 1 without key tokens, 0 in recent view) ==\n",
             "survival (key tokens kept in the summary) by depth:\n",
             "depth ticket      number      identifier  rare\n",
             "1     100% (1/1)  -           50% (1/2)   -\n",
@@ -74,7 +75,7 @@ fn render_sample_layout() {
             "  recall found (newest 50): 50% (1/2)\n",
             "  pointer kept: 33% (1/3)\n",
             "\n",
-            "== top-up (1 anchors, 0 without key tokens) ==\n",
+            "== top-up (1 anchors, 0 without key tokens, 1 in recent view) ==\n",
             "no data\n",
             "by era (approximate: summaries are written after their entries):\n",
             "before 2026-11-12:\n",

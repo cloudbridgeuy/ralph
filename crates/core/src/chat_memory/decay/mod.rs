@@ -24,7 +24,7 @@ use crate::chat_memory::{Entry, TagState, Tree};
 use ancestors::ancestors;
 use anchors::{pick_anchors, Anchor, Group};
 use era::{section, Collected, Section};
-use reach::{probe, Outcome};
+use reach::{cover_ancestor, probe, Outcome};
 use std::collections::BTreeMap;
 use survival::{observe, pointer_of};
 use tokens::document_frequency;
@@ -52,6 +52,7 @@ pub struct Decay {
     pub anchors: Vec<Anchor>,
     pub uncompressed: usize,
     pub keyless: BTreeMap<Group, usize>,
+    pub recent: BTreeMap<Group, usize>,
     pub sections: BTreeMap<Group, Section>,
 }
 
@@ -82,6 +83,17 @@ pub fn build_decay(entries: &[Entry], tree: &Tree, tags: &TagState, config: &Dec
             (*group, count)
         })
         .collect();
+    let recent = GROUPS
+        .iter()
+        .map(|group| {
+            let count = anchors
+                .iter()
+                .filter(|a| a.group == *group && !a.keys.is_empty())
+                .filter(|a| cover_ancestor(a.id, &view_cover).is_none())
+                .count();
+            (*group, count)
+        })
+        .collect();
     let data = Collected {
         observations: &observations,
         pointers: &pointers,
@@ -95,6 +107,7 @@ pub fn build_decay(entries: &[Entry], tree: &Tree, tags: &TagState, config: &Dec
         anchors,
         uncompressed,
         keyless,
+        recent,
         sections,
     }
 }

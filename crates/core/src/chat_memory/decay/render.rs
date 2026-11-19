@@ -22,6 +22,13 @@ const BUCKETS: [(Bucket, &str); 5] = [
 ];
 const COLUMN: usize = 12;
 
+#[derive(Clone, Copy)]
+struct Counts {
+    anchors: usize,
+    keyless: usize,
+    recent: usize,
+}
+
 fn show(cell: Cell) -> String {
     match cell.percent() {
         Some(percent) => format!("{percent}% ({}/{})", cell.kept, cell.total),
@@ -88,10 +95,13 @@ fn indented(lines: Vec<String>) -> impl Iterator<Item = String> {
     lines.into_iter().map(|line| format!("  {line}"))
 }
 
-fn section_lines(name: &str, anchors: usize, keyless: usize, section: &Section) -> Vec<String> {
+fn section_lines(name: &str, counts: Counts, section: &Section) -> Vec<String> {
     let mut lines = vec![
         String::new(),
-        format!("== {name} ({anchors} anchors, {keyless} without key tokens) =="),
+        format!(
+            "== {name} ({} anchors, {} without key tokens, {} in recent view) ==",
+            counts.anchors, counts.keyless, counts.recent
+        ),
     ];
     lines.extend(block_lines(&section.overall));
     lines.push("by era (approximate: summaries are written after their entries):".to_string());
@@ -119,7 +129,13 @@ pub fn render_decay(decay: &Decay) -> String {
     ] {
         let section = decay.sections.get(&group).unwrap_or(&empty);
         let keyless = decay.keyless.get(&group).copied().unwrap_or(0);
-        lines.extend(section_lines(name, anchors, keyless, section));
+        let recent = decay.recent.get(&group).copied().unwrap_or(0);
+        let counts = Counts {
+            anchors,
+            keyless,
+            recent,
+        };
+        lines.extend(section_lines(name, counts, section));
     }
     lines.join("\n")
 }
