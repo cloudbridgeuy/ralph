@@ -1,7 +1,7 @@
 use super::*;
 use crate::worker_verify::{step, Checks};
 use agent_client_protocol::schema::v1::{CloseSessionRequest, McpServerStdio};
-use ralph_core::worker::{CheckResult, AGY_AGENT, AUTH_REQUIRED_CODE};
+use ralph_core::worker::{CheckResult, AGY_AGENT};
 
 const STUB: &str = r#"import json, sys
 from pathlib import Path
@@ -31,14 +31,6 @@ fn server(dir: &Path, receipt: &str) -> McpServer {
     ]))
 }
 
-fn session_failure(code: i32, message: &str) -> String {
-    if code == AUTH_REQUIRED_CODE {
-        "agy is not authenticated; sign in with `agy` and retry".into()
-    } else {
-        format!("agy session request failed: {message}")
-    }
-}
-
 async fn discovery(path: PathBuf) -> Result<String, String> {
     blocking::unblock(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -62,16 +54,56 @@ async fn close(connection: &ConnectionTo<Agent>, id: &SessionId) -> Result<Strin
         .block_task()
         .await
         .map(|_| "session closed".to_string())
-        .map_err(|error| session_failure(i32::from(error.code), &error.message))
+        .map_err(|error| agy_settings::session_failure(i32::from(error.code), &error.message))
+}
+
+fn identity(init: &InitializeResponse, version: &str) -> Result<(), String> {
+    if let Some(info) = &init.agent_info {
+        if info.name != "Antigravity ACP Server" || info.version != version {
+            return Err(format!(
+                "agy ACP identity {} {} does not match agy {version}",
+                info.name, info.version
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn opening(dir: &Path, receipt: &str, updates: agy_settings::Updates) -> Opening {
+    Opening {
+        agent: AGY_AGENT,
+        launch: Launch::Fresh,
+        cwd: dir.to_path_buf(),
+        server: server(dir, receipt),
+        worker_id: "verify".to_string(),
+        model: Some("gemini-3.8-flash-low".to_string()),
+        permission_mode: PermissionMode::Ask,
+        effort: Some("low".to_string()),
+        updates,
+        inbox: dir.join("inbox"),
+    }
+}
+
+fn settings(selection: &agy_settings::Selection) -> Result<String, String> {
+    if selection.model == "gemini-3.8-flash-low" && selection.effort.as_deref() == Some("low") {
+        Ok("Flash model and low effort confirmed".to_string())
+    } else {
+        Err(format!(
+            "agy returned unexpected settings: {} {:?}",
+            selection.model, selection.effort
+        ))
+    }
 }
 
 async fn run(
     connection: ConnectionTo<Agent>,
     dir: PathBuf,
     checks: Checks,
+    version: String,
+    updates: agy_settings::Updates,
 ) -> Result<(), agent_client_protocol::Error> {
     let init = match initialize(&connection, &AGY_AGENT).await {
-        Ok(result) => result,
+        Ok(result) => result.and_then(|init| identity(&init, &version).map(|()| init)),
         Err(error) => Err(format!("agy initialize failed: {}", error.message)),
     };
     let Some(init) = step(&checks, "initialize", init, |_| {
@@ -86,19 +118,17 @@ async fn run(
         ));
         return Ok(());
     }
-    let created = connection
-        .send_request(
-            NewSessionRequest::new(dir.clone()).mcp_servers(vec![server(&dir, "new.receipt")]),
-        )
-        .block_task()
-        .await
-        .map_err(|error| session_failure(i32::from(error.code), &error.message));
-    let Some(created) = step(&checks, "session/new", created, |created| {
-        format!("session {}", created.session_id)
+    let new = opening(&dir, "new.receipt", Arc::clone(&updates));
+    let created = agy_settings::open(&connection, &new).await;
+    let Some((id, selected)) = step(&checks, "session/new", created, |(id, _)| {
+        format!("session {id}")
     }) else {
         return Ok(());
     };
-    let id = created.session_id;
+    if step(&checks, "settings/new", settings(&selected), Clone::clone).is_none() {
+        close(&connection, &id).await.ok();
+        return Ok(());
+    }
     let found = discovery(dir.join("new.receipt")).await;
     if step(&checks, "mcp/new", found, Clone::clone).is_none() {
         close(&connection, &id).await.ok();
@@ -108,19 +138,15 @@ async fn run(
     if step(&checks, "session/close", closed, Clone::clone).is_none() {
         return Ok(());
     }
-    let loaded = connection
-        .send_request(
-            LoadSessionRequest::new(id.clone(), dir.clone())
-                .mcp_servers(vec![server(&dir, "load.receipt")]),
-        )
-        .block_task()
-        .await
-        .map_err(|error| session_failure(i32::from(error.code), &error.message));
-    if step(&checks, "session/load", loaded, |_| {
+    let load = opening(&dir, "load.receipt", updates);
+    let loaded = agy_settings::load(&connection, &load, id.clone()).await;
+    let Some((_, selected)) = step(&checks, "session/load", loaded, |_| {
         "session loaded".to_string()
-    })
-    .is_none()
-    {
+    }) else {
+        return Ok(());
+    };
+    if step(&checks, "settings/load", settings(&selected), Clone::clone).is_none() {
+        close(&connection, &id).await.ok();
         return Ok(());
     }
     let found = discovery(dir.join("load.receipt")).await;
@@ -133,7 +159,7 @@ async fn run(
     Ok(())
 }
 
-pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) {
+pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, remaining: Duration) {
     if live {
         checks.add(CheckResult::fail(
             "live",
@@ -141,6 +167,14 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) {
         ));
         return;
     }
+    if remaining.is_zero() {
+        checks.add(CheckResult::fail(
+            "timeout",
+            "agy verify budget expired during version probing",
+        ));
+        return;
+    }
+    let started = Instant::now();
     let canonical = fs::canonicalize(dir)
         .map_err(|error| format!("could not resolve verify directory: {error}"));
     let Some(dir) = step(checks, "directory", canonical, |dir| {
@@ -173,38 +207,59 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) {
     let timed_out = Arc::new(AtomicBool::new(false));
     let timeout_flag = Arc::clone(&timed_out);
     let group = child.id();
+    let remaining = remaining.saturating_sub(started.elapsed());
     let watchdog = thread::spawn(move || {
-        if let Err(mpsc::RecvTimeoutError::Timeout) = waiting.recv_timeout(Duration::from_secs(90))
-        {
+        if let Err(mpsc::RecvTimeoutError::Timeout) = waiting.recv_timeout(remaining) {
             timeout_flag.store(true, Ordering::SeqCst);
             stop_groups(&[group], Duration::from_millis(200), || false);
         }
     });
-    let outcome = block_on(Client.builder().connect_with(
-        transport::streams(stdin, stdout, log),
-        {
-            let (dir, checks) = (dir.to_path_buf(), checks.clone());
-            async move |connection| run(connection, dir, checks).await
-        },
-    ));
+    let updates = Arc::new(Mutex::new(None));
+    let observer = Arc::clone(&updates);
+    let version = version.to_string();
+    let outcome = block_on(
+        Client
+            .builder()
+            .on_receive_notification(
+                async move |notification: SessionNotification, _cx| {
+                    if let Ok(update) = serde_json::to_value(&notification.update) {
+                        agy_settings::observe(
+                            &observer,
+                            &notification.session_id.to_string(),
+                            &update,
+                        );
+                    }
+                    Ok(())
+                },
+                agent_client_protocol::on_receive_notification!(),
+            )
+            .connect_with(transport::streams(stdin, stdout, log), {
+                let (dir, checks) = (dir.to_path_buf(), checks.clone());
+                async move |connection| run(connection, dir, checks, version, updates).await
+            }),
+    );
     done.send(()).ok();
     watchdog.join().ok();
-    let exited = child.try_wait().ok().flatten();
-    stop_child(&mut child);
+    let exited = exited_unreaped(&child);
+    stop_groups(&[group], Duration::from_millis(200), || {
+        !exited_unreaped(&child)
+    });
+    let status = child.wait();
     if timed_out.load(Ordering::SeqCst) {
         checks.add(CheckResult::fail(
             "timeout",
             "agy verification exceeded 90 seconds",
         ));
-    } else if let Some(status) = exited.filter(|status| !status.success()) {
-        checks.add(CheckResult::fail(
-            "connection",
-            format!("agy acp exited during verification: {status}"),
-        ));
     } else if let Err(error) = outcome {
         checks.add(CheckResult::fail(
             "connection",
             format!("agy ACP connection failed: {error}"),
+        ));
+    }
+    if exited && !matches!(status.as_ref(), Ok(status) if status.success()) {
+        checks.add(CheckResult::fail(
+            "connection",
+            format!("agy acp exited during verification: {status:?}"),
         ));
     }
 }
@@ -226,8 +281,34 @@ mod tests {
     }
 
     #[test]
+    fn identity_and_settings_must_match_the_probe() -> Result<(), Box<dyn std::error::Error>> {
+        let make = |name, version| {
+            serde_json::from_value::<InitializeResponse>(serde_json::json!({
+                "protocolVersion": 1, "agentInfo": {"name": name, "version": version}
+            }))
+        };
+        assert!(identity(&make("Antigravity ACP Server", "1.5.12")?, "1.5.12").is_ok());
+        assert!(identity(&make("Antigravity ACP Server", "1.5.13")?, "1.5.12").is_err());
+        assert!(identity(&make("other", "1.5.12")?, "1.5.12").is_err());
+        assert!(settings(&agy_settings::Selection {
+            model: "gemini-3.8-flash-low".into(),
+            effort: Some("low".into())
+        })
+        .is_ok());
+        assert!(settings(&agy_settings::Selection {
+            model: "gemini-3.8-flash-low".into(),
+            effort: Some("high".into())
+        })
+        .is_err());
+        Ok(())
+    }
+
+    #[test]
     fn authentication_failure_gives_sign_in_guidance() {
-        assert!(session_failure(AUTH_REQUIRED_CODE, "denied").contains("sign in"));
-        assert!(session_failure(-32603, "broken").contains("broken"));
+        assert!(
+            agy_settings::session_failure(ralph_core::worker::AUTH_REQUIRED_CODE, "denied")
+                .contains("sign in")
+        );
+        assert!(agy_settings::session_failure(-32603, "broken").contains("broken"));
     }
 }

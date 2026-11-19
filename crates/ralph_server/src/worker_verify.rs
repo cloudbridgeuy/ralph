@@ -188,6 +188,7 @@ pub fn run(
     }
     let (version, required) = match agent {
         HarnessId::Agy => {
+            let started = Instant::now();
             let probe = crate::version_drift::probe(AGY_AGENT.command);
             let version = step(
                 &checks,
@@ -198,8 +199,9 @@ pub fn run(
                 }),
                 |version| version.clone(),
             );
-            if version.is_some() {
-                acp_worker::verify_agy(live, dir.path(), &checks);
+            if let Some(version) = version.as_deref() {
+                let remaining = verify_limit(live).saturating_sub(started.elapsed());
+                acp_worker::verify_agy(live, dir.path(), &checks, version, remaining);
             }
             (version, AGY_REQUIRED_CHECKS)
         }

@@ -109,9 +109,11 @@ pub const AGY_REQUIRED_CHECKS: &[&str] = &[
     "version",
     "initialize",
     "session/new",
+    "settings/new",
     "mcp/new",
     "session/close",
     "session/load",
+    "settings/load",
     "mcp/load",
     "session/close reload",
 ];
@@ -664,4 +666,19 @@ fn agy_requires_discovery_and_reload() {
         CheckResult::pass("session/close", "ok"),
     ];
     assert!(!spec_passed(&initial, Some("1.5.12"), AGY_REQUIRED_CHECKS));
+}
+#[test]
+fn agy_free_verify_requires_model_and_effort_readback() {
+    let protocol = [
+        "version",
+        "initialize",
+        "session/new",
+        "mcp/new",
+        "session/close",
+        "session/load",
+        "mcp/load",
+        "session/close reload",
+    ]
+    .map(|name| CheckResult::pass(name, "ok"));
+    assert!(!spec_passed(&protocol, Some("1.5.12"), AGY_REQUIRED_CHECKS));
 }

@@ -8,6 +8,7 @@ use agent_client_protocol::{Agent, ConnectionTo, UntypedMessage};
 use futures::{channel::oneshot, FutureExt};
 use ralph_core::worker::{
     agy_effort_available, agy_effort_confirmed, agy_model_base, agy_selection, PermissionMode,
+    AUTH_REQUIRED_CODE,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -89,6 +90,14 @@ pub(super) async fn apply_mode(
     Ok(())
 }
 
+pub(super) fn session_failure(code: i32, message: &str) -> String {
+    if code == AUTH_REQUIRED_CODE {
+        "agy is not authenticated; sign in with `agy` and retry".into()
+    } else {
+        format!("agy session request failed: {message}")
+    }
+}
+
 pub(super) async fn open(
     connection: &ConnectionTo<Agent>,
     opening: &Opening,
@@ -99,7 +108,7 @@ pub(super) async fn open(
         .send_request(UntypedMessage::new("session/new", request).map_err(|e| e.to_string())?)
         .block_task()
         .await
-        .map_err(|error| format!("agy session could not be started: {}", error.message))?;
+        .map_err(|error| session_failure(i32::from(error.code), &error.message))?;
     let id = SessionId::new(
         response["sessionId"]
             .as_str()
@@ -128,7 +137,7 @@ pub(super) async fn load(
         .send_request(UntypedMessage::new("session/load", request).map_err(|e| e.to_string())?)
         .block_task()
         .await
-        .map_err(|error| format!("agy session could not be loaded: {}", error.message))?;
+        .map_err(|error| session_failure(i32::from(error.code), &error.message))?;
     let result = apply(connection, &id, opening, &response).await;
     if result.is_err() {
         connection
