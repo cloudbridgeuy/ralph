@@ -1,4 +1,3 @@
-use crate::chat::client_monitor::Monitor;
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::thread::{fork_of, open_names};
 use crate::clipboard::PASTE_IMAGE;
@@ -12,6 +11,7 @@ use ralph_core::chat_path::{path_completion, path_word, PathRoot, MAX_READ};
 use ralph_core::chat_switch::switch_completions;
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::monitor::Monitor;
 use ralph_server::disk_files::resolve;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,

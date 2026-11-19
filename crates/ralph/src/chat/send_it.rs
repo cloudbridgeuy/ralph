@@ -1,4 +1,3 @@
-use crate::chat::client_monitor::Monitor;
 use crate::chat::hold_progress::git_out;
 use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
@@ -16,6 +15,7 @@ use ralph_core::chat_suggestion::driven_fill;
 use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
+use ralph_server::chat::monitor::Monitor;
 use ralph_server::chat::send_it::SendIt as ServerSendIt;
 use ralph_server::chat::session::Emit;
 use ralph_server::chat::snapshots::TurnSnapshots;

@@ -33,9 +33,7 @@ mod thread_cmd;
 mod view;
 mod workers;
 
-use crate::chat::client_monitor::{
-    client_events, client_sink, watch_headless, watch_input, Monitor,
-};
+use crate::chat::client_monitor::{client_events, client_sink, watch_headless, watch_input};
 use crate::chat::editor::build_editor;
 use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
@@ -261,33 +259,31 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         std::io::stdout().is_terminal(),
         std::env::var_os(REX_SESSION_ENV).is_some_and(|value| !value.is_empty()),
     );
-    let monitor = Arc::new(Monitor {
-        core: Arc::new(open_core(CoreParts {
-            store_dir: &store_dir,
-            store_root: store_root.clone(),
-            chat: chat_config,
-            tuning: &tuning,
-            workers: Workers::new(
-                store_dir.clone(),
-                exe.clone(),
-                permission_mode.clone(),
-                args.worktree_dir.clone(),
-            ),
-            live,
-            last_ping: Arc::clone(&last_ping),
-            run: run.clone(),
-        })),
-        alert: AlertConfig {
-            sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
-            notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
-            unknown_focus: chat_config.inbox_alert_unknown_focus,
-            terminal_status,
-        },
-        term: Arc::new(TermStatus::new(
-            terminal_status,
-            chat_config.terminal_title && std::io::stdout().is_terminal(),
-        )),
-    });
+    let monitor = Arc::new(open_core(CoreParts {
+        store_dir: &store_dir,
+        store_root: store_root.clone(),
+        chat: chat_config,
+        tuning: &tuning,
+        workers: Workers::new(
+            store_dir.clone(),
+            exe.clone(),
+            permission_mode.clone(),
+            args.worktree_dir.clone(),
+        ),
+        live,
+        last_ping: Arc::clone(&last_ping),
+        run: run.clone(),
+    }));
+    let alert = AlertConfig {
+        sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
+        notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
+        unknown_focus: chat_config.inbox_alert_unknown_focus,
+        terminal_status,
+    };
+    let term = Arc::new(TermStatus::new(
+        terminal_status,
+        chat_config.terminal_title && std::io::stdout().is_terminal(),
+    ));
     let session_name = name::session_name(
         args.name.as_deref(),
         chat_config.name.as_deref(),
@@ -295,11 +291,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         name::resolved_home().as_deref(),
     );
     let thread_name = fork.as_ref().map(|fork| fork.name.as_str());
-    monitor.term.start_title(&ralph_core::chat_name::title_name(
+    term.start_title(&ralph_core::chat_name::title_name(
         &session_name,
         thread_name,
     ));
-    let _term_clear = ClearOnDrop(Arc::clone(&monitor.term));
+    let _term_clear = ClearOnDrop(Arc::clone(&term));
     let roster = {
         let monitor = Arc::clone(&monitor);
         let store = Store::new(store_dir.clone());
@@ -317,14 +313,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let send_it = SendIt::new(
         &store_dir,
         send_it_limits,
-        client_events(monitor.alert, Arc::clone(&monitor.term)),
+        client_events(alert, Arc::clone(&term)),
     );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
-    serve(&monitor.core, wiring.socket, &send_it, roster);
+    serve(&monitor, wiring.socket, &send_it, roster);
     let session = Session {
         turn,
-        core: Arc::clone(&monitor.core),
+        core: Arc::clone(&monitor),
         send_it: (*send_it).clone(),
         limits: send_it_limits,
         snapshots,
@@ -373,7 +369,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             .as_ref()
             .map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, wiring.guard.0.clone()),
-        Arc::clone(&monitor.term),
+        Arc::clone(&term),
     );
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
@@ -385,9 +381,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .with_external_printer(printer);
     let repaint = editor.repaint_signal();
     spawn_host(
-        Arc::clone(&monitor.core),
+        Arc::clone(&monitor),
         keepalive,
-        client_sink(Arc::clone(&monitor), move || repaint.request_repaint()),
+        client_sink(Arc::clone(&monitor), alert, Arc::clone(&term), move || {
+            repaint.request_repaint()
+        }),
     );
     crate::render::image::enable_images(image_settings);
     let (configured_editor, config_warning) = chat_config.editor_setting();

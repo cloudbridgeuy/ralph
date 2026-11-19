@@ -1,4 +1,3 @@
-use crate::chat::client_monitor::Monitor;
 use crate::chat::editor::{
     build_queue_editor, edit_queue_draft, BACK_OUT, OPEN_EDITOR, QUEUE_CTRL_C,
 };
@@ -13,6 +12,7 @@ use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
+use ralph_server::chat::monitor::Monitor;
 use ralph_server::subprocess::OutputGate;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::locked;

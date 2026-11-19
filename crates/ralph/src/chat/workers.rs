@@ -1,5 +1,4 @@
 use crate::ansi::{fg, BOLD, DIM, RESET};
-use crate::chat::client_monitor::Monitor;
 use crate::chat::inbox::Display;
 use crate::chat::prompt::screen_columns;
 use crate::markdown::{MarkdownTheme, Palette};
@@ -23,6 +22,7 @@ use ralph_core::workers_view::{
     WorkerRow, TONE_ACTIVE, TONE_BLOCKED, TONE_DONE, TONE_END, TONE_WAITING,
 };
 use ralph_server::chat::memory::{load_usage, read_optional, usage_path, Store};
+use ralph_server::chat::monitor::Monitor;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::config::{AppConfig, WorkersSection};
 use ralph_server::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};

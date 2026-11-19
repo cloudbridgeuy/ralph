@@ -1,4 +1,3 @@
-use crate::chat::client_monitor::Monitor;
 use crate::chat::hold_progress::HoldPanel;
 use crate::chat::prompt::{screen_columns, terminal_columns};
 use crate::chat::statusbar::StatusBar;
@@ -8,6 +7,7 @@ use ralph_core::cancel::CancelToken;
 use ralph_core::chat_hold::{first_match, hold_key, HoldFilter};
 use ralph_core::chat_status::Status;
 use ralph_core::inbox::Position;
+use ralph_server::chat::monitor::Monitor;
 use ralph_server::warn::warn;
 use std::io::{self, IsTerminal, Write};
 use std::thread;
