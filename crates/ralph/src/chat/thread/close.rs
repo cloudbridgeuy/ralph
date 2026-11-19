@@ -34,6 +34,9 @@ pub(super) fn record_close(
     event: CloseEvent,
     at: &str,
 ) -> Result<(), String> {
+    if event == CloseEvent::Other {
+        return Ok(());
+    }
     let dir = thread_dir(main, name);
     let meta = read_meta(&dir).map_err(|e| e.to_string())?;
     let plan = close_plan(event, &meta);
@@ -179,5 +182,15 @@ mod tests {
     #[test]
     fn a_plain_chat_closes_its_thread() {
         assert!(closes_on_exit(None));
+    }
+
+    #[test]
+    fn an_other_close_on_a_missing_thread_does_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = record_close(tmp.path(), &name("ghost"), CloseEvent::Other, "t");
+        assert_eq!(result, Ok(()));
+        assert!(!thread_dir(tmp.path(), &name("ghost"))
+            .join("thread.json")
+            .exists());
     }
 }
