@@ -125,6 +125,32 @@ pub fn repeat_label(repeat: &Repeat) -> String {
     }
 }
 
+pub const MAX_REPEATING: usize = 5;
+
+pub fn first_fire<Tz: TimeZone>(
+    repeat: &Repeat,
+    now: DateTime<Utc>,
+    zone: &Tz,
+) -> Option<DateTime<Utc>> {
+    let anchor = now.checked_sub_signed(Duration::try_days(1)?)?;
+    match repeat {
+        Repeat::Every { every_secs } => {
+            let span = Duration::try_seconds(i64::try_from(*every_secs).ok()?)?;
+            (*every_secs > 0).then(|| now.checked_add_signed(span))?
+        }
+        Repeat::Daily { .. } => next_fire(repeat, anchor, now, zone),
+    }
+}
+
+pub fn repeating_cap_refusal(tasks: &[Task]) -> Option<String> {
+    let repeating = tasks.iter().filter(|task| task.repeat.is_some()).count();
+    (repeating >= MAX_REPEATING).then(|| {
+        format!(
+            "At most {MAX_REPEATING} repeating tasks are allowed; cancel one with /schedule cancel <id>."
+        )
+    })
+}
+
 pub fn plan_rearm<Tz: TimeZone>(task: &Task, now: DateTime<Utc>, zone: &Tz) -> Option<Task> {
     let repeat = task.repeat.as_ref()?;
     let at = next_fire(repeat, task.at, now, zone)?;
@@ -500,5 +526,91 @@ mod tests {
         let task = running(None);
         let now = utc("2026-01-01T10:05:00Z");
         assert_eq!(plan_worker_rearm(&task, &WorkerEnd::Done, now, &Utc), None);
+    }
+
+    fn task_with(repeat: Option<Repeat>, status: TaskStatus) -> Task {
+        Task {
+            id: "t".to_string(),
+            kind: command(),
+            follow_up: None,
+            at: utc("2026-01-01T10:00:00Z"),
+            timeout_secs: None,
+            status,
+            late: false,
+            deadline: None,
+            repeat,
+        }
+    }
+
+    #[test]
+    fn first_fire_every_is_one_interval_from_now() {
+        let now = utc("2026-01-01T10:00:00Z");
+        assert_eq!(
+            first_fire(&every(7200), now, &plus_one()),
+            Some(utc("2026-01-01T12:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn first_fire_daily_uses_today_when_ahead() {
+        let now = utc("2026-01-01T10:00:00Z");
+        assert_eq!(
+            first_fire(&daily("12:00"), now, &plus_one()),
+            Some(utc("2026-01-01T11:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn first_fire_daily_uses_tomorrow_when_passed_or_now() {
+        let now = utc("2026-01-01T10:00:00Z");
+        assert_eq!(
+            first_fire(&daily("08:00"), now, &plus_one()),
+            Some(utc("2026-01-02T07:00:00Z"))
+        );
+        assert_eq!(
+            first_fire(&daily("11:00"), now, &plus_one()),
+            Some(utc("2026-01-02T10:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn first_fire_of_an_invalid_repeat_is_none() {
+        let now = utc("2026-01-01T10:00:00Z");
+        assert_eq!(first_fire(&every(0), now, &plus_one()), None);
+        assert_eq!(first_fire(&daily("nope"), now, &plus_one()), None);
+    }
+
+    fn repeating_rows(count: usize, status: TaskStatus) -> Vec<Task> {
+        (0..count)
+            .map(|_| task_with(Some(every(3600)), status))
+            .collect()
+    }
+
+    #[test]
+    fn the_cap_allows_four_repeating_tasks() {
+        assert_eq!(
+            repeating_cap_refusal(&repeating_rows(MAX_REPEATING - 1, TaskStatus::Pending)),
+            None
+        );
+    }
+
+    #[test]
+    fn the_cap_refuses_at_five_and_names_the_way_out() {
+        let message =
+            repeating_cap_refusal(&repeating_rows(MAX_REPEATING, TaskStatus::Pending)).unwrap();
+        assert!(message.contains('5'), "{message}");
+        assert!(
+            message.contains("cancel one with /schedule cancel <id>"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn the_cap_ignores_one_shot_rows_and_counts_proposed_ones() {
+        let mut rows = repeating_rows(MAX_REPEATING - 1, TaskStatus::Pending);
+        rows.extend((0..10).map(|_| task_with(None, TaskStatus::Pending)));
+        assert_eq!(repeating_cap_refusal(&rows), None);
+        rows.push(task_with(Some(every(3600)), TaskStatus::Proposed));
+        assert!(repeating_cap_refusal(&rows).is_some());
     }
 }
