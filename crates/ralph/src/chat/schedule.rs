@@ -1,5 +1,4 @@
 use crate::chat::terminal::{poll_input, read_input, Input, POLL_MS};
-use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use ralph_core::cancel::CancelToken;
 use ralph_core::schedule::{
@@ -11,6 +10,7 @@ use ralph_core::schedule_command::{
     SCHEDULE_USAGE,
 };
 use ralph_core::watch_request::start_failure_report;
+use ralph_server::schedule_store::ScheduleStore;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;

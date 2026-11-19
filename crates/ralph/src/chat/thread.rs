@@ -1,7 +1,6 @@
 use crate::chat::prompt::screen_columns;
 use crate::chat::thread_cmd::{merge_line, record_cli_merge};
 use crate::cli::{ThreadArgs, ThreadCommand, MERGE_TIMEOUT_SECS};
-use crate::schedule_store::ScheduleStore;
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallSite, Entry, MemoryCall, Tree};
@@ -25,6 +24,7 @@ pub(super) use ralph_server::chat::fork::read_meta;
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::memory::Store;
 use ralph_server::private_file::check_path;
+use ralph_server::schedule_store::ScheduleStore;
 use ralph_server::watch_store::WatchStore;
 use ralph_server::workers::{canonical_store, running_workers};
 use std::fs;

@@ -22,7 +22,6 @@ pub mod markdown;
 mod mermaid_guard;
 pub mod prompt_source;
 pub mod render;
-mod schedule_store;
 pub mod signal;
 pub mod spinner;
 pub mod startup;
