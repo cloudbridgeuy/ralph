@@ -211,7 +211,7 @@ fn run_cell(launch: &Launch, cell: &Cell, color: bool) -> io::Result<Option<Fini
         .stdout(stdout_writer)
         .stderr(stderr_writer);
     detach_from_terminal(&mut command);
-    signal::default_sigttou_in(&mut command);
+    ralph_server::subprocess::default_sigttou_in(&mut command);
     let snapshot_pipe = if launch.snapshot {
         let (reader, writer) = io::pipe()?;
         route_to_snapshot_fd(&mut command, writer.as_raw_fd());

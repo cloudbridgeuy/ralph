@@ -4,13 +4,12 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
     EXIT_CODE_KILLED,
 };
-use crate::signal;
 use crate::stream_processor::{DiskFiles, OutputBlock, VerboseToolsConfig};
 use ralph_core::cancel::CancelToken;
 use ralph_core::stream::blocks::StreamCollector;
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
-use ralph_server::subprocess::kill_process_group;
+use ralph_server::subprocess::{default_sigttou_in, kill_process_group};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -25,6 +24,7 @@ pub struct SpinnerSubprocessConfig {
     pub timeout_secs: Option<u64>,
     pub verbose_tools: VerboseToolsConfig,
     pub show_tools: bool,
+    pub terminated: fn() -> bool,
     pub sink: Arc<dyn TurnSink>,
     pub gate: Option<Arc<OutputGate>>,
     pub interrupt: Option<CancelToken>,
@@ -62,7 +62,7 @@ pub(super) fn spawn_piped(command_text: &str, stdin: Stdio) -> io::Result<Child>
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
-    signal::default_sigttou_in(&mut command);
+    default_sigttou_in(&mut command);
     command.spawn()
 }
 
@@ -349,7 +349,7 @@ fn run_subprocess_with_spinner(
             .interrupt
             .as_ref()
             .is_some_and(CancelToken::is_cancelled)
-            || signal::is_terminated();
+            || (config.terminated)();
         if interrupted {
             pump.stop_spinner();
             kill_process_group(&mut child);
@@ -393,6 +393,7 @@ mod tests {
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),
             show_tools: false,
+            terminated: || false,
             sink: Arc::clone(sink) as Arc<dyn TurnSink>,
             gate: None,
             interrupt: None,

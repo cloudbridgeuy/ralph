@@ -3,7 +3,6 @@ use crate::chat::keepalive::Stamp;
 use crate::chat::suggestion::SuggestionCell;
 use crate::chat::thread::{fork_view, Fork};
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
-use crate::signal;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
@@ -139,6 +138,7 @@ pub(super) struct Turn<'a> {
     pub(super) seen_len: Mutex<Option<usize>>,
     pub(super) sink: Arc<dyn TurnSink>,
     pub(super) show_tools: bool,
+    pub(super) terminated: fn() -> bool,
 }
 
 impl Turn<'_> {
@@ -287,7 +287,7 @@ impl Turn<'_> {
                     self.attempt(session.take(), pre_log_len, &input, &mut launch);
                 session = live;
                 ran_session = ran;
-                if stopped(cancel) {
+                if stopped(cancel, self.terminated) {
                     Attempt::Done(result)
                 } else {
                     let attempt = attempt_from(result);
@@ -299,7 +299,7 @@ impl Turn<'_> {
             },
             |delay| {
                 let waited_from = Instant::now();
-                let keep_waiting = wait_unless(|| stopped(cancel), delay);
+                let keep_waiting = wait_unless(|| stopped(cancel, self.terminated), delay);
                 self.note_timing(|held| held.with_outage_wait(waited_from.elapsed()));
                 keep_waiting
             },
@@ -313,7 +313,7 @@ impl Turn<'_> {
         self.process_turns.store(process_turns, Ordering::SeqCst);
         let end = turn_end(&TurnSignals {
             cancelled: cancel.is_cancelled(),
-            terminated: signal::is_terminated(),
+            terminated: (self.terminated)(),
         });
         if !keeps_session(&end) {
             self.drop_session(ResetReason::Restart);
@@ -529,6 +529,7 @@ impl Turn<'_> {
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),
             show_tools: self.show_tools,
+            terminated: self.terminated,
             sink: Arc::clone(&self.sink),
             gate: Some(Arc::clone(&self.gate)),
             interrupt: None,
@@ -579,8 +580,8 @@ fn keeps_session(end: &TurnEnd) -> bool {
     !matches!(end, TurnEnd::Cancelled)
 }
 
-fn stopped(cancel: &CancelToken) -> bool {
-    cancel.is_cancelled() || signal::is_terminated()
+fn stopped(cancel: &CancelToken, terminated: fn() -> bool) -> bool {
+    cancel.is_cancelled() || terminated()
 }
 
 #[cfg(test)]

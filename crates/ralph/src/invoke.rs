@@ -208,6 +208,7 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
         timeout_secs: Some(config.timeout_secs),
         verbose_tools: config.verbose_tools,
         show_tools: io::stdout().is_terminal(),
+        terminated: crate::signal::is_terminated,
         sink,
         gate: None,
         interrupt: Some(config.interrupt),

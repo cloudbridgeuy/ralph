@@ -43,6 +43,17 @@ pub fn spawn_detached(command: &mut Command) -> io::Result<()> {
     Ok(())
 }
 
+pub fn default_sigttou_in(command: &mut Command) {
+    unsafe {
+        command.pre_exec(|| {
+            if libc::signal(libc::SIGTTOU, libc::SIG_DFL) == libc::SIG_ERR {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
 pub fn detach_from_terminal(command: &mut Command) {
     unsafe {
         command.pre_exec(|| {

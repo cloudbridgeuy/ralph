@@ -560,6 +560,7 @@ fn run_memory_command(
                             timeout_secs: Some(curator.timeout),
                             verbose_tools: stream_processor::VerboseToolsConfig::new(),
                             show_tools: std::io::stdout().is_terminal(),
+                            terminated: signal::is_terminated,
                             sink: std::sync::Arc::new(sink),
                             gate: None,
                             interrupt: None,

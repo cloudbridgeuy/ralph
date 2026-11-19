@@ -2,7 +2,6 @@ use super::spinner::{spawn_piped, Display, Pump, Readers, SpinnerSubprocessConfi
 use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
-use crate::signal;
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat_memory::{model_usage_since, writes_usage_row};
 use ralph_core::stream::{interrupt_line, result_is_error, user_line, IterationCosts, ModelTotals};
@@ -232,7 +231,7 @@ impl Session {
                 break pump.finish(&self.readers, exit_code, true);
             }
             let cancelled = interrupts.cancelled();
-            if interrupt.is_none() && interrupt_requested(interrupts, signal::is_terminated()) {
+            if interrupt.is_none() && interrupt_requested(interrupts, (self.config.terminated)()) {
                 let _ = self.send(&interrupt_line(INTERRUPT_REQUEST_ID));
                 interrupt = Some((Instant::now(), cancelled));
             }

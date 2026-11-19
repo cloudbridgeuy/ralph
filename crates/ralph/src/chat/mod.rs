@@ -292,6 +292,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         seen_len: Mutex::new(None),
         sink,
         show_tools: io::stdout().is_terminal(),
+        terminated: signal::is_terminated,
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
