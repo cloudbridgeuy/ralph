@@ -14,7 +14,7 @@ ralph chat history decay --max-anchors 50 --store ~/.ralph/chat
 An anchor is an old message the check tries to find again. There are two groups. The report keeps them apart in every section.
 
 - tagged: entries whose latest tag row says `rule` or `decision`. Failed and skipped rows do not count.
-- top-up: untagged user entries that hold a ticket id (like `guz-1637`) or an identifier (like `split_view` or `a::b`).
+- top-up: user entries not tagged rule or decision (approval-only or unlabelled tags count) that hold a ticket id (like `guz-1637`) or an identifier (like `split_view` or `a::b`).
 
 `--max-anchors` (default 200) caps the total. Tagged anchors come first.
 
