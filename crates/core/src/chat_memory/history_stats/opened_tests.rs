@@ -21,12 +21,27 @@ fn hits_covered_by_a_later_zoom_are_opened() {
         found,
         Opened {
             opened: 1,
-            unopened: 0,
+            unopened: 1,
             unknown: 0
         }
     );
     let thread = opened(&[search(json!(["auth:5"])), zoom("auth:4-7")]);
     assert_eq!(thread.opened, 1);
+}
+
+#[test]
+fn each_hit_id_counts_on_its_own() {
+    let found = opened(&[search(json!(["5", "9"])), zoom("8-11")]);
+    assert_eq!(
+        found,
+        Opened {
+            opened: 1,
+            unopened: 1,
+            unknown: 0
+        }
+    );
+    let all_open = opened(&[search(json!(["5", "9"])), zoom("4-11")]);
+    assert_eq!((all_open.opened, all_open.unopened), (2, 0));
 }
 
 #[test]
@@ -55,7 +70,7 @@ fn hits_with_no_later_zoom_or_read_are_unopened() {
 fn rows_without_hit_ids_are_unknown() {
     let found = opened(&[
         call(json!({"hits": 3})),
-        call(json!({"hits": 2, "hit_ids": ["5"], "turn": null, "run": null, "source": "cli"})),
+        call(json!({"hits": 2, "hit_ids": ["5", "6"], "turn": null, "run": null, "source": "cli"})),
         call(json!({"hits": 0, "outcome": "empty"})),
         zoom("5"),
     ]);
@@ -64,7 +79,7 @@ fn rows_without_hit_ids_are_unknown() {
         Opened {
             opened: 0,
             unopened: 0,
-            unknown: 2
+            unknown: 5
         }
     );
 }

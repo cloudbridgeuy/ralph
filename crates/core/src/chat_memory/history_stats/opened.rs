@@ -22,15 +22,6 @@ fn turn_key(call: &Call) -> Option<TurnKey<'_>> {
     Some((call.run.as_deref(), call.turn.as_deref()?))
 }
 
-fn hit_spans(call: &Call) -> Vec<Span> {
-    let scope = call.scope.as_deref();
-    call.hit_ids
-        .iter()
-        .flatten()
-        .filter_map(|id| parse_span(id, scope))
-        .collect()
-}
-
 fn returned_hits(call: &Call) -> bool {
     matches!(call.tool, Tool::Recall | Tool::Search)
         && (call.hits.is_some_and(|hits| hits > 0)
@@ -39,6 +30,15 @@ fn returned_hits(call: &Call) -> bool {
 
 fn has_hit_ids(call: &Call) -> bool {
     call.hit_ids.as_ref().is_some_and(|ids| !ids.is_empty())
+}
+
+fn unknown_hits(call: &Call) -> usize {
+    match &call.hit_ids {
+        Some(ids) if !ids.is_empty() => ids.len(),
+        _ => call
+            .hits
+            .map_or(1, |hits| usize::try_from(hits).unwrap_or(usize::MAX)),
+    }
 }
 
 pub fn count_opened(calls: &[Call]) -> Opened {
@@ -52,18 +52,25 @@ pub fn count_opened(calls: &[Call]) -> Opened {
     for call in calls.iter().filter(|call| returned_hits(call)) {
         let tracked = has_hit_ids(call) && matches!(call.source, Source::Mcp | Source::Slash);
         let Some(key) = turn_key(call).filter(|_| tracked) else {
-            found.unknown += 1;
+            found.unknown += unknown_hits(call);
             continue;
         };
-        let hits = hit_spans(call);
-        let later = openers.get(&key).into_iter().flatten();
-        let reached = later
+        let scope = call.scope.as_deref();
+        let later: Vec<&Span> = openers
+            .get(&key)
+            .into_iter()
+            .flatten()
             .filter(|(index, _)| *index > call.index)
-            .any(|(_, span)| hits.iter().any(|hit| overlaps(hit, span)));
-        if reached {
-            found.opened += 1;
-        } else {
-            found.unopened += 1;
+            .map(|(_, span)| span)
+            .collect();
+        for id in call.hit_ids.iter().flatten() {
+            let reached = parse_span(id, scope)
+                .is_some_and(|hit| later.iter().any(|span| overlaps(&hit, span)));
+            if reached {
+                found.opened += 1;
+            } else {
+                found.unopened += 1;
+            }
         }
     }
     found

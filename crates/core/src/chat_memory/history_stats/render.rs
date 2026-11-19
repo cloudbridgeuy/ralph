@@ -114,9 +114,12 @@ pub fn render_stats(stats: &Stats) -> String {
         ],
         vec![
             "unopened hits".to_string(),
-            format!("opened: {}", stats.opened.opened),
-            format!("unopened: {}", stats.opened.unopened),
-            format!("unknown: {}", stats.opened.unknown),
+            format!("opened hits: {}", stats.opened.opened),
+            format!("unopened hits: {}", stats.opened.unopened),
+            format!(
+                "unknown (hits, or rows with no hit count): {}",
+                stats.opened.unknown
+            ),
         ],
         turns_section(stats),
         depth_section(&stats.zoom),

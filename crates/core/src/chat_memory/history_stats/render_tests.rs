@@ -82,9 +82,9 @@ chains: 0
 calls in chains: 0
 
 unopened hits
-opened: 1
-unopened: 0
-unknown: 0
+opened hits: 1
+unopened hits: 1
+unknown (hits, or rows with no hit count): 0
 
 no-history turns
 turns: 2
