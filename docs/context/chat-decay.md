@@ -29,11 +29,17 @@ Each anchor entry gives key tokens, found with the search tokenizer. A token fal
 
 Other words are ignored. A `#id` reference is not a token. It is a pointer.
 
+## Reach scope
+
+Reach probes only the frozen older-view prefix: the nodes `older_nodes` gives, the same list the chat's older view prints. Anchors at or after the frozen cut are in the recent view. They get survival and pointer rows but no reach row, and the group title counts them as `in recent view`. A log under 256 entries has no frozen prefix, so it has no reach rows.
+
+Decay assumes the default recent-history size (`RECENT_HISTORY_TOKENS`, 8192). A store with a custom value can cut at a different point.
+
 ## What each number means
 
-- Header: `anchors N (tagged X, top-up Y) uncompressed U`. U counts anchors whose cover node is a single entry. They have no summary, so the other numbers leave them out. Anchors with no key tokens are not probed. Each group title shows their count as `without key tokens`.
+- Header: `anchors N (tagged X, top-up Y) uncompressed U`. U counts anchors whose cover node is a single entry. They have no summary, so the other numbers leave them out. Anchors with no key tokens are not probed. Each group title shows their count as `without key tokens`. Anchors with key tokens that sit in the recent view are not probed either; the title counts them as `in recent view` (see Reach scope). The two counts never overlap: a keyless anchor counts only as `without key tokens`.
 - Survival: for each summary that covers the anchor (its aligned blocks with a summary; depth 0 is the anchor's own leaf summary, not a block above it), the share of the anchor's key tokens that the summary still holds. Rows are depths (block size is 2 to the power of depth). Columns are token classes.
-- Search rank: the query is the key tokens that survive in the summary the chat view shows for the anchor (the cover node). The report gives the 1-based rank of the anchor in `search` results, in buckets 1, 2-5, 6-20, >20 and miss.
+- Search rank: the query is the key tokens that survive in the summary the older chat view shows for the anchor (the cover node). The report gives the 1-based rank of the anchor in `search` results, in buckets 1, 2-5, 6-20, >20 and miss.
 - unreachable: no key token survives in the cover summary, so no query exists.
 - Recall found (newest 50): the share of anchors that `recall` lists among its newest 50 matching lines (the cap of the recall tool). A match older than the 50 newest counts as a miss, so this is a floor. The pattern is the surviving tokens joined by `|`.
 - Pointer kept: the share of anchors whose `#id` appears in any summary that covers them. Its era comes from the largest summarised ancestor. `#12` does not match `#123`.
