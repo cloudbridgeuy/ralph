@@ -42,7 +42,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -50,6 +50,7 @@ use std::time::{Duration, Instant};
 
 mod agy_settings;
 mod agy_verify;
+mod cancel;
 mod cursor_worker;
 mod journal;
 mod model;
@@ -169,6 +170,7 @@ pub struct AcpWorker {
     owner: PathBuf,
     prompts: queue::UnboundedSender<Inbound>,
     journal: Option<PathBuf>,
+    generation: Arc<AtomicU64>,
     closing: Arc<AtomicBool>,
     done: bool,
     exit_seen: bool,
@@ -275,6 +277,7 @@ impl AcpWorker {
         let (prompts, prompt_rx) = queue::unbounded();
         let (finished_tx, finished_rx) = mpsc::channel();
         let closing = Arc::new(AtomicBool::new(false));
+        let generation = Arc::new(AtomicU64::new(0));
         let mut worker = Self {
             agent,
             child,
@@ -284,6 +287,7 @@ impl AcpWorker {
             owner: owner.to_path_buf(),
             prompts: prompts.clone(),
             journal,
+            generation: Arc::clone(&generation),
             closing: Arc::clone(&closing),
             done: false,
             exit_seen: false,
@@ -422,6 +426,7 @@ impl AcpWorker {
                                     inbox,
                                     closing,
                                     changes,
+                                    generation,
                                     heartbeat: in_turns,
                                     events,
                                 };

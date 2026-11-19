@@ -1,5 +1,7 @@
+use super::cancel::Cancellation;
 use super::*;
 use crate::worker_mcp::remove_if_present;
+use futures::select_biased;
 use ralph_core::worker::{turn_end_activity, ActivityState};
 
 pub(super) struct Turns {
@@ -14,6 +16,7 @@ pub(super) struct Turns {
     pub(super) changes: Option<WorkerChanges>,
     pub(super) heartbeat: Arc<Heartbeat>,
     pub(super) events: Events,
+    pub(super) generation: Arc<AtomicU64>,
 }
 
 impl Turns {
@@ -49,12 +52,42 @@ fn accept_inbound(
     turns: &Turns,
     queue: &mut PromptQueue,
     item: Inbound,
+    cancellation: &mut Cancellation,
 ) {
-    let entry = match &item {
-        Inbound::Interrupt(_, entry) | Inbound::TrackedInterrupt(_, entry, _) => {
-            Some(entry.clone())
+    if let Inbound::TrackedInterrupt(text, entry, receipt, target) = item {
+        if turns.closing.load(Ordering::SeqCst) {
+            write_interrupt_result(
+                &turns.results,
+                &entry,
+                ralph_core::worker::InterruptOutcome::Gone,
+            );
+            return;
         }
-        Inbound::Prompt(_) | Inbound::TrackedPrompt(_, _) => None,
+        queue.accept_ordered_interrupt(text, receipt);
+        let outcome = cancellation.request(
+            entry.clone(),
+            target,
+            turns.generation.load(Ordering::SeqCst),
+            || {
+                let sent = connection
+                    .send_notification(CancelNotification::new(turns.session.clone()))
+                    .is_ok();
+                if sent {
+                    turns.permissions.cancel_all();
+                }
+                sent
+            },
+        );
+        if let Some(outcome) = outcome {
+            write_interrupt_result(&turns.results, &entry, outcome);
+        }
+        return;
+    }
+    let entry = match &item {
+        Inbound::Interrupt(_, entry) => Some(entry.clone()),
+        Inbound::Prompt(_)
+        | Inbound::TrackedPrompt(_, _)
+        | Inbound::TrackedInterrupt(_, _, _, _) => None,
     };
     let steps = queue.accept(item);
     if let Some(entry) = entry {
@@ -72,14 +105,26 @@ pub(super) async fn run_turns(
     let mut inbound = inbound.fuse();
     let mut queue = PromptQueue::default();
     let mut stopping = false;
+    let mut cancellation = Cancellation::default();
     loop {
         let Some((text, receipt)) = queue.start_tracked() else {
             match futures::future::select(inbound.next(), &mut stop).await {
                 Either::Left((Some(item), _)) => {
-                    accept_inbound(connection, turns, &mut queue, item);
+                    accept_inbound(connection, turns, &mut queue, item, &mut cancellation);
                     continue;
                 }
-                _ => return,
+                _ => {
+                    while let Some(Some(item)) = inbound.next().now_or_never() {
+                        if let Inbound::TrackedInterrupt(_, entry, _, _) = item {
+                            write_interrupt_result(
+                                &turns.results,
+                                &entry,
+                                ralph_core::worker::InterruptOutcome::Gone,
+                            );
+                        }
+                    }
+                    return;
+                }
             }
         };
         push_event(&turns.events, WorkerEvent::TurnStarted);
@@ -98,6 +143,9 @@ pub(super) async fn run_turns(
             post_prompt_failure(turns, &message);
             continue;
         }
+        if turns.agent == AGY_AGENT {
+            turns.generation.fetch_add(1, Ordering::SeqCst);
+        }
         let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
             return;
         };
@@ -111,18 +159,38 @@ pub(super) async fn run_turns(
         )
         .fuse();
         let result = loop {
-            select! {
+            select_biased! {
                 result = sent => break result,
                 _ = stop => {
                     stopping = true;
-                    run_steps(connection, turns, vec![Step::CancelSession]);
+                    if turns.agent != AGY_AGENT || !cancellation.pending() {
+                        run_steps(connection, turns, vec![Step::CancelSession]);
+                    }
                 }
                 item = inbound.select_next_some() => {
-                    accept_inbound(connection, turns, &mut queue, item);
+                    accept_inbound(connection, turns, &mut queue, item, &mut cancellation);
                 }
             }
         };
-        let interrupted = queue.finish();
+        if turns.agent == AGY_AGENT {
+            turns.generation.fetch_add(1, Ordering::SeqCst);
+        }
+        let queued_interrupt = queue.finish();
+        let reason = result.as_ref().map(|done| {
+            serde_json::to_value(done.stop_reason)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_default()
+        });
+        let stop = reason.as_deref().map_err(|e| e.message.as_str());
+        let interrupted = if turns.agent == AGY_AGENT {
+            stop == Ok("cancelled")
+        } else {
+            queued_interrupt
+        };
+        for (entry, outcome) in cancellation.finish(stop, stopping) {
+            write_interrupt_result(&turns.results, &entry, outcome);
+        }
         if result.is_ok() {
             if let Some(store) = turns.inbox_dir() {
                 journal::finish(&store, receipt.as_deref());
@@ -137,14 +205,7 @@ pub(super) async fn run_turns(
         {
             changes.snapshot_turn_or_warn();
         }
-        let reason = result.as_ref().map(|done| {
-            serde_json::to_value(done.stop_reason)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_string))
-                .unwrap_or_default()
-        });
         push_event(&turns.events, WorkerEvent::TurnEnded(end));
-        let stop = reason.as_deref().map_err(|e| e.message.as_str());
         let outcome = receipt_outcome(
             &turns.markers.reported,
             stop,
@@ -168,6 +229,15 @@ pub(super) async fn run_turns(
             TurnOutcome::Reported | TurnOutcome::Cancelled | TurnOutcome::Closed => {}
         }
         if stopping {
+            while let Some(Some(item)) = inbound.next().now_or_never() {
+                if let Inbound::TrackedInterrupt(_, entry, _, _) = item {
+                    write_interrupt_result(
+                        &turns.results,
+                        &entry,
+                        ralph_core::worker::InterruptOutcome::Gone,
+                    );
+                }
+            }
             return;
         }
     }
@@ -175,12 +245,12 @@ pub(super) async fn run_turns(
 
 fn turn_end<T>(result: &Result<T, agent_client_protocol::Error>, interrupted: bool) -> TurnEnd {
     match result {
-        _ if interrupted => TurnEnd::Interrupted,
-        Ok(_) => TurnEnd::Succeeded,
         Err(e) => TurnEnd::Failed {
             message: e.message.clone(),
             transient: false,
         },
+        Ok(_) if interrupted => TurnEnd::Interrupted,
+        Ok(_) => TurnEnd::Succeeded,
     }
 }
 
@@ -203,6 +273,13 @@ fn receipt_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interrupted_prompt_error_is_not_reported_as_cancelled() {
+        let result: Result<(), agent_client_protocol::Error> =
+            Err(agent_client_protocol::Error::internal_error());
+        assert!(matches!(turn_end(&result, true), TurnEnd::Failed { .. }));
+    }
 
     #[test]
     fn rejected_report_requires_a_reminder() {

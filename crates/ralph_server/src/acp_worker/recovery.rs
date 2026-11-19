@@ -191,7 +191,9 @@ impl CursorHost {
         if !self.agy || close {
             fs::remove_dir_all(&files.prompt).ok();
             fs::remove_dir_all(&files.interrupt).ok();
-            fs::remove_dir_all(&files.interrupt_result).ok();
+            if !self.agy {
+                fs::remove_dir_all(&files.interrupt_result).ok();
+            }
         }
         fs::remove_file(activity_path(&self.store_dir, id)).ok();
         fs::remove_file(gone_path(&self.store_dir, id)).ok();

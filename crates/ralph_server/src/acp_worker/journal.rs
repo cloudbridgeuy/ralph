@@ -87,8 +87,9 @@ impl AcpWorker {
 
     pub(super) fn interrupt(&self, text: &str, entry: &str) -> Result<(), String> {
         let item = if let Some(dir) = &self.journal {
+            let generation = self.generation.load(Ordering::SeqCst);
             let receipt = journal::record(dir)?;
-            Inbound::TrackedInterrupt(text.to_string(), entry.to_string(), receipt)
+            Inbound::TrackedInterrupt(text.to_string(), entry.to_string(), receipt, generation)
         } else {
             Inbound::Interrupt(text.to_string(), entry.to_string())
         };

@@ -72,11 +72,11 @@ impl Capabilities {
         match (self.harness, feature) {
             (HarnessId::Agy, Spawn | Prompt | Close | Model) => Full,
             (HarnessId::Agy, Resume) => Partial("session/load required; unfinished work is reported, not resent"),
+            (HarnessId::Agy, Interrupt) => Partial("outcome unknown after 30 s; not live verified"),
             (HarnessId::Agy, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Agy, PermYolo) => Partial("process flag, not yet stub-verified"),
             (HarnessId::Agy, Report) => Partial("MCP delivery requires live verification"),
             (HarnessId::Agy, Heartbeat) => Partial("ACP traffic only"),
-            (HarnessId::Agy, _) => Support::None,
             (HarnessId::ClaudeTmux, Model) => Full,
             (HarnessId::ClaudeTmux, _) => Support::None,
             (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report | Model | Close) => Full,

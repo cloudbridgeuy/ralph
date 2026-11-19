@@ -405,7 +405,8 @@ impl Pump {
                     Inbound::Prompt(text) | Inbound::TrackedPrompt(text, _) => {
                         self.turns.accept(text)
                     }
-                    Inbound::Interrupt(text, entry) | Inbound::TrackedInterrupt(text, entry, _) => {
+                    Inbound::Interrupt(text, entry)
+                    | Inbound::TrackedInterrupt(text, entry, _, _) => {
                         self.turns.interrupt(text, entry)
                     }
                 };

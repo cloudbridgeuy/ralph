@@ -25,7 +25,7 @@ pub enum Inbound {
     Prompt(String),
     Interrupt(String, String),
     TrackedPrompt(String, String),
-    TrackedInterrupt(String, String, String),
+    TrackedInterrupt(String, String, String, u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +39,7 @@ pub struct PromptQueue {
     pending: VecDeque<(String, Option<String>)>,
     running: bool,
     interrupted: bool,
+    ordered: usize,
 }
 
 impl PromptQueue {
@@ -52,7 +53,7 @@ impl PromptQueue {
                 self.pending.push_back((text, Some(receipt)));
                 Vec::new()
             }
-            Inbound::TrackedInterrupt(text, entry, receipt) => {
+            Inbound::TrackedInterrupt(text, entry, receipt, _) => {
                 let steps = self.accept(Inbound::Interrupt(text, entry));
                 if let Some((_, slot)) = self.pending.front_mut() {
                     *slot = Some(receipt);
@@ -71,6 +72,11 @@ impl PromptQueue {
         }
     }
 
+    pub fn accept_ordered_interrupt(&mut self, text: String, receipt: String) {
+        self.pending.insert(self.ordered, (text, Some(receipt)));
+        self.ordered += 1;
+    }
+
     pub fn remind(&mut self) {
         if !self.pending.iter().any(|(text, _)| text == REPORT_REMINDER) {
             self.pending.push_back((REPORT_REMINDER.to_string(), None));
@@ -79,6 +85,7 @@ impl PromptQueue {
 
     pub fn start_tracked(&mut self) -> Option<(String, Option<String>)> {
         let text = self.pending.pop_front()?;
+        self.ordered = self.ordered.saturating_sub(1);
         self.running = true;
         self.interrupted = false;
         Some(text)
@@ -104,6 +111,8 @@ pub enum InterruptOutcome {
     Sent,
     Gone,
     Dropped,
+    Completed,
+    Unknown,
 }
 
 impl From<bool> for InterruptOutcome {
@@ -122,6 +131,8 @@ pub fn interrupt_result_text(outcome: InterruptOutcome) -> &'static str {
         InterruptOutcome::Sent => "sent",
         InterruptOutcome::Gone => "gone",
         InterruptOutcome::Dropped => "dropped",
+        InterruptOutcome::Completed => "completed",
+        InterruptOutcome::Unknown => "unknown",
     }
 }
 
@@ -131,6 +142,8 @@ pub fn parse_interrupt_result(text: &str) -> Option<InterruptOutcome> {
         "sent" => Some(InterruptOutcome::Sent),
         "gone" => Some(InterruptOutcome::Gone),
         "dropped" => Some(InterruptOutcome::Dropped),
+        "completed" => Some(InterruptOutcome::Completed),
+        "unknown" => Some(InterruptOutcome::Unknown),
         _ => None,
     }
 }
@@ -146,6 +159,8 @@ pub fn interrupt_reply(id: &str, outcome: Option<InterruptOutcome>) -> String {
         Some(InterruptOutcome::Gone) => {
             format!("Worker {id} exited: its turn ended and this message was not delivered.")
         }
+        Some(InterruptOutcome::Completed) => format!("Worker {id}: the prior turn ended before cancellation was confirmed; this message runs next."),
+        Some(InterruptOutcome::Unknown) => format!("Worker {id}: cancellation outcome unknown; this message is queued."),
         Some(InterruptOutcome::Dropped) => format!(
             "Worker {id}: the interrupt was not sent and this message runs next."
         ),
@@ -379,12 +394,33 @@ mod tests {
     }
 
     #[test]
+    fn ordered_interrupts_keep_receipts_and_precede_prompts() {
+        let mut queue = PromptQueue::default();
+        queue.accept(Inbound::Prompt("ordinary".into()));
+        queue.accept_ordered_interrupt("first".into(), "one".into());
+        queue.accept_ordered_interrupt("second".into(), "two".into());
+        assert_eq!(
+            queue.start_tracked(),
+            Some(("first".into(), Some("one".into())))
+        );
+        queue.finish();
+        assert_eq!(
+            queue.start_tracked(),
+            Some(("second".into(), Some("two".into())))
+        );
+        queue.finish();
+        assert_eq!(queue.start_tracked(), Some(("ordinary".into(), None)));
+    }
+
+    #[test]
     fn interrupt_result_text_round_trips() {
         for outcome in [
             InterruptOutcome::Cancelled,
             InterruptOutcome::Sent,
             InterruptOutcome::Gone,
             InterruptOutcome::Dropped,
+            InterruptOutcome::Completed,
+            InterruptOutcome::Unknown,
         ] {
             assert_eq!(
                 parse_interrupt_result(interrupt_result_text(outcome)),
