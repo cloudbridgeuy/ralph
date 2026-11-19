@@ -1,4 +1,4 @@
-use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
+use crate::acp_log::{drain_stderr, CappedLog};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
@@ -14,13 +14,11 @@ use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{mark_prompt_lost, report_interrupt_gone, HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
-    AuthenticateRequest, CancelNotification, InitializeRequest, InitializeResponse,
-    LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
-    SessionNotification,
+    AuthenticateRequest, CancelNotification, InitializeResponse, LoadSessionRequest, McpServer,
+    NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
 };
-use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
+use agent_client_protocol::{Agent, Client, ConnectionTo, Responder};
 use futures::channel::mpsc as queue;
 use futures::channel::oneshot;
 use futures::executor::block_on;
@@ -29,10 +27,10 @@ use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
-    check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
-    probed_version, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
-    session_error, stop_problem, sweeps_permissions, turn_outcome, AcpAgent, AcpCall,
-    BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
+    decide, decode_update, describe, encode, gone_path, permission_content, probed_version,
+    prompt_failure_report, ready_path, reduce, request_stale, resume_decision, session_error,
+    stop_problem, sweeps_permissions, turn_outcome, AcpAgent, AcpCall, BlockedContent,
+    Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
     PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
     Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
     CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
@@ -55,6 +53,7 @@ mod permissions;
 mod print;
 mod print_hooks;
 mod queued;
+pub(crate) mod transport;
 mod turns;
 mod verify;
 
@@ -62,6 +61,7 @@ use crate::permission_queue::{host_process_token, PermissionQueue};
 use cursor_worker::CursorWorker;
 use permissions::Permissions;
 use print::PrintWorker;
+use transport::initialize;
 use turns::{run_turns, Turns};
 use verify::agent_version_probe;
 pub(crate) use verify::verify;
@@ -144,6 +144,7 @@ async fn open_session(
 }
 
 pub struct AcpWorker {
+    agent: AcpAgent,
     child: Child,
     permissions: Arc<Permissions>,
     stop: Option<oneshot::Sender<()>>,
@@ -200,6 +201,7 @@ impl AcpWorker {
         let closing = Arc::new(AtomicBool::new(false));
         let reported = Arc::new(AtomicBool::new(false));
         let mut worker = Self {
+            agent,
             child,
             permissions: Arc::clone(&permissions),
             stop: None,
@@ -258,18 +260,7 @@ impl AcpWorker {
         let session_model = request.model.clone();
         thread::spawn(move || {
             let failed = ready_tx.clone();
-            let transport = ByteStreams::new(
-                blocking::Unblock::new(LoggedWrite {
-                    inner: stdin,
-                    log: Arc::clone(&log),
-                    tag: "in",
-                }),
-                blocking::Unblock::new(LoggedRead {
-                    inner: stdout,
-                    log,
-                    tag: "out",
-                }),
-            );
+            let transport = transport::streams(stdin, stdout, log);
             let outcome = block_on(
                 Client
                     .builder()
@@ -410,7 +401,7 @@ impl AcpWorker {
             if !self.closing.load(Ordering::SeqCst) {
                 self.permissions
                     .heartbeat
-                    .gone(&Scope::Worker, &exit_reason(status));
+                    .gone(&Scope::Worker, &exit_reason(status, &self.agent));
             }
         }
     }
@@ -484,8 +475,8 @@ impl Drop for AcpWorker {
     }
 }
 
-fn exit_reason(status: ExitStatus) -> String {
-    format!("{} acp exited ({status})", CURSOR_AGENT.command)
+fn exit_reason(status: ExitStatus, agent: &AcpAgent) -> String {
+    format!("{} acp exited ({status})", agent.command)
 }
 
 fn agent_version_warning(agent: &AcpAgent, inbox: &Path) -> Option<String> {
@@ -495,17 +486,6 @@ fn agent_version_warning(agent: &AcpAgent, inbox: &Path) -> Option<String> {
         probed_version(agent, &probe).map(str::to_string),
         inbox,
     )
-}
-
-async fn initialize(
-    connection: &ConnectionTo<Agent>,
-    agent: &AcpAgent,
-) -> Result<Result<InitializeResponse, String>, agent_client_protocol::Error> {
-    let init = connection
-        .send_request(InitializeRequest::new(ProtocolVersion::V1))
-        .block_task()
-        .await?;
-    Ok(check_protocol(agent, init.protocol_version.as_u16()).map(|()| init))
 }
 
 async fn authenticate(
@@ -840,9 +820,23 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
 
     #[test]
+    fn exit_reason_uses_the_launched_agent_command() {
+        assert_eq!(
+            exit_reason(
+                ExitStatus::from_raw(9),
+                &AcpAgent {
+                    command: "agy",
+                    ..CURSOR_AGENT
+                }
+            ),
+            "agy acp exited (signal: 9 (SIGKILL))"
+        );
+    }
+
+    #[test]
     fn exit_reason_names_the_agent_and_the_status() {
         assert_eq!(
-            exit_reason(ExitStatus::from_raw(9)),
+            exit_reason(ExitStatus::from_raw(9), &CURSOR_AGENT),
             "agent acp exited (signal: 9 (SIGKILL))"
         );
     }

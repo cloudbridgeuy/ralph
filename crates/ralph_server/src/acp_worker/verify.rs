@@ -1,5 +1,6 @@
 use super::*;
 use crate::worker_verify::{step, Checks};
+use agent_client_protocol::ByteStreams;
 use ralph_core::worker::{
     cancel_check, cursor_verify_leftover, cursor_verify_project, permission_check, probed_version,
     prompt_check, BlockedContent, CheckResult, PermissionSetup, TurnSummary, VersionProbe,
