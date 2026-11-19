@@ -692,6 +692,7 @@ fn schedule_states_list_armed_and_running_tasks_by_time_in_local_hours() {
         status,
         late: false,
         deadline: None,
+        repeat: None,
     };
     let tasks = [
         task("b", "2026-01-01T12:00:00Z", TaskStatus::Pending),
@@ -732,6 +733,7 @@ fn schedule_states_mark_tasks_due_on_a_later_local_day() {
         status: TaskStatus::Pending,
         late: false,
         deadline: None,
+        repeat: None,
     };
     let tasks = [
         task("today", "2026-01-01T22:30:00Z"),

@@ -199,6 +199,7 @@ mod tests {
             status,
             late,
             deadline: None,
+            repeat: None,
         }
     }
 

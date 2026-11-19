@@ -18,6 +18,7 @@ fn worker(id: &str, at: &str, status: TaskStatus) -> Task {
         status,
         late: false,
         deadline: None,
+        repeat: None,
     }
 }
 

@@ -95,6 +95,7 @@ mod tests {
             status: TaskStatus::Proposed,
             late: false,
             deadline: None,
+            repeat: None,
         }
     }
 

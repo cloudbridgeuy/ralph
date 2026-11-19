@@ -798,6 +798,7 @@ mod tests {
                 status: TaskStatus::Pending,
                 late: false,
                 deadline: None,
+                repeat: None,
             })
             .unwrap();
     }

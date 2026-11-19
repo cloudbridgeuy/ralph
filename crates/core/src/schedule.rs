@@ -38,6 +38,8 @@ pub struct Task {
     pub late: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<crate::schedule_repeat::Repeat>,
 }
 
 pub fn parse_after(raw: &str) -> Result<Duration, String> {
@@ -348,6 +350,7 @@ mod tests {
             status,
             late: false,
             deadline: None,
+            repeat: None,
         }
     }
 
