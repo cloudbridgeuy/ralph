@@ -8,10 +8,16 @@ use ralph_core::schedule_worker::{chat_report, WorkerEnd};
 
 fn settle(store: &ScheduleStore, task: &Task, next: Option<Task>) {
     match next {
-        Some(next) => warn_if_err(
-            store.save(&next),
-            format!("re-arming scheduled task {}", task.id),
-        ),
+        Some(next) => {
+            let saved = store.save(&next);
+            if saved.is_err() {
+                store.remove(&task.id);
+            }
+            warn_if_err(
+                saved,
+                format!("repeat stopped: re-arming scheduled task {}", task.id),
+            );
+        }
         None => store.remove(&task.id),
     }
 }
@@ -93,6 +99,17 @@ mod tests {
             .filter_map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .filter_map(|value| value["worker"].as_str().map(str::to_string))
             .collect()
+    }
+
+    #[test]
+    fn a_failed_rearm_save_removes_the_row() {
+        let t = task(command(), hourly());
+        let (dir, store) = saved(&t);
+        let name = ralph_core::watch_store::file_name(&t.id);
+        std::fs::create_dir(dir.path().join(format!(".{name}"))).unwrap();
+        finish_task(&store, &t, Utc::now());
+        assert!(store.load_all().is_empty());
+        assert!(!dir.path().join(name).exists());
     }
 
     fn assert_rearmed(store: &ScheduleStore, now: DateTime<Utc>) {
