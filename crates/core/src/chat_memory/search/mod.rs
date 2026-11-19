@@ -5,5 +5,6 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use query::{tokenize, Token};
 pub use request::{parse_search_args, SearchRequest};
 pub use scan::search_found;

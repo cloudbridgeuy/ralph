@@ -1,8 +1,8 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Token {
-    pub(super) word: String,
-    pub(super) parts: Vec<String>,
-    pub(super) start: usize,
+pub(crate) struct Token {
+    pub(crate) word: String,
+    pub(crate) parts: Vec<String>,
+    pub(crate) start: usize,
 }
 
 fn is_word(c: char) -> bool {
@@ -32,7 +32,7 @@ fn joiner_len(chars: &[(usize, char)], at: usize) -> usize {
     }
 }
 
-pub(super) fn tokenize(text: &str) -> Vec<Token> {
+pub(crate) fn tokenize(text: &str) -> Vec<Token> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut tokens = Vec::new();
     let mut i = 0;
