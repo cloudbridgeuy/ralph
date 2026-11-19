@@ -63,7 +63,13 @@ pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
     let only = filters
         .store
         .clone()
-        .map(|flag| store_dir(Some(flag)).map(|dir| dir.display().to_string()))
+        .map(|flag| {
+            store_dir(Some(flag)).map(|dir| {
+                resolve_recorded_store(&dir, |path| fs::canonicalize(path).ok())
+                    .display()
+                    .to_string()
+            })
+        })
         .transpose()?;
     let workers = stores_to_read(&usage, only.as_deref())
         .iter()
@@ -124,9 +130,56 @@ pub fn run(args: UsageArgs) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn resolve_recorded_store(path: &Path, canon: impl Fn(&Path) -> Option<PathBuf>) -> PathBuf {
+    path.ancestors()
+        .find_map(|ancestor| {
+            let resolved = canon(ancestor)?;
+            let tail = path.strip_prefix(ancestor).ok()?;
+            Some(resolved.join(tail))
+        })
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fake_canon(path: &Path) -> Option<PathBuf> {
+        let rest = path.strip_prefix("/tmp").ok()?;
+        (rest.components().count() <= 1).then(|| Path::new("/private/tmp").join(rest))
+    }
+
+    #[test]
+    fn resolve_recorded_store_canonicalizes_an_existing_path() {
+        assert_eq!(
+            resolve_recorded_store(Path::new("/tmp/x"), fake_canon),
+            PathBuf::from("/private/tmp/x")
+        );
+    }
+
+    #[test]
+    fn resolve_recorded_store_resolves_longest_existing_ancestor_of_a_missing_store() {
+        assert_eq!(
+            resolve_recorded_store(Path::new("/tmp/x/store"), fake_canon),
+            PathBuf::from("/private/tmp/x/store")
+        );
+    }
+
+    #[test]
+    fn resolve_recorded_store_of_a_fully_unresolvable_path_is_unchanged() {
+        assert_eq!(
+            resolve_recorded_store(Path::new("/nowhere/a/b"), |_| None),
+            PathBuf::from("/nowhere/a/b")
+        );
+    }
+
+    #[test]
+    fn resolve_recorded_store_keeps_every_missing_segment_in_order() {
+        assert_eq!(
+            resolve_recorded_store(Path::new("/tmp/x/a/b/c"), fake_canon),
+            PathBuf::from("/private/tmp/x/a/b/c")
+        );
+    }
 
     #[test]
     fn ledger_flag_overrides_config() {
