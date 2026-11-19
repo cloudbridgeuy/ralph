@@ -102,6 +102,7 @@ struct Opening {
     worker_id: String,
     model: Option<String>,
     permission_mode: PermissionMode,
+    effort: Option<String>,
     updates: agy_settings::Updates,
 }
 
@@ -200,9 +201,28 @@ impl AcpWorker {
             }
         }
         let permission_mode = if agent == AGY_AGENT {
-            configured_permission_mode("agy", |config| config.agy.permissions_setting())
+            match &launch {
+                Launch::Resume { record, .. } => record.permissions.unwrap_or(PermissionMode::Ask),
+                Launch::Fresh => {
+                    configured_permission_mode("agy", |config| config.agy.permissions_setting())
+                }
+            }
         } else {
             cursor_permissions()
+        };
+        let effort = if agent == AGY_AGENT {
+            match &launch {
+                Launch::Resume { record, .. } => record.effort.clone(),
+                Launch::Fresh => {
+                    let config = AppConfig::load().map_err(|error| error.to_string())?.agy;
+                    if let Some(error) = config.selection_errors().into_iter().next() {
+                        return Err(error);
+                    }
+                    config.effort
+                }
+            }
+        } else {
+            None
         };
         let mut command = agy_settings::command(agent.command, permission_mode);
         command.current_dir(&request.worktree);
@@ -344,6 +364,7 @@ impl AcpWorker {
                             worker_id: worker_id.clone(),
                             model: session_model,
                             permission_mode,
+                            effort,
                             updates,
                         };
                         let loads = init.agent_capabilities.load_session;

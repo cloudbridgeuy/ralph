@@ -100,6 +100,18 @@ impl Workers {
             }
         }
         let config = AppConfig::load().map_err(|e| e.to_string());
+        let agy_model = if harness == HarnessId::Agy {
+            let agy = &config
+                .as_ref()
+                .map_err(|error| io::Error::other(error.to_string()))?
+                .agy;
+            if let Some(error) = agy.selection_errors().into_iter().next() {
+                return Err(io::Error::other(error));
+            }
+            model.or(agy.model.as_deref()).map(str::to_string)
+        } else {
+            None
+        };
         let (shell, shell_warning) = resolve_claude_shell(
             config
                 .as_ref()
@@ -143,16 +155,7 @@ impl Workers {
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
         let (model, model_warning) = match harness {
-            HarnessId::Agy => {
-                let agy = &config
-                    .as_ref()
-                    .map_err(|error| io::Error::other(error.to_string()))?
-                    .agy;
-                if let Some(error) = agy.selection_errors().into_iter().next() {
-                    return Err(io::Error::other(error));
-                }
-                (model.or(agy.model.as_deref()).map(str::to_string), None)
-            }
+            HarnessId::Agy => (agy_model, None),
             HarnessId::Opencode => {
                 let (model, warning) = resolve_opencode_model(
                     model,

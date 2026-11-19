@@ -2,11 +2,13 @@ use super::Opening;
 use crate::watches::locked;
 use agent_client_protocol::schema::v1::{
     CloseSessionRequest, LoadSessionRequest, NewSessionRequest, SessionId, SessionModeState,
-    SetSessionModeRequest,
+    SetSessionConfigOptionRequest, SetSessionModeRequest,
 };
 use agent_client_protocol::{Agent, ConnectionTo, UntypedMessage};
 use futures::{channel::oneshot, FutureExt};
-use ralph_core::worker::{agy_model_base, agy_selection, PermissionMode};
+use ralph_core::worker::{
+    agy_effort_available, agy_effort_confirmed, agy_model_base, agy_selection, PermissionMode,
+};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -142,7 +144,7 @@ async fn apply(
         .get("modes")
         .and_then(|value| serde_json::from_value(value.clone()).ok());
     apply_mode(connection, id, opening.permission_mode, mode.as_ref()).await?;
-    let model = agy_selection(opening.model.as_deref(), initial)?;
+    let model = agy_selection(opening.model.as_deref(), opening.effort.as_deref(), initial)?;
     let mut state = initial.clone();
     if let Some(model) = model {
         let primary = agy_model_base(&model, initial);
@@ -182,6 +184,27 @@ async fn apply(
             {
                 return Err(format!("agy did not confirm model '{model}'"));
             }
+        }
+    }
+    agy_effort_available(opening.effort.as_deref(), &state)?;
+    if let Some(effort) = opening.effort.as_deref() {
+        let model = state["configOptions"]
+            .as_array()
+            .and_then(|items| items.iter().find(|item| item["id"] == "model"))
+            .and_then(|item| item["currentValue"].as_str())
+            .ok_or("agy did not report its current model")?;
+        let result = connection
+            .send_request(SetSessionConfigOptionRequest::new(
+                id.clone(),
+                "thought_level",
+                effort,
+            ))
+            .block_task()
+            .await
+            .map_err(|error| format!("agy could not set effort: {}", error.message))?;
+        let options = serde_json::to_value(result).map_err(|error| error.to_string())?;
+        if !agy_effort_confirmed(&options, model, effort) {
+            return Err("agy did not confirm the requested model and effort".to_string());
         }
     }
     Ok(())

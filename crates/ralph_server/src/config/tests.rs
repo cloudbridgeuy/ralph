@@ -765,3 +765,9 @@ fn agy_model_is_known() {
     let parsed = AppConfig::parse_reporting_unknown("[agy]\nmodel = \"gemini-4-neon-high\"\n", "c");
     assert!(matches!(parsed, Ok((_, unknown)) if unknown.is_empty()));
 }
+
+#[test]
+fn agy_effort_is_known() {
+    let parsed = AppConfig::parse_reporting_unknown("[agy]\neffort = \"high\"\n", "c");
+    assert!(matches!(parsed, Ok((_, unknown)) if unknown.is_empty()));
+}
