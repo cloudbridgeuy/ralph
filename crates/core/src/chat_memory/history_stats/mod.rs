@@ -20,13 +20,14 @@ mod opened_tests;
 mod parse;
 #[cfg(test)]
 mod parse_tests;
+mod render;
+#[cfg(test)]
+mod render_tests;
+mod stats;
 #[cfg(test)]
 mod test_rows;
 
-pub use chains::{build_chains, Chains};
 pub use config::StatsConfig;
-pub use counts::{count_calls, Counts, ToolCounts};
-pub use join::{join_turns, Join};
-pub use old::{count_old, OldReach};
-pub use opened::{count_opened, zoom_stats, Opened, ZoomStats};
 pub use parse::{parse_history, parse_timing, Parsed, TimingParsed};
+pub use render::render_stats;
+pub use stats::{build_stats, Stats};
