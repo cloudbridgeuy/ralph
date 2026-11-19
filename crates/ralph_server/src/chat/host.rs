@@ -8,7 +8,6 @@ use ralph_core::program_status;
 use ralph_core::worker::{Report, INBOX_DIR};
 use ralph_core::worker_check::check_every_polls;
 use std::sync::Arc;
-use std::thread::JoinHandle;
 
 const MEMORY_EVERY_POLLS: u64 = 10;
 
@@ -25,21 +24,14 @@ pub fn due(tick: u64, check_every: Option<u64>) -> Due {
     }
 }
 
-pub struct Host {
-    pub tick: JoinHandle<()>,
-    pub keepalive: Option<JoinHandle<()>>,
-}
-
-impl Host {
-    pub fn spawn(
-        monitor: Arc<Monitor>,
-        keepalive: Option<KeepaliveWatch>,
-        sink: impl Fn(HostEvent) + Send + 'static,
-    ) -> Self {
-        Self {
-            tick: std::thread::spawn(move || run_ticks(&monitor, &sink)),
-            keepalive: keepalive.map(|watch| std::thread::spawn(move || watch.run())),
-        }
+pub fn spawn_host(
+    monitor: Arc<Monitor>,
+    keepalive: Option<KeepaliveWatch>,
+    sink: impl Fn(HostEvent) + Send + 'static,
+) {
+    std::thread::spawn(move || run_ticks(&monitor, &sink));
+    if let Some(watch) = keepalive {
+        std::thread::spawn(move || watch.run());
     }
 }
 

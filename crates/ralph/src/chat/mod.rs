@@ -92,7 +92,7 @@ use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use ralph_server::chat::check::CheckState;
-use ralph_server::chat::host::Host;
+use ralph_server::chat::host::spawn_host;
 use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::{ready_ids, Monitor as Core, ProcessMemo};
@@ -450,7 +450,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
         .with_external_printer(printer);
     let repaint = editor.repaint_signal();
-    Host::spawn(
+    spawn_host(
         Arc::clone(&monitor.core),
         keepalive,
         client_sink(Arc::clone(&monitor), move || repaint.request_repaint()),
