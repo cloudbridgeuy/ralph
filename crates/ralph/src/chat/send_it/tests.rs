@@ -4,6 +4,7 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{Awaiting, VerifyMode};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
+use ralph_server::chat::ask::Notices;
 use ralph_server::chat::memory::Store;
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
@@ -859,28 +860,26 @@ fn a_settled_last_check_logs_only_the_done_notice() {
 }
 
 #[derive(Clone, Default)]
-struct Printed(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for Printed {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
+struct Printed(Arc<Mutex<String>>);
 
 impl Printed {
     fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        self.0.lock().unwrap().clone()
+    }
+
+    fn sink(&self) -> Notices {
+        let lines = self.0.clone();
+        Arc::new(move |line| {
+            let mut lines = lines.lock().unwrap();
+            lines.push_str(line);
+            lines.push('\n');
+        })
     }
 }
 
 fn printing(dir: &Path) -> (SendIt, Active, Printed) {
     let printed = Printed::default();
-    let send_it = SendIt::with_output(dir, LIMITS, Arc::new(Mutex::new(printed.clone())));
+    let send_it = SendIt::with_notices(dir, LIMITS, printed.sink());
     let (send_it, active) = judging_on(send_it);
     (send_it, active, printed)
 }
@@ -932,5 +931,5 @@ fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
 }
 
 fn quiet(dir: &Path) -> SendIt {
-    SendIt::with_output(dir, LIMITS, Arc::new(Mutex::new(Printed::default())))
+    SendIt::with_notices(dir, LIMITS, Printed::default().sink())
 }

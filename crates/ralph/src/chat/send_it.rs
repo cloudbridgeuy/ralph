@@ -25,6 +25,7 @@ use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_core::worker_check::logged_states;
+use ralph_server::chat::ask::Notices;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::turn::{Turn, TurnOutcome};
@@ -38,7 +39,7 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 const RUN_DIR: &str = "send-it";
 const RUN_FILE: &str = "run.toml";
@@ -49,6 +50,14 @@ const NOT_PROPOSED: &str =
 
 fn unreadable(path: &Path, error: io::Error) -> String {
     format!("Could not read {}: {error}", path.display())
+}
+
+fn print_line(line: &str) {
+    let mut out = io::stdout().lock();
+    warn_if_err(
+        writeln!(out, "{line}").and_then(|()| out.flush()),
+        "Failed to print the send-it line",
+    );
 }
 
 #[derive(Debug, Clone)]
@@ -64,7 +73,7 @@ pub(crate) struct SendIt {
 }
 
 #[derive(Clone)]
-struct Out(Arc<Mutex<dyn Write + Send>>);
+struct Out(Notices);
 
 impl fmt::Debug for Out {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -164,10 +173,10 @@ pub(super) fn worker_states(monitor: &Monitor) -> (HashMap<String, String>, Vec<
 
 impl SendIt {
     pub(crate) fn new(store_dir: &Path, limits: Limits) -> Self {
-        Self::with_output(store_dir, limits, Arc::new(Mutex::new(io::stdout())))
+        Self::with_notices(store_dir, limits, Arc::new(print_line))
     }
 
-    fn with_output(store_dir: &Path, limits: Limits, out: Arc<Mutex<dyn Write + Send>>) -> Self {
+    fn with_notices(store_dir: &Path, limits: Limits, notices: Notices) -> Self {
         Self {
             log: store_dir.to_path_buf(),
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
@@ -176,16 +185,12 @@ impl SendIt {
             refused: Arc::default(),
             judged: Arc::default(),
             answered: Arc::default(),
-            out: Out(out),
+            out: Out(notices),
         }
     }
 
     fn show(&self, line: impl fmt::Display) {
-        let mut out = self.out.0.lock().unwrap_or_else(PoisonError::into_inner);
-        warn_if_err(
-            writeln!(out, "{line}").and_then(|()| out.flush()),
-            "Failed to print the send-it line",
-        );
+        (self.out.0)(&line.to_string());
     }
 
     fn load(&self) -> Result<Option<RunFile>, String> {
