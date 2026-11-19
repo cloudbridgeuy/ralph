@@ -484,11 +484,19 @@ impl Workers {
         harness: &str,
     ) -> io::Result<Option<String>> {
         let id = launch.id;
-        for path in files.all() {
-            if harness != "agy" || path != files.owner {
+        let lock = if harness == "agy" {
+            let lock = crate::acp_worker::recovery::lock(&files.owner)?;
+            self.check_agy_locked(&files, id, false)?;
+            clear_marker(&files.error)?;
+            clear_marker(&files.warning)?;
+            clear_marker(&WorkerMarkers::new(&self.store_dir, id).ready)?;
+            Some(lock)
+        } else {
+            for path in files.all() {
                 clear_marker(path)?;
             }
-        }
+            None
+        };
         let request = SpawnRequest {
             worktree: launch.worktree.to_path_buf(),
             exe: self.exe.clone(),
@@ -498,10 +506,13 @@ impl Workers {
             snapshots: launch.site.is_some(),
             model: launch.model.map(str::to_string),
         };
-        write_file(
-            &files.spawn,
-            &serde_json::to_string(&request).map_err(io::Error::other)?,
-        )?;
+        let text = serde_json::to_string(&request).map_err(io::Error::other)?;
+        if harness == "agy" {
+            crate::cursor_owner::write_file_atomic(&files.spawn, &text)?;
+        } else {
+            write_file(&files.spawn, &text)?;
+        }
+        drop(lock);
         let ready = WorkerMarkers::new(&self.store_dir, id).ready;
         self.await_spawn(&files.spawn, &ready, &files.error, harness)?;
         let warning = fs::read_to_string(&files.warning).ok();

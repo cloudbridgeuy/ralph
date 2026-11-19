@@ -58,7 +58,7 @@ mod permissions;
 mod print;
 mod print_hooks;
 mod queued;
-mod recovery;
+pub(crate) mod recovery;
 pub(crate) mod transport;
 mod turns;
 mod verify;
@@ -663,7 +663,7 @@ impl CursorHost {
     fn poll(&self) {
         self.reap_exits();
         for id in request_ids(&self.store_dir, self.dir(CURSOR_CLOSE_DIR, "agy-close")) {
-            if self.handles(&id) {
+            if self.agy || self.handles(&id) {
                 self.close(&id);
             }
         }

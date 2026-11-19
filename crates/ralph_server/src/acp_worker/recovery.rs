@@ -1,7 +1,7 @@
 use ralph_core::worker::{resume_decision, AcpAgent, Resume, SessionRecord, AGY_AGENT};
 use std::path::Path;
 
-pub(super) fn resume(
+pub(crate) fn resume(
     agent: &AcpAgent,
     id: &str,
     record: &SessionRecord,
@@ -47,7 +47,7 @@ pub(super) fn resume(
     }
 }
 
-pub(super) fn lock(owner: &Path) -> std::io::Result<std::fs::File> {
+pub(crate) fn lock(owner: &Path) -> std::io::Result<std::fs::File> {
     let store = owner
         .parent()
         .and_then(Path::parent)
@@ -84,7 +84,7 @@ pub(super) fn claim_saved(files: &HandoffFiles, record: &SessionRecord) -> bool 
     if current.as_ref() != Some(record) {
         return false;
     }
-    if files.owner.exists() && !crate::cursor_owner::reclaim_agy(&files.owner) {
+    if files.owner.symlink_metadata().is_ok() && !crate::cursor_owner::reclaim_agy(&files.owner) {
         return false;
     }
     claim_owner(&files.owner).is_ok()
@@ -170,7 +170,7 @@ impl CursorHost {
         let Ok(_lock) = lock(&files.owner) else {
             return;
         };
-        if files.owner.exists() || locked(&self.starting).contains_key(id) {
+        if locked(&self.starting).contains_key(id) {
             return;
         }
         let record = fs::read_to_string(&files.session)
@@ -179,6 +179,11 @@ impl CursorHost {
         if record.as_ref().is_some_and(|record| {
             resume(&AGY_AGENT, id, record, &self.store_dir, true) == Resume::Go
         }) {
+            if files.owner.symlink_metadata().is_ok()
+                && !crate::cursor_owner::reclaim_agy(&files.owner)
+            {
+                return;
+            }
             self.cleanup(id, &files, true);
         }
     }

@@ -27,6 +27,7 @@ use std::process::{self, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod agy;
 mod close;
 mod guard;
 pub mod headless;
@@ -218,7 +219,7 @@ impl Workers {
 
     fn headless_files(&self, id: &str) -> Option<(HarnessId, HandoffFiles)> {
         let agy = HandoffFiles::agy(&self.store_dir, id);
-        if agy.owner.exists() {
+        if agy.owner.exists() || self.saved_agy(&agy) {
             return Some((HarnessId::Agy, agy));
         }
         let cursor = HandoffFiles::cursor(&self.store_dir, id);
@@ -335,7 +336,7 @@ impl Workers {
             }
             CloseStep::TerminateAgy => {
                 let files = HandoffFiles::agy(&self.store_dir, id);
-                if files.owner.exists() {
+                if files.owner.exists() || files.session.exists() {
                     self.terminate_headless(&files, "agy")?;
                 }
             }
@@ -436,6 +437,10 @@ impl Workers {
             HarnessId::Codex,
             HarnessId::Claude,
         ] {
+            if harness == HarnessId::Agy {
+                self.check_agy(id, closing)?;
+                continue;
+            }
             let files = match harness {
                 HarnessId::Agy => HandoffFiles::agy(&self.store_dir, id),
                 HarnessId::Codex => HandoffFiles::codex(&self.store_dir, id),
@@ -457,13 +462,30 @@ impl Workers {
     }
 
     fn terminate_headless(&self, files: &HandoffFiles, name: &str) -> io::Result<()> {
-        write_file(&files.close, "")?;
+        if name == "agy" {
+            let _lock = crate::acp_worker::recovery::lock(&files.owner)?;
+            let id = files
+                .owner
+                .file_name()
+                .and_then(|id| id.to_str())
+                .ok_or_else(|| io::Error::other("invalid agy worker id"))?;
+            self.check_agy_locked(files, id, true)?;
+            write_file(&files.close, "")?;
+        } else {
+            write_file(&files.close, "")?;
+        }
         let started = Instant::now();
         loop {
-            match close_handoff(files.owner.exists(), started.elapsed()) {
+            match close_handoff(
+                files.owner.exists()
+                    || (name == "agy" && (files.session.exists() || files.close.exists())),
+                started.elapsed(),
+            ) {
                 Handoff::Done => return Ok(()),
                 Handoff::TimedOut => {
-                    clear_marker(&files.close)?;
+                    if name != "agy" {
+                        clear_marker(&files.close)?;
+                    }
                     return Err(io::Error::other(format!(
                         "ralph chat did not confirm stopping the {name} worker in time"
                     )));
