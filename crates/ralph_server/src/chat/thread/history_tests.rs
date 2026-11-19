@@ -1,7 +1,8 @@
 use super::*;
+use crate::history_log::write_turn;
 use ralph_core::chat_memory::{history_path, parse_tool_call};
-use ralph_server::history_log::write_turn;
 use serde_json::{json, Value};
+use std::fs;
 
 fn seeded() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();

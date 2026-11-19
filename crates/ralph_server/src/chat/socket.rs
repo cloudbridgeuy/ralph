@@ -1,3 +1,5 @@
+pub mod serve;
+
 use ralph_core::chat_socket::{runtime_dir_name, sidecar_name, socket_file_name, StoreKey};
 use std::fs;
 use std::path::{Path, PathBuf};

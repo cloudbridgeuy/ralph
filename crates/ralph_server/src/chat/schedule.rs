@@ -1,9 +1,18 @@
+use crate::chat::ask::{yes_no, Ask, Notices};
 use crate::schedule_store::ScheduleStore;
 use crate::warn::warn_if_err;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
-use ralph_core::schedule::{plan_restore, plan_tick, to_watch_spec, Task, TaskStatus};
+use crate::workers::Workers;
+use ralph_core::schedule::{
+    approval_question, plan_restore, plan_tick, proposed, to_watch_spec, Task, TaskStatus,
+};
+use ralph_core::schedule_command::{
+    cancel_message, list_tasks, plan_cancel, CancelPlan, CancelStop, ScheduleCommand,
+    SCHEDULE_USAGE,
+};
 use ralph_core::watch_request::start_failure_report;
+use std::time::Duration;
 
 pub fn restore_schedule(store: &ScheduleStore, alive_workers: &[String]) {
     let tasks = store.load_all();
@@ -61,12 +70,120 @@ pub fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) {
     }
 }
 
+pub fn approve_proposed(
+    store: &ScheduleStore,
+    default_timeout: Duration,
+    ask: &mut dyn Ask,
+    notices: &Notices,
+) -> bool {
+    let tasks = proposed(store.load_all());
+    for task in &tasks {
+        if decide(task, default_timeout, ask) {
+            let armed = store.save(&Task {
+                status: TaskStatus::Pending,
+                ..task.clone()
+            });
+            match armed {
+                Ok(()) => notices(&format!("Armed {}.", task.id)),
+                Err(error) => notices(&format!("Could not arm {}: {error}", task.id)),
+            }
+        } else {
+            store.remove(&task.id);
+            notices(&format!("Cancelled {}.", task.id));
+        }
+    }
+    !tasks.is_empty()
+}
+
+fn decide(task: &Task, default_timeout: Duration, ask: &mut dyn Ask) -> bool {
+    let question = || {
+        let now = chrono::Utc::now();
+        let offset = *chrono::Local::now().offset();
+        approval_question(task, now, offset, default_timeout)
+    };
+    yes_no(ask, question).unwrap_or(false)
+}
+
+pub fn run(
+    command: ScheduleCommand,
+    store: &ScheduleStore,
+    watches: &Watches,
+    workers: &Workers,
+) -> String {
+    match command {
+        ScheduleCommand::List => list_tasks(
+            &store.load_all(),
+            chrono::Utc::now(),
+            *chrono::Local::now().offset(),
+        ),
+        ScheduleCommand::Cancel(id) => {
+            let plan = plan_cancel(&id, &store.load_all());
+            if let CancelPlan::Remove { id, stop } = &plan {
+                store.remove(id);
+                match stop {
+                    Some(CancelStop::Watch(watch)) => {
+                        watches.stop(watch);
+                    }
+                    Some(CancelStop::Worker(worker)) => warn_if_err(
+                        workers.stop_harness(worker),
+                        format!("stopping cancelled worker {worker}"),
+                    ),
+                    None => {}
+                }
+            }
+            cancel_message(&plan)
+        }
+        ScheduleCommand::Usage => SCHEDULE_USAGE.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;
     use ralph_core::schedule::TaskKind;
+    use std::io;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    struct Scripted {
+        queue: std::vec::IntoIter<Option<String>>,
+        prompts: String,
+    }
+
+    impl Ask for Scripted {
+        fn answer(&mut self, prompt: &str) -> Option<String> {
+            self.prompts.push_str(prompt);
+            self.queue.next().flatten()
+        }
+
+        fn edit(&mut self, _path: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn run(store: &ScheduleStore, answers: &[Option<&str>]) -> (bool, String, String) {
+        let mut ask = Scripted {
+            queue: answers
+                .iter()
+                .map(|a| a.map(str::to_string))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            prompts: String::new(),
+        };
+        let lines = Arc::new(Mutex::new(String::new()));
+        let sink = lines.clone();
+        let notices: Notices = Arc::new(move |line| {
+            if let Ok(mut lines) = sink.lock() {
+                lines.push_str(line);
+                lines.push('\n');
+            }
+        });
+        let asked = approve_proposed(store, Duration::from_secs(60), &mut ask, &notices);
+        let notices = lines.lock().map(|lines| lines.clone()).unwrap_or_default();
+        (asked, ask.prompts, notices)
+    }
 
     fn propose(store: &ScheduleStore, id: &str, minutes: i64) {
         store
@@ -174,5 +291,83 @@ mod tests {
         mark_running(&store, "a");
         fire_due(&store, &watches, &inbox);
         assert!(statuses(&store).is_empty());
+    }
+
+    #[test]
+    fn yes_arms_and_no_cancels_in_time_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        propose(&store, "first", 5);
+        propose(&store, "second", 10);
+        let (_, prompts, notices) = run(&store, &[Some("YES\n"), Some("n\n")]);
+        assert_eq!(
+            statuses(&store),
+            vec![("first".to_string(), TaskStatus::Pending)]
+        );
+        assert_eq!(notices, "Armed first.\nCancelled second.\n");
+        assert!(prompts.find("echo first").unwrap() < prompts.find("echo second").unwrap());
+    }
+
+    #[test]
+    fn unclear_answers_repeat_the_same_question() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        propose(&store, "a", 5);
+        let (_, prompts, _) = run(&store, &[Some("go\n"), Some("\n"), Some("y\n")]);
+        assert_eq!(prompts.matches("Arm it? [y/n]").count(), 3);
+        assert_eq!(
+            statuses(&store),
+            vec![("a".to_string(), TaskStatus::Pending)]
+        );
+    }
+
+    #[test]
+    fn interrupt_or_end_of_input_cancels_the_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        propose(&store, "a", 5);
+        let (_, _, notices) = run(&store, &[None]);
+        assert!(statuses(&store).is_empty());
+        assert_eq!(notices, "Cancelled a.\n");
+    }
+
+    #[test]
+    fn armed_and_running_tasks_are_not_asked_about() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        propose(&store, "a", 5);
+        assert!(run(&store, &[Some("y")]).0);
+        let (asked, prompts, notices) = run(&store, &[]);
+        assert!(!asked);
+        assert!(prompts.is_empty() && notices.is_empty());
+        assert_eq!(
+            statuses(&store),
+            vec![("a".to_string(), TaskStatus::Pending)]
+        );
+    }
+
+    #[test]
+    fn an_empty_store_asks_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        assert_eq!(run(&store, &[]), (false, String::new(), String::new()));
+    }
+
+    #[test]
+    fn a_failed_save_is_reported_instead_of_armed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        propose(&store, "a", 5);
+        let tmp = dir
+            .path()
+            .join(format!(".{}", ralph_core::watch_store::file_name("a")));
+        std::fs::create_dir(&tmp).unwrap();
+        let (_, _, notices) = run(&store, &[Some("y")]);
+        assert!(notices.contains("Could not arm a:"), "{notices}");
+        assert!(!notices.contains("Armed a."), "{notices}");
+        assert_eq!(
+            statuses(&store),
+            vec![("a".to_string(), TaskStatus::Proposed)]
+        );
     }
 }

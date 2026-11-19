@@ -1,5 +1,5 @@
 use crate::chat::inbox::Display;
-use crate::chat::schedule::{ask_answer, read_answer};
+use crate::chat::schedule::Keyboard;
 use crate::chat::thread::landing::set_landed;
 use crate::chat::thread::{
     config_root, drop_precheck, drop_thread, listing, merge_precheck, merge_thread, open_thread,
@@ -15,9 +15,9 @@ use ralph_core::chat_thread_cmd::{
     drop_answer, drop_question, merge_answer, merge_posted_message, merge_question, merging_notice,
     op_refusal, parked_message, revived_message, view_posted_message, ThreadOp, VIEW_FLAG,
 };
+use ralph_server::chat::ask::yes_no;
 use ralph_server::chat::memory::Store;
 use ralph_server::warn::warn_if_err;
-use std::io;
 use std::path::Path;
 
 pub(super) struct ThreadEnv<'a> {
@@ -127,7 +127,7 @@ pub(super) fn land(main: &Path, merged: Option<ThreadName>, id: Option<usize>) {
 }
 
 pub(super) fn confirm(question: &str) -> Option<bool> {
-    ask_answer(|| question.to_string(), &mut read_answer, &mut io::stdout())
+    yes_no(&mut Keyboard { editor: &[] }, || question.to_string())
 }
 
 #[cfg(test)]
