@@ -48,6 +48,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(chat.editor_setting().1)
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)
         .chain(config.claude.shell_setting().1)
+        .chain(config.agy.permissions_setting().1)
         .chain(hard_errors(&config))
         .collect();
     Ok(CheckReport {
@@ -157,5 +158,15 @@ mod tests {
         let report = check("[theme]\nagent = \"x\"\n", "c").unwrap();
         assert!(report.errors.is_empty());
         assert_eq!(report.notes.len(), 1);
+    }
+
+    #[test]
+    fn agy_permissions_are_validated() {
+        let valid = check("[agy]\npermissions = \"ask\"\n", "c");
+        assert!(matches!(valid, Ok(report) if report.errors.is_empty()));
+        let invalid = check("[agy]\npermissions = \"always\"\n", "c");
+        assert!(
+            matches!(invalid, Ok(report) if report.errors.iter().any(|error| error.contains("[agy] permissions")))
+        );
     }
 }

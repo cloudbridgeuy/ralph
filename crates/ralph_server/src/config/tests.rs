@@ -740,3 +740,22 @@ fn store_bad_claude_shell_keeps_store_keys() {
         .iter()
         .all(|n| !n.key.starts_with("store-fallback:")));
 }
+
+#[test]
+fn agy_permissions_are_known_and_security_sensitive() {
+    let text = "[agy]\npermissions = \"yolo\"\n";
+    let parsed = AppConfig::parse_reporting_unknown(text, "config.toml");
+    assert!(parsed.is_ok());
+    let Ok((config, unknown)) = parsed else {
+        return;
+    };
+    assert!(unknown.is_empty(), "{unknown:?}");
+    let table = toml::Value::try_from(config);
+    assert!(table.is_ok());
+    let Ok(table) = table else { return };
+    assert_eq!(table["agy"]["permissions"].as_str(), Some("yolo"));
+    let parsed = text.parse::<toml::Table>();
+    assert!(parsed.is_ok());
+    let Ok(parsed) = parsed else { return };
+    assert!(super::layers::security_keys(&parsed).contains(&"agy.permissions"));
+}

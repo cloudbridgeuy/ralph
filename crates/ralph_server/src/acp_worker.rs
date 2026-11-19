@@ -48,6 +48,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod agy_settings;
 mod agy_verify;
 mod cursor_worker;
 mod model;
@@ -100,6 +101,7 @@ struct Opening {
     server: McpServer,
     worker_id: String,
     model: Option<String>,
+    permission_mode: PermissionMode,
 }
 
 async fn open_session(
@@ -108,15 +110,24 @@ async fn open_session(
     loads_session: bool,
 ) -> Result<SessionId, String> {
     match &opening.launch {
-        Launch::Fresh => connection
-            .send_request(
-                NewSessionRequest::new(opening.cwd.clone())
-                    .mcp_servers(vec![opening.server.clone()]),
+        Launch::Fresh => {
+            let response = connection
+                .send_request(
+                    NewSessionRequest::new(opening.cwd.clone())
+                        .mcp_servers(vec![opening.server.clone()]),
+                )
+                .block_task()
+                .await
+                .map_err(|error| format!("agy session could not be started: {}", error.message))?;
+            agy_settings::apply_mode(
+                connection,
+                &response.session_id,
+                opening.permission_mode,
+                response.modes.as_ref(),
             )
-            .block_task()
-            .await
-            .map(|response| response.session_id)
-            .map_err(|error| format!("agy session could not be started: {}", error.message)),
+            .await?;
+            Ok(response.session_id)
+        }
         Launch::Resume { record, store } => {
             if let Resume::Skip(message) = resume_decision(
                 &opening.agent,
@@ -141,6 +152,15 @@ async fn open_session(
                     opening.agent.name, opening.worker_id, e.message
                 )
             })?;
+            if opening.agent == AGY_AGENT {
+                agy_settings::apply_mode(
+                    connection,
+                    &session,
+                    opening.permission_mode,
+                    loaded.modes.as_ref(),
+                )
+                .await?;
+            }
             model::apply_model(
                 connection,
                 opening,
@@ -201,8 +221,13 @@ impl AcpWorker {
                 );
             }
         }
-        let mut command = Command::new(agent.command);
-        command.arg("acp").current_dir(&request.worktree);
+        let permission_mode = if agent == AGY_AGENT {
+            configured_permission_mode("agy", |config| config.agy.permissions_setting())
+        } else {
+            cursor_permissions()
+        };
+        let mut command = agy_settings::command(agent.command, permission_mode);
+        command.current_dir(&request.worktree);
         if agent == CURSOR_AGENT {
             let store = request.inbox.parent().ok_or("worker inbox has no store")?;
             command.envs([ralph_core::worker::inbox_env(
@@ -216,11 +241,7 @@ impl AcpWorker {
         let events = Events::default();
         let permissions = Permissions::new(
             &markers,
-            if agent == AGY_AGENT {
-                PermissionMode::Ask
-            } else {
-                cursor_permissions()
-            },
+            permission_mode,
             PermissionQueue::new(
                 host_process_token(),
                 id.to_string(),
@@ -333,6 +354,7 @@ impl AcpWorker {
                             server,
                             worker_id: worker_id.clone(),
                             model: session_model,
+                            permission_mode,
                         };
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
