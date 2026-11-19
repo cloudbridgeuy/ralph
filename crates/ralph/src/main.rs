@@ -107,8 +107,11 @@ fn main() -> ExitCode {
 fn execute_chat(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let store = args.store.clone();
     let thread = args.thread.clone();
+    let closes = chat::thread::close::closes_on_exit(args.command.as_ref());
     let exit = chat::run(args)?;
-    chat::thread::close::record_exit(store, thread.as_ref(), &exit);
+    if closes {
+        chat::thread::close::record_exit(store, thread.as_ref(), &exit);
+    }
     match exit {
         chat::ChatExit::Quit | chat::ChatExit::Closed => Ok(()),
         chat::ChatExit::Switch(target, opts) => {

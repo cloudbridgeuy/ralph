@@ -518,6 +518,7 @@ The pure model is `crates/core/src/workers_view/remote.rs`; the shell is `crates
 - zoom depth: how many zooms went 0, 1, 2, 3 or 4+ levels deep, and the node size.
 - old reach: a call is old when it reaches below the start of the turn's view. It is undecided when the turn has no view.
 - The parser is lenient. It skips bad rows and counts them in `skipped rows`.
+- Threads: a history command, including `--thread <name>`, does not run the thread close step; a missing thread gives an empty report.
 - Code: the pure `build_stats` and `render_stats` in `crates/core/src/chat_memory/history_stats/`; the shell is `crates/ralph/src/chat/session/stats.rs`.
 
 Sample:

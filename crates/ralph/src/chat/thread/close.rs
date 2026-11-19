@@ -1,11 +1,16 @@
 use super::{read_meta, thread_dir, write_meta};
 use crate::chat::session::store_dir;
 use crate::chat::ChatExit;
+use crate::cli::ChatCommand;
 use ralph_core::chat_thread::{ThreadMeta, ThreadName};
 use ralph_core::chat_thread_auto::{close_plan, thread_closed_report, CloseEvent, ClosePlan};
 use ralph_core::worker::INBOX_DIR;
 use ralph_server::worker_mcp::Inbox;
 use std::path::{Path, PathBuf};
+
+pub(crate) fn closes_on_exit(command: Option<&ChatCommand>) -> bool {
+    !matches!(command, Some(ChatCommand::History(_)))
+}
 
 pub(crate) fn record_exit(store: Option<PathBuf>, thread: Option<&ThreadName>, exit: &ChatExit) {
     let Some(name) = thread else { return };
@@ -55,6 +60,7 @@ pub(super) fn record_close(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::{HistoryArgs, HistoryTool};
     use ralph_core::chat_thread::AutoMode;
     use ralph_core::chat_thread_auto::THREAD_CLOSED_STATUS;
     use ralph_core::worker::Report;
@@ -155,5 +161,23 @@ mod tests {
         fs::write(old.join("thread.json"), r#"{"base":0,"created":"t"}"#).unwrap();
         record_close(main.path(), &name("old"), CloseEvent::Closed, "t").unwrap();
         assert!(!closed(main.path(), "old"));
+    }
+
+    #[test]
+    fn history_does_not_close_a_thread() {
+        let history = ChatCommand::History(HistoryArgs {
+            stats: None,
+            tool: Some(HistoryTool::Read),
+            words: vec!["1".to_string()],
+            cursor: None,
+            tag: None,
+            scope: None,
+        });
+        assert!(!closes_on_exit(Some(&history)));
+    }
+
+    #[test]
+    fn a_plain_chat_closes_its_thread() {
+        assert!(closes_on_exit(None));
     }
 }
