@@ -75,6 +75,14 @@ fn pointer_absent() {
 }
 
 #[test]
+fn pointer_ignores_block_ids() {
+    assert!(!has_pointer("see #4-5", 4));
+    assert!(has_pointer("see #4.", 4));
+    assert!(has_pointer("see #4 ", 4));
+    assert!(has_pointer("see #4-x", 4));
+}
+
+#[test]
 fn pointer_ignores_longer_id() {
     assert!(!has_pointer("see #123", 12));
     assert!(has_pointer("see #123 and #12.", 12));

@@ -56,9 +56,15 @@ pub fn observe(anchor: &Anchor, ancestors: &[Ancestor]) -> Vec<Observation> {
 
 pub fn has_pointer(summary: &str, id: usize) -> bool {
     let needle = format!("#{id}");
-    summary
-        .match_indices(&needle)
-        .any(|(at, _)| !summary[at + needle.len()..].starts_with(|c: char| c.is_ascii_digit()))
+    summary.match_indices(&needle).any(|(at, _)| {
+        let mut after = summary[at + needle.len()..].chars();
+        let next = after.next();
+        let is_digit = |c: Option<char>| c.is_some_and(|c| c.is_ascii_digit());
+        match next {
+            Some('-') => !is_digit(after.next()),
+            other => !is_digit(other),
+        }
+    })
 }
 
 pub fn pointer_of(anchor: &Anchor, ancestors: &[Ancestor]) -> Option<Pointer> {
