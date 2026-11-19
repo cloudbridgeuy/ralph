@@ -1,5 +1,4 @@
 use std::io::{IsTerminal, Read, Write};
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
@@ -21,7 +20,7 @@ use super::wrap::wrap_width;
 use super::{RenderContext, Viewport};
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode};
 use crate::markdown::MarkdownTheme;
-use crate::stream_processor::DiskFiles;
+use ralph_server::disk_files::DiskFiles;
 
 const TMUX_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
 const TMUX_PROBE_POLL: Duration = Duration::from_millis(10);
@@ -134,13 +133,6 @@ pub fn detect(color: bool) -> Option<ImageSettings> {
             })
             .filter(|(width, height)| *width > 0 && *height > 0),
     })
-}
-
-pub(crate) fn resolve(path: &str) -> PathBuf {
-    match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
-        _ => PathBuf::from(path),
-    }
 }
 
 pub(crate) fn disk_image(path: &str) -> Option<ImageFile> {
@@ -298,6 +290,7 @@ pub fn render_cell_display(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     const SETTINGS: ImageSettings = ImageSettings {
         placement: Placement::Direct,

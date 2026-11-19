@@ -4,11 +4,12 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
     EXIT_CODE_KILLED,
 };
-use crate::stream_processor::{DiskFiles, OutputBlock, VerboseToolsConfig};
+use crate::stream_processor::{OutputBlock, VerboseToolsConfig};
 use ralph_core::cancel::CancelToken;
 use ralph_core::stream::blocks::StreamCollector;
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
+use ralph_server::disk_files::DiskFiles;
 use ralph_server::subprocess::{default_sigttou_in, kill_process_group};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;

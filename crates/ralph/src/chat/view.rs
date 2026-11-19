@@ -1,12 +1,13 @@
 use crate::chat::inbox::Display;
 use crate::mermaid_guard;
-use crate::render::image::{draw_png, resolve, ImageBounds};
+use crate::render::image::{draw_png, ImageBounds};
 use crate::render::{render_markdown_with, RenderContext};
 use crate::ui_theme::UiColors;
 use ralph_core::chat_view::{rebase_images, view_refusal, FileKind, ViewArgs, MAX_VIEW_BYTES};
 use ralph_core::chunk::{ChunkType, ParsedChunk};
 use ralph_core::kitty::ASSUMED_CELL_PX;
 use ralph_core::mermaid_fit::Room;
+use ralph_server::disk_files::resolve;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
