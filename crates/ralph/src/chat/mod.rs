@@ -294,6 +294,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         sink,
         show_tools: io::stdout().is_terminal(),
         terminated: signal::is_terminated,
+        exe: Some(&exe),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),

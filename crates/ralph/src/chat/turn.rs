@@ -35,6 +35,7 @@ use ralph_server::timing;
 use ralph_server::watches::locked;
 use ralph_server::workers::usage_store;
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -48,24 +49,36 @@ pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
         .any(|block| !matches!(block, OutputBlock::Separator))
 }
 
-pub(super) fn spawn_nap(store: &Path, run: &str) -> io::Result<()> {
-    spawn_detached(
-        Command::new(std::env::current_exe()?)
-            .args(build_nap_args(store, run))
-            .envs([ralph_core::worker::inbox_env(&std::fs::canonicalize(
-                store,
-            )?)]),
-    )
+fn background_command(
+    exe: Option<&Path>,
+    args: Vec<OsString>,
+    store: &Path,
+) -> io::Result<Command> {
+    let exe =
+        exe.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "ralph executable not found"))?;
+    let mut command = Command::new(exe);
+    command
+        .args(args)
+        .envs([ralph_core::worker::inbox_env(&std::fs::canonicalize(
+            store,
+        )?)]);
+    Ok(command)
 }
 
-pub(super) fn spawn_tag(store: &Path, run: &str) -> io::Result<()> {
-    spawn_detached(
-        Command::new(std::env::current_exe()?)
-            .args(build_tag_args(store, run))
-            .envs([ralph_core::worker::inbox_env(&std::fs::canonicalize(
-                store,
-            )?)]),
-    )
+fn spawn_nap(exe: Option<&Path>, store: &Path, run: &str) -> io::Result<()> {
+    spawn_detached(&mut background_command(
+        exe,
+        build_nap_args(store, run),
+        store,
+    )?)
+}
+
+fn spawn_tag(exe: Option<&Path>, store: &Path, run: &str) -> io::Result<()> {
+    spawn_detached(&mut background_command(
+        exe,
+        build_tag_args(store, run),
+        store,
+    )?)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +152,7 @@ pub(super) struct Turn<'a> {
     pub(super) sink: Arc<dyn TurnSink>,
     pub(super) show_tools: bool,
     pub(super) terminated: fn() -> bool,
+    pub(super) exe: Option<&'a Path>,
 }
 
 impl Turn<'_> {
@@ -405,11 +419,11 @@ impl Turn<'_> {
                     self.suggestions.set(suggestion);
                 }
                 self.warn_if_err(
-                    spawn_nap(self.store_dir, self.run),
+                    spawn_nap(self.exe, self.store_dir, self.run),
                     "Failed to start chat memory nap",
                 );
                 self.warn_if_err(
-                    spawn_tag(self.store_dir, self.run),
+                    spawn_tag(self.exe, self.store_dir, self.run),
                     "Failed to start chat entry tagging",
                 );
                 if let Some(reason) = reset_reason(&self.reset_limits, process_turns, costs) {
@@ -590,6 +604,21 @@ mod tests {
     use crate::stream_processor::StreamProcessorResult;
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
+
+    #[test]
+    fn background_runs_use_the_executable_the_client_gave() {
+        let store = std::env::temp_dir();
+        let command =
+            background_command(Some(Path::new("/opt/ralph/bin/ralph")), Vec::new(), &store)
+                .unwrap();
+        assert_eq!(command.get_program(), "/opt/ralph/bin/ralph");
+    }
+
+    #[test]
+    fn background_runs_fail_without_an_executable() {
+        let store = std::env::temp_dir();
+        assert!(background_command(None, Vec::new(), &store).is_err());
+    }
 
     #[test]
     fn system_prompt_file_holds_the_old_argument_bytes_privately() {
