@@ -45,7 +45,7 @@ use crate::chat::queue::{
 use crate::chat::refusal::{refuse_or_exit, restore_prompt};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, Keyboard};
-use crate::chat::send_it::{Active, InboxTurn, SendIt};
+use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active, InboxTurn};
 use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::{chat_exit, check as check_switch, Leave};
@@ -83,6 +83,7 @@ use ralph_server::chat::host::spawn_host;
 use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::ready_ids;
+use ralph_server::chat::send_it::SendIt;
 use ralph_server::chat::session::{
     open_core, phase_after, serve, trigger_for, tuning, At, CoreParts, Session, Wiring,
     WiringConfig,
@@ -321,7 +322,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let session = Session {
         turn,
         core: Arc::clone(&monitor),
-        send_it: (*send_it).clone(),
+        send_it: send_it.clone(),
         limits: send_it_limits,
         snapshots,
     };
@@ -635,13 +636,13 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 idle.store(false, Ordering::SeqCst);
                 match held {
                     Held::Item(position) => {
-                        let driven = send_it.held_item(&mut sending, position, &monitor)?;
+                        let driven = held_item(&send_it, &mut sending, position, &monitor)?;
                         pending = driven.enter(&mut editor);
                     }
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);
                         if let Some(active) = sending.take() {
-                            send_it.took_over(&active).enter(&mut editor);
+                            took_over(&send_it, &active).enter(&mut editor);
                         }
                     }
                     Held::Quit => {
@@ -670,7 +671,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         shown_plan = shown;
                     }
                     if let Some(started) = reply.started {
-                        let mut driven = send_it.dispatch(started, &monitor);
+                        let mut driven = dispatch(&send_it, started, &monitor);
                         (sending, pending) = (driven.active.take(), driven.enter(&mut editor));
                     }
                     continue;
@@ -816,7 +817,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 watched: None,
                 refused: None,
             };
-            let driven = send_it.dispatch(send_it.tick(&active, ended), &monitor);
+            let driven = dispatch(&send_it, tick(&send_it, &active, ended), &monitor);
             sending = driven.active;
             if driven.route.is_some() {
                 pending = driven.route.map(Submitted::internal);

@@ -8,7 +8,7 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{
     awaits_check, briefed_turn, done_block, done_notice, judge_echo, judge_prompt, resolve_check,
     run_end_prefill, running_line, settle_check, step_line, stop_block, verify_worker, Driving,
-    Ended, Limits, Next, StopReason, Ticked,
+    Ended, Next, StopReason, Ticked,
 };
 use ralph_core::chat_status::Route;
 use ralph_core::chat_suggestion::driven_fill;
@@ -16,26 +16,12 @@ use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_server::chat::monitor::Monitor;
-use ralph_server::chat::send_it::SendIt as ServerSendIt;
-use ralph_server::chat::session::Emit;
+use ralph_server::chat::send_it::SendIt;
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::turn::{Turn, TurnOutcome};
 use ralph_server::watches::{locked, OutcomeSlot};
 use reedline::{EditCommand, Reedline};
 use std::io;
-use std::ops::Deref;
-use std::path::Path;
-
-#[derive(Debug, Clone)]
-pub(crate) struct SendIt(ServerSendIt);
-
-impl Deref for SendIt {
-    type Target = ServerSendIt;
-
-    fn deref(&self) -> &ServerSendIt {
-        &self.0
-    }
-}
 
 pub(super) struct Active {
     driving: Driving,
@@ -87,75 +73,69 @@ impl Driven {
     }
 }
 
-impl SendIt {
-    pub(crate) fn new(store_dir: &Path, limits: Limits, emit: Emit) -> Self {
-        Self(ServerSendIt::new(store_dir, limits, emit))
-    }
-
-    pub(super) fn tick(&self, active: &Active, ended: Ended) -> Ticked {
-        self.0.tick(&active.driving, active.watched.as_ref(), ended)
-    }
-
-    pub(super) fn held_item(
-        &self,
-        sending: &mut Option<Active>,
-        position: Position,
-        monitor: &Monitor,
-    ) -> io::Result<Driven> {
-        let read = Driven::reading(Route::ReadInbox(Selection::At(position)));
-        let outcome = sending
-            .as_ref()
-            .filter(|active| awaits_check(&active.driving))
-            .and_then(|active| active.watched.as_ref())
-            .and_then(|slot| locked(slot).clone());
-        let Some(outcome) = outcome else {
-            return Ok(read);
-        };
-        let reports = monitor.drain(Selection::At(position))?;
-        monitor.refresh(true);
-        let Some(active) = sending.take() else {
-            return Ok(read);
-        };
-        let file = self.load().ok().flatten();
-        let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
-        log_shown(self, &ticked);
-        let mut driven = route(self, ticked, monitor);
-        if driven.route.is_none() {
-            monitor.set_phase(Phase::Prompt);
-        }
-        *sending = driven.active.take();
-        Ok(driven)
-    }
-
-    pub(super) fn brief_unread(&self, sending: &mut Option<Active>, message: String) -> String {
-        let Some(active) = sending.as_mut().filter(|active| !active.driving.briefed) else {
-            return message;
-        };
-        let Some(file) = self.load().ok().flatten() else {
-            return message;
-        };
-        let (driving, text) = briefed_turn(&file.plan, active.driving.clone(), &message);
-        active.driving = driving;
-        text
-    }
-
-    pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        log_shown(self, &ticked);
-        route(self, ticked, monitor)
-    }
-
-    pub(super) fn took_over(&self, active: &Active) -> Driven {
-        stopped(self, StopReason::TookOver, &active.driving)
-    }
+pub(super) fn tick(send_it: &SendIt, active: &Active, ended: Ended) -> Ticked {
+    send_it.tick(&active.driving, active.watched.as_ref(), ended)
 }
 
-fn log_shown(send_it: &ServerSendIt, ticked: &Ticked) {
+pub(super) fn held_item(
+    send_it: &SendIt,
+    sending: &mut Option<Active>,
+    position: Position,
+    monitor: &Monitor,
+) -> io::Result<Driven> {
+    let read = Driven::reading(Route::ReadInbox(Selection::At(position)));
+    let outcome = sending
+        .as_ref()
+        .filter(|active| awaits_check(&active.driving))
+        .and_then(|active| active.watched.as_ref())
+        .and_then(|slot| locked(slot).clone());
+    let Some(outcome) = outcome else {
+        return Ok(read);
+    };
+    let reports = monitor.drain(Selection::At(position))?;
+    monitor.refresh(true);
+    let Some(active) = sending.take() else {
+        return Ok(read);
+    };
+    let file = send_it.load().ok().flatten();
+    let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
+    log_shown(send_it, &ticked);
+    let mut driven = route(send_it, ticked, monitor);
+    if driven.route.is_none() {
+        monitor.set_phase(Phase::Prompt);
+    }
+    *sending = driven.active.take();
+    Ok(driven)
+}
+
+pub(super) fn brief_unread(
+    send_it: &SendIt,
+    sending: &mut Option<Active>,
+    message: String,
+) -> String {
+    let Some(active) = sending.as_mut().filter(|active| !active.driving.briefed) else {
+        return message;
+    };
+    let Some(file) = send_it.load().ok().flatten() else {
+        return message;
+    };
+    let (driving, text) = briefed_turn(&file.plan, active.driving.clone(), &message);
+    active.driving = driving;
+    text
+}
+
+pub(super) fn dispatch(send_it: &SendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
+    log_shown(send_it, &ticked);
+    route(send_it, ticked, monitor)
+}
+
+fn log_shown(send_it: &SendIt, ticked: &Ticked) {
     for line in ticked.shown_lines() {
         send_it.log_notice(line);
     }
 }
 
-fn route(send_it: &ServerSendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
+fn route(send_it: &SendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
     for line in ticked.shown_lines() {
         send_it.show(line);
     }
@@ -240,7 +220,7 @@ fn route(send_it: &ServerSendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
     }
 }
 
-fn ended(send_it: &ServerSendIt, notice: &str, block: &str, driving: &Driving) -> Driven {
+fn ended(send_it: &SendIt, notice: &str, block: &str, driving: &Driving) -> Driven {
     send_it.show(block);
     send_it.log_notice(notice);
     if let Err(error) = send_it.release(&driving.hash, None) {
@@ -249,7 +229,7 @@ fn ended(send_it: &ServerSendIt, notice: &str, block: &str, driving: &Driving) -
     Driven::ended()
 }
 
-fn stopped(send_it: &ServerSendIt, reason: StopReason, driving: &Driving) -> Driven {
+fn stopped(send_it: &SendIt, reason: StopReason, driving: &Driving) -> Driven {
     let kept = send_it.release(&driving.hash, Some(driving.progress.step + 1));
     let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
     let notice = reason.notice(&driving.run, kept_file);
@@ -263,6 +243,10 @@ fn stopped(send_it: &ServerSendIt, reason: StopReason, driving: &Driving) -> Dri
         prefill: run_end_prefill(&Next::Stop(reason)),
         ..Driven::ended()
     }
+}
+
+pub(super) fn took_over(send_it: &SendIt, active: &Active) -> Driven {
+    stopped(send_it, StopReason::TookOver, &active.driving)
 }
 
 pub(super) struct InboxTurn<'a> {
@@ -300,7 +284,7 @@ impl InboxTurn<'_> {
             self.monitor.set_phase(Phase::Prompt);
             return Ok(None);
         };
-        let message = send_it.brief_unread(sending, unread.message);
+        let message = brief_unread(send_it, sending, unread.message);
         let (result, queue) = self.snapshots.around(|| {
             self.keys.during(|cancel| {
                 self.turn
