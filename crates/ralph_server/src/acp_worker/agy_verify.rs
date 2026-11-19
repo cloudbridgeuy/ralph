@@ -72,7 +72,23 @@ fn identity(init: &InitializeResponse, version: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn opening(dir: &Path, receipt: &str, updates: agy_settings::Updates) -> Opening {
+fn spawn_command(mode: PermissionMode) -> Command {
+    agy_settings::command(AGY_AGENT.command, mode)
+}
+
+fn mode_name(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Ask => "ask",
+        PermissionMode::Yolo => "yolo",
+    }
+}
+
+fn opening(
+    dir: &Path,
+    receipt: &str,
+    mode: PermissionMode,
+    updates: agy_settings::Updates,
+) -> Opening {
     Opening {
         agent: AGY_AGENT,
         launch: Launch::Fresh,
@@ -80,7 +96,7 @@ fn opening(dir: &Path, receipt: &str, updates: agy_settings::Updates) -> Opening
         server: server(dir, receipt),
         worker_id: "verify".to_string(),
         model: Some("gemini-3.8-flash-low".to_string()),
-        permission_mode: PermissionMode::Ask,
+        permission_mode: mode,
         effort: Some("low".to_string()),
         updates,
         inbox: dir.join("inbox"),
@@ -103,7 +119,7 @@ struct Run {
     checks: Checks,
     version: String,
     updates: agy_settings::Updates,
-    live: bool,
+    live: Option<PermissionMode>,
     allow_report: Arc<AtomicBool>,
 }
 
@@ -135,7 +151,12 @@ async fn run(
         ));
         return Ok(());
     }
-    let new = opening(&dir, "new.receipt", Arc::clone(&updates));
+    let new = opening(
+        &dir,
+        "new.receipt",
+        PermissionMode::Ask,
+        Arc::clone(&updates),
+    );
     let created = agy_settings::open(&connection, &new).await;
     let Some((id, selected)) = step(&checks, "session/new", created, |(id, _)| {
         format!("session {id}")
@@ -155,7 +176,12 @@ async fn run(
     if step(&checks, "session/close", closed, Clone::clone).is_none() {
         return Ok(());
     }
-    let load = opening(&dir, "load.receipt", Arc::clone(&updates));
+    let load = opening(
+        &dir,
+        "load.receipt",
+        PermissionMode::Ask,
+        Arc::clone(&updates),
+    );
     let loaded = agy_settings::load(&connection, &load, id.clone()).await;
     let Some((_, selected)) = step(&checks, "session/load", loaded, |_| {
         "session loaded".to_string()
@@ -172,13 +198,21 @@ async fn run(
         return Ok(());
     }
     let closed = close(&connection, &id).await;
-    if step(&checks, "session/close reload", closed, Clone::clone).is_some() && live {
-        live::run(&connection, &dir, &checks, updates, &allow_report).await;
+    if step(&checks, "session/close reload", closed, Clone::clone).is_some() {
+        if let Some(mode) = live {
+            live::run(&connection, &dir, &checks, (mode, updates), &allow_report).await;
+        }
     }
     Ok(())
 }
 
-pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, remaining: Duration) {
+pub(crate) fn verify(
+    live: Option<PermissionMode>,
+    dir: &Path,
+    checks: &Checks,
+    version: &str,
+    remaining: Duration,
+) {
     if remaining.is_zero() {
         checks.add(CheckResult::fail(
             "timeout",
@@ -204,10 +238,12 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
     {
         return;
     }
-    let evidence = if live {
+    let mode = live.unwrap_or(PermissionMode::Ask);
+    let evidence = if live.is_some() {
         match evidence::Evidence::create() {
             Ok((evidence, path)) => {
                 println!("agy permission evidence: {}", path.display());
+                println!("agy permission mode: {}", mode_name(mode));
                 Some(evidence)
             }
             Err(error) => {
@@ -221,8 +257,8 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
     } else {
         None
     };
-    let mut command = Command::new(AGY_AGENT.command);
-    command.arg("acp").current_dir(dir);
+    let mut command = spawn_command(mode);
+    command.current_dir(dir);
     let spawned =
         spawn_piped(command).map_err(|error| format!("could not start `agy acp`: {error}"));
     let Some((mut child, stdin, stdout, stderr)) =
@@ -344,7 +380,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
             "timeout",
             format!(
                 "agy verification exceeded {} seconds",
-                ralph_core::worker::verify_limit(live).as_secs()
+                ralph_core::worker::verify_limit(live.is_some()).as_secs()
             ),
         ));
     } else if let Err(ref error) = outcome {
@@ -376,6 +412,31 @@ mod tests {
         assert_eq!(first["args"][1], second["args"][1]);
         assert_ne!(first["args"][2], second["args"][2]);
         Ok(())
+    }
+
+    #[test]
+    fn yolo_verify_starts_agy_with_its_yolo_flag_and_opens_yolo_sessions() {
+        let args = |mode| {
+            spawn_command(mode)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            args(PermissionMode::Yolo),
+            ["acp", "--dangerously-skip-permissions"]
+        );
+        assert_eq!(args(PermissionMode::Ask), ["acp"]);
+        let updates = Arc::new(Mutex::new(None));
+        let open = |mode| opening(Path::new("/tmp/verify"), "r", mode, Arc::clone(&updates));
+        assert_eq!(
+            open(PermissionMode::Yolo).permission_mode,
+            PermissionMode::Yolo
+        );
+        assert_eq!(
+            open(PermissionMode::Ask).permission_mode,
+            PermissionMode::Ask
+        );
     }
 
     #[test]

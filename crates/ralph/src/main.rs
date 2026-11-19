@@ -130,6 +130,7 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
         WorkerCommand::Verify {
             agent,
             live,
+            yolo,
             drift,
             inbox,
         } => ralph_server::worker_verify::run(
@@ -142,6 +143,7 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
                 VerifyAgent::ClaudeTmux => HarnessId::ClaudeTmux,
             },
             live,
+            yolo,
             drift
                 .zip(inbox)
                 .map(|(version, inbox)| DriftRun::new(version, inbox)),

@@ -179,6 +179,12 @@ warning for that version."
         live: bool,
         #[arg(
             long,
+            requires = "live",
+            help = "With agy --live, start agy with its yolo permission flag"
+        )]
+        yolo: bool,
+        #[arg(
+            long,
             hide = true,
             value_name = "VERSION",
             requires = "inbox",

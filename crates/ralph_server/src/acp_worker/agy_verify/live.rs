@@ -49,7 +49,11 @@ fn usage(text: &str, session: &str, model: &str, total: u64) -> Result<String, S
     }
 }
 
-fn prepare(dir: &Path, updates: agy_settings::Updates) -> Result<Opening, String> {
+fn prepare(
+    dir: &Path,
+    mode: PermissionMode,
+    updates: agy_settings::Updates,
+) -> Result<Opening, String> {
     let owner = dir.join("owner");
     fs::write(&owner, "verify")
         .map_err(|error| format!("could not create verify owner: {error}"))?;
@@ -58,7 +62,7 @@ fn prepare(dir: &Path, updates: agy_settings::Updates) -> Result<Opening, String
     let worktree = dir.join("worktree");
     fs::create_dir(&worktree)
         .map_err(|error| format!("could not create verify worktree: {error}"))?;
-    let mut opening = opening(dir, "unused", updates);
+    let mut opening = opening(dir, "unused", mode, updates);
     opening.cwd = worktree;
     opening.server = serde_json::from_value(acp_mcp_server(&exe, ID, &opening.inbox, &owner, None))
         .map_err(|error| format!("could not configure worker MCP: {error}"))?;
@@ -78,10 +82,10 @@ pub(super) async fn run(
     connection: &ConnectionTo<Agent>,
     dir: &Path,
     checks: &Checks,
-    updates: agy_settings::Updates,
+    (mode, updates): (PermissionMode, agy_settings::Updates),
     allow_report: &AtomicBool,
 ) {
-    let Some(opening) = step(checks, "live setup", prepare(dir, updates), |_| {
+    let Some(opening) = step(checks, "live setup", prepare(dir, mode, updates), |_| {
         "temporary worker MCP prepared".to_string()
     }) else {
         return;
