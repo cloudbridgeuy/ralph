@@ -1,8 +1,8 @@
+use crate::chat::client_monitor::Monitor;
 use crate::chat::editor::open_in_editor;
 use crate::chat::hold_progress::git_out;
 use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
-use crate::chat::monitor::Monitor;
 use crate::chat::prompt::{screen_columns, Submitted};
 use crate::chat::queue::Queue;
 use crate::inbox_alert;

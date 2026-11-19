@@ -1,8 +1,8 @@
+use crate::chat::client_monitor::Monitor;
 use crate::chat::config;
 use crate::chat::diff::{self, DiffContext};
 use crate::chat::direct;
 use crate::chat::inbox::{self, Display};
-use crate::chat::monitor::Monitor;
 use crate::chat::nudge;
 use crate::chat::prompt::Columns;
 use crate::chat::rerender;

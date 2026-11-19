@@ -1,6 +1,6 @@
 use crate::ansi::{fg, BOLD, DIM, RESET};
+use crate::chat::client_monitor::Monitor;
 use crate::chat::inbox::Display;
-use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::markdown::{MarkdownTheme, Palette};
 use crate::render::{render_markdown, COLOR_OFF};

@@ -1,5 +1,6 @@
 use super::*;
-use crate::chat::monitor::{Core, Monitor, ProcessMemo};
+use crate::chat::client_monitor::Monitor;
+use crate::chat::monitor::{Core, ProcessMemo};
 use crate::chat::term_status::TermStatus;
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_process::{FileStamp, UsageTail};

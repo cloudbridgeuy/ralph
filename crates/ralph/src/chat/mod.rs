@@ -1,5 +1,6 @@
 mod bounded;
 pub(crate) mod cell;
+mod client_monitor;
 mod config;
 #[cfg(test)]
 mod corrupt_tests;
@@ -37,13 +38,14 @@ mod thread_cmd;
 mod view;
 mod workers;
 
+use crate::chat::client_monitor::{
+    client_sink, watch_headless, watch_input, watch_status, Monitor,
+};
 use crate::chat::editor::build_editor;
 use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
-use crate::chat::monitor::{
-    client_sink, ready_ids, watch_headless, watch_input, watch_status, Core, Monitor, ProcessMemo,
-};
+use crate::chat::monitor::{ready_ids, Core, ProcessMemo};
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
     decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
