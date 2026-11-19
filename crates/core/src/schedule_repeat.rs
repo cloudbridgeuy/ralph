@@ -98,7 +98,16 @@ fn next_daily<Tz: TimeZone>(
 ) -> Option<DateTime<Utc>> {
     let time = parse_daily_time(daily)?;
     let today = now.with_timezone(zone).date_naive();
-    let anchor_date = (anchor <= now).then(|| anchor.with_timezone(zone).date_naive());
+    let anchor_date = (anchor <= now)
+        .then(|| anchor.with_timezone(zone))
+        .and_then(|local| {
+            let date = local.date_naive();
+            if local.time() < time {
+                date.checked_sub_days(Days::new(1))
+            } else {
+                Some(date)
+            }
+        });
     (0..=DAY_SEARCH)
         .filter_map(|days| today.checked_add_days(Days::new(days)))
         .filter(|date| anchor_date.is_none_or(|fired| *date > fired))
@@ -550,6 +559,47 @@ mod tests {
         task.at = utc("2026-01-01T10:00:00Z");
         let next = plan_rearm(&task, utc("2026-01-01T10:00:05Z"), &Utc).unwrap();
         assert_eq!(next.at, utc("2026-01-02T10:00:00Z"));
+    }
+
+    #[test]
+    fn a_daily_task_that_ran_before_its_time_is_rearmed_for_the_same_day() {
+        let mut task = running(Some(daily("02:00")));
+        task.at = utc("2026-01-01T01:00:00Z");
+        let next = plan_rearm(&task, utc("2026-01-01T01:00:10Z"), &Utc).unwrap();
+        assert_eq!(next.at, utc("2026-01-01T02:00:00Z"));
+    }
+
+    #[test]
+    fn a_daily_task_that_ran_at_its_time_or_later_is_rearmed_for_the_next_day() {
+        for (at, now) in [
+            ("2026-01-01T02:00:00Z", "2026-01-01T02:00:10Z"),
+            ("2026-01-01T03:00:00Z", "2026-01-01T03:00:10Z"),
+        ] {
+            let mut task = running(Some(daily("02:00")));
+            task.at = utc(at);
+            let next = plan_rearm(&task, utc(now), &Utc).unwrap();
+            assert_eq!(next.at, utc("2026-01-02T02:00:00Z"), "{at}");
+        }
+    }
+
+    #[test]
+    fn daily_next_fire_keeps_the_same_day_for_an_earlier_anchor() {
+        let daily = daily("02:00");
+        let before = utc("2026-01-01T01:00:00Z");
+        let exact = utc("2026-01-01T02:00:00Z");
+        let after = utc("2026-01-01T03:00:00Z");
+        assert_eq!(
+            next_fire(&daily, before, utc("2026-01-01T01:00:10Z"), &Utc),
+            Some(utc("2026-01-01T02:00:00Z"))
+        );
+        assert_eq!(
+            next_fire(&daily, exact, utc("2026-01-01T02:00:10Z"), &Utc),
+            Some(utc("2026-01-02T02:00:00Z"))
+        );
+        assert_eq!(
+            next_fire(&daily, after, utc("2026-01-01T03:00:10Z"), &Utc),
+            Some(utc("2026-01-02T02:00:00Z"))
+        );
     }
 
     #[test]
