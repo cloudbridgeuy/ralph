@@ -2,7 +2,9 @@ use crate::mcp::string_arg;
 use crate::schedule::{
     escape_controls, parse_after, parse_at, Task, TaskKind, TaskStatus, WORKER_MAX_TIMEOUT_SECS,
 };
-use crate::schedule_repeat::{check_min, first_fire, parse_repeat, Repeat};
+use crate::schedule_repeat::{
+    check_min, first_fire, next_fire, parse_repeat, repeat_label, Repeat,
+};
 use crate::worker::is_dashed_token;
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use serde_json::{json, Value};
@@ -42,6 +44,11 @@ impl ScheduleRequest {
                     "The first run of the repeating task cannot be computed.".to_string()
                 })?,
         };
+        if let Some(repeat) = &self.repeat {
+            if next_fire(repeat, at, at, zone).is_none() {
+                return Err(format!("{} is too large to repeat.", repeat_label(repeat)));
+            }
+        }
         Ok(Task {
             id: self.id,
             kind: self.kind,
@@ -550,6 +557,38 @@ mod tests {
         let task = request.into_task(now(), &offset()).unwrap();
         assert_eq!(task.at, now() + ChronoDuration::minutes(10));
         assert!(task.repeat.is_some());
+    }
+
+    #[test]
+    fn into_task_refuses_an_every_too_large_to_repeat_after_the_first_run() {
+        for when in [
+            When::After(Duration::from_secs(600)),
+            When::At("14:30".to_string()),
+        ] {
+            let mut request = repeating(Repeat::Every {
+                every_secs: u64::MAX,
+            });
+            request.when = Some(when);
+            let error = request.into_task(now(), &offset()).unwrap_err();
+            assert!(error.contains("is too large to repeat"), "{error}");
+        }
+    }
+
+    #[test]
+    fn into_task_accepts_a_normal_every_with_a_first_run() {
+        let mut request = repeating(Repeat::Every { every_secs: 3600 });
+        request.when = Some(When::At("14:30".to_string()));
+        let task = request.into_task(now(), &offset()).unwrap();
+        assert_eq!(task.at, now() + ChronoDuration::minutes(150));
+    }
+
+    #[test]
+    fn into_task_accepts_daily_with_a_first_run() {
+        let mut request = repeating(Repeat::Daily {
+            daily: "02:00".to_string(),
+        });
+        request.when = Some(When::At("14:30".to_string()));
+        assert!(request.into_task(now(), &offset()).is_ok());
     }
 
     #[test]
