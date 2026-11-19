@@ -35,7 +35,7 @@ Other words are ignored. A `#id` reference is not a token. It is a pointer.
 - Survival: for each summary above the anchor (its aligned blocks with a summary), the share of the anchor's key tokens that the summary still holds. Rows are depths (block size is 2 to the power of depth). Columns are token classes.
 - Search rank: the query is the key tokens that survive in the summary the chat view shows for the anchor (the cover node). The report gives the 1-based rank of the anchor in `search` results, in buckets 1, 2-5, 6-20, >20 and miss.
 - unreachable: no key token survives in the cover summary, so no query exists.
-- Recall found: the share of anchors that `recall` lists, newest first, among the shown lines. The pattern is the surviving tokens joined by `|`.
+- Recall found (newest 50): the share of anchors that `recall` lists among its newest 50 matching lines (the cap of the recall tool). A match older than the 50 newest counts as a miss, so this is a floor. The pattern is the surviving tokens joined by `|`.
 - Pointer kept: the share of anchors whose `#id` appears in any summary above them. `#12` does not match `#123`.
 
 A falling survival or rank at higher depth means compression loses old facts.

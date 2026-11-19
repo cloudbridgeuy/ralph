@@ -42,7 +42,7 @@ pub fn zoom(window: &Window, tree: &Tree, node: Node) -> Result<Vec<String>, Str
         .collect()
 }
 
-const RECALL_MAX_LINES: usize = 50;
+pub(crate) const RECALL_MAX_LINES: usize = 50;
 const PREVIEW_CHARS: usize = 80;
 const PREVIEW_LEAD_CHARS: usize = 20;
 

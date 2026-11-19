@@ -4,6 +4,7 @@ use super::reach::{recall_cell, Bucket, ReachTally};
 use super::survival::{Cell, Table};
 use super::tokens::Class;
 use super::Decay;
+use crate::chat_memory::lookup::RECALL_MAX_LINES;
 use std::collections::BTreeSet;
 
 const CLASSES: [(Class, &str); 4] = [
@@ -66,7 +67,10 @@ fn reach_lines(reach: &ReachTally) -> Vec<String> {
             ranks.join(", "),
             reach.unreachable
         ),
-        format!("recall found: {}", show(recall_cell(reach))),
+        format!(
+            "recall found (newest {RECALL_MAX_LINES}): {}",
+            show(recall_cell(reach))
+        ),
     ]
 }
 
