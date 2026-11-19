@@ -9,6 +9,7 @@ ralph chat [--skill <PATH>]... [--permission-mode <MODE>] [--worktree-dir <DIR>]
 ralph                      # same as ralph chat with defaults
 ralph chat history <read|zoom|recall|search> <words>... [--cursor <C>] [--store <DIR>]
 ralph chat history stats [--gap <secs>] [--few-hits <n>] [--store <DIR>]
+ralph chat history decay [--max-anchors <n>] [--store <DIR>]   # see chat-decay.md
 ralph chat --thread <NAME> [--model <MODEL>]  # create or open a thread; see Threads
 ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pull <NAME>> [--store <DIR>]
 ```

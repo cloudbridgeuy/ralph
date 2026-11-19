@@ -627,6 +627,25 @@ pub enum HistorySub {
 It calls no model and costs nothing."
     )]
     Stats(StatsArgs),
+    #[command(
+        about = "Check whether repeated compression makes old decisions harder to find.",
+        long_about = "Reads log.jsonl, tree.jsonl and tags.jsonl from the store. It tests how \
+many key tokens of tagged and untagged anchor messages survive in each summary level, whether \
+search and recall still reach them, and whether a summary keeps their #id. It calls no model and \
+costs nothing. The era split is approximate."
+    )]
+    Decay(DecayArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct DecayArgs {
+    #[arg(
+        long = "max-anchors",
+        value_name = "N",
+        default_value_t = 200,
+        help = "Most anchor messages to test, tagged ones first"
+    )]
+    pub max_anchors: usize,
 }
 
 #[derive(clap::Args, Debug)]

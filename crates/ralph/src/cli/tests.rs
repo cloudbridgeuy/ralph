@@ -637,6 +637,30 @@ fn test_cli_chat_history_stats_takes_gap_and_few_hits() {
 }
 
 #[test]
+fn parses_history_decay() {
+    let history_of = |args: &[&str]| {
+        let Some(Commands::Chat(chat)) = Cli::try_parse_from(args).unwrap().command else {
+            panic!("expected chat");
+        };
+        let Some(ChatCommand::History(history)) = chat.command else {
+            panic!("expected chat history");
+        };
+        history
+    };
+    let Some(HistorySub::Decay(decay)) = history_of(&["ralph", "chat", "history", "decay"]).stats
+    else {
+        panic!("expected decay");
+    };
+    assert_eq!(decay.max_anchors, 200);
+    let Some(HistorySub::Decay(decay)) =
+        history_of(&["ralph", "chat", "history", "decay", "--max-anchors", "50"]).stats
+    else {
+        panic!("expected decay");
+    };
+    assert_eq!(decay.max_anchors, 50);
+}
+
+#[test]
 fn test_cli_chat_history_recall_without_words_still_errors() {
     let err = Cli::try_parse_from(["ralph", "chat", "history", "recall"]).unwrap_err();
     assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);

@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use super::STORE_ENV;
 
+mod decay;
 mod stats;
 
 pub(super) fn resolve_store(
@@ -58,6 +59,7 @@ pub(super) fn print_history(
     let Some(tool) = history.tool else {
         return match &history.stats {
             Some(HistorySub::Stats(args)) => stats::print_stats(store_dir, args),
+            Some(HistorySub::Decay(args)) => decay::print_decay(store_dir, args),
             None => Err("history needs a tool or a subcommand".into()),
         };
     };

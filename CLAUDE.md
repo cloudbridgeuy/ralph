@@ -14,7 +14,7 @@ cargo install --locked --path crates/ralph --root /usr/local --force  # Custom p
 ralph wraps `claude -p` with rich terminal rendering. Commands:
 
 - `ralph` / `ralph chat` - persistent chat with a compressed memory tree ([details](docs/context/ralph-chat.md))
-- `ralph chat history <read|zoom|recall|search|stats> …` - print the chat memory as the model's tools see it, or report how they were used; no model, no turn ([details](docs/context/ralph-chat.md#history-commands))
+- `ralph chat history <read|zoom|recall|search|stats|decay> …` - print the chat memory as the model's tools see it, report how they were used, or test whether compression hides old decisions; no model, no turn ([details](docs/context/ralph-chat.md#history-commands), [decay](docs/context/chat-decay.md))
 - `ralph chat --thread <name> [--model <m>]` / `ralph thread <ls|log|drop|merge [--view]|park|revive|pull>` - named side chats forked from main; in a chat, `/thread <ls|open <name> [--auto-merge|--auto-drop] [--model <m>] (new Rex block)|switch <name>|main|merge <name> [--view]|park <name>|revive <name>|drop <name>|pull <name>>` mirrors the CLI; `log` prints main and its threads as a unicode graph with no model and no cost ([details](docs/context/ralph-chat.md#threads), [log](docs/context/threads.md#thread-log))
 - `/send-it <instructions>` / `/send-it <status|edit|go|off|save|templates>` - in a chat, run an approved plan of steps with exit criteria and no input ([details](docs/context/send-it.md))
 - `@<id> <text>` - in a chat, send `<text>` to worker `<id>` as written, with no model turn and no cost ([details](docs/context/ralph-chat.md#id-text))
@@ -173,6 +173,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
+- [Chat Decay Check](docs/context/chat-decay.md) - `ralph chat history decay`: anchors, token survival by summary depth, search and recall reach, pointers, approximate era split
 - [Threads Guide](docs/context/threads.md) - Task-first how-to: open, pull, merge, park, revive and drop threads, and the refusals
 - [send-it Guide](docs/context/send-it.md) - Task-first how-to: propose, review and approve a run plan, exit criteria, caps, allowed actions, stops and templates
 - [ralph wire Command](docs/context/ralph-wire.md) - Recording proxy, storage layout, live rows, `ls`/`sessions`, chat usage
