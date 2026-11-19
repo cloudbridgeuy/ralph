@@ -919,3 +919,25 @@ fn consecutive_user_entries_need_no_assistant_pair() {
     assert!(lines.iter().any(|l| l.contains("@w1 first")));
     assert!(lines.iter().any(|l| l.contains("@w1 second")));
 }
+
+#[test]
+fn view_nodes_are_the_nodes_view_prints() {
+    let entries = short(9);
+    let tree = tree_of(&[n(0, 2), n(2, 4), n(0, 4)]);
+    let nodes = view_nodes(&entries, &tree, 6);
+    assert_eq!(
+        nodes,
+        [n(0, 4), n(4, 5), n(5, 6), n(6, 7), n(7, 8), n(8, 9)]
+    );
+    let lines = bare_view(&entries, &tree, 6);
+    let node_ids: Vec<String> = nodes.iter().map(Node::id).collect();
+    assert_eq!(node_ids, ids(&lines));
+}
+
+#[test]
+fn older_nodes_cover_only_the_frozen_prefix() {
+    let entries = short(300);
+    let nodes = older_nodes(&entries, &Tree::new(), 10, 0);
+    assert_eq!(nodes.last().map(|node| node.hi), Some(256));
+    assert_eq!(nodes.first().map(|node| node.lo), Some(0));
+}

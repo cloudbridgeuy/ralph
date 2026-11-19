@@ -18,8 +18,9 @@ mod tokens;
 #[cfg(test)]
 mod tokens_tests;
 
-use crate::chat::VIEW_LINES;
-use crate::chat_memory::{cover, Entry, TagState, Tree};
+use crate::chat::{RECENT_HISTORY_TOKENS, VIEW_LINES};
+use crate::chat_memory::tree::older_nodes;
+use crate::chat_memory::{Entry, TagState, Tree};
 use ancestors::ancestors;
 use anchors::{pick_anchors, Anchor, Group};
 use era::{section, Collected, Section};
@@ -59,7 +60,7 @@ pub fn build_decay(entries: &[Entry], tree: &Tree, tags: &TagState, config: &Dec
     let mut observations = Vec::new();
     let mut pointers = Vec::new();
     let mut probes = Vec::new();
-    let view_cover = cover(entries.len(), VIEW_LINES);
+    let view_cover = older_nodes(entries, tree, VIEW_LINES, RECENT_HISTORY_TOKENS);
     for anchor in &anchors {
         let found = ancestors(anchor.id, entries.len(), tree);
         observations.extend(observe(anchor, &found));

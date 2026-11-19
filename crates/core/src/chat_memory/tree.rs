@@ -169,7 +169,7 @@ fn mergeable_pair(tree: &Tree, nodes: &[Node], target: Node) -> Option<usize> {
     })
 }
 
-pub fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
+pub fn view_nodes(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<Node> {
     let mut nodes = cover(entries.len(), budget);
     while let Some(target) = split_target(entries, tree, &nodes) {
         if nodes.len() >= budget {
@@ -188,11 +188,28 @@ pub fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
         let (left, right) = target.halves();
         nodes.splice(i..=i, [left, right]);
     }
+    nodes
+}
+
+pub fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
     merge_notices(
-        nodes
+        view_nodes(entries, tree, budget)
             .into_iter()
             .map(|node| shown_node(entries, tree, node)),
     )
+}
+
+fn frozen_len(entries: &[Entry], recent_tokens: usize) -> usize {
+    stable_cut(verbatim_start(entries, 0, recent_tokens), OLDER_VIEW_STEP)
+}
+
+pub fn older_nodes(
+    entries: &[Entry],
+    tree: &Tree,
+    budget: usize,
+    recent_tokens: usize,
+) -> Vec<Node> {
+    view_nodes(&entries[..frozen_len(entries, recent_tokens)], tree, budget)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -209,7 +226,7 @@ pub fn split_view(
     recent_tokens: usize,
 ) -> ViewSplit {
     let start = verbatim_start(entries, 0, recent_tokens);
-    let frozen = stable_cut(start, OLDER_VIEW_STEP);
+    let frozen = frozen_len(entries, recent_tokens);
     let cut = stable_cut(start, TAIL_STEP);
     ViewSplit {
         older: view(&entries[..frozen], tree, budget),
