@@ -31,7 +31,7 @@ fn unreadable(path: &Path, error: io::Error) -> String {
 #[derive(Debug, Clone)]
 pub struct SendIt {
     log: PathBuf,
-    pub path: PathBuf,
+    path: PathBuf,
     templates: PathBuf,
     limits: Limits,
     refused: Arc<Mutex<Option<String>>>,
@@ -316,7 +316,7 @@ impl SendIt {
         }
     }
 
-    pub fn clear_approval(&self, width: usize) -> Screen {
+    fn clear_approval(&self, width: usize) -> Screen {
         match self.load() {
             Ok(Some(file)) => match self.save(&RunFile {
                 approved: None,
@@ -490,5 +490,38 @@ mod tests {
         assert!(failed.text.contains("not approved"), "{}", failed.text);
         let fine = send_it.edit(&mut Editor(None), 80);
         assert!(fine.text.contains("not approved"), "{}", fine.text);
+    }
+
+    #[test]
+    fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = quiet(dir.path());
+        send_it.propose(&plan_args()).unwrap();
+        let hash = send_it.status(80).shown.unwrap();
+        send_it.go(
+            Some(&hash),
+            true,
+            &Seen {
+                last: &HashMap::new(),
+                running: &[],
+            },
+        );
+        assert_eq!(
+            quiet(tempfile::tempdir().unwrap().path()).clear_approval(80),
+            Screen::text(NO_RUN)
+        );
+        let screen = send_it.clear_approval(80);
+        assert_eq!(screen.shown, Some(hash.clone()));
+        assert!(screen
+            .text
+            .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
+        fs::write(&send_it.path, "goal = ").unwrap();
+        let broken = send_it.clear_approval(80);
+        assert_eq!(broken.shown, None);
+        assert!(
+            broken.text.ends_with("Fix it with /send-it edit."),
+            "{}",
+            broken.text
+        );
     }
 }

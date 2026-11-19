@@ -1,4 +1,3 @@
-use crate::chat::socket::forward;
 use crate::chat::thread::{config_root, fork_of, Memory};
 use ralph_core::chat_help::config_help;
 use ralph_core::chat_memory::{
@@ -8,6 +7,7 @@ use ralph_core::chat_memory::{
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::mcp::tool_result;
 use ralph_server::chat::changes::run_changes;
+use ralph_server::chat::socket::serve::forward;
 use ralph_server::history_log;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};

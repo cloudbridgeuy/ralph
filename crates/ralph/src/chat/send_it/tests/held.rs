@@ -225,7 +225,7 @@ fn a_judge_turn_whose_plan_is_gone_carries_the_status_prefill() {
     };
     let ticked = send_it.tick(&active, super::ended());
     assert_eq!(ticked.next, Next::Judge);
-    fs::remove_file(&send_it.path).unwrap();
+    send_it.off();
     let driven = send_it.dispatch(ticked, &monitor(dir.path()));
     assert_eq!(driven.prefill.as_deref(), Some("/send-it status"));
     assert!(driven.route.is_none());

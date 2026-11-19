@@ -1,5 +1,4 @@
 use super::*;
-use crate::chat::socket::{respond, Shared};
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
 use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Seen, StepResult, VerifyMode};
@@ -8,6 +7,7 @@ use ralph_core::watch::WatchOutcome;
 use ralph_server::chat::ask::Notices;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::send_it::{Screen, NOT_PROPOSED, NO_RUN};
+use ralph_server::chat::socket::serve::{respond, Shared};
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
@@ -32,7 +32,7 @@ fn plan_args() -> Value {
     })
 }
 
-fn go(send_it: &SendIt, shown: Option<&str>, typed: bool) -> (String, Option<Ticked>) {
+fn go(send_it: &ServerSendIt, shown: Option<&str>, typed: bool) -> (String, Option<Ticked>) {
     send_it.go(
         shown,
         typed,
@@ -171,32 +171,11 @@ fn the_screens_after_a_proposal_and_a_template_use_carry_a_styled_copy() {
 }
 
 #[test]
-fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
-    let dir = tempfile::tempdir().unwrap();
-    let (send_it, hash) = proposed(dir.path());
-    go(&send_it, Some(&hash), true);
-    let screen = send_it.clear_approval(80);
-    assert_eq!(screen.shown, Some(hash.clone()));
-    assert!(screen
-        .text
-        .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
-    fs::write(&send_it.path, "goal = ").unwrap();
-    let broken = send_it.clear_approval(80);
-    assert_eq!(broken.shown, None);
-    assert!(
-        broken.text.ends_with("Fix it with /send-it edit."),
-        "{}",
-        broken.text
-    );
-}
-
-#[test]
 fn without_a_run_every_command_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = quiet(dir.path());
     let none = Screen::text(NO_RUN);
     assert_eq!(send_it.status(80), none);
-    assert_eq!(send_it.clear_approval(80), none);
     assert_eq!(go(&send_it, Some("x"), true), (NO_RUN.to_string(), None));
     assert_eq!(send_it.off(), NO_RUN);
     assert!(NO_RUN.starts_with("No send-it run."));
@@ -300,7 +279,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: send_it.clone(),
+        send_it: (*send_it).clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
@@ -394,7 +373,7 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: quiet(dir.path()),
+        send_it: (*quiet(dir.path())).clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
@@ -420,7 +399,10 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
         "The approved run does not allow `reply`. The run stops; ralph tells the person."
     );
     assert_eq!(
-        shared.send_it.tick(&active, ended()).next,
+        shared
+            .send_it
+            .tick(&active.driving, active.watched.as_ref(), ended())
+            .next,
         Next::Stop(StopReason::Refused {
             tool: "reply".to_string()
         })
@@ -433,7 +415,7 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: quiet(dir.path()),
+        send_it: (*quiet(dir.path())).clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
@@ -472,7 +454,10 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
         spawned.text
     );
     assert_eq!(
-        shared.send_it.tick(&active, ended()).next,
+        shared
+            .send_it
+            .tick(&active.driving, active.watched.as_ref(), ended())
+            .next,
         Next::Stop(StopReason::Refused {
             tool: "spawn_worker codex".to_string()
         })
@@ -584,7 +569,7 @@ fn every_tick_reads_the_plan_file_again() {
         send_it.tick(&active, ended()).next,
         Next::Check("cargo xtask lint".to_string())
     );
-    send_it.clear_approval(80);
+    send_it.release(&active.driving.hash, None).unwrap();
     assert_eq!(
         send_it.tick(&active, ended()).next,
         Next::Stop(StopReason::PlanChanged)
