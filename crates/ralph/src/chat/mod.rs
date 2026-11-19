@@ -65,7 +65,6 @@ use crate::cli::{ChatArgs, ChatCommand};
 use crate::config::{load_for_chat, ConfigSnapshot, FileState, MermaidStyleExt, ThemeWarnings};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;
-use crate::invoke::Isolation;
 use crate::markdown::{MarkdownTheme, RolePalette, ThemeRole};
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::schedule_store::ScheduleStore;
@@ -111,6 +110,7 @@ use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
+use ralph_server::invoke::Isolation;
 use ralph_server::opencode_worker::sweep_stale_server_records;
 use ralph_server::paths::{absolute_from, config_path};
 use ralph_server::warn::{warn, warn_if_err};
@@ -167,7 +167,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let config = loaded.config;
     let permission_mode = config.chat_permission_mode(
         args.permission_mode.as_deref(),
-        std::env::var(crate::invoke::CHAT_PERMISSION_MODE_ENV)
+        std::env::var(ralph_server::invoke::CHAT_PERMISSION_MODE_ENV)
             .ok()
             .as_deref(),
     );

@@ -3,6 +3,7 @@
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
 pub mod ansi;
+mod ask;
 mod chat;
 mod cli;
 mod clipboard;
@@ -16,7 +17,6 @@ mod hook_bridge;
 mod inbox_alert;
 mod inbox_post;
 mod input_theme;
-mod invoke;
 mod licenses;
 pub mod markdown;
 mod mermaid_guard;
@@ -40,15 +40,16 @@ pub mod warn;
 mod watch_requests;
 mod wire;
 
+use ask::InvocationConfig;
 use clap::Parser;
 use cli::{
     AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, ChatTagArgs, Cli, Commands, MermaidArgs,
     VerifyAgent, WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
-use invoke::InvocationConfig;
 use ralph_core::cancel::CancelToken;
 use ralph_core::worker::HarnessId;
 use ralph_server::backoff;
+use ralph_server::invoke;
 use ralph_server::subprocess;
 use ralph_server::version_drift::DriftRun;
 use ralph_server::warn::{warn, warn_if_err};
@@ -209,7 +210,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         startup::display_prompt(&prompt_display, &ui);
     }
 
-    let outcome = invoke::invoke(config);
+    let outcome = ask::invoke(config);
     if let Some(done) = subprocess::recorded(&outcome) {
         record_ask(done);
     }

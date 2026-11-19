@@ -17,6 +17,7 @@ pub(crate) mod cursor_sweep;
 pub(crate) mod cursor_usage;
 pub mod disk_files;
 pub mod hook_bridge;
+pub mod invoke;
 pub(crate) mod json_file;
 pub mod ledger;
 pub(crate) mod opencode_usage;
