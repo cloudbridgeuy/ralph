@@ -27,15 +27,14 @@ use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
-    decide, decode_update, describe, encode, gone_path, permission_content, probed_version,
-    prompt_failure_report, ready_path, reduce, request_stale, resume_decision, session_error,
-    stop_problem, sweeps_permissions, turn_outcome, AcpAgent, AcpCall, BlockedContent,
-    Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
-    PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
-    Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
-    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
-    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
-    CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    decide, describe, encode, gone_path, permission_content, probed_version, prompt_failure_report,
+    ready_path, reduce, request_stale, resume_decision, session_error, stop_problem,
+    sweeps_permissions, turn_outcome, AcpAgent, AcpCall, BlockedContent, Capabilities,
+    HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound, PermissionAnswer,
+    PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
+    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
+    CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR,
+    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -96,7 +95,6 @@ struct Opening {
     launch: Launch,
     cwd: PathBuf,
     server: McpServer,
-    loading: Arc<AtomicBool>,
     worker_id: String,
     model: Option<String>,
 }
@@ -118,7 +116,6 @@ async fn open_session(
                 return Err(message);
             }
             let session = SessionId::new(record.session_id.clone());
-            opening.loading.store(true, Ordering::SeqCst);
             let loaded = connection
                 .send_request(
                     LoadSessionRequest::new(session.clone(), opening.cwd.clone())
@@ -126,7 +123,6 @@ async fn open_session(
                 )
                 .block_task()
                 .await;
-            opening.loading.store(false, Ordering::SeqCst);
             let loaded = loaded.map_err(|e| {
                 format!(
                     "{} session {} could not be loaded: {}",
@@ -201,7 +197,6 @@ impl AcpWorker {
         let (prompts, prompt_rx) = queue::unbounded();
         let (finished_tx, finished_rx) = mpsc::channel();
         let closing = Arc::new(AtomicBool::new(false));
-        let reported = Arc::new(AtomicBool::new(false));
         let mut worker = Self {
             agent,
             child,
@@ -232,8 +227,6 @@ impl AcpWorker {
         let (stop_tx, stop_rx) = oneshot::channel();
         worker.stop = Some(stop_tx);
         let cwd = request.worktree.clone();
-        let loading = Arc::new(AtomicBool::new(false));
-        let replaying = Arc::clone(&loading);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
         let changes = request
@@ -249,8 +242,6 @@ impl AcpWorker {
             });
         let results = results.to_path_buf();
         let turns_permissions = Arc::clone(&permissions);
-        let seen = Arc::clone(&reported);
-        let allowed = Arc::clone(&reported);
         let heartbeat = Arc::clone(&permissions.heartbeat);
         heartbeat.clear();
         let on_request = Arc::clone(&heartbeat);
@@ -269,26 +260,14 @@ impl AcpWorker {
                     .on_receive_request(
                         async move |request: RequestPermissionRequest, responder, _cx| {
                             on_request.touch();
-                            if permissions.push(&request, responder) {
-                                allowed.store(true, Ordering::SeqCst);
-                            }
+                            permissions.push(&request, responder);
                             Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
                     .on_receive_notification(
-                        async move |notification: SessionNotification, _cx| {
-                            let update =
-                                serde_json::to_value(&notification.update).unwrap_or_default();
-                            for event in decode_update(&update, now_secs()) {
-                                match event {
-                                    WorkerEvent::Activity { at } => on_notification.touch_at(at),
-                                    WorkerEvent::Reported if !replaying.load(Ordering::SeqCst) => {
-                                        seen.store(true, Ordering::SeqCst);
-                                    }
-                                    _ => {}
-                                }
-                            }
+                        async move |_notification: SessionNotification, _cx| {
+                            on_notification.touch();
                             Ok(())
                         },
                         agent_client_protocol::on_receive_notification!(),
@@ -312,7 +291,6 @@ impl AcpWorker {
                             launch,
                             cwd,
                             server,
-                            loading,
                             worker_id: worker_id.clone(),
                             model: session_model,
                         };
@@ -329,7 +307,6 @@ impl AcpWorker {
                                     markers,
                                     results,
                                     inbox,
-                                    reported,
                                     closing,
                                     changes,
                                     heartbeat: in_turns,

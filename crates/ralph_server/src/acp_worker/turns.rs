@@ -1,4 +1,5 @@
 use super::*;
+use crate::worker_mcp::remove_if_present;
 use ralph_core::worker::{turn_end_activity, ActivityState};
 
 pub(super) struct Turns {
@@ -9,7 +10,6 @@ pub(super) struct Turns {
     pub(super) markers: WorkerMarkers,
     pub(super) results: PathBuf,
     pub(super) inbox: Inbox,
-    pub(super) reported: Arc<AtomicBool>,
     pub(super) closing: Arc<AtomicBool>,
     pub(super) changes: Option<WorkerChanges>,
     pub(super) heartbeat: Arc<Heartbeat>,
@@ -69,7 +69,20 @@ pub(super) async fn run_turns(
         };
         push_event(&turns.events, WorkerEvent::TurnStarted);
         turns.heartbeat.set_state(ActivityState::Running);
-        turns.reported.store(false, Ordering::SeqCst);
+        if let Err(error) = remove_if_present(&turns.markers.reported) {
+            queue.finish();
+            let message = format!("could not clear the report receipt: {error}");
+            turns.heartbeat.set_state(ActivityState::Failed);
+            push_event(
+                &turns.events,
+                WorkerEvent::TurnEnded(TurnEnd::Failed {
+                    message: message.clone(),
+                    transient: false,
+                }),
+            );
+            post_prompt_failure(turns, &message);
+            continue;
+        }
         let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
             return;
         };
@@ -112,9 +125,9 @@ pub(super) async fn run_turns(
         });
         push_event(&turns.events, WorkerEvent::TurnEnded(end));
         let stop = reason.as_deref().map_err(|e| e.message.as_str());
-        let outcome = turn_outcome(
+        let outcome = receipt_outcome(
+            &turns.markers.reported,
             stop,
-            turns.reported.load(Ordering::SeqCst),
             text == REPORT_REMINDER,
             turns.closing.load(Ordering::SeqCst),
             interrupted,
@@ -155,4 +168,69 @@ fn post_prompt_failure(turns: &Turns, problem: &str) {
     let at = chrono::Utc::now().to_rfc3339();
     let report = prompt_failure_report(turns.agent.name, &turns.worker_id, &at, problem);
     turns.inbox.post(&report, 0).ok();
+}
+
+fn receipt_outcome(
+    receipt: &Path,
+    stop: Result<&str, &str>,
+    reminded: bool,
+    closing: bool,
+    interrupted: bool,
+) -> TurnOutcome {
+    turn_outcome(stop, receipt.exists(), reminded, closing, interrupted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejected_report_requires_a_reminder() {
+        let dir = tempfile::tempdir().unwrap();
+        let markers = WorkerMarkers::new(dir.path(), "A");
+        let inbox =
+            Inbox::new(dir.path().join("inbox")).requiring_owner(Some(dir.path().join("agy/A")));
+        let call = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"report\",\"arguments\":{\"status\":\"done\",\"text\":\"hello\"}}}\n";
+        let mut output = Vec::new();
+        crate::worker_mcp::run_stdio_server("A", &inbox, None, &call[..], &mut output).unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(reply["result"]["isError"], true);
+        assert_eq!(
+            receipt_outcome(&markers.reported, Ok("end_turn"), false, false, false),
+            TurnOutcome::Remind
+        );
+    }
+
+    #[test]
+    fn report_receipt_belongs_to_the_current_worker_and_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = WorkerMarkers::new(dir.path(), "A");
+        let b = WorkerMarkers::new(dir.path(), "B");
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let call = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"report\",\"arguments\":{\"status\":\"done\",\"text\":\"hello\"}}}\n";
+        let mut output = Vec::new();
+        crate::worker_mcp::run_stdio_server("A", &inbox, None, &call[..], &mut output).unwrap();
+        assert_eq!(
+            receipt_outcome(&a.reported, Ok("end_turn"), false, false, false),
+            TurnOutcome::Reported
+        );
+        assert_eq!(
+            receipt_outcome(&b.reported, Ok("end_turn"), false, false, false),
+            TurnOutcome::Remind
+        );
+        remove_if_present(&a.reported).unwrap();
+        assert_eq!(
+            receipt_outcome(&a.reported, Ok("end_turn"), false, false, false),
+            TurnOutcome::Remind
+        );
+        remove_if_present(&a.reported).unwrap();
+    }
+
+    #[test]
+    fn receipt_reset_rejects_unremovable_stale_receipts() {
+        let dir = tempfile::tempdir().unwrap();
+        let receipt = dir.path().join("receipt");
+        fs::create_dir(&receipt).unwrap();
+        assert!(remove_if_present(&receipt).is_err());
+    }
 }

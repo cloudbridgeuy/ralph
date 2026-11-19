@@ -42,7 +42,7 @@ impl Permissions {
         })
     }
 
-    pub(super) fn push(&self, request: &RequestPermissionRequest, responder: Reply) -> bool {
+    pub(super) fn push(&self, request: &RequestPermissionRequest, responder: Reply) {
         let value = serde_json::to_value(request).unwrap_or_default();
         let content = BlockedContent {
             request_id: responder.id().to_string(),
@@ -50,10 +50,9 @@ impl Permissions {
         };
         if let Some(option) = auto_allow_option(self.mode, &content) {
             respond_selected(responder, option.option_id.clone());
-            return true;
+            return;
         }
         self.queue.enqueue(responder, content);
-        false
     }
 
     pub(super) fn answer(&self, answer: &PermissionAnswer) -> Result<(), String> {

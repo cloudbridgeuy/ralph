@@ -1,6 +1,4 @@
-use super::REPORT_TOOL;
-use crate::worker::{Report, ReportStatus, REPORT_REMINDER, SERVER_NAME, WORKER_PROMPT};
-use serde_json::Value;
+use crate::worker::{Report, ReportStatus, REPORT_REMINDER, WORKER_PROMPT};
 use std::collections::VecDeque;
 
 pub fn prompt_entry_name(nanos: u64, pid: u32) -> String {
@@ -166,12 +164,6 @@ pub fn sweeps_permissions(stop: Result<&str, &str>, outcome: &TurnOutcome) -> bo
     stop == Ok("cancelled") || *outcome == TurnOutcome::Cancelled
 }
 
-pub fn is_report_tool_call(update: &Value) -> bool {
-    let title = format!("{SERVER_NAME}: {REPORT_TOOL}");
-    update["sessionUpdate"] == "tool_call_update"
-        && update["title"].as_str().is_some_and(|v| v.trim() == title)
-}
-
 pub fn stop_problem(agent: &str, reason: &str) -> String {
     format!("the {agent} agent ended its turn with `{reason}`")
 }
@@ -193,7 +185,6 @@ pub fn accept_report(owner_required: bool, owner_exists: bool) -> bool {
 mod tests {
     use super::super::CURSOR_AGENT;
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn remind_queues_at_most_one_reminder() {
@@ -401,43 +392,6 @@ mod tests {
         assert_eq!(queue.start().as_deref(), Some("now"));
         assert!(!queue.finish());
         assert_eq!(queue.start(), None);
-    }
-
-    #[test]
-    fn only_the_worker_report_tool_call_counts_as_reported() {
-        let call = |kind: &str, title: &str| json!({"sessionUpdate": kind, "title": title});
-        assert!(is_report_tool_call(&json!({
-            "sessionUpdate": "tool_call_update",
-            "toolCallId": "t1",
-            "title": "ralph-worker: report",
-            "rawInput": {"toolName": "report", "status": "done", "text": "hi"}
-        })));
-        assert!(!is_report_tool_call(&json!({
-            "sessionUpdate": "tool_call",
-            "toolCallId": "t1",
-            "title": "MCP: tool",
-            "kind": "other"
-        })));
-        assert!(!is_report_tool_call(&call(
-            "tool_call",
-            "ralph-worker: report"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "tool_call_update",
-            "ralph-worker-report: report"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "tool_call_update",
-            "other-server: report"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "tool_call_update",
-            "ralph-worker: spawn"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "agent_message_chunk",
-            "ralph-worker: report"
-        )));
     }
 
     #[test]
