@@ -38,6 +38,7 @@ pub(in crate::chat) fn monitor(dir: &Path) -> Monitor {
         store,
         known: Mutex::new(Vec::new()),
         fresh: Mutex::new((Vec::new(), 0)),
+        starting: Arc::default(),
         scheduled_reports: Mutex::new(Vec::new()),
         warned: Mutex::new(HashSet::new()),
         unrecorded: Mutex::new(HashSet::new()),

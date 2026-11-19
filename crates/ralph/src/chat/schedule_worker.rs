@@ -12,20 +12,22 @@ use ralph_server::workers::{running_workers, SpawnArgs, Workers};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-static STARTING: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-struct Starting(String);
+struct Starting(Arc<Mutex<Vec<String>>>, String);
 
 impl Starting {
-    fn enter(id: &str) -> Self {
-        locked(&STARTING).push(id.to_string());
-        Self(id.to_string())
+    fn enter(monitor: &Monitor, id: &str) -> Self {
+        locked(&monitor.starting).push(id.to_string());
+        Self(Arc::clone(&monitor.starting), id.to_string())
     }
+}
+
+fn starting_ids(monitor: &Monitor) -> Vec<String> {
+    locked(&monitor.starting).clone()
 }
 
 impl Drop for Starting {
     fn drop(&mut self) {
-        locked(&STARTING).retain(|id| id != &self.0);
+        locked(&self.0).retain(|id| id != &self.1);
     }
 }
 
@@ -47,7 +49,7 @@ pub(super) fn tick_workers(monitor: &Monitor) {
     let alive = if any_running {
         alive_with_starting(
             &alive_worker_ids(&monitor.store_dir),
-            &locked(&STARTING).clone(),
+            &starting_ids(monitor),
         )
     } else {
         Vec::new()
@@ -127,7 +129,7 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
     let workers = monitor.workers.clone();
     let store = monitor.schedule.clone();
     let inbox = Arc::clone(&monitor.inbox);
-    let starting = Starting::enter(&task.id);
+    let starting = Starting::enter(monitor, &task.id);
     std::thread::spawn(move || {
         let _starting = starting;
         let worker = worker_id(&task.id);
@@ -162,4 +164,20 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::send_it::tests::held;
+
+    #[test]
+    fn two_monitors_do_not_share_starting_ids() {
+        let (first_dir, second_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let first = held::monitor(first_dir.path());
+        let second = held::monitor(second_dir.path());
+        let _starting = Starting::enter(&first, "task");
+        assert_eq!(starting_ids(&first), vec!["task".to_string()]);
+        assert!(starting_ids(&second).is_empty());
+    }
 }

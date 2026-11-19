@@ -331,6 +331,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         check: Mutex::new(CheckState::seeded(&store)),
         known: Mutex::new(known),
         fresh: Mutex::new((Vec::new(), 0)),
+        starting: Arc::default(),
         scheduled_reports: Mutex::new(Vec::new()),
         warned: Mutex::new(HashSet::new()),
         unrecorded: Mutex::new(HashSet::new()),

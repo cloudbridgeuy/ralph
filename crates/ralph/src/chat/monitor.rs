@@ -96,6 +96,7 @@ pub(super) struct Monitor {
     pub(super) check: Mutex<CheckState>,
     pub(super) known: Mutex<Vec<Report>>,
     pub(super) fresh: Mutex<(Vec<Report>, usize)>,
+    pub(super) starting: Arc<Mutex<Vec<String>>>,
     pub(super) scheduled_reports: Mutex<Vec<Report>>,
     pub(super) warned: Mutex<HashSet<String>>,
     pub(super) unrecorded: Mutex<HashSet<String>>,
