@@ -32,7 +32,8 @@ pub use history_log::{
     MalformedCall, TurnFacts,
 };
 pub use history_stats::{
-    count_calls, parse_history, parse_timing, Counts, Parsed, TimingParsed, ToolCounts,
+    build_chains, count_calls, parse_history, parse_timing, Chains, Counts, Parsed, StatsConfig,
+    TimingParsed, ToolCounts,
 };
 pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,

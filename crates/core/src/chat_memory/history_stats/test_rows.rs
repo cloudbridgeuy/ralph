@@ -23,3 +23,7 @@ pub fn call(extra: Value) -> String {
 pub fn history(lines: &[String]) -> Parsed {
     parse_history(&lines.join("\n"))
 }
+
+pub fn at(second: u32) -> String {
+    format!("2026-11-05T10:{:02}:{:02}Z", second / 60, second % 60)
+}
