@@ -100,12 +100,16 @@ impl<'a> Scan<'a> {
     }
 }
 
+fn page_bounds(request: &SearchRequest, total: usize) -> (usize, usize) {
+    let offset = request.cursor.map_or(0, |c| c.offset).min(total);
+    (offset, (offset + request.limit).min(total))
+}
+
 fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String {
     if ranked.is_empty() {
         return format!("no hits for {}", request.text);
     }
-    let offset = request.cursor.map_or(0, |c| c.offset).min(ranked.len());
-    let end = (offset + request.limit).min(ranked.len());
+    let (offset, end) = page_bounds(request, ranked.len());
     let mut lines: Vec<String> = ranked[offset..end]
         .iter()
         .map(|hit| {
@@ -145,11 +149,13 @@ pub fn search_found<B: ByteSource>(
         return Ok(Err(message));
     }
     let ranked = scan.ranked();
+    let (offset, end) = page_bounds(request, ranked.len());
     Ok(Ok(Found {
         text: render(request, count, &ranked),
         hits: ranked.len(),
         truncated: None,
         oldest: ranked.iter().map(|hit| hit.id).min(),
         top: ranked.first().map(|hit| hit.id),
+        shown: ranked[offset..end].iter().map(|hit| hit.id).collect(),
     }))
 }

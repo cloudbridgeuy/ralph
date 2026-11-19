@@ -113,6 +113,11 @@ pub fn recall_found(entries: &[Entry], pattern: &str) -> Result<Found, String> {
         truncated: Some(hits.len() > RECALL_MAX_LINES),
         oldest: hits.iter().map(|(i, _, _)| *i).min(),
         top: hits.first().map(|(i, _, _)| *i),
+        shown: hits
+            .iter()
+            .take(RECALL_MAX_LINES)
+            .map(|(i, _, _)| *i)
+            .collect(),
     })
 }
 

@@ -78,7 +78,7 @@ impl Memory {
                 took: started.elapsed(),
                 metrics: result
                     .as_ref()
-                    .map(|answer| answer.facts)
+                    .map(|answer| answer.facts.clone())
                     .unwrap_or_default(),
             },
         );

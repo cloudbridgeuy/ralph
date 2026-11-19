@@ -3,7 +3,7 @@ use ralph_core::chat_memory::{
     cover_candidates, cover_size, found_metrics, read_metrics, recall_found, search_found,
     zoom_metrics, Archive, ByteSource, CallMetrics, Found, NodeSource, Tool,
 };
-use ralph_core::chat_thread::{label_item, label_lines};
+use ralph_core::chat_thread::{label_item, label_lines, ThreadName};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
@@ -14,6 +14,7 @@ pub struct Answer {
 fn lookup_answer<B: ByteSource>(
     archive: &mut Archive<B>,
     found: Found,
+    label: Option<&ThreadName>,
     lines: impl FnOnce(String) -> String,
 ) -> Answer {
     let total = archive.count();
@@ -21,8 +22,16 @@ fn lookup_answer<B: ByteSource>(
         let nodes = archive.tree.nodes(&cover_candidates(top, total)).ok()?;
         Some(cover_size(&nodes, top, total))
     });
+    let mut facts = found_metrics(&found, cover);
+    if let Some(name) = label {
+        facts.hit_ids = facts
+            .hit_ids
+            .iter()
+            .map(|id| format!("{name}:{id}"))
+            .collect();
+    }
     Answer {
-        facts: found_metrics(&found, cover),
+        facts,
         text: lines(found.text),
     }
 }
@@ -59,12 +68,12 @@ impl Store {
                         entries.push(entry.clone())
                     })?;
                     recall_found(&entries, pattern)
-                        .map(|found| lookup_answer(archive, found, lines))
+                        .map(|found| lookup_answer(archive, found, reach.label, lines))
                 }
                 Tool::Search(request) => {
                     let request = super::super::tag_store::with_tags(&self.dir, request)?;
                     search_found(archive, &request)?
-                        .map(|found| lookup_answer(archive, found, lines))
+                        .map(|found| lookup_answer(archive, found, reach.label, lines))
                 }
             })
         });

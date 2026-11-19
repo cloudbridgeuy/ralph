@@ -132,8 +132,9 @@ pub fn record_call(
     result: &Result<String, String>,
     ctx: CallContext,
 ) {
+    let source = ctx.source;
     let facts = history_call_facts(call, result, ctx);
-    append_call_row(store, ctx.source, |key| history_call_row(key, &facts));
+    append_call_row(store, source, |key| history_call_row(key, &facts));
 }
 
 pub fn record_error(store: &Path, bad: &MalformedCall, scope: ErrorScope, ctx: CallContext) {

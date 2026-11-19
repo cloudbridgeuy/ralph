@@ -7,7 +7,10 @@ pub struct Found {
     pub truncated: Option<bool>,
     pub oldest: Option<usize>,
     pub top: Option<usize>,
+    pub shown: Vec<usize>,
 }
+
+const HIT_IDS_CAP: usize = 10;
 
 fn count(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
@@ -56,6 +59,12 @@ pub fn found_metrics(found: &Found, top_cover_size: Option<u64>) -> CallMetrics 
         truncated: found.truncated,
         oldest_hit: found.oldest.map(count),
         top_cover_size: found.top.and(top_cover_size),
+        hit_ids: found
+            .shown
+            .iter()
+            .take(HIT_IDS_CAP)
+            .map(usize::to_string)
+            .collect(),
         ..CallMetrics::default()
     }
 }
@@ -107,6 +116,7 @@ mod tests {
             truncated: Some(true),
             oldest: Some(3),
             top: Some(9),
+            shown: vec![9, 3],
         };
         let metrics = found_metrics(&found, Some(4));
         assert_eq!(metrics.hits, Some(60));
@@ -120,8 +130,28 @@ mod tests {
             truncated: Some(false),
             oldest: None,
             top: None,
+            shown: Vec::new(),
         };
         let metrics = found_metrics(&empty, Some(4));
         assert_eq!((metrics.hits, metrics.top_cover_size), (Some(0), None));
+    }
+
+    #[test]
+    fn found_metrics_list_shown_ids_in_order_capped_at_ten() {
+        let found = |shown: Vec<usize>| Found {
+            text: String::new(),
+            hits: shown.len(),
+            truncated: None,
+            oldest: None,
+            top: None,
+            shown,
+        };
+        let few = found_metrics(&found(vec![9, 3, 5]), None);
+        assert_eq!(few.hit_ids, ["9", "3", "5"]);
+        let many = found_metrics(&found((0..25).rev().collect()), None);
+        assert_eq!(many.hit_ids.len(), 10);
+        assert_eq!(many.hit_ids[0], "24");
+        assert_eq!(many.hit_ids[9], "15");
+        assert!(found_metrics(&found(Vec::new()), None).hit_ids.is_empty());
     }
 }

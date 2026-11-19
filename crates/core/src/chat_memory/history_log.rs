@@ -170,7 +170,7 @@ pub enum HistoryOutcome {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallMetrics {
     pub hits: Option<u64>,
     pub truncated: Option<bool>,
@@ -179,9 +179,10 @@ pub struct CallMetrics {
     pub in_view: Option<bool>,
     pub oldest_hit: Option<u64>,
     pub top_cover_size: Option<u64>,
+    pub hit_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct CallContext {
     pub source: CallSource,
     pub took: Duration,
@@ -245,6 +246,8 @@ enum HistoryEvent {
         oldest_hit: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         top_cover_size: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hit_ids: Option<Vec<String>>,
     },
     Turn {
         scope: String,
@@ -440,7 +443,7 @@ pub fn history_call_facts(
 }
 
 fn call_event(facts: &CallFacts) -> HistoryEvent {
-    let metrics = facts.metrics;
+    let metrics = &facts.metrics;
     HistoryEvent::Call {
         source: facts.source,
         tool: facts.tool,
@@ -457,6 +460,7 @@ fn call_event(facts: &CallFacts) -> HistoryEvent {
         in_view: metrics.in_view,
         oldest_hit: metrics.oldest_hit,
         top_cover_size: metrics.top_cover_size,
+        hit_ids: (!metrics.hit_ids.is_empty()).then(|| metrics.hit_ids.clone()),
     }
 }
 

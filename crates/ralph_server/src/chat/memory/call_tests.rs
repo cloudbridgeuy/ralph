@@ -1,5 +1,6 @@
 use super::*;
 use ralph_core::chat_memory::{parse_tool_call, CallMetrics, Tool};
+use ralph_core::chat_thread::ThreadName;
 use serde_json::{json, Value};
 
 const STAMP: &str = "2026-01-01T00:00";
@@ -346,4 +347,56 @@ fn search_facts_count_hits_and_find_the_top_cover() {
     let none = facts(&store, "search", json!({"query": "zzz"}));
     assert_eq!(none.hits, Some(0));
     assert_eq!((none.oldest_hit, none.top_cover_size), (None, None));
+}
+
+#[test]
+fn a_recall_row_lists_hit_ids() {
+    let (_dir, store) = small_store();
+    let wide = facts(&store, "recall", json!({"pattern": "needle"}));
+    assert_eq!(wide.hit_ids, ["5", "3", "1"]);
+    let none = facts(&store, "recall", json!({"pattern": "zzz"}));
+    assert!(none.hit_ids.is_empty());
+}
+
+#[test]
+fn a_search_row_lists_only_the_returned_page() {
+    let (_dir, store) = small_store();
+    let all = facts(&store, "search", json!({"query": "needle"}));
+    assert_eq!(all.hit_ids.len(), 3);
+    let paged = facts(&store, "search", json!({"query": "needle", "limit": 1}));
+    assert_eq!(paged.hit_ids, all.hit_ids[..1]);
+}
+
+#[test]
+fn hit_ids_are_capped_at_ten() {
+    let texts: Vec<String> = (0..25).map(|i| format!("hit {i}")).collect();
+    let (_dir, store) = seeded(&texts);
+    let recalled = facts(&store, "recall", json!({"pattern": "hit"}));
+    assert_eq!(recalled.hit_ids.len(), 10);
+    assert_eq!(recalled.hit_ids[0], "24");
+}
+
+#[test]
+fn a_zoom_or_read_row_has_no_hit_ids() {
+    let (_dir, store) = small_store();
+    assert!(facts(&store, "zoom", json!({"id": "0-3"}))
+        .hit_ids
+        .is_empty());
+    assert!(facts(&store, "read", json!({"id": "0-3"}))
+        .hit_ids
+        .is_empty());
+}
+
+#[test]
+fn thread_hit_ids_carry_the_thread_label() {
+    let (_dir, store) = small_store();
+    let name = ThreadName::parse("auth").unwrap();
+    let reach = Reach {
+        limit: None,
+        label: Some(&name),
+    };
+    let found = store
+        .call(&tool("recall", json!({"pattern": "needle"})), reach)
+        .unwrap();
+    assert_eq!(found.facts.hit_ids, ["auth:5", "auth:3", "auth:1"]);
 }

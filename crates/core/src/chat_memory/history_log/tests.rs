@@ -218,6 +218,7 @@ fn optional_fields_are_skipped_when_none() {
         "in_view",
         "oldest_hit",
         "top_cover_size",
+        "hit_ids",
     ] {
         assert!(v.get(field).is_none(), "{field}");
     }
@@ -534,4 +535,26 @@ fn a_hashed_turn_row_has_no_id_list() {
     let back: HistoryRow =
         serde_json::from_str(&encode_history(&history_turn_row(&key(), &facts)).unwrap()).unwrap();
     assert_eq!(value(&back), v);
+}
+
+#[test]
+fn a_search_row_lists_hit_ids_in_returned_order() {
+    let mut ctx = ctx();
+    ctx.metrics.hits = Some(3);
+    ctx.metrics.hit_ids = vec!["7".into(), "auth:4".into(), "2".into()];
+    let v = call(Tool::Recall("foo".into()), Ok("#7 hit".into()), ctx);
+    assert_eq!(v["hit_ids"], json!(["7", "auth:4", "2"]));
+}
+
+#[test]
+fn a_row_without_hit_ids_omits_the_field() {
+    let v = call(Tool::Recall("foo".into()), Ok("no hits".into()), ctx());
+    assert!(v.get("hit_ids").is_none());
+}
+
+#[test]
+fn an_old_row_without_hit_ids_still_parses() {
+    let line = r#"{"v":1,"at":"a","store":"/s","event":"call","source":"mcp","tool":"search","scope":"own","args":{},"outcome":"ok","hits":2,"result_bytes":4,"duration_ms":1}"#;
+    let row: HistoryRow = serde_json::from_str(line).unwrap();
+    assert!(value(&row).get("hit_ids").is_none());
 }
