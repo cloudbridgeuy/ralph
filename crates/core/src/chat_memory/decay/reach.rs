@@ -84,6 +84,9 @@ pub fn recall_position(entries: &[Entry], id: usize, words: &[&str]) -> Option<u
 }
 
 pub fn probe(anchor: &Anchor, entries: &[Entry], tree: &Tree, cover: &[Node]) -> Option<Probe> {
+    if anchor.keys.is_empty() {
+        return None;
+    }
     let node = cover_ancestor(anchor.id, cover)?;
     let outcome = if node.size() == 1 {
         Outcome::Uncompressed

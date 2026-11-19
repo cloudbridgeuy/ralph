@@ -116,3 +116,14 @@ fn percent_rounds_and_handles_empty() {
     assert_eq!(Cell { kept: 1, total: 3 }.percent(), Some(33));
     assert_eq!(Cell { kept: 2, total: 3 }.percent(), Some(67));
 }
+
+#[test]
+fn keyless_anchor_has_no_pointer_row() {
+    let tree = tree();
+    let found = ancestors(1, 4, &tree);
+    let keyless = Anchor {
+        keys: Vec::new(),
+        ..anchor(1, Group::Tagged)
+    };
+    assert_eq!(pointer_of(&keyless, &found), None);
+}

@@ -88,8 +88,11 @@ fn indented(lines: Vec<String>) -> impl Iterator<Item = String> {
     lines.into_iter().map(|line| format!("  {line}"))
 }
 
-fn section_lines(name: &str, anchors: usize, section: &Section) -> Vec<String> {
-    let mut lines = vec![String::new(), format!("== {name} ({anchors} anchors) ==")];
+fn section_lines(name: &str, anchors: usize, keyless: usize, section: &Section) -> Vec<String> {
+    let mut lines = vec![
+        String::new(),
+        format!("== {name} ({anchors} anchors, {keyless} without key tokens) =="),
+    ];
     lines.extend(block_lines(&section.overall));
     lines.push("by era (approximate: summaries are written after their entries):".to_string());
     for era in ERAS {
@@ -115,7 +118,8 @@ pub fn render_decay(decay: &Decay) -> String {
         (Group::TopUp, "top-up", top_up),
     ] {
         let section = decay.sections.get(&group).unwrap_or(&empty);
-        lines.extend(section_lines(name, anchors, section));
+        let keyless = decay.keyless.get(&group).copied().unwrap_or(0);
+        lines.extend(section_lines(name, anchors, keyless, section));
     }
     lines.join("\n")
 }

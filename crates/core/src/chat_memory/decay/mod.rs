@@ -51,6 +51,7 @@ impl Default for DecayConfig {
 pub struct Decay {
     pub anchors: Vec<Anchor>,
     pub uncompressed: usize,
+    pub keyless: BTreeMap<Group, usize>,
     pub sections: BTreeMap<Group, Section>,
 }
 
@@ -71,6 +72,16 @@ pub fn build_decay(entries: &[Entry], tree: &Tree, tags: &TagState, config: &Dec
         .iter()
         .filter(|p| p.outcome == Outcome::Uncompressed)
         .count();
+    let keyless = GROUPS
+        .iter()
+        .map(|group| {
+            let count = anchors
+                .iter()
+                .filter(|a| a.group == *group && a.keys.is_empty())
+                .count();
+            (*group, count)
+        })
+        .collect();
     let data = Collected {
         observations: &observations,
         pointers: &pointers,
@@ -83,6 +94,7 @@ pub fn build_decay(entries: &[Entry], tree: &Tree, tags: &TagState, config: &Dec
     Decay {
         anchors,
         uncompressed,
+        keyless,
         sections,
     }
 }

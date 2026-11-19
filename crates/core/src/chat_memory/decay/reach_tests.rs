@@ -134,3 +134,13 @@ fn reach_tally_counts_outcomes_and_skips_uncompressed() {
     assert_eq!(tally.recall.values().sum::<usize>(), 2);
     assert_eq!(tally.recall[&Bucket::Miss], 1);
 }
+
+#[test]
+fn keyless_anchor_is_not_probed() {
+    let cover = [n(0, 4), n(4, 5), n(5, 6)];
+    let keyless = Anchor {
+        keys: Vec::new(),
+        ..anchor(2)
+    };
+    assert_eq!(probe(&keyless, &entries(), &tree("text"), &cover), None);
+}

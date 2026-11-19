@@ -68,6 +68,9 @@ pub fn has_pointer(summary: &str, id: usize) -> bool {
 }
 
 pub fn pointer_of(anchor: &Anchor, ancestors: &[Ancestor]) -> Option<Pointer> {
+    if anchor.keys.is_empty() {
+        return None;
+    }
     let last = ancestors.last()?.node.hi - 1;
     Some(Pointer {
         group: anchor.group,

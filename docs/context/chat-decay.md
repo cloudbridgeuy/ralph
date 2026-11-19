@@ -31,7 +31,7 @@ Other words are ignored. A `#id` reference is not a token. It is a pointer.
 
 ## What each number means
 
-- Header: `anchors N (tagged X, top-up Y) uncompressed U`. U counts anchors whose cover node is a single entry. They have no summary, so the other numbers leave them out.
+- Header: `anchors N (tagged X, top-up Y) uncompressed U`. U counts anchors whose cover node is a single entry. They have no summary, so the other numbers leave them out. Anchors with no key tokens are not probed. Each group title shows their count as `without key tokens`.
 - Survival: for each summary above the anchor (its aligned blocks with a summary), the share of the anchor's key tokens that the summary still holds. Rows are depths (block size is 2 to the power of depth). Columns are token classes.
 - Search rank: the query is the key tokens that survive in the summary the chat view shows for the anchor (the cover node). The report gives the 1-based rank of the anchor in `search` results, in buckets 1, 2-5, 6-20, >20 and miss.
 - unreachable: no key token survives in the cover summary, so no query exists.
