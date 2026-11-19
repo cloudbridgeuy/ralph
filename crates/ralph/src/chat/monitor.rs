@@ -1,8 +1,6 @@
 use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
-use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
 use crate::chat::term_status::TermStatus;
-use crate::chat::thread::settle;
 use crate::inbox_alert;
 use crate::signal;
 use ralph_core::chat::ResetLimits;
@@ -32,6 +30,8 @@ use ralph_core::worker_check::{
 use ralph_server::chat::check::CheckState;
 use ralph_server::chat::host::{tick_events, HostEvent};
 use ralph_server::chat::memory::{self, Store};
+use ralph_server::chat::schedule::fire_due;
+use ralph_server::chat::settle;
 use ralph_server::cursor_owner::{now_secs, write_file};
 use ralph_server::schedule_store::ScheduleStore;
 use ralph_server::subprocess::Session;

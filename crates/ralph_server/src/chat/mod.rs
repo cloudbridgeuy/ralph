@@ -6,6 +6,8 @@ pub mod host;
 pub mod index_files;
 pub mod memory;
 pub mod name;
+pub mod schedule;
+pub mod settle;
 pub mod skills;
 pub mod snapshots;
 pub mod socket;

@@ -51,7 +51,7 @@ use crate::chat::queue::{
 };
 use crate::chat::refusal::{refuse_or_exit, restore_prompt};
 use crate::chat::route::{run_local, LocalRoute};
-use crate::chat::schedule::{approve_proposed, restore_schedule};
+use crate::chat::schedule::approve_proposed;
 use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::{BarContext, StatusBar};
@@ -99,6 +99,7 @@ use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use ralph_server::chat::check::CheckState;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::schedule::restore_schedule;
 use ralph_server::chat::skills::read_claude_config;
 use ralph_server::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
