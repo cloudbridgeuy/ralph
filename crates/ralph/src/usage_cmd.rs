@@ -135,7 +135,11 @@ fn resolve_recorded_store(path: &Path, canon: impl Fn(&Path) -> Option<PathBuf>)
         .find_map(|ancestor| {
             let resolved = canon(ancestor)?;
             let tail = path.strip_prefix(ancestor).ok()?;
-            Some(resolved.join(tail))
+            Some(if tail.as_os_str().is_empty() {
+                resolved
+            } else {
+                resolved.join(tail)
+            })
         })
         .unwrap_or_else(|| path.to_path_buf())
 }
@@ -154,6 +158,28 @@ mod tests {
         assert_eq!(
             resolve_recorded_store(Path::new("/tmp/x"), fake_canon),
             PathBuf::from("/private/tmp/x")
+        );
+    }
+
+    #[test]
+    fn resolve_recorded_store_of_an_existing_path_has_no_trailing_separator() {
+        let resolved = resolve_recorded_store(Path::new("/tmp/x"), fake_canon);
+        assert_eq!(resolved.display().to_string(), "/private/tmp/x");
+    }
+
+    #[test]
+    fn resolve_recorded_store_of_a_missing_store_has_no_trailing_separator() {
+        let resolved = resolve_recorded_store(Path::new("/tmp/x/store"), fake_canon);
+        assert_eq!(resolved.display().to_string(), "/private/tmp/x/store");
+    }
+
+    #[test]
+    fn resolve_recorded_store_matches_the_worker_recorded_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = resolve_recorded_store(dir.path(), |q| fs::canonicalize(q).ok());
+        assert_eq!(
+            resolved.display().to_string(),
+            ralph_server::workers::usage_store(dir.path())
         );
     }
 
