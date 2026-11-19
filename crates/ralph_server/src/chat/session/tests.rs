@@ -52,3 +52,40 @@ fn tuning_keeps_the_quiet_and_reset_warnings() {
     assert!(tuned.as_ref().is_ok_and(|t| t.quiet_warning.is_some()));
     assert!(tuned.is_ok_and(|t| !t.reset_warnings.is_empty()));
 }
+
+#[test]
+fn trigger_for_marks_send_it_turns() {
+    assert_eq!(trigger_for(true), Trigger::SendIt);
+    assert_eq!(trigger_for(false), Trigger::User);
+}
+
+#[test]
+fn phase_after_shows_replied_only_for_a_reply() {
+    assert_eq!(phase_after(TurnOutcome::Replied), Phase::Replied);
+    assert_eq!(phase_after(TurnOutcome::Exit), Phase::Prompt);
+}
+
+#[test]
+fn a_plain_reply_prints_and_keeps_the_plan() {
+    let reply = Reply::plain("templates");
+    assert_eq!(reply.screen.text, "templates");
+    assert!(!reply.note && reply.shown.is_none() && reply.started.is_none());
+}
+
+#[test]
+fn a_noted_reply_is_recorded_and_keeps_the_plan() {
+    let reply = Reply::noted("Saved.");
+    assert!(reply.note && reply.shown.is_none());
+}
+
+#[test]
+fn a_screen_reply_replaces_the_shown_plan() {
+    let screen = Screen {
+        text: "plan".into(),
+        styled: "plan".into(),
+        shown: Some("abc".into()),
+    };
+    let reply = Reply::screen(screen);
+    assert!(reply.note);
+    assert_eq!(reply.shown, Some(Some("abc".to_string())));
+}

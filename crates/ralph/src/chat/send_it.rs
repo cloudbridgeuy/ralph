@@ -12,21 +12,17 @@ use ralph_core::chat_send_it::{
     judge_prompt, resolve_check, run_end_prefill, running_line, settle_check, step_line,
     stop_block, verify_worker, Driving, Ended, Limits, Next, StopReason, Ticked,
 };
-use ralph_core::chat_status::{latest_states, Route};
+use ralph_core::chat_status::Route;
 use ralph_core::chat_suggestion::driven_fill;
 use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
-use ralph_core::worker_check::logged_states;
-use ralph_server::chat::memory::Store;
 use ralph_server::chat::send_it::SendIt as ServerSendIt;
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::turn::{Turn, TurnOutcome};
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::{locked, OutcomeSlot};
-use ralph_server::workers::running_workers;
 use reedline::{EditCommand, Reedline};
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::ops::Deref;
 use std::path::Path;
@@ -99,20 +95,6 @@ impl Driven {
             prefill: None,
         }
     }
-}
-
-pub(super) fn worker_states(monitor: &Monitor) -> (HashMap<String, String>, Vec<String>) {
-    let mut last = Store::new(monitor.store_dir.clone())
-        .load()
-        .map(|(entries, _)| logged_states(&entries))
-        .unwrap_or_default();
-    last.extend(locked(&monitor.seen).clone());
-    last.extend(latest_states(&monitor.inbox.peek().unwrap_or_default()));
-    let running = running_workers(&monitor.store_dir)
-        .into_iter()
-        .map(|worker| worker.id)
-        .collect();
-    (last, running)
 }
 
 impl SendIt {

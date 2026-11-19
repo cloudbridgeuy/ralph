@@ -1,34 +1,40 @@
+use crate::chat::ask::Ask;
 use crate::chat::check::CheckState;
 use crate::chat::keepalive::Stamp;
 use crate::chat::memory::{self, Store};
 use crate::chat::monitor::{Monitor, ProcessMemo};
 use crate::chat::schedule::restore_schedule;
 use crate::chat::schedule_worker::alive_worker_ids;
-use crate::chat::send_it::SendIt;
+use crate::chat::send_it::{Screen, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
     write_skill_plugin,
 };
+use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::serve::{ChatSocket, Shared, SocketGuard};
+use crate::chat::turn::{Turn, TurnOutcome};
 use crate::config::{AppConfig, ChatSection};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::schedule_store::ScheduleStore;
-use crate::watches::Watches;
+use crate::watches::{locked, Watches};
 use crate::wire::store::current_uid;
 use crate::worker_mcp::Inbox;
-use crate::workers::Workers;
+use crate::workers::{running_workers, Workers};
 use ralph_core::chat::{
     resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
     select_servers, ResetLimits,
 };
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
+use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_process::UsageTail;
+use ralph_core::chat_send_it::{propose_prompt, usage, Limits, Seen, SendItCommand, Ticked};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, ChatSkill, SkillSources};
 use ralph_core::chat_socket::{runtime_root, system_prompt_path};
-use ralph_core::chat_status::Status;
+use ralph_core::chat_status::{latest_states, Status};
 use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::worker::INBOX_DIR;
+use ralph_core::worker_check::logged_states;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -193,6 +199,142 @@ pub fn serve(
         roster,
     );
     restore_schedule(&core.schedule, &alive_worker_ids(&core.store_dir));
+}
+
+pub fn trigger_for(sending: bool) -> Trigger {
+    if sending {
+        Trigger::SendIt
+    } else {
+        Trigger::User
+    }
+}
+
+pub fn phase_after(outcome: TurnOutcome) -> Phase {
+    if outcome == TurnOutcome::Replied {
+        Phase::Replied
+    } else {
+        Phase::Prompt
+    }
+}
+
+pub struct Session<'s> {
+    pub turn: Turn<'s>,
+    pub core: Arc<Monitor>,
+    pub send_it: SendIt,
+    pub limits: Limits,
+    pub snapshots: TurnSnapshots,
+}
+
+pub struct At<'a> {
+    pub shown_plan: Option<&'a str>,
+    pub typed_at_prompt: bool,
+    pub width: usize,
+}
+
+pub struct Proposal {
+    pub sent: String,
+    before: Option<String>,
+}
+
+pub struct Reply {
+    pub screen: Screen,
+    pub note: bool,
+    pub shown: Option<Option<String>>,
+    pub started: Option<Ticked>,
+    pub proposal: Option<Proposal>,
+}
+
+impl Reply {
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            screen: Screen::text(text),
+            note: false,
+            shown: None,
+            started: None,
+            proposal: None,
+        }
+    }
+
+    pub fn noted(text: impl Into<String>) -> Self {
+        Self {
+            note: true,
+            ..Self::plain(text)
+        }
+    }
+
+    pub fn screen(screen: Screen) -> Self {
+        Self {
+            shown: Some(screen.shown.clone()),
+            note: true,
+            screen,
+            started: None,
+            proposal: None,
+        }
+    }
+}
+
+impl Session<'_> {
+    pub fn worker_states(&self) -> (HashMap<String, String>, Vec<String>) {
+        let mut last = Store::new(self.core.store_dir.clone())
+            .load()
+            .map(|(entries, _)| logged_states(&entries))
+            .unwrap_or_default();
+        last.extend(locked(&self.core.seen).clone());
+        last.extend(latest_states(&self.core.inbox.peek().unwrap_or_default()));
+        let running = running_workers(&self.core.store_dir)
+            .into_iter()
+            .map(|worker| worker.id)
+            .collect();
+        (last, running)
+    }
+
+    pub fn send_it(&self, command: SendItCommand, at: &At, ask: &mut dyn Ask) -> Reply {
+        match command {
+            SendItCommand::Propose(text) => {
+                if let Some((ticket, name)) = self.send_it.template_use(&text) {
+                    return Reply::screen(self.send_it.use_template(&ticket, &name, at.width));
+                }
+                if let Some(refusal) = self.send_it.refusal() {
+                    return Reply::noted(refusal);
+                }
+                Reply {
+                    proposal: Some(Proposal {
+                        sent: propose_prompt(&text),
+                        before: self.send_it.current_hash(),
+                    }),
+                    ..Reply::plain("")
+                }
+            }
+            SendItCommand::Save { name, ticket } => {
+                Reply::noted(self.send_it.save_template(&name, ticket.as_deref()))
+            }
+            SendItCommand::Templates => Reply::plain(self.send_it.templates()),
+            SendItCommand::Usage => Reply::plain(usage(&self.limits)),
+            SendItCommand::Go => {
+                let (last, running) = self.worker_states();
+                let seen = Seen {
+                    last: &last,
+                    running: &running,
+                };
+                let (text, started) = self.send_it.go(at.shown_plan, at.typed_at_prompt, &seen);
+                Reply {
+                    shown: started.as_ref().map(|_| None),
+                    started,
+                    ..Reply::noted(text)
+                }
+            }
+            SendItCommand::Off => Reply {
+                shown: Some(None),
+                ..Reply::noted(self.send_it.off())
+            },
+            SendItCommand::Edit => Reply::screen(self.send_it.edit(ask, at.width)),
+            SendItCommand::Status => Reply::screen(self.send_it.status(at.width)),
+        }
+    }
+
+    pub fn proposed(&self, proposal: Proposal, width: usize) -> Screen {
+        self.send_it.proposed(proposal.before, width)
+    }
 }
 
 #[cfg(test)]

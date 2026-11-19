@@ -45,7 +45,7 @@ use crate::chat::queue::{
 use crate::chat::refusal::{refuse_or_exit, restore_prompt};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, Keyboard};
-use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
+use crate::chat::send_it::{Active, InboxTurn, SendIt};
 use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::{chat_exit, check as check_switch, Leave};
@@ -68,9 +68,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_process::run_id;
-use ralph_core::chat_send_it::{
-    propose_prompt, usage as send_it_usage, Ended, Seen, SendItCommand,
-};
+use ralph_core::chat_send_it::Ended;
 use ralph_core::chat_status::{orphan_hint, Route};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
@@ -85,7 +83,10 @@ use ralph_server::chat::host::spawn_host;
 use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::ready_ids;
-use ralph_server::chat::session::{open_core, serve, tuning, CoreParts, Wiring, WiringConfig};
+use ralph_server::chat::session::{
+    open_core, phase_after, serve, trigger_for, tuning, At, CoreParts, Session, Wiring,
+    WiringConfig,
+};
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::turn::{draft_after, Turn, TurnOutcome};
@@ -315,6 +316,16 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
     serve(&monitor.core, wiring.socket, &send_it, roster);
+    let session = Session {
+        turn,
+        core: Arc::clone(&monitor.core),
+        send_it: (*send_it).clone(),
+        limits: send_it_limits,
+        snapshots,
+    };
+    let Session {
+        turn, snapshots, ..
+    } = &session;
     monitor.refresh(true);
     let running = running_workers(&monitor.store_dir);
     if let Some(hint) = orphan_hint(
@@ -474,8 +485,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         editor: &prompt.editor,
     };
     let inbox_turn = InboxTurn {
-        turn: &turn,
-        snapshots: &snapshots,
+        turn,
+        snapshots,
         keys: &keys,
         monitor: &monitor,
     };
@@ -591,11 +602,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                         }
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
-                        let trigger = if sending.is_some() {
-                            Trigger::SendIt
-                        } else {
-                            Trigger::User
-                        };
+                        let trigger = trigger_for(sending.is_some());
                         let (result, queued) = snapshots.around(|| {
                             keys.during(|cancel| {
                                 turn.run(trigger, std::slice::from_ref(&sent), &sent, cancel)
@@ -640,84 +647,47 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 }
                 continue;
             }
-            Route::SendIt(SendItCommand::Propose(text)) => {
-                if let Some((ticket, name)) = send_it.template_use(&text) {
-                    let screen = send_it.use_template(&ticket, &name, prompt::screen_columns());
-                    println!("{}", screen.for_terminal(color));
-                    note(&screen.text);
-                    shown_plan = screen.shown;
+            Route::SendIt(command) => {
+                let at = At {
+                    shown_plan: shown_plan.as_deref(),
+                    typed_at_prompt,
+                    width: prompt::screen_columns(),
+                };
+                let mut keyboard = Keyboard {
+                    editor: &prompt.editor,
+                };
+                let reply = session.send_it(command, &at, &mut keyboard);
+                let Some(proposal) = reply.proposal else {
+                    println!("{}", reply.screen.for_terminal(color));
+                    if reply.note {
+                        note(&reply.screen.text);
+                    }
+                    if let Some(shown) = reply.shown {
+                        shown_plan = shown;
+                    }
+                    if let Some(started) = reply.started {
+                        let mut driven = send_it.dispatch(started, &monitor);
+                        (sending, pending) = (driven.active.take(), driven.enter(&mut editor));
+                    }
                     continue;
-                }
-                if let Some(refusal) = send_it.refusal() {
-                    println!("{refusal}");
-                    note(&refusal);
-                    continue;
-                }
-                let before = send_it.current_hash();
-                let sent = propose_prompt(&text);
+                };
                 monitor.set_phase(Phase::Turn);
                 let (result, queued) = snapshots.around(|| {
                     keys.during(|cancel| {
-                        turn.run(Trigger::User, std::slice::from_ref(&sent), &sent, cancel)
+                        turn.run(
+                            Trigger::User,
+                            std::slice::from_ref(&proposal.sent),
+                            &proposal.sent,
+                            cancel,
+                        )
                     })
                 });
                 queue = queued;
                 let outcome = result?;
-                let screen = send_it.proposed(before, prompt::screen_columns());
+                let screen = session.proposed(proposal, prompt::screen_columns());
                 println!("{}", screen.for_terminal(color));
                 shown_plan = screen.shown;
                 (outcome, None)
-            }
-            Route::SendIt(SendItCommand::Save { name, ticket }) => {
-                let saved = send_it.save_template(&name, ticket.as_deref());
-                println!("{saved}");
-                note(&saved);
-                continue;
-            }
-            Route::SendIt(SendItCommand::Templates) => {
-                println!("{}", send_it.templates());
-                continue;
-            }
-            Route::SendIt(SendItCommand::Usage) => {
-                println!("{}", send_it_usage(&send_it_limits));
-                continue;
-            }
-            Route::SendIt(SendItCommand::Go) => {
-                let (last, running) = worker_states(&monitor);
-                let seen = Seen {
-                    last: &last,
-                    running: &running,
-                };
-                let (text, started) = send_it.go(shown_plan.as_deref(), typed_at_prompt, &seen);
-                println!("{text}");
-                note(&text);
-                if let Some(started) = started {
-                    shown_plan = None;
-                    let mut driven = send_it.dispatch(started, &monitor);
-                    (sending, pending) = (driven.active.take(), driven.enter(&mut editor));
-                }
-                continue;
-            }
-            Route::SendIt(SendItCommand::Off) => {
-                shown_plan = None;
-                let off = send_it.off();
-                println!("{off}");
-                note(&off);
-                continue;
-            }
-            Route::SendIt(command @ (SendItCommand::Status | SendItCommand::Edit)) => {
-                let screen = if command == SendItCommand::Edit {
-                    let mut keyboard = Keyboard {
-                        editor: &prompt.editor,
-                    };
-                    send_it.edit(&mut keyboard, prompt::screen_columns())
-                } else {
-                    send_it.status(prompt::screen_columns())
-                };
-                println!("{}", screen.for_terminal(color));
-                note(&screen.text);
-                shown_plan = screen.shown;
-                continue;
             }
             Route::Switch { parsed, line } => {
                 let leave = Leave {
@@ -815,11 +785,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             }
         };
         queue.entries.splice(0..0, std::mem::take(&mut carried));
-        monitor.set_phase(if outcome == TurnOutcome::Replied {
-            Phase::Replied
-        } else {
-            Phase::Prompt
-        });
+        monitor.set_phase(phase_after(outcome));
         monitor.refresh(true);
         if outcome == TurnOutcome::Exit {
             let lost = unsent(&queue);
