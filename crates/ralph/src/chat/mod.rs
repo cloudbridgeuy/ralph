@@ -60,15 +60,11 @@ use crate::render::{cap_wrap_width, RenderContext};
 use crate::signal;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
-use ralph_core::chat::{
-    resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
-    resolve_wrap_width, select_servers, ReplyImages,
-};
+use ralph_core::chat::{resolve_wrap_width, select_servers, ReplyImages};
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
-use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
@@ -94,6 +90,7 @@ use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::{ready_ids, Monitor as Core, ProcessMemo};
 use ralph_server::chat::schedule::restore_schedule;
+use ralph_server::chat::session::tuning;
 use ralph_server::chat::skills::read_claude_config;
 use ralph_server::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
@@ -168,15 +165,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             .as_deref(),
     );
     let chat_config = config.chat;
-    let recent_history_tokens = resolve_recent_history_tokens(
-        args.recent_history_tokens,
-        chat_config.recent_history_tokens,
-    );
-    let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
-    let keepalive_hours = resolve_keepalive_hours(chat_config.keepalive_hours);
-    let (worker_quiet_secs, quiet_warning) = chat_config.worker_quiet_setting();
-    let (reset_limits, reset_warnings) = chat_config.reset_limits_setting();
-    let watch_timeout = resolve_watch_timeout(chat_config.watch_timeout_secs)?;
+    let tuning = tuning(&chat_config, args.recent_history_tokens)?;
+    let (recent_history_tokens, reset_limits) = (tuning.recent_history_tokens, tuning.reset_limits);
     let wrap_cap = resolve_wrap_width(
         args.wrap_width,
         std::env::var(WRAP_WIDTH_ENV).ok().as_deref(),
@@ -306,7 +296,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     );
     let monitor = Arc::new(Monitor {
         core: Arc::new(Core {
-            watches: Watches::new(Arc::clone(&inbox), &store_dir, watch_timeout),
+            watches: Watches::new(Arc::clone(&inbox), &store_dir, tuning.watch_timeout),
             schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
             inbox,
             store: Store::new(store_dir.clone()),
@@ -315,8 +305,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             seen: Mutex::new(HashMap::new()),
             active: Mutex::new(None),
             recent_history_tokens,
-            worker_check_secs,
-            worker_quiet_secs,
+            worker_check_secs: tuning.worker_check_secs,
+            worker_quiet_secs: tuning.worker_quiet_secs,
             auto_continue: chat_config.auto_continue,
             hold_progress: chat_config.hold_progress,
             workers: Workers::new(
@@ -419,7 +409,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
-    let keepalive = keepalive_hours.map(|limit_hours| KeepaliveWatch {
+    let keepalive = tuning.keepalive_hours.map(|limit_hours| KeepaliveWatch {
         limit_hours,
         idle: Arc::clone(&idle),
         session: Arc::clone(&turn.session),
@@ -465,8 +455,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let late_warnings: Vec<String> = config_warning
         .into_iter()
         .chain(editor_warning)
-        .chain(quiet_warning)
-        .chain(reset_warnings)
+        .chain(tuning.quiet_warning.clone())
+        .chain(tuning.reset_warnings.clone())
         .chain(send_it_warnings)
         .chain(empty_warning)
         .collect();
@@ -561,7 +551,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
     };
     let schedule_store = monitor.schedule.clone();
-    approve_proposed(&schedule_store, watch_timeout);
+    approve_proposed(&schedule_store, tuning.watch_timeout);
     let mut pending: Option<Submitted> = None;
     let mut shown_plan: Option<String> = None;
     let mut sending: Option<Active> = None;
@@ -910,7 +900,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             leaving = Some(chat_exit(LoopExit::TurnExit));
             break;
         }
-        let asked = approve_proposed(&schedule_store, watch_timeout);
+        let asked = approve_proposed(&schedule_store, tuning.watch_timeout);
         if let Some(active) = sending.take() {
             let unread = monitor.inbox.peek().unwrap_or_default();
             let ended = Ended {
