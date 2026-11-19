@@ -2,6 +2,7 @@ mod archive;
 mod claim;
 #[cfg(test)]
 mod corrupt_tests;
+mod history_log;
 mod index;
 mod log;
 mod lookup;
@@ -20,6 +21,12 @@ use std::collections::HashMap;
 
 pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite};
 pub use claim::{holder_pid, store_in_use_message};
+pub use history_log::{
+    call_args, cap_text, classify_call, encode_history, history_call_facts, history_call_row,
+    history_error_row, history_path, history_tool_of, history_turn_row, scope_label, turn_id,
+    view_ids_field, CallContext, CallFacts, CallMetrics, CallSource, HistoryKey, HistoryOutcome,
+    HistoryRow, HistoryTool, TurnFacts, ViewIds, ARG_CHARS, ERROR_CHARS, VIEW_IDS_CAP,
+};
 pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
     INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,
