@@ -39,7 +39,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
 Each module defines its own enum. `#[from]` enables `?` conversion.
 
 ```rust
-// crates/ralph/src/subprocess/types.rs
+// crates/ralph_server/src/subprocess/types.rs
 #[derive(Debug, thiserror::Error)]
 pub enum SubprocessError {
     #[error("Failed to spawn subprocess: {0}")]

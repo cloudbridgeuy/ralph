@@ -164,11 +164,10 @@ ralph/
 │           ├── main.rs         # Entry point and command dispatch
 │           ├── cli/            # CLI definitions (clap)
 │           ├── chat*.rs        # Chat shell, memory store, MCP server
-│           ├── invoke.rs       # Shared claude invocation
+│           ├── ask.rs          # ralph ask invocation
 │           ├── render/         # Terminal rendering
-│           ├── stream_processor/ # Stream handling
-│           │   └── tool_results/  # Edit, Write and NotebookEdit formatters
-│           └── subprocess/     # Process management
+│           └── stream_processor/ # Stream handling
+│               └── tool_results/  # Edit, Write and NotebookEdit formatters
 ├── xtask/              # Build automation tasks
 │   └── src/
 │       └── main.rs     # xtask commands (lint, install)
