@@ -1,5 +1,5 @@
+use crate::chat::client_monitor::Monitor;
 use crate::chat::hold_progress::HoldPanel;
-use crate::chat::monitor::Monitor;
 use crate::chat::prompt::{screen_columns, terminal_columns};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};

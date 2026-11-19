@@ -1,3 +1,6 @@
+use crate::warn::{warn, warn_if_err};
+use crate::watches::Watches;
+use crate::worker_mcp::Inbox;
 use chrono::{DateTime, Utc};
 use ralph_core::watch_command::{stop_message, StopResult};
 use ralph_core::watch_request::{
@@ -9,9 +12,6 @@ use ralph_core::watch_tools::{
     StopTarget,
 };
 use ralph_core::worker::Report;
-use ralph_server::warn::{warn, warn_if_err};
-use ralph_server::watches::Watches;
-use ralph_server::worker_mcp::Inbox;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -175,9 +175,9 @@ pub fn start_queued(watches: &Watches, inbox: &Inbox, store_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::watch_store::WatchStore;
     use ralph_core::watch::WatchKind;
     use ralph_core::watch_store::{SavedWatch, WATCHES_DIR};
-    use ralph_server::watch_store::WatchStore;
 
     fn request(id: &str) -> WatchRequest {
         WatchRequest {

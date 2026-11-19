@@ -1,4 +1,7 @@
 use crate::chat::monitor::{Monitor, POLL};
+use crate::warn::warn_if_err;
+use crate::watches::locked;
+use crate::workers::{running_workers, SpawnArgs, Workers};
 use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_worker::{
     alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
@@ -6,37 +9,36 @@ use ralph_core::schedule_worker::{
     WorkerEnd, WorkerFire,
 };
 use ralph_core::worker::HarnessId;
-use ralph_server::warn::warn_if_err;
-use ralph_server::watches::locked;
-use ralph_server::workers::{running_workers, SpawnArgs, Workers};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-static STARTING: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-struct Starting(String);
+struct Starting(Arc<Mutex<Vec<String>>>, String);
 
 impl Starting {
-    fn enter(id: &str) -> Self {
-        locked(&STARTING).push(id.to_string());
-        Self(id.to_string())
+    fn enter(monitor: &Monitor, id: &str) -> Self {
+        locked(&monitor.starting).push(id.to_string());
+        Self(Arc::clone(&monitor.starting), id.to_string())
     }
+}
+
+fn starting_ids(monitor: &Monitor) -> Vec<String> {
+    locked(&monitor.starting).clone()
 }
 
 impl Drop for Starting {
     fn drop(&mut self) {
-        locked(&STARTING).retain(|id| id != &self.0);
+        locked(&self.0).retain(|id| id != &self.1);
     }
 }
 
-pub(super) fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
+pub fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
     running_workers(store_dir)
         .into_iter()
         .map(|worker| worker.id)
         .collect()
 }
 
-pub(super) fn tick_workers(monitor: &Monitor) {
+pub fn tick_workers(monitor: &Monitor) {
     let tasks = monitor.schedule.load_all();
     if !tasks.iter().any(is_worker_task) || monitor.watches.is_closing() {
         return;
@@ -47,7 +49,7 @@ pub(super) fn tick_workers(monitor: &Monitor) {
     let alive = if any_running {
         alive_with_starting(
             &alive_worker_ids(&monitor.store_dir),
-            &locked(&STARTING).clone(),
+            &starting_ids(monitor),
         )
     } else {
         Vec::new()
@@ -83,7 +85,7 @@ fn end_task(monitor: &Monitor, task: &Task, end: &WorkerEnd, now: chrono::DateTi
                 .err()
                 .map(|error| error.to_string());
             if let Some(error) = &stop_error {
-                ralph_server::warn::warn(format!("stopping timed out worker {worker}: {error}"));
+                crate::warn::warn(format!("stopping timed out worker {worker}: {error}"));
             }
             post_report(
                 monitor,
@@ -118,7 +120,7 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
         return;
     };
     if let Err(error) = monitor.schedule.save(&task) {
-        ralph_server::warn::warn(format!(
+        crate::warn::warn(format!(
             "marking scheduled task {} running: {error}",
             task.id
         ));
@@ -127,7 +129,7 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
     let workers = monitor.workers.clone();
     let store = monitor.schedule.clone();
     let inbox = Arc::clone(&monitor.inbox);
-    let starting = Starting::enter(&task.id);
+    let starting = Starting::enter(monitor, &task.id);
     std::thread::spawn(move || {
         let _starting = starting;
         let worker = worker_id(&task.id);
@@ -162,4 +164,77 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::check::CheckState;
+    use crate::chat::keepalive::Stamp;
+    use crate::chat::memory::Store;
+    use crate::chat::monitor::ProcessMemo;
+    use crate::schedule_store::ScheduleStore;
+    use crate::watches::Watches;
+    use crate::worker_mcp::Inbox;
+    use ralph_core::chat::ResetLimits;
+    use ralph_core::chat_process::{FileStamp, UsageTail};
+    use ralph_core::chat_status::Status;
+    use ralph_core::program_status::Phase;
+    use std::collections::{HashMap, HashSet};
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
+
+    fn monitor(dir: &Path) -> Monitor {
+        let inbox = Arc::new(Inbox::new(dir.join("inbox")));
+        let store = Store::new(dir.to_path_buf());
+        Monitor {
+            watches: Watches::new(Arc::clone(&inbox), dir, std::time::Duration::from_secs(60)),
+            schedule: ScheduleStore::new(dir.join("schedule")),
+            inbox,
+            store_dir: dir.to_path_buf(),
+            status: Mutex::new(Status::default()),
+            seen: Mutex::new(HashMap::new()),
+            active: Mutex::new(None),
+            recent_history_tokens: 0,
+            worker_check_secs: None,
+            worker_quiet_secs: 0,
+            auto_continue: false,
+            hold_progress: false,
+            workers: Workers::new(
+                dir.to_path_buf(),
+                PathBuf::from("ralph"),
+                String::new(),
+                None,
+            ),
+            check: Mutex::new(CheckState::seeded(&store)),
+            store,
+            known: Mutex::new(Vec::new()),
+            fresh: Mutex::new((Vec::new(), 0)),
+            starting: Arc::default(),
+            scheduled_reports: Mutex::new(Vec::new()),
+            warned: Mutex::new(HashSet::new()),
+            unrecorded: Mutex::new(HashSet::new()),
+            live: Arc::new(AtomicBool::new(false)),
+            last_ping: Stamp::default(),
+            run: String::new(),
+            reset_limits: ResetLimits {
+                turns: 0,
+                tokens: 0,
+            },
+            process: Mutex::new(ProcessMemo::default()),
+            usage_tail: Mutex::new(UsageTail::starting_at(&FileStamp { id: None, len: 0 })),
+            phase: Mutex::new(Phase::Turn),
+            hold: Mutex::new(None),
+        }
+    }
+
+    #[test]
+    fn two_monitors_do_not_share_starting_ids() {
+        let (first_dir, second_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let first = monitor(first_dir.path());
+        let second = monitor(second_dir.path());
+        let _starting = Starting::enter(&first, "task");
+        assert_eq!(starting_ids(&first), vec!["task".to_string()]);
+        assert!(starting_ids(&second).is_empty());
+    }
 }

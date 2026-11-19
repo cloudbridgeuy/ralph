@@ -1,4 +1,4 @@
-use crate::chat::monitor::Monitor;
+use crate::chat::client_monitor::Monitor;
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::thread::{fork_of, open_names};
 use crate::clipboard::PASTE_IMAGE;

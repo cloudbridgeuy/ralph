@@ -7,11 +7,12 @@ use crate::chat::thread_cmd::{merge_line, record_cli_merge};
 use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
 use ralph_core::chat_memory::CallSite;
-use ralph_core::chat_thread::{AutoMode, ThreadMeta, ThreadName, THREADS_DIR};
+use ralph_core::chat_thread::{AutoMode, ThreadName};
 use ralph_core::chat_thread_auto::{
-    clear_closed, close_answer, close_question, close_refusal, pending_closes, PendingClose,
+    clear_closed, close_answer, close_question, close_refusal, PendingClose,
 };
 use ralph_core::chat_thread_cmd::{merge_posted_message, merging_notice};
+use ralph_server::chat::settle::pending;
 use ralph_server::warn::warn_if_err;
 use ralph_server::worker_mcp::Inbox;
 use std::io::Write;
@@ -45,25 +46,6 @@ pub(in crate::chat) fn scan(main: &Path, inbox: &Inbox) -> bool {
     );
     messages.iter().for_each(|message| println!("{message}"));
     !messages.is_empty()
-}
-
-fn closed_threads(main: &Path) -> Vec<(ThreadName, ThreadMeta)> {
-    let Ok(entries) = std::fs::read_dir(main.join(THREADS_DIR)) else {
-        return Vec::new();
-    };
-    let mut threads: Vec<(ThreadName, ThreadMeta)> = entries
-        .filter_map(|entry| ThreadName::parse(entry.ok()?.file_name().to_str()?).ok())
-        .filter_map(|name| {
-            let meta = read_meta(&thread_dir(main, &name)).ok()?;
-            Some((name, meta))
-        })
-        .collect();
-    threads.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-    threads
-}
-
-pub(in crate::chat) fn pending(main: &Path) -> Vec<PendingClose> {
-    pending_closes(&closed_threads(main))
 }
 
 pub(super) fn settle(

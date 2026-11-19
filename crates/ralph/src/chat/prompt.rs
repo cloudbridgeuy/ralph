@@ -1,6 +1,6 @@
 use crate::ansi::{DIM, RESET};
+use crate::chat::client_monitor::Monitor;
 use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR};
-use crate::chat::monitor::Monitor;
 use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::switch::ChatExit;

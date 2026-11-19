@@ -22,7 +22,6 @@ pub mod markdown;
 mod mermaid_guard;
 pub mod prompt_source;
 pub mod render;
-mod schedule_store;
 pub mod signal;
 pub mod spinner;
 pub mod startup;
@@ -37,7 +36,6 @@ mod usage_cmd;
 pub mod stream_processor;
 mod version;
 pub mod warn;
-mod watch_requests;
 mod wire;
 
 use ask::InvocationConfig;

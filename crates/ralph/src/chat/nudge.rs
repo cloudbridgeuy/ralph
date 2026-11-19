@@ -1,4 +1,4 @@
-use crate::chat::monitor::Monitor;
+use crate::chat::client_monitor::Monitor;
 use ralph_core::chat_nudge::{failure_line, resolve_nudge, NudgeCommand};
 use ralph_core::worker::blocked_path;
 
