@@ -91,6 +91,14 @@ fn when_label(task: &Task, now: DateTime<Utc>, offset: FixedOffset) -> String {
 }
 
 fn relative_label(task: &Task, now: DateTime<Utc>) -> String {
+    let base = remaining_label(task, now);
+    match &task.repeat {
+        Some(repeat) => format!("{base} ({})", crate::schedule_repeat::repeat_label(repeat)),
+        None => base,
+    }
+}
+
+fn remaining_label(task: &Task, now: DateTime<Utc>) -> String {
     let remaining = (task.at - now).num_seconds();
     let relative = if remaining > 0 {
         format!("in {}", format_span(remaining.unsigned_abs()))
@@ -435,6 +443,29 @@ mod tests {
         assert_eq!(
             kind_label(&TaskKind::Worker { brief: "x".into() }),
             "worker"
+        );
+    }
+
+    #[test]
+    fn list_shows_the_repeat_after_the_time_left() {
+        use crate::schedule_repeat::Repeat;
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut every = task("a", "2026-01-01T12:00:00Z", TaskStatus::Pending, false);
+        every.repeat = Some(Repeat::Every { every_secs: 21600 });
+        let mut daily = task("b", "2026-01-01T09:00:00Z", TaskStatus::Pending, true);
+        daily.repeat = Some(Repeat::Daily {
+            daily: "02:00".to_string(),
+        });
+        let one_shot = task("c", "2026-01-01T13:00:00Z", TaskStatus::Pending, false);
+        let text = list_tasks(&[every, daily, one_shot], now, offset());
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "b  cmd  armed  11:00  due late (daily 02:00)  echo b",
+                "a  cmd  armed  14:00  in 2h (every 6h)        echo a",
+                "c  cmd  armed  15:00  in 3h                   echo c",
+            ]
         );
     }
 }

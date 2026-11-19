@@ -117,11 +117,15 @@ impl Command {
             Command::Schedule => &[
                 (
                     "/schedule [list]",
-                    "list the scheduled tasks: id, state, time, time left, command; starts no turn",
+                    "list the scheduled tasks: id, state, time, time left, command; a repeating task shows its repeat after the time left; starts no turn",
                 ),
                 (
                     "/schedule cancel <id>",
-                    "remove a task, and stop its watch if it runs; /schedule creates nothing: the model proposes tasks and you arm each at a y/n prompt",
+                    "remove a task, and stop its watch if it runs; for a repeating task it stops all further runs; /schedule creates nothing: the model proposes tasks and you arm each at a y/n prompt",
+                ),
+                (
+                    "model tool schedule, every",
+                    "the model can propose a repeating task with every: <dur> or daily HH:MM; at least 10 min for a command, 60 min for a worker; at most 5 repeating tasks; you approve it once and that covers every run; a run missed while the chat was off fires once, late, with no catch-up",
                 ),
             ],
             Command::Diff => &[

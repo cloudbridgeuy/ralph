@@ -519,3 +519,24 @@ fn the_direct_message_row_follows_the_nudge_rows() {
         assert!(rows[direct].contains(phrase), "{phrase}");
     }
 }
+
+#[test]
+fn the_schedule_help_explains_repeating_tasks() {
+    let text = help_topic(Some("schedule")).unwrap();
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for part in [
+        "repeating task with every",
+        "daily HH:MM",
+        "at least 10 min for a command",
+        "60 min for a worker",
+        "at most 5 repeating tasks",
+        "you approve it once",
+        "/schedule cancel <id>",
+        "stops all further runs",
+        "fires once, late, with no catch-up",
+        "shows its repeat after the time left",
+        "/schedule creates nothing",
+    ] {
+        assert!(flat.contains(part), "{part}: {flat}");
+    }
+}

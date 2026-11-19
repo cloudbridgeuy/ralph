@@ -313,7 +313,8 @@ pub fn approval_question(
             ),
         ),
     };
-    format!("{heading}Runs at {when} ({relative}), {timeout}.\nArm it? [y/n] ")
+    let repeat = crate::schedule_repeat::repeat_notice(task).unwrap_or_default();
+    format!("{heading}Runs at {when} ({relative}), {timeout}.\n{repeat}Arm it? [y/n] ")
 }
 
 fn indent_brief(brief: &str) -> String {
@@ -917,5 +918,48 @@ mod tests {
         let tasks = vec![task("a", "2026-01-01T12:00:00Z", TaskStatus::Pending)];
         let plan = plan_tick(&tasks, &["schedule:a".to_string()], now);
         assert!(plan.fire.is_empty() && plan.finished.is_empty());
+    }
+
+    #[test]
+    fn a_repeating_question_shows_the_repeat_and_the_single_approval() {
+        use crate::schedule_repeat::Repeat;
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = task("nightly", "2026-01-01T10:10:00Z", TaskStatus::Proposed);
+        t.repeat = Some(Repeat::Daily {
+            daily: "02:00".to_string(),
+        });
+        let text = approval_question(&t, now, offset(), Duration::from_secs(60));
+        assert!(
+            text.contains("Repeats daily 02:00 until cancelled with /schedule cancel nightly; this one approval covers every run.\n"),
+            "{text}"
+        );
+        assert!(text.ends_with("Arm it? [y/n] "), "{text}");
+    }
+
+    #[test]
+    fn a_repeating_worker_question_shows_the_repeat() {
+        use crate::schedule_repeat::Repeat;
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = worker_task("go");
+        t.repeat = Some(Repeat::Every { every_secs: 7200 });
+        let text = approval_question(&t, now, offset(), Duration::from_secs(60));
+        assert!(text.contains("Repeats every 2h until cancelled"), "{text}");
+        assert!(
+            text.contains("this one approval covers every run"),
+            "{text}"
+        );
+        assert!(text.ends_with("Arm it? [y/n] "), "{text}");
+    }
+
+    #[test]
+    fn a_one_shot_question_has_no_repeat_line() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let t = task("a", "2026-01-01T10:10:00Z", TaskStatus::Proposed);
+        let text = approval_question(&t, now, offset(), Duration::from_secs(60));
+        assert!(!text.contains("Repeats"), "{text}");
+        assert!(
+            text.ends_with("Runs at 12:10 (in 10m), default timeout 1m.\nArm it? [y/n] "),
+            "{text}"
+        );
     }
 }

@@ -1,4 +1,4 @@
-use crate::schedule::{format_span, parse_after, Task, TaskKind, TaskStatus};
+use crate::schedule::{escape_controls, format_span, parse_after, Task, TaskKind, TaskStatus};
 use crate::schedule_worker::WorkerEnd;
 use chrono::{DateTime, Days, Duration, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -125,6 +125,16 @@ pub fn repeat_label(repeat: &Repeat) -> String {
     }
 }
 
+pub fn repeat_notice(task: &Task) -> Option<String> {
+    task.repeat.as_ref().map(|repeat| {
+        format!(
+            "Repeats {} until cancelled with /schedule cancel {}; this one approval covers every run.\n",
+            repeat_label(repeat),
+            escape_controls(&task.id)
+        )
+    })
+}
+
 pub const MAX_REPEATING: usize = 5;
 
 pub fn first_fire<Tz: TimeZone>(
@@ -208,6 +218,43 @@ mod tests {
         TaskKind::Worker {
             brief: "b".to_string(),
         }
+    }
+
+    fn repeating(id: &str, repeat: Option<Repeat>) -> Task {
+        Task {
+            id: id.to_string(),
+            kind: command(),
+            follow_up: None,
+            at: utc("2026-01-01T10:00:00Z"),
+            timeout_secs: None,
+            status: TaskStatus::Proposed,
+            late: false,
+            deadline: None,
+            repeat,
+        }
+    }
+
+    #[test]
+    fn notice_names_the_repeat_the_id_and_the_single_approval() {
+        let notice = repeat_notice(&repeating("nightly", Some(daily("02:00")))).unwrap();
+        assert_eq!(
+            notice,
+            "Repeats daily 02:00 until cancelled with /schedule cancel nightly; this one approval covers every run.\n"
+        );
+        let notice = repeat_notice(&repeating("a", Some(every(21600)))).unwrap();
+        assert!(notice.starts_with("Repeats every 6h until"), "{notice}");
+    }
+
+    #[test]
+    fn notice_escapes_control_characters_in_the_id() {
+        let notice = repeat_notice(&repeating("a\x1bb", Some(every(600)))).unwrap();
+        assert!(!notice.contains('\x1b'), "{notice:?}");
+        assert!(notice.contains("a\\x1bb"), "{notice}");
+    }
+
+    #[test]
+    fn a_one_shot_task_has_no_notice() {
+        assert_eq!(repeat_notice(&repeating("a", None)), None);
     }
 
     #[derive(Clone)]
