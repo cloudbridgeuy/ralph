@@ -228,7 +228,7 @@ A typed line that starts with `@<id>` followed by whitespace or the end of the l
 - Refusals print `@<id>: <reason>` and record nothing: empty text; a merged thread's digest id (`thread:<name>`); an id that is not one of this chat's workers (the line lists the running ids and names `@@`); a worker with `blocked/<id>` (it waits on a permission request; answer by request id). A failed send prints `@<id>: <error>`.
 - Memory: a sent line appends one `user` entry, `@<id> <text>`, a newline, then `Result: <reply line>`. It sets no pending-turn marker and writes no usage row or ledger entry. A live process gets it before the next message (step 4 of the [turn loop](#turn-loop)), and the model finds it with `search` and `read` like any user entry; it is never a `worker` entry, so the worker-check ignores it.
 - During a `/send-it` run the line is queued, and the run loop takes the queued line as a takeover, as for any typed line (see [/send-it](#send-it)).
-- Tab after a leading `@` completes this chat's worker ids. Pure logic: `ralph_core::chat_direct` (`parse_direct`, `resolve_direct`, `direct_completions`, `memory_line`, `failure_line`); the shell is `crates/ralph/src/chat/direct.rs`, dispatched from `run_local`. `/help` does not list it yet.
+- Tab after a leading `@` completes this chat's worker ids. Pure logic: `ralph_core::chat_direct` (`parse_direct`, `resolve_direct`, `direct_completions`, `memory_line`, `failure_line`); the shell is `crates/ralph/src/chat/direct.rs`, dispatched from `run_local`. `/help` lists it in the Commands section, right after the `/nudge` rows (the `DIRECT` row in `chat_help`).
 
 ### Local command records
 
@@ -364,7 +364,7 @@ The model schedules a shell command or a worker with the `schedule` tool (see [M
 
 `/help` is local: it never starts a turn or calls the model. Only the bare command (after trimming) counts: `/help x`, `/help me fix the build` and `/helpfoo` are normal messages. It prints `Store: <dir>`, a blank line, then the pure `chat_help::help_text(width)` (through `help_with_store`), word-wrapped to the prompt width (the terminal width, capped by `--wrap-width`); a section whose text column would be under 30 columns puts each text under its label:
 
-- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/send-it`, `/thread`, `/config`, `/view`, `/rerender`, `/read`, `/zoom`, `/recall` and `/search`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
+- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/send-it`, `/thread`, `/config`, `/view`, `/rerender`, `/read`, `/zoom`, `/recall` and `/search`, from `Command::ALL`, plus the `@<id> <text>` row right after the `/nudge` rows (it is not a `/` command, so it has no `Command` variant). `route_input` matches the same table, so a command cannot route without a help row.
 - Cells: the `!` and `!!` shorthands and `!<runtime>` fences.
 - Keys: at the prompt, in vi mode, during a turn, and in the queue editor (`PROMPT_KEYS`, `VI_KEYS`, `TURN_KEYS`, `QUEUE_KEYS`).
 - Status bar: one row per segment `Kind`, the five modes (`HOLD`, `NAP`, `INBOX`, `WORK`, `IDLE`; first match wins), each part of the process cell (`T12/30`, `ctx 62%`, `cache 41m`, `!`, `shift ~9 msg`) and the `↻ tokens`, `↻ turns` and `↻ restart` marks.

@@ -283,6 +283,13 @@ impl Command {
     }
 }
 
+/// The `@<id> <text>` row. It is not a `/` command, so it has no `Command`
+/// variant; `help_text` lists it right after the `/nudge` rows.
+const DIRECT: &[(&str, &str)] = &[(
+    "@<id> <text>",
+    "send <text> to worker <id> as written, with no model turn and no cost; @@ sends a normal message to the model that starts with one @; while a turn runs it waits in the queue",
+)];
+
 const CELLS: &[(&str, &str)] = &[
     (
         "!<command>",
@@ -622,7 +629,13 @@ pub fn help_text(width: usize) -> String {
     let mut out = String::new();
     let commands = Command::ALL
         .iter()
-        .flat_map(|command| pairs(command.usage()))
+        .flat_map(|command| {
+            let mut rows = pairs(command.usage());
+            if *command == Command::Nudge {
+                rows.extend(pairs(DIRECT));
+            }
+            rows
+        })
         .collect();
     section(
         &mut out,

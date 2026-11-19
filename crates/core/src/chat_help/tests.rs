@@ -500,3 +500,21 @@ fn history_help_rows_name_the_model_tools() {
         assert!(row.contains(&format!("model's {tool} tool")), "{row}");
     }
 }
+
+#[test]
+fn the_direct_message_row_follows_the_nudge_rows() {
+    let text = help_text(2_000);
+    let rows: Vec<&str> = text.lines().collect();
+    let direct = rows
+        .iter()
+        .position(|line| has_row(line, "@<id> <text>"))
+        .expect("no @<id> <text> row");
+    let nudge = rows
+        .iter()
+        .rposition(|line| has_row(line, "/nudge"))
+        .unwrap();
+    assert_eq!(direct, nudge + 1);
+    for phrase in ["no model turn", "no cost", "@@", "queue"] {
+        assert!(rows[direct].contains(phrase), "{phrase}");
+    }
+}
