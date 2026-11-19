@@ -16,10 +16,11 @@ use ralph_server::chat::memory::Store;
 use ralph_server::chat::socket::{SocketFiles, SocketPlace};
 use ralph_server::cursor_owner::process_start;
 use ralph_server::schedule_store::ScheduleStore;
-use ralph_server::warn::warn;
+use ralph_server::warn::{warn, warn_if_err};
 use ralph_server::watch_requests;
 use ralph_server::watches::Watches;
 use ralph_server::wire::store::ensure_store_root;
+use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::{canonical_store, SpawnArgs, Workers};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -46,6 +47,7 @@ pub(crate) struct Shared {
     pub(crate) workers: Workers,
     pub(crate) send_it: SendIt,
     pub(crate) watches: Watches,
+    pub(crate) inbox: Arc<Inbox>,
 }
 
 pub(crate) struct SocketGuard(pub(crate) SocketFiles);
@@ -223,6 +225,7 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
         workers,
         send_it,
         watches,
+        inbox,
     } = shared;
     if request.tool == WATCH_LIST {
         return Ok(watch_requests::list_text(watches, store.dir(), Utc::now()));
@@ -272,7 +275,13 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
                 .reply(id, text, *interrupt, request.as_deref())
                 .inspect(|_| send_it.answer(id.clone()))
         }
-        Command::Close { id, abandon, force } => workers.close(id, *abandon, *force),
+        Command::Close { id, abandon, force } => {
+            workers.close(id, *abandon, *force).inspect(|_| {
+                if *abandon {
+                    warn_if_err(inbox.drop_worker(id), format!("dropping reports of {id}"));
+                }
+            })
+        }
         Command::Watch(request) => {
             watch_requests::queue(store.dir(), request).map(|()| queued_message(&request.id))
         }
@@ -360,7 +369,6 @@ mod tests {
     use super::*;
     use ralph_core::chat_send_it::{Limits, VerifyMode};
     use ralph_core::chat_socket::sidecar_name;
-    use ralph_server::worker_mcp::Inbox;
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
@@ -369,6 +377,7 @@ mod tests {
     }
 
     fn shared(dir: &Path) -> Shared {
+        let inbox = Arc::new(Inbox::new(dir.join("inbox")));
         Shared {
             store: Store::new(dir.to_path_buf()),
             workers: workers(),
@@ -380,11 +389,8 @@ mod tests {
                     verify: VerifyMode::Off,
                 },
             ),
-            watches: Watches::new(
-                Arc::new(Inbox::new(dir.join("inbox"))),
-                dir,
-                Duration::from_secs(60),
-            ),
+            watches: Watches::new(Arc::clone(&inbox), dir, Duration::from_secs(60)),
+            inbox,
         }
     }
 

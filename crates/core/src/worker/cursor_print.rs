@@ -1,5 +1,5 @@
 use super::transcript_usage::ModelUsage;
-use super::{ThreadSignal, TurnEnd, SERVER_NAME};
+use super::{Action, ThreadSignal, TurnEnd, REPORT_REMINDER, SERVER_NAME};
 use crate::chat_memory::{worker_usage_record, CallSite, LedgerRow};
 use crate::stream::result_is_error;
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
@@ -99,6 +99,28 @@ pub fn print_turn_signals(reported: bool, end: TurnEnd) -> Vec<ThreadSignal> {
         .into_iter()
         .chain([ThreadSignal::TurnEnded(end)])
         .collect()
+}
+
+pub fn print_action_note(action: &Action) -> Option<String> {
+    match action {
+        Action::Start(text) => Some(format!(
+            "start prompt_bytes={} reminder={}",
+            text.len(),
+            text == REPORT_REMINDER
+        )),
+        Action::MarkUnreported => Some("mark-unreported".to_string()),
+        Action::PostFailure(problem) => Some(format!("post-failure {problem}")),
+        _ => None,
+    }
+}
+
+pub fn print_end_note(outcome: Option<ExitOutcome>, end: &TurnEnd, reported: bool) -> String {
+    let exit = outcome.map_or("NotRun".to_string(), |outcome| format!("{outcome:?}"));
+    format!("end exit={exit} end={end:?} reported={reported}")
+}
+
+pub fn print_spawn_note(call: u64, chat: Option<&str>) -> String {
+    format!("spawn call={call} chat={}", chat.unwrap_or("-"))
 }
 
 pub fn exit_outcome(saw_result: bool, sigint_sent: bool) -> ExitOutcome {

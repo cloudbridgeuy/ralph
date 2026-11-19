@@ -369,6 +369,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
         send_it: send_it.clone(),
         watches: watches(dir.path()),
+        inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
     let call = |args: Value| {
         respond(
@@ -462,6 +463,7 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
         send_it: quiet(dir.path()),
         watches: watches(dir.path()),
+        inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "watch"}]);
@@ -500,6 +502,7 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
         send_it: quiet(dir.path()),
         watches: watches(dir.path()),
+        inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "watch"}]);
