@@ -3,13 +3,14 @@ use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{CancelNotification, PromptResponse, StopReason};
 use ralph_core::worker::{reported_path, Report};
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const ID: &str = "verify";
 const TEXT: &str = "verify";
 const PROMPT: &str = "Call the ralph-worker report tool exactly once with status done and text verify. Do not call any other tool. Then stop.";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
 const SHELL_PROMPT: &str =
-    "Run the shell command `date +%Y` and reply with its output. Do not call any other tool.";
+    "Run the shell command `date +%s > yolo.txt` in the current directory. Do not call any other tool. Then stop.";
 
 fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
     if delivered
@@ -52,11 +53,25 @@ fn usage(text: &str, session: &str, model: &str, total: u64) -> Result<String, S
     }
 }
 
-fn yolo_check(requests: usize, stop: &Result<String, String>) -> Result<String, String> {
+fn yolo_check(
+    requests: usize,
+    stop: &Result<String, String>,
+    written: Option<&str>,
+    window: (u64, u64),
+) -> Result<String, String> {
+    let (start, end) = window;
     match (requests, stop.as_deref()) {
-        (0, Ok("end_turn")) => Ok(
-            "agy raised 0 permission requests for an MCP report and a shell command".to_string(),
-        ),
+        (0, Ok("end_turn")) => match written {
+            None => Err("yolo.txt missing after the shell turn".to_string()),
+            Some(text) if text.trim().parse::<u64>().is_ok_and(|time| (start..=end).contains(&time)) => Ok(
+                "agy raised 0 permission requests and ran `date +%s` (yolo.txt within the turn)"
+                    .to_string(),
+            ),
+            Some(text) => Err(format!(
+                "yolo.txt holds `{}`, not a time in {start}..={end}",
+                text.trim()
+            )),
+        },
         (count, Ok("end_turn")) => Err(format!(
             "agy raised {count} permission requests in yolo mode"
         )),
@@ -65,6 +80,12 @@ fn yolo_check(requests: usize, stop: &Result<String, String>) -> Result<String, 
         )),
         (_, Err(message)) => Err(format!("agy shell prompt failed: {message}")),
     }
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 fn stop_name(
@@ -238,11 +259,19 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
         false
     };
     if passed && mode == PermissionMode::Yolo {
+        let start = unix_seconds();
         let stop = shell_turn(connection, &id).await;
+        let end = unix_seconds();
+        let written = fs::read_to_string(opening.cwd.join("yolo.txt")).ok();
         step(
             checks,
             "live yolo",
-            yolo_check(requests.load(Ordering::SeqCst), &stop),
+            yolo_check(
+                requests.load(Ordering::SeqCst),
+                &stop,
+                written.as_deref(),
+                (start, end),
+            ),
             Clone::clone,
         );
     }
@@ -267,16 +296,38 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn yolo_passes_only_with_no_requests_and_a_normal_end() {
+    fn yolo_passes_only_with_no_requests_a_normal_end_and_a_timestamp_in_the_window() {
         let ended = Ok("end_turn".to_string());
-        assert!(yolo_check(0, &ended).is_ok());
-        let many = yolo_check(2, &ended).err().unwrap_or_default();
+        let window = (100, 110);
+        assert!(yolo_check(0, &ended, Some("105\n"), window).is_ok());
+        assert!(yolo_check(0, &ended, Some("100"), window).is_ok());
+        assert!(yolo_check(0, &ended, Some("110"), window).is_ok());
+        let many = yolo_check(2, &ended, Some("105"), window)
+            .err()
+            .unwrap_or_default();
         assert!(many.contains('2'), "{many}");
-        let cancelled = yolo_check(0, &Ok("cancelled".to_string()))
+        let cancelled = yolo_check(0, &Ok("cancelled".to_string()), Some("105"), window)
             .err()
             .unwrap_or_default();
         assert!(cancelled.contains("cancelled"), "{cancelled}");
-        assert!(yolo_check(0, &Err("boom".to_string())).is_err());
+        assert!(yolo_check(0, &Err("boom".to_string()), Some("105"), window).is_err());
+        let missing = yolo_check(0, &ended, None, window)
+            .err()
+            .unwrap_or_default();
+        assert!(missing.contains("yolo.txt missing"), "{missing}");
+        let text = yolo_check(0, &ended, Some("2026"), window)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            text.contains("`2026`") && text.contains("100..=110"),
+            "{text}"
+        );
+        let word = yolo_check(0, &ended, Some("soon"), window)
+            .err()
+            .unwrap_or_default();
+        assert!(word.contains("`soon`"), "{word}");
+        assert!(yolo_check(0, &ended, Some("111"), window).is_err());
+        assert!(yolo_check(0, &ended, Some("99"), window).is_err());
     }
 
     #[test]
