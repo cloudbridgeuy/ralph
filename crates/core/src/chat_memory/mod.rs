@@ -27,9 +27,9 @@ pub use history_log::{
     call_args, cap_text, classify_call, count_turn_calls, encode_history, history_call_facts,
     history_call_row, history_error_row, history_path, history_tool_named, history_tool_of,
     history_turn_row, malformed_call, next_turn_number, parse_turn_id, resolve_scope, scope_label,
-    tool_raw, turn_id, view_ids_field, view_line_ids, CallContext, CallFacts, CallMetrics,
-    CallSource, HistoryKey, HistoryOutcome, HistoryRow, HistoryTool, MalformedCall, TurnFacts,
-    ViewIds, ARG_CHARS, ERROR_CHARS, VIEW_IDS_CAP,
+    turn_id, view_ids_field, view_line_ids, CallContext, CallFacts, CallMetrics, CallSource,
+    HistoryKey, HistoryOutcome, HistoryRow, HistoryTool, MalformedCall, TurnFacts, ViewIds,
+    ARG_CHARS, ERROR_CHARS, VIEW_IDS_CAP,
 };
 pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,

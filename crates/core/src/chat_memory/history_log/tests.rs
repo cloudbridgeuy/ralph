@@ -29,14 +29,14 @@ fn value(row: &HistoryRow) -> Value {
     serde_json::from_str(&line).unwrap()
 }
 
-fn call(tool: Tool, raw: Value, result: Result<String, String>, ctx: CallContext) -> Value {
+fn call(tool: Tool, result: Result<String, String>, ctx: CallContext) -> Value {
     let call = MemoryCall {
         scope: Scope::Own,
         tool,
     };
     value(&history_call_row(
         &key(),
-        &history_call_facts(&call, &raw, &result, ctx),
+        &history_call_facts(&call, &result, ctx),
     ))
 }
 
@@ -56,7 +56,6 @@ fn a_zoom_row_carries_the_node_and_metrics() {
     ctx.metrics.in_view = Some(true);
     let v = call(
         Tool::Zoom(Node::parse("4-7").unwrap()),
-        json!({"id": "4-7"}),
         Ok("abc".into()),
         ctx,
     );
@@ -92,7 +91,7 @@ fn a_read_row_records_mode_budget_and_cursor() {
         budget: 512,
         cursor: None,
     };
-    let args = call_args(&Tool::Read(request), &json!({"id": "2-5"}));
+    let args = call_args(&Tool::Read(request));
     assert_eq!(
         args,
         json!({"from": 2, "to": 6, "mode": "summary", "budget": 512, "has_cursor": false})
@@ -105,7 +104,6 @@ fn a_read_row_records_mode_budget_and_cursor() {
             budget: 4096,
             cursor: None,
         }),
-        json!({"id": "2-5"}),
         Ok("x".into()),
         ctx(),
     );
@@ -120,12 +118,7 @@ fn a_recall_row_records_the_pattern_and_truncation() {
     ctx.metrics.truncated = Some(true);
     ctx.metrics.oldest_hit = Some(3);
     ctx.metrics.top_cover_size = Some(16);
-    let v = call(
-        Tool::Recall("foo.*".into()),
-        json!({"pattern": "foo.*"}),
-        Ok("#1 hit".into()),
-        ctx,
-    );
+    let v = call(Tool::Recall("foo.*".into()), Ok("#1 hit".into()), ctx);
     assert_eq!(v["tool"], "recall");
     assert_eq!(v["args"], json!({"pattern": "foo.*"}));
     assert_eq!(v["hits"], 80);
@@ -135,21 +128,21 @@ fn a_recall_row_records_the_pattern_and_truncation() {
 }
 
 #[test]
-fn a_search_row_records_the_filters_from_the_raw_args() {
-    let raw = json!({
+fn a_successful_search_row_logs_the_parsed_filters_and_cursor() {
+    let request = parse_search_args(&json!({
         "query": "rate limit",
         "role": "user",
         "tag": "rule",
         "since": "2026-10-20",
         "until": "2026-10-21",
         "limit": 5,
-        "cursor": "abc",
-        "thread": "auth",
-    });
-    let request = parse_search_args(&json!({"query": "rate limit"})).unwrap();
-    let args = call_args(&Tool::Search(request), &raw);
+        "cursor": "3.9.00000000000000ff",
+    }))
+    .unwrap();
+    let tool = Tool::Search(request);
+    let v = call(tool, Ok("x".into()), ctx());
     assert_eq!(
-        args,
+        v["args"],
         json!({
             "query": "rate limit",
             "role": "user",
@@ -163,16 +156,20 @@ fn a_search_row_records_the_filters_from_the_raw_args() {
 }
 
 #[test]
-fn a_search_without_filters_has_only_the_query() {
+fn a_successful_search_row_logs_the_default_limit() {
     let request = parse_search_args(&json!({"query": "x"})).unwrap();
-    let args = call_args(&Tool::Search(request), &json!({"query": "x"}));
-    assert_eq!(args, json!({"query": "x", "has_cursor": false}));
+    let tool = Tool::Search(request);
+    let v = call(tool, Ok("x".into()), ctx());
+    assert_eq!(
+        v["args"],
+        json!({"query": "x", "limit": 20, "has_cursor": false})
+    );
 }
 
 #[test]
 fn long_patterns_and_queries_are_capped() {
     let long = "é".repeat(ARG_CHARS + 50);
-    let args = call_args(&Tool::Recall(long.clone()), &json!({}));
+    let args = call_args(&Tool::Recall(long.clone()));
     let capped = args["pattern"].as_str().unwrap();
     assert_eq!(capped.chars().count(), ARG_CHARS + 1);
     assert!(capped.ends_with('…'));
@@ -192,12 +189,7 @@ fn the_classifier_separates_ok_empty_and_error() {
 
 #[test]
 fn an_error_result_sets_the_error_and_skips_hits() {
-    let v = call(
-        Tool::Recall("(".into()),
-        json!({"pattern": "("}),
-        Err("bad regex".into()),
-        ctx(),
-    );
+    let v = call(Tool::Recall("(".into()), Err("bad regex".into()), ctx());
     assert_eq!(v["outcome"], "error");
     assert_eq!(v["error"], "bad regex");
     assert_eq!(v["result_bytes"], 9);
@@ -213,7 +205,7 @@ fn optional_fields_are_skipped_when_none() {
         scope: Scope::Own,
         tool: Tool::Recall("a".into()),
     };
-    let facts = history_call_facts(&call, &json!({}), &Ok("x".into()), ctx());
+    let facts = history_call_facts(&call, &Ok("x".into()), ctx());
     let v = value(&history_call_row(&anon, &facts));
     for field in [
         "run",
@@ -245,7 +237,7 @@ fn a_call_row_round_trips() {
         scope: Scope::Main,
         tool: Tool::Recall("a".into()),
     };
-    let facts = history_call_facts(&call, &json!({}), &Ok("x".into()), ctx());
+    let facts = history_call_facts(&call, &Ok("x".into()), ctx());
     let row = history_call_row(&key(), &facts);
     let back: HistoryRow = serde_json::from_str(&encode_history(&row).unwrap()).unwrap();
     assert_eq!(back, row);
@@ -400,7 +392,7 @@ fn only_call_rows_of_the_turn_are_counted() {
             scope: Scope::Main,
             tool: Tool::Recall("a".into()),
         };
-        let facts = history_call_facts(&call, &json!({}), &Ok("x".into()), ctx());
+        let facts = history_call_facts(&call, &Ok("x".into()), ctx());
         let mut k = key();
         k.turn = Some(turn);
         encode_history(&history_call_row(&k, &facts)).unwrap()
@@ -424,16 +416,6 @@ fn only_call_rows_of_the_turn_are_counted() {
     assert_eq!(count_turn_calls(&text, "r1#4"), 1);
     assert_eq!(count_turn_calls(&text, "r1#9"), 0);
     assert_eq!(count_turn_calls("", "r1#3"), 0);
-}
-
-#[test]
-fn only_a_search_has_raw_args_to_recover() {
-    let request = parse_search_args(&json!({"query": "rate limit"})).unwrap();
-    assert_eq!(
-        tool_raw(&Tool::Search(request)),
-        json!({"query": "rate limit"})
-    );
-    assert_eq!(tool_raw(&Tool::Recall("a".into())), Value::Null);
 }
 
 #[test]

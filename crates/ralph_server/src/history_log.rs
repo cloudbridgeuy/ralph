@@ -4,8 +4,8 @@ use crate::warn::warn_if_err;
 use crate::workers::usage_store;
 use ralph_core::chat_memory::{
     count_turn_calls, encode_history, history_call_facts, history_call_row, history_error_row,
-    history_path, history_turn_row, next_turn_number, parse_turn_id, tool_raw, turn_id,
-    CallContext, CallSource, HistoryKey, HistoryRow, HistoryTool, MemoryCall, TurnFacts,
+    history_path, history_turn_row, next_turn_number, parse_turn_id, turn_id, CallContext,
+    CallSource, HistoryKey, HistoryRow, HistoryTool, MemoryCall, TurnFacts,
 };
 use serde_json::Value;
 use std::fs::{self, File};
@@ -130,7 +130,7 @@ pub fn record_call(
     result: &Result<String, String>,
     ctx: CallContext,
 ) {
-    let facts = history_call_facts(call, &tool_raw(&call.tool), result, ctx);
+    let facts = history_call_facts(call, result, ctx);
     append_call_row(store, ctx.source, |key| history_call_row(key, &facts));
 }
 

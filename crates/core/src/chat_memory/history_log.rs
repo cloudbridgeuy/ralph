@@ -1,4 +1,4 @@
-use super::{MemoryCall, Mode, Tool};
+use super::{MemoryCall, Mode, SearchRequest, Tool};
 use crate::chat_thread::{Scope, ThreadName};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -335,7 +335,7 @@ fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
-pub fn call_args(tool: &Tool, raw: &Value) -> Value {
+pub fn call_args(tool: &Tool) -> Value {
     match tool {
         Tool::Zoom(node) => json!({"id": node.id()}),
         Tool::Recall(pattern) => json!({"pattern": cap_text(pattern, ARG_CHARS)}),
@@ -346,15 +346,30 @@ pub fn call_args(tool: &Tool, raw: &Value) -> Value {
             "budget": request.budget,
             "has_cursor": request.cursor.is_some(),
         }),
-        Tool::Search(_) => raw_args(HistoryTool::Search, raw),
+        Tool::Search(request) => search_args(request),
     }
 }
 
-pub fn tool_raw(tool: &Tool) -> Value {
-    match tool {
-        Tool::Search(request) => json!({"query": request.text()}),
-        _ => Value::Null,
+fn search_args(request: &SearchRequest) -> Value {
+    let mut args = Map::new();
+    args.insert(
+        "query".to_string(),
+        Value::String(cap_text(request.text(), ARG_CHARS)),
+    );
+    let texts = [
+        ("role", request.role().map(|role| role.as_str())),
+        ("tag", request.tag().map(|tag| tag.as_str())),
+        ("since", request.since_text()),
+        ("until", request.until_text()),
+    ];
+    for (key, text) in texts {
+        if let Some(text) = text {
+            args.insert(key.to_string(), Value::String(cap_text(text, ARG_CHARS)));
+        }
     }
+    args.insert("limit".to_string(), json!(request.limit()));
+    args.insert("has_cursor".to_string(), Value::Bool(request.has_cursor()));
+    Value::Object(args)
 }
 
 fn raw_args(tool: HistoryTool, raw: &Value) -> Value {
@@ -381,7 +396,6 @@ fn raw_scope(raw: &Value) -> String {
 
 pub fn history_call_facts(
     call: &MemoryCall,
-    raw: &Value,
     result: &Result<String, String>,
     ctx: CallContext,
 ) -> CallFacts {
@@ -393,7 +407,7 @@ pub fn history_call_facts(
         source: ctx.source,
         tool: history_tool_of(&call.tool),
         scope: scope_label(&call.scope),
-        args: call_args(&call.tool, raw),
+        args: call_args(&call.tool),
         outcome: classify_call(result),
         error,
         result_bytes: byte_count(text),

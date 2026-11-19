@@ -31,6 +31,26 @@ impl SearchRequest {
     pub fn text(&self) -> &str {
         &self.text
     }
+
+    pub fn role(&self) -> Option<Role> {
+        self.role
+    }
+
+    pub fn since_text(&self) -> Option<&str> {
+        self.since_text.as_deref()
+    }
+
+    pub fn until_text(&self) -> Option<&str> {
+        self.until_text.as_deref()
+    }
+
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
+    pub fn has_cursor(&self) -> bool {
+        self.cursor.is_some()
+    }
 }
 
 impl SearchCursor {
@@ -67,6 +87,8 @@ pub struct SearchRequest {
     tag_ids: Option<BTreeSet<usize>>,
     since: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
+    since_text: Option<String>,
+    until_text: Option<String>,
     pub(super) limit: usize,
     pub(super) cursor: Option<SearchCursor>,
     pub(super) fingerprint: u64,
@@ -161,6 +183,8 @@ pub fn parse_search_args(args: &Value) -> Result<SearchRequest, String> {
         before: optional_str(args, "until")?
             .map(|s| parse_edge(s, Edge::Until))
             .transpose()?,
+        since_text: optional_str(args, "since")?.map(|s| s.trim().to_string()),
+        until_text: optional_str(args, "until")?.map(|s| s.trim().to_string()),
         limit: parse_limit(args)?,
         cursor: optional_str(args, "cursor")?
             .map(|s| SearchCursor::parse(s.trim()))
