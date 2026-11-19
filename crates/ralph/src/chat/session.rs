@@ -1,23 +1,19 @@
 use crate::chat::prompt::{ChatPrompt, Submitted};
 use crate::chat::queue::exit_notice;
-use crate::chat::thread::{self, Memory};
+use crate::chat::route::history_call;
+use crate::chat::thread;
 use crate::cli::HistoryArgs;
 use ralph_core::chat::{prompt_text, CustomPrompt};
 use ralph_core::chat_hold::hold_targets;
-use ralph_core::chat_memory::{
-    history_tool, history_tool_named, CallContext, CallMetrics, CallSource, ErrorScope,
-    MalformedCall,
-};
+use ralph_core::chat_memory::{history_tool, history_tool_named, CallSource};
 use ralph_core::chat_status::route_input;
 use ralph_core::chat_thread::{in_scope, ThreadName};
 use ralph_server::config::PromptFiles;
 use ralph_server::history_log;
 use ralph_server::warn::warn_if_err;
 use reedline::{HistoryItem, Reedline};
-use serde_json::Value;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use super::STORE_ENV;
 
@@ -69,24 +65,10 @@ pub(super) fn print_history(
     });
     let call = parsed.inspect_err(|message| {
         if let Some(tool) = history_tool_named(history.tool.name()) {
-            let bad = MalformedCall {
-                tool,
-                raw: Value::Null,
-                message: message.clone(),
-            };
-            history_log::record_error(
-                store_dir,
-                &bad,
-                ErrorScope::AsTyped,
-                CallContext {
-                    source: CallSource::Cli,
-                    took: Duration::ZERO,
-                    metrics: CallMetrics::default(),
-                },
-            );
+            history_log::record_refusal(store_dir, tool, message, CallSource::Cli);
         }
     })?;
-    let text = Memory::open(store_dir)?.call(&call, CallSource::Cli)?.text;
+    let text = history_call(store_dir, &call, CallSource::Cli)?.text;
     println!("{text}");
     Ok(())
 }

@@ -5,11 +5,14 @@ use crate::workers::usage_store;
 use ralph_core::chat_memory::{
     count_turn_calls, encode_history, history_call_facts, history_call_row, history_error_row,
     history_path, history_turn_row, next_turn_number, parse_turn_id, turn_id, CallContext,
-    CallSource, ErrorScope, HistoryKey, HistoryRow, MalformedCall, MemoryCall, TurnFacts,
+    CallMetrics, CallSource, ErrorScope, HistoryKey, HistoryRow, HistoryTool, MalformedCall,
+    MemoryCall, TurnFacts,
 };
+use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub struct TurnMark {
     pub id: String,
@@ -139,6 +142,20 @@ pub fn record_error(store: &Path, bad: &MalformedCall, scope: ErrorScope, ctx: C
     });
 }
 
+pub fn record_refusal(store: &Path, tool: HistoryTool, message: &str, source: CallSource) {
+    let bad = MalformedCall {
+        tool,
+        raw: Value::Null,
+        message: message.to_string(),
+    };
+    let ctx = CallContext {
+        source,
+        took: Duration::ZERO,
+        metrics: CallMetrics::default(),
+    };
+    record_error(store, &bad, ErrorScope::AsTyped, ctx);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +259,20 @@ mod tests {
         assert_eq!(row["error"], "bad id");
         assert_eq!(row["source"], "slash");
         assert_eq!(row["args"], json!({"id": "9"}));
+    }
+
+    #[test]
+    fn a_refusal_row_is_an_error_row_with_no_args_and_own_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        record_refusal(dir.path(), HistoryTool::Search, "no store", CallSource::Cli);
+        let row = &rows(dir.path())[0];
+        assert_eq!(row["event"], "call");
+        assert_eq!(row["tool"], "search");
+        assert_eq!(row["source"], "cli");
+        assert_eq!(row["scope"], "own");
+        assert_eq!(row["outcome"], "error");
+        assert_eq!(row["error"], "no store");
+        assert_eq!(row["duration_ms"], 0);
     }
 
     #[test]

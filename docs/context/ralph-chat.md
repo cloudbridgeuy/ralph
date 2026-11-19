@@ -827,7 +827,7 @@ Writes are best effort: an I/O error shows one warning and never fails a turn or
 
 The turn id is `<run>#<n>`, where `<run>` is the usage-row run id and `n` is a counter for the whole run. The turn shell (`turn.rs`) writes it to `<store>/TURN` at turn start (`begin_turn`). A successful chat claim in `Store::claim_chat` clears the file, so a new chat process starts at 1. `chat-mcp` and the slash commands read `TURN` and stamp `run` and `turn` on their rows; a slash call between turns carries the previous turn id. The CLI never reads `TURN`, so its rows carry no `run` or `turn`.
 
-A malformed call writes an `error` row on all three paths: chat-mcp (the tool result has `isError`), slash and CLI (the parse fails). A call to an unknown tool name writes no row.
+A malformed call writes an `error` row on all three paths: chat-mcp (the tool result has `isError`), slash and CLI (the parse fails). A call to an unknown tool name writes no row. A parsed slash or CLI call whose `Memory::open` fails (for example a thread store with an unreadable `thread.json`) also writes an `error` row, with scope `own` and empty `args`; if the store directory does not exist, no row is written, as for every row.
 
 Writes are best effort: an I/O error shows one warning and never changes the tool result. Rows are one `write_all` on an `O_APPEND` file opened with `O_NOFOLLOW`, with no `LOCK`. A store directory that does not exist gets no row and no directory.
 
