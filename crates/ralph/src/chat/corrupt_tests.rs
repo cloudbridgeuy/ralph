@@ -1,4 +1,3 @@
-use super::monitor::fresh_warnings;
 use ralph_core::chat_memory::{
     encode_entry, nap_step, pending, Entry, Mode, NapStep, NewEntry, Node, RangeRequest, Tool,
     Tree, CORRUPT_TEXT,
@@ -6,6 +5,7 @@ use ralph_core::chat_memory::{
 use ralph_server::chat::index_files::open_archive;
 use ralph_server::chat::memory::Reach;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::monitor::fresh_warnings;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;

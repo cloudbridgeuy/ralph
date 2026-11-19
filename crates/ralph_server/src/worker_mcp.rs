@@ -2,9 +2,10 @@ use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     accept_report, append_status, decode_statuses, encode_statuses, handle_request,
-    inbox_file_name, report_event, reported_path, sent_path, status_path, stop_activity_state,
-    stop_block_output, stop_decision, unreported_path, ActivityMark, ActivityState, Outcome,
-    Report, ReportFacts, ReportStatus, StatusLine, StopDecision,
+    inbox_file_name, refuses_repeat_report, report_event, reported_path, sent_path, status_path,
+    stop_activity_state, stop_block_output, stop_decision, unreported_path, ActivityMark,
+    ActivityState, Outcome, Report, ReportFacts, ReportStatus, StatusLine, StopDecision,
+    REPEAT_REPORT_REFUSAL,
 };
 use serde_json::Value;
 use std::fs;
@@ -22,6 +23,7 @@ const DROP_LOG: &str = "inbox-drops.jsonl";
 pub struct Inbox {
     dir: PathBuf,
     owner: Option<PathBuf>,
+    once_per_turn: bool,
     lock: Mutex<()>,
 }
 
@@ -30,12 +32,18 @@ impl Inbox {
         Self {
             dir,
             owner: None,
+            once_per_turn: false,
             lock: Mutex::new(()),
         }
     }
 
     pub fn requiring_owner(mut self, owner: Option<PathBuf>) -> Self {
         self.owner = owner;
+        self
+    }
+
+    pub fn once_per_turn(mut self, once: bool) -> Self {
+        self.once_per_turn = once;
         self
     }
 
@@ -52,6 +60,11 @@ impl Inbox {
         let tmp = self.dir.join(format!(".{name}"));
         fs::write(&tmp, serde_json::to_vec(report)?)?;
         fs::rename(tmp, self.dir.join(name))
+    }
+
+    fn reported_this_turn(&self, worker: &str) -> bool {
+        let store = self.dir.parent().unwrap_or(Path::new("."));
+        refuses_repeat_report(self.once_per_turn, reported_path(store, worker).exists())
     }
 
     fn log_report(&self, report: &Report, status: ReportStatus, seq: u64) {
@@ -199,6 +212,18 @@ impl Inbox {
         })?
     }
 
+    pub fn drop_worker(&self, worker: &str) -> io::Result<usize> {
+        let log = self.dir.with_file_name(DROP_LOG);
+        self.sync(|ledger| {
+            let dropped = ledger.drop_worker(worker);
+            let now = chrono::Utc::now();
+            let logged = dropped
+                .iter()
+                .try_for_each(|entry| append_line(&log, &drop_log_line(entry, now)));
+            (logged.map(|()| dropped.len()), !dropped.is_empty())
+        })?
+    }
+
     pub fn ledger(&self) -> io::Result<Ledger> {
         self.sync(|ledger| (ledger.clone(), false))
     }
@@ -258,6 +283,12 @@ pub fn run_stdio_server(
                 if !inbox.accepts_report() {
                     let closed = tool_result(id, "Could not deliver: worker closed.", true);
                     writeln!(output, "{closed}")?;
+                    output.flush()?;
+                    continue;
+                }
+                if inbox.reported_this_turn(worker) {
+                    let refused = tool_result(id, REPEAT_REPORT_REFUSAL, true);
+                    writeln!(output, "{refused}")?;
                     output.flush()?;
                     continue;
                 }
@@ -404,6 +435,32 @@ mod tests {
     }
 
     #[test]
+    fn drop_worker_removes_its_queued_reports_and_logs_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        for (worker, seq) in [("A", 1), ("B", 1), ("A", 2)] {
+            let report = Report {
+                worker: worker.to_string(),
+                at: format!("2026-11-10T13:00:0{seq}Z"),
+                status: "done".to_string(),
+                text: "t".to_string(),
+            };
+            inbox.post(&report, seq).unwrap();
+        }
+        assert_eq!(inbox.drop_worker("A").unwrap(), 2);
+        let left: Vec<String> = inbox
+            .peek()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.worker)
+            .collect();
+        assert_eq!(left, ["B"]);
+        let log = fs::read_to_string(dir.path().join(DROP_LOG)).unwrap();
+        assert_eq!(log.lines().count(), 2);
+        assert_eq!(inbox.drop_worker("A").unwrap(), 0);
+    }
+
+    #[test]
     fn stop_hook_writes_background_while_tasks_run_and_idle_otherwise() {
         let busy = r#"{"stop_hook_active":false,"background_tasks":[{"id":"x"}]}"#;
         assert!(activity_after(busy, false).ends_with(" background"));
@@ -483,6 +540,59 @@ mod tests {
         assert_eq!(reports[0].worker, "GUZ-1");
         assert_eq!(reports[0].text, "hello");
         assert!(inbox.peek().unwrap().is_empty());
+    }
+
+    fn report_call(id: u32, text: &str) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"report","arguments":{{"status":"done","text":"{text}"}}}}}}"#
+        )
+    }
+
+    fn replies(inbox: &Inbox, calls: &[String]) -> Vec<Value> {
+        let mut out = Vec::new();
+        let input = format!("{}\n", calls.join("\n"));
+        run_stdio_server("GUZ-1", inbox, None, input.as_bytes(), &mut out).unwrap();
+        String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_second_report_in_the_same_turn_is_refused_and_posts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox")).once_per_turn(true);
+        let out = replies(&inbox, &[report_call(1, "first"), report_call(2, "second")]);
+        assert_eq!(out[0]["result"]["isError"], false);
+        assert_eq!(out[1]["result"]["isError"], true);
+        assert!(out[1]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Already reported this turn"));
+        let reports = inbox.drain(Selection::All).unwrap();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].text, "first");
+    }
+
+    #[test]
+    fn a_report_after_the_turn_consumed_the_marker_is_delivered() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox")).once_per_turn(true);
+        replies(&inbox, &[report_call(1, "first")]);
+        fs::remove_file(dir.path().join("reported").join("GUZ-1")).unwrap();
+        let out = replies(&inbox, &[report_call(2, "next turn")]);
+        assert_eq!(out[0]["result"]["isError"], false);
+        assert_eq!(inbox.peek().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn without_the_once_per_turn_flag_repeat_reports_still_post() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let out = replies(&inbox, &[report_call(1, "a"), report_call(2, "b")]);
+        assert_eq!(out[1]["result"]["isError"], false);
+        assert_eq!(inbox.peek().unwrap().len(), 2);
     }
 
     fn status_call(id: u32, text: &str) -> String {

@@ -1,16 +1,16 @@
-use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
-use crate::chat::schedule::fire_due;
-use crate::chat::schedule_worker::tick_workers;
-use crate::chat::term_status::TermStatus;
-use crate::chat::thread::settle;
-use crate::inbox_alert;
+use crate::chat::check::CheckState;
+use crate::chat::host::{tick_events, HostEvent};
+use crate::chat::keepalive::Stamp;
+use crate::chat::memory::{self, Store};
+use crate::chat::settle;
+use crate::cursor_owner::{now_secs, write_file};
 use crate::schedule_store::ScheduleStore;
-use crate::signal;
-use crate::watch_requests;
+use crate::warn::{warn, warn_if_err};
+use crate::watches::{locked, Watches};
+use crate::worker_mcp::Inbox;
+use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_hold::HoldFilter;
-use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
-use ralph_core::chat_keepalive::lock_wait_continues;
 use ralph_core::chat_memory::entries_to_shift;
 use ralph_core::chat_process::{process_cell, process_usage, ProcessEnv, ProcessUsage, UsageTail};
 use ralph_core::chat_status::{
@@ -18,42 +18,28 @@ use ralph_core::chat_status::{
 };
 use ralph_core::chat_thread_auto::split_close_reports;
 use ralph_core::inbox::Selection;
-use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
+use ralph_core::inbox_alert::fresh_reports;
 use ralph_core::program_status::{self, report_for, Phase};
 use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
     marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
-    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, HANDOFF_POLL, INBOX_DIR,
-    READY_DIR,
+    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, READY_DIR,
 };
 use ralph_core::worker_check::{
-    check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
-    CHECK_STATUS, NUDGE_TEXT,
+    last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, CHECK_STATUS,
+    NUDGE_TEXT,
 };
-use ralph_server::chat::check::CheckState;
-use ralph_server::chat::memory::{self, Store};
-use ralph_server::cursor_owner::{now_secs, write_file};
-use ralph_server::subprocess::Session;
-use ralph_server::version_drift::DailyTick;
-use ralph_server::warn::{warn, warn_if_err};
-use ralph_server::watches::{locked, Watches};
-use ralph_server::worker_mcp::Inbox;
-use ralph_server::workers::headless::{ExitCleanup, HeadlessShutdown};
-use ralph_server::workers::{capture_pane, opencode_active, running_workers, Workers};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, IsTerminal};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, TryLockError};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-pub(super) const POLL: Duration = Duration::from_millis(500);
-const LOCK_POLL: Duration = Duration::from_millis(100);
-const MEMORY_EVERY_POLLS: u64 = 10;
-const INPUT_LOST_EXIT: i32 = 129;
+pub const POLL: Duration = Duration::from_millis(500);
 
-pub(super) fn ready_ids(store_dir: &Path) -> Vec<String> {
+pub fn ready_ids(store_dir: &Path) -> Vec<String> {
     std::fs::read_dir(store_dir.join(READY_DIR))
         .map(|entries| {
             entries
@@ -64,7 +50,7 @@ pub(super) fn ready_ids(store_dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub(super) fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) -> Vec<String> {
+pub fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) -> Vec<String> {
     warnings
         .into_iter()
         .filter(|warning| seen.insert(warning.clone()))
@@ -72,68 +58,74 @@ pub(super) fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) 
 }
 
 #[derive(Default)]
-pub(super) struct ProcessMemo {
+pub struct ProcessMemo {
     usage: Option<ProcessUsage>,
     shift: Option<usize>,
 }
 
-pub(super) struct Monitor {
-    pub(super) inbox: Arc<Inbox>,
-    pub(super) watches: Watches,
-    pub(super) schedule: ScheduleStore,
-    pub(super) store: Store,
-    pub(super) store_dir: PathBuf,
-    pub(super) status: Mutex<Status>,
-    pub(super) seen: Mutex<HashMap<String, String>>,
-    pub(super) active: Mutex<Option<HashSet<String>>>,
-    pub(super) recent_history_tokens: usize,
-    pub(super) worker_check_secs: Option<u64>,
-    pub(super) worker_quiet_secs: u64,
-    pub(super) auto_continue: bool,
-    pub(super) hold_progress: bool,
-    pub(super) workers: Workers,
-    pub(super) check: Mutex<CheckState>,
-    pub(super) known: Mutex<Vec<Report>>,
-    pub(super) scheduled_reports: Mutex<Vec<Report>>,
-    pub(super) warned: Mutex<HashSet<String>>,
-    pub(super) unrecorded: Mutex<HashSet<String>>,
-    pub(super) alert: AlertConfig,
-    pub(super) live: Arc<AtomicBool>,
-    pub(super) last_ping: Stamp,
-    pub(super) run: String,
-    pub(super) reset_limits: ResetLimits,
-    pub(super) process: Mutex<ProcessMemo>,
-    pub(super) usage_tail: Mutex<UsageTail>,
-    pub(super) term: Arc<TermStatus>,
-    pub(super) phase: Mutex<Phase>,
-    pub(super) hold: Mutex<Option<HoldFilter>>,
+pub struct Monitor {
+    pub inbox: Arc<Inbox>,
+    pub watches: Watches,
+    pub schedule: ScheduleStore,
+    pub store: Store,
+    pub store_dir: PathBuf,
+    pub status: Mutex<Status>,
+    pub seen: Mutex<HashMap<String, String>>,
+    pub active: Mutex<Option<HashSet<String>>>,
+    pub recent_history_tokens: usize,
+    pub worker_check_secs: Option<u64>,
+    pub worker_quiet_secs: u64,
+    pub auto_continue: bool,
+    pub hold_progress: bool,
+    pub workers: Workers,
+    pub check: Mutex<CheckState>,
+    pub known: Mutex<Vec<Report>>,
+    pub fresh: Mutex<(Vec<Report>, usize)>,
+    pub starting: Arc<Mutex<Vec<String>>>,
+    pub scheduled_reports: Mutex<Vec<Report>>,
+    pub warned: Mutex<HashSet<String>>,
+    pub unrecorded: Mutex<HashSet<String>>,
+    pub live: Arc<AtomicBool>,
+    pub last_ping: Stamp,
+    pub run: String,
+    pub reset_limits: ResetLimits,
+    pub process: Mutex<ProcessMemo>,
+    pub usage_tail: Mutex<UsageTail>,
+    pub phase: Mutex<Phase>,
+    pub hold: Mutex<Option<HoldFilter>>,
 }
 
 impl Monitor {
-    pub(super) fn status(&self) -> Status {
+    pub fn status(&self) -> Status {
         locked(&self.status).clone()
     }
 
-    pub(super) fn set_phase(&self, phase: Phase) {
+    pub fn set_phase(&self, phase: Phase) {
         *locked(&self.phase) = phase;
     }
 
-    pub(super) fn set_hold(&self, hold: Option<HoldFilter>) {
+    pub fn set_hold(&self, hold: Option<HoldFilter>) {
         *locked(&self.hold) = hold;
     }
 
-    fn terminal_report(&self, unread: usize) -> program_status::Report {
+    pub fn terminal_report(&self, unread: usize) -> program_status::Report {
         let mut status = self.status();
         status.unread = unread;
         status.hold = locked(&self.hold).clone();
         report_for(*locked(&self.phase), &status)
     }
 
-    fn report_terminal(&self) {
-        self.term.send(&self.terminal_report(self.status().unread));
+    pub fn tick_events(&self, changed: bool) -> Vec<HostEvent> {
+        let (fresh, unread) = std::mem::take(&mut *locked(&self.fresh));
+        tick_events(
+            changed,
+            self.terminal_report(self.status().unread),
+            fresh,
+            unread,
+        )
     }
 
-    pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
+    pub fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
         let (_, reports) = split_close_reports(self.inbox.drain(selection)?);
         self.note_scheduled(&reports);
         locked(&self.seen).extend(latest_states(&reports));
@@ -214,7 +206,7 @@ impl Monitor {
             .collect()
     }
 
-    fn check(&self) {
+    pub fn check(&self) {
         let running = running_workers(&self.store_dir);
         let actions = {
             let mut state = locked(&self.check);
@@ -302,12 +294,14 @@ impl Monitor {
 
     fn alert_fresh(&self, pending: &[Report]) {
         let mut known = locked(&self.known);
-        let fresh = fresh_reports(&known, pending);
-        if !fresh.is_empty() && self.alert.enabled() {
-            let terminal = self.terminal_report(pending.len()).state;
-            if let Some(alert) = inbox_alert(&fresh, inbox_alert::focus(), terminal, &self.alert) {
-                inbox_alert::deliver(&alert);
-            }
+        let fresh: Vec<Report> = fresh_reports(&known, pending)
+            .into_iter()
+            .cloned()
+            .collect();
+        if !fresh.is_empty() {
+            let mut queued = locked(&self.fresh);
+            queued.0.extend(fresh);
+            queued.1 = pending.len();
         }
         *known = pending.to_vec();
     }
@@ -318,7 +312,7 @@ impl Monitor {
         known.extend(fresh);
     }
 
-    pub(super) fn refresh(&self, with_memory: bool) -> bool {
+    pub fn refresh(&self, with_memory: bool) -> bool {
         let peeked = self.inbox.peek();
         if let Ok(pending) = &peeked {
             self.alert_fresh(pending);
@@ -390,111 +384,4 @@ impl Monitor {
         *status = next;
         changed
     }
-}
-
-pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 'static) {
-    std::thread::spawn(move || {
-        let check_every = monitor
-            .worker_check_secs
-            .map(|secs| check_every_polls(secs, POLL));
-        let mut tick: u64 = 0;
-        let mut daily = DailyTick::start();
-        let inbox_dir = monitor.store_dir.join(INBOX_DIR);
-        loop {
-            std::thread::sleep(POLL);
-            tick += 1;
-            daily.tick(&inbox_dir);
-            watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
-            fire_due(&monitor.schedule, &monitor.watches, &monitor.inbox);
-            tick_workers(&monitor);
-            if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
-                repaint();
-            }
-            monitor.report_terminal();
-            if check_every.is_some_and(|every| tick.is_multiple_of(every)) {
-                monitor.check();
-            }
-        }
-    });
-}
-
-pub(super) fn watch_headless(store_dir: PathBuf) -> HeadlessShutdown {
-    let headless = HeadlessShutdown::new(store_dir);
-    for host in headless.hosts() {
-        let resumed = Arc::clone(host);
-        std::thread::spawn(move || resumed.resume());
-        let polled = Arc::clone(host);
-        // Keep each host independent: HTTP and ACP handoffs can block, and neither
-        // should delay the other host or the status/check loop.
-        std::thread::spawn(move || loop {
-            std::thread::sleep(HANDOFF_POLL);
-            if !polled.poll() {
-                break;
-            }
-        });
-    }
-    headless
-}
-
-pub(super) fn stdin_hung_up() -> bool {
-    let mut stdin = libc::pollfd {
-        fd: libc::STDIN_FILENO,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    // SAFETY: ralph's direct dependencies have no safe poll wrapper, and this is
-    // the backup check for terminals that close without sending SIGHUP.
-    // `stdin` is a valid, initialized pollfd on the stack and nfds is 1, so poll
-    // only touches that one struct. fd 0 is not owned or closed here. A zero
-    // timeout means poll never blocks. revents is read only when poll returns > 0.
-    unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
-}
-
-fn drop_session(session: &Mutex<Option<Session>>) {
-    let started = Instant::now();
-    loop {
-        match session.try_lock() {
-            Ok(mut live) => {
-                live.take();
-                return;
-            }
-            Err(TryLockError::Poisoned(poisoned)) => {
-                poisoned.into_inner().take();
-                return;
-            }
-            Err(TryLockError::WouldBlock) => {
-                if !lock_wait_continues(started.elapsed(), PING_TIMEOUT) {
-                    return;
-                }
-                std::thread::sleep(LOCK_POLL);
-            }
-        }
-    }
-}
-
-pub(super) fn watch_input(
-    at_prompt: Arc<AtomicBool>,
-    session: Arc<Mutex<Option<Session>>>,
-    plugin_dir: Option<PathBuf>,
-    exit: ExitCleanup,
-    term: Arc<TermStatus>,
-) {
-    let started_on_terminal = io::stdin().is_terminal();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(POLL);
-        if input_lost_at_prompt(&InputWatch {
-            hangup_signal: signal::is_terminated(),
-            started_on_terminal,
-            stdin_hung_up: stdin_hung_up(),
-            at_prompt: at_prompt.load(Ordering::SeqCst),
-        }) {
-            drop_session(&session);
-            if let Some(dir) = &plugin_dir {
-                std::fs::remove_dir_all(dir).ok();
-            }
-            term.clear();
-            exit.run();
-            std::process::exit(INPUT_LOST_EXIT);
-        }
-    });
 }

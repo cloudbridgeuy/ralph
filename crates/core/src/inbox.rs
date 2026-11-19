@@ -102,6 +102,14 @@ impl Ledger {
         self.entries.iter().map(|e| e.report.clone()).collect()
     }
 
+    pub fn drop_worker(&mut self, worker: &str) -> Vec<Entry> {
+        let (dropped, kept): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
+            .into_iter()
+            .partition(|e| e.report.worker == worker);
+        self.entries = kept;
+        dropped
+    }
+
     pub fn take_closes(&mut self) -> Vec<Report> {
         let (closes, rest): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
             .into_iter()
@@ -250,6 +258,21 @@ mod tests {
 
     fn now() -> DateTime<Utc> {
         "2026-01-10T00:00:00Z".parse().unwrap()
+    }
+
+    #[test]
+    fn drop_worker_removes_only_that_workers_entries_in_order() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![
+            ("1".to_string(), entry("A", "t1").report),
+            ("2".to_string(), entry("B", "t2").report),
+            ("3".to_string(), entry("A", "t3").report),
+        ]);
+        let dropped = ledger.drop_worker("A");
+        let times: Vec<&str> = dropped.iter().map(|e| e.report.at.as_str()).collect();
+        assert_eq!(times, ["t1", "t3"]);
+        assert_eq!(sources(&ledger), ["2"]);
+        assert!(ledger.drop_worker("A").is_empty());
     }
 
     #[test]

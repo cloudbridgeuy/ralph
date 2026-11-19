@@ -1,7 +1,7 @@
+use crate::chat::client_monitor::Monitor;
 use crate::chat::editor::{
     build_queue_editor, edit_queue_draft, BACK_OUT, OPEN_EDITOR, QUEUE_CTRL_C,
 };
-use crate::chat::monitor::Monitor;
 use crate::chat::prompt::{retry_interrupted, QueuePrompt};
 use crate::chat::queue::{on_exit, Action, EditorExit, Queue};
 use crate::chat::route::{run_local, LocalRoute};

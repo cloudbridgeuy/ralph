@@ -1,3 +1,8 @@
+use crate::chat::memory::usage_path;
+use crate::ledger;
+use crate::subprocess::{recorded, Session, StreamingSubprocessResult};
+use crate::warn::warn_if_err;
+use crate::watches::locked;
 use chrono::{DateTime, Utc};
 use ralph_core::chat_keepalive::{
     keepalive_action, keeps_after, keeps_for_turn, ping_follow_up, Keepalive, KeepaliveInput,
@@ -5,46 +10,41 @@ use ralph_core::chat_keepalive::{
 };
 use ralph_core::chat_memory::{subagent_records, usage_record, CallSite, LedgerRow};
 use ralph_core::stream::IterationMetadata;
-use ralph_server::chat::memory::usage_path;
-use ralph_server::ledger;
-use ralph_server::subprocess::{recorded, Session, StreamingSubprocessResult};
-use ralph_server::warn::warn_if_err;
-use ralph_server::watches::locked;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const CHECK_EVERY: Duration = Duration::from_secs(30);
-pub(super) const PING_TIMEOUT: Duration = Duration::from_secs(60);
+pub const PING_TIMEOUT: Duration = Duration::from_secs(60);
 
-pub(super) use ralph_server::chat::turn::Stamp;
+pub use crate::chat::turn::Stamp;
 
 #[derive(Default)]
-pub(super) struct Keeps {
+pub struct Keeps {
     counted_turn_end: Option<DateTime<Utc>>,
     count: u32,
 }
 
-pub(super) struct KeepaliveWatch {
-    pub(super) limit_hours: u64,
-    pub(super) idle: Arc<AtomicBool>,
-    pub(super) session: Arc<Mutex<Option<Session>>>,
-    pub(super) live: Arc<AtomicBool>,
-    pub(super) last_turn_end: Stamp,
-    pub(super) last_ping: Stamp,
-    pub(super) last_attempt: Stamp,
-    pub(super) keeps: Mutex<Keeps>,
-    pub(super) identity: Arc<Mutex<IterationMetadata>>,
-    pub(super) run: String,
-    pub(super) store: String,
+pub struct KeepaliveWatch {
+    pub limit_hours: u64,
+    pub idle: Arc<AtomicBool>,
+    pub session: Arc<Mutex<Option<Session>>>,
+    pub live: Arc<AtomicBool>,
+    pub last_turn_end: Stamp,
+    pub last_ping: Stamp,
+    pub last_attempt: Stamp,
+    pub keeps: Mutex<Keeps>,
+    pub identity: Arc<Mutex<IterationMetadata>>,
+    pub run: String,
+    pub store: String,
 }
 
 impl KeepaliveWatch {
-    pub(super) fn spawn(self) {
-        std::thread::spawn(move || loop {
+    pub fn run(self) -> ! {
+        loop {
             std::thread::sleep(CHECK_EVERY);
             self.tick();
-        });
+        }
     }
 
     fn tick(&self) {

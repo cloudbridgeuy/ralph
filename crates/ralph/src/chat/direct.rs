@@ -1,4 +1,4 @@
-use crate::chat::monitor::Monitor;
+use crate::chat::client_monitor::Monitor;
 use crate::chat::route::LocalRoute;
 use ralph_core::chat_direct::{failure_line, memory_line, resolve_direct, Direct};
 use ralph_core::chat_memory::Role;

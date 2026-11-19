@@ -22,7 +22,6 @@ pub mod markdown;
 mod mermaid_guard;
 pub mod prompt_source;
 pub mod render;
-mod schedule_store;
 pub mod signal;
 pub mod spinner;
 pub mod startup;
@@ -37,7 +36,6 @@ mod usage_cmd;
 pub mod stream_processor;
 mod version;
 pub mod warn;
-mod watch_requests;
 mod wire;
 
 use ask::InvocationConfig;
@@ -346,7 +344,9 @@ fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Err
     let changes = site
         .as_ref()
         .and_then(ralph_server::worker_changes::WorkerChanges::open);
-    let inbox = ralph_server::worker_mcp::Inbox::new(args.inbox).requiring_owner(args.owner);
+    let inbox = ralph_server::worker_mcp::Inbox::new(args.inbox)
+        .requiring_owner(args.owner)
+        .once_per_turn(args.once_per_turn);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     ralph_server::worker_mcp::run_stdio_server(

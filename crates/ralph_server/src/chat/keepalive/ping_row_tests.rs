@@ -1,7 +1,7 @@
 use super::*;
-use crate::stream_processor::StreamProcessorResult;
+use crate::subprocess::SubprocessError;
+use ralph_core::stream::blocks::StreamProcessorResult;
 use ralph_core::stream::{IterationCosts, Usage};
-use ralph_server::subprocess::SubprocessError;
 use serde_json::Value;
 
 fn result(total: Option<f64>, before: Option<f64>) -> StreamingSubprocessResult {
