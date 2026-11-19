@@ -1,4 +1,3 @@
-use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
 use crate::chat::schedule_worker::tick_workers;
 use crate::chat::term_status::TermStatus;
 use crate::inbox_alert;
@@ -29,6 +28,7 @@ use ralph_core::worker_check::{
 };
 use ralph_server::chat::check::CheckState;
 use ralph_server::chat::host::{tick_events, HostEvent};
+use ralph_server::chat::keepalive::{Stamp, PING_TIMEOUT};
 use ralph_server::chat::memory::{self, Store};
 use ralph_server::chat::schedule::fire_due;
 use ralph_server::chat::settle;

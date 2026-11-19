@@ -4,6 +4,7 @@ pub mod claim;
 pub mod fork;
 pub mod host;
 pub mod index_files;
+pub mod keepalive;
 pub mod memory;
 pub mod name;
 pub mod schedule;

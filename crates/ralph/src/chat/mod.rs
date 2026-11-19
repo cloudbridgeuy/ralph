@@ -9,7 +9,6 @@ mod editor;
 mod hold;
 mod hold_progress;
 mod inbox;
-mod keepalive;
 mod keys;
 pub(crate) mod mcp;
 mod monitor;
@@ -68,7 +67,6 @@ use crate::render::{cap_wrap_width, RenderContext};
 use crate::signal;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
-use keepalive::{KeepaliveWatch, Stamp};
 use ralph_core::chat::{
     resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
     resolve_wrap_width, select_servers, ReplyImages,
@@ -98,6 +96,7 @@ use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use ralph_server::chat::check::CheckState;
+use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::schedule::restore_schedule;
 use ralph_server::chat::skills::read_claude_config;
