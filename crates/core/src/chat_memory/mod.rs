@@ -31,7 +31,9 @@ pub use history_log::{
     CallContext, CallMetrics, CallSource, ErrorScope, HistoryKey, HistoryRow, HistoryTool,
     MalformedCall, TurnFacts,
 };
-pub use history_stats::{parse_history, parse_timing, Parsed, TimingParsed};
+pub use history_stats::{
+    count_calls, parse_history, parse_timing, Counts, Parsed, TimingParsed, ToolCounts,
+};
 pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
     INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,
