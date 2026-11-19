@@ -58,7 +58,7 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 - `crates/ralph_server/src/chat/skills.rs`: MCP config and skill plugin setup.
 - `crates/ralph_server/src/chat/memory.rs`: `Store` (files, `LOCK`, `NAP`, `CHAT`, append, nap loop and commit, indexed `read` and `zoom`).
 - `crates/ralph_server/src/chat/index_files.rs`: `FileSource`, `open_archive`, and the `log.idx` and `tree.idx` writes (`update_index` for writers, `save_stale` for readers).
-- `crates/ralph/src/chat/mcp.rs`: `chat-mcp` stdio loop; answers `zoom`, `recall`, `search`, `read`, `changes` and `help`, forwards socket tools to the chat socket.
+- `crates/ralph_server/src/chat/mcp.rs`: `chat-mcp` stdio loop; answers `zoom`, `recall`, `search`, `read`, `changes` and `help`, forwards socket tools to the chat socket.
 - `crates/ralph_server/src/chat/socket.rs` and `socket/serve.rs`: chat socket files, bind, sweep, server and `forward` client.
 - `crates/core/src/retry.rs`: pure retry rules: `classify`, `FailureKind`, `OUTAGE_MARKERS`, `OUTAGE_BACKOFF_SECS`, `backoff`, `retry_delay`.
 - `crates/ralph_server/src/backoff.rs`: shell loop `retry_on_outage` with an injectable wait, `attempt_from`, `wait_unless` and `final_tag_failure_kind`; used by `turn.rs`, the nap in `main.rs` and the tag pass in `main.rs`.

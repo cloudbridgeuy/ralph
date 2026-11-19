@@ -1,14 +1,15 @@
-use crate::chat::thread::{config_root, fork_of, Memory};
+use crate::chat::changes::run_changes;
+use crate::chat::socket::serve::forward;
+use crate::chat::thread::Memory;
+use crate::history_log;
 use ralph_core::chat_help::config_help;
 use ralph_core::chat_memory::{
     finish_call, handle_request, malformed_call, CallContext, CallMetrics, CallSource, ErrorScope,
     Outcome,
 };
 use ralph_core::chat_socket::SocketRequest;
+use ralph_core::chat_thread::{config_root, fork_of};
 use ralph_core::mcp::tool_result;
-use ralph_server::chat::changes::run_changes;
-use ralph_server::chat::socket::serve::forward;
-use ralph_server::history_log;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -44,7 +45,7 @@ pub fn run_stdio_server(
         let request: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
-                ralph_server::warn::warn(format!("ignoring malformed JSON-RPC line: {e}"));
+                crate::warn::warn(format!("ignoring malformed JSON-RPC line: {e}"));
                 continue;
             }
         };
@@ -72,7 +73,7 @@ pub fn run_stdio_server(
             Outcome::ConfigHelp { id, section } => finish_call(
                 id,
                 config_help(
-                    &ralph_server::config::config_path(),
+                    &crate::config::config_path(),
                     Some(&config_root(memory.dir())),
                     section.as_deref(),
                 ),
@@ -93,8 +94,8 @@ pub fn run_stdio_server(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_server::chat::memory::Reach;
-    use ralph_server::chat::memory::Store;
+    use crate::chat::memory::Reach;
+    use crate::chat::memory::Store;
 
     fn run(store: &Store, socket: &Path, input: &str) -> Vec<Value> {
         let mut out = Vec::new();
@@ -284,8 +285,22 @@ mod tests {
         let main = root.path().join("chat");
         std::fs::create_dir_all(&main).unwrap();
         let auth = ralph_core::chat_thread::ThreadName::parse("auth").unwrap();
-        crate::chat::thread::ensure(&main, &auth).unwrap();
         let thread = crate::chat::thread::thread_dir(&main, &auth);
+        std::fs::create_dir_all(&thread).unwrap();
+        let meta = ralph_core::chat_thread::ThreadMeta {
+            base: 0,
+            created: "t".to_string(),
+            merged: None,
+            parked: None,
+            auto: None,
+            model: None,
+            closed: false,
+        };
+        std::fs::write(
+            thread.join(ralph_core::chat_thread::THREAD_FILE),
+            serde_json::to_string(&meta).unwrap(),
+        )
+        .unwrap();
         let socket = root.path().join("chat-1.sock");
         for (dir, expected) in [(&main, "main"), (&thread, "auth")] {
             let store = Store::new(dir.to_path_buf());
@@ -311,7 +326,7 @@ mod tests {
             "{\"role\":\"user\",\"at\":\"t\",\"text\":\"hello\"}\n",
         )
         .unwrap();
-        ralph_server::history_log::write_turn(dir.path(), "run-1#2").unwrap();
+        crate::history_log::write_turn(dir.path(), "run-1#2").unwrap();
         let input = [
             call("zoom", serde_json::json!({"id": "0"})),
             call("nonsense", serde_json::json!({})),

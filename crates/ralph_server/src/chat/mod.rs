@@ -6,6 +6,7 @@ pub mod fork;
 pub mod host;
 pub mod index_files;
 pub mod keepalive;
+pub mod mcp;
 pub mod memory;
 pub mod monitor;
 pub mod name;

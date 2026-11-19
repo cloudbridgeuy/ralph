@@ -11,7 +11,6 @@ mod hold;
 mod hold_progress;
 mod inbox;
 mod keys;
-pub(crate) mod mcp;
 mod nudge;
 mod prompt;
 mod queue;
