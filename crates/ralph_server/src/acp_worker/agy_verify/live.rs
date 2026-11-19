@@ -1,12 +1,13 @@
 use super::*;
 use crate::worker_mcp::Inbox;
-use agent_client_protocol::schema::v1::StopReason;
+use agent_client_protocol::schema::v1::{CancelNotification, PromptResponse, StopReason};
 use ralph_core::worker::{reported_path, Report};
 use serde_json::Value;
 
 const ID: &str = "verify";
 const TEXT: &str = "verify";
 const PROMPT: &str = "Call the ralph-worker report tool exactly once with status done and text verify. Do not call any other tool. Then stop.";
+const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
 const SHELL_PROMPT: &str =
     "Run the shell command `date +%Y` and reply with its output. Do not call any other tool.";
 
@@ -66,11 +67,10 @@ fn yolo_check(requests: usize, stop: &Result<String, String>) -> Result<String, 
     }
 }
 
-async fn shell_turn(connection: &ConnectionTo<Agent>, id: &SessionId) -> Result<String, String> {
-    connection
-        .send_request(PromptRequest::new(id.clone(), vec![SHELL_PROMPT.into()]))
-        .block_task()
-        .await
+fn stop_name(
+    result: Result<PromptResponse, agent_client_protocol::Error>,
+) -> Result<String, String> {
+    result
         .map(|done| {
             serde_json::to_value(done.stop_reason)
                 .ok()
@@ -78,6 +78,55 @@ async fn shell_turn(connection: &ConnectionTo<Agent>, id: &SessionId) -> Result<
                 .unwrap_or_default()
         })
         .map_err(|error| error.message)
+}
+
+async fn shell_turn(connection: &ConnectionTo<Agent>, id: &SessionId) -> Result<String, String> {
+    stop_name(
+        connection
+            .send_request(PromptRequest::new(id.clone(), vec![SHELL_PROMPT.into()]))
+            .block_task()
+            .await,
+    )
+}
+
+fn live_cancel(stop: &Result<String, String>, cancel_sent: bool) -> Result<String, String> {
+    match (stop.as_deref(), cancel_sent) {
+        (Err(message), _) => Err(format!("agy cancel prompt failed: {message}")),
+        (Ok(_), false) => {
+            Err("agy ended the turn before any output, so no cancel was sent".to_string())
+        }
+        (Ok("cancelled"), true) => Ok("turn ended with `cancelled` after the cancel".to_string()),
+        (Ok(reason), true) => Err(format!("turn ended with `{reason}` after the cancel")),
+    }
+}
+
+async fn cancel_turn(
+    connection: &ConnectionTo<Agent>,
+    id: &SessionId,
+    signals: &mut queue::UnboundedReceiver<()>,
+) -> (Result<String, String>, bool) {
+    while signals.try_recv().is_ok() {}
+    let mut sent = Box::pin(
+        connection
+            .send_request(PromptRequest::new(id.clone(), vec![CANCEL_PROMPT.into()]))
+            .block_task(),
+    )
+    .fuse();
+    let mut cancel_sent = false;
+    let result = loop {
+        select! {
+            result = sent => break result,
+            _ = signals.select_next_some() => {
+                if !cancel_sent {
+                    cancel_sent = true;
+                    connection
+                        .send_notification(CancelNotification::new(id.clone()))
+                        .ok();
+                }
+            }
+        }
+    };
+    (stop_name(result), cancel_sent)
 }
 
 fn prepare(
@@ -114,6 +163,7 @@ pub(super) struct Live {
     pub(super) updates: agy_settings::Updates,
     pub(super) allow_report: Arc<AtomicBool>,
     pub(super) requests: Arc<AtomicUsize>,
+    pub(super) signals: queue::UnboundedReceiver<()>,
 }
 
 pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &Checks, live: Live) {
@@ -122,6 +172,7 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
         updates,
         allow_report,
         requests,
+        mut signals,
     } = live;
     let Some(opening) = step(checks, "live setup", prepare(dir, mode, updates), |_| {
         "temporary worker MCP prepared".to_string()
@@ -195,6 +246,15 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
             Clone::clone,
         );
     }
+    if passed {
+        let (stop, cancel_sent) = cancel_turn(connection, &id, &mut signals).await;
+        step(
+            checks,
+            "live cancel",
+            live_cancel(&stop, cancel_sent),
+            Clone::clone,
+        );
+    }
     let result = close(connection, &id).await;
     if passed {
         step(checks, "live close", result, Clone::clone);
@@ -217,6 +277,25 @@ mod tests {
             .unwrap_or_default();
         assert!(cancelled.contains("cancelled"), "{cancelled}");
         assert!(yolo_check(0, &Err("boom".to_string())).is_err());
+    }
+
+    #[test]
+    fn cancel_passes_only_when_sent_and_the_turn_ends_cancelled() {
+        let stopped = |reason: &str| Ok(reason.to_string());
+        assert!(live_cancel(&stopped("cancelled"), true).is_ok());
+        let unsent = live_cancel(&stopped("end_turn"), false)
+            .err()
+            .unwrap_or_default();
+        assert!(unsent.contains("no cancel was sent"), "{unsent}");
+        let late = live_cancel(&stopped("end_turn"), true)
+            .err()
+            .unwrap_or_default();
+        assert!(late.contains("end_turn"), "{late}");
+        assert!(live_cancel(&stopped("cancelled"), false).is_err());
+        let failed = live_cancel(&Err("boom".to_string()), true)
+            .err()
+            .unwrap_or_default();
+        assert!(failed.contains("boom"), "{failed}");
     }
 
     #[test]

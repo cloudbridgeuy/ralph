@@ -123,6 +123,7 @@ struct Run {
     live: Option<PermissionMode>,
     allow_report: Arc<AtomicBool>,
     requests: Arc<AtomicUsize>,
+    signals: queue::UnboundedReceiver<()>,
 }
 
 async fn run(
@@ -137,6 +138,7 @@ async fn run(
         live,
         allow_report,
         requests,
+        signals,
     } = run;
     let init = match initialize(&connection, &AGY_AGENT).await {
         Ok(result) => result.and_then(|init| identity(&init, &version).map(|()| init)),
@@ -208,6 +210,7 @@ async fn run(
                 updates,
                 allow_report,
                 requests,
+                signals,
             };
             live::run(&connection, &dir, &checks, live).await;
         }
@@ -292,6 +295,7 @@ pub(crate) fn verify(
     let permission = Arc::clone(&allow_report);
     let requests = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&requests);
+    let (signal, signals) = queue::unbounded();
     let updates = Arc::new(Mutex::new(None));
     let observer = Arc::clone(&updates);
     let version = version.to_string();
@@ -319,6 +323,7 @@ pub(crate) fn verify(
             )
             .on_receive_notification(
                 async move |notification: SessionNotification, _cx| {
+                    signal.unbounded_send(()).ok();
                     if let Ok(update) = serde_json::to_value(&notification.update) {
                         agy_settings::observe(
                             &observer,
@@ -356,6 +361,7 @@ pub(crate) fn verify(
                                 live,
                                 allow_report,
                                 requests,
+                                signals,
                             },
                         )
                         .await

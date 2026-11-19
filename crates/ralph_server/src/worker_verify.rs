@@ -178,6 +178,7 @@ const AGY_LIVE_REQUIRED_CHECKS: &[&str] = &[
     "live prompt",
     "live report",
     "live usage",
+    "live cancel",
     "live close",
 ];
 
@@ -198,6 +199,7 @@ const AGY_YOLO_REQUIRED_CHECKS: &[&str] = &[
     "live report",
     "live usage",
     "live yolo",
+    "live cancel",
     "live close",
 ];
 
@@ -373,6 +375,7 @@ mod tests {
             "live prompt",
             "live report",
             "live usage",
+            "live cancel",
             "live close",
         ] {
             let partial: Vec<_> = all
