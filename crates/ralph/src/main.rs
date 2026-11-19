@@ -52,6 +52,7 @@ use ralph_core::cancel::CancelToken;
 use ralph_core::worker::HarnessId;
 use ralph_server::version_drift::DriftRun;
 use ralph_server::warn::{warn, warn_if_err};
+use std::io::IsTerminal;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
 
@@ -297,8 +298,6 @@ use prompt_source::{classify_prompt_source, read_from_source, PromptSource};
 ///
 /// After resolution, validates that the prompt is not empty.
 fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
-    use std::io::IsTerminal;
-
     let prompt = match prompt_arg {
         // Explicit argument provided - use classify_prompt_source
         Some(_) => {
@@ -560,6 +559,7 @@ fn run_memory_command(
                             command: command.to_string(),
                             timeout_secs: Some(curator.timeout),
                             verbose_tools: stream_processor::VerboseToolsConfig::new(),
+                            show_tools: std::io::stdout().is_terminal(),
                             sink: std::sync::Arc::new(sink),
                             gate: None,
                             interrupt: None,

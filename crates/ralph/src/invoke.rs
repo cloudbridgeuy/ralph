@@ -10,7 +10,7 @@ use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::worker::inbox_env;
 use ralph_server::config::ChatSection;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -207,6 +207,7 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
         ),
         timeout_secs: Some(config.timeout_secs),
         verbose_tools: config.verbose_tools,
+        show_tools: io::stdout().is_terminal(),
         sink,
         gate: None,
         interrupt: Some(config.interrupt),

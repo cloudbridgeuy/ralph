@@ -11,7 +11,6 @@ use ralph_core::stream::blocks::StreamCollector;
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::subprocess::kill_process_group;
-use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -25,6 +24,7 @@ pub struct SpinnerSubprocessConfig {
     pub command: String,
     pub timeout_secs: Option<u64>,
     pub verbose_tools: VerboseToolsConfig,
+    pub show_tools: bool,
     pub sink: Arc<dyn TurnSink>,
     pub gate: Option<Arc<OutputGate>>,
     pub interrupt: Option<CancelToken>,
@@ -168,10 +168,7 @@ pub(super) struct Pump {
 
 impl Pump {
     pub(super) fn start(config: &SpinnerSubprocessConfig, display: Display) -> Pump {
-        let collector = StreamCollector::new(
-            std::io::stdout().is_terminal(),
-            config.verbose_tools.clone(),
-        );
+        let collector = StreamCollector::new(config.show_tools, config.verbose_tools.clone());
         let shown = (display == Display::Shown).then(|| {
             let mut shown = Shown {
                 sink: Arc::clone(&config.sink),
@@ -395,6 +392,7 @@ mod tests {
             command: String::new(),
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),
+            show_tools: false,
             sink: Arc::clone(sink) as Arc<dyn TurnSink>,
             gate: None,
             interrupt: None,
@@ -470,6 +468,21 @@ mod tests {
         pump.step(&readers, false).unwrap();
         pump.finish(&readers, 0, true);
         assert_eq!(sink.events(), Vec::new());
+    }
+
+    #[test]
+    fn the_pump_shows_tools_as_the_client_says() {
+        let sink = Arc::new(Recording::default());
+        [true, false].into_iter().for_each(|show_tools| {
+            let pump = Pump::start(
+                &SpinnerSubprocessConfig {
+                    show_tools,
+                    ..config(&sink)
+                },
+                Display::Silent,
+            );
+            assert_eq!(pump.collector.is_showing_tool_invocations(), show_tools);
+        });
     }
 
     #[test]

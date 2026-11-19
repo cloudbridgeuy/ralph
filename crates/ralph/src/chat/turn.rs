@@ -138,6 +138,7 @@ pub(super) struct Turn<'a> {
     pub(super) timing: Mutex<TurnTiming>,
     pub(super) seen_len: Mutex<Option<usize>>,
     pub(super) sink: Arc<dyn TurnSink>,
+    pub(super) show_tools: bool,
 }
 
 impl Turn<'_> {
@@ -527,6 +528,7 @@ impl Turn<'_> {
             )?,
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),
+            show_tools: self.show_tools,
             sink: Arc::clone(&self.sink),
             gate: Some(Arc::clone(&self.gate)),
             interrupt: None,

@@ -291,6 +291,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         timing: Mutex::default(),
         seen_len: Mutex::new(None),
         sink,
+        show_tools: io::stdout().is_terminal(),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
