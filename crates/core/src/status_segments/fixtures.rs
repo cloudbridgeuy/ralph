@@ -95,6 +95,14 @@ pub(super) fn threaded_context() -> Context {
     }
 }
 
+pub(super) fn modeled_context() -> Context {
+    Context {
+        alias: Some("haiku".into()),
+        resolved: Some("claude-haiku-4-5".into()),
+        ..threaded_context()
+    }
+}
+
 pub(super) fn text(spans: &[Span]) -> String {
     spans.iter().map(|span| span.text.as_str()).collect()
 }

@@ -8,7 +8,7 @@ mod build;
 mod fixtures;
 mod layout;
 
-pub use build::segments;
+pub use build::{model_variants, segments};
 pub use layout::{bar, compose, layout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub enum Kind {
     Mail(Mode),
     Name,
     Thread,
+    Model,
     Workers,
     Watches,
     Schedule,
@@ -83,6 +84,8 @@ pub struct Placed {
 pub struct Context {
     pub name: String,
     pub thread: Option<String>,
+    pub alias: Option<String>,
+    pub resolved: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,9 +123,12 @@ impl Kind {
             | Kind::Mail(mode)
             | Kind::Process(mode)
             | Kind::Cost(mode) => mode_bg(mode),
-            Kind::Name | Kind::Thread | Kind::Workers | Kind::Watches | Kind::Schedule => {
-                Shade::BaseBg
-            }
+            Kind::Name
+            | Kind::Thread
+            | Kind::Model
+            | Kind::Workers
+            | Kind::Watches
+            | Kind::Schedule => Shade::BaseBg,
         }
     }
 
@@ -134,7 +140,7 @@ impl Kind {
             | Kind::Mail(mode)
             | Kind::Process(mode)
             | Kind::Cost(mode) => mode_fg(mode),
-            Kind::Name | Kind::Thread => Shade::StoreFg,
+            Kind::Name | Kind::Thread | Kind::Model => Shade::StoreFg,
             Kind::Workers => Shade::WorkersFg,
             Kind::Watches | Kind::Schedule => Shade::WatchesFg,
         }

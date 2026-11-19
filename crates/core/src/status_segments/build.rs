@@ -5,13 +5,34 @@ use crate::chat_status::ScheduleState;
 pub(super) const MODE_PRIORITY: u8 = 0;
 const NAME_PRIORITY: u8 = 1;
 const THREAD_PRIORITY: u8 = 2;
-const QUEUE_PRIORITY: u8 = 3;
-const MAIL_PRIORITY: u8 = 4;
-const PROCESS_PRIORITY: u8 = 5;
-const COST_PRIORITY: u8 = 6;
-const WORKERS_PRIORITY: u8 = 7;
-const WATCHES_PRIORITY: u8 = 8;
-const SCHEDULE_PRIORITY: u8 = 9;
+const MODEL_PRIORITY: u8 = 3;
+const QUEUE_PRIORITY: u8 = 4;
+const MAIL_PRIORITY: u8 = 5;
+const PROCESS_PRIORITY: u8 = 6;
+const COST_PRIORITY: u8 = 7;
+const WORKERS_PRIORITY: u8 = 8;
+const WATCHES_PRIORITY: u8 = 9;
+const SCHEDULE_PRIORITY: u8 = 10;
+
+fn known(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|v| !v.is_empty())
+}
+
+pub fn model_variants(resolved: Option<&str>, alias: Option<&str>) -> Vec<String> {
+    let resolved = known(resolved);
+    let mut variants: Vec<String> = Vec::new();
+    let candidates = [
+        resolved,
+        resolved.and_then(|id| id.strip_prefix("claude-")),
+        known(alias),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if !variants.iter().any(|seen| seen == candidate) {
+            variants.push(candidate.to_string());
+        }
+    }
+    variants
+}
 
 fn workers_variants(status: &Status) -> Vec<String> {
     let count = status.workers.len();
@@ -120,6 +141,9 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             vec![format!("thread {thread}"), format!("⑂ {thread}")],
         )
     });
+    let model_forms = model_variants(context.resolved.as_deref(), context.alias.as_deref());
+    let model = (!model_forms.is_empty())
+        .then(|| Segment::new(Side::Left, Kind::Model, MODEL_PRIORITY, model_forms));
     let workers = (!status.workers.is_empty()).then(|| {
         Segment::new(
             Side::Right,
@@ -168,6 +192,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         Some(mode),
         name,
         thread,
+        model,
         queue,
         hold,
         mail,
@@ -449,5 +474,88 @@ mod tests {
             shown.starts_with(" INBOX  ralph-chat  📬 2 unread"),
             "{shown}"
         );
+    }
+
+    #[test]
+    fn model_variants_strip_claude_prefix_and_keep_alias() {
+        assert_eq!(
+            model_variants(Some("claude-haiku-4-5"), Some("haiku")),
+            ["claude-haiku-4-5", "haiku-4-5", "haiku"]
+        );
+        assert_eq!(
+            model_variants(Some("claude-haiku-4-5"), Some("haiku-4-5")),
+            ["claude-haiku-4-5", "haiku-4-5"]
+        );
+        assert_eq!(model_variants(Some("gpt-x"), None), ["gpt-x"]);
+    }
+
+    #[test]
+    fn model_variants_alias_only_before_first_turn() {
+        assert_eq!(model_variants(None, Some("haiku")), ["haiku"]);
+    }
+
+    #[test]
+    fn model_variants_empty_when_unknown() {
+        assert!(model_variants(None, None).is_empty());
+        assert!(model_variants(Some(" "), Some("")).is_empty());
+    }
+
+    #[test]
+    fn segments_omit_model_when_unknown() {
+        let all = segments(&status(), &threaded_context());
+        assert!(all.iter().all(|s| s.kind != Kind::Model));
+    }
+
+    #[test]
+    fn model_sits_after_thread_before_queue() {
+        let status = Status {
+            queue: Some(QueueCell {
+                running: true,
+                count: 1,
+                held: false,
+            }),
+            ..with_process()
+        };
+        let all = segments(&status, &modeled_context());
+        let at = |kind| all.iter().position(|s| s.kind == kind).unwrap();
+        assert_eq!(at(Kind::Model), at(Kind::Thread) + 1);
+        assert_eq!(at(Kind::Queue(Mode::Inbox)), at(Kind::Model) + 1);
+        let model = &all[at(Kind::Model)];
+        assert_eq!((model.priority, model.side), (3, Side::Left));
+        let shown = text(&bar(&status, &modeled_context(), 200, Separator::Bar));
+        assert!(
+            shown.starts_with(" INBOX │ ralph-chat │ thread t1 │ claude-haiku-4-5 │"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn shifted_priorities_stay_in_display_order() {
+        let status = Status {
+            queue: Some(QueueCell {
+                running: true,
+                count: 1,
+                held: false,
+            }),
+            ..with_schedule(1)
+        };
+        let all = segments(&status, &modeled_context());
+        let priority = |kind| all.iter().find(|s| s.kind == kind).unwrap().priority;
+        assert_eq!(
+            [
+                priority(Kind::Queue(Mode::Inbox)),
+                priority(Kind::Mail(Mode::Inbox)),
+                priority(Kind::Process(Mode::Inbox)),
+                priority(Kind::Cost(Mode::Inbox)),
+                priority(Kind::Workers),
+                priority(Kind::Watches),
+                priority(Kind::Schedule),
+            ],
+            [4, 5, 6, 7, 8, 9, 10]
+        );
+        let mut priorities: Vec<u8> = all.iter().map(|s| s.priority).collect();
+        priorities.sort_unstable();
+        priorities.dedup();
+        assert_eq!(priorities.len(), all.len());
     }
 }
