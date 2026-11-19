@@ -128,3 +128,11 @@ fn a_huge_hit_count_saturates_the_unknown_sum() {
     let found = opened(&[huge.clone(), huge]);
     assert_eq!(found.unknown, usize::MAX);
 }
+
+#[test]
+fn shown_ids_raise_a_total_hit_count_that_is_too_low() {
+    let found = opened(&[call(json!({
+        "hits": 0, "hit_ids": ["5"], "source": "cli", "turn": null, "run": null
+    }))]);
+    assert_eq!(found.unknown, 1);
+}
