@@ -25,7 +25,7 @@ pub fn command_definitions() -> [Value; 5] {
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
                     "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
                     "phase": {"type": "string", "enum": WorkPhase::ALL.map(WorkPhase::as_str), "description": "What this worker does: plan, build, fix or live-check. Recorded in the lifecycle log. Omit when none fits."},
-                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. claude-tmux: as claude."}
+                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. agy: an advertised model slug; default [agy] model in the ralph config, else agy's own default. claude-tmux: as claude."}
                 },
                 "required": ["id", "task"]
             }
@@ -275,7 +275,10 @@ fn harness(args: &Value) -> Result<ParsedSpawn, String> {
         }
         (Some(CODEX_HARNESS), Some(_)) => Err("Model must be non-empty with no whitespace.".into()),
         (Some("agy"), None) => Ok((HarnessId::Agy, None)),
-        (Some("agy"), Some(_)) => Err(model_refusal(HarnessId::Agy)),
+        (Some("agy"), Some(model)) if is_token_model(model) => {
+            Ok((HarnessId::Agy, Some(model.to_string())))
+        }
+        (Some("agy"), Some(_)) => Err("Model must be non-empty with no whitespace.".into()),
         (Some(CURSOR_HARNESS), None) => Ok((HarnessId::Cursor, None)),
         (Some(CURSOR_HARNESS), Some(model)) => {
             let spec = SpawnSpec {
@@ -746,5 +749,16 @@ mod tests {
             spawn_harness(json!({"harness": "agy"})),
             Ok((HarnessId::Agy, None))
         );
+    }
+
+    #[test]
+    fn agy_accepts_explicit_model() {
+        assert!(matches!(
+            parse_command(
+                "spawn_worker",
+                &json!({"id": "a", "task": "t", "harness": "agy", "model": "gemini-4-neon-high"})
+            ),
+            Some(Ok(_))
+        ));
     }
 }

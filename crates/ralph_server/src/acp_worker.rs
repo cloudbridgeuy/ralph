@@ -102,6 +102,7 @@ struct Opening {
     worker_id: String,
     model: Option<String>,
     permission_mode: PermissionMode,
+    updates: agy_settings::Updates,
 }
 
 async fn open_session(
@@ -110,24 +111,7 @@ async fn open_session(
     loads_session: bool,
 ) -> Result<SessionId, String> {
     match &opening.launch {
-        Launch::Fresh => {
-            let response = connection
-                .send_request(
-                    NewSessionRequest::new(opening.cwd.clone())
-                        .mcp_servers(vec![opening.server.clone()]),
-                )
-                .block_task()
-                .await
-                .map_err(|error| format!("agy session could not be started: {}", error.message))?;
-            agy_settings::apply_mode(
-                connection,
-                &response.session_id,
-                opening.permission_mode,
-                response.modes.as_ref(),
-            )
-            .await?;
-            Ok(response.session_id)
-        }
+        Launch::Fresh => agy_settings::open(connection, opening).await,
         Launch::Resume { record, store } => {
             if let Resume::Skip(message) = resume_decision(
                 &opening.agent,
@@ -139,6 +123,9 @@ async fn open_session(
                 return Err(message);
             }
             let session = SessionId::new(record.session_id.clone());
+            if opening.agent == AGY_AGENT {
+                return agy_settings::load(connection, opening, session).await;
+            }
             let loaded = connection
                 .send_request(
                     LoadSessionRequest::new(session.clone(), opening.cwd.clone())
@@ -152,15 +139,6 @@ async fn open_session(
                     opening.agent.name, opening.worker_id, e.message
                 )
             })?;
-            if opening.agent == AGY_AGENT {
-                agy_settings::apply_mode(
-                    connection,
-                    &session,
-                    opening.permission_mode,
-                    loaded.modes.as_ref(),
-                )
-                .await?;
-            }
             model::apply_model(
                 connection,
                 opening,
@@ -310,6 +288,8 @@ impl AcpWorker {
         let opened = Arc::new(AtomicBool::new(false));
         let was_opened = Arc::clone(&opened);
         let session_model = request.model.clone();
+        let updates = Arc::new(Mutex::new(None));
+        let on_update = Arc::clone(&updates);
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = transport::streams(stdin, stdout, log);
@@ -325,8 +305,17 @@ impl AcpWorker {
                         agent_client_protocol::on_receive_request!(),
                     )
                     .on_receive_notification(
-                        async move |_notification: SessionNotification, _cx| {
+                        async move |notification: SessionNotification, _cx| {
                             on_notification.touch();
+                            if agent == AGY_AGENT && locked(&on_update).is_some() {
+                                if let Ok(update) = serde_json::to_value(&notification.update) {
+                                    agy_settings::observe(
+                                        &on_update,
+                                        &notification.session_id.to_string(),
+                                        &update,
+                                    );
+                                }
+                            }
                             Ok(())
                         },
                         agent_client_protocol::on_receive_notification!(),
@@ -355,6 +344,7 @@ impl AcpWorker {
                             worker_id: worker_id.clone(),
                             model: session_model,
                             permission_mode,
+                            updates,
                         };
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {

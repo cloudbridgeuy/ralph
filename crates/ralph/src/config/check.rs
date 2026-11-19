@@ -49,6 +49,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)
         .chain(config.claude.shell_setting().1)
         .chain(config.agy.permissions_setting().1)
+        .chain(config.agy.selection_errors())
         .chain(hard_errors(&config))
         .collect();
     Ok(CheckReport {

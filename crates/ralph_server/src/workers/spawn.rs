@@ -143,10 +143,16 @@ impl Workers {
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
         let (model, model_warning) = match harness {
-            HarnessId::Agy if model.is_some() => {
-                return Err(io::Error::other("agy does not accept a model yet"))
+            HarnessId::Agy => {
+                let agy = &config
+                    .as_ref()
+                    .map_err(|error| io::Error::other(error.to_string()))?
+                    .agy;
+                if let Some(error) = agy.selection_errors().into_iter().next() {
+                    return Err(io::Error::other(error));
+                }
+                (model.or(agy.model.as_deref()).map(str::to_string), None)
             }
-            HarnessId::Agy => (None, None),
             HarnessId::Opencode => {
                 let (model, warning) = resolve_opencode_model(
                     model,

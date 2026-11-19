@@ -70,7 +70,7 @@ impl Capabilities {
         use Feature::*;
         use Support::{Full, Partial};
         match (self.harness, feature) {
-            (HarnessId::Agy, Spawn | Prompt | Close) => Full,
+            (HarnessId::Agy, Spawn | Prompt | Close | Model) => Full,
             (HarnessId::Agy, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Agy, PermYolo) => Partial("process flag, not yet stub-verified"),
             (HarnessId::Agy, Report) => Partial("MCP delivery requires live verification"),
@@ -471,7 +471,7 @@ mod tests {
             Support::Partial("process flag, not yet stub-verified")
         );
         assert!(matches!(caps.support(Feature::Report), Support::Partial(_)));
-        assert_eq!(caps.support(Feature::Model), Support::None);
+        assert_eq!(caps.support(Feature::Model), Support::Full);
         assert_eq!(caps.support(Feature::Resume), Support::None);
     }
 
@@ -479,7 +479,7 @@ mod tests {
     fn model_refusal_names_accepting_harnesses() {
         assert_eq!(
             model_refusal(HarnessId::Cursor),
-            "cursor does not accept a model; harnesses that do: claude-tmux, opencode, cursor, codex, claude"
+            "cursor does not accept a model; harnesses that do: agy, claude-tmux, opencode, cursor, codex, claude"
         );
     }
 

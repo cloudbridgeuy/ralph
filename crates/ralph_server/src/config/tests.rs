@@ -759,3 +759,9 @@ fn agy_permissions_are_known_and_security_sensitive() {
     let Ok(parsed) = parsed else { return };
     assert!(super::layers::security_keys(&parsed).contains(&"agy.permissions"));
 }
+
+#[test]
+fn agy_model_is_known() {
+    let parsed = AppConfig::parse_reporting_unknown("[agy]\nmodel = \"gemini-4-neon-high\"\n", "c");
+    assert!(matches!(parsed, Ok((_, unknown)) if unknown.is_empty()));
+}

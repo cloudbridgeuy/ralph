@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+mod agy_model;
 mod frames;
 mod handoff;
 mod log;
@@ -9,6 +10,7 @@ mod permissions;
 mod protocol;
 mod turns;
 
+pub use agy_model::*;
 pub use frames::*;
 pub use handoff::*;
 pub use log::*;
