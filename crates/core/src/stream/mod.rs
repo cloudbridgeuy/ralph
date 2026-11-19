@@ -27,6 +27,7 @@
 //! }
 //! ```
 
+pub mod blocks;
 mod costs;
 mod events;
 mod extraction;

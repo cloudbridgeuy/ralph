@@ -55,7 +55,7 @@ use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
-use crate::chat::statusbar::StatusBar;
+use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::{SuggestionCell, SuggestionHighlighter};
 use crate::chat::switch::{chat_exit, check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
@@ -262,7 +262,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let last_turn_end: Stamp = Arc::default();
     let last_ping: Stamp = Arc::default();
-    let (gate, sink) = prompt::turn_output(*theme_config.ui());
+    let (gate, sink) = prompt::turn_output(&theme_config)?;
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -276,7 +276,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         custom_prompt: &custom_prompt,
         reply_images,
         isolation: &isolation,
-        theme_config: &theme_config,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),
@@ -501,10 +500,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color,
         bar: StatusBar::new(
             &config.theme.status,
-            &session_name,
-            thread_name,
             &chat_config,
             color,
+            &BarContext {
+                name: &session_name,
+                thread: thread_name,
+                model_args: &model_args,
+                identity: Arc::clone(&turn.identity),
+            },
         ),
         notice: RefCell::new(None),
         editor: editor_cmd,

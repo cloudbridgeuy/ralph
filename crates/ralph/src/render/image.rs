@@ -1,5 +1,5 @@
 use std::io::{IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
@@ -14,14 +14,15 @@ use ralph_core::kitty::{
 };
 
 use ralph_core::kitty_image::{prepare, prepare_animation};
+use ralph_core::stream::blocks::{Files, ImageFile};
 
 use super::text::render_markdown;
 use super::wrap::wrap_width;
 use super::{RenderContext, Viewport};
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode};
 use crate::markdown::MarkdownTheme;
+use crate::stream_processor::DiskFiles;
 
-const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const TMUX_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
 const TMUX_PROBE_POLL: Duration = Duration::from_millis(10);
 
@@ -142,14 +143,12 @@ pub(crate) fn resolve(path: &str) -> PathBuf {
     }
 }
 
-fn read_capped(path: &Path) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(MAX_IMAGE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    (bytes.len() as u64 <= MAX_IMAGE_BYTES).then_some(bytes)
+pub(crate) fn disk_image(path: &str) -> Option<ImageFile> {
+    Some(DiskFiles.image(path))
+}
+
+pub(crate) fn lookup_in(files: &[ImageFile]) -> impl Fn(&str) -> Option<ImageFile> + '_ {
+    |path| files.iter().find(|file| file.path == path).cloned()
 }
 
 fn fallback(alt: &str, path: &str) -> String {
@@ -178,8 +177,16 @@ impl From<Viewport> for ImageBounds {
     }
 }
 
-fn render_image(alt: &str, path: &str, images: ImageSettings, bounds: ImageBounds) -> String {
-    draw_image(path, images, bounds).unwrap_or_else(|| fallback(alt, path))
+fn render_image(
+    alt: &str,
+    path: &str,
+    lookup: &dyn Fn(&str) -> Option<ImageFile>,
+    images: ImageSettings,
+    bounds: ImageBounds,
+) -> String {
+    lookup(path)
+        .and_then(|file| draw_image(&file, images, bounds))
+        .unwrap_or_else(|| fallback(alt, path))
 }
 
 pub fn print_attachments(text: &str) {
@@ -194,7 +201,7 @@ pub fn print_attachments(text: &str) {
 pub fn render_attachments(text: &str, images: ImageSettings, bounds: ImageBounds) -> String {
     attachment_paths(text)
         .iter()
-        .filter_map(|path| draw_image(path, images, bounds))
+        .filter_map(|path| draw_image(&disk_image(path)?, images, bounds))
         .collect()
 }
 
@@ -238,20 +245,16 @@ pub fn draw_png(bytes: &[u8], images: ImageSettings, bounds: ImageBounds) -> Opt
     })
 }
 
-fn draw_image(path: &str, images: ImageSettings, bounds: ImageBounds) -> Option<String> {
-    let resolved = resolve(path);
-    let bytes = read_capped(&resolved)?;
-    let drawn = draw_png(&bytes, images, bounds)?;
-    let shown = std::fs::canonicalize(&resolved)
-        .or_else(|_| std::path::absolute(&resolved))
-        .unwrap_or(resolved);
-    Some(drawn + &path_line(&shown))
+fn draw_image(file: &ImageFile, images: ImageSettings, bounds: ImageBounds) -> Option<String> {
+    let drawn = draw_png(file.bytes.as_deref()?, images, bounds)?;
+    Some(drawn + &path_line(&file.shown))
 }
 
 pub fn render_with_markers(
     content: &str,
     images: ImageSettings,
     bounds: ImageBounds,
+    lookup: &dyn Fn(&str) -> Option<ImageFile>,
     render_text: impl Fn(&str) -> String,
 ) -> String {
     let mut out = String::new();
@@ -271,7 +274,7 @@ pub fn render_with_markers(
                 if !out.is_empty() && !out.ends_with('\n') {
                     out.push('\n');
                 }
-                out.push_str(&render_image(&alt, &path, images, bounds));
+                out.push_str(&render_image(&alt, &path, lookup, images, bounds));
                 after_image = true;
             }
         }
@@ -409,7 +412,13 @@ mod tests {
     #[test]
     fn unreadable_path_falls_back_to_text() {
         assert_eq!(
-            render_image("chart", "/definitely/not/here.png", SETTINGS, BOUNDS),
+            render_image(
+                "chart",
+                "/definitely/not/here.png",
+                &disk_image,
+                SETTINGS,
+                BOUNDS
+            ),
             "[image: chart (/definitely/not/here.png)]\n"
         );
     }
@@ -450,29 +459,56 @@ mod tests {
         std::fs::write(&path, b"not a png at all, just text bytes").unwrap();
         let shown = path.to_string_lossy().into_owned();
         assert_eq!(
-            render_image("a", &shown, SETTINGS, BOUNDS),
+            render_image("a", &shown, &disk_image, SETTINGS, BOUNDS),
             format!("[image: a ({shown})]\n")
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
+    fn supplied_bytes_draw_without_the_file_on_disk() {
+        let file = ImageFile {
+            path: "/no/such.png".into(),
+            shown: "/no/such.png".into(),
+            bytes: Some(include_bytes!("../../tests/fixtures/guz1408-fox.gif").to_vec()),
+        };
+        let files = [file];
+        let out = render_with_markers(
+            "![x](/no/such.png)\n",
+            SETTINGS,
+            BOUNDS,
+            &lookup_in(&files),
+            |t| t.to_string(),
+        );
+        assert!(out.contains("\x1b_G"), "{out:?}");
+        assert!(!out.contains("[image:"), "{out:?}");
+    }
+
+    #[test]
     fn markers_render_text_around_the_fallback() {
-        let out = render_with_markers("a ![x](/no/such.png) b", SETTINGS, BOUNDS, |t| {
-            t.to_string()
-        });
+        let out = render_with_markers(
+            "a ![x](/no/such.png) b",
+            SETTINGS,
+            BOUNDS,
+            &disk_image,
+            |t| t.to_string(),
+        );
         assert_eq!(out, "a \n[image: x (/no/such.png)]\n b");
     }
 
     #[test]
     fn fallback_as_last_segment_ends_with_a_line_end() {
-        let out = render_with_markers("![x](/no.png)", SETTINGS, BOUNDS, |t| t.to_string());
+        let out = render_with_markers("![x](/no.png)", SETTINGS, BOUNDS, &disk_image, |t| {
+            t.to_string()
+        });
         assert_eq!(out, "[image: x (/no.png)]\n");
     }
 
     #[test]
     fn marker_line_end_is_not_doubled() {
-        let out = render_with_markers("![x](/no.png)\nnext", SETTINGS, BOUNDS, |t| t.to_string());
+        let out = render_with_markers("![x](/no.png)\nnext", SETTINGS, BOUNDS, &disk_image, |t| {
+            t.to_string()
+        });
         assert_eq!(out, "[image: x (/no.png)]\nnext");
     }
 
@@ -481,7 +517,7 @@ mod tests {
         let dir = temp_dir("valid");
         let path = tall_png(&dir);
         let shown = std::fs::canonicalize(&path).unwrap();
-        let out = render_image("t", &path.to_string_lossy(), SETTINGS, BOUNDS);
+        let out = render_image("t", &path.to_string_lossy(), &disk_image, SETTINGS, BOUNDS);
         std::fs::remove_dir_all(&dir).unwrap();
         let (cols, rows) = cell_grid((16, 64), None, BOUNDS.cols, BOUNDS.rows);
         assert!(out.starts_with("\x1b_G"));
@@ -505,7 +541,7 @@ mod tests {
             placement: Placement::Tmux,
             ..SETTINGS
         };
-        let out = render_image("t", &path.to_string_lossy(), tmux, BOUNDS);
+        let out = render_image("t", &path.to_string_lossy(), &disk_image, tmux, BOUNDS);
         std::fs::remove_dir_all(&dir).unwrap();
         let (_, rows) = cell_grid((16, 64), None, BOUNDS.cols, BOUNDS.rows);
         assert!(out.starts_with("\x1bPtmux;"));
@@ -524,7 +560,13 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let dotted = dir.join("sub").join("..").join("tall.png");
         let shown = std::fs::canonicalize(&path).unwrap();
-        let out = render_image("t", &dotted.to_string_lossy(), SETTINGS, BOUNDS);
+        let out = render_image(
+            "t",
+            &dotted.to_string_lossy(),
+            &disk_image,
+            SETTINGS,
+            BOUNDS,
+        );
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(out.ends_with(&path_line(&shown)), "{out:?}");
         assert!(!shown.to_string_lossy().contains(".."));

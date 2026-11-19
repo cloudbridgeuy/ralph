@@ -9,82 +9,14 @@
 //! 3. Generate a unified diff between before and after
 //! 4. Display with syntax highlighting based on cell type
 
-use std::fs;
-
-use similar::{ChangeTag, TextDiff};
-
 use crate::diff_highlight::highlight_with_basic_colors;
 
-use super::super::types::NotebookSnapshot;
 use crate::ansi::RESET;
 use crate::render::NotebookEditParams;
 use crate::render::RenderContext;
 
 /// Maximum lines to show in a diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
-
-/// Generate a unified diff from a NotebookSnapshot by comparing before/after cell content.
-///
-/// Reads the current cell content and generates a unified diff against the
-/// captured snapshot. Returns None if the notebook/cell cannot be read or no changes
-/// were made.
-pub fn generate_diff_from_snapshot(snapshot: &NotebookSnapshot) -> Option<String> {
-    // For insert operations with no previous content, we'll show all new content as additions
-    // For delete operations, we'll show all previous content as deletions
-    let after_content = if snapshot.edit_mode == "delete" {
-        // Cell was deleted - after content is empty
-        String::new()
-    } else {
-        // Read current cell content
-        read_notebook_cell_content(&snapshot.notebook_path, &snapshot.cell_identifier)?
-    };
-
-    // Get before content (empty string if cell didn't exist / insert operation)
-    let before_content = snapshot.content.as_deref().unwrap_or("");
-
-    // Skip if no changes
-    if before_content == after_content {
-        return None;
-    }
-
-    // Generate unified diff
-    let diff = TextDiff::from_lines(before_content, &after_content);
-    let cell_display = format!("{}:{}", snapshot.notebook_path, snapshot.cell_identifier);
-    let unified = generate_unified_diff(&diff, &cell_display);
-
-    Some(unified)
-}
-
-/// Generate unified diff format from a TextDiff.
-fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, cell_display: &str) -> String {
-    let mut output = String::new();
-
-    // Add header
-    output.push_str(&format!("--- a/{}\n", cell_display));
-    output.push_str(&format!("+++ b/{}\n", cell_display));
-
-    // Generate hunks
-    for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
-        // Hunk header
-        output.push_str(&format!("{}", hunk.header()));
-
-        // Changes
-        for change in hunk.iter_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => "-",
-                ChangeTag::Insert => "+",
-                ChangeTag::Equal => " ",
-            };
-            output.push_str(sign);
-            output.push_str(change.value());
-            if !change.value().ends_with('\n') {
-                output.push('\n');
-            }
-        }
-    }
-
-    output
-}
 
 pub fn format_notebook_result(ctx: &RenderContext, params: &NotebookEditParams) -> String {
     if let Some(diff_content) = params.diff_content {
@@ -215,81 +147,11 @@ fn format_diff_output(
     }
 }
 
-/// Read the content of a specific cell from a Jupyter notebook.
-///
-/// Returns the cell content as a single string (joining source lines),
-/// or None if the notebook or cell cannot be read.
-fn read_notebook_cell_content(notebook_path: &str, cell_identifier: &str) -> Option<String> {
-    // Read and parse the notebook JSON
-    let notebook_content = fs::read_to_string(notebook_path).ok()?;
-    let notebook: serde_json::Value = serde_json::from_str(&notebook_content).ok()?;
-
-    // Get the cells array
-    let cells = notebook.get("cells")?.as_array()?;
-
-    // Try to find the cell by identifier
-    // First try to match by cell_id (string match)
-    // Then try to match by index (if identifier is numeric)
-    let cell = if let Ok(index) = cell_identifier.parse::<usize>() {
-        // Numeric identifier - use as 0-based index
-        cells.get(index)
-    } else {
-        // String identifier - try to match against cell id metadata
-        cells.iter().find(|cell| {
-            cell.get("id")
-                .and_then(|id| id.as_str())
-                .map(|id| id == cell_identifier)
-                .unwrap_or(false)
-        })
-    }?;
-
-    // Extract the source content
-    // The "source" field can be either a string or an array of strings
-    let source = cell.get("source")?;
-    if let Some(s) = source.as_str() {
-        Some(s.to_string())
-    } else if let Some(arr) = source.as_array() {
-        let lines: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
-        Some(lines.join(""))
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::stream_processor::StreamProcessor;
-
-    #[test]
-    fn test_generate_unified_diff() {
-        let before = "print('hello')\n";
-        let after = "print('world')\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "notebook.ipynb:0");
-
-        assert!(unified.contains("--- a/notebook.ipynb:0"));
-        assert!(unified.contains("+++ b/notebook.ipynb:0"));
-        assert!(unified.contains("-print('hello')"));
-        assert!(unified.contains("+print('world')"));
-    }
-
-    #[test]
-    fn test_generate_unified_diff_new_cell() {
-        let before = "";
-        let after = "# New cell\nprint('hello')\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "notebook.ipynb:1");
-
-        assert!(unified.contains("+# New cell"));
-        assert!(unified.contains("+print('hello')"));
-        // The diff header contains "--- a/" but no deletion lines should exist
-        // (deletion lines start with "-" followed by actual content, not header markers)
-        assert!(!unified.contains("-# New cell"));
-        assert!(!unified.contains("-print"));
-    }
+    use ralph_core::stream::blocks::NotebookSnapshot;
 
     #[test]
     fn test_format_diff_output_code_cell() {
@@ -404,7 +266,7 @@ mod tests {
     #[test]
     fn diff_uses_the_configured_foregrounds() {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.diff_colors = crate::diff_theme::test_colors();
+        processor.renderer.diff_colors = crate::diff_theme::test_colors();
         let out = format_diff_output(&processor.render_context(), &params(&snapshot()), "+x\n-y");
         assert!(out.contains("\x1b[94m+x"));
         assert!(out.contains("\x1b[95m-y"));
@@ -424,7 +286,7 @@ mod tests {
     #[test]
     fn header_uses_the_configured_tool_colors() {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.tool_colors = crate::tool_theme::test_colors();
+        processor.renderer.tool_colors = crate::tool_theme::test_colors();
         let mut inserted = snapshot();
         inserted.edit_mode = "insert".to_string();
         let out = format_diff_output(&processor.render_context(), &params(&inserted), "+x");

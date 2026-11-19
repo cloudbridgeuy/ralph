@@ -1,10 +1,5 @@
-//! Type definitions for the stream processor module.
-//!
-//! Contains configuration structs and result types used throughout
-//! the stream processing pipeline.
-
-use ralph_core::chunk::ParsedChunk;
-use ralph_core::stream::{IterationCosts, IterationMetadata};
+use crate::chunk::ParsedChunk;
+use crate::stream::{IterationCosts, IterationMetadata};
 use std::collections::HashSet;
 
 use super::output_block::OutputBlock;
@@ -129,9 +124,6 @@ pub struct StreamProcessorResult {
     /// Each block captures the data needed to re-render a piece of output.
     /// Blocks are ordered as they appeared during live execution.
     pub output_blocks: Vec<OutputBlock>,
-    /// Final rendered output from flushing remaining buffered content.
-    /// Callers should print this after the stream processing loop ends.
-    pub final_output: Option<String>,
 }
 
 /// Result of extracting a key argument from a tool invocation.

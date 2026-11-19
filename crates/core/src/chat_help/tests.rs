@@ -252,6 +252,7 @@ fn every_built_segment_has_a_legend() {
         &full_status(),
         &Context {
             name: "a/b".into(),
+            alias: Some("haiku".into()),
             ..Context::default()
         },
     );

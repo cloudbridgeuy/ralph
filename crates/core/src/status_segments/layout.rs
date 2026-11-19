@@ -459,12 +459,14 @@ mod tests {
             [
                 Kind::Name,
                 Kind::Thread,
+                Kind::Model,
                 Kind::Workers,
                 Kind::Watches,
                 Kind::Schedule
             ]
             .map(|k| (k.bg(), k.fg())),
             [
+                (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::WorkersFg),
@@ -520,5 +522,41 @@ mod tests {
         let spans = side_spans(&segments, &placed, Side::Right, Separator::Powerline);
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[1].text, " x ");
+    }
+
+    fn model_kinds(width: usize) -> Vec<Kind> {
+        let all = segments(&everything(), &modeled_context());
+        layout(&all, width, Separator::Block)
+            .iter()
+            .map(|p| all[p.segment].kind)
+            .collect()
+    }
+
+    #[test]
+    fn model_compacts_before_workers_drop() {
+        let all = segments(&everything(), &modeled_context());
+        let model_text = |width| {
+            layout(&all, width, Separator::Block)
+                .iter()
+                .find(|p| all[p.segment].kind == Kind::Model)
+                .map(|p| all[p.segment].variants[p.variant].clone())
+        };
+        assert_eq!(model_text(120).as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(model_text(80).as_deref(), Some("haiku-4-5"));
+        assert_eq!(model_text(76).as_deref(), Some("haiku"));
+        assert!(model_kinds(76).contains(&Kind::Workers));
+        assert!(!model_kinds(55).contains(&Kind::Workers));
+        assert!(model_kinds(55).contains(&Kind::Model));
+    }
+
+    #[test]
+    fn model_drops_before_mail_and_mode_at_narrow_width() {
+        assert!(model_kinds(43).contains(&Kind::Model));
+        assert!(!model_kinds(43).contains(&Kind::Mail(Mode::Inbox)));
+        assert!(model_kinds(32).contains(&Kind::Model));
+        let narrow = model_kinds(31);
+        assert!(!narrow.contains(&Kind::Model));
+        assert_eq!(narrow, [Kind::Mode(Mode::Inbox), Kind::Name, Kind::Thread]);
+        assert_eq!(model_kinds(0), [Kind::Mode(Mode::Inbox)]);
     }
 }
