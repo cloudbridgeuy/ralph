@@ -1,6 +1,5 @@
 use super::*;
 use crate::chat::client_monitor::Monitor;
-use crate::chat::monitor::{Core, ProcessMemo};
 use crate::chat::term_status::TermStatus;
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_process::{FileStamp, UsageTail};
@@ -9,6 +8,7 @@ use ralph_core::chat_status::Status;
 use ralph_core::inbox_alert::{AlertConfig, UnknownFocus};
 use ralph_server::chat::check::CheckState;
 use ralph_server::chat::keepalive::Stamp;
+use ralph_server::chat::monitor::{Monitor as Core, ProcessMemo};
 use ralph_server::schedule_store::ScheduleStore;
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;

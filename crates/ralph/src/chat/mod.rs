@@ -12,7 +12,6 @@ mod hold_progress;
 mod inbox;
 mod keys;
 pub(crate) mod mcp;
-mod monitor;
 mod nudge;
 mod prompt;
 mod queue;
@@ -21,13 +20,11 @@ mod refusal;
 mod rerender;
 mod route;
 mod schedule;
-mod schedule_worker;
 pub(crate) use ralph_server::chat::tag_store;
 mod send_it;
 mod sent;
 pub(crate) mod session;
 pub(crate) mod socket;
-mod stall;
 mod statusbar;
 mod suggestion;
 mod switch;
@@ -45,7 +42,6 @@ use crate::chat::editor::build_editor;
 use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
-use crate::chat::monitor::{ready_ids, Core, ProcessMemo};
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
     decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
@@ -100,6 +96,7 @@ use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use ralph_server::chat::check::CheckState;
 use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::monitor::{ready_ids, Monitor as Core, ProcessMemo};
 use ralph_server::chat::schedule::restore_schedule;
 use ralph_server::chat::skills::read_claude_config;
 use ralph_server::chat::skills::{
@@ -403,7 +400,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     );
     restore_schedule(
         &monitor.schedule,
-        &schedule_worker::alive_worker_ids(&monitor.store_dir),
+        &ralph_server::chat::schedule_worker::alive_worker_ids(&monitor.store_dir),
     );
     monitor.refresh(true);
     let running = running_workers(&monitor.store_dir);

@@ -1,3 +1,14 @@
+use crate::chat::check::CheckState;
+use crate::chat::host::{tick_events, HostEvent};
+use crate::chat::keepalive::Stamp;
+use crate::chat::memory::{self, Store};
+use crate::chat::settle;
+use crate::cursor_owner::{now_secs, write_file};
+use crate::schedule_store::ScheduleStore;
+use crate::warn::{warn, warn_if_err};
+use crate::watches::{locked, Watches};
+use crate::worker_mcp::Inbox;
+use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_memory::entries_to_shift;
@@ -19,17 +30,6 @@ use ralph_core::worker_check::{
     last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, CHECK_STATUS,
     NUDGE_TEXT,
 };
-use ralph_server::chat::check::CheckState;
-use ralph_server::chat::host::{tick_events, HostEvent};
-use ralph_server::chat::keepalive::Stamp;
-use ralph_server::chat::memory::{self, Store};
-use ralph_server::chat::settle;
-use ralph_server::cursor_owner::{now_secs, write_file};
-use ralph_server::schedule_store::ScheduleStore;
-use ralph_server::warn::{warn, warn_if_err};
-use ralph_server::watches::{locked, Watches};
-use ralph_server::worker_mcp::Inbox;
-use ralph_server::workers::{capture_pane, opencode_active, running_workers, Workers};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -37,9 +37,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-pub(super) const POLL: Duration = Duration::from_millis(500);
+pub const POLL: Duration = Duration::from_millis(500);
 
-pub(super) fn ready_ids(store_dir: &Path) -> Vec<String> {
+pub fn ready_ids(store_dir: &Path) -> Vec<String> {
     std::fs::read_dir(store_dir.join(READY_DIR))
         .map(|entries| {
             entries
@@ -50,7 +50,7 @@ pub(super) fn ready_ids(store_dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub(super) fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) -> Vec<String> {
+pub fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) -> Vec<String> {
     warnings
         .into_iter()
         .filter(|warning| seen.insert(warning.clone()))
@@ -58,64 +58,64 @@ pub(super) fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) 
 }
 
 #[derive(Default)]
-pub(super) struct ProcessMemo {
+pub struct ProcessMemo {
     usage: Option<ProcessUsage>,
     shift: Option<usize>,
 }
 
-pub(super) struct Core {
-    pub(super) inbox: Arc<Inbox>,
-    pub(super) watches: Watches,
-    pub(super) schedule: ScheduleStore,
-    pub(super) store: Store,
-    pub(super) store_dir: PathBuf,
-    pub(super) status: Mutex<Status>,
-    pub(super) seen: Mutex<HashMap<String, String>>,
-    pub(super) active: Mutex<Option<HashSet<String>>>,
-    pub(super) recent_history_tokens: usize,
-    pub(super) worker_check_secs: Option<u64>,
-    pub(super) worker_quiet_secs: u64,
-    pub(super) auto_continue: bool,
-    pub(super) hold_progress: bool,
-    pub(super) workers: Workers,
-    pub(super) check: Mutex<CheckState>,
-    pub(super) known: Mutex<Vec<Report>>,
-    pub(super) fresh: Mutex<(Vec<Report>, usize)>,
-    pub(super) starting: Arc<Mutex<Vec<String>>>,
-    pub(super) scheduled_reports: Mutex<Vec<Report>>,
-    pub(super) warned: Mutex<HashSet<String>>,
-    pub(super) unrecorded: Mutex<HashSet<String>>,
-    pub(super) live: Arc<AtomicBool>,
-    pub(super) last_ping: Stamp,
-    pub(super) run: String,
-    pub(super) reset_limits: ResetLimits,
-    pub(super) process: Mutex<ProcessMemo>,
-    pub(super) usage_tail: Mutex<UsageTail>,
-    pub(super) phase: Mutex<Phase>,
-    pub(super) hold: Mutex<Option<HoldFilter>>,
+pub struct Monitor {
+    pub inbox: Arc<Inbox>,
+    pub watches: Watches,
+    pub schedule: ScheduleStore,
+    pub store: Store,
+    pub store_dir: PathBuf,
+    pub status: Mutex<Status>,
+    pub seen: Mutex<HashMap<String, String>>,
+    pub active: Mutex<Option<HashSet<String>>>,
+    pub recent_history_tokens: usize,
+    pub worker_check_secs: Option<u64>,
+    pub worker_quiet_secs: u64,
+    pub auto_continue: bool,
+    pub hold_progress: bool,
+    pub workers: Workers,
+    pub check: Mutex<CheckState>,
+    pub known: Mutex<Vec<Report>>,
+    pub fresh: Mutex<(Vec<Report>, usize)>,
+    pub starting: Arc<Mutex<Vec<String>>>,
+    pub scheduled_reports: Mutex<Vec<Report>>,
+    pub warned: Mutex<HashSet<String>>,
+    pub unrecorded: Mutex<HashSet<String>>,
+    pub live: Arc<AtomicBool>,
+    pub last_ping: Stamp,
+    pub run: String,
+    pub reset_limits: ResetLimits,
+    pub process: Mutex<ProcessMemo>,
+    pub usage_tail: Mutex<UsageTail>,
+    pub phase: Mutex<Phase>,
+    pub hold: Mutex<Option<HoldFilter>>,
 }
 
-impl Core {
-    pub(super) fn status(&self) -> Status {
+impl Monitor {
+    pub fn status(&self) -> Status {
         locked(&self.status).clone()
     }
 
-    pub(super) fn set_phase(&self, phase: Phase) {
+    pub fn set_phase(&self, phase: Phase) {
         *locked(&self.phase) = phase;
     }
 
-    pub(super) fn set_hold(&self, hold: Option<HoldFilter>) {
+    pub fn set_hold(&self, hold: Option<HoldFilter>) {
         *locked(&self.hold) = hold;
     }
 
-    pub(super) fn terminal_report(&self, unread: usize) -> program_status::Report {
+    pub fn terminal_report(&self, unread: usize) -> program_status::Report {
         let mut status = self.status();
         status.unread = unread;
         status.hold = locked(&self.hold).clone();
         report_for(*locked(&self.phase), &status)
     }
 
-    pub(super) fn tick_events(&self, changed: bool) -> Vec<HostEvent> {
+    pub fn tick_events(&self, changed: bool) -> Vec<HostEvent> {
         let (fresh, unread) = std::mem::take(&mut *locked(&self.fresh));
         tick_events(
             changed,
@@ -125,7 +125,7 @@ impl Core {
         )
     }
 
-    pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
+    pub fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
         let (_, reports) = split_close_reports(self.inbox.drain(selection)?);
         self.note_scheduled(&reports);
         locked(&self.seen).extend(latest_states(&reports));
@@ -206,7 +206,7 @@ impl Core {
             .collect()
     }
 
-    pub(super) fn check(&self) {
+    pub fn check(&self) {
         let running = running_workers(&self.store_dir);
         let actions = {
             let mut state = locked(&self.check);
@@ -312,7 +312,7 @@ impl Core {
         known.extend(fresh);
     }
 
-    pub(super) fn refresh(&self, with_memory: bool) -> bool {
+    pub fn refresh(&self, with_memory: bool) -> bool {
         let peeked = self.inbox.peek();
         if let Ok(pending) = &peeked {
             self.alert_fresh(pending);

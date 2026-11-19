@@ -1,4 +1,7 @@
-use super::monitor::Core;
+use crate::chat::monitor::Monitor;
+use crate::cursor_owner::{now_secs, write_file};
+use crate::warn::warn_if_err;
+use crate::watches::locked;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{activity_path, sent_path, ActivityMark, HarnessId, Report};
 use ralph_core::worker_check::CHECK_STATUS;
@@ -7,9 +10,6 @@ use ralph_core::worker_stall::{
     report_secs, reported_since_go_ahead, stall_action, AutoContinue, ContinueStep, StallAction,
     StallFacts, CONTINUE_TEXT, REASON_API_ERROR,
 };
-use ralph_server::cursor_owner::{now_secs, write_file};
-use ralph_server::warn::warn_if_err;
-use ralph_server::watches::locked;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
@@ -67,8 +67,8 @@ fn append_line(path: &Path, line: &str) -> io::Result<()> {
     writeln!(file, "{line}")
 }
 
-impl Core {
-    pub(super) fn stall_tick(&self, running: &[RunningWorker]) {
+impl Monitor {
+    pub fn stall_tick(&self, running: &[RunningWorker]) {
         for worker in running {
             self.stall_step(worker);
         }
@@ -112,7 +112,7 @@ impl Core {
         }
         let sent = self.workers.nudge(id, CONTINUE_TEXT);
         if let Err(e) = &sent {
-            ralph_server::warn::warn(format!("auto-continuing worker {id}: {e}"));
+            crate::warn::warn(format!("auto-continuing worker {id}: {e}"));
         }
         self.run_steps(worker, at, after_send(sent.is_ok()));
     }
@@ -133,7 +133,7 @@ impl Core {
             gate
         };
         if let (true, Err(e)) = (gate.warn, &written) {
-            ralph_server::warn::warn(format!(
+            crate::warn::warn(format!(
                 "recording the auto-continue of worker {id}, no continue sent: {e}"
             ));
         }
