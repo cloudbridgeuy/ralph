@@ -44,6 +44,7 @@ use ralph_server::workers::headless::{ExitCleanup, HeadlessShutdown};
 use ralph_server::workers::{capture_pane, opencode_active, running_workers, Workers};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
@@ -78,7 +79,7 @@ pub(super) struct ProcessMemo {
     shift: Option<usize>,
 }
 
-pub(super) struct Monitor {
+pub(super) struct Core {
     pub(super) inbox: Arc<Inbox>,
     pub(super) watches: Watches,
     pub(super) schedule: ScheduleStore,
@@ -100,19 +101,31 @@ pub(super) struct Monitor {
     pub(super) scheduled_reports: Mutex<Vec<Report>>,
     pub(super) warned: Mutex<HashSet<String>>,
     pub(super) unrecorded: Mutex<HashSet<String>>,
-    pub(super) alert: AlertConfig,
     pub(super) live: Arc<AtomicBool>,
     pub(super) last_ping: Stamp,
     pub(super) run: String,
     pub(super) reset_limits: ResetLimits,
     pub(super) process: Mutex<ProcessMemo>,
     pub(super) usage_tail: Mutex<UsageTail>,
-    pub(super) term: Arc<TermStatus>,
     pub(super) phase: Mutex<Phase>,
     pub(super) hold: Mutex<Option<HoldFilter>>,
 }
 
-impl Monitor {
+pub(super) struct Monitor {
+    pub(super) core: Core,
+    pub(super) alert: AlertConfig,
+    pub(super) term: Arc<TermStatus>,
+}
+
+impl Deref for Monitor {
+    type Target = Core;
+
+    fn deref(&self) -> &Core {
+        &self.core
+    }
+}
+
+impl Core {
     pub(super) fn status(&self) -> Status {
         locked(&self.status).clone()
     }

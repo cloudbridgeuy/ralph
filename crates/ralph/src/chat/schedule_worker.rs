@@ -1,4 +1,4 @@
-use crate::chat::monitor::{Monitor, POLL};
+use crate::chat::monitor::{Core, POLL};
 use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_worker::{
     alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
@@ -15,13 +15,13 @@ use std::sync::{Arc, Mutex};
 struct Starting(Arc<Mutex<Vec<String>>>, String);
 
 impl Starting {
-    fn enter(monitor: &Monitor, id: &str) -> Self {
+    fn enter(monitor: &Core, id: &str) -> Self {
         locked(&monitor.starting).push(id.to_string());
         Self(Arc::clone(&monitor.starting), id.to_string())
     }
 }
 
-fn starting_ids(monitor: &Monitor) -> Vec<String> {
+fn starting_ids(monitor: &Core) -> Vec<String> {
     locked(&monitor.starting).clone()
 }
 
@@ -38,7 +38,7 @@ pub(super) fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn tick_workers(monitor: &Monitor) {
+pub(super) fn tick_workers(monitor: &Core) {
     let tasks = monitor.schedule.load_all();
     if !tasks.iter().any(is_worker_task) || monitor.watches.is_closing() {
         return;
@@ -65,7 +65,7 @@ pub(super) fn tick_workers(monitor: &Monitor) {
     }
 }
 
-fn post_report(monitor: &Monitor, task: &Task, text: String, now: chrono::DateTime<chrono::Utc>) {
+fn post_report(monitor: &Core, task: &Task, text: String, now: chrono::DateTime<chrono::Utc>) {
     let report = chat_report(&task.id, text, &now.to_rfc3339());
     warn_if_err(
         monitor.inbox.post(&report, 0),
@@ -73,7 +73,7 @@ fn post_report(monitor: &Monitor, task: &Task, text: String, now: chrono::DateTi
     );
 }
 
-fn end_task(monitor: &Monitor, task: &Task, end: &WorkerEnd, now: chrono::DateTime<chrono::Utc>) {
+fn end_task(monitor: &Core, task: &Task, end: &WorkerEnd, now: chrono::DateTime<chrono::Utc>) {
     let worker = worker_id(&task.id);
     match end {
         WorkerEnd::Done => settle_done(&monitor.workers, &worker),
@@ -108,7 +108,7 @@ fn settle_done(workers: &Workers, worker: &str) {
     }
 }
 
-fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono::Utc>) {
+fn start_task(monitor: &Core, fire: WorkerFire, now: chrono::DateTime<chrono::Utc>) {
     let task = Task {
         status: TaskStatus::Running,
         late: fire.late,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::chat::monitor::{Monitor, ProcessMemo};
+use crate::chat::monitor::{Core, Monitor, ProcessMemo};
 use crate::chat::term_status::TermStatus;
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_process::{FileStamp, UsageTail};
@@ -16,50 +16,52 @@ pub(in crate::chat) fn monitor(dir: &Path) -> Monitor {
     let inbox = Arc::new(Inbox::new(dir.join("inbox")));
     let store = Store::new(dir.to_path_buf());
     Monitor {
-        watches: Watches::new(Arc::clone(&inbox), dir, std::time::Duration::from_secs(60)),
-        schedule: ScheduleStore::new(dir.join("schedule")),
-        inbox,
-        store_dir: dir.to_path_buf(),
-        status: Mutex::new(Status::default()),
-        seen: Mutex::new(HashMap::new()),
-        active: Mutex::new(None),
-        recent_history_tokens: 0,
-        worker_check_secs: None,
-        worker_quiet_secs: 0,
-        auto_continue: false,
-        hold_progress: false,
-        workers: Workers::new(
-            dir.to_path_buf(),
-            PathBuf::from("ralph"),
-            String::new(),
-            None,
-        ),
-        check: Mutex::new(CheckState::seeded(&store)),
-        store,
-        known: Mutex::new(Vec::new()),
-        fresh: Mutex::new((Vec::new(), 0)),
-        starting: Arc::default(),
-        scheduled_reports: Mutex::new(Vec::new()),
-        warned: Mutex::new(HashSet::new()),
-        unrecorded: Mutex::new(HashSet::new()),
+        core: Core {
+            watches: Watches::new(Arc::clone(&inbox), dir, std::time::Duration::from_secs(60)),
+            schedule: ScheduleStore::new(dir.join("schedule")),
+            inbox,
+            store_dir: dir.to_path_buf(),
+            status: Mutex::new(Status::default()),
+            seen: Mutex::new(HashMap::new()),
+            active: Mutex::new(None),
+            recent_history_tokens: 0,
+            worker_check_secs: None,
+            worker_quiet_secs: 0,
+            auto_continue: false,
+            hold_progress: false,
+            workers: Workers::new(
+                dir.to_path_buf(),
+                PathBuf::from("ralph"),
+                String::new(),
+                None,
+            ),
+            check: Mutex::new(CheckState::seeded(&store)),
+            store,
+            known: Mutex::new(Vec::new()),
+            fresh: Mutex::new((Vec::new(), 0)),
+            starting: Arc::default(),
+            scheduled_reports: Mutex::new(Vec::new()),
+            warned: Mutex::new(HashSet::new()),
+            unrecorded: Mutex::new(HashSet::new()),
+            live: Arc::new(AtomicBool::new(false)),
+            last_ping: Stamp::default(),
+            run: String::new(),
+            reset_limits: ResetLimits {
+                turns: 0,
+                tokens: 0,
+            },
+            process: Mutex::new(ProcessMemo::default()),
+            usage_tail: Mutex::new(UsageTail::starting_at(&FileStamp { id: None, len: 0 })),
+            phase: Mutex::new(Phase::Turn),
+            hold: Mutex::new(None),
+        },
         alert: AlertConfig {
             sound: false,
             notification: false,
             unknown_focus: UnknownFocus::Silent,
             terminal_status: false,
         },
-        live: Arc::new(AtomicBool::new(false)),
-        last_ping: Stamp::default(),
-        run: String::new(),
-        reset_limits: ResetLimits {
-            turns: 0,
-            tokens: 0,
-        },
-        process: Mutex::new(ProcessMemo::default()),
-        usage_tail: Mutex::new(UsageTail::starting_at(&FileStamp { id: None, len: 0 })),
         term: Arc::new(TermStatus::new(false, false)),
-        phase: Mutex::new(Phase::Turn),
-        hold: Mutex::new(None),
     }
 }
 

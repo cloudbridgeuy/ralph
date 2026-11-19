@@ -1,4 +1,4 @@
-use super::monitor::Monitor;
+use super::monitor::Core;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{activity_path, sent_path, ActivityMark, HarnessId, Report};
 use ralph_core::worker_check::CHECK_STATUS;
@@ -67,7 +67,7 @@ fn append_line(path: &Path, line: &str) -> io::Result<()> {
     writeln!(file, "{line}")
 }
 
-impl Monitor {
+impl Core {
     pub(super) fn stall_tick(&self, running: &[RunningWorker]) {
         for worker in running {
             self.stall_step(worker);
