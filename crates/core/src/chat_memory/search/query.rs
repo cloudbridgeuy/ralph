@@ -2,7 +2,7 @@
 pub(crate) struct Token {
     pub(crate) word: String,
     pub(crate) parts: Vec<String>,
-    pub(crate) start: usize,
+    pub(super) start: usize,
 }
 
 fn is_word(c: char) -> bool {
