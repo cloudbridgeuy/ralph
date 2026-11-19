@@ -24,12 +24,11 @@ pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite, NodeSour
 pub use claim::{holder_pid, store_in_use_message};
 pub use facts::{cover_candidates, cover_size, found_metrics, read_metrics, zoom_metrics, Found};
 pub use history_log::{
-    call_args, cap_text, classify_call, count_turn_calls, encode_history, history_call_facts,
-    history_call_row, history_error_row, history_path, history_tool_named, history_tool_of,
-    history_turn_row, malformed_call, next_turn_number, parse_turn_id, resolve_scope, scope_label,
-    turn_id, view_ids_field, view_line_ids, CallContext, CallFacts, CallMetrics, CallSource,
-    ErrorScope, HistoryKey, HistoryOutcome, HistoryRow, HistoryTool, MalformedCall, TurnFacts,
-    ViewIds, ARG_CHARS, ERROR_CHARS, VIEW_IDS_CAP,
+    count_turn_calls, encode_history, history_call_facts, history_call_row, history_error_row,
+    history_path, history_tool_named, history_tool_of, history_turn_row, malformed_call,
+    next_turn_number, parse_turn_id, resolve_scope, scope_label, turn_id, view_line_ids,
+    CallContext, CallMetrics, CallSource, ErrorScope, HistoryKey, HistoryRow, HistoryTool,
+    MalformedCall, TurnFacts,
 };
 pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
