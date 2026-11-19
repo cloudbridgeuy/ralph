@@ -61,7 +61,11 @@ pub(super) fn print_history(
         Some(scope) => in_scope(call, scope),
         None => Ok(call),
     })
-    .and_then(|call| Memory::open(store_dir)?.call(&call))?;
+    .and_then(|call| {
+        Memory::open(store_dir)?
+            .call(&call)
+            .map(|answer| answer.text)
+    })?;
     println!("{text}");
     Ok(())
 }

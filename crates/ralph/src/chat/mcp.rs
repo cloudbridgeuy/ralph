@@ -30,7 +30,9 @@ pub fn run_stdio_server(
         let response = match handle_request(&request) {
             Outcome::Silent => continue,
             Outcome::Respond(v) => v,
-            Outcome::Call { id, call } => finish_call(id, memory.call(&call)),
+            Outcome::Call { id, call } => {
+                finish_call(id, memory.call(&call).map(|answer| answer.text))
+            }
             Outcome::Changes { id, request } => {
                 let result = std::env::current_dir()
                     .map_err(|e| format!("Could not read the working directory: {e}"))
@@ -219,7 +221,7 @@ mod tests {
             assert_eq!(
                 store
                     .call(&parsed.tool, Reach::default())
-                    .unwrap_or_else(|e| e),
+                    .map_or_else(|e| e, |answer| answer.text),
                 served,
                 "{name}"
             );

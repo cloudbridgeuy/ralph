@@ -113,7 +113,8 @@ fn a_bad_line_over_the_chunk_size_keeps_ids_and_later_entries() {
     assert!(warnings[0].len() < 1_000, "{}", warnings[0].len());
     let page = store
         .call(&Tool::Read(raw(0, 3)), Reach::default())
-        .unwrap();
+        .unwrap()
+        .text;
     assert!(
         page.contains("#2 · worker ·  · 15 chars\n[corrupt entry]"),
         "{page}"
@@ -142,7 +143,8 @@ fn a_log_that_is_one_bad_line_loads_as_one_placeholder() {
     );
     let page = store
         .call(&Tool::Read(raw(0, 1)), Reach::default())
-        .unwrap();
+        .unwrap()
+        .text;
     assert!(
         page.contains("#0 · worker ·  · 15 chars\n[corrupt entry]"),
         "{page}"

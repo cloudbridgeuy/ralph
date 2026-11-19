@@ -2,7 +2,7 @@ use super::query::tokenize;
 use super::request::{check_cursor, check_fingerprint, passes, SearchCursor, SearchRequest};
 use crate::chat_memory::archive::{Archive, ByteSource};
 use crate::chat_memory::lookup::excerpt;
-use crate::chat_memory::{Entry, Role};
+use crate::chat_memory::{Entry, Found, Role};
 use std::io;
 
 pub(super) const CHUNK_ENTRIES: usize = 256;
@@ -136,6 +136,13 @@ pub fn search<B: ByteSource>(
     archive: &mut Archive<B>,
     request: &SearchRequest,
 ) -> io::Result<Result<String, String>> {
+    Ok(search_found(archive, request)?.map(|found| found.text))
+}
+
+pub fn search_found<B: ByteSource>(
+    archive: &mut Archive<B>,
+    request: &SearchRequest,
+) -> io::Result<Result<Found, String>> {
     if let Err(message) = check_fingerprint(request) {
         return Ok(Err(message));
     }
@@ -144,5 +151,12 @@ pub fn search<B: ByteSource>(
     if let Err(message) = check_cursor(request, count) {
         return Ok(Err(message));
     }
-    Ok(Ok(render(request, count, &scan.ranked())))
+    let ranked = scan.ranked();
+    Ok(Ok(Found {
+        text: render(request, count, &ranked),
+        hits: ranked.len(),
+        truncated: None,
+        oldest: ranked.iter().map(|hit| hit.id).min(),
+        top: ranked.first().map(|hit| hit.id),
+    }))
 }

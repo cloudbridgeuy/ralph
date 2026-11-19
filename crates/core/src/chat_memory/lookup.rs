@@ -1,5 +1,5 @@
 use super::tree::{block_line, collapse, entry_line, leaf_line};
-use super::{Entry, Node, Tree, Window};
+use super::{Entry, Found, Node, Tree, Window};
 use regex::RegexBuilder;
 
 /// Entries that `zoom` reads: the leaf itself, or both leaves of a pair.
@@ -93,6 +93,10 @@ fn format_recall(pattern: &str, hits: &[(usize, &Entry, String)]) -> String {
 }
 
 pub fn recall(entries: &[Entry], pattern: &str) -> Result<String, String> {
+    recall_found(entries, pattern).map(|found| found.text)
+}
+
+pub fn recall_found(entries: &[Entry], pattern: &str) -> Result<Found, String> {
     let re = RegexBuilder::new(pattern)
         .case_insensitive(true)
         .build()
@@ -107,7 +111,13 @@ pub fn recall(entries: &[Entry], pattern: &str) -> Result<String, String> {
                 .map(|m| (i, entry, preview(&entry.text, m.start())))
         })
         .collect();
-    Ok(format_recall(pattern, &hits))
+    Ok(Found {
+        text: format_recall(pattern, &hits),
+        hits: hits.len(),
+        truncated: Some(hits.len() > RECALL_MAX_LINES),
+        oldest: hits.iter().map(|(i, _, _)| *i).min(),
+        top: hits.first().map(|(i, _, _)| *i),
+    })
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ mod archive;
 mod claim;
 #[cfg(test)]
 mod corrupt_tests;
+mod facts;
 mod history_log;
 mod index;
 mod log;
@@ -19,8 +20,9 @@ mod usage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite};
+pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite, NodeSource};
 pub use claim::{holder_pid, store_in_use_message};
+pub use facts::{cover_candidates, cover_size, found_metrics, read_metrics, zoom_metrics, Found};
 pub use history_log::{
     call_args, cap_text, classify_call, encode_history, history_call_facts, history_call_row,
     history_error_row, history_path, history_tool_of, history_turn_row, scope_label, turn_id,
@@ -35,13 +37,13 @@ pub use log::{
     encode_entry, encode_record, entry_or_corrupt, log_tail, parse_log, parse_tree, LogTail,
     CORRUPT_TEXT,
 };
-pub use lookup::{recall, zoom};
+pub use lookup::{recall, recall_found, zoom};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
     nap_system, retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
 };
 pub use range::{read_range, Mode, RangeRequest, Read};
-pub use search::{parse_search_args, search, SearchRequest};
+pub use search::{parse_search_args, search, search_found, SearchRequest};
 pub use tag::{
     after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
     failure_kind, ids_with, isolated, next_size, parse_reply, restrict_decision, retake,

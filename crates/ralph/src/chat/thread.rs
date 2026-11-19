@@ -28,7 +28,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use ralph_server::chat::memory::Reach;
+use ralph_server::chat::memory::{Answer, Reach};
 
 pub(crate) mod close;
 mod graph;
@@ -59,7 +59,7 @@ impl Memory {
         })
     }
 
-    pub fn call(&self, call: &MemoryCall) -> Result<String, String> {
+    pub fn call(&self, call: &MemoryCall) -> Result<Answer, String> {
         let own = |label| self.own.call(&call.tool, Reach { limit: None, label });
         match (&call.scope, &self.fork) {
             (Scope::Own | Scope::Main, None) => own(None),
@@ -447,7 +447,9 @@ mod tests {
     }
 
     fn call(memory: &Memory, tool: &str, args: serde_json::Value) -> Result<String, String> {
-        memory.call(&parse_tool_call(tool, &args).unwrap())
+        memory
+            .call(&parse_tool_call(tool, &args).unwrap())
+            .map(|answer| answer.text)
     }
 
     #[cfg(unix)]

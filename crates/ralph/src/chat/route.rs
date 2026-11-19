@@ -90,7 +90,9 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::History(call) => writeln!(
             out,
             "{}",
-            call.and_then(|call| Memory::open(ctx.store)?.call(&call))
+            call.and_then(|call| Memory::open(ctx.store)?
+                .call(&call)
+                .map(|answer| answer.text))
                 .unwrap_or_else(|e| e)
         )?,
         Route::Send(_)

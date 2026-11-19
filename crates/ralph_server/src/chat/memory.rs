@@ -6,12 +6,11 @@ use crate::private_file::check_path;
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     commit_decision, encode_entry, encode_record, holder_pid, log_tail, parse_log, parse_tree,
-    recall, search, Archive, Commit, Entry, LogTail, NewEntry, Node, NodeSlot, Role, Tool, Tree,
-    Trigger,
+    Archive, Commit, Entry, LogTail, NewEntry, Node, NodeSlot, Role, Tree, Trigger,
 };
 use ralph_core::chat_process::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::chat_suggestion::SuggestionRecord;
-use ralph_core::chat_thread::{label_item, label_lines, ThreadName};
+use ralph_core::chat_thread::ThreadName;
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -22,7 +21,12 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 mod append_tests;
+mod call;
+#[cfg(test)]
+mod call_tests;
 mod nap;
+
+pub use call::Answer;
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
 const SUGGESTIONS_FILE: &str = "suggestions.jsonl";
@@ -195,42 +199,6 @@ impl Store {
 
     pub fn log_len(&self) -> io::Result<usize> {
         self.with_archive(|archive| Ok(archive.count()))
-    }
-
-    pub fn call(&self, tool: &Tool, reach: Reach) -> Result<String, String> {
-        let item = |text: &String| match reach.label {
-            Some(name) => label_item(text, name),
-            None => text.clone(),
-        };
-        let lines = |text: String| match reach.label {
-            Some(name) => label_lines(&text, name),
-            None => text,
-        };
-        let result = self.with_archive(|archive| {
-            if let Some(end) = reach.limit {
-                archive.limit_to(end);
-            }
-            Ok(match tool {
-                Tool::Zoom(node) => archive
-                    .zoom(*node)?
-                    .map(|items| items.iter().map(item).collect::<Vec<_>>().join("\n")),
-                Tool::Read(request) => archive.read(request)?.map(|mut page| {
-                    page.blocks = page.blocks.iter().map(item).collect();
-                    page.render()
-                }),
-                Tool::Recall(pattern) => {
-                    let mut entries = Vec::new();
-                    archive.scan_entries(RECALL_CHUNK_ENTRIES, |_, entry| {
-                        entries.push(entry.clone())
-                    })?;
-                    recall(&entries, pattern).map(lines)
-                }
-                Tool::Search(request) => {
-                    search(archive, &super::tag_store::with_tags(&self.dir, request)?)?.map(lines)
-                }
-            })
-        });
-        result.unwrap_or_else(|e| Err(format!("Could not read chat memory: {e}")))
     }
 
     fn open_lock(&self) -> io::Result<File> {
@@ -446,7 +414,7 @@ fn trim_torn_tail(file: &mut File) -> io::Result<()> {
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
-        parse_search_args, split_view, LogIndex, RangeRequest, TreeIndex, FALLBACK_MARK,
+        parse_search_args, split_view, LogIndex, RangeRequest, Tool, TreeIndex, FALLBACK_MARK,
         LOG_INDEX_FILE, MAX_NAP_ATTEMPTS, TREE_INDEX_FILE,
     };
 
@@ -617,7 +585,8 @@ mod tests {
         assert_eq!(stored_index(&store).unwrap().count(), 2);
         let page = store
             .call(&Tool::Read(read_request("0-1")), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(page.contains("one"), "{page}");
     }
 
@@ -635,7 +604,8 @@ mod tests {
         store.append(Role::User, "needle three").unwrap();
         let page = store
             .call(&Tool::Read(read_request("0-3")), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(
             page.contains("#1 · worker ·  · 15 chars\n[corrupt entry]"),
             "{page}"
@@ -646,11 +616,13 @@ mod tests {
         );
         let zoomed = store
             .call(&Tool::Zoom(Node::new(3, 4).unwrap()), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(zoomed.starts_with("#3 user "), "{zoomed}");
         let recalled = store
             .call(&Tool::Recall("needle".to_string()), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         let hits: Vec<_> = recalled.lines().filter(|l| l.starts_with('#')).collect();
         assert_eq!(hits.len(), 3, "{recalled}");
         assert!(
@@ -660,7 +632,8 @@ mod tests {
         let request = parse_search_args(&serde_json::json!({ "query": "needle corrupt" })).unwrap();
         let found = store
             .call(&Tool::Search(request.clone()), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         let ids: Vec<_> = found.lines().filter(|l| l.starts_with('#')).collect();
         assert_eq!(ids.len(), 3, "{found}");
         assert!(!found.contains("#1 "), "{found}");
@@ -728,11 +701,13 @@ mod tests {
         assert_eq!(stored_index(&store).unwrap().count(), 1);
         let page = store
             .call(&Tool::Read(read_request("0-9")), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(page.contains("first") && page.contains("second"));
         assert!(store
             .call(&Tool::Zoom(Node::new(1, 2).unwrap()), Reach::default())
             .unwrap()
+            .text
             .contains("second"));
         assert_eq!(stored_index(&store).unwrap().count(), 2);
     }
@@ -749,11 +724,13 @@ mod tests {
         fs::write(store.dir().join(LOG_INDEX_FILE), index.encode()).unwrap();
         let zoomed = store
             .call(&Tool::Zoom(Node::new(1, 2).unwrap()), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(zoomed.contains("one"), "{zoomed}");
         let page = store
             .call(&Tool::Read(read_request("0-2")), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(page.contains("zero") && page.contains("two"), "{page}");
         let log = fs::read(store.dir().join("log.jsonl")).unwrap();
         let mut built = LogIndex::default();
@@ -865,7 +842,8 @@ mod tests {
         assert_eq!((index.count(), index.covered), (4, tree.len() as u64));
         let zoomed = store
             .call(&Tool::Zoom(Node::new(0, 4).unwrap()), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(
             zoomed.contains("sum2") && zoomed.contains("sum3"),
             "{zoomed}"
@@ -881,7 +859,8 @@ mod tests {
         fs::write(store.dir().join(TREE_INDEX_FILE), b"junk").unwrap();
         let zoomed = store
             .call(&Tool::Zoom(Node::new(0, 4).unwrap()), Reach::default())
-            .unwrap();
+            .unwrap()
+            .text;
         assert!(
             zoomed.contains("first") && !zoomed.contains("loser"),
             "{zoomed}"
