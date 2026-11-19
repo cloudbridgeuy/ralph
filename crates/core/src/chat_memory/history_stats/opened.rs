@@ -33,12 +33,11 @@ fn has_hit_ids(call: &Call) -> bool {
 }
 
 fn unknown_hits(call: &Call) -> usize {
-    match &call.hit_ids {
-        Some(ids) if !ids.is_empty() => ids.len(),
-        _ => call
-            .hits
-            .map_or(1, |hits| usize::try_from(hits).unwrap_or(usize::MAX)),
-    }
+    let shown = call.hit_ids.as_ref().map_or(0, Vec::len);
+    call.hits.map_or_else(
+        || shown.max(1),
+        |hits| usize::try_from(hits).unwrap_or(usize::MAX),
+    )
 }
 
 pub fn count_opened(calls: &[Call]) -> Opened {

@@ -112,3 +112,12 @@ fn zoom_depth_histogram() {
     assert_eq!(stats.depth, [1, 0, 1, 0, 2]);
     assert_eq!((stats.size_count, stats.size_max), (3, 16));
 }
+
+#[test]
+fn a_cli_row_counts_its_total_hits_as_unknown() {
+    let ids: Vec<String> = (10..20).map(|n| n.to_string()).collect();
+    let found = opened(&[call(json!({
+        "hits": 30, "hit_ids": ids, "source": "cli", "turn": null, "run": null
+    }))]);
+    assert_eq!(found.unknown, 30);
+}
