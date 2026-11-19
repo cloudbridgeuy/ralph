@@ -121,3 +121,10 @@ fn a_cli_row_counts_its_total_hits_as_unknown() {
     }))]);
     assert_eq!(found.unknown, 30);
 }
+
+#[test]
+fn a_huge_hit_count_saturates_the_unknown_sum() {
+    let huge = call(json!({"hits": 18446744073709551615u64, "source": "cli"}));
+    let found = opened(&[huge.clone(), huge]);
+    assert_eq!(found.unknown, usize::MAX);
+}

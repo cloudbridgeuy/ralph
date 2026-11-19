@@ -119,3 +119,11 @@ fn parse_reads_timing_turn_rows_only() {
     assert_eq!(parsed.turns[0].turn_ms, Some(900));
     assert_eq!(parsed.turns[0].index, 0);
 }
+
+#[test]
+fn parse_skips_a_hit_count_above_u64() {
+    let row = call(json!({"hits": 0})).replace("\"hits\":0", "\"hits\":18446744073709551616");
+    let parsed = parse_history(&row);
+    assert!(parsed.calls.is_empty());
+    assert_eq!(parsed.skipped, 1);
+}

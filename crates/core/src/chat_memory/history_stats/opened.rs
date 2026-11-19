@@ -51,7 +51,7 @@ pub fn count_opened(calls: &[Call]) -> Opened {
     for call in calls.iter().filter(|call| returned_hits(call)) {
         let tracked = has_hit_ids(call) && matches!(call.source, Source::Mcp | Source::Slash);
         let Some(key) = turn_key(call).filter(|_| tracked) else {
-            found.unknown += unknown_hits(call);
+            found.unknown = found.unknown.saturating_add(unknown_hits(call));
             continue;
         };
         let scope = call.scope.as_deref();
