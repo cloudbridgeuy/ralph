@@ -29,11 +29,11 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
     decide, describe, encode, gone_path, permission_content, probed_version, prompt_failure_report,
-    ready_path, reduce, request_stale, resume_decision, session_error, stop_problem,
-    sweeps_permissions, task_prompt, turn_outcome, AcpAgent, AcpCall, BlockedContent, Capabilities,
-    HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound, PermissionAnswer,
-    PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
-    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE, CURSOR_AGENT,
+    ready_path, reduce, request_stale, session_error, stop_problem, sweeps_permissions,
+    task_prompt, turn_outcome, AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles,
+    HarnessId, HeadlessState, HeadlessWorker, Inbound, PermissionAnswer, PermissionMode,
+    PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome,
+    WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE, CURSOR_AGENT,
     CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
     CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
     CURSOR_SPAWN_DIR, REPORT_REMINDER,
@@ -56,6 +56,7 @@ mod permissions;
 mod print;
 mod print_hooks;
 mod queued;
+mod recovery;
 pub(crate) mod transport;
 mod turns;
 mod verify;
@@ -65,6 +66,7 @@ pub(crate) use agy_verify::verify as verify_agy;
 use cursor_worker::CursorWorker;
 use permissions::Permissions;
 use print::PrintWorker;
+use recovery::{agent_version_warning, exit_reason};
 use transport::initialize;
 use turns::{run_turns, Turns};
 use verify::agent_version_probe;
@@ -104,17 +106,20 @@ struct Opening {
     permission_mode: PermissionMode,
     effort: Option<String>,
     updates: agy_settings::Updates,
+    inbox: PathBuf,
 }
 
 async fn open_session(
     connection: &ConnectionTo<Agent>,
     opening: &Opening,
     loads_session: bool,
-) -> Result<SessionId, String> {
+) -> Result<(SessionId, Option<agy_settings::Selection>), String> {
     match &opening.launch {
-        Launch::Fresh => agy_settings::open(connection, opening).await,
+        Launch::Fresh => agy_settings::open(connection, opening)
+            .await
+            .map(|(id, settings)| (id, Some(settings))),
         Launch::Resume { record, store } => {
-            if let Resume::Skip(message) = resume_decision(
+            if let Resume::Skip(message) = recovery::resume(
                 &opening.agent,
                 &opening.worker_id,
                 record,
@@ -125,7 +130,9 @@ async fn open_session(
             }
             let session = SessionId::new(record.session_id.clone());
             if opening.agent == AGY_AGENT {
-                return agy_settings::load(connection, opening, session).await;
+                return agy_settings::load(connection, opening, session)
+                    .await
+                    .map(|(id, settings)| (id, Some(settings)));
             }
             let loaded = connection
                 .send_request(
@@ -147,7 +154,7 @@ async fn open_session(
                 loaded.config_options.as_deref(),
             )
             .await?;
-            Ok(session)
+            Ok((session, None))
         }
     }
 }
@@ -224,8 +231,16 @@ impl AcpWorker {
         } else {
             None
         };
+        let cwd = if agent == AGY_AGENT {
+            request
+                .worktree
+                .canonicalize()
+                .map_err(|e| format!("could not resolve agy worktree: {e}"))?
+        } else {
+            request.worktree.clone()
+        };
         let mut command = agy_settings::command(agent.command, permission_mode);
-        command.current_dir(&request.worktree);
+        command.current_dir(&cwd);
         if agent == CURSOR_AGENT {
             let store = request.inbox.parent().ok_or("worker inbox has no store")?;
             command.envs([ralph_core::worker::inbox_env(
@@ -277,14 +292,14 @@ impl AcpWorker {
             id,
             &request.inbox,
             owner,
-            request.snapshots.then_some(request.worktree.as_path()),
+            request.snapshots.then_some(cwd.as_path()),
         ))
         .map_err(|e| format!("could not build the worker MCP entry: {e}"))?;
         let (ready_tx, ready_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = oneshot::channel();
         worker.stop = Some(stop_tx);
-        let cwd = request.worktree.clone();
-        let inbox = Inbox::new(request.inbox.clone());
+        let inbox_path = request.inbox.clone();
+        let inbox = Inbox::new(inbox_path.clone());
         let worker_id = id.to_string();
         let changes = request
             .inbox
@@ -294,7 +309,7 @@ impl AcpWorker {
                 WorkerChanges::open(&WorkerSite {
                     store: store.to_path_buf(),
                     id: id.to_string(),
-                    worktree: request.worktree.clone(),
+                    worktree: cwd.clone(),
                 })
             });
         let results = results.to_path_buf();
@@ -366,10 +381,24 @@ impl AcpWorker {
                             permission_mode,
                             effort,
                             updates,
+                            inbox: inbox_path,
                         };
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
-                            Ok(session) => {
+                            Ok((session, settings)) => {
+                                if let Some(settings) = settings {
+                                    if let Err(message) =
+                                        recovery::save(&opening, &session, &settings)
+                                    {
+                                        connection
+                                            .send_request(CloseSessionRequest::new(session))
+                                            .block_task()
+                                            .await
+                                            .ok();
+                                        ready_tx.send(Err(message)).ok();
+                                        return Ok(());
+                                    }
+                                }
                                 opened.store(true, Ordering::SeqCst);
                                 ready_tx.send(Ok(())).ok();
                                 let turns = Turns {
@@ -536,19 +565,6 @@ impl Drop for AcpWorker {
     }
 }
 
-fn exit_reason(status: ExitStatus, agent: &AcpAgent) -> String {
-    format!("{} acp exited ({status})", agent.command)
-}
-
-fn agent_version_warning(agent: &AcpAgent, inbox: &Path) -> Option<String> {
-    let probe = agent_version_probe(agent);
-    crate::version_drift::soft_warning(
-        &CURSOR_GATE,
-        probed_version(agent, &probe).map(str::to_string),
-        inbox,
-    )
-}
-
 async fn authenticate(
     connection: &ConnectionTo<Agent>,
     agent: &AcpAgent,
@@ -603,14 +619,6 @@ impl CursorHost {
             starting: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
         })
-    }
-
-    fn dir(&self, cursor: &'static str, agy: &'static str) -> &'static str {
-        if self.agy {
-            agy
-        } else {
-            cursor
-        }
     }
 
     fn workers(&self) -> MutexGuard<'_, HashMap<String, CursorWorker>> {
@@ -819,7 +827,7 @@ impl CursorHost {
     }
 
     fn resume_all(&self) {
-        for id in request_ids(&self.store_dir, CURSOR_SESSION_DIR) {
+        for id in request_ids(&self.store_dir, self.dir(CURSOR_SESSION_DIR, "agy-session")) {
             self.resume(&id);
         }
     }
@@ -843,9 +851,13 @@ impl CursorHost {
             ));
             return;
         };
-        if let Resume::Skip(message) =
-            resume_decision(&CURSOR_AGENT, id, &record, &self.store_dir, true)
-        {
+        if let Resume::Skip(message) = recovery::resume(
+            if self.agy { &AGY_AGENT } else { &CURSOR_AGENT },
+            id,
+            &record,
+            &self.store_dir,
+            true,
+        ) {
             warn(message);
             return;
         }
@@ -857,11 +869,19 @@ impl CursorHost {
             return;
         };
         if !record.cwd.is_dir() {
-            warn(format!(
+            let message = format!(
                 "{} session {id} not resumed: its worktree {} is gone",
-                CURSOR_AGENT.name,
+                if self.agy {
+                    AGY_AGENT.name
+                } else {
+                    CURSOR_AGENT.name
+                },
                 record.cwd.display()
-            ));
+            );
+            warn(message.clone());
+            if self.agy {
+                write_file(&files.error, &message).ok();
+            }
             return;
         }
         let request = SpawnRequest {
@@ -875,7 +895,18 @@ impl CursorHost {
             ),
             model: record.model.clone(),
         };
-        let started = if let Some(mode) = record.permissions {
+        let claimed = if self.agy {
+            if claim_owner(&files.owner).is_err() {
+                return;
+            }
+            fs::read_to_string(&files.owner).ok()
+        } else {
+            None
+        };
+        let started = if !self.agy && record.permissions.is_some() {
+            let Some(mode) = record.permissions else {
+                return;
+            };
             PrintWorker::start(id, &request, &files, Some(&record), mode).map(CursorWorker::Print)
         } else {
             let launch = Launch::Resume {
@@ -888,6 +919,11 @@ impl CursorHost {
         match started {
             Ok(worker) => self.adopt_resumed(id, worker),
             Err(message) => {
+                if claimed.as_ref().is_some_and(|claim| {
+                    fs::read_to_string(&files.owner).as_ref().ok() == Some(claim)
+                }) {
+                    fs::remove_file(&files.owner).ok();
+                }
                 warn(message.clone());
                 write_file(&files.error, &message).ok();
             }
@@ -903,7 +939,6 @@ impl CursorHost {
             fs::remove_file(ready).ok();
         }
     }
-
     fn adopt(&self, id: &str, mut worker: CursorWorker, task: Option<String>) {
         let files = self.files(id);
         let claimed = !self.closed.load(Ordering::SeqCst)
@@ -955,33 +990,5 @@ impl HeadlessHost for CursorHost {
 
     fn shutdown(&self) {
         CursorHost::shutdown(self);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::os::unix::process::ExitStatusExt;
-
-    #[test]
-    fn exit_reason_uses_the_launched_agent_command() {
-        assert_eq!(
-            exit_reason(
-                ExitStatus::from_raw(9),
-                &AcpAgent {
-                    command: "agy",
-                    ..CURSOR_AGENT
-                }
-            ),
-            "agy acp exited (signal: 9 (SIGKILL))"
-        );
-    }
-
-    #[test]
-    fn exit_reason_names_the_agent_and_the_status() {
-        assert_eq!(
-            exit_reason(ExitStatus::from_raw(9), &CURSOR_AGENT),
-            "agent acp exited (signal: 9 (SIGKILL))"
-        );
     }
 }

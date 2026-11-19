@@ -13,6 +13,12 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Selection {
+    pub(super) model: String,
+    pub(super) effort: Option<String>,
+}
+
 type Pending = Option<(String, String, oneshot::Sender<serde_json::Value>)>;
 pub(super) type Updates = Arc<Mutex<Pending>>;
 
@@ -86,7 +92,7 @@ pub(super) async fn apply_mode(
 pub(super) async fn open(
     connection: &ConnectionTo<Agent>,
     opening: &Opening,
-) -> Result<SessionId, String> {
+) -> Result<(SessionId, Selection), String> {
     let request =
         NewSessionRequest::new(opening.cwd.clone()).mcp_servers(vec![opening.server.clone()]);
     let response = connection
@@ -108,14 +114,14 @@ pub(super) async fn open(
             .await
             .ok();
     }
-    result.map(|()| id)
+    result.map(|selection| (id, selection))
 }
 
 pub(super) async fn load(
     connection: &ConnectionTo<Agent>,
     opening: &Opening,
     id: SessionId,
-) -> Result<SessionId, String> {
+) -> Result<(SessionId, Selection), String> {
     let request = LoadSessionRequest::new(id.clone(), opening.cwd.clone())
         .mcp_servers(vec![opening.server.clone()]);
     let response = connection
@@ -131,7 +137,7 @@ pub(super) async fn load(
             .await
             .ok();
     }
-    result.map(|()| id)
+    result.map(|selection| (id, selection))
 }
 
 async fn apply(
@@ -139,16 +145,16 @@ async fn apply(
     id: &SessionId,
     opening: &Opening,
     initial: &serde_json::Value,
-) -> Result<(), String> {
+) -> Result<Selection, String> {
     let mode = initial
         .get("modes")
         .and_then(|value| serde_json::from_value(value.clone()).ok());
     apply_mode(connection, id, opening.permission_mode, mode.as_ref()).await?;
     let model = agy_selection(opening.model.as_deref(), opening.effort.as_deref(), initial)?;
     let mut state = initial.clone();
-    if let Some(model) = model {
-        let primary = agy_model_base(&model, initial);
-        let same = initial["models"]["currentModelId"] == model;
+    if let Some(ref model) = model {
+        let primary = agy_model_base(model, initial);
+        let same = initial["models"]["currentModelId"] == *model;
         let (send, receive) = oneshot::channel();
         *locked(&opening.updates) = Some((id.to_string(), primary.to_string(), send));
         let request = UntypedMessage::new(
@@ -206,8 +212,41 @@ async fn apply(
         if !agy_effort_confirmed(&options, model, effort) {
             return Err("agy did not confirm the requested model and effort".to_string());
         }
+        state = options;
     }
-    Ok(())
+    selection(initial, &state, model.as_deref())
+}
+
+pub(super) fn selection(
+    initial: &serde_json::Value,
+    state: &serde_json::Value,
+    chosen: Option<&str>,
+) -> Result<Selection, String> {
+    let current = |id: &str| {
+        state["configOptions"]
+            .as_array()?
+            .iter()
+            .find(|item| item["id"] == id)?["currentValue"]
+            .as_str()
+            .map(str::to_string)
+    };
+    let effort = current("thought_level");
+    let model = chosen
+        .or_else(|| initial["models"]["currentModelId"].as_str())
+        .ok_or("agy did not report its current model")?;
+    let base = current("model");
+    let candidate = base
+        .as_ref()
+        .zip(effort.as_ref())
+        .map(|(base, effort)| format!("{base}-{effort}"));
+    let model = candidate
+        .filter(|candidate| {
+            initial["models"]["availableModels"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item["modelId"] == *candidate))
+        })
+        .unwrap_or_else(|| model.to_string());
+    Ok(Selection { model, effort })
 }
 
 #[cfg(test)]
