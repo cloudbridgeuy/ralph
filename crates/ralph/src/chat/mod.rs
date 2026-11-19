@@ -39,11 +39,9 @@ use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
-use crate::chat::queue::Queue;
-use crate::chat::refusal::refuse_or_exit;
 use crate::chat::route::{run_local, LocalRoute};
-use crate::chat::schedule::{approve_proposed, Keyboard};
-use crate::chat::send_it::{dispatch, InboxTurn};
+use crate::chat::schedule::approve_proposed;
+use crate::chat::send_it::InboxTurn;
 use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::chat_exit;
@@ -65,7 +63,7 @@ use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_local::CommandRecord;
-use ralph_core::chat_memory::{store_in_use_message, Trigger};
+use ralph_core::chat_memory::store_in_use_message;
 use ralph_core::chat_process::run_id;
 use ralph_core::chat_status::{orphan_hint, Route};
 use ralph_core::chat_suggestion::SuggestionRecord;
@@ -81,11 +79,11 @@ use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::ready_ids;
 use ralph_server::chat::send_it::SendIt;
 use ralph_server::chat::session::{
-    open_core, serve, trigger_for, tuning, At, CoreParts, Session, Wiring, WiringConfig,
+    open_core, serve, tuning, CoreParts, Session, Wiring, WiringConfig,
 };
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::suggestion::SuggestionCell;
-use ralph_server::chat::turn::{draft_after, Turn};
+use ralph_server::chat::turn::Turn;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
@@ -487,7 +485,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
     };
     approve_proposed(&monitor.schedule, tuning.watch_timeout);
-    let mut shown_plan: Option<String> = None;
     let mut lp = TerminalLoop {
         session: &session,
         prompt: &prompt,
@@ -514,6 +511,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             skip_summary: args.skip_summary,
         },
         shell: cell::ShellState::default(),
+        keys: &keys,
+        cell_limits,
+        in_thread: fork.is_some(),
+        shown_plan: None,
         editor,
         pending: None,
         sending: None,
@@ -581,149 +582,52 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             }
         }
         let record = CommandRecord::for_route(&route, &typed_line);
-        let note = |output: &str| {
-            record
-                .row(output)
-                .and_then(|row| thread_cmd::append_row(&store, &row))
-        };
-        let mut queue = Queue::default();
-        let mut drained = Vec::new();
-        let (outcome, draft) = match route {
+        let ending = match route {
             Route::Ignore => continue,
             Route::Shell(line) => match lp.shell(&line)? {
                 Flow::Next => continue,
                 Flow::Stop => break,
             },
-            Route::Send(message) => {
-                crate::render::image::print_attachments(&message);
-                monitor.set_phase(Phase::Cell);
-                let outcome = match cell::prepare(&message, cell_limits, &mut lp.shell, color) {
-                    Ok(prepared) => {
-                        if let Some(shown) = &prepared.shown {
-                            cell::show(&mut std::io::stdout(), &display, shown);
-                        }
-                        let sent = prepared.sent;
-                        monitor.set_phase(Phase::Turn);
-                        let trigger = trigger_for(lp.sending.is_some());
-                        let (result, queued) = snapshots.around(|| {
-                            keys.during(|cancel| {
-                                turn.run(trigger, std::slice::from_ref(&sent), &sent, cancel)
-                            })
-                        });
-                        queue = queued;
-                        result?
-                    }
-                    Err(outcome) => outcome,
-                };
-                (outcome, draft_after(outcome, message))
-            }
+            Route::Send(message) => lp.send(message)?,
             Route::ReadInbox(selection) => {
                 let display = inbox_display(color);
                 let Some(read) = inbox_turn.read(&send_it, selection, &display, &mut lp.sending)?
                 else {
                     continue;
                 };
-                (queue, drained) = (read.queue, read.drained);
-                (read.outcome, None)
+                Ending {
+                    outcome: read.outcome,
+                    draft: None,
+                    queue: read.queue,
+                    drained: read.drained,
+                }
             }
             Route::Hold(filter) => match lp.hold(&filter)? {
                 Flow::Next => continue,
                 Flow::Stop => break,
             },
-            Route::SendIt(command) => {
-                let at = At {
-                    shown_plan: shown_plan.as_deref(),
-                    typed_at_prompt,
-                    width: prompt::screen_columns(),
-                };
-                let mut keyboard = Keyboard {
-                    editor: &prompt.editor,
-                };
-                let reply = session.send_it(command, &at, &mut keyboard);
-                let Some(proposal) = reply.proposal else {
-                    println!("{}", reply.screen.for_terminal(color));
-                    if reply.note {
-                        note(&reply.screen.text);
-                    }
-                    if let Some(shown) = reply.shown {
-                        shown_plan = shown;
-                    }
-                    if let Some(started) = reply.started {
-                        let mut driven = dispatch(&send_it, started, &monitor);
-                        (lp.sending, lp.pending) =
-                            (driven.active.take(), driven.enter(&mut lp.editor));
-                    }
-                    continue;
-                };
-                monitor.set_phase(Phase::Turn);
-                let (result, queued) = snapshots.around(|| {
-                    keys.during(|cancel| {
-                        turn.run(
-                            Trigger::User,
-                            std::slice::from_ref(&proposal.sent),
-                            &proposal.sent,
-                            cancel,
-                        )
-                    })
-                });
-                queue = queued;
-                let outcome = result?;
-                let screen = session.proposed(proposal, prompt::screen_columns());
-                println!("{}", screen.for_terminal(color));
-                shown_plan = screen.shown;
-                (outcome, None)
-            }
+            Route::SendIt(command) => match lp.send_it(command, typed_at_prompt, &record)? {
+                Some(ending) => ending,
+                None => continue,
+            },
             Route::Switch { parsed, line } => match lp.switch(parsed, &line)? {
                 Flow::Next => continue,
                 Flow::Stop => break,
             },
-            Route::ThreadOp { op, line } => {
-                let merged = thread_cmd::merging(&op);
-                match op.and_then(|op| {
-                    let env = thread_cmd::ThreadEnv {
-                        store_dir: &store_dir,
-                        in_thread: fork.is_some(),
-                        width: prompt::screen_columns(),
-                        display: &display,
-                    };
-                    thread_cmd::run(&op, &env, &mut thread_cmd::confirm, &|name| {
-                        thread::running_ids(&thread::config_root(&store_dir), name)
-                    })
-                }) {
-                    Ok(text) => {
-                        println!("{text}");
-                        let id = note(&text);
-                        thread_cmd::land(&thread::config_root(&store_dir), merged, id);
-                        monitor.refresh(true);
-                        lp.queue_next();
-                    }
-                    Err(refusal) => {
-                        println!("{refusal}");
-                        note(&refusal);
-                        if refuse_or_exit(&mut lp.editor, &line, std::mem::take(&mut lp.carried))? {
-                            lp.leaving = Some(chat_exit(LoopExit::ThreadOpRefused));
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
+            Route::ThreadOp { op, line } => match lp.thread_op(op, &line, &record)? {
+                Flow::Next => continue,
+                Flow::Stop => break,
+            },
             local => {
                 if let Some(output) = run_local(local, &local_route, &mut io::stdout(), || {
                     monitor.refresh(true);
                 })? {
-                    note(&output);
+                    lp.note(&record, &output);
                 }
                 continue;
             }
         };
-        if lp.after_turn(Ending {
-            outcome,
-            draft,
-            queue,
-            drained,
-        })? == Flow::Stop
-        {
+        if lp.after_turn(ending)? == Flow::Stop {
             break;
         }
     }
