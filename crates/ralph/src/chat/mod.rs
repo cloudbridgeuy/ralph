@@ -60,20 +60,18 @@ use crate::render::{cap_wrap_width, RenderContext};
 use crate::signal;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
-use ralph_core::chat::{resolve_wrap_width, select_servers, ReplyImages};
+use ralph_core::chat::{resolve_wrap_width, ReplyImages};
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_memory::{store_in_use_message, Trigger};
-use ralph_core::chat_process::{run_id, UsageTail};
+use ralph_core::chat_process::run_id;
 use ralph_core::chat_send_it::{
     propose_prompt, usage as send_it_usage, Ended, Seen, SendItCommand,
 };
-use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
-use ralph_core::chat_socket::{runtime_root, system_prompt_path};
-use ralph_core::chat_status::{orphan_hint, Route, Status};
+use ralph_core::chat_status::{orphan_hint, Route};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
@@ -81,35 +79,22 @@ use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{status_enabled, Phase};
-use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
-use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
-use ralph_server::chat::check::CheckState;
+use ralph_core::worker::ATTACHMENTS_DIR;
 use ralph_server::chat::host::spawn_host;
 use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
-use ralph_server::chat::monitor::{ready_ids, Monitor as Core, ProcessMemo};
-use ralph_server::chat::schedule::restore_schedule;
-use ralph_server::chat::session::tuning;
-use ralph_server::chat::skills::read_claude_config;
-use ralph_server::chat::skills::{
-    env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
-};
+use ralph_server::chat::monitor::ready_ids;
+use ralph_server::chat::session::{open_core, serve, tuning, CoreParts, Wiring, WiringConfig};
 use ralph_server::chat::snapshots::TurnSnapshots;
-use ralph_server::chat::socket::serve::{ChatSocket, Shared, SocketGuard};
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::turn::{draft_after, Turn, TurnOutcome};
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
 use ralph_server::invoke::Isolation;
-use ralph_server::opencode_worker::sweep_stale_server_records;
 use ralph_server::paths::{absolute_from, config_path};
-use ralph_server::schedule_store::ScheduleStore;
 use ralph_server::warn::{warn, warn_if_err};
-use ralph_server::watches::Watches;
-use ralph_server::wire::store::current_uid;
-use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::headless::ExitCleanup;
 use ralph_server::workers::{canonical_store, running_workers, usage_store, Workers};
 use reedline::{EditCommand, ExternalPrinter};
@@ -120,7 +105,6 @@ use session::{
     store_dir,
 };
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -164,47 +148,30 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             .ok()
             .as_deref(),
     );
-    let chat_config = config.chat;
-    let tuning = tuning(&chat_config, args.recent_history_tokens)?;
+    let tuning = tuning(&config.chat, args.recent_history_tokens)?;
     let (recent_history_tokens, reset_limits) = (tuning.recent_history_tokens, tuning.reset_limits);
     let wrap_cap = resolve_wrap_width(
         args.wrap_width,
         std::env::var(WRAP_WIDTH_ENV).ok().as_deref(),
-        chat_config.wrap_width,
+        config.chat.wrap_width,
     )?;
     cap_wrap_width(wrap_cap);
     let cell_limits = resolve_cell_limits(
         std::env::var(CELL_OUTPUT_LIMIT_ENV).ok().as_deref(),
         std::env::var(CELL_OUTPUT_BYTES_ENV).ok().as_deref(),
-        chat_config.cell_output_limit,
-        chat_config.cell_output_bytes,
+        config.chat.cell_output_limit,
+        config.chat.cell_output_bytes,
     )?;
-    sweep_stale_server_records();
-    let chat_socket = ChatSocket::bind(&store_dir, &runtime_root(current_uid()))?;
+    let wiring = Wiring::open(&WiringConfig {
+        store_dir: &store_dir,
+        exe: &exe,
+        config: &config,
+        cli_skills: &args.skills,
+        home: dirs::home_dir().as_deref(),
+    })?;
+    let chat_config = &config.chat;
     let suggestions = SuggestionCell::default();
     let shown = SuggestionCell::default();
-    let socket_files = chat_socket.files().clone();
-    let _socket_guard = SocketGuard(socket_files.clone());
-    let imported = select_servers(
-        &read_claude_config(config.claude.config_dir.as_deref()),
-        &chat_config.mcp_servers,
-    );
-    let mcp_args = write_mcp_config(&store_dir, chat_socket.path(), &exe, &imported)?;
-    let system_prompt_file = system_prompt_path(chat_socket.path());
-    let skill_dirs = resolve_skills(
-        &SkillSources {
-            cli: &args.skills,
-            env: &env_skills(),
-            config: &chat_config.skills,
-        },
-        dirs::home_dir().as_deref(),
-    );
-    let skills = link_skills(usable_skills(skill_dirs.clone()));
-    let plugin = write_skill_plugin(&skills)?;
-    let plugin_args = plugin
-        .as_ref()
-        .map(|plugin| build_plugin_args(plugin.path()))
-        .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
     crate::warn::set_warning_color(theme_config.ui().warning);
     crate::warn::set_notice_color(theme_config.ui().ask_ok);
@@ -233,7 +200,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let (custom_prompt, prompt_warnings) = load_custom_prompt(&prompt_files);
     prompt_warnings.iter().for_each(warn);
     let isolation = Isolation::for_chat(
-        &chat_config,
+        chat_config,
         &std::env::current_dir()?,
         config.claude.config_dir.as_deref(),
     );
@@ -253,12 +220,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         store: &store,
         store_dir: &store_dir,
         fork: fork.as_ref(),
-        mcp_args: &mcp_args,
-        system_prompt_file: &system_prompt_file,
+        mcp_args: &wiring.mcp_args,
+        system_prompt_file: &wiring.system_prompt_file,
         permission_mode: &permission_mode,
-        plugin_args: &plugin_args,
+        plugin_args: &wiring.plugin_args,
         model_args: &model_args,
-        skills: &skills,
+        skills: &wiring.skills,
         custom_prompt: &custom_prompt,
         reply_images,
         isolation: &isolation,
@@ -286,51 +253,27 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         &store_dir,
         &std::env::current_dir()?,
     );
-    let inbox = Arc::new(Inbox::new(store_dir.join(INBOX_DIR)));
-    let known = inbox.peek().unwrap_or_default();
-    let usage_stamp = memory::usage_stamp(&memory::usage_path()).unwrap_or_default();
     let terminal_status = status_enabled(
         chat_config.terminal_status,
         std::io::stdout().is_terminal(),
         std::env::var_os(REX_SESSION_ENV).is_some_and(|value| !value.is_empty()),
     );
     let monitor = Arc::new(Monitor {
-        core: Arc::new(Core {
-            watches: Watches::new(Arc::clone(&inbox), &store_dir, tuning.watch_timeout),
-            schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
-            inbox,
-            store: Store::new(store_dir.clone()),
-            store_dir: store_root.clone(),
-            status: Mutex::new(Status::default()),
-            seen: Mutex::new(HashMap::new()),
-            active: Mutex::new(None),
-            recent_history_tokens,
-            worker_check_secs: tuning.worker_check_secs,
-            worker_quiet_secs: tuning.worker_quiet_secs,
-            auto_continue: chat_config.auto_continue,
-            hold_progress: chat_config.hold_progress,
+        core: Arc::new(open_core(CoreParts {
+            store_dir: &store_dir,
+            store_root: store_root.clone(),
+            chat: chat_config,
+            tuning: &tuning,
             workers: Workers::new(
                 store_dir.clone(),
                 exe.clone(),
                 permission_mode.clone(),
                 args.worktree_dir.clone(),
             ),
-            check: Mutex::new(CheckState::seeded(&store)),
-            known: Mutex::new(known),
-            fresh: Mutex::new((Vec::new(), 0)),
-            starting: Arc::default(),
-            scheduled_reports: Mutex::new(Vec::new()),
-            warned: Mutex::new(HashSet::new()),
-            unrecorded: Mutex::new(HashSet::new()),
             live,
             last_ping: Arc::clone(&last_ping),
             run: run.clone(),
-            reset_limits,
-            process: Mutex::new(ProcessMemo::default()),
-            usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
-            phase: Mutex::new(Phase::Prompt),
-            hold: Mutex::new(None),
-        }),
+        })),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
             notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
@@ -371,25 +314,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let send_it = SendIt::new(&store_dir, send_it_limits);
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
-    chat_socket.serve(
-        Shared {
-            store: Store::new(store_dir.clone()),
-            workers: Workers::new(
-                store_dir.clone(),
-                exe.clone(),
-                permission_mode.clone(),
-                args.worktree_dir.clone(),
-            ),
-            send_it: (*send_it).clone(),
-            watches: monitor.watches.clone(),
-            inbox: Arc::clone(&monitor.inbox),
-        },
-        roster,
-    );
-    restore_schedule(
-        &monitor.schedule,
-        &ralph_server::chat::schedule_worker::alive_worker_ids(&monitor.store_dir),
-    );
+    serve(&monitor.core, wiring.socket, &send_it, roster);
     monitor.refresh(true);
     let running = running_workers(&monitor.store_dir);
     if let Some(hint) = orphan_hint(
@@ -426,8 +351,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     watch_input(
         Arc::clone(&at_prompt),
         Arc::clone(&turn.session),
-        plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
-        ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
+        wiring
+            .plugin
+            .as_ref()
+            .map(|plugin| plugin.path().to_path_buf()),
+        ExitCleanup::new(monitor.watches.clone(), &headless, wiring.guard.0.clone()),
         Arc::clone(&monitor.term),
     );
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
@@ -481,7 +409,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             .into_iter()
             .map(FileState::of)
             .collect(),
-        skills: skill_dirs
+        skills: wiring
+            .skill_dirs
             .iter()
             .map(|dir| FileState::of(absolute_from(dir, &cwd)))
             .collect(),
@@ -495,7 +424,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color,
         bar: StatusBar::new(
             &config.theme.status,
-            &chat_config,
+            chat_config,
             color,
             &BarContext {
                 name: &session_name,
