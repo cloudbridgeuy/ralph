@@ -1,4 +1,5 @@
-use crate::chat::ask::{yes_no, Ask, Notices};
+use crate::chat::ask::{yes_no, Ask};
+use crate::chat::session::{Emit, Event};
 use crate::schedule_store::ScheduleStore;
 use crate::warn::warn_if_err;
 use crate::watches::Watches;
@@ -74,7 +75,7 @@ pub fn approve_proposed(
     store: &ScheduleStore,
     default_timeout: Duration,
     ask: &mut dyn Ask,
-    notices: &Notices,
+    emit: &Emit,
 ) -> bool {
     let tasks = proposed(store.load_all());
     for task in &tasks {
@@ -84,12 +85,12 @@ pub fn approve_proposed(
                 ..task.clone()
             });
             match armed {
-                Ok(()) => notices(&format!("Armed {}.", task.id)),
-                Err(error) => notices(&format!("Could not arm {}: {error}", task.id)),
+                Ok(()) => emit(Event::Notice(format!("Armed {}.", task.id))),
+                Err(error) => emit(Event::Notice(format!("Could not arm {}: {error}", task.id))),
             }
         } else {
             store.remove(&task.id);
-            notices(&format!("Cancelled {}.", task.id));
+            emit(Event::Notice(format!("Cancelled {}.", task.id)));
         }
     }
     !tasks.is_empty()
@@ -174,13 +175,13 @@ mod tests {
         };
         let lines = Arc::new(Mutex::new(String::new()));
         let sink = lines.clone();
-        let notices: Notices = Arc::new(move |line| {
-            if let Ok(mut lines) = sink.lock() {
-                lines.push_str(line);
+        let emit: Emit = Arc::new(move |event| {
+            if let (Ok(mut lines), Event::Notice(line)) = (sink.lock(), event) {
+                lines.push_str(&line);
                 lines.push('\n');
             }
         });
-        let asked = approve_proposed(store, Duration::from_secs(60), &mut ask, &notices);
+        let asked = approve_proposed(store, Duration::from_secs(60), &mut ask, &emit);
         let notices = lines.lock().map(|lines| lines.clone()).unwrap_or_default();
         (asked, ask.prompts, notices)
     }

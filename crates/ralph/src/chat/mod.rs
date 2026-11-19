@@ -33,7 +33,9 @@ mod thread_cmd;
 mod view;
 mod workers;
 
-use crate::chat::client_monitor::{client_sink, watch_headless, watch_input, Monitor};
+use crate::chat::client_monitor::{
+    client_events, client_sink, watch_headless, watch_input, Monitor,
+};
 use crate::chat::editor::build_editor;
 use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
@@ -312,7 +314,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         }
     };
     let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
-    let send_it = SendIt::new(&store_dir, send_it_limits);
+    let send_it = SendIt::new(
+        &store_dir,
+        send_it_limits,
+        client_events(monitor.alert, Arc::clone(&monitor.term)),
+    );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
     serve(&monitor.core, wiring.socket, &send_it, roster);
@@ -637,7 +643,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                     Held::Left => {
                         monitor.set_phase(Phase::Prompt);
                         if let Some(active) = sending.take() {
-                            send_it.took_over(&active, &monitor).enter(&mut editor);
+                            send_it.took_over(&active).enter(&mut editor);
                         }
                     }
                     Held::Quit => {

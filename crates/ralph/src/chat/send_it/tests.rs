@@ -4,9 +4,9 @@ use ralph_core::chat_memory::{Role, Trigger};
 use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Seen, StepResult, VerifyMode};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
-use ralph_server::chat::ask::Notices;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::send_it::{Screen, NOT_PROPOSED, NO_RUN};
+use ralph_server::chat::session::{Emit, Event};
 use ralph_server::chat::socket::serve::{respond, Shared};
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub(in crate::chat) mod held;
 mod screen;
@@ -785,12 +785,14 @@ impl Printed {
         self.0.lock().unwrap().clone()
     }
 
-    fn sink(&self) -> Notices {
+    fn sink(&self) -> Emit {
         let lines = self.0.clone();
-        Arc::new(move |line| {
-            let mut lines = lines.lock().unwrap();
-            lines.push_str(line);
-            lines.push('\n');
+        Arc::new(move |event| {
+            if let Event::Notice(line) = event {
+                let mut lines = lines.lock().unwrap();
+                lines.push_str(&line);
+                lines.push('\n');
+            }
         })
     }
 }

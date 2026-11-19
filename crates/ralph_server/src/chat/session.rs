@@ -42,6 +42,14 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    Notice(String),
+    Blocked(String),
+}
+
+pub type Emit = Arc<dyn Fn(Event) + Send + Sync>;
+
 pub struct Tuning {
     pub recent_history_tokens: usize,
     pub worker_check_secs: Option<u64>,

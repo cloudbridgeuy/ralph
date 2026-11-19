@@ -203,7 +203,7 @@ fn a_settled_passing_check_on_the_last_step_finishes_with_no_prefill() {
 fn taking_over_a_run_carries_no_prefill() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active) = started(dir.path());
-    let driven = send_it.took_over(&active, &monitor(dir.path()));
+    let driven = send_it.took_over(&active);
     assert_eq!(driven.prefill, None);
     assert!(driven.route.is_none());
     assert!(driven.active.is_none());
