@@ -40,10 +40,46 @@ pub fn auto_allow_option(
         .flatten()
 }
 
+pub fn agy_auto_allow_option<'a>(
+    request: &Value,
+    content: &'a BlockedContent,
+) -> Option<&'a PermissionOption> {
+    let call = &request["toolCall"];
+    let matches = [
+        ("report", "mcp_ralph-worker_report"),
+        ("set_status", "mcp_ralph-worker_set_status"),
+    ]
+    .iter()
+    .any(|(tool, qualified)| {
+        let name = call.get("name");
+        let server = call.get("server");
+        let actual_tool = call.get("tool");
+        name.is_none_or(|value| value == *qualified || value == *tool)
+            && server.is_none_or(|value| value == "ralph-worker")
+            && actual_tool.is_none_or(|value| value == *tool)
+            && (name.is_some_and(|value| value == *qualified)
+                || (server.is_some() && (name.is_some() || actual_tool.is_some())))
+    });
+    matches
+        .then(|| {
+            content
+                .options
+                .iter()
+                .find(|option| option.kind == "allow_once")
+        })
+        .flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn agy_worker_report_is_allowed_by_identity() {
+        let request = json!({"toolCall": {"name": "mcp_ralph-worker_report"}, "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}]});
+        assert!(agy_auto_allow_option(&request, &permission_content(&request)).is_some());
+    }
 
     fn options() -> Vec<PermissionOption> {
         vec![

@@ -9,10 +9,12 @@ pub enum HarnessId {
     Cursor,
     Opencode,
     Codex,
+    Agy,
 }
 
 impl HarnessId {
-    pub const ALL: [HarnessId; 5] = [
+    pub const ALL: [HarnessId; 6] = [
+        Self::Agy,
         Self::ClaudeTmux,
         Self::Opencode,
         Self::Cursor,
@@ -27,12 +29,14 @@ impl HarnessId {
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Codex => "codex",
+            Self::Agy => "agy",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LiveHarness {
+    pub agy: bool,
     pub cursor: bool,
     pub codex: bool,
     pub claude: bool,
@@ -40,7 +44,9 @@ pub struct LiveHarness {
 }
 
 pub fn close_harness(recorded: Option<HarnessId>, live: LiveHarness) -> HarnessId {
-    if live.cursor {
+    if live.agy {
+        HarnessId::Agy
+    } else if live.cursor {
         HarnessId::Cursor
     } else if live.codex {
         HarnessId::Codex
@@ -100,6 +106,7 @@ mod tests {
 
     fn probes(cursor: bool, codex: bool, claude: bool, opencode: bool) -> LiveHarness {
         LiveHarness {
+            agy: false,
             cursor,
             codex,
             claude,
@@ -173,5 +180,12 @@ mod tests {
                 kind
             );
         }
+    }
+
+    #[test]
+    fn agy_identity_round_trips() {
+        let parsed = serde_json::from_str::<HarnessId>("\"agy\"");
+        assert!(parsed.is_ok());
+        assert_eq!(parsed.ok().map(HarnessId::as_str), Some("agy"));
     }
 }

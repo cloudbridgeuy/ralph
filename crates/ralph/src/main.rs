@@ -134,6 +134,7 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
             inbox,
         } => ralph_server::worker_verify::run(
             match agent {
+                VerifyAgent::Agy => HarnessId::Agy,
                 VerifyAgent::Cursor => HarnessId::Cursor,
                 VerifyAgent::Codex => HarnessId::Codex,
                 VerifyAgent::Claude => HarnessId::Claude,

@@ -153,6 +153,7 @@ pub struct WorkerArgs {
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerifyAgent {
+    Agy,
     Cursor,
     Codex,
     Claude,

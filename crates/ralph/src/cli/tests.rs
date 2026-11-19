@@ -670,3 +670,8 @@ fn test_cli_chat_history_recall_without_words_still_errors() {
 fn test_cli_chat_history_without_a_tool_errors() {
     assert!(Cli::try_parse_from(["ralph", "chat", "history"]).is_err());
 }
+
+#[test]
+fn verify_accepts_agy() {
+    assert!(Cli::try_parse_from(["ralph", "worker", "verify", "agy"]).is_ok());
+}

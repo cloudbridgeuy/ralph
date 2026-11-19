@@ -70,6 +70,13 @@ impl Capabilities {
         use Feature::*;
         use Support::{Full, Partial};
         match (self.harness, feature) {
+            (HarnessId::Agy, Spawn | Prompt | Close | Model) => Full,
+            (HarnessId::Agy, Resume) => Partial("session/load required; unfinished work is reported, not resent"),
+            (HarnessId::Agy, Interrupt) => Partial("outcome unknown after 30 s; not live verified"),
+            (HarnessId::Agy, PermAsk) => Partial("protocol-raised requests only"),
+            (HarnessId::Agy, PermYolo) => Partial("process flag, not yet stub-verified"),
+            (HarnessId::Agy, Report) => Partial("MCP delivery requires live verification"),
+            (HarnessId::Agy, Heartbeat) => Partial("ACP traffic only"),
             (HarnessId::ClaudeTmux, Model) => Full,
             (HarnessId::ClaudeTmux, _) => Support::None,
             (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report | Model | Close) => Full,
@@ -457,10 +464,23 @@ mod tests {
     }
 
     #[test]
+    fn agy_support_reports_current_limits() {
+        let caps = capabilities(HarnessId::Agy);
+        assert_eq!(caps.support(Feature::Spawn), Support::Full);
+        assert_eq!(
+            caps.support(Feature::PermYolo),
+            Support::Partial("process flag, not yet stub-verified")
+        );
+        assert!(matches!(caps.support(Feature::Report), Support::Partial(_)));
+        assert_eq!(caps.support(Feature::Model), Support::Full);
+        assert!(matches!(caps.support(Feature::Resume), Support::Partial(_)));
+    }
+
+    #[test]
     fn model_refusal_names_accepting_harnesses() {
         assert_eq!(
             model_refusal(HarnessId::Cursor),
-            "cursor does not accept a model; harnesses that do: claude-tmux, opencode, cursor, codex, claude"
+            "cursor does not accept a model; harnesses that do: agy, claude-tmux, opencode, cursor, codex, claude"
         );
     }
 

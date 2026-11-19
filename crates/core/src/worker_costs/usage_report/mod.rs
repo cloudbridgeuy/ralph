@@ -444,6 +444,9 @@ fn priced(entry: &Entry, pricing: &Pricing, table: &PriceTable) -> (Series, Usd)
     if is_excluded(&entry.line) {
         return (Series::Excluded, Usd::default());
     }
+    if let Some(usd) = Usd::agy(&entry.line) {
+        return (Series::Est, usd);
+    }
     match (entry.reported, entry.line.cost_usd) {
         (true, Some(cost)) => (Series::Reported, Usd::reported(cost)),
         _ => (Series::Est, computed_usd(&entry.line, pricing, table)),

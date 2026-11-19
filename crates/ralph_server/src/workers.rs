@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::cursor_owner::{
-    caller_owns, owned_claude_ids, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file,
+    caller_owns, owned_agy_ids, owned_claude_ids, owned_codex_ids, owned_cursor_ids, sweep_owner,
+    write_file,
 };
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::outcome_log;
@@ -26,9 +27,12 @@ use std::process::{self, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod agy;
 mod close;
 mod guard;
 pub mod headless;
+#[cfg(test)]
+mod interrupt_token_test;
 mod reply;
 mod spawn;
 mod verify;
@@ -216,6 +220,10 @@ impl Workers {
     }
 
     fn headless_files(&self, id: &str) -> Option<(HarnessId, HandoffFiles)> {
+        let agy = HandoffFiles::agy(&self.store_dir, id);
+        if agy.owner.exists() || self.saved_agy(&agy) {
+            return Some((HarnessId::Agy, agy));
+        }
         let cursor = HandoffFiles::cursor(&self.store_dir, id);
         if cursor.owner.exists() {
             return Some((HarnessId::Cursor, cursor));
@@ -249,12 +257,19 @@ impl Workers {
             if interrupt && caps.support(Feature::Interrupt) == Support::None {
                 Err(io::Error::other(describe(&caps, Feature::Interrupt)))
             } else if interrupt {
-                self.queue_entry(&files.interrupt, text).map(|entry| {
-                    Sent::plain(interrupt_reply(
-                        id,
-                        self.await_interrupt_result(&files.interrupt_result, &entry),
-                    ))
-                })
+                let payload = if kind == HarnessId::Agy {
+                    crate::acp_worker::journal::encode_interrupt(&self.store_dir, id, text)
+                } else {
+                    text.to_string()
+                };
+                let suffix = if kind == HarnessId::Agy { "-agy1" } else { "" };
+                self.queue_entry_with_suffix(&files.interrupt, &payload, suffix)
+                    .map(|entry| {
+                        Sent::plain(interrupt_reply(
+                            id,
+                            self.await_interrupt_result(&files.interrupt_result, &entry),
+                        ))
+                    })
             } else if self.awaits_permission(id) {
                 self.answer_permission(id, "", text).map(Sent::plain)
             } else {
@@ -287,7 +302,11 @@ impl Workers {
     }
 
     fn queue_entry(&self, dir: &Path, text: &str) -> io::Result<String> {
-        let entry = prompt_entry_name(now_nanos(), process::id());
+        self.queue_entry_with_suffix(dir, text, "")
+    }
+
+    fn queue_entry_with_suffix(&self, dir: &Path, text: &str, suffix: &str) -> io::Result<String> {
+        let entry = format!("{}{suffix}", prompt_entry_name(now_nanos(), process::id()));
         let pending = dir.join(format!(".{entry}"));
         write_file(&pending, text)?;
         fs::rename(&pending, dir.join(&entry))?;
@@ -327,6 +346,12 @@ impl Workers {
         match step {
             CloseStep::RemoveOpencodeSession => {
                 self.terminate_opencode(id)?;
+            }
+            CloseStep::TerminateAgy => {
+                let files = HandoffFiles::agy(&self.store_dir, id);
+                if files.owner.exists() || files.session.exists() {
+                    self.terminate_headless(&files, "agy")?;
+                }
             }
             CloseStep::TerminateCursor => {
                 if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
@@ -419,8 +444,18 @@ impl Workers {
     }
 
     fn refuse_busy_headless(&self, id: &str, closing: bool) -> io::Result<()> {
-        for harness in [HarnessId::Cursor, HarnessId::Codex, HarnessId::Claude] {
+        for harness in [
+            HarnessId::Agy,
+            HarnessId::Cursor,
+            HarnessId::Codex,
+            HarnessId::Claude,
+        ] {
+            if harness == HarnessId::Agy {
+                self.check_agy(id, closing)?;
+                continue;
+            }
             let files = match harness {
+                HarnessId::Agy => HandoffFiles::agy(&self.store_dir, id),
                 HarnessId::Codex => HandoffFiles::codex(&self.store_dir, id),
                 HarnessId::Claude => HandoffFiles::claude(&self.store_dir, id),
                 _ => HandoffFiles::cursor(&self.store_dir, id),
@@ -440,13 +475,30 @@ impl Workers {
     }
 
     fn terminate_headless(&self, files: &HandoffFiles, name: &str) -> io::Result<()> {
-        write_file(&files.close, "")?;
+        if name == "agy" {
+            let _lock = crate::acp_worker::recovery::lock(&files.owner)?;
+            let id = files
+                .owner
+                .file_name()
+                .and_then(|id| id.to_str())
+                .ok_or_else(|| io::Error::other("invalid agy worker id"))?;
+            self.check_agy_locked(files, id, true)?;
+            write_file(&files.close, "")?;
+        } else {
+            write_file(&files.close, "")?;
+        }
         let started = Instant::now();
         loop {
-            match close_handoff(files.owner.exists(), started.elapsed()) {
+            match close_handoff(
+                files.owner.exists()
+                    || (name == "agy" && (files.session.exists() || files.close.exists())),
+                started.elapsed(),
+            ) {
                 Handoff::Done => return Ok(()),
                 Handoff::TimedOut => {
-                    clear_marker(&files.close)?;
+                    if name != "agy" {
+                        clear_marker(&files.close)?;
+                    }
                     return Err(io::Error::other(format!(
                         "ralph chat did not confirm stopping the {name} worker in time"
                     )));
@@ -651,6 +703,11 @@ fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {
 pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     let mut workers = store_workers(&tmux_listing(), &store_dir.to_string_lossy());
     workers.extend(
+        owned_agy_ids(store_dir)
+            .iter()
+            .map(|id| RunningWorker::headless(id, HarnessId::Agy)),
+    );
+    workers.extend(
         owned_cursor_ids(store_dir)
             .iter()
             .map(|id| RunningWorker::headless(id, HarnessId::Cursor)),
@@ -720,6 +777,19 @@ fn stdout_line(output: Output) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn agy_owner_is_discovered_as_its_own_headless_worker() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let workers = workers_in(dir.path());
+        super::write_file(&dir.path().join("agy/A"), "owner")?;
+        assert_eq!(
+            workers.headless_files("A").map(|(kind, _)| kind),
+            Some(ralph_core::worker::HarnessId::Agy)
+        );
+        Ok(())
+    }
     use super::*;
     use std::time::Duration;
 

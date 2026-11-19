@@ -3,7 +3,7 @@ use crate::transport::stdio::stop_group;
 use crate::warn::warn;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
-    sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep,
+    sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep, AGY_OWNER_DIR,
     CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
     CURSOR_SESSION_DIR,
 };
@@ -88,6 +88,10 @@ fn owned_ids(store_dir: &Path, dir: &str, files: fn(&Path, &str) -> HandoffFiles
     ids
 }
 
+pub fn owned_agy_ids(store_dir: &Path) -> Vec<String> {
+    owned_ids(store_dir, AGY_OWNER_DIR, HandoffFiles::agy)
+}
+
 pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
     owned_ids(store_dir, CURSOR_OWNER_DIR, HandoffFiles::cursor)
 }
@@ -128,15 +132,22 @@ fn owner_facts(owner: &Path) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
         .is_some_and(|r| alive_since(r.chat_pid, &r.chat_start));
     let facts = OwnerFacts {
         chat_alive,
-        group_alive: record.as_ref().is_some_and(group_alive),
+        group_alive: record
+            .as_ref()
+            .is_some_and(|record| group_alive(record, owner)),
         mine: chat_alive && record.as_ref().is_some_and(|r| r.chat_pid == process::id()),
     };
     Some((record, facts))
 }
 
-fn group_alive(record: &OwnerRecord) -> bool {
+fn group_alive(record: &OwnerRecord, owner: &Path) -> bool {
     let leader = process_start(record.group);
-    let reclaimable = leader.is_none() && cursor_group_reclaimable(&group_table(), record.group);
+    let reclaimable = leader.is_none()
+        && owner
+            .parent()
+            .and_then(Path::file_name)
+            .is_none_or(|name| name != AGY_OWNER_DIR)
+        && cursor_group_reclaimable(&group_table(), record.group);
     group_live(leader.as_deref(), &record.group_start, reclaimable)
 }
 
@@ -157,6 +168,73 @@ pub fn sweep_owner(files: &HandoffFiles) -> Option<Sweep> {
         fs::remove_dir_all(&files.interrupt_result).ok();
     }
     Some(decision)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProcessIdentity {
+    Matches,
+    GoneOrReused,
+    Unknown,
+}
+
+fn identity_from(start: Option<&str>, expected: &str, error: Option<i32>) -> ProcessIdentity {
+    match start {
+        Some(actual) if actual == expected => ProcessIdentity::Matches,
+        Some(_) => ProcessIdentity::GoneOrReused,
+        None if error == Some(libc::ESRCH) => ProcessIdentity::GoneOrReused,
+        None => ProcessIdentity::Unknown,
+    }
+}
+
+pub(crate) fn agy_identity(pid: u32, expected: &str) -> ProcessIdentity {
+    let start = process_start(pid);
+    let error = if start.is_none() {
+        match libc::pid_t::try_from(pid) {
+            Ok(pid) if pid > 0 => {
+                let result = unsafe { libc::kill(pid, 0) };
+                if result == -1 {
+                    io::Error::last_os_error().raw_os_error()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    identity_from(start.as_deref(), expected, error)
+}
+
+pub(crate) fn reclaim_agy(owner: &Path) -> bool {
+    let Some(record) = fs::read_to_string(owner)
+        .ok()
+        .and_then(|text| OwnerRecord::parse(&text))
+    else {
+        return owner
+            .symlink_metadata()
+            .is_err_and(|error| error.kind() == io::ErrorKind::NotFound);
+    };
+    if agy_identity(record.chat_pid, &record.chat_start) != ProcessIdentity::GoneOrReused {
+        return false;
+    }
+    match agy_identity(record.group, &record.group_start) {
+        ProcessIdentity::Matches => {
+            stop_group(record.group, || {
+                agy_identity(record.group, &record.group_start) == ProcessIdentity::Matches
+            });
+            if agy_identity(record.group, &record.group_start) != ProcessIdentity::GoneOrReused {
+                return false;
+            }
+        }
+        ProcessIdentity::Unknown => return false,
+        ProcessIdentity::GoneOrReused => {}
+    }
+    reclaim_agy_decision(owner, Sweep::Reclaim { kill_group: false })
+}
+
+pub(crate) fn reclaim_agy_decision(owner: &Path, decision: Sweep) -> bool {
+    matches!(decision, Sweep::Reclaim { .. }) && fs::remove_file(owner).is_ok()
 }
 
 pub fn write_owner_record(owner: &Path, group: u32, agent: &str) -> Result<(), String> {
@@ -281,6 +359,27 @@ pub(crate) fn queued_entries(dir: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreadable_live_process_is_not_reclaimed() {
+        assert_eq!(
+            identity_from(None, "old", Some(libc::EPERM)),
+            ProcessIdentity::Unknown
+        );
+        assert_eq!(identity_from(None, "old", None), ProcessIdentity::Unknown);
+        assert_eq!(
+            identity_from(None, "old", Some(libc::ESRCH)),
+            ProcessIdentity::GoneOrReused
+        );
+        assert_eq!(
+            identity_from(Some("new"), "old", None),
+            ProcessIdentity::GoneOrReused
+        );
+        assert_eq!(
+            identity_from(Some("old"), "old", None),
+            ProcessIdentity::Matches
+        );
+    }
 
     #[test]
     fn an_atomic_write_replaces_the_text_and_leaves_no_temp_file() {

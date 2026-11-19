@@ -26,9 +26,9 @@ use ralph_core::worker::{
     worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles,
     HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFacts, SpawnFootprint, SpawnRecord,
     SpawnRequest, Startup, Ticket, TicketKeys, UsageSink, WorkPhase, WorkerImport, WorkerMarkers,
-    WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT,
-    FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
-    STORE_OPTION, WORKERS_DIR,
+    WorktreeBase, WorktreeVia, AGY_AGENT, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND,
+    CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -100,6 +100,18 @@ impl Workers {
             }
         }
         let config = AppConfig::load().map_err(|e| e.to_string());
+        let agy_model = if harness == HarnessId::Agy {
+            let agy = &config
+                .as_ref()
+                .map_err(|error| io::Error::other(error.to_string()))?
+                .agy;
+            if let Some(error) = agy.selection_errors().into_iter().next() {
+                return Err(io::Error::other(error));
+            }
+            model.or(agy.model.as_deref()).map(str::to_string)
+        } else {
+            None
+        };
         let (shell, shell_warning) = resolve_claude_shell(
             config
                 .as_ref()
@@ -143,6 +155,7 @@ impl Workers {
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
         let (model, model_warning) = match harness {
+            HarnessId::Agy => (agy_model, None),
             HarnessId::Opencode => {
                 let (model, warning) = resolve_opencode_model(
                     model,
@@ -287,6 +300,7 @@ impl Workers {
 
     fn preflight(&self, id: &str, harness: HarnessId, shell: ClaudeShell) -> io::Result<()> {
         match harness {
+            HarnessId::Agy => require_on_path(AGY_AGENT.command),
             HarnessId::ClaudeTmux => {
                 require_on_path("tmux")?;
                 require_on_path(shell.program())?;
@@ -341,6 +355,14 @@ impl Workers {
         }
         self.write_spawn_record(id, *harness, ticket.clone(), base_sha.clone())?;
         let command = match harness {
+            HarnessId::Agy => {
+                let warning =
+                    self.spawn_headless(launch, HandoffFiles::agy(&self.store_dir, id), "agy")?;
+                return Ok(with_start_warning(
+                    format!("{started} It runs headless inside ralph chat (no tmux session)."),
+                    warning.as_deref(),
+                ));
+            }
             HarnessId::ClaudeTmux => {
                 let settings = self.write_settings(id, &markers, *site)?;
                 let task_dir = self.write_task(id, task)?;
@@ -438,6 +460,7 @@ impl Workers {
 
     fn harness_running(&self, launch: &Launch) -> bool {
         match launch.harness {
+            HarnessId::Agy => HandoffFiles::agy(&self.store_dir, launch.id).owner.exists(),
             HarnessId::ClaudeTmux => session_exists(launch.session).unwrap_or(true),
             HarnessId::Opencode => HandoffFiles::opencode(&self.store_dir, launch.id)
                 .owner
@@ -461,9 +484,19 @@ impl Workers {
         harness: &str,
     ) -> io::Result<Option<String>> {
         let id = launch.id;
-        for path in files.all() {
-            clear_marker(path)?;
-        }
+        let lock = if harness == "agy" {
+            let lock = crate::acp_worker::recovery::lock(&files.owner)?;
+            self.check_agy_locked(&files, id, false)?;
+            clear_marker(&files.error)?;
+            clear_marker(&files.warning)?;
+            clear_marker(&WorkerMarkers::new(&self.store_dir, id).ready)?;
+            Some(lock)
+        } else {
+            for path in files.all() {
+                clear_marker(path)?;
+            }
+            None
+        };
         let request = SpawnRequest {
             worktree: launch.worktree.to_path_buf(),
             exe: self.exe.clone(),
@@ -473,10 +506,13 @@ impl Workers {
             snapshots: launch.site.is_some(),
             model: launch.model.map(str::to_string),
         };
-        write_file(
-            &files.spawn,
-            &serde_json::to_string(&request).map_err(io::Error::other)?,
-        )?;
+        let text = serde_json::to_string(&request).map_err(io::Error::other)?;
+        if harness == "agy" {
+            crate::cursor_owner::write_file_atomic(&files.spawn, &text)?;
+        } else {
+            write_file(&files.spawn, &text)?;
+        }
+        drop(lock);
         let ready = WorkerMarkers::new(&self.store_dir, id).ready;
         self.await_spawn(&files.spawn, &ready, &files.error, harness)?;
         let warning = fs::read_to_string(&files.warning).ok();

@@ -332,7 +332,7 @@ fn write_activity(path: Option<&Path>, state: ActivityState) {
     }
 }
 
-fn remove_if_present(path: &Path) -> io::Result<()> {
+pub(crate) fn remove_if_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),

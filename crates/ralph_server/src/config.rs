@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 use theme::{DiffTheme, InputTheme, RoleTheme, StatusTheme, ToolTheme, UiTheme};
 use toml::Table;
 
+mod agy;
 mod changes;
 mod chat_settings;
 mod claude;
@@ -33,6 +34,7 @@ pub mod theme;
 mod usage;
 mod wire;
 mod workers;
+pub use agy::AgySection;
 pub use changes::ChangesSection;
 pub use chat_settings::PromptFiles;
 pub use claude::ClaudeSection;
@@ -154,6 +156,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub cursor: CursorSection,
+
+    #[serde(default)]
+    pub agy: AgySection,
 
     #[serde(default)]
     pub codex: CodexSection,

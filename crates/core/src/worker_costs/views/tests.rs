@@ -659,3 +659,37 @@ fn codex_dollars_show_as_excluded_in_every_chat_view() {
         );
     }
 }
+#[test]
+fn agy_cost_views_render_no_price() {
+    let mut agy = worker("a", "2026-11-05T10:00:00Z", "claude-opus-5-5");
+    agy["harness"] = json!("agy");
+    for view in [View::HarnessModel, View::Harness, View::Role, View::Ticket] {
+        let text = view_of(view, &[agy.clone()], &[]);
+        assert!(text.contains("no price"), "{text}");
+        assert!(!text.contains("n/a") && !text.contains("$0"), "{text}");
+    }
+}
+
+#[test]
+fn agy_zero_tokens_and_mixed_costs_keep_missing_price() {
+    let at = "2026-11-05T10:00:00Z";
+    let mut agy = worker("a", at, "claude-opus-5-5");
+    agy["harness"] = json!("agy");
+    for key in [
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "cache_write_5m",
+        "cache_write_1h",
+    ] {
+        agy[key] = json!(0);
+    }
+    let sole = view_of(View::Harness, &[agy.clone()], &[]);
+    assert!(
+        sole.contains("no price") && !sole.contains("n/a") && !sole.contains("$0"),
+        "{sole}"
+    );
+    let mixed = view_of(View::Role, &[agy, nap("claude-opus-5-5")], &[]);
+    assert!(mixed.contains("+ no price"), "{mixed}");
+}

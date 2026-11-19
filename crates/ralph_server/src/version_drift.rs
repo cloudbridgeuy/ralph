@@ -11,7 +11,7 @@ use ralph_core::worker::{
     finish_plan, known_fail_warning, last_check_time, last_verified_version, lock_claim,
     opencode_probed_version, probe_text, probed_version, record_after_post, store_inbox,
     tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome, FinishPlan, HarnessId,
-    LockClaim, LockError, VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE,
+    LockClaim, LockError, VersionGate, VersionProbe, AGY_AGENT, CLAUDE_COMMAND, CLAUDE_TMUX_GATE,
     CURSOR_AGENT, DAILY_CHECK_LIMIT, LOCK_CHECK, OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK,
     VERSION_PROBE_LIMIT,
 };
@@ -80,7 +80,7 @@ pub(crate) fn spawn_warning(harness: HarnessId, inbox: &Path) -> Option<String> 
             opencode_probed_version(&probe(OPENCODE_COMMAND)),
             inbox,
         ),
-        HarnessId::Cursor | HarnessId::Codex | HarnessId::Claude => None,
+        HarnessId::Agy | HarnessId::Cursor | HarnessId::Codex | HarnessId::Claude => None,
     }
 }
 
@@ -88,6 +88,7 @@ fn probed(harness: HarnessId) -> Result<String, String> {
     match harness {
         HarnessId::ClaudeTmux => tmux_claude_version(&probe(CLAUDE_COMMAND)),
         HarnessId::Opencode => opencode_probed_version(&probe(OPENCODE_COMMAND)),
+        HarnessId::Agy => probed_version(&AGY_AGENT, &probe(AGY_AGENT.command)).map(str::to_string),
         HarnessId::Cursor => {
             probed_version(&CURSOR_AGENT, &probe(CURSOR_AGENT.command)).map(str::to_string)
         }

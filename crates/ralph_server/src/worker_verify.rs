@@ -4,9 +4,10 @@ use crate::version_drift::{record_manual, DriftRun};
 use crate::watches::locked;
 use crate::{acp_worker, claude_worker, codex_worker, opencode_worker, verified_agents, workers};
 use ralph_core::worker::{
-    claude_required_checks, finish_plan, finished_probe, limit_failure, render_check,
-    render_summary, required_failure, resolve_claude_model, resolve_opencode_model, spec_passed,
-    verified_entry, verify_limit, CheckResult, HarnessId, Verdict, VerifiedAgent, VersionProbe,
+    check_agent_version, claude_required_checks, finish_plan, finished_probe, limit_failure,
+    probed_version, render_check, render_summary, required_failure, resolve_claude_model,
+    resolve_opencode_model, spec_passed, verified_entry, verify_limit, CheckResult, HarnessId,
+    Verdict, VerifiedAgent, VersionProbe, AGY_AGENT, AGY_GATE, AGY_REQUIRED_CHECKS,
     CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL,
     OPENCODE_REQUIRED_CHECKS,
 };
@@ -92,7 +93,7 @@ fn resolved_model(
     config: &Result<AppConfig, String>,
 ) -> (Option<String>, Option<String>) {
     match agent {
-        HarnessId::Cursor | HarnessId::Codex => (None, None),
+        HarnessId::Agy | HarnessId::Cursor | HarnessId::Codex => (None, None),
         HarnessId::ClaudeTmux | HarnessId::Claude => resolve_claude_model(
             None,
             config
@@ -115,7 +116,7 @@ fn resolved_model(
 
 fn model_label(agent: HarnessId, model: Option<&str>) -> Option<String> {
     match agent {
-        HarnessId::Cursor | HarnessId::Codex => None,
+        HarnessId::Agy | HarnessId::Cursor | HarnessId::Codex => None,
         HarnessId::ClaudeTmux | HarnessId::Claude => {
             Some(model.unwrap_or("claude's default model").to_string())
         }
@@ -161,6 +162,33 @@ fn conclude(
     }
 }
 
+const AGY_LIVE_REQUIRED_CHECKS: &[&str] = &[
+    "version",
+    "initialize",
+    "session/new",
+    "settings/new",
+    "mcp/new",
+    "session/close",
+    "session/load",
+    "settings/load",
+    "mcp/load",
+    "session/close reload",
+    "live session",
+    "live settings",
+    "live prompt",
+    "live report",
+    "live usage",
+    "live close",
+];
+
+fn agy_required_checks(live: bool) -> &'static [&'static str] {
+    if live {
+        AGY_LIVE_REQUIRED_CHECKS
+    } else {
+        AGY_REQUIRED_CHECKS
+    }
+}
+
 pub fn run(
     agent: HarnessId,
     live: bool,
@@ -186,6 +214,24 @@ pub fn run(
         checks.add(CheckResult::advisory("model", Verdict::Unknown, warning));
     }
     let (version, required) = match agent {
+        HarnessId::Agy => {
+            let started = Instant::now();
+            let probe = crate::version_drift::probe(AGY_AGENT.command);
+            let version = step(
+                &checks,
+                "version",
+                probed_version(&AGY_AGENT, &probe).and_then(|version| {
+                    check_agent_version(&AGY_GATE, version, &verified_agents::load())?;
+                    Ok(version.to_string())
+                }),
+                |version| version.clone(),
+            );
+            if let Some(version) = version.as_deref() {
+                let remaining = verify_limit(live).saturating_sub(started.elapsed());
+                acp_worker::verify_agy(live, dir.path(), &checks, version, remaining);
+            }
+            (version, agy_required_checks(live))
+        }
         HarnessId::Cursor => (
             acp_worker::verify(live, dir.path(), &checks),
             CURSOR_REQUIRED_CHECKS,
@@ -264,6 +310,48 @@ mod tests {
             model: None,
             live: false,
             passed: version.is_some(),
+        }
+    }
+
+    #[test]
+    fn agy_live_requires_more_than_the_free_protocol_checks() {
+        let checks: Vec<_> = AGY_REQUIRED_CHECKS
+            .iter()
+            .map(|name| CheckResult::pass(name, "ok"))
+            .collect();
+        assert!(spec_passed(
+            &checks,
+            Some("1.5.12"),
+            agy_required_checks(false)
+        ));
+        assert!(!spec_passed(
+            &checks,
+            Some("1.5.12"),
+            agy_required_checks(true)
+        ));
+        let all: Vec<_> = agy_required_checks(true)
+            .iter()
+            .map(|name| CheckResult::pass(name, "ok"))
+            .collect();
+        assert!(spec_passed(&all, Some("1.5.12"), agy_required_checks(true)));
+        for missing in [
+            "live session",
+            "live settings",
+            "live prompt",
+            "live report",
+            "live usage",
+            "live close",
+        ] {
+            let partial: Vec<_> = all
+                .iter()
+                .filter(|check| check.name != missing)
+                .cloned()
+                .collect();
+            assert!(!spec_passed(
+                &partial,
+                Some("1.5.12"),
+                agy_required_checks(true)
+            ));
         }
     }
 
