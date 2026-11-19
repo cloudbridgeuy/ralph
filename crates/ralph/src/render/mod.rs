@@ -40,7 +40,8 @@ pub use wrap::{cap_wrap_width, wrap_width};
 
 // Re-export text rendering
 pub use text::{
-    render_code_block, render_diff_block, render_markdown, render_markdown_with, render_text_block,
+    render_code_block, render_diff_block, render_markdown, render_markdown_with,
+    render_text_block_with,
 };
 
 // Re-export tool renderer components

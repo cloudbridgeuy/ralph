@@ -1,10 +1,9 @@
-use ralph_core::stream::ToolInvocation;
-
 use super::output_block::{
     GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
 use super::types::{GrepParams, VerboseToolsConfig, WriteSnapshot};
 use super::utils::extract_key_argument;
+use crate::stream::ToolInvocation;
 
 pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Option<&'a str> {
     invocation?.input.get(key)?.as_str()
@@ -109,8 +108,8 @@ pub fn write_result_variant(snapshot: WriteSnapshot, after: Option<String>) -> T
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_helpers::{create_test_invocation, expect_tool_invocation};
     use super::*;
-    use crate::stream_processor::test_helpers::{create_test_invocation, expect_tool_invocation};
     use serde_json::json;
 
     #[test]

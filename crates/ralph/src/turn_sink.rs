@@ -1,10 +1,13 @@
+use crate::highlight::{ThemeConfig, ThemeError};
 use crate::render::wrap_width;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
+use crate::stream_processor::BlockRenderer;
 use crate::subprocess::{write_to, OutputGate, Stream};
 use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::watches::locked;
+use std::io::IsTerminal;
 use std::sync::{Arc, Mutex};
 use termimad::MadSkin;
 
@@ -22,11 +25,16 @@ pub(crate) fn rule_skin(ui: &UiColors) -> MadSkin {
     skin
 }
 
-pub(crate) fn written(event: &TurnEvent, ui: &UiColors, width: usize) -> Option<(Stream, String)> {
+pub(crate) fn written(
+    event: &TurnEvent,
+    ui: &UiColors,
+    width: usize,
+    renderer: &mut BlockRenderer,
+) -> Option<(Stream, String)> {
     match event {
         TurnEvent::Rule => Some((Stream::Stdout, rule(&rule_skin(ui), width))),
         TurnEvent::Warning(message) => Some((Stream::Stderr, warning_line(message))),
-        TurnEvent::Output(text) => Some((Stream::Stdout, text.clone())),
+        TurnEvent::Blocks(blocks) => Some((Stream::Stdout, renderer.render(blocks))),
         TurnEvent::Stderr(text) => Some((Stream::Stderr, text.clone())),
         TurnEvent::Busy(_) | TurnEvent::Resume(_) | TurnEvent::Idle => None,
     }
@@ -54,21 +62,36 @@ pub(crate) struct TerminalSink {
     columns: fn() -> usize,
     session: SpinnerSessionInfo,
     spinner: Mutex<Option<Spinner>>,
+    renderer: Mutex<BlockRenderer>,
 }
 
 impl TerminalSink {
-    pub(crate) fn new(gate: Option<Arc<OutputGate>>, ui: UiColors, columns: fn() -> usize) -> Self {
-        TerminalSink {
+    pub(crate) fn new(
+        gate: Option<Arc<OutputGate>>,
+        theme: &ThemeConfig,
+        columns: fn() -> usize,
+    ) -> Result<Self, ThemeError> {
+        Self::with_highlighting(gate, theme, columns, std::io::stdout().is_terminal())
+    }
+
+    pub(crate) fn with_highlighting(
+        gate: Option<Arc<OutputGate>>,
+        theme: &ThemeConfig,
+        columns: fn() -> usize,
+        highlighting: bool,
+    ) -> Result<Self, ThemeError> {
+        Ok(TerminalSink {
             gate,
-            ui,
+            ui: *theme.ui(),
             columns,
             session: SpinnerSessionInfo::default(),
             spinner: Mutex::new(None),
-        }
+            renderer: Mutex::new(BlockRenderer::new(Some(theme.clone()), highlighting)?),
+        })
     }
 
-    pub(crate) fn plain(ui: UiColors) -> Self {
-        TerminalSink::new(None, ui, rendered_width)
+    pub(crate) fn plain(theme: &ThemeConfig) -> Result<Self, ThemeError> {
+        TerminalSink::new(None, theme, rendered_width)
     }
 
     pub(crate) fn with_session(self, session: SpinnerSessionInfo) -> Self {
@@ -102,7 +125,15 @@ impl TurnSink for TerminalSink {
     fn emit(&self, event: TurnEvent) {
         if let Some(step) = spin(&event) {
             self.turn(step);
-        } else if let Some((stream, text)) = written(&event, &self.ui, (self.columns)()) {
+            return;
+        }
+        let shown = written(
+            &event,
+            &self.ui,
+            (self.columns)(),
+            &mut locked(&self.renderer),
+        );
+        if let Some((stream, text)) = shown {
             write_to(self.gate.as_deref(), stream, &text);
         }
     }
@@ -120,16 +151,29 @@ pub(crate) fn context(wait: Wait) -> SpinnerContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream_processor::OutputBlock;
+    use ralph_core::chunk::{ChunkType, ParsedChunk};
 
     fn ui() -> UiColors {
         UiColors::default()
+    }
+
+    fn renderer() -> BlockRenderer {
+        BlockRenderer::new(None, false).unwrap()
+    }
+
+    fn prose(content: &str) -> OutputBlock {
+        OutputBlock::text(ParsedChunk {
+            chunk_type: ChunkType::Prose,
+            content: content.to_string(),
+        })
     }
 
     #[test]
     fn a_rule_is_the_themed_rule_at_the_width_on_stdout() {
         let expected = rule(&rule_skin(&ui()), 20);
         assert_eq!(
-            written(&TurnEvent::Rule, &ui(), 20),
+            written(&TurnEvent::Rule, &ui(), 20, &mut renderer()),
             Some((Stream::Stdout, expected))
         );
     }
@@ -137,19 +181,34 @@ mod tests {
     #[test]
     fn a_warning_is_a_warning_line_on_stderr() {
         assert_eq!(
-            written(&TurnEvent::Warning("Turn cancelled.".into()), &ui(), 20),
+            written(
+                &TurnEvent::Warning("Turn cancelled.".into()),
+                &ui(),
+                20,
+                &mut renderer()
+            ),
             Some((Stream::Stderr, warning_line("Turn cancelled.")))
         );
     }
 
     #[test]
-    fn output_and_stderr_pass_through_on_their_streams() {
+    fn blocks_render_to_text_on_stdout_and_stderr_passes_through() {
         assert_eq!(
-            written(&TurnEvent::Output("hi".into()), &ui(), 20),
-            Some((Stream::Stdout, "hi".to_string()))
+            written(
+                &TurnEvent::Blocks(vec![prose("hello\n")]),
+                &ui(),
+                20,
+                &mut renderer()
+            ),
+            Some((Stream::Stdout, "hello\n".to_string()))
         );
         assert_eq!(
-            written(&TurnEvent::Stderr("oops\n".into()), &ui(), 20),
+            written(
+                &TurnEvent::Stderr("oops\n".into()),
+                &ui(),
+                20,
+                &mut renderer()
+            ),
             Some((Stream::Stderr, "oops\n".to_string()))
         );
     }
@@ -161,7 +220,7 @@ mod tests {
             TurnEvent::Resume(Wait::Thinking),
             TurnEvent::Idle,
         ] {
-            assert_eq!(written(&event, &ui(), 20), None);
+            assert_eq!(written(&event, &ui(), 20, &mut renderer()), None);
         }
     }
 
@@ -189,7 +248,7 @@ mod tests {
     #[test]
     fn written_events_leave_the_spinner_alone() {
         assert_eq!(spin(&TurnEvent::Rule), None);
-        assert_eq!(spin(&TurnEvent::Output("x".into())), None);
+        assert_eq!(spin(&TurnEvent::Blocks(vec![prose("x")])), None);
     }
 
     #[test]

@@ -12,7 +12,7 @@
 
 use crate::render::ansi;
 
-use super::super::utils::extract_language_from_path;
+use crate::render::extract_language_from_path;
 use crate::render::RenderContext;
 
 /// Maximum lines to show in a new file display before truncating.
@@ -604,7 +604,7 @@ mod tests {
 
     fn colored_processor() -> StreamProcessor {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.diff_colors = crate::diff_theme::test_colors();
+        processor.renderer.diff_colors = crate::diff_theme::test_colors();
         processor
     }
 
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn new_file_header_uses_the_configured_tool_colors() {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.tool_colors = crate::tool_theme::test_colors();
+        processor.renderer.tool_colors = crate::tool_theme::test_colors();
         let out = format_new_file_display(&processor.render_context(), "a.rs", "x");
         assert!(out.starts_with("\x1b[94m── a.rs \x1b[91m(new file)"));
     }

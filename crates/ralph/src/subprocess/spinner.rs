@@ -4,10 +4,10 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
     EXIT_CODE_KILLED,
 };
-use crate::highlight::ThemeConfig;
 use crate::signal;
-use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
+use crate::stream_processor::{DiskFiles, OutputBlock, VerboseToolsConfig};
 use ralph_core::cancel::CancelToken;
+use ralph_core::stream::blocks::StreamCollector;
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::subprocess::kill_process_group;
@@ -24,7 +24,6 @@ use std::time::{Duration, Instant};
 pub struct SpinnerSubprocessConfig {
     pub command: String,
     pub timeout_secs: Option<u64>,
-    pub theme_config: ThemeConfig,
     pub verbose_tools: VerboseToolsConfig,
     pub sink: Arc<dyn TurnSink>,
     pub gate: Option<Arc<OutputGate>>,
@@ -145,9 +144,9 @@ impl Shown {
         }
     }
 
-    fn show(&mut self, text: String) {
+    fn show(&mut self, blocks: Vec<OutputBlock>) {
         self.stop();
-        self.sink.emit(TurnEvent::Output(text));
+        self.sink.emit(TurnEvent::Blocks(blocks));
     }
 }
 
@@ -159,7 +158,7 @@ impl Drop for Shown {
 
 pub(super) struct Pump {
     shown: Option<Shown>,
-    processor: StreamProcessor,
+    collector: StreamCollector,
     last_output_time: Instant,
     pending_tool_count: usize,
     stderr: String,
@@ -168,17 +167,11 @@ pub(super) struct Pump {
 }
 
 impl Pump {
-    pub(super) fn start(
-        config: &SpinnerSubprocessConfig,
-        display: Display,
-    ) -> Result<Pump, SubprocessError> {
-        let stdout_is_terminal = std::io::stdout().is_terminal();
-        let processor = StreamProcessor::with_verbose_tools(
-            config.theme_config.clone(),
-            stdout_is_terminal,
-            stdout_is_terminal,
+    pub(super) fn start(config: &SpinnerSubprocessConfig, display: Display) -> Pump {
+        let collector = StreamCollector::new(
+            std::io::stdout().is_terminal(),
             config.verbose_tools.clone(),
-        )?;
+        );
         let shown = (display == Display::Shown).then(|| {
             let mut shown = Shown {
                 sink: Arc::clone(&config.sink),
@@ -187,15 +180,15 @@ impl Pump {
             shown.wait(TurnEvent::Busy(Wait::Response));
             shown
         });
-        Ok(Pump {
+        Pump {
             shown,
-            processor,
+            collector,
             last_output_time: Instant::now(),
             pending_tool_count: 0,
             stderr: String::new(),
             gate: config.gate.clone(),
             request_at: None,
-        })
+        }
     }
 
     fn stop_spinner(&mut self) {
@@ -230,11 +223,10 @@ impl Pump {
                 if line.contains("\"type\":\"user\"") && line.contains("\"type\":\"tool_result\"") {
                     self.pending_tool_count = self.pending_tool_count.saturating_sub(1);
                 }
-                if let Some(output) = self.processor.process_line(&line) {
-                    if let Some(shown) = self.shown.as_mut() {
-                        shown.show(output);
-                        self.last_output_time = Instant::now();
-                    }
+                let blocks = self.collector.process_line(&line, &DiskFiles);
+                if let (false, Some(shown)) = (blocks.is_empty(), self.shown.as_mut()) {
+                    shown.show(blocks);
+                    self.last_output_time = Instant::now();
                 }
                 if let Some(is_error) = result_is_error(&line) {
                     return Ok(Step::Result { is_error });
@@ -273,17 +265,16 @@ impl Pump {
     ) -> StreamingSubprocessResult {
         self.stop_spinner();
         for line in readers.take_queued() {
-            if let Some(output) = self.processor.process_line(&line) {
-                if let Some(shown) = self.shown.as_mut() {
-                    shown.show(output);
-                }
+            let blocks = self.collector.process_line(&line, &DiskFiles);
+            if let (false, Some(shown)) = (blocks.is_empty(), self.shown.as_mut()) {
+                shown.show(blocks);
             }
         }
         let sink = self.shown.as_ref().map(|shown| shown.sink.as_ref());
         drain_stderr(readers, &mut self.stderr, sink.filter(|_| show_stderr));
-        let stream_result = self.processor.finish();
-        if let (Some(output), Some(shown)) = (&stream_result.final_output, self.shown.as_mut()) {
-            shown.show(output.clone());
+        let (flushed, stream_result) = self.collector.finish(&DiskFiles);
+        if let (false, Some(shown)) = (flushed.is_empty(), self.shown.as_mut()) {
+            shown.show(flushed);
         }
         StreamingSubprocessResult {
             exit_code,
@@ -333,7 +324,7 @@ fn run_subprocess_with_spinner(
         _ => None,
     };
     let mut readers = Readers::start(&mut child)?;
-    let mut pump = Pump::start(config, display)?;
+    let mut pump = Pump::start(config, display);
     let start = Instant::now();
 
     loop {
@@ -378,6 +369,7 @@ fn run_subprocess_with_spinner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream_processor::OutputBlock;
     use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
     use std::sync::Mutex;
 
@@ -402,7 +394,6 @@ mod tests {
         SpinnerSubprocessConfig {
             command: String::new(),
             timeout_secs: None,
-            theme_config: ThemeConfig::new(),
             verbose_tools: VerboseToolsConfig::new(),
             sink: Arc::clone(sink) as Arc<dyn TurnSink>,
             gate: None,
@@ -443,15 +434,15 @@ mod tests {
     fn a_shown_pump_waits_then_stops_the_spinner_before_its_output() {
         let sink = Arc::new(Recording::default());
         let (readers, _feed) = feed(&[HELLO], &[]);
-        let mut pump = Pump::start(&config(&sink), Display::Shown).unwrap();
+        let mut pump = Pump::start(&config(&sink), Display::Shown);
         pump.step(&readers, false).unwrap();
         pump.finish(&readers, 0, true);
         let events = sink.events();
         assert_eq!(events.first(), Some(&TurnEvent::Busy(Wait::Response)));
         let output = events
             .iter()
-            .position(|event| matches!(event, TurnEvent::Output(text) if text.contains("Hello")))
-            .expect("an Output event");
+            .position(|event| matches!(event, TurnEvent::Blocks(blocks) if blocks.iter().any(|block| matches!(block, OutputBlock::Text(text) if text.chunk.content.contains("Hello")))))
+            .expect("a Blocks event");
         let idle = events.iter().position(|event| *event == TurnEvent::Idle);
         assert!(idle.is_some_and(|idle| idle < output), "{events:?}");
     }
@@ -460,7 +451,7 @@ mod tests {
     fn a_shown_pump_passes_stderr_lines_to_the_sink() {
         let sink = Arc::new(Recording::default());
         let (readers, _feed) = feed(&[], &["oops"]);
-        let mut pump = Pump::start(&config(&sink), Display::Shown).unwrap();
+        let mut pump = Pump::start(&config(&sink), Display::Shown);
         pump.step(&readers, false).unwrap();
         assert_eq!(
             sink.events(),
@@ -475,7 +466,7 @@ mod tests {
     fn a_silent_pump_emits_nothing() {
         let sink = Arc::new(Recording::default());
         let (readers, _feed) = feed(&[HELLO], &["oops"]);
-        let mut pump = Pump::start(&config(&sink), Display::Silent).unwrap();
+        let mut pump = Pump::start(&config(&sink), Display::Silent);
         pump.step(&readers, false).unwrap();
         pump.finish(&readers, 0, true);
         assert_eq!(sink.events(), Vec::new());
@@ -484,7 +475,7 @@ mod tests {
     #[test]
     fn dropping_a_waiting_pump_stops_the_spinner() {
         let sink = Arc::new(Recording::default());
-        drop(Pump::start(&config(&sink), Display::Shown).unwrap());
+        drop(Pump::start(&config(&sink), Display::Shown));
         assert_eq!(
             sink.events(),
             vec![TurnEvent::Busy(Wait::Response), TurnEvent::Idle]

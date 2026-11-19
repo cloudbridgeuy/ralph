@@ -1,3 +1,5 @@
+use crate::stream::blocks::OutputBlock;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wait {
     Response,
@@ -16,16 +18,14 @@ impl Wait {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TurnEvent {
     Rule,
     Warning(String),
     Busy(Wait),
     Resume(Wait),
     Idle,
-    /// Stopgap: text the stream processor already rendered for the terminal.
-    /// Step 3b replaces it with data events (OutputBlock / ParsedChunk) that the client renders.
-    Output(String),
+    Blocks(Vec<OutputBlock>),
     Stderr(String),
 }
 

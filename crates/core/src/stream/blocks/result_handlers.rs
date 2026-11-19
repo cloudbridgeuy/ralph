@@ -1,13 +1,15 @@
-use std::fs;
+use std::path::Path;
 
-use ralph_core::chunk::is_unfenced_diff;
-use ralph_core::stream::{ToolInvocation, ToolResult};
+use crate::chunk::is_unfenced_diff;
+use crate::stream::{ToolInvocation, ToolResult};
 
 use super::block_builders::{input_str, write_result_variant};
-use super::output_block::{OutputBlock, ToolResultVariant};
-use super::tool_results::{edit_diff_from_snapshot, notebook_diff_from_snapshot};
-use super::types::{EditSnapshot, NotebookSnapshot, VerboseToolsConfig, WriteSnapshot};
+use super::diff::{edit_diff, notebook_diff};
 use super::utils::{count_non_empty_lines, is_content_truncated};
+use super::{
+    EditSnapshot, Files, NotebookSnapshot, OutputBlock, ToolResultVariant, VerboseToolsConfig,
+    WriteSnapshot,
+};
 
 pub enum Snapshot {
     Edit(EditSnapshot),
@@ -20,6 +22,7 @@ pub fn build_result_block(
     result: &ToolResult,
     invocation: Option<&ToolInvocation>,
     snapshot: Option<Snapshot>,
+    files: &dyn Files,
 ) -> OutputBlock {
     let name = invocation.map_or("Unknown", |inv| inv.name.as_str());
     let content = result.content.clone();
@@ -35,13 +38,13 @@ pub fn build_result_block(
                 diff_content: content.unwrap_or_default(),
             }
         }
-        Some(snapshot) if !result.is_error => snapshot_variant(snapshot),
+        Some(snapshot) if !result.is_error => snapshot_variant(snapshot, files),
         _ => plain_variant(verbose, name, result, invocation),
     };
     OutputBlock::tool_result(name, result.is_error, variant)
 }
 
-fn snapshot_variant(snapshot: Snapshot) -> ToolResultVariant {
+fn snapshot_variant(snapshot: Snapshot, files: &dyn Files) -> ToolResultVariant {
     match snapshot {
         Snapshot::Edit(snap) if snap.old_string.is_some() || snap.new_string.is_some() => {
             ToolResultVariant::EditBeforeAfter {
@@ -50,7 +53,10 @@ fn snapshot_variant(snapshot: Snapshot) -> ToolResultVariant {
                 file_path: snap.file_path,
             }
         }
-        Snapshot::Edit(snap) => match edit_diff_from_snapshot(&snap) {
+        Snapshot::Edit(snap) => match files
+            .read_text(Path::new(&snap.file_path))
+            .and_then(|after| edit_diff(&snap, &after))
+        {
             Some(diff_content) => ToolResultVariant::EditDiff {
                 file_path: snap.file_path,
                 diff_content,
@@ -60,16 +66,21 @@ fn snapshot_variant(snapshot: Snapshot) -> ToolResultVariant {
             },
         },
         Snapshot::Write(snap) => {
-            let after = fs::read_to_string(&snap.file_path).ok();
+            let after = files.read_text(Path::new(&snap.file_path));
             write_result_variant(snap, after)
         }
-        Snapshot::Notebook(snap) => ToolResultVariant::NotebookEdit {
-            diff_content: notebook_diff_from_snapshot(&snap),
-            notebook_path: snap.notebook_path,
-            cell_identifier: snap.cell_identifier,
-            cell_type: snap.cell_type,
-            edit_mode: snap.edit_mode,
-        },
+        Snapshot::Notebook(snap) => {
+            let notebook_json = (snap.edit_mode != "delete")
+                .then(|| files.read_text(Path::new(&snap.notebook_path)))
+                .flatten();
+            ToolResultVariant::NotebookEdit {
+                diff_content: notebook_diff(&snap, notebook_json.as_deref()),
+                notebook_path: snap.notebook_path,
+                cell_identifier: snap.cell_identifier,
+                cell_type: snap.cell_type,
+                edit_mode: snap.edit_mode,
+            }
+        }
     }
 }
 

@@ -1,14 +1,5 @@
-//! Pure utility functions for the stream processor (Functional Core).
-//!
-//! This module contains stateless helper functions for argument extraction,
-//! string truncation, and language detection. All functions are pure with
-//! no side effects.
-
 use super::types::KeyArgument;
 use serde_json::Value;
-
-// Re-export language detection from shared render module for backward compatibility
-pub use crate::render::extract_language_from_path;
 
 /// Extract the most relevant argument from a tool invocation for display.
 ///
@@ -109,8 +100,6 @@ pub fn truncate_multiline(s: &str, max_lines: usize) -> (String, bool) {
         (truncated, true)
     }
 }
-
-// Tests for extract_language_from_path are in crate::render::utils
 
 #[cfg(test)]
 mod tests {

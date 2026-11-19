@@ -197,4 +197,39 @@ mod tests {
         assert!(!gate.is_paused());
         assert!(gate.lock().held.take().is_empty());
     }
+
+    #[test]
+    fn a_paused_sink_holds_a_warning_then_blocks_in_order() {
+        use crate::highlight::ThemeConfig;
+        use crate::stream_processor::OutputBlock;
+        use crate::turn_sink::TerminalSink;
+        use ralph_core::chunk::{ChunkType, ParsedChunk};
+        use ralph_core::turn_event::{TurnEvent, TurnSink};
+        use std::sync::Arc;
+
+        let gate = Arc::new(OutputGate::new());
+        let sink = TerminalSink::with_highlighting(
+            Some(Arc::clone(&gate)),
+            &ThemeConfig::new(),
+            || 20,
+            false,
+        )
+        .unwrap();
+        gate.pause();
+        sink.emit(TurnEvent::Warning("w".into()));
+        sink.emit(TurnEvent::Blocks(vec![OutputBlock::text(ParsedChunk {
+            chunk_type: ChunkType::Prose,
+            content: "hello\n".to_string(),
+        })]));
+        let held = gate.lock().held.take();
+        let seen: Vec<(Stream, &str)> = held.iter().map(|c| (c.stream, c.text.as_str())).collect();
+        assert_eq!(
+            seen,
+            vec![
+                (Stream::Stderr, crate::warn::warning_line("w").as_str()),
+                (Stream::Stdout, "hello\n")
+            ]
+        );
+        gate.resume();
+    }
 }

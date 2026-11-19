@@ -8,7 +8,9 @@ use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
 use ralph_core::shell_format::{format_fence, is_shell_fence};
 
-use super::image::{render_with_markers, ImageBounds};
+use ralph_core::stream::blocks::ImageFile;
+
+use super::image::{disk_image, render_with_markers, ImageBounds};
 use super::link::{mark_links, paint_links};
 pub(crate) use super::wrap::render_prose;
 use super::wrap::wrap_width;
@@ -19,6 +21,15 @@ pub fn render_text_block(
     ctx: &RenderContext<'_>,
     chunk: &ParsedChunk,
     markdown: Option<&MarkdownTheme>,
+) -> String {
+    render_text_block_with(ctx, chunk, markdown, &disk_image)
+}
+
+pub fn render_text_block_with(
+    ctx: &RenderContext<'_>,
+    chunk: &ParsedChunk,
+    markdown: Option<&MarkdownTheme>,
+    lookup: &dyn Fn(&str) -> Option<ImageFile>,
 ) -> String {
     match &chunk.chunk_type {
         ChunkType::Prose => {
@@ -37,7 +48,7 @@ pub fn render_text_block(
                         chunk.content.clone()
                     };
                     apc_in_place(&content, |piece| {
-                        render_with_markers(piece, images, bounds, |text| {
+                        render_with_markers(piece, images, bounds, lookup, |text| {
                             styled.map_or_else(
                                 || text.to_string(),
                                 |theme| render_styled_prose(theme, text, width),
