@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(turn["run"], "r1");
         assert_eq!(turn["turn"], "r1#2");
         assert_eq!(turn["scope"], "auth");
-        assert_eq!(turn["history_calls"], 2);
+        assert_eq!(turn["history_calls"], 1);
         assert_eq!(turn["view_ids"], json!(["0-15", "16"]));
         assert_eq!(all[1]["history_calls"], 1);
     }

@@ -419,6 +419,28 @@ fn only_call_rows_of_the_turn_are_counted() {
 }
 
 #[test]
+fn only_mcp_call_rows_are_counted() {
+    let call = |source: CallSource| {
+        let call = MemoryCall {
+            scope: Scope::Main,
+            tool: Tool::Recall("a".into()),
+        };
+        let mut ctx = ctx();
+        ctx.source = source;
+        let facts = history_call_facts(&call, &Ok("x".into()), ctx);
+        encode_history(&history_call_row(&key(), &facts)).unwrap()
+    };
+    let text = format!(
+        "{}{}{}{}",
+        call(CallSource::Mcp),
+        call(CallSource::Slash),
+        call(CallSource::Cli),
+        call(CallSource::Mcp)
+    );
+    assert_eq!(count_turn_calls(&text, "r1#3"), 2);
+}
+
+#[test]
 fn history_tools_are_found_by_name() {
     assert_eq!(history_tool_named("zoom"), Some(HistoryTool::Zoom));
     assert_eq!(history_tool_named("search"), Some(HistoryTool::Search));

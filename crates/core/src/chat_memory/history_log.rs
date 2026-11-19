@@ -88,7 +88,14 @@ pub fn count_turn_calls(text: &str, turn: &str) -> u64 {
         .lines()
         .filter_map(|line| serde_json::from_str::<HistoryRow>(line).ok())
         .filter(|row| {
-            row.turn.as_deref() == Some(turn) && matches!(row.event, HistoryEvent::Call { .. })
+            row.turn.as_deref() == Some(turn)
+                && matches!(
+                    row.event,
+                    HistoryEvent::Call {
+                        source: CallSource::Mcp,
+                        ..
+                    }
+                )
         })
         .count();
     u64::try_from(counted).unwrap_or(u64::MAX)
