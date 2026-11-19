@@ -2,7 +2,7 @@ use crate::chat_cell::{bang, Bang};
 use crate::chat_direct::{parse_direct, Direct, DirectLine};
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
-use crate::chat_memory::{history_tool, MemoryCall};
+use crate::chat_memory::{history_tool, HistoryTool, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
 use crate::chat_rerender::parse_rerender_args;
@@ -114,12 +114,23 @@ pub enum Route {
         op: Result<ThreadOp, String>,
         line: String,
     },
-    History(Result<MemoryCall, String>),
+    History(MemoryCall),
+    HistoryRefused {
+        tool: HistoryTool,
+        message: String,
+    },
     View(ViewArgs),
     Rerender(Result<usize, String>),
     Help,
     Config,
     Ignore,
+}
+
+fn history_route(tool: HistoryTool, words: &str, cursor: Option<&str>) -> Route {
+    match history_tool(tool.name(), words, cursor, None) {
+        Ok(call) => Route::History(call),
+        Err(message) => Route::HistoryRefused { tool, message },
+    }
 }
 
 impl Route {
@@ -132,6 +143,7 @@ impl Route {
             | Route::Help
             | Route::Config
             | Route::History(_)
+            | Route::HistoryRefused { .. }
             | Route::InboxUsage
             | Route::Watch(WatchCommand::List | WatchCommand::Usage)
             | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
@@ -205,13 +217,16 @@ pub fn route_input(
                 Command::Config => Route::Config,
                 Command::View => Route::View(parse_view_args(args)),
                 Command::Rerender => Route::Rerender(parse_rerender_args(args)),
-                Command::Read | Command::Search => {
+                Command::Read => {
                     let (words, cursor) = split_cursor(args);
-                    Route::History(history_tool(&command.name()[1..], words, cursor, None))
+                    history_route(HistoryTool::Read, words, cursor)
                 }
-                Command::Zoom | Command::Recall => {
-                    Route::History(history_tool(&command.name()[1..], args, None, None))
+                Command::Search => {
+                    let (words, cursor) = split_cursor(args);
+                    history_route(HistoryTool::Search, words, cursor)
                 }
+                Command::Zoom => history_route(HistoryTool::Zoom, args, None),
+                Command::Recall => history_route(HistoryTool::Recall, args, None),
             };
         }
     }

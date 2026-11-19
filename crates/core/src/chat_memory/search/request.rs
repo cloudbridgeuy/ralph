@@ -27,6 +27,10 @@ impl SearchRequest {
     pub fn tag(&self) -> Option<Label> {
         self.tag
     }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
 }
 
 impl SearchCursor {

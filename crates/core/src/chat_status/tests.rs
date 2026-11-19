@@ -775,7 +775,13 @@ fn history_commands_route_to_the_model_tools() {
     use crate::chat_memory::parse_tool_call;
     use serde_json::json;
     let route = |line: &str| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
-    let tool = |name: &str, args: serde_json::Value| Route::History(parse_tool_call(name, &args));
+    let tool = |name: &str, args: serde_json::Value| match parse_tool_call(name, &args) {
+        Ok(call) => Route::History(call),
+        Err(message) => Route::HistoryRefused {
+            tool: crate::chat_memory::history_tool_named(name).unwrap(),
+            message,
+        },
+    };
     assert_eq!(route("/read 4-7"), tool("read", json!({"id": "4-7"})));
     assert_eq!(
         route("/read 4-7 summary --cursor 5.0@7s"),
@@ -813,8 +819,24 @@ fn bad_history_arguments_route_to_an_error_not_a_message() {
         "/search --cursor 1",
     ] {
         let route = route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
-        assert!(matches!(route, Route::History(Err(_))), "{line}: {route:?}");
+        assert!(
+            matches!(route, Route::HistoryRefused { .. }),
+            "{line}: {route:?}"
+        );
     }
+}
+
+#[test]
+fn a_refused_history_line_names_its_tool() {
+    use crate::chat_memory::HistoryTool;
+    let tool = |line: &str| match route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()) {
+        Route::HistoryRefused { tool, .. } => tool,
+        other => panic!("{line}: {other:?}"),
+    };
+    assert_eq!(tool("/read"), HistoryTool::Read);
+    assert_eq!(tool("/zoom"), HistoryTool::Zoom);
+    assert_eq!(tool("/recall"), HistoryTool::Recall);
+    assert_eq!(tool("/search"), HistoryTool::Search);
 }
 
 #[test]

@@ -14,6 +14,7 @@ pub(crate) mod cursor_cleanup;
 pub mod cursor_owner;
 pub(crate) mod cursor_sweep;
 pub(crate) mod cursor_usage;
+pub mod history_log;
 pub mod hook_bridge;
 pub(crate) mod json_file;
 pub mod ledger;

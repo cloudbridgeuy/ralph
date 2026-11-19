@@ -230,6 +230,7 @@ impl Store {
             Ok(()) => {
                 file.set_len(0)?;
                 write!(file, "{}", std::process::id())?;
+                crate::history_log::clear_turn(&self.dir);
                 Ok(Ok(ChatClaim(file)))
             }
             Err(TryLockError::WouldBlock) => {

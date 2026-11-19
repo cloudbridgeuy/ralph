@@ -13,6 +13,7 @@ use crate::chat::workers;
 use crate::config::ConfigSnapshot;
 use crate::schedule_store::ScheduleStore;
 use ralph_core::chat_help::help_with_store;
+use ralph_core::chat_memory::{CallContext, CallMetrics, CallSource};
 use ralph_core::chat_status::Route;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
@@ -20,11 +21,14 @@ use ralph_core::worker::TicketKeys;
 use ralph_server::chat::watch;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::config::ChangesSection;
+use ralph_server::history_log;
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
 pub struct LocalRoute<'a> {
     pub inbox: &'a Inbox,
@@ -87,14 +91,26 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
         Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.display),
-        Route::History(call) => writeln!(
-            out,
-            "{}",
-            call.and_then(|call| Memory::open(ctx.store)?
-                .call(&call)
-                .map(|answer| answer.text))
-                .unwrap_or_else(|e| e)
-        )?,
+        Route::History(call) => {
+            let text = Memory::open(ctx.store)
+                .and_then(|memory| memory.call(&call, CallSource::Slash))
+                .map_or_else(|e| e, |answer| answer.text);
+            writeln!(out, "{text}")?
+        }
+        Route::HistoryRefused { tool, message } => {
+            history_log::record_error(
+                ctx.store,
+                tool,
+                &Value::Null,
+                &message,
+                CallContext {
+                    source: CallSource::Slash,
+                    took: Duration::ZERO,
+                    metrics: CallMetrics::default(),
+                },
+            );
+            writeln!(out, "{message}")?
+        }
         Route::Send(_)
         | Route::Switch { .. }
         | Route::ThreadOp { .. }

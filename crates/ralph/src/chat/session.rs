@@ -4,14 +4,19 @@ use crate::chat::thread::{self, Memory};
 use crate::cli::HistoryArgs;
 use ralph_core::chat::{prompt_text, CustomPrompt};
 use ralph_core::chat_hold::hold_targets;
-use ralph_core::chat_memory::history_tool;
+use ralph_core::chat_memory::{
+    history_tool, history_tool_named, CallContext, CallMetrics, CallSource,
+};
 use ralph_core::chat_status::route_input;
 use ralph_core::chat_thread::{in_scope, ThreadName};
 use ralph_server::config::PromptFiles;
+use ralph_server::history_log;
 use ralph_server::warn::warn_if_err;
 use reedline::{HistoryItem, Reedline};
+use serde_json::Value;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::STORE_ENV;
 
@@ -51,7 +56,7 @@ pub(super) fn print_history(
     store_dir: &Path,
     history: &HistoryArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let text = history_tool(
+    let parsed = history_tool(
         history.tool.name(),
         &history.words.join(" "),
         history.cursor.as_deref(),
@@ -60,12 +65,23 @@ pub(super) fn print_history(
     .and_then(|call| match &history.scope {
         Some(scope) => in_scope(call, scope),
         None => Ok(call),
-    })
-    .and_then(|call| {
-        Memory::open(store_dir)?
-            .call(&call)
-            .map(|answer| answer.text)
+    });
+    let call = parsed.inspect_err(|message| {
+        if let Some(tool) = history_tool_named(history.tool.name()) {
+            history_log::record_error(
+                store_dir,
+                tool,
+                &Value::Null,
+                message,
+                CallContext {
+                    source: CallSource::Cli,
+                    took: Duration::ZERO,
+                    metrics: CallMetrics::default(),
+                },
+            );
+        }
     })?;
+    let text = Memory::open(store_dir)?.call(&call, CallSource::Cli)?.text;
     println!("{text}");
     Ok(())
 }
