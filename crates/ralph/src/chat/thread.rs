@@ -3,16 +3,14 @@ use crate::chat::thread_cmd::{merge_line, record_cli_merge};
 use crate::cli::{ThreadArgs, ThreadCommand, MERGE_TIMEOUT_SECS};
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
-use ralph_core::chat_memory::{
-    resolve_scope, view, CallContext, CallSite, CallSource, Entry, MemoryCall, Tree,
-};
+use ralph_core::chat_memory::{view, CallSite, Entry, Tree};
 pub use ralph_core::chat_thread::config_root;
 pub(super) use ralph_core::chat_thread::fork_of;
 use ralph_core::chat_thread::{
-    digest_with, drop_message, empty_list_message, fork_check, guard_check, label_item,
-    merge_prompt, merged_check, merged_report, open_check, open_launch, pull_message, revive_check,
-    view_block, view_report, Guarded, Live, Merged, OpenLaunch, OpenSpawn, Parked, Scope,
-    ThreadMeta, ThreadName, THREADS_DIR, THREAD_FILE, VIEW_BLOCK_LINES,
+    digest_with, drop_message, empty_list_message, guard_check, label_item, merge_prompt,
+    merged_check, merged_report, open_check, open_launch, pull_message, revive_check, view_block,
+    view_report, Guarded, Live, Merged, OpenLaunch, OpenSpawn, Parked, ThreadMeta, ThreadName,
+    THREADS_DIR, THREAD_FILE, VIEW_BLOCK_LINES,
 };
 use ralph_core::chat_thread_cmd::{
     merge_posted_message, parked_message, revived_message, view_posted_message, OpenOpts,
@@ -23,9 +21,7 @@ use ralph_core::worker::{chat_message, Report};
 use ralph_server::chat::claim::ChatClaim;
 pub use ralph_server::chat::fork::open_fork;
 pub(super) use ralph_server::chat::fork::read_meta;
-use ralph_server::chat::fork::Fork;
 use ralph_server::chat::memory::Store;
-use ralph_server::history_log;
 use ralph_server::private_file::check_path;
 use ralph_server::schedule_store::ScheduleStore;
 use ralph_server::watch_store::WatchStore;
@@ -33,14 +29,9 @@ use ralph_server::workers::{canonical_store, running_workers};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
-
-use ralph_server::chat::memory::{Answer, Reach};
 
 pub(crate) mod close;
 mod graph;
-#[cfg(test)]
-mod history_tests;
 pub(super) mod landing;
 mod list;
 pub(super) mod open;
@@ -48,76 +39,6 @@ pub(super) mod settle;
 mod tombstone;
 pub use list::rows;
 pub(super) use list::{default_listing, listing};
-
-pub struct Memory {
-    own: Store,
-    fork: Option<Fork>,
-}
-
-impl Memory {
-    pub fn open(dir: &Path) -> Result<Memory, String> {
-        Ok(Memory {
-            own: Store::new(dir.to_path_buf()),
-            fork: open_fork(dir)?,
-        })
-    }
-
-    pub fn call(&self, call: &MemoryCall, source: CallSource) -> Result<Answer, String> {
-        let started = Instant::now();
-        let result = self.dispatch(call);
-        let resolved = MemoryCall {
-            scope: resolve_scope(&call.scope, self.fork.as_ref().map(|fork| &fork.name)),
-            tool: call.tool.clone(),
-        };
-        history_log::record_call(
-            self.dir(),
-            &resolved,
-            &result.clone().map(|answer| answer.text),
-            CallContext {
-                source,
-                took: started.elapsed(),
-                metrics: result
-                    .as_ref()
-                    .map(|answer| answer.facts.clone())
-                    .unwrap_or_default(),
-            },
-        );
-        result
-    }
-
-    fn dispatch(&self, call: &MemoryCall) -> Result<Answer, String> {
-        let own = |label| self.own.call(&call.tool, Reach { limit: None, label });
-        match (&call.scope, &self.fork) {
-            (Scope::Own | Scope::Main, None) => own(None),
-            (Scope::Own, Some(fork)) => own(Some(&fork.name)),
-            (Scope::Thread(name), Some(fork)) if *name == fork.name => own(Some(name)),
-            (Scope::Main, Some(fork)) => {
-                fork_check(&call.tool, fork.meta.base)?;
-                let reach = Reach {
-                    limit: Some(fork.meta.base),
-                    label: None,
-                };
-                fork.main.call(&call.tool, reach)
-            }
-            (Scope::Thread(name), fork) => {
-                let main = fork.as_ref().map_or(&self.own, |fork| &fork.main);
-                let dir = thread_dir(main.dir(), name);
-                if !dir.join(THREAD_FILE).is_file() {
-                    return Err(format!("no thread {name}; `ralph thread ls` lists them."));
-                }
-                let reach = Reach {
-                    limit: None,
-                    label: Some(name),
-                };
-                Store::new(dir).call(&call.tool, reach)
-            }
-        }
-    }
-
-    pub fn dir(&self) -> &Path {
-        self.own.dir()
-    }
-}
 
 pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
     let main = super::store_dir(args.store)?;
@@ -177,9 +98,7 @@ pub fn store_config_path(written: &Path) -> PathBuf {
     config_root(written).join("config.toml")
 }
 
-pub fn thread_dir(main: &Path, name: &ThreadName) -> PathBuf {
-    main.join(THREADS_DIR).join(name.as_str())
-}
+pub use ralph_server::chat::thread::{thread_dir, Memory};
 
 pub fn ensure(main: &Path, name: &ThreadName) -> io::Result<ThreadMeta> {
     let dir = thread_dir(main, name);
@@ -434,7 +353,7 @@ mod tests {
     use super::*;
     use crate::config::load_for_chat;
     use ralph_core::chat_memory::ViewSplit;
-    use ralph_core::chat_memory::{parse_tool_call, Role};
+    use ralph_core::chat_memory::{parse_tool_call, CallSource, Role};
     use ralph_core::chat_thread_table::ThreadState;
     use ralph_core::inbox::Selection;
     use ralph_core::schedule::{Task, TaskKind, TaskStatus};

@@ -19,6 +19,7 @@ pub mod socket;
 pub mod stall;
 pub mod suggestion;
 pub mod tag_store;
+pub mod thread;
 pub mod turn;
 pub mod watch;
 pub mod workers_remote;
