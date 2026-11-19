@@ -65,6 +65,15 @@ fn prepare(dir: &Path, updates: agy_settings::Updates) -> Result<Opening, String
     Ok(opening)
 }
 
+fn report_then_usage(
+    checks: &Checks,
+    delivered: Result<String, String>,
+    usage: impl FnOnce() -> Result<String, String>,
+) -> bool {
+    step(checks, "live report", delivered, Clone::clone).is_some()
+        && step(checks, "live usage", usage(), Clone::clone).is_some()
+}
+
 pub(super) async fn run(
     connection: &ConnectionTo<Agent>,
     dir: &Path,
@@ -102,7 +111,7 @@ pub(super) async fn run(
                 Err("agy live prompt did not end normally".to_string())
             }
         });
-    if let Some(response) = step(checks, "live prompt", response, |_| {
+    let passed = if let Some(response) = step(checks, "live prompt", response, |_| {
         "one prompt completed".to_string()
     }) {
         let inbox = Inbox::new(opening.inbox.clone());
@@ -110,37 +119,53 @@ pub(super) async fn run(
             .peek()
             .map_err(|error| format!("could not read verify inbox: {error}"))
             .and_then(|items| report(&items, reported_path(dir, ID).is_file()));
-        step(checks, "live report", delivered, Clone::clone);
-        let session = id.to_string();
-        let path = dir.join("usage.jsonl");
-        let target = agy_usage::Target {
-            worker: ID,
-            session: &session,
-            model: &selected.model,
-            store: Some(dir),
-            turn_id: None,
-        };
-        let total = response
-            .usage
-            .as_ref()
-            .map_or(0, |usage| usage.total_tokens);
-        let recorded = agy_usage::record(&path, &target, &response)
-            .map_err(|error| format!("could not record verify usage: {error}"))
-            .and_then(|()| {
-                fs::read_to_string(&path)
-                    .map_err(|error| format!("could not read verify usage: {error}"))
-            })
-            .and_then(|text| usage(&text, &session, &selected.model, total));
-        step(checks, "live usage", recorded, Clone::clone);
-    }
+        report_then_usage(checks, delivered, || {
+            let session = id.to_string();
+            let path = dir.join("usage.jsonl");
+            let target = agy_usage::Target {
+                worker: ID,
+                session: &session,
+                model: &selected.model,
+                store: Some(dir),
+                turn_id: None,
+            };
+            let total = response
+                .usage
+                .as_ref()
+                .map_or(0, |usage| usage.total_tokens);
+            agy_usage::record(&path, &target, &response)
+                .map_err(|error| format!("could not record verify usage: {error}"))
+                .and_then(|()| {
+                    fs::read_to_string(&path)
+                        .map_err(|error| format!("could not read verify usage: {error}"))
+                })
+                .and_then(|text| usage(&text, &session, &selected.model, total))
+        })
+    } else {
+        false
+    };
     let result = close(connection, &id).await;
-    step(checks, "live close", result, Clone::clone);
+    if passed {
+        step(checks, "live close", result, Clone::clone);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn report_failure_skips_usage_execution() {
+        let checks = Checks::default();
+        let called = std::cell::Cell::new(false);
+        report_then_usage(&checks, Err("missing report".into()), || {
+            called.set(true);
+            Ok("recorded".into())
+        });
+        assert!(!called.get());
+        assert_eq!(checks.results().len(), 1);
+    }
 
     #[test]
     fn report_requires_one_exact_delivery() {

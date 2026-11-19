@@ -3,6 +3,7 @@ use crate::worker_verify::{step, Checks};
 use agent_client_protocol::schema::v1::{CloseSessionRequest, McpServerStdio};
 use ralph_core::worker::{CheckResult, AGY_AGENT};
 
+mod evidence;
 mod live;
 
 const STUB: &str = r#"import json, sys
@@ -203,6 +204,23 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
     {
         return;
     }
+    let evidence = if live {
+        match evidence::Evidence::create() {
+            Ok((evidence, path)) => {
+                println!("agy permission evidence: {}", path.display());
+                Some(evidence)
+            }
+            Err(error) => {
+                checks.add(CheckResult::fail(
+                    "evidence",
+                    format!("could not create permission evidence: {error}"),
+                ));
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let mut command = Command::new(AGY_AGENT.command);
     command.arg("acp").current_dir(dir);
     let spawned =
@@ -264,23 +282,37 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
                 },
                 agent_client_protocol::on_receive_notification!(),
             )
-            .connect_with(transport::streams(stdin, stdout, log), {
-                let (dir, checks) = (dir.to_path_buf(), checks.clone());
-                async move |connection| {
-                    run(
-                        connection,
-                        Run {
-                            dir,
-                            checks,
-                            version,
-                            updates,
-                            live,
-                            allow_report,
-                        },
-                    )
-                    .await
-                }
-            }),
+            .connect_with(
+                agent_client_protocol::ByteStreams::new(
+                    blocking::Unblock::new(evidence::Capture::new(
+                        stdin,
+                        evidence.clone(),
+                        "client_to_agent",
+                    )),
+                    blocking::Unblock::new(evidence::Capture::new(
+                        stdout,
+                        evidence.clone(),
+                        "agent_to_client",
+                    )),
+                ),
+                {
+                    let (dir, checks) = (dir.to_path_buf(), checks.clone());
+                    async move |connection| {
+                        run(
+                            connection,
+                            Run {
+                                dir,
+                                checks,
+                                version,
+                                updates,
+                                live,
+                                allow_report,
+                            },
+                        )
+                        .await
+                    }
+                },
+            ),
     );
     done.send(()).ok();
     watchdog.join().ok();
@@ -289,6 +321,24 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
         !exited_unreaped(&child)
     });
     let status = child.wait();
+    let failed = checks
+        .results()
+        .iter()
+        .any(|check| check.blocking && check.verdict != ralph_core::worker::Verdict::Pass);
+    if let Some(error) = evidence.and_then(|evidence| evidence.error()) {
+        if failed {
+            eprintln!("could not record permission evidence: {error}");
+        } else {
+            checks.add(CheckResult::fail(
+                "evidence",
+                format!("could not record permission evidence: {error}"),
+            ));
+        }
+        return;
+    }
+    if failed {
+        return;
+    }
     if timed_out.load(Ordering::SeqCst) {
         checks.add(CheckResult::fail(
             "timeout",
@@ -297,13 +347,12 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
                 ralph_core::worker::verify_limit(live).as_secs()
             ),
         ));
-    } else if let Err(error) = outcome {
+    } else if let Err(ref error) = outcome {
         checks.add(CheckResult::fail(
             "connection",
             format!("agy ACP connection failed: {error}"),
         ));
-    }
-    if exited && !matches!(status.as_ref(), Ok(status) if status.success()) {
+    } else if exited && !matches!(status.as_ref(), Ok(status) if status.success()) {
         checks.add(CheckResult::fail(
             "connection",
             format!("agy acp exited during verification: {status:?}"),
