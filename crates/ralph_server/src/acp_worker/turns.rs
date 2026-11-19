@@ -9,6 +9,8 @@ pub(super) struct Turns {
     pub(super) permissions: Arc<Permissions>,
     pub(super) session: SessionId,
     pub(super) worker_id: String,
+    pub(super) model: Option<String>,
+    pub(super) store: Option<PathBuf>,
     pub(super) markers: WorkerMarkers,
     pub(super) results: PathBuf,
     pub(super) inbox: Inbox,
@@ -226,12 +228,26 @@ pub(super) async fn run_turns(
         }
         let end = turn_end(&result, interrupted);
         turns.heartbeat.set_state(turn_end_activity(&end));
-        if let Some(changes) = turns
+        let turn_id = turns
             .changes
             .as_ref()
             .filter(|_| !turns.closing.load(Ordering::SeqCst))
-        {
-            changes.snapshot_turn_or_warn();
+            .and_then(WorkerChanges::snapshot_turn_or_warn);
+        if let (Some(model), Ok(response)) = (turns.model.as_deref(), &result) {
+            if turns.agent == AGY_AGENT {
+                let session = turns.session.to_string();
+                let target = agy_usage::Target {
+                    worker: &turns.worker_id,
+                    session: &session,
+                    model,
+                    store: turns.store.as_deref(),
+                    turn_id,
+                };
+                crate::warn::warn_if_err(
+                    agy_usage::record(&crate::chat::memory::usage_path(), &target, response),
+                    "Failed to record agy worker usage",
+                );
+            }
         }
         push_event(&turns.events, WorkerEvent::TurnEnded(end));
         let outcome = receipt_outcome(
@@ -357,5 +373,19 @@ mod tests {
         let receipt = dir.path().join("receipt");
         fs::create_dir(&receipt).unwrap();
         assert!(remove_if_present(&receipt).is_err());
+    }
+}
+
+#[cfg(test)]
+mod usage_response_tests {
+    #[test]
+    fn agy_prompt_response_preserves_turn_usage() -> Result<(), Box<dyn std::error::Error>> {
+        let response: agent_client_protocol::schema::v1::PromptResponse = serde_json::from_value(
+            serde_json::json!({"stopReason":"end_turn","usage":{"inputTokens":100,"outputTokens":20,"cachedReadTokens":30,"cachedWriteTokens":10,"thoughtTokens":5,"totalTokens":120}}),
+        )?;
+        let value = serde_json::to_value(response)?;
+        assert_eq!(value["usage"]["cachedReadTokens"], 30);
+        assert_eq!(value["usage"]["thoughtTokens"], 5);
+        Ok(())
     }
 }

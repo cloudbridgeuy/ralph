@@ -49,6 +49,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod agy_settings;
+pub(crate) mod agy_usage;
 mod agy_verify;
 mod cancel;
 mod cursor_worker;
@@ -402,9 +403,9 @@ impl AcpWorker {
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
                             Ok((session, settings)) => {
-                                if let Some(settings) = settings {
+                                if let Some(ref settings) = settings {
                                     if let Err(message) =
-                                        recovery::save(&opening, &session, &settings)
+                                        recovery::save(&opening, &session, settings)
                                     {
                                         connection
                                             .send_request(CloseSessionRequest::new(session))
@@ -422,6 +423,8 @@ impl AcpWorker {
                                     agent,
                                     session,
                                     worker_id,
+                                    model: settings.map(|settings| settings.model),
+                                    store: opening.inbox.parent().map(Path::to_path_buf),
                                     markers,
                                     results,
                                     inbox,

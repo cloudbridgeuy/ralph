@@ -14,7 +14,7 @@ name = "ralph_server"
 path = "src/lib.rs"
 
 [dependencies]
-agent-client-protocol = { workspace = true }
+agent-client-protocol = { workspace = true, features = ["unstable_end_turn_token_usage"] }
 blocking = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
