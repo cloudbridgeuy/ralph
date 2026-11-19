@@ -12,13 +12,21 @@ mod noise;
 mod plan;
 mod render;
 mod resume;
+mod steer;
 mod template;
+mod verify;
+mod verify_check;
+mod verify_drive;
+mod verify_limits;
+mod verify_mode;
+mod verify_tick;
 mod warnings;
 
 fn limits() -> Limits {
     Limits {
         max_turns: 3,
         max_usd: 1.0,
+        verify: VerifyMode::Off,
     }
 }
 
@@ -172,7 +180,8 @@ fn a_run_plan_parses_with_typed_steps_actions_and_grants() {
         Step {
             task: "collect evidence".to_string(),
             criterion: Criterion::WorkerDone {
-                worker: "E1".to_string()
+                worker: "E1".to_string(),
+                verify: None,
             },
         }
     );
@@ -196,7 +205,8 @@ fn missing_caps_fall_back_to_the_defaults() {
         plan.limits,
         Limits {
             max_turns: 3,
-            max_usd: 4.0
+            max_usd: 4.0,
+            verify: VerifyMode::Off
         }
     );
     assert_eq!(plan.judge_rounds, DEFAULT_JUDGE_ROUNDS);
@@ -400,6 +410,7 @@ fn a_check_runs_as_a_plain_watch_named_for_its_step() {
             kind: crate::watch::WatchKind::Normal,
             timeout: None,
             limit: None,
+            cwd: None,
         }
     );
 }
@@ -550,6 +561,7 @@ fn a_step_turn_counts_its_cost_and_waits_on_the_criterion() {
             driving: driving(0, Awaiting::Report("E1".to_string()), spent(2, 0.75)),
             next: Next::Hold("E1".to_string()),
             met: None,
+            notice: None,
         }
     );
     let check = tick(&driving(2, Awaiting::Turn, Run::default()), &ended(&file));

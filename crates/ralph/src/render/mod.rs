@@ -40,16 +40,15 @@ pub use wrap::{cap_wrap_width, wrap_width};
 
 // Re-export text rendering
 pub use text::{
-    render_code_block, render_diff_block, render_markdown, render_markdown_with, render_text_block,
+    render_code_block, render_diff_block, render_markdown, render_markdown_with,
+    render_text_block_with,
 };
 
 // Re-export tool renderer components
 pub use tool_renderers::{
-    ansi, render_bash_invocation, render_bash_result, render_content_block,
-    render_default_invocation, render_default_result, render_edit_before_after, render_edit_diff,
-    render_glob_invocation, render_glob_result, render_grep_invocation, render_grep_result,
-    render_no_changes_message, render_notebook_edit, render_read_invocation, render_read_result,
-    render_todowrite_invocation, render_todowrite_result, render_write_new_file,
-    render_write_no_changes, GrepInvocationParams, NotebookEditParams, RenderContext,
-    TodoDisplayItem,
+    ansi, render_bash_invocation, render_bash_result, render_default_invocation,
+    render_default_result, render_glob_invocation, render_glob_result, render_grep_invocation,
+    render_grep_result, render_read_invocation, render_read_result, render_todowrite_invocation,
+    render_todowrite_result, GrepInvocationParams, NotebookEditParams, RenderContext,
+    TodoDisplayItem, Viewport,
 };

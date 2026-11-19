@@ -91,6 +91,7 @@ mod tests {
                 kind: WatchKind::Persistent,
                 timeout: None,
                 limit: None,
+                cwd: None,
             },
             Utc::now(),
         )

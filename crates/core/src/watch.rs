@@ -1,6 +1,7 @@
 use crate::worker::Report;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::time::Duration;
 
 pub const WATCH_STATUS: &str = "watch";
@@ -33,6 +34,7 @@ pub struct WatchSpec {
     pub kind: WatchKind,
     pub timeout: Option<Duration>,
     pub limit: Option<Duration>,
+    pub cwd: Option<PathBuf>,
 }
 
 impl WatchSpec {
@@ -229,6 +231,7 @@ mod tests {
             kind: WatchKind::Normal,
             timeout: None,
             limit: None,
+            cwd: None,
         }
     }
 

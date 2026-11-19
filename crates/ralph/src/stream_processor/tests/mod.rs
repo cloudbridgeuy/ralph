@@ -34,3 +34,7 @@ mod grep_verbose;
 mod glob_verbose;
 
 mod step_result;
+
+mod block_parity;
+
+mod block_renderer;

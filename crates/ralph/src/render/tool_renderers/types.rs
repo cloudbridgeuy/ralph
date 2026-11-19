@@ -23,5 +23,5 @@ pub struct NotebookEditParams<'a> {
     pub cell_identifier: &'a str,
     pub cell_type: Option<&'a str>,
     pub edit_mode: &'a str,
-    pub diff_content: &'a str,
+    pub diff_content: Option<&'a str>,
 }

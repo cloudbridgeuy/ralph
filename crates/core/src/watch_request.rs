@@ -30,6 +30,7 @@ impl WatchRequest {
             },
             timeout: self.timeout_secs.map(Duration::from_secs),
             limit: self.timeout_secs.map(Duration::from_secs),
+            cwd: None,
         }
     }
 

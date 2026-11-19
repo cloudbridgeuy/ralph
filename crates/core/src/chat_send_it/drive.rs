@@ -1,10 +1,27 @@
 use super::*;
+use crate::worker::{branch_name, worktree_for_branch};
+use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Progress {
     pub step: usize,
     pub judge_rounds: u32,
     pub probing: bool,
+    pub verify: VerifyMode,
+    pub verifying: bool,
+}
+
+// verify is Off here: Progress defaults are plain unit state; start_run seeds the real mode from Limits.
+impl Default for Progress {
+    fn default() -> Self {
+        Progress {
+            step: 0,
+            judge_rounds: 0,
+            probing: false,
+            verify: VerifyMode::Off,
+            verifying: false,
+        }
+    }
 }
 
 pub struct Seen<'a> {
@@ -60,7 +77,7 @@ pub fn step_line(plan: &RunPlan, index: usize, step: &Step) -> String {
 
 fn wait_on(criterion: &Criterion) -> Next {
     match criterion {
-        Criterion::WorkerDone { worker } => Next::Hold(worker.clone()),
+        Criterion::WorkerDone { worker, .. } => Next::Hold(worker.clone()),
         Criterion::WatchPasses { command } => Next::Watch(command.clone()),
         Criterion::CheckPasses { command } => Next::Check(command.clone()),
         Criterion::Judge { .. } => Next::Judge,
@@ -76,12 +93,29 @@ fn begin(plan: &RunPlan, index: usize, step: &Step) -> Next {
     }
 }
 
+fn done_reported(plan: &RunPlan, progress: Progress, criterion: &Criterion) -> (Progress, Next) {
+    match criterion {
+        Criterion::WorkerDone {
+            verify: Some(command),
+            ..
+        } if progress.verify != VerifyMode::Off => (
+            Progress {
+                verifying: true,
+                ..progress
+            },
+            Next::Check(command.clone()),
+        ),
+        _ => step_met(plan, progress),
+    }
+}
+
 fn step_met(plan: &RunPlan, progress: Progress) -> (Progress, Next) {
     let index = progress.step + 1;
     match plan.steps.get(index) {
         Some(step) => (
             Progress {
                 step: index,
+                verify: progress.verify,
                 ..Progress::default()
             },
             begin(plan, index, step),
@@ -105,13 +139,21 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             } else if run.spent_usd >= limits.max_usd {
                 Next::Stop(StopReason::CostCap)
             } else {
-                wait_on(criterion)
+                match criterion {
+                    Criterion::WorkerDone {
+                        verify: Some(command),
+                        ..
+                    } if progress.verifying => Next::Check(command.clone()),
+                    _ => wait_on(criterion),
+                }
             };
             (progress, next)
         }
-        (Event::Report(report), Criterion::WorkerDone { worker }) if report.worker == *worker => {
+        (Event::Report(report), Criterion::WorkerDone { worker, .. })
+            if report.worker == *worker =>
+        {
             if report.status == "done" {
-                step_met(plan, progress)
+                done_reported(plan, progress, &step.criterion)
             } else {
                 unmet
             }
@@ -121,6 +163,13 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. },
         ) => {
             if *outcome == WatchOutcome::Exited(0) {
+                step_met(plan, progress)
+            } else {
+                (progress, Next::Stop(StopReason::check_failed(number)))
+            }
+        }
+        (Event::Watched(outcome), Criterion::WorkerDone { .. }) if progress.verifying => {
+            if *outcome == WatchOutcome::Exited(0) || progress.verify == VerifyMode::Observe {
                 step_met(plan, progress)
             } else {
                 (progress, Next::Stop(StopReason::check_failed(number)))
@@ -143,9 +192,9 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             } else {
                 (
                     Progress {
-                        step: progress.step,
                         judge_rounds,
                         probing: false,
+                        ..progress
                     },
                     Next::Send(format!(
                         "{}\njudge: not met: {evidence}",
@@ -195,6 +244,7 @@ pub struct Ticked {
     pub driving: Driving,
     pub next: Next,
     pub met: Option<String>,
+    pub notice: Option<String>,
 }
 
 const CHECK_ID: &str = "send-it-";
@@ -216,7 +266,42 @@ pub fn check_spec(step: usize, command: &str) -> WatchSpec {
         kind: WatchKind::Normal,
         timeout: None,
         limit: None,
+        cwd: None,
     }
+}
+
+pub fn verify_spec(step: usize, command: &str, cwd: PathBuf) -> WatchSpec {
+    WatchSpec {
+        cwd: Some(cwd),
+        ..check_spec(step, command)
+    }
+}
+
+pub fn verify_worker(plan: &RunPlan, progress: Progress) -> Option<&str> {
+    match plan.steps.get(progress.step).map(|step| &step.criterion) {
+        Some(Criterion::WorkerDone { worker, .. }) if progress.verifying => Some(worker),
+        _ => None,
+    }
+}
+
+pub fn resolve_check(
+    step: usize,
+    command: &str,
+    worker: Option<&str>,
+    porcelain: Option<&str>,
+) -> Result<WatchSpec, StopReason> {
+    let Some(worker) = worker else {
+        return Ok(check_spec(step, command));
+    };
+    porcelain
+        .and_then(|listing| verify_cwd(listing, worker))
+        .map(|cwd| verify_spec(step, command, cwd))
+        .ok_or_else(|| StopReason::CheckNotStarted {
+            step: step + 1,
+            error: format!(
+                "No worktree found for worker {worker}, so the verify command has no place to run."
+            ),
+        })
 }
 
 fn awaiting(next: &Next, progress: Progress) -> Awaiting {
@@ -233,8 +318,8 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
         return (progress, Next::Done);
     };
     match &step.criterion {
-        Criterion::WorkerDone { worker } => match seen.last.get(worker) {
-            Some(status) if status == "done" => step_met(plan, progress),
+        Criterion::WorkerDone { worker, .. } => match seen.last.get(worker) {
+            Some(status) if status == "done" => done_reported(plan, progress, &step.criterion),
             known if known.is_some() || seen.running.contains(worker) => {
                 (progress, Next::Hold(worker.clone()))
             }
@@ -258,6 +343,7 @@ pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
     let hash = plan_hash(&file.plan);
     let start = Progress {
         step: resume_step(file).map_or(0, |step| step - 1),
+        verify: file.plan.limits.verify,
         ..Progress::default()
     };
     let first = match resume_step(file) {
@@ -275,10 +361,22 @@ pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
         briefed: false,
         tally: Tally::default(),
     };
-    Some(Ticked { driving, next, met }.briefed_by(&file.plan))
+    Some(
+        Ticked {
+            driving,
+            next,
+            met,
+            notice: None,
+        }
+        .briefed_by(&file.plan),
+    )
 }
 
 impl Ticked {
+    fn noticing(self, notice: Option<String>) -> Ticked {
+        Ticked { notice, ..self }
+    }
+
     fn briefed_by(self, plan: &RunPlan) -> Ticked {
         match self.next {
             Next::Send(line) => {
@@ -287,6 +385,7 @@ impl Ticked {
                     driving,
                     next: Next::Send(line),
                     met: self.met,
+                    notice: self.notice,
                 }
             }
             next => Ticked { next, ..self },
@@ -414,6 +513,7 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         },
         next,
         met,
+        notice: None,
     };
     let file = match admitted(ended, &driving.hash) {
         Ok(file) => file,
@@ -436,8 +536,14 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         .map(|result| result.evidence.as_str());
     let met = (progress.step > driving.progress.step || decided == Next::Done)
         .then(|| met_line(plan, driving.progress.step, evidence));
+    let notice = ended
+        .watched
+        .filter(|_| awaits_check(driving))
+        .and_then(|outcome| would_block(driving.progress, outcome, ended.drained));
     if matches!(decided, Next::Done | Next::Stop(_)) {
-        return finish(run, progress, decided, met).recording(evidence);
+        return finish(run, progress, decided, met)
+            .noticing(notice)
+            .recording(evidence);
     }
     let next = match advance(plan, progress, Event::TurnEnded(&run)).1 {
         stop @ Next::Stop(_) => stop,
@@ -445,6 +551,7 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         _ => decided,
     };
     finish(run, progress, next, met)
+        .noticing(notice)
         .briefed_by(plan)
         .recording(evidence)
 }
@@ -470,6 +577,7 @@ pub fn settle_check(
         },
         next,
         met,
+        notice: None,
     };
     let plan = match current_plan(file, &driving.hash) {
         Ok(file) => &file.plan,
@@ -489,6 +597,7 @@ pub fn settle_check(
     };
     let met = (progress.step > driving.progress.step || decided == Next::Done)
         .then(|| met_line(plan, driving.progress.step, None));
+    let notice = would_block(driving.progress, outcome, reports);
     let next = match decided {
         Next::Done | Next::Stop(_) => decided,
         _ => match advance(plan, progress, Event::TurnEnded(&driving.run)).1 {
@@ -496,7 +605,32 @@ pub fn settle_check(
             _ => decided,
         },
     };
-    finish(progress, next, met).briefed_by(plan).recording(None)
+    finish(progress, next, met)
+        .noticing(notice)
+        .briefed_by(plan)
+        .recording(None)
+}
+
+fn would_block(progress: Progress, outcome: &WatchOutcome, reports: &[Report]) -> Option<String> {
+    (progress.verifying
+        && progress.verify == VerifyMode::Observe
+        && *outcome != WatchOutcome::Exited(0))
+    .then(|| {
+        let source = check_watch_id(progress.step);
+        let report = reports.iter().find(|report| report.worker == source);
+        would_block_line(progress.step, &check_detail(outcome, report))
+    })
+}
+
+pub fn would_block_line(step: usize, detail: &str) -> String {
+    format!(
+        "send-it: step {} would block: verify failed: {detail}",
+        step + 1
+    )
+}
+
+pub fn verify_cwd(porcelain: &str, worker: &str) -> Option<PathBuf> {
+    worktree_for_branch(porcelain, &branch_name(worker))
 }
 
 fn met_line(plan: &RunPlan, step: usize, evidence: Option<&str>) -> String {

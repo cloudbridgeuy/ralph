@@ -169,7 +169,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [I/O Patterns](docs/context/rust-cli-io.md) - stdin/stdout handling, terminal detection, async I/O
 - [Environment Configuration](docs/context/rust-cli-env-config.md) - Env vars, secrets, config precedence
 - [Project Structure](docs/context/rust-cli-project-structure.md) - Workspace setup, xtask, module organization
-- [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks, block-buffered prose, table enhancement
+- [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - core StreamCollector, BlockRenderer, output blocks, block-buffered prose, table enhancement
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage

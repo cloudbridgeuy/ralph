@@ -126,6 +126,16 @@ mod tests {
     }
 
     #[test]
+    fn a_bad_send_it_verify_is_an_error_and_a_good_one_is_not() {
+        let bad = errors("[chat]\nsend_it_verify = \"strict\"\n");
+        assert_eq!(bad.len(), 1, "{bad:?}");
+        assert!(bad[0].contains("send_it_verify"), "{bad:?}");
+        for mode in ["off", "observe", "enforce"] {
+            assert!(errors(&format!("[chat]\nsend_it_verify = \"{mode}\"\n")).is_empty());
+        }
+    }
+
+    #[test]
     fn mermaid_style_values_are_checked_and_its_config_is_free_form() {
         assert_eq!(
             errors("[mermaid.style]\nfont_size = 0.0\n"),

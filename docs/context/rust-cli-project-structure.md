@@ -461,7 +461,7 @@ myapp/
 
 ## Splitting Large Modules
 
-When a module exceeds ~500-1000 lines, split it into a directory structure for better maintainability and LLM parsing. This pattern is used for `startup/`, `stream_processor/`, and `subprocess/` modules.
+When a module exceeds ~500-1000 lines, split it into a directory structure for better maintainability and LLM parsing. This pattern is used for `startup/`, `stream_processor/`, and `ralph_server`'s `subprocess/` modules.
 
 **When to split:**
 - File exceeds 500-1000 lines

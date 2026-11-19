@@ -58,13 +58,13 @@ The hash follows the content of the plan, not its layout. Any change to the cont
 
 Each step has one criterion. The run goes to the next step only when the criterion is met.
 
-- `worker_done { worker }`: the worker reports `done`. Any other report status from that worker stops the run.
+- `worker_done { worker }`: the worker reports `done`. Any other report status from that worker stops the run. It takes an optional `verify` command that should exit 0 to confirm the claim; the plan view shows it on the exit line. A blank `verify`, or a `verify` that is not null on any other kind, is refused with `Step N: verify is only for worker_done`. Other unknown keys in a criterion are ignored. ralph runs it after the worker reports `done`; see [Verify a done report](#verify-a-done-report).
 - `check_passes { command }` and `watch_passes { command }`: ralph alone runs the command as a watch, with no model turn. The model never sees the step line and does not run the command. The step is met when the command exits 0. Any other result stops the run as `CheckFailed`, and the notice names the exit code and the last lines of the output. If the watch cannot start, the run stops with a notice that says the check could not start and names the error. Put any work the check needs in an earlier step.
 - `judge { question }`: the model answers the question with "met" or "not met" and one line of evidence. See [Judge steps](#judge-steps).
 
 A question or a blocked report from any worker stops the run, unless the plan allows `reply` and the model replied to that worker in the turn that read the report. A report that arrives during a turn and is not read yet still stops it. If the plan does not allow `reply`, ralph refuses the model's reply, so the worker gets no answer, and the run stops.
 
-A plan with a `worker_done` step and no `reply` action shows one `Warning:` line per such step, after the `Allowed:` and `Not allowed:` lines, before `Caps:`, in the plan view and in the `propose_run` result. The warning does not block approval.
+A plan with a `worker_done` step and no `reply` action shows one `Warning:` line per such step, after the `Allowed:` and `Not allowed:` lines, before `Caps:`, in the plan view and in the `propose_run` result. The warning does not block approval. A plan where every step uses a `judge` criterion also shows one plan-level `Warning:` line, because each judge round costs one model turn; `check_passes` and `watch_passes` cost $0. A plan that mixes criterion kinds does not get this line.
 
 ## Judge steps
 
@@ -76,7 +76,7 @@ If the answer is "not met", or the model gives no answer, that is a failed round
 
 Each run has a turn cap and a cost cap. When the run reaches a cap, it stops.
 
-- The plan sets the caps in `[caps]`. A plan with no caps uses `[chat] send_it_max_turns` (default 15) and `[chat] send_it_max_usd` (default 5.0). See [configuration](../configuration.md).
+- The plan sets the caps in `[caps]`. A plan with no caps uses `[chat] send_it_max_turns` (default 15) and `[chat] send_it_max_usd` (default 5.0). `[chat] send_it_verify` (`off`, `observe` or `enforce`, default `observe`) sets how `verify` commands count; a bad value is an error in `ralph config check`. The mode comes from the current config each time a run starts or resumes. ralph never stores it in `run.toml`, and it does not change the plan hash. See [configuration](../configuration.md).
 - A grant (`turn_cap` or `cost_cap`) replaces that cap. The plan shows grants in a separate "You pre-approve" block, so you see them before you approve. A plan with no grants has no such block.
 - These turns count toward the turn cap: step turns, judge turns, and report turns that settle nothing.
 - The turn that reads a worker report and settles its step does not count.
@@ -154,3 +154,20 @@ ralph refuses:
 - a tool that the approved plan does not allow, during a run. This includes a reply to a worker question in the turn that reads the report.
 
 For the exact messages, see [ralph chat: /send-it](ralph-chat.md#send-it).
+
+## Verify a done report
+
+A `worker_done` step can carry a `verify` command. When the worker reports `done`, ralph runs the command before it counts the step as met. `[chat] send_it_verify` sets what a failure does.
+
+- `off`: ralph ignores `verify`. The `done` report meets the step.
+- `observe` (default): ralph runs the command. If it fails, the step still counts as met. ralph writes one line to the chat log: `send-it: step N would block: verify failed: <detail>`.
+- `enforce`: ralph runs the command. If it does not exit 0, the run stops with the check failure for that step.
+
+Where the command runs:
+
+- The command runs in the worktree of the worker that reported `done`. ralph finds it with one `git worktree list --porcelain` call and the branch of that worker.
+- If ralph finds no worktree for that worker, the run stops as a check that could not start. ralph does not guess a directory.
+- The check runs in the worker's worktree. If the worker was closed, the worktree is gone, and the run stops as `CheckNotStarted` even in `observe` mode.
+- The command uses the existing watch timeout. A timeout counts as a failed command.
+
+The mode is never stored in `run.toml`. A run that stops and resumes uses the mode in the config at the time of the resume. A resume that finds the worker already `done` verifies under that mode.

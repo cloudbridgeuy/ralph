@@ -7,9 +7,10 @@ use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
 use ralph_core::shell_format::{format_fence, is_shell_fence};
-use termimad::terminal_size;
 
-use super::image::{render_with_markers, ImageBounds};
+use ralph_core::stream::blocks::ImageFile;
+
+use super::image::{disk_image, render_with_markers, ImageBounds};
 use super::link::{mark_links, paint_links};
 pub(crate) use super::wrap::render_prose;
 use super::wrap::wrap_width;
@@ -21,26 +22,36 @@ pub fn render_text_block(
     chunk: &ParsedChunk,
     markdown: Option<&MarkdownTheme>,
 ) -> String {
+    render_text_block_with(ctx, chunk, markdown, &disk_image)
+}
+
+pub fn render_text_block_with(
+    ctx: &RenderContext<'_>,
+    chunk: &ParsedChunk,
+    markdown: Option<&MarkdownTheme>,
+    lookup: &dyn Fn(&str) -> Option<ImageFile>,
+) -> String {
     match &chunk.chunk_type {
         ChunkType::Prose => {
             let styled = markdown.filter(|_| ctx.terminal);
+            let width = wrap_width(ctx.viewport.termimad_size().0.into());
             match ctx.images {
                 None => styled.map_or_else(
                     || chunk.content.clone(),
-                    |theme| render_styled_prose(theme, &chunk.content),
+                    |theme| render_styled_prose(theme, &chunk.content, width),
                 ),
                 Some(images) => {
-                    let bounds = ImageBounds::current();
+                    let bounds = ImageBounds::from(ctx.viewport);
                     let content = if images.placement == Placement::Tmux {
                         strip_kitty_apc(&chunk.content)
                     } else {
                         chunk.content.clone()
                     };
                     apc_in_place(&content, |piece| {
-                        render_with_markers(piece, images, bounds, |text| {
+                        render_with_markers(piece, images, bounds, lookup, |text| {
                             styled.map_or_else(
                                 || text.to_string(),
-                                |theme| render_styled_prose(theme, text),
+                                |theme| render_styled_prose(theme, text, width),
                             )
                         })
                     })
@@ -83,8 +94,7 @@ fn apc_in_place(content: &str, render_text: impl Fn(&str) -> String) -> String {
     out
 }
 
-fn render_styled_prose(theme: &MarkdownTheme, text: &str) -> String {
-    let width = wrap_width(terminal_size().0.into());
+fn render_styled_prose(theme: &MarkdownTheme, text: &str, width: usize) -> String {
     let rendered = render_prose(&theme.skin, &mark_links(text), width);
     paint_links(&enhance_tables(&rendered), &theme.palette)
 }
@@ -267,6 +277,7 @@ fn render_directive_block(
 mod tests {
     use super::*;
     use crate::highlight::{Highlighter, ThemeConfig};
+    use crate::render::Viewport;
 
     fn create_test_context() -> (Highlighter, MarkdownTheme) {
         let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
@@ -275,6 +286,33 @@ mod tests {
     }
 
     const APC: &str = "\x1b_Gf=100,a=T;QQ==\x1b\\";
+
+    fn prose_at(cols: u16) -> String {
+        let (highlighter, skin) = create_test_context();
+        let mut ctx =
+            RenderContext::terminal(&highlighter).with_viewport(Viewport::fixed(cols, 24));
+        ctx.images = None;
+        let chunk = ParsedChunk::prose(format!("{}\n", "word ".repeat(40)));
+        render_text_block(&ctx, &chunk, Some(&skin))
+    }
+
+    #[test]
+    fn prose_wraps_at_the_viewport_width() {
+        let (_, skin) = create_test_context();
+        for cols in [60, 100] {
+            let text = format!("{}\n", "word ".repeat(40));
+            let expected = paint_links(
+                &enhance_tables(&render_prose(
+                    &skin.skin,
+                    &mark_links(&text),
+                    wrap_width(cols.into()),
+                )),
+                &skin.palette,
+            );
+            assert_eq!(prose_at(cols), expected);
+        }
+        assert_ne!(prose_at(60), prose_at(100));
+    }
 
     #[test]
     fn animation_commands_remain_adjacent_on_replay() {

@@ -313,6 +313,8 @@ pub struct ChatSection {
     #[serde(default = "default_send_it_max_usd")]
     pub send_it_max_usd: f64,
     #[serde(default)]
+    pub send_it_verify: Option<String>,
+    #[serde(default)]
     pub editor: Option<EditorSetting>,
     #[serde(default)]
     pub edit_mode: Option<String>,
@@ -382,6 +384,7 @@ impl Default for ChatSection {
             resume_summary: true,
             send_it_max_turns: default_send_it_max_turns(),
             send_it_max_usd: default_send_it_max_usd(),
+            send_it_verify: None,
             editor: None,
             edit_mode: None,
             empty_submit: None,

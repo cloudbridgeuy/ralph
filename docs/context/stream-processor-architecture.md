@@ -4,77 +4,53 @@ The `stream_processor` module handles real-time parsing and rendering of Claude 
 
 ## Module Structure
 
+Collecting lives in `ralph_core` (no terminal crates); rendering lives in `ralph`.
+
 ```
-stream_processor/
-├── mod.rs                 # Module exports
-├── processor.rs           # StreamProcessor struct and builder
-├── event_handler.rs       # Event processing logic
-├── result_handlers.rs     # Tool result handler functions
-├── output_block.rs        # Output block types
-├── block_builders.rs      # Functions to build output blocks
-├── tool_display/          # Tool invocation formatters
-│   ├── mod.rs
-│   ├── bash.rs
-│   ├── grep.rs
-│   ├── glob.rs
-│   ├── read.rs
-│   └── todowrite.rs
-├── tool_results/          # Tool result formatters
-│   ├── mod.rs
-│   ├── bash.rs
-│   ├── edit.rs
-│   ├── grep.rs
-│   ├── glob.rs
-│   ├── read.rs
-│   ├── todowrite.rs
-│   └── write.rs
-├── types.rs               # Configuration and type definitions
-└── utils.rs               # Utility functions
+ralph_core::stream::blocks (crates/core/src/stream/blocks/)
+├── collector.rs           # StreamCollector: stream-json lines to OutputBlocks
+├── files.rs               # Files trait: read_text, exists, image
+├── output_block.rs        # OutputBlock and its variants
+├── result_handlers.rs     # build_result_block: tool result to output block
+├── block_builders.rs      # Invocation blocks and the Write result variant
+├── snapshot_capture.rs    # Edit, Write and NotebookEdit snapshots
+├── diff.rs, utils.rs      # Pure helpers
+└── types.rs               # StreamProcessorResult, VerboseToolsConfig, snapshots
+
+ralph::stream_processor (crates/ralph/src/stream_processor/)
+├── block_renderer.rs      # BlockRenderer: blocks to screen text, owns theme and separators
+├── render_block.rs        # render_block: one output block to screen text
+├── tool_results/          # Edit, Write and NotebookEdit formatters, tool errors
+└── processor.rs           # StreamProcessor: collector + renderer (tests only)
 ```
 
 ## Key Patterns
 
-### StreamProcessorBuilder
+### Collect, Then Render
 
-Use the builder pattern for constructing `StreamProcessor` instances:
+`StreamCollector::process_line` parses a line and returns the new `OutputBlock`s;
+`finish` flushes buffered prose and returns the last blocks plus a
+`StreamProcessorResult`. It does no rendering. `BlockRenderer::render` turns
+blocks into screen text through `render_block`, so the screen text is a pure
+function of the blocks. `tests/block_parity.rs` checks this for every tool path
+and text chunk. `StreamProcessor` (collector + renderer) exists for tests only.
 
-```rust
-use ralph::stream_processor::StreamProcessorBuilder;
-use ralph::highlight::ThemeConfig;
+### Files Trait
 
-let processor = StreamProcessorBuilder::new()
-    .highlighting(true)
-    .show_tools(true)
-    .theme_config(ThemeConfig::new().with_theme("Monokai Extended"))
-    .verbose_tools(VerboseToolsConfig::all())
-    .build()?;
-```
-
-The builder provides sensible defaults:
-- `highlighting`: Defaults to terminal detection
-- `show_tools`: Defaults to the highlighting setting
-- `theme_config`: Defaults to built-in theme
-- `verbose_tools`: Defaults to none
+All file access during collection goes through `Files`. `ralph` passes
+`DiskFiles`; `ralph_core` never touches the filesystem. Images referenced in
+markdown are read at collect time: `TextBlock.images` holds an `ImageFile`
+(path, resolved path, bytes). It is `serde(skip)`, so stored blocks carry no
+image bytes. Ceiling: `DiskFiles` reads at most 10 MiB per image; a larger or
+unreadable file gives `bytes: None`. Rendering never reads a file.
 
 ### render_context() Helper
 
-When formatting tool output, use the `render_context()` method instead of manually checking the highlighting flag:
-
-```rust
-// Good - use the helper
-let output = render_grep_invocation(&processor.render_context(), &params);
-
-// Avoid - duplicates the conditional pattern
-let ctx = if processor.highlighting_enabled {
-    RenderContext::terminal(&processor.code_highlighter)
-} else {
-    RenderContext::plain(&processor.code_highlighter)
-};
-```
+When formatting tool output, use `BlockRenderer::render_context()` instead of manually checking the highlighting flag.
 
 ### ToolResultVariant Pattern
 
-The `ToolResultVariant` enum has 13 variants, one for each tool type that requires specialized result handling:
+The `ToolResultVariant` enum has 14 variants. Each holds the data that its screen text needs:
 
 | Variant | Tool | Purpose |
 |---------|------|---------|
@@ -89,43 +65,25 @@ The `ToolResultVariant` enum has 13 variants, one for each tool type that requir
 | `Grep` | Grep | Search results with match count |
 | `Glob` | Glob | File list with truncation |
 | `TodoWrite` | TodoWrite | Task list confirmation |
-| `NotebookEdit` | NotebookEdit | Jupyter cell diff |
+| `NotebookEdit` | NotebookEdit | Jupyter cell diff, or no changes |
+| `ToolError` | Read, Grep, Glob | Verbose tool error |
 | `Default` | Other | Generic content display |
 
 ### Adding a New Tool
 
 When adding support for a new tool:
 
-1. Add a variant to `ToolResultVariant` in `output_block.rs`
-2. Add a builder function in `block_builders.rs`
-3. Add a handler function in `result_handlers.rs`
-4. Add a case to the match in `event_handler.rs`
-5. Add formatter functions in `tool_display/` and `tool_results/`
-
-### Result Handlers
-
-Each tool type has a dedicated handler function in `result_handlers.rs`:
-
-```rust
-pub fn handle_grep_result(
-    processor: &StreamProcessor,
-    result: &ToolResult,
-    invocation: &ToolInvocation,
-) -> ToolResultOutput {
-    let formatted = tool_results::format_tool_result_with_context(...);
-    let block = build_grep_result_block(...);
-    ToolResultOutput { formatted, block }
-}
-```
-
-Handlers return `ToolResultOutput` containing both the formatted display string and the output block.
+1. Add a variant to `ToolResultVariant` in `output_block.rs` (core)
+2. Fill it in `build_result_block` in `result_handlers.rs` (collect side: file reads go through `Files`)
+3. Render it in `render_result` in `render_block.rs` (render side: no I/O)
+4. Add a case to `tests/block_parity.rs`
 
 ## Parameter Extraction
 
 For tools with many parameters (like Grep), use dedicated parameter structs:
 
 ```rust
-// In types.rs
+// In ralph_core types.rs
 pub struct GrepParams {
     pub pattern: String,
     pub path: Option<String>,
@@ -167,31 +125,42 @@ Code fences render through `render_code_block` (`render/text.rs`). Shell fences 
 
 ### Flush points
 
-Buffered prose is flushed (rendered and emitted) at these points:
+Buffered prose is flushed (collected as blocks) at these points:
 
 1. **New assistant message** — when a different `message_id` arrives, the previous message's prose is flushed before processing the new one
 2. **Tool invocation** — prose is flushed before tool invocation display, so text appears in the correct order
 3. **Code fence** — the `StreamingChunkBuffer` flushes accumulated prose when a code fence opens
-4. **`finish()`** — any remaining prose is flushed via `final_output` in `StreamProcessorResult`
+4. **`finish()`** — any remaining prose is flushed and returned as the last blocks
 
-### final_output
+## Turn Events
 
-`StreamProcessorResult.final_output` contains the last rendered prose from `finish()`. Callers (spinner, timeout) must `print!` this value before returning the result.
+`Pump` (`crates/ralph_server/src/subprocess/spinner.rs`) collects with a `StreamCollector` and does not render or print. The client sets `SpinnerSubprocessConfig::show_tools` and `terminated`; `DiskFiles` (`crates/ralph_server/src/disk_files.rs`) is the `Files` impl backed by the filesystem. It emits `ralph_core::turn_event::TurnEvent`s to the `TurnSink` in `SpinnerSubprocessConfig::sink`; `ralph_server::chat::turn::Turn` emits to the same sink.
+
+| Event | Sent when | `TerminalSink` does |
+| --- | --- | --- |
+| `Busy(Wait)` | a shown pump starts; Turn waits for the session lock or a nap | starts a spinner on a fresh clock |
+| `Resume(Wait)` | output stops for `DEFAULT_GAP_THRESHOLD_MS` (`Wait::after_gap`: `Tool` with a pending tool, else `Thinking`) | restarts the spinner on the same clock |
+| `Idle` | before output, on pause, at finish, on drop | stops the spinner and clears its line |
+| `Blocks(Vec<OutputBlock>)` | the collector yields blocks (also at finish) | its `BlockRenderer` renders them; writes the text to stdout through the gate |
+| `Stderr(String)` | a shown pump reads a child stderr line | writes it to stderr through the gate |
+| `Rule`, `Warning(String)` | Turn draws a rule or warns | writes the themed rule at the chat width, or a warning line on stderr |
+
+A silent pump (pings, the memory curator) emits nothing. The spinner thread still writes stdout directly, past the gate. Pump keeps the `OutputGate` only for the hold-panel pause and settle handshake: it emits `Idle`, then settles. `Blocks` carries data; only the sink renders it.
 
 ## Directive-Aware Streaming
 
 Prose chunks are scanned for directive tags (`<ralph-{verb} to="...">...</ralph-{verb}>`) during both line-by-line streaming and flush processing. When directives are found, `split_text_around_directives()` splits the prose into alternating `Prose` and `Directive` sub-chunks.
 
 - `Directive` chunks carry `verb` and `target` metadata alongside the payload content
-- The stream processor renders them as styled one-liners: `→ target (verb): "payload"`
+- The renderer renders them as styled one-liners: `→ target (verb): "payload"`
 - Directive blocks receive trailing newlines matching code/diff block behavior
 - In `extract_response_text()`, directive chunks are reconstructed back to XML tags
 
-The splitting happens in `event_handler.rs` at both streaming sites (line processing and flush). The reconstruction happens in `output_block.rs::text_block_to_response_text()`.
+The splitting happens in `collector.rs` at both streaming sites (line processing and flush). The reconstruction happens in `output_block.rs::text_block_to_response_text()`.
 
 ## Shared Markdown Skin
 
-`markdown.rs` owns terminal markdown styling. A `Palette` holds every color for one role (assistant or agent); the `RolePalette` trait's `palette` method on `RoleTheme` resolves it purely from the role default plus `[theme.<role>]` overrides and returns warnings. `MarkdownTheme` pairs the `Palette` with its `MadSkin` (`markdown_skin`). `StreamProcessor` builds the assistant `MarkdownTheme` from `ThemeConfig::palette()`; the chat shell builds the agent one for `/inbox`. `render_text_block` and `render_markdown` take a `MarkdownTheme`.
+`markdown.rs` owns terminal markdown styling. A `Palette` holds every color for one role (assistant or agent); the `RolePalette` trait's `palette` method on `RoleTheme` resolves it purely from the role default plus `[theme.<role>]` overrides and returns warnings. `MarkdownTheme` pairs the `Palette` with its `MadSkin` (`markdown_skin`). `BlockRenderer` builds the assistant `MarkdownTheme` from `ThemeConfig::palette()`; the chat shell builds the agent one for `/inbox`. `render_text_block` and `render_markdown` take a `MarkdownTheme`.
 
 ## Table Enhancement
 

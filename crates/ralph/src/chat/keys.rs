@@ -8,12 +8,12 @@ use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
 use crate::signal;
-use crate::subprocess::OutputGate;
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
+use ralph_server::subprocess::OutputGate;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::locked;
 use reedline::{EditCommand, Reedline, Signal};
@@ -210,7 +210,7 @@ impl Keys<'_> {
             EditorExit::Submitted(text) => match self.instant_route(&text) {
                 Some(route) => {
                     warn_if_err(
-                        run_local(route, self.local, || {
+                        run_local(route, self.local, &mut std::io::stdout(), || {
                             self.monitor.refresh(true);
                         }),
                         "Failed to run the command",

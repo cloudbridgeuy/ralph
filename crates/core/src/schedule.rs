@@ -212,6 +212,7 @@ pub fn to_watch_spec(task: &Task, now: DateTime<Utc>, offset: FixedOffset) -> Op
         kind: WatchKind::Normal,
         timeout,
         limit: timeout,
+        cwd: None,
     })
 }
 

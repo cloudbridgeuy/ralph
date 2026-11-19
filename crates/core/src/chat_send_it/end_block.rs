@@ -438,6 +438,10 @@ impl Ticked {
     pub fn shown_met(&self) -> Option<&str> {
         self.met.as_deref().filter(|_| self.next != Next::Done)
     }
+
+    pub fn shown_lines(&self) -> impl Iterator<Item = &str> {
+        self.notice.as_deref().into_iter().chain(self.shown_met())
+    }
 }
 
 const GO_LINE: &str = "/send-it go";

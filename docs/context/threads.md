@@ -29,6 +29,7 @@ The purpose is to let a thread run a less frontier model, to test whether it is 
 
 - Accepted values: `sonnet`, `opus`, `haiku`, or an id that starts with `claude-`. Anything else is an error; there is no fallback.
 - The model is chosen at open or reopen and stored in `thread.json`. A later `--model` replaces it. Without `--model`, the stored one stays.
+- The status bar of the thread's chat shows the model alias in a cell after the thread cell (`thread <name> │ haiku`). After its first turn the cell shows the resolved id, for example `claude-haiku-4-5`.
 - It is refused while the thread's chat is open. Close that chat first.
 - Revive, switch, pull and park keep it.
 - Only the thread's chat turns use it. Nap, the merge curator and the tag pass stay on haiku. Main chat is unchanged.

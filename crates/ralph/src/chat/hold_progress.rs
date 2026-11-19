@@ -1,5 +1,4 @@
 use crate::chat::bounded::stdout_within;
-use crate::chat::prompt::terminal_columns;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_hold_progress::{
     held_ids, last_hint, lines, rebase_progress, redraw, HoldProgress,
@@ -11,7 +10,7 @@ use ralph_core::worker::{
 use ralph_server::config::AppConfig;
 use ralph_server::snapshot::{base_with, ORIGIN_HEAD_ARGS};
 use ralph_server::workers::running_workers;
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -78,38 +77,31 @@ impl HoldPanel {
         self.rendered(width) != self.shown
     }
 
-    pub(super) fn paint(&mut self, bar: &str, width: usize) {
+    pub(super) fn paint(&mut self, bar: &str, width: usize, terminal: usize, out: &mut dyn Write) {
         let rendered = self.rendered(width);
-        self.write(&rendered, bar);
+        self.write(&rendered, bar, terminal, out);
         self.shown = rendered;
         self.bar = bar.to_string();
         self.painted = width;
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(super) fn clear(&mut self, terminal: usize, out: &mut dyn Write) {
         if self.shown.is_empty() {
             return;
         }
         let bar = self.bar.clone();
-        self.write(&[], &bar);
+        self.write(&[], &bar, terminal, out);
         self.shown.clear();
     }
 
-    fn write(&self, rendered: &[String], bar: &str) {
-        let mut out = io::stdout();
-        let frame = redraw(
-            rendered,
-            self.shown.len(),
-            bar,
-            self.painted,
-            terminal_columns(),
-        );
+    fn write(&self, rendered: &[String], bar: &str, terminal: usize, out: &mut dyn Write) {
+        let frame = redraw(rendered, self.shown.len(), bar, self.painted, terminal);
         let _ = write!(out, "{frame}");
         let _ = out.flush();
     }
 }
 
-fn git_out(dir: Option<&Path>, args: &[&str]) -> Option<String> {
+pub(super) fn git_out(dir: Option<&Path>, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     command.arg("--no-optional-locks");
     if let Some(dir) = dir {
@@ -210,4 +202,34 @@ fn commits_since(tree: &Path, base: &str) -> Option<u32> {
     )?
     .parse()
     .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paint_then_clear_write_the_redraw_frames_at_the_given_terminal_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut panel = HoldPanel::new(false, &HoldFilter::Any, false, dir.path());
+        panel.facts = vec![HoldProgress {
+            id: "w1".to_string(),
+            elapsed_secs: 0,
+            activity: None,
+            rebase: None,
+            commits: Some(2),
+            hint: None,
+        }];
+        let mut out = Vec::new();
+        panel.paint("bar", 60, 80, &mut out);
+        let shown = panel.shown.clone();
+        assert!(!shown.is_empty());
+        panel.clear(80, &mut out);
+        let painted = redraw(&shown, 0, "bar", 0, 80);
+        let cleared = redraw(&[], shown.len(), "bar", 60, 80);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            format!("{painted}{cleared}")
+        );
+    }
 }

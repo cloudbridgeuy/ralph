@@ -26,6 +26,7 @@ fn watch_states_report_the_time_left() {
         kind: WatchKind::Normal,
         timeout: None,
         limit: None,
+        cwd: None,
     };
     let saved = [
         SavedWatch::new(&spec("w1", "sleep 90"), now),
@@ -57,6 +58,7 @@ fn watch_states_are_equal_one_second_apart_at_twelve_minutes() {
         kind: WatchKind::Normal,
         timeout: None,
         limit: None,
+        cwd: None,
     };
     let saved = [SavedWatch::new(&spec, now)];
     let at = |secs| watch_states(&saved, now + chrono::Duration::seconds(secs));

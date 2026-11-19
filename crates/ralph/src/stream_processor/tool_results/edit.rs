@@ -9,17 +9,11 @@
 //! 3. Display after block (new_string) with green background + syntax highlighting
 //! 4. Fall back to unified diff if old_string/new_string unavailable
 
-use std::fs;
-
-use similar::{ChangeTag, TextDiff};
-
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::render::ansi;
-use ralph_core::stream::ToolInvocation;
 
-use super::super::processor::StreamProcessor;
-use super::super::types::EditSnapshot;
-use super::super::utils::extract_language_from_path;
+use crate::render::extract_language_from_path;
+use crate::render::RenderContext;
 
 /// Maximum lines to show in a before/after block before truncating.
 const MAX_BLOCK_LINES: usize = 30;
@@ -27,47 +21,23 @@ const MAX_BLOCK_LINES: usize = 30;
 /// Maximum lines to show in a unified diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
 
-/// Format an Edit tool result using before/after display from snapshot.
-///
-/// This is called when we have captured a snapshot before the edit.
-/// It uses old_string/new_string for before/after display, falling back
-/// to unified diff if those are unavailable.
-pub fn format_edit_result_with_snapshot(
-    processor: &StreamProcessor,
-    snapshot: EditSnapshot,
+pub fn format_before_after(
+    ctx: &RenderContext,
+    file_path: &str,
+    old_str: &str,
+    new_str: &str,
 ) -> String {
-    // Prefer before/after display if old_string and new_string are available
-    if snapshot.old_string.is_some() || snapshot.new_string.is_some() {
-        return format_before_after_display(processor, &snapshot);
-    }
-
-    // Fall back to unified diff from file content comparison
-    if let Some(diff_content) = generate_diff_from_snapshot(&snapshot) {
-        format_diff_output(processor, &snapshot.file_path, &diff_content)
+    let language = extract_language_from_path(file_path);
+    if ctx.terminal {
+        format_before_after_highlighted(ctx, file_path, old_str, new_str, language)
     } else {
-        // No changes or couldn't read file - show simple success message
-        format_no_changes_message(processor, &snapshot.file_path)
-    }
-}
-
-/// Format the before/after display with syntax highlighting and colored backgrounds.
-fn format_before_after_display(processor: &StreamProcessor, snapshot: &EditSnapshot) -> String {
-    let old_str = snapshot.old_string.as_deref().unwrap_or("");
-    let new_str = snapshot.new_string.as_deref().unwrap_or("");
-
-    // Detect language from file path
-    let language = extract_language_from_path(&snapshot.file_path);
-
-    if processor.highlighting_enabled {
-        format_before_after_highlighted(processor, &snapshot.file_path, old_str, new_str, language)
-    } else {
-        format_before_after_plain(&snapshot.file_path, old_str, new_str)
+        format_before_after_plain(file_path, old_str, new_str)
     }
 }
 
 /// Format before/after blocks with syntax highlighting and colored backgrounds.
 fn format_before_after_highlighted(
-    processor: &StreamProcessor,
+    ctx: &RenderContext,
     file_path: &str,
     old_str: &str,
     new_str: &str,
@@ -78,34 +48,34 @@ fn format_before_after_highlighted(
     // File path header with box drawing
     output.push_str(&format!(
         "{}── {} ──{}\n",
-        processor.tool_colors.name_fg(),
+        ctx.tools.name_fg(),
         file_path,
         ansi::RESET
     ));
 
     // Before block
     output.push_str(&format_highlighted_block(
-        processor,
+        ctx,
         "Before:",
         old_str,
         language,
-        &ansi::bg(Some(processor.diff_colors.del_bg)),
+        &ansi::bg(Some(ctx.diff.del_bg)),
     ));
 
     // Horizontal separator
     output.push_str(&format!(
         "{}─────────────────────────{}\n",
-        processor.tool_colors.label_fg(),
+        ctx.tools.label_fg(),
         ansi::RESET
     ));
 
     // After block
     output.push_str(&format_highlighted_block(
-        processor,
+        ctx,
         "After:",
         new_str,
         language,
-        &ansi::bg(Some(processor.diff_colors.add_bg)),
+        &ansi::bg(Some(ctx.diff.add_bg)),
     ));
 
     output
@@ -113,7 +83,7 @@ fn format_before_after_highlighted(
 
 /// Format a single highlighted block (before or after) with background color.
 fn format_highlighted_block(
-    processor: &StreamProcessor,
+    ctx: &RenderContext,
     label: &str,
     content: &str,
     language: Option<&'static str>,
@@ -124,18 +94,14 @@ fn format_highlighted_block(
     // Label
     output.push_str(&format!(
         "{}{}{}\n",
-        processor.tool_colors.label_fg(),
+        ctx.tools.label_fg(),
         label,
         ansi::RESET
     ));
 
     // Handle empty content
     if content.is_empty() {
-        output.push_str(&format!(
-            "{}(empty){}\n",
-            processor.tool_colors.label_fg(),
-            ansi::RESET
-        ));
+        output.push_str(&format!("{}(empty){}\n", ctx.tools.label_fg(), ansi::RESET));
         return output;
     }
 
@@ -152,9 +118,7 @@ fn format_highlighted_block(
 
     // Apply syntax highlighting first (if language is detected)
     let highlighted = if let Some(lang) = language {
-        processor
-            .code_highlighter
-            .highlight(&display_content, Some(lang))
+        ctx.highlighter.highlight(&display_content, Some(lang))
     } else {
         display_content.clone()
     };
@@ -179,7 +143,7 @@ fn format_highlighted_block(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            processor.tool_colors.label_fg(),
+            ctx.tools.label_fg(),
             line_count - MAX_BLOCK_LINES,
             ansi::RESET
         ));
@@ -249,13 +213,13 @@ fn format_plain_block(label: &str, content: &str) -> String {
 }
 
 /// Format a simple "no changes" message.
-fn format_no_changes_message(processor: &StreamProcessor, file_path: &str) -> String {
-    if processor.highlighting_enabled {
+pub fn format_no_changes_message(ctx: &RenderContext, file_path: &str) -> String {
+    if ctx.terminal {
         format!(
             "{}✓{} {}Edit: {} (no changes){}\n",
-            processor.tool_colors.ok_fg(),
+            ctx.tools.ok_fg(),
             ansi::RESET,
-            processor.tool_colors.label_fg(),
+            ctx.tools.label_fg(),
             file_path,
             ansi::RESET
         )
@@ -264,85 +228,11 @@ fn format_no_changes_message(processor: &StreamProcessor, file_path: &str) -> St
     }
 }
 
-/// Generate a unified diff from an EditSnapshot by comparing before/after content.
-///
-/// Reads the current file content and generates a unified diff against the
-/// captured snapshot. Returns None if the file cannot be read or no changes
-/// were made.
-pub fn generate_diff_from_snapshot(snapshot: &EditSnapshot) -> Option<String> {
-    // Read current file content
-    let after_content = fs::read_to_string(&snapshot.file_path).ok()?;
-
-    // Get before content (empty string if file didn't exist)
-    let before_content = snapshot.content.as_deref().unwrap_or("");
-
-    // Skip if no changes
-    if before_content == after_content {
-        return None;
-    }
-
-    // Generate unified diff
-    let diff = TextDiff::from_lines(before_content, &after_content);
-    let unified = generate_unified_diff(&diff, &snapshot.file_path);
-
-    Some(unified)
-}
-
-/// Generate unified diff format from a TextDiff.
-fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, file_path: &str) -> String {
-    let mut output = String::new();
-
-    // Add header
-    output.push_str(&format!("--- a/{}\n", file_path));
-    output.push_str(&format!("+++ b/{}\n", file_path));
-
-    // Generate hunks
-    for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
-        // Hunk header
-        output.push_str(&format!("{}", hunk.header()));
-
-        // Changes
-        for change in hunk.iter_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => "-",
-                ChangeTag::Insert => "+",
-                ChangeTag::Equal => " ",
-            };
-            output.push_str(sign);
-            output.push_str(change.value());
-            if !change.value().ends_with('\n') {
-                output.push('\n');
-            }
-        }
-    }
-
-    output
-}
-
-/// Format an Edit tool result that already contains diff content.
-///
-/// This is the fallback path used when the Edit tool result already contains
-/// diff content (e.g., from older versions or custom tools).
-pub fn format_edit_diff_result(
-    processor: &StreamProcessor,
-    invocation: ToolInvocation,
-    diff_content: &str,
-) -> String {
-    // Extract file path from the invocation input
-    let file_path = invocation
-        .input
-        .get("file_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown file");
-
-    format_diff_output(processor, file_path, diff_content)
-}
-
 /// Format diff output with optional highlighting and truncation.
 ///
 /// This is the common formatting logic shared between generated diffs
 /// and diffs that come directly from tool results.
-fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content: &str) -> String {
+pub fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &str) -> String {
     // Count lines for potential truncation
     let lines: Vec<&str> = diff_content.lines().collect();
     let line_count = lines.len();
@@ -355,10 +245,9 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
         (diff_content.to_string(), false)
     };
 
-    if processor.highlighting_enabled {
+    if ctx.terminal {
         // Highlight the diff
-        let highlighted_diff =
-            highlight_with_basic_colors(&display_content, &processor.diff_colors);
+        let highlighted_diff = highlight_with_basic_colors(&display_content, &ctx.diff);
 
         // Build output with header
         let mut output = String::new();
@@ -366,7 +255,7 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
         // File path header with box drawing
         output.push_str(&format!(
             "{}── {} ──{}\n",
-            processor.tool_colors.name_fg(),
+            ctx.tools.name_fg(),
             file_path,
             ansi::RESET
         ));
@@ -383,7 +272,7 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
-                processor.tool_colors.label_fg(),
+                ctx.tools.label_fg(),
                 line_count - MAX_DIFF_LINES,
                 ansi::RESET
             ));
@@ -417,51 +306,14 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_generate_unified_diff() {
-        let before = "line1\nline2\nline3\n";
-        let after = "line1\nmodified\nline3\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "test.txt");
-
-        assert!(unified.contains("--- a/test.txt"));
-        assert!(unified.contains("+++ b/test.txt"));
-        assert!(unified.contains("-line2"));
-        assert!(unified.contains("+modified"));
-    }
-
-    #[test]
-    fn test_generate_unified_diff_addition() {
-        let before = "line1\n";
-        let after = "line1\nline2\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "test.txt");
-
-        assert!(unified.contains("+line2"));
-        assert!(!unified.contains("-line1")); // line1 unchanged
-    }
-
-    #[test]
-    fn test_generate_unified_diff_deletion() {
-        let before = "line1\nline2\n";
-        let after = "line1\n";
-
-        let diff = TextDiff::from_lines(before, after);
-        let unified = generate_unified_diff(&diff, "test.txt");
-
-        assert!(unified.contains("-line2"));
-        assert!(!unified.contains("+line2"));
-    }
+    use crate::stream_processor::StreamProcessor;
 
     #[test]
     fn test_format_diff_output_truncation() {
         let processor = StreamProcessor::with_highlighting(false);
         let long_diff: String = (0..100).map(|i| format!("+line{}\n", i)).collect();
 
-        let output = format_diff_output(&processor, "test.txt", &long_diff);
+        let output = format_diff_output(&processor.render_context(), "test.txt", &long_diff);
 
         assert!(output.contains("... 50 more lines"));
     }
@@ -471,7 +323,7 @@ mod tests {
         let processor = StreamProcessor::with_highlighting(false);
         let short_diff = "+line1\n+line2\n";
 
-        let output = format_diff_output(&processor, "test.txt", short_diff);
+        let output = format_diff_output(&processor.render_context(), "test.txt", short_diff);
 
         assert!(!output.contains("more lines"));
     }
@@ -531,7 +383,7 @@ mod tests {
         let processor = StreamProcessor::with_highlighting(true);
 
         let output = format_before_after_highlighted(
-            &processor,
+            &processor.render_context(),
             "test.rs",
             "let x = 1;",
             "let x = 2;",
@@ -550,29 +402,10 @@ mod tests {
     }
 
     #[test]
-    fn test_format_before_after_display_prefers_old_new_strings() {
-        let processor = StreamProcessor::with_highlighting(false);
-        let snapshot = EditSnapshot {
-            file_path: "test.rs".to_string(),
-            content: Some("full file content".to_string()),
-            old_string: Some("old".to_string()),
-            new_string: Some("new".to_string()),
-        };
-
-        let output = format_edit_result_with_snapshot(&processor, snapshot);
-
-        // Should use old_string/new_string, not full file diff
-        assert!(output.contains("Before:"));
-        assert!(output.contains("old"));
-        assert!(output.contains("After:"));
-        assert!(output.contains("new"));
-    }
-
-    #[test]
     fn test_format_no_changes_message_highlighted() {
         let processor = StreamProcessor::with_highlighting(true);
 
-        let output = format_no_changes_message(&processor, "test.rs");
+        let output = format_no_changes_message(&processor.render_context(), "test.rs");
 
         assert!(output.contains("✓"));
         assert!(output.contains("test.rs"));
@@ -583,7 +416,7 @@ mod tests {
     fn test_format_no_changes_message_plain() {
         let processor = StreamProcessor::with_highlighting(false);
 
-        let output = format_no_changes_message(&processor, "test.rs");
+        let output = format_no_changes_message(&processor.render_context(), "test.rs");
 
         assert!(output.contains("test.rs"));
         assert!(output.contains("no changes"));
@@ -593,13 +426,19 @@ mod tests {
 
     fn colored_processor() -> StreamProcessor {
         let mut processor = StreamProcessor::with_highlighting(true);
-        processor.diff_colors = crate::diff_theme::test_colors();
+        processor.renderer.diff_colors = crate::diff_theme::test_colors();
         processor
     }
 
     #[test]
     fn before_after_uses_the_configured_backgrounds() {
-        let out = format_before_after_highlighted(&colored_processor(), "a.rs", "x", "y", None);
+        let out = format_before_after_highlighted(
+            &colored_processor().render_context(),
+            "a.rs",
+            "x",
+            "y",
+            None,
+        );
         assert!(out.contains("\x1b[48;2;4;5;6m"));
         assert!(out.contains("\x1b[48;2;1;2;3m"));
         assert!(!out.contains(ansi::RED_BG));
@@ -608,7 +447,7 @@ mod tests {
 
     #[test]
     fn unified_diff_uses_the_configured_foregrounds() {
-        let out = format_diff_output(&colored_processor(), "a.rs", "+x\n-y");
+        let out = format_diff_output(&colored_processor().render_context(), "a.rs", "+x\n-y");
         assert!(out.contains("\x1b[94m+x"));
         assert!(out.contains("\x1b[95m-y"));
     }
@@ -616,26 +455,25 @@ mod tests {
     #[test]
     fn plain_processor_has_no_escape_byte() {
         let processor = StreamProcessor::with_highlighting(false);
-        assert!(!format_diff_output(&processor, "a.rs", "+x\n-y\n@@ -1 @@").contains('\x1b'));
-        assert!(!format_before_after_display(
-            &processor,
-            &EditSnapshot {
-                file_path: "a.rs".to_string(),
-                content: None,
-                old_string: Some("x".to_string()),
-                new_string: Some("y".to_string()),
-            }
-        )
-        .contains('\x1b'));
+        assert!(
+            !format_diff_output(&processor.render_context(), "a.rs", "+x\n-y\n@@ -1 @@")
+                .contains('\x1b')
+        );
+        assert!(
+            !format_before_after(&processor.render_context(), "a.rs", "x", "y").contains('\x1b')
+        );
     }
 
     #[test]
     fn headers_and_marks_use_the_configured_tool_colors() {
         let mut processor = colored_processor();
-        processor.tool_colors = crate::tool_theme::test_colors();
-        let out = format_before_after_highlighted(&processor, "a.rs", "x", "y", None);
+        processor.renderer.tool_colors = crate::tool_theme::test_colors();
+        let out =
+            format_before_after_highlighted(&processor.render_context(), "a.rs", "x", "y", None);
         assert!(out.starts_with("\x1b[94m── a.rs"));
         assert!(out.contains("\x1b[96mBefore:"));
-        assert!(format_no_changes_message(&processor, "a.rs").starts_with("\x1b[97m✓"));
+        assert!(
+            format_no_changes_message(&processor.render_context(), "a.rs").starts_with("\x1b[97m✓")
+        );
     }
 }

@@ -35,13 +35,44 @@ pub struct StepResult {
     pub evidence: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VerifyMode {
+    Off,
+    #[default]
+    Observe,
+    Enforce,
+}
+
+impl std::str::FromStr for VerifyMode {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text.trim() {
+            "off" => Ok(VerifyMode::Off),
+            "observe" => Ok(VerifyMode::Observe),
+            "enforce" => Ok(VerifyMode::Enforce),
+            other => Err(format!("{other:?} is not off, observe or enforce")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Criterion {
-    WorkerDone { worker: String },
-    WatchPasses { command: String },
-    CheckPasses { command: String },
-    Judge { question: String },
+    WorkerDone {
+        worker: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify: Option<String>,
+    },
+    WatchPasses {
+        command: String,
+    },
+    CheckPasses {
+        command: String,
+    },
+    Judge {
+        question: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -142,10 +173,47 @@ fn parse_step(number: usize, step: RawStep) -> Result<Step, String> {
     let criterion = step.criterion.ok_or_else(|| {
         format!("Step {number} has no exit criterion. Give each step a check ralph can measure.")
     })?;
+    let criterion = match criterion {
+        Criterion::WorkerDone {
+            worker,
+            verify: Some(command),
+        } => {
+            let command = command.trim();
+            if command.is_empty() {
+                return Err(format!(
+                    "Step {number} has an empty verify command. Give a command that exits 0, or drop verify."
+                ));
+            }
+            Criterion::WorkerDone {
+                worker,
+                verify: Some(command.to_string()),
+            }
+        }
+        other => other,
+    };
     Ok(Step {
         task: task.to_string(),
         criterion,
     })
+}
+
+fn refuse_stray_verify(number: usize, args: &Value) -> Result<(), String> {
+    let criterion = args
+        .get("steps")
+        .and_then(Value::as_array)
+        .and_then(|steps| steps.get(number - 1))
+        .and_then(|step| step.get("criterion"));
+    let Some(criterion) = criterion else {
+        return Ok(());
+    };
+    let has_verify = criterion
+        .get("verify")
+        .is_some_and(|verify| !verify.is_null());
+    let kind = criterion.get("kind").and_then(Value::as_str);
+    if has_verify && kind != Some("worker_done") {
+        return Err(format!("Step {number}: verify is only for worker_done"));
+    }
+    Ok(())
 }
 
 pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
@@ -162,11 +230,17 @@ pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
         .steps
         .into_iter()
         .enumerate()
-        .map(|(index, step)| parse_step(index + 1, step))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|(index, step)| {
+            let number = index + 1;
+            let parsed = parse_step(number, step)?;
+            refuse_stray_verify(number, args)?;
+            Ok(parsed)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let limits = Limits {
         max_turns: raw.caps.turns.unwrap_or(defaults.max_turns),
         max_usd: raw.caps.usd.unwrap_or(defaults.max_usd),
+        verify: defaults.verify,
     };
     let judge_rounds = raw.caps.judge_rounds.unwrap_or(DEFAULT_JUDGE_ROUNDS);
     if limits.max_turns == 0
@@ -189,6 +263,8 @@ pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
 const RUN_BY_RALPH_NOTE: &str = "ralph runs this check alone: put any work in an earlier step";
 const RUN_BY_RALPH_RULE: &str = "A watch_passes or check_passes step is run by ralph alone, with no model turn: put any work it needs in an earlier step.";
 
+const CRITERION_PREFERENCE: &str = "Prefer check_passes or watch_passes: ralph runs them for $0. Use judge only as a fallback: it costs one model turn per round.";
+
 impl Criterion {
     fn runs_in_ralph(&self) -> bool {
         matches!(
@@ -199,7 +275,14 @@ impl Criterion {
 
     fn label(&self) -> String {
         match self {
-            Criterion::WorkerDone { worker } => format!("worker {worker} reports done"),
+            Criterion::WorkerDone {
+                worker,
+                verify: None,
+            } => format!("worker {worker} reports done"),
+            Criterion::WorkerDone {
+                worker,
+                verify: Some(command),
+            } => format!("worker {worker} reports done, then `{command}` exits 0"),
             Criterion::WatchPasses { command } => format!("watch `{command}` exits 0"),
             Criterion::CheckPasses { command } => format!("`{command}` exits 0"),
             Criterion::Judge { question } => format!("judged: {question}"),
@@ -260,18 +343,26 @@ impl Grant {
     }
 }
 
+const JUDGE_ONLY_WARNING: &str = "Warning: every step uses a judge. A judge costs one model turn per round. Prefer check_passes or watch_passes: ralph runs them for $0.";
+
 pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
     let may_reply = plan.allowed.contains(&Action::Reply);
+    let judge_only = !plan.steps.is_empty()
+        && plan
+            .steps
+            .iter()
+            .all(|step| matches!(step.criterion, Criterion::Judge { .. }));
     plan.steps
         .iter()
         .enumerate()
         .filter_map(|(index, step)| match &step.criterion {
-            Criterion::WorkerDone { worker } if !may_reply => Some(format!(
+            Criterion::WorkerDone { worker, .. } if !may_reply => Some(format!(
                 "Warning: step {} waits for worker {worker}, but the plan does not allow `reply`. A question from that worker stops the run.",
                 index + 1
             )),
             _ => None,
         })
+        .chain(judge_only.then(|| JUDGE_ONLY_WARNING.to_string()))
         .collect()
 }
 
@@ -444,7 +535,7 @@ pub fn propose_refusal(existing: Option<&RunFile>) -> Option<String> {
 
 pub fn propose_prompt(text: &str) -> String {
     format!(
-        "/send-it: restate these instructions as a run plan. Call `propose_run` once with the plan, then stop. Do not start the work: ralph shows the plan and the person approves it with /send-it go. {RUN_BY_RALPH_RULE}\n\n{text}"
+        "/send-it: restate these instructions as a run plan. Call `propose_run` once with the plan, then stop. Do not start the work: ralph shows the plan and the person approves it with /send-it go. {RUN_BY_RALPH_RULE} {CRITERION_PREFERENCE}\n\n{text}"
     )
 }
 
@@ -462,13 +553,14 @@ pub fn propose_run_tool() -> Value {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "do": {"type": "string", "description": "What the step does."},
+                            "do": {"type": "string", "description": "What the step does. Plan it so a check_passes or watch_passes command can prove it is done."},
                             "criterion": {
                                 "type": "object",
-                                "description": format!("Exit check. worker_done needs worker; watch_passes and check_passes need a command that exits 0; judge needs a question. {RUN_BY_RALPH_RULE}"),
+                                "description": format!("Exit check. worker_done needs worker; watch_passes and check_passes need a command that exits 0; judge needs a question. {RUN_BY_RALPH_RULE} {CRITERION_PREFERENCE}"),
                                 "properties": {
                                     "kind": {"type": "string", "enum": ["worker_done", "watch_passes", "check_passes", "judge"]},
                                     "worker": {"type": "string"},
+                                    "verify": {"type": "string", "description": "Optional, worker_done only: a command that exits 0 to confirm the worker's claim."},
                                     "command": {"type": "string"},
                                     "question": {"type": "string"}
                                 },
@@ -567,6 +659,7 @@ const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted."
 pub struct Limits {
     pub max_turns: u32,
     pub max_usd: f64,
+    pub verify: VerifyMode,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

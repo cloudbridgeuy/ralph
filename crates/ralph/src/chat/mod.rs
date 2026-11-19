@@ -35,7 +35,6 @@ mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
 mod thread_cmd;
-mod turn;
 mod view;
 mod workers;
 
@@ -55,22 +54,19 @@ use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::send_it::{worker_states, Active, InboxTurn, SendIt};
 use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
-use crate::chat::statusbar::StatusBar;
-use crate::chat::suggestion::{SuggestionCell, SuggestionHighlighter};
+use crate::chat::statusbar::{BarContext, StatusBar};
+use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::{chat_exit, check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
-use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::cli::{ChatArgs, ChatCommand};
 use crate::config::{load_for_chat, ConfigSnapshot, FileState, MermaidStyleExt, ThemeWarnings};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;
-use crate::invoke::Isolation;
 use crate::markdown::{MarkdownTheme, RolePalette, ThemeRole};
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
-use crate::subprocess::OutputGate;
 use crate::theme_slots::ResolveColors;
 use crate::warn::print_above_prompt;
 use keepalive::{KeepaliveWatch, Stamp};
@@ -109,9 +105,12 @@ use ralph_server::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
 use ralph_server::chat::snapshots::TurnSnapshots;
+use ralph_server::chat::suggestion::SuggestionCell;
+use ralph_server::chat::turn::{draft_after, Turn, TurnOutcome};
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
+use ralph_server::invoke::Isolation;
 use ralph_server::opencode_worker::sweep_stale_server_records;
 use ralph_server::paths::{absolute_from, config_path};
 use ralph_server::warn::{warn, warn_if_err};
@@ -129,7 +128,7 @@ use session::{
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 pub(crate) use switch::ChatExit;
@@ -168,7 +167,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let config = loaded.config;
     let permission_mode = config.chat_permission_mode(
         args.permission_mode.as_deref(),
-        std::env::var(crate::invoke::CHAT_PERMISSION_MODE_ENV)
+        std::env::var(ralph_server::invoke::CHAT_PERMISSION_MODE_ENV)
             .ok()
             .as_deref(),
     );
@@ -263,6 +262,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     };
     let last_turn_end: Stamp = Arc::default();
     let last_ping: Stamp = Arc::default();
+    let (gate, sink) = prompt::turn_output(&theme_config)?;
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -276,14 +276,13 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         custom_prompt: &custom_prompt,
         reply_images,
         isolation: &isolation,
-        theme_config: &theme_config,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),
         live: Arc::clone(&live),
         reset_limits,
         recent_history_tokens,
-        gate: Arc::new(OutputGate::new()),
+        gate,
         run: &run,
         suggestions: suggestions.clone(),
         last_turn_end: Arc::clone(&last_turn_end),
@@ -291,6 +290,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         last_cost_usd: Mutex::new(None),
         timing: Mutex::default(),
         seen_len: Mutex::new(None),
+        sink,
+        show_tools: io::stdout().is_terminal(),
+        terminated: signal::is_terminated,
+        exe: Some(&exe),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -411,7 +414,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color.then(|| crate::input_theme::to_reedline(theme_config.ui().ask_header)),
     );
     if chat_config.resume_summary && !args.skip_summary {
-        recap::print_recap(&store, running.len(), sent_style);
+        let width = prompt::screen_columns();
+        recap::print_recap(&store, running.len(), sent_style, width, &mut io::stdout())?;
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
@@ -500,10 +504,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color,
         bar: StatusBar::new(
             &config.theme.status,
-            &session_name,
-            thread_name,
             &chat_config,
             color,
+            &BarContext {
+                name: &session_name,
+                thread: thread_name,
+                model_args: &model_args,
+                identity: Arc::clone(&turn.identity),
+            },
         ),
         notice: RefCell::new(None),
         editor: editor_cmd,
@@ -533,6 +541,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
         remote: &remote,
         config: &config_snapshot,
+        columns: prompt::screen_columns,
     };
     let keys = Keys {
         gate: &turn.gate,
@@ -558,18 +567,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let mut offered: Option<(String, u64)> = None;
     let mut carried: Vec<String> = Vec::new();
     let mut leaving: Option<ChatExit> = None;
-    let show_cells = |shown: &str| {
-        let ctx = RenderContext::new(&agent_highlighter, color)
-            .with_diff(diff_colors)
-            .with_tools(tool_colors);
-        print!(
-            "{}",
-            crate::render::image::render_cell_display(&ctx, shown, &agent_theme)
-        );
-    };
     let settles_closes = fork.is_none();
-    if settles_closes {
-        thread::settle::scan(&store_dir, &monitor.inbox);
+    if settles_closes && thread::settle::scan(&store_dir, &monitor.inbox) {
+        monitor.refresh(true);
     }
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
@@ -643,7 +643,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 monitor.refresh(true);
                 match ran {
                     Ok(shown) => {
-                        show_cells(&shown);
+                        cell::show(&mut std::io::stdout(), &display, &shown);
                         if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
                             carried = rest;
                             pending = Some(route_queued(text, &mut editor, &prompt));
@@ -662,21 +662,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             Route::Send(message) => {
-                if let Some(images) = crate::render::image::enabled() {
-                    print!(
-                        "{}",
-                        crate::render::image::render_attachments(
-                            &message,
-                            images,
-                            crate::render::image::ImageBounds::current()
-                        )
-                    );
-                }
+                crate::render::image::print_attachments(&message);
                 monitor.set_phase(Phase::Cell);
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
-                            show_cells(shown);
+                            cell::show(&mut std::io::stdout(), &display, shown);
                         }
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
@@ -892,7 +883,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 continue;
             }
             local => {
-                if let Some(output) = run_local(local, &local_route, || {
+                if let Some(output) = run_local(local, &local_route, &mut io::stdout(), || {
                     monitor.refresh(true);
                 })? {
                     note(&output);

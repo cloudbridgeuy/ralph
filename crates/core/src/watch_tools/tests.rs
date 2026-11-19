@@ -14,6 +14,7 @@ fn saved(id: &str, kind: WatchKind, timeout: Option<u64>) -> SavedWatch {
             kind,
             timeout: timeout.map(Duration::from_secs),
             limit: timeout.map(Duration::from_secs),
+            cwd: None,
         },
         at(0),
     )

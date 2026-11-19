@@ -5,6 +5,7 @@ fn usage_names_the_instructions_form_and_the_default_caps() {
     let text = usage(&Limits {
         max_turns: 15,
         max_usd: 5.0,
+        verify: VerifyMode::Off,
     });
     assert!(text.starts_with("Usage: /send-it <instructions>"), "{text}");
     assert!(text.contains("exit criterion"), "{text}");

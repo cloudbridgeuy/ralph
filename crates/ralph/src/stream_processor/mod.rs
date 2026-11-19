@@ -1,54 +1,19 @@
-//! Streaming output processor for LLM subprocess output (Imperative Shell).
-//!
-//! This module provides real-time parsing and highlighting of Claude's
-//! `--output-format stream-json` output. It parses JSON events line by line,
-//! extracts text content, applies syntax highlighting to code blocks, and
-//! outputs to the terminal while capturing data for storage.
-//!
-//! # Features
-//!
-//! - Real-time JSON parsing of stream-json events
-//! - Syntax highlighting for code blocks using syntect
-//! - Diff highlighting with delta fallback chain
-//! - Terminal detection for automatic color support
-//! - Metadata and tool call extraction from stream events
-//! - Output block accumulation for response text extraction
-//!
-//! # Example
-//!
-//! ```no_run
-//! use ralph::stream_processor::StreamProcessor;
-//!
-//! let mut processor = StreamProcessor::new();
-//! processor.process_line(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}"#);
-//! let result = processor.finish();
-//! ```
-
-mod block_builders;
-mod event_handler;
-mod output_block;
+mod block_renderer;
+#[cfg(test)]
 mod processor;
-mod result_handlers;
-mod tool_display;
+mod render_block;
 mod tool_results;
-mod types;
-mod utils;
 
-// Re-export public API
-pub use output_block::{
-    extract_response_text, GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem,
-    ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
+pub use block_renderer::BlockRenderer;
+#[cfg(test)]
+pub use processor::StreamProcessor;
+pub use ralph_core::stream::blocks::{
+    extract_response_text, OutputBlock, StreamProcessorResult, ToolInvocationBlock,
+    ToolInvocationVariant, ToolResultBlock, ToolResultVariant, VerboseToolsConfig,
 };
-pub use processor::{StreamProcessor, StreamProcessorBuilder};
-pub use types::{StreamProcessorResult, VerboseToolsConfig};
-
-// Re-export for tests
-#[cfg(test)]
-pub use types::KeyArgument;
-#[cfg(test)]
-pub use utils::{extract_key_argument, truncate_string};
 
 #[cfg(test)]
-mod test_helpers;
+pub use ralph_core::stream::blocks::{extract_key_argument, truncate_string, KeyArgument};
+
 #[cfg(test)]
 mod tests;

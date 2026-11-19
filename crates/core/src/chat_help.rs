@@ -283,6 +283,13 @@ impl Command {
     }
 }
 
+/// The `@<id> <text>` row. It is not a `/` command, so it has no `Command`
+/// variant; `help_text` lists it right after the `/nudge` rows.
+const DIRECT: &[(&str, &str)] = &[(
+    "@<id> <text>",
+    "send <text> to worker <id> as written, with no model turn and no cost; @@ sends a normal message to the model that starts with one @; while a turn runs it waits in the queue",
+)];
+
 const CELLS: &[(&str, &str)] = &[
     (
         "!<command>",
@@ -335,7 +342,7 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
     },
     KeyHelp {
         keys: "Tab, Shift-Tab",
-        effect: "after /hold , complete the word under the cursor from this chat's worker ids, watch:<name> and schedule:<id>; after /view , complete the path from directories and .md or .markdown files; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
+        effect: "after /hold , complete the word under the cursor from this chat's worker ids, watch:<name> and schedule:<id>; after /view , complete the path from directories and .md or .markdown files; on a word starting with ., .., /, ~ or $HOME, complete the path from the working dir, the root or the home dir; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
     },
     KeyHelp {
         keys: "Up, Down, Ctrl-R",
@@ -409,13 +416,14 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
 ];
 
 /// Status bar segments in the order they are explained.
-pub const SEGMENTS: [Kind; 11] = [
+pub const SEGMENTS: [Kind; 12] = [
     Kind::Mode(Mode::Idle),
     Kind::Hold(Mode::Idle),
     Kind::Queue(Mode::Idle),
     Kind::Mail(Mode::Idle),
     Kind::Name,
     Kind::Thread,
+    Kind::Model,
     Kind::Workers,
     Kind::Watches,
     Kind::Schedule,
@@ -446,6 +454,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
         Kind::Mail(_) => ("📬 N unread", "worker reports waiting; /inbox sends them"),
         Kind::Name => ("name", "the chat session name"),
         Kind::Thread => ("thread <name>", "the thread this chat is"),
+        Kind::Model => ("model", "the model: its alias at start, the resolved id after a turn"),
         Kind::Workers => ("workers", "each worker and its state"),
         Kind::Watches => ("watch <id> <left>", "running watches and their time left"),
         Kind::Schedule => (
@@ -622,7 +631,13 @@ pub fn help_text(width: usize) -> String {
     let mut out = String::new();
     let commands = Command::ALL
         .iter()
-        .flat_map(|command| pairs(command.usage()))
+        .flat_map(|command| {
+            let mut rows = pairs(command.usage());
+            if *command == Command::Nudge {
+                rows.extend(pairs(DIRECT));
+            }
+            rows
+        })
         .collect();
     section(
         &mut out,

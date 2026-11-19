@@ -3,7 +3,7 @@
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
 pub mod ansi;
-mod backoff;
+mod ask;
 mod chat;
 mod cli;
 mod clipboard;
@@ -17,7 +17,6 @@ mod hook_bridge;
 mod inbox_alert;
 mod inbox_post;
 mod input_theme;
-mod invoke;
 mod licenses;
 pub mod markdown;
 mod mermaid_guard;
@@ -30,27 +29,31 @@ pub mod startup;
 mod status_theme;
 mod theme_slots;
 mod tool_theme;
+mod turn_sink;
 mod ui_theme;
 mod upgrade;
 mod usage_cmd;
 
 pub mod stream_processor;
-pub mod subprocess;
 mod version;
 pub mod warn;
 mod watch_requests;
 mod wire;
 
+use ask::InvocationConfig;
 use clap::Parser;
 use cli::{
     AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, ChatTagArgs, Cli, Commands, MermaidArgs,
     VerifyAgent, WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
-use invoke::InvocationConfig;
 use ralph_core::cancel::CancelToken;
 use ralph_core::worker::HarnessId;
+use ralph_server::backoff;
+use ralph_server::invoke;
+use ralph_server::subprocess;
 use ralph_server::version_drift::DriftRun;
 use ralph_server::warn::{warn, warn_if_err};
+use std::io::IsTerminal;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
 
@@ -207,7 +210,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         startup::display_prompt(&prompt_display, &ui);
     }
 
-    let outcome = invoke::invoke(config);
+    let outcome = ask::invoke(config);
     if let Some(done) = subprocess::recorded(&outcome) {
         record_ask(done);
     }
@@ -296,8 +299,6 @@ use prompt_source::{classify_prompt_source, read_from_source, PromptSource};
 ///
 /// After resolution, validates that the prompt is not empty.
 fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
-    use std::io::IsTerminal;
-
     let prompt = match prompt_arg {
         // Explicit argument provided - use classify_prompt_source
         Some(_) => {
@@ -553,21 +554,23 @@ fn run_memory_command(
     let outcome = backoff::retry_on_outage(
         "chat memory curator",
         || {
-            backoff::attempt_from(subprocess::invoke_subprocess_silent(
-                &subprocess::SpinnerSubprocessConfig {
-                    command: command.to_string(),
-                    timeout_secs: Some(curator.timeout),
-                    theme_config: theme_config.clone(),
-                    session_elapsed_ms: 0,
-                    verbose_tools: stream_processor::VerboseToolsConfig::new(),
-                    session_info: spinner::SpinnerSessionInfo {
-                        persona: Some("chat memory".into()),
-                    },
-                    gate: None,
-                    interrupt: None,
-                    stdin: Some(stdin.clone()),
-                },
-            ))
+            backoff::attempt_from(
+                turn_sink::TerminalSink::plain(&theme_config)
+                    .map_err(|error| subprocess::SubprocessError::Theme(error.to_string()))
+                    .and_then(|sink| {
+                        subprocess::invoke_subprocess_silent(&subprocess::SpinnerSubprocessConfig {
+                            command: command.to_string(),
+                            timeout_secs: Some(curator.timeout),
+                            verbose_tools: stream_processor::VerboseToolsConfig::new(),
+                            show_tools: std::io::stdout().is_terminal(),
+                            terminated: signal::is_terminated,
+                            sink: std::sync::Arc::new(sink),
+                            gate: None,
+                            interrupt: None,
+                            stdin: Some(stdin.clone()),
+                        })
+                    }),
+            )
         },
         |delay| backoff::wait_unless(signal::is_terminated, delay),
     );
