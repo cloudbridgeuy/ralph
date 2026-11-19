@@ -59,14 +59,14 @@ The actual `ralph-worker` report delivery writes the per-worker `reported/<id>` 
 | --- | --- | --- |
 | spawn | Full | Starts a dedicated ACP child and session in the worktree. |
 | prompt | Full | Sends turns to that session. |
-| resume | Partial | Requires `session/load`; unfinished work is reported, not resent. |
+| resume | Partial | Requires `session/load`; unfinished work is reported, not resent; live: after `kill -9` of the chat, and separately of only `agy acp`, a chat restart ran `session/load` and the next reply recalled a code word from turn 1. |
 | interrupt | Partial | Outcome is unknown after 30 s; live: `session/cancel` stopped the turn with `cancelled` in the same second. |
 | perm-ask | Partial | Only protocol-raised requests are handled; live: `write_file` posted a `blocked` report and `allow` resumed the turn. |
 | perm-yolo | Partial | Process flag, fixed at spawn; live: a yolo worker ran shell commands and wrote files with 0 permission requests. |
 | model | Full | Checks and sets an advertised model ID. |
 | report | Full | Live: MCP reports reached the inbox in ask and yolo. |
 | close | Full | Closes this session and owned process group. |
-| heartbeat | Partial | ACP traffic only. |
+| heartbeat | Partial | ACP traffic only; live: `kill -9` of `agy acp` wrote `gone/<id>` in the same second and posted one `check` report within 60 s. |
 
 Usage records use `PromptResponse.usage`, when present and internally consistent, with the confirmed advertised model ID. Each prompt response contains per-response counts, not cumulative session totals: in a four-prompt live worker session (agy 1.5.12) the input tokens were 16256, 8621, 2167 and 6390, one row per prompt, including the cancelled one. It checks whether cached and thought tokens are included or separate and records only a uniquely consistent breakdown. Ambiguous, inconsistent or unwritable usage produces a warning rather than a fabricated row; missing or zero usage produces no row. No agy price is assumed, even if a response reports cost: usage reports show `no price`, and a mixed priced/unpriced day shows a partial-price marker (`+ no price` in text, `*` in charts).
 
