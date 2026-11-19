@@ -4,6 +4,7 @@
 
 pub(crate) mod acp_log;
 pub(crate) mod acp_worker;
+pub mod backoff;
 pub mod chat;
 pub(crate) mod claude_cleanup;
 pub(crate) mod claude_worker;

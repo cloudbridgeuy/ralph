@@ -3,7 +3,6 @@
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
 pub mod ansi;
-mod backoff;
 mod chat;
 mod cli;
 mod clipboard;
@@ -49,6 +48,7 @@ use cli::{
 use invoke::InvocationConfig;
 use ralph_core::cancel::CancelToken;
 use ralph_core::worker::HarnessId;
+use ralph_server::backoff;
 use ralph_server::subprocess;
 use ralph_server::version_drift::DriftRun;
 use ralph_server::warn::{warn, warn_if_err};
