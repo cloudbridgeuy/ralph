@@ -39,7 +39,7 @@ fn go(send_it: &SendIt, shown: Option<&str>, typed: bool) -> (String, Option<Tic
 }
 
 fn proposed(dir: &Path) -> (SendIt, String) {
-    let send_it = SendIt::new(dir, LIMITS);
+    let send_it = quiet(dir);
     send_it.propose(&plan_args()).unwrap();
     let hash = send_it.status().shown.unwrap();
     (send_it, hash)
@@ -48,7 +48,7 @@ fn proposed(dir: &Path) -> (SendIt, String) {
 #[test]
 fn propose_stores_the_plan_under_the_store() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let stored = send_it.propose(&plan_args()).unwrap();
     let text = fs::read_to_string(dir.path().join("send-it/run.toml")).unwrap();
     let file = read_run(&text, LIMITS).unwrap();
@@ -63,7 +63,7 @@ fn propose_stores_the_plan_under_the_store() {
 #[test]
 fn propose_adds_the_warning_line_after_the_stored_line_for_a_worker_done_plan_without_reply() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let mut args = plan_args();
     args["steps"] = json!([{"do": "wait", "criterion": {"kind": "worker_done", "worker": "E1"}}]);
     let stored = send_it.propose(&args).unwrap();
@@ -74,14 +74,14 @@ fn propose_adds_the_warning_line_after_the_stored_line_for_a_worker_done_plan_wi
         lines[1].starts_with("Warning: step 1 waits for worker E1"),
         "{stored}"
     );
-    let clean = SendIt::new(tempfile::tempdir().unwrap().path(), LIMITS);
+    let clean = quiet(tempfile::tempdir().unwrap().path());
     assert!(!clean.propose(&plan_args()).unwrap().contains("Warning:"));
 }
 
 #[test]
 fn propose_rejects_a_step_without_a_criterion_and_stores_nothing() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let args = json!({"goal": "g", "steps": [{"do": "x"}]});
     assert_eq!(
         send_it.propose(&args),
@@ -93,7 +93,7 @@ fn propose_rejects_a_step_without_a_criterion_and_stores_nothing() {
 #[test]
 fn propose_refuses_while_an_approved_plan_exists() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let plan = parse_run(&plan_args(), LIMITS).unwrap();
     let hash = plan_hash(&plan);
     let draft = RunFile {
@@ -134,7 +134,7 @@ fn an_approved_run_blocks_a_new_proposal_until_off() {
 #[test]
 fn save_writes_the_stored_plan_as_a_template_and_overwrites_by_name() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     assert_eq!(send_it.save_template("ship", None), NO_RUN);
     proposed(dir.path());
     let saved = send_it.save_template("ship", Some("GUZ-1"));
@@ -151,7 +151,7 @@ fn save_writes_the_stored_plan_as_a_template_and_overwrites_by_name() {
 #[test]
 fn templates_lists_the_saved_names_in_order() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     assert!(send_it.templates().starts_with("No templates."));
     proposed(dir.path());
     send_it.save_template("ship", None);
@@ -260,7 +260,7 @@ fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
 #[test]
 fn without_a_run_every_command_says_so() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let none = Screen::text(NO_RUN);
     assert_eq!(send_it.status(), none);
     assert_eq!(send_it.clear_approval(), none);
@@ -272,7 +272,7 @@ fn without_a_run_every_command_says_so() {
 #[test]
 fn a_turn_that_stores_no_new_plan_says_so() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     assert_eq!(send_it.proposed(None).text, NOT_PROPOSED);
     let (send_it, hash) = proposed(dir.path());
     assert_eq!(send_it.proposed(Some(hash.clone())).text, NOT_PROPOSED);
@@ -307,7 +307,10 @@ fn ended() -> Ended<'static> {
 }
 
 fn judging(dir: &Path) -> (SendIt, Active) {
-    let send_it = SendIt::new(dir, LIMITS);
+    judging_on(quiet(dir))
+}
+
+fn judging_on(send_it: SendIt) -> (SendIt, Active) {
     let mut args = plan_args();
     args["steps"] =
         json!([{"do": "review", "criterion": {"kind": "judge", "question": "all fixed?"}}]);
@@ -389,7 +392,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
 #[test]
 fn only_an_approved_plan_lends_its_allowed_list() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     assert_eq!(send_it.allowed(), None);
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "reply"}, {"kind": "watch"}]);
@@ -403,7 +406,7 @@ fn only_an_approved_plan_lends_its_allowed_list() {
 #[test]
 fn the_next_tick_takes_the_answered_workers_once() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "reply"}]);
     send_it.propose(&args).unwrap();
@@ -457,7 +460,7 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: SendIt::new(dir.path(), LIMITS),
+        send_it: quiet(dir.path()),
         watches: watches(dir.path()),
     };
     let mut args = plan_args();
@@ -495,7 +498,7 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: SendIt::new(dir.path(), LIMITS),
+        send_it: quiet(dir.path()),
         watches: watches(dir.path()),
     };
     let mut args = plan_args();
@@ -577,7 +580,7 @@ fn release_drops_the_run_s_approval_and_keeps_the_plan_for_save_and_reuse() {
 #[test]
 fn a_stop_keeps_the_plan_until_off_and_go_resumes_at_the_stopped_step() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let args = json!({
         "goal": "ship GUZ-1",
         "steps": [
@@ -612,7 +615,7 @@ fn a_stop_keeps_the_plan_until_off_and_go_resumes_at_the_stopped_step() {
 #[test]
 fn go_on_a_stopped_worker_step_skips_it_once_the_worker_reported_done() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let args = json!({
         "goal": "ship GUZ-1",
         "steps": [
@@ -791,7 +794,7 @@ fn a_done_tick_without_a_plan_still_logs_its_met_line() {
 #[test]
 fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     let mut args = plan_args();
     args["steps"] = json!([
         {"do": "collect evidence", "criterion": {"kind": "worker_done", "worker": "E1", "verify": "cargo test"}},
@@ -828,7 +831,7 @@ fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
 #[test]
 fn a_settled_last_check_logs_only_the_done_notice() {
     let dir = tempfile::tempdir().unwrap();
-    let send_it = SendIt::new(dir.path(), LIMITS);
+    let send_it = quiet(dir.path());
     send_it.propose(&plan_args()).unwrap();
     let hash = send_it.status().shown.unwrap();
     let mut driving = go(&send_it, Some(&hash), true).1.unwrap().driving;
@@ -850,4 +853,81 @@ fn a_settled_last_check_logs_only_the_done_notice() {
         logged[0].starts_with(&notice_record("send-it done:")),
         "{logged:?}"
     );
+}
+
+#[derive(Clone, Default)]
+struct Printed(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for Printed {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Printed {
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+fn printing(dir: &Path) -> (SendIt, Active, Printed) {
+    let printed = Printed::default();
+    let send_it = SendIt::with_output(dir, LIMITS, Arc::new(Mutex::new(printed.clone())));
+    let (send_it, active) = judging_on(send_it);
+    (send_it, active, printed)
+}
+
+fn done(active: Active, met: Option<&str>) -> Ticked {
+    Ticked {
+        driving: active.driving,
+        next: Next::Done,
+        met: met.map(str::to_string),
+        notice: None,
+    }
+}
+
+#[test]
+fn a_done_tick_without_a_plan_prints_and_logs_its_met_line_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active, printed) = printing(dir.path());
+    send_it.off();
+    send_it.dispatch(done(active, Some("Step 1 met")), &held::monitor(dir.path()));
+    assert_eq!(printed.text(), "Step 1 met\n");
+    assert_eq!(logged_texts(dir.path()), vec![notice_record("Step 1 met")]);
+}
+
+#[test]
+fn a_done_tick_without_a_plan_or_a_met_line_stays_silent() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active, printed) = printing(dir.path());
+    send_it.off();
+    send_it.dispatch(done(active, None), &held::monitor(dir.path()));
+    assert_eq!(printed.text(), "");
+    assert!(logged_texts(dir.path()).is_empty());
+}
+
+#[test]
+fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active, printed) = printing(dir.path());
+    send_it.dispatch(done(active, Some("Step 1 met")), &held::monitor(dir.path()));
+    let logged = logged_texts(dir.path());
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert!(logged[0].contains("send-it done"), "{logged:?}");
+    assert!(!logged[0].contains("Step 1 met"), "{logged:?}");
+    assert!(
+        printed.text().contains("send-it DONE"),
+        "{}",
+        printed.text()
+    );
+    assert!(!printed.text().contains("Step 1 met"), "{}", printed.text());
+}
+
+fn quiet(dir: &Path) -> SendIt {
+    SendIt::with_output(dir, LIMITS, Arc::new(Mutex::new(Printed::default())))
 }
