@@ -40,11 +40,11 @@ pub struct KeepaliveWatch {
 }
 
 impl KeepaliveWatch {
-    pub fn spawn(self) {
-        std::thread::spawn(move || loop {
+    pub fn run(self) -> ! {
+        loop {
             std::thread::sleep(CHECK_EVERY);
             self.tick();
-        });
+        }
     }
 
     fn tick(&self) {

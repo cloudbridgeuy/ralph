@@ -1,5 +1,72 @@
+use crate::chat::keepalive::KeepaliveWatch;
+use crate::chat::monitor::{Monitor, POLL};
+use crate::chat::schedule::fire_due;
+use crate::chat::schedule_worker::tick_workers;
+use crate::version_drift::DailyTick;
+use crate::watch_requests;
 use ralph_core::program_status;
-use ralph_core::worker::Report;
+use ralph_core::worker::{Report, INBOX_DIR};
+use ralph_core::worker_check::check_every_polls;
+use std::sync::Arc;
+use std::thread::JoinHandle;
+
+const MEMORY_EVERY_POLLS: u64 = 10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Due {
+    pub memory: bool,
+    pub check: bool,
+}
+
+pub fn due(tick: u64, check_every: Option<u64>) -> Due {
+    Due {
+        memory: tick.is_multiple_of(MEMORY_EVERY_POLLS),
+        check: check_every.is_some_and(|every| tick.is_multiple_of(every)),
+    }
+}
+
+pub struct Host {
+    pub tick: JoinHandle<()>,
+    pub keepalive: Option<JoinHandle<()>>,
+}
+
+impl Host {
+    pub fn spawn(
+        monitor: Arc<Monitor>,
+        keepalive: Option<KeepaliveWatch>,
+        sink: impl Fn(HostEvent) + Send + 'static,
+    ) -> Self {
+        Self {
+            tick: std::thread::spawn(move || run_ticks(&monitor, &sink)),
+            keepalive: keepalive.map(|watch| std::thread::spawn(move || watch.run())),
+        }
+    }
+}
+
+fn run_ticks(monitor: &Monitor, sink: &impl Fn(HostEvent)) -> ! {
+    let check_every = monitor
+        .worker_check_secs
+        .map(|secs| check_every_polls(secs, POLL));
+    let mut tick: u64 = 0;
+    let mut daily = DailyTick::start();
+    let inbox_dir = monitor.store_dir.join(INBOX_DIR);
+    loop {
+        std::thread::sleep(POLL);
+        tick += 1;
+        let due = due(tick, check_every);
+        daily.tick(&inbox_dir);
+        watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
+        fire_due(&monitor.schedule, &monitor.watches, &monitor.inbox);
+        tick_workers(monitor);
+        let changed = monitor.refresh(due.memory);
+        for event in monitor.tick_events(changed) {
+            sink(event);
+        }
+        if due.check {
+            monitor.check();
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostEvent {
@@ -73,5 +140,19 @@ mod tests {
                 HostEvent::Status(status())
             ]
         );
+    }
+
+    #[test]
+    fn due_reloads_memory_every_tenth_tick() {
+        assert!(due(10, None).memory);
+        assert!(due(20, None).memory);
+        assert!(!due(9, None).memory);
+    }
+
+    #[test]
+    fn due_checks_only_on_multiples_of_the_check_interval() {
+        assert!(due(4, Some(2)).check);
+        assert!(!due(3, Some(2)).check);
+        assert!(!due(4, None).check);
     }
 }

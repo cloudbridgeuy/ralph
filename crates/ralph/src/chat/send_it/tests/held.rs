@@ -17,7 +17,7 @@ pub(in crate::chat) fn monitor(dir: &Path) -> Monitor {
     let inbox = Arc::new(Inbox::new(dir.join("inbox")));
     let store = Store::new(dir.to_path_buf());
     Monitor {
-        core: Core {
+        core: Arc::new(Core {
             watches: Watches::new(Arc::clone(&inbox), dir, std::time::Duration::from_secs(60)),
             schedule: ScheduleStore::new(dir.join("schedule")),
             inbox,
@@ -55,7 +55,7 @@ pub(in crate::chat) fn monitor(dir: &Path) -> Monitor {
             usage_tail: Mutex::new(UsageTail::starting_at(&FileStamp { id: None, len: 0 })),
             phase: Mutex::new(Phase::Turn),
             hold: Mutex::new(None),
-        },
+        }),
         alert: AlertConfig {
             sound: false,
             notification: false,

@@ -4,16 +4,11 @@ use crate::signal;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_keepalive::lock_wait_continues;
 use ralph_core::inbox_alert::{inbox_alert, AlertConfig};
-use ralph_core::worker::{Report, HANDOFF_POLL, INBOX_DIR};
-use ralph_core::worker_check::check_every_polls;
+use ralph_core::worker::{Report, HANDOFF_POLL};
 use ralph_server::chat::host::HostEvent;
 use ralph_server::chat::keepalive::PING_TIMEOUT;
 use ralph_server::chat::monitor::{Monitor as Core, POLL};
-use ralph_server::chat::schedule::fire_due;
-use ralph_server::chat::schedule_worker::tick_workers;
 use ralph_server::subprocess::Session;
-use ralph_server::version_drift::DailyTick;
-use ralph_server::watch_requests;
 use ralph_server::workers::headless::{ExitCleanup, HeadlessShutdown};
 use std::io::{self, IsTerminal};
 use std::ops::Deref;
@@ -23,11 +18,10 @@ use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 
 const LOCK_POLL: Duration = Duration::from_millis(100);
-const MEMORY_EVERY_POLLS: u64 = 10;
 const INPUT_LOST_EXIT: i32 = 129;
 
 pub(super) struct Monitor {
-    pub(super) core: Core,
+    pub(super) core: Arc<Core>,
     pub(super) alert: AlertConfig,
     pub(super) term: Arc<TermStatus>,
 }
@@ -59,32 +53,6 @@ pub(super) fn client_sink(
             }
         }
     }
-}
-
-pub(super) fn watch_status(monitor: Arc<Monitor>, sink: impl Fn(HostEvent) + Send + 'static) {
-    std::thread::spawn(move || {
-        let check_every = monitor
-            .worker_check_secs
-            .map(|secs| check_every_polls(secs, POLL));
-        let mut tick: u64 = 0;
-        let mut daily = DailyTick::start();
-        let inbox_dir = monitor.store_dir.join(INBOX_DIR);
-        loop {
-            std::thread::sleep(POLL);
-            tick += 1;
-            daily.tick(&inbox_dir);
-            watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
-            fire_due(&monitor.schedule, &monitor.watches, &monitor.inbox);
-            tick_workers(&monitor);
-            let changed = monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS));
-            for event in monitor.tick_events(changed) {
-                sink(event);
-            }
-            if check_every.is_some_and(|every| tick.is_multiple_of(every)) {
-                monitor.check();
-            }
-        }
-    });
 }
 
 pub(super) fn watch_headless(store_dir: PathBuf) -> HeadlessShutdown {

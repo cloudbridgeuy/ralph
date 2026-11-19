@@ -35,9 +35,7 @@ mod thread_cmd;
 mod view;
 mod workers;
 
-use crate::chat::client_monitor::{
-    client_sink, watch_headless, watch_input, watch_status, Monitor,
-};
+use crate::chat::client_monitor::{client_sink, watch_headless, watch_input, Monitor};
 use crate::chat::editor::build_editor;
 use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
@@ -94,6 +92,7 @@ use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use ralph_server::chat::check::CheckState;
+use ralph_server::chat::host::Host;
 use ralph_server::chat::keepalive::{KeepaliveWatch, Stamp};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::{ready_ids, Monitor as Core, ProcessMemo};
@@ -308,7 +307,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         std::env::var_os(REX_SESSION_ENV).is_some_and(|value| !value.is_empty()),
     );
     let monitor = Arc::new(Monitor {
-        core: Core {
+        core: Arc::new(Core {
             watches: Watches::new(Arc::clone(&inbox), &store_dir, watch_timeout),
             schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
             inbox,
@@ -343,7 +342,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
             phase: Mutex::new(Phase::Prompt),
             hold: Mutex::new(None),
-        },
+        }),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
             notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
@@ -421,22 +420,19 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
-    if let Some(limit_hours) = keepalive_hours {
-        KeepaliveWatch {
-            limit_hours,
-            idle: Arc::clone(&idle),
-            session: Arc::clone(&turn.session),
-            live: Arc::clone(&turn.live),
-            last_turn_end,
-            last_ping,
-            last_attempt: Arc::new(Mutex::new(None)),
-            keeps: Mutex::default(),
-            identity: Arc::clone(&turn.identity),
-            run: run.clone(),
-            store: usage_store(&store_dir),
-        }
-        .spawn();
-    }
+    let keepalive = keepalive_hours.map(|limit_hours| KeepaliveWatch {
+        limit_hours,
+        idle: Arc::clone(&idle),
+        session: Arc::clone(&turn.session),
+        live: Arc::clone(&turn.live),
+        last_turn_end,
+        last_ping,
+        last_attempt: Arc::new(Mutex::new(None)),
+        keeps: Mutex::default(),
+        identity: Arc::clone(&turn.identity),
+        run: run.clone(),
+        store: usage_store(&store_dir),
+    });
     let headless = watch_headless(monitor.store_dir.clone());
     watch_input(
         Arc::clone(&at_prompt),
@@ -454,8 +450,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
         .with_external_printer(printer);
     let repaint = editor.repaint_signal();
-    watch_status(
-        Arc::clone(&monitor),
+    Host::spawn(
+        Arc::clone(&monitor.core),
+        keepalive,
         client_sink(Arc::clone(&monitor), move || repaint.request_repaint()),
     );
     crate::render::image::enable_images(image_settings);
