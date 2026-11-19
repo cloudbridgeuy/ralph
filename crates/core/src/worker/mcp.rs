@@ -742,8 +742,7 @@ mod tests {
         assert!(
             command_definitions()[0]["inputSchema"]["properties"]["harness"]["enum"]
                 .as_array()
-                .unwrap()
-                .contains(&json!("agy"))
+                .is_some_and(|values| values.contains(&json!("agy")))
         );
         assert_eq!(
             spawn_harness(json!({"harness": "agy"})),

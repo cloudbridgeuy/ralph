@@ -317,15 +317,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_binding_has_a_separate_receipt_and_the_same_server() {
+    fn each_binding_has_a_separate_receipt_and_the_same_server(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let dir = Path::new("/tmp/verify");
-        let first = serde_json::to_value(server(dir, "new.receipt")).unwrap();
-        let second = serde_json::to_value(server(dir, "load.receipt")).unwrap();
+        let first = serde_json::to_value(server(dir, "new.receipt"))?;
+        let second = serde_json::to_value(server(dir, "load.receipt"))?;
         assert_eq!(first["name"], second["name"]);
         assert_eq!(first["command"], second["command"]);
         assert_eq!(first["args"][0], second["args"][0]);
         assert_eq!(first["args"][1], second["args"][1]);
         assert_ne!(first["args"][2], second["args"][2]);
+        Ok(())
     }
 
     #[test]

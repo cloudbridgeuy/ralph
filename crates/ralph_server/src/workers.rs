@@ -779,14 +779,16 @@ fn stdout_line(output: Output) -> String {
 mod tests {
 
     #[test]
-    fn agy_owner_is_discovered_as_its_own_headless_worker() {
-        let dir = tempfile::tempdir().unwrap();
+    fn agy_owner_is_discovered_as_its_own_headless_worker() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
         let workers = workers_in(dir.path());
-        super::write_file(&dir.path().join("agy/A"), "owner").unwrap();
+        super::write_file(&dir.path().join("agy/A"), "owner")?;
         assert_eq!(
             workers.headless_files("A").map(|(kind, _)| kind),
             Some(ralph_core::worker::HarnessId::Agy)
         );
+        Ok(())
     }
     use super::*;
     use std::time::Duration;

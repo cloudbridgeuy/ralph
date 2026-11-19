@@ -326,31 +326,33 @@ mod tests {
     }
 
     #[test]
-    fn rejected_report_requires_a_reminder() {
-        let dir = tempfile::tempdir().unwrap();
+    fn rejected_report_requires_a_reminder() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
         let markers = WorkerMarkers::new(dir.path(), "A");
         let inbox =
             Inbox::new(dir.path().join("inbox")).requiring_owner(Some(dir.path().join("agy/A")));
         let call = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"report\",\"arguments\":{\"status\":\"done\",\"text\":\"hello\"}}}\n";
         let mut output = Vec::new();
-        crate::worker_mcp::run_stdio_server("A", &inbox, None, &call[..], &mut output).unwrap();
-        let reply: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        crate::worker_mcp::run_stdio_server("A", &inbox, None, &call[..], &mut output)?;
+        let reply: serde_json::Value = serde_json::from_slice(&output)?;
         assert_eq!(reply["result"]["isError"], true);
         assert_eq!(
             receipt_outcome(&markers.reported, Ok("end_turn"), false, false, false),
             TurnOutcome::Remind
         );
+        Ok(())
     }
 
     #[test]
-    fn report_receipt_belongs_to_the_current_worker_and_turn() {
-        let dir = tempfile::tempdir().unwrap();
+    fn report_receipt_belongs_to_the_current_worker_and_turn(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
         let a = WorkerMarkers::new(dir.path(), "A");
         let b = WorkerMarkers::new(dir.path(), "B");
         let inbox = Inbox::new(dir.path().join("inbox"));
         let call = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"report\",\"arguments\":{\"status\":\"done\",\"text\":\"hello\"}}}\n";
         let mut output = Vec::new();
-        crate::worker_mcp::run_stdio_server("A", &inbox, None, &call[..], &mut output).unwrap();
+        crate::worker_mcp::run_stdio_server("A", &inbox, None, &call[..], &mut output)?;
         assert_eq!(
             receipt_outcome(&a.reported, Ok("end_turn"), false, false, false),
             TurnOutcome::Reported
@@ -359,20 +361,23 @@ mod tests {
             receipt_outcome(&b.reported, Ok("end_turn"), false, false, false),
             TurnOutcome::Remind
         );
-        remove_if_present(&a.reported).unwrap();
+        remove_if_present(&a.reported)?;
         assert_eq!(
             receipt_outcome(&a.reported, Ok("end_turn"), false, false, false),
             TurnOutcome::Remind
         );
-        remove_if_present(&a.reported).unwrap();
+        remove_if_present(&a.reported)?;
+        Ok(())
     }
 
     #[test]
-    fn receipt_reset_rejects_unremovable_stale_receipts() {
-        let dir = tempfile::tempdir().unwrap();
+    fn receipt_reset_rejects_unremovable_stale_receipts() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
         let receipt = dir.path().join("receipt");
-        fs::create_dir(&receipt).unwrap();
+        fs::create_dir(&receipt)?;
         assert!(remove_if_present(&receipt).is_err());
+        Ok(())
     }
 }
 

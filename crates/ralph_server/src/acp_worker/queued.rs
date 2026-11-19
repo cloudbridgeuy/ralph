@@ -62,8 +62,9 @@ mod tests {
     }
 
     #[test]
-    fn agy_host_leaves_foreign_requests_and_cursor_files_alone() {
-        let store = tempfile::tempdir().unwrap();
+    fn agy_host_leaves_foreign_requests_and_cursor_files_alone(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
         let agy = HandoffFiles::agy(store.path(), "A");
         let cursor = HandoffFiles::cursor(store.path(), "A");
         write_file(
@@ -75,13 +76,12 @@ mod tests {
                 group_start: "other".into(),
             }
             .render(),
-        )
-        .unwrap();
-        write_file(&agy.spawn, "request").unwrap();
-        write_file(&agy.close, "").unwrap();
-        write_file(&agy.answer, "answer").unwrap();
-        write_file(&agy.prompt.join("1"), "task").unwrap();
-        write_file(&cursor.owner, "cursor").unwrap();
+        )?;
+        write_file(&agy.spawn, "request")?;
+        write_file(&agy.close, "")?;
+        write_file(&agy.answer, "answer")?;
+        write_file(&agy.prompt.join("1"), "task")?;
+        write_file(&cursor.owner, "cursor")?;
         let mut agy_host = host(store.path());
         agy_host.agy = true;
         agy_host.poll();
@@ -89,7 +89,8 @@ mod tests {
             agy.owner.exists() && agy.close.exists() && agy.answer.exists() && agy.spawn.exists()
         );
         assert!(agy.prompt.join("1").exists());
-        assert_eq!(fs::read_to_string(cursor.owner).unwrap(), "cursor");
+        assert_eq!(fs::read_to_string(cursor.owner)?, "cursor");
+        Ok(())
     }
 
     #[test]

@@ -412,7 +412,9 @@ mod tests {
     fn agy_close_terminates_only_the_agy_worker() {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
         state.kind = HarnessId::Agy;
-        let steps = close_plan(&state, false, false).unwrap();
+        let Ok(steps) = close_plan(&state, false, false) else {
+            panic!("agy close plan failed")
+        };
         assert!(steps.contains(&CloseStep::TerminateAgy));
         assert!(!steps.contains(&CloseStep::TerminateCursor));
     }
