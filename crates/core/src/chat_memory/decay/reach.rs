@@ -1,4 +1,5 @@
 use super::anchors::{Anchor, Group};
+use super::survival::Cell;
 use super::tokens::{text_words, Key};
 use crate::chat_memory::search::rank_ids;
 use crate::chat_memory::{parse_search_args, recall_found, Entry, Node, Tree};
@@ -120,4 +121,13 @@ pub fn reach_tally<'a>(probes: impl IntoIterator<Item = &'a Probe>) -> ReachTall
         }
     }
     tally
+}
+
+pub fn recall_cell(tally: &ReachTally) -> Cell {
+    let total: usize = tally.recall.values().sum();
+    let missed = tally.recall.get(&Bucket::Miss).copied().unwrap_or(0);
+    Cell {
+        kept: total - missed,
+        total,
+    }
 }

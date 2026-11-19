@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite, NodeSource};
 pub use claim::{holder_pid, store_in_use_message};
-pub use decay::{build_decay, Decay, DecayConfig};
+pub use decay::{build_decay, render_decay, Decay, DecayConfig};
 pub use facts::{cover_candidates, cover_size, found_metrics, read_metrics, zoom_metrics, Found};
 pub use history_log::{
     count_turn_calls, encode_history, history_call_facts, history_call_row, history_error_row,

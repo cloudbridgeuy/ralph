@@ -101,3 +101,10 @@ fn groups_reported_separately() {
     assert_eq!(rate(Group::Tagged), Cell { kept: 1, total: 1 });
     assert_eq!(rate(Group::TopUp), Cell { kept: 0, total: 1 });
 }
+
+#[test]
+fn percent_rounds_and_handles_empty() {
+    assert_eq!(Cell::default().percent(), None);
+    assert_eq!(Cell { kept: 1, total: 3 }.percent(), Some(33));
+    assert_eq!(Cell { kept: 2, total: 3 }.percent(), Some(67));
+}

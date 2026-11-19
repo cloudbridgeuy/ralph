@@ -26,6 +26,10 @@ pub struct Cell {
 }
 
 impl Cell {
+    pub fn percent(self) -> Option<usize> {
+        (self.total > 0).then(|| (self.kept * 100 + self.total / 2) / self.total)
+    }
+
     pub fn add(&mut self, kept: bool) {
         self.total += 1;
         self.kept += usize::from(kept);

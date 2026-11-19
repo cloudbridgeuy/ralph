@@ -2,9 +2,15 @@ mod ancestors;
 mod anchors;
 #[cfg(test)]
 mod anchors_tests;
+mod era;
+#[cfg(test)]
+mod era_tests;
 mod reach;
 #[cfg(test)]
 mod reach_tests;
+mod render;
+#[cfg(test)]
+mod render_tests;
 mod survival;
 #[cfg(test)]
 mod survival_tests;
@@ -15,12 +21,14 @@ mod tokens_tests;
 use crate::chat::VIEW_LINES;
 use crate::chat_memory::{cover, Entry, TagState, Tree};
 use ancestors::ancestors;
-use anchors::Group;
-use anchors::{pick_anchors, Anchor};
-use reach::{probe, reach_tally, Outcome, Probe, ReachTally};
+use anchors::{pick_anchors, Anchor, Group};
+use era::{section, Collected, Section};
+use reach::{probe, Outcome};
 use std::collections::BTreeMap;
-use survival::{observe, pointer_cell, pointer_of, tally, Cell, Observation, Pointer, Table};
+use survival::{observe, pointer_of};
 use tokens::document_frequency;
+
+pub use render::render_decay;
 
 const GROUPS: [Group; 2] = [Group::Tagged, Group::TopUp];
 const DEFAULT_MAX_ANCHORS: usize = 200;
@@ -41,13 +49,8 @@ impl Default for DecayConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decay {
     pub anchors: Vec<Anchor>,
-    pub observations: Vec<Observation>,
-    pub pointers: Vec<Pointer>,
-    pub survival: BTreeMap<Group, Table>,
-    pub pointer_rates: BTreeMap<Group, Cell>,
-    pub probes: Vec<Probe>,
     pub uncompressed: usize,
-    pub reach: BTreeMap<Group, ReachTally>,
+    pub sections: BTreeMap<Group, Section>,
 }
 
 pub fn build_decay(entries: &[Entry], tree: &Tree, tags: &TagState, config: &DecayConfig) -> Decay {
@@ -63,45 +66,22 @@ pub fn build_decay(entries: &[Entry], tree: &Tree, tags: &TagState, config: &Dec
         pointers.extend(pointer_of(anchor, &found));
         probes.extend(probe(anchor, entries, tree, &view_cover));
     }
-    let survival = GROUPS
-        .iter()
-        .map(|group| {
-            (
-                *group,
-                tally(observations.iter().filter(|o| o.group == *group)),
-            )
-        })
-        .collect();
-    let pointer_rates = GROUPS
-        .iter()
-        .map(|group| {
-            (
-                *group,
-                pointer_cell(pointers.iter().filter(|p| p.group == *group)),
-            )
-        })
-        .collect();
     let uncompressed = probes
         .iter()
         .filter(|p| p.outcome == Outcome::Uncompressed)
         .count();
-    let reach = GROUPS
+    let data = Collected {
+        observations: &observations,
+        pointers: &pointers,
+        probes: &probes,
+    };
+    let sections = GROUPS
         .iter()
-        .map(|group| {
-            (
-                *group,
-                reach_tally(probes.iter().filter(|p| p.group == *group)),
-            )
-        })
+        .map(|group| (*group, section(*group, &data, entries)))
         .collect();
     Decay {
         anchors,
-        observations,
-        pointers,
-        survival,
-        pointer_rates,
-        probes,
         uncompressed,
-        reach,
+        sections,
     }
 }
