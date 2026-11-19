@@ -1,6 +1,5 @@
 use crate::chat::keepalive::Stamp;
 use crate::chat::suggestion::SuggestionCell;
-use crate::chat::thread::{fork_view, Fork};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use ralph_core::cancel::CancelToken;
@@ -22,6 +21,7 @@ use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
+use ralph_server::chat::fork::{fork_view, Fork};
 use ralph_server::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use ralph_server::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use ralph_server::ledger;

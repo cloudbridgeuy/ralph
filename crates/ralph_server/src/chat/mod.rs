@@ -1,6 +1,7 @@
 pub mod changes;
 pub mod check;
 pub mod claim;
+pub mod fork;
 pub mod index_files;
 pub mod memory;
 pub mod name;
