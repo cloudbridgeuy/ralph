@@ -7,8 +7,8 @@ use crate::prelude::*;
 use alloc::Allocs;
 use ralph_core::chat_memory::{
     encode_entry, encode_record, parse_log, parse_search_args, parse_tree, pending, read_range,
-    search, zoom, Archive, ByteSource, LogIndex, Mode, NewEntry, Node, RangeRequest, Read, Role,
-    SearchRequest, Tree, TreeIndex, Window, LOG_INDEX_FILE, TREE_INDEX_FILE,
+    search_found, zoom, Archive, ByteSource, LogIndex, Mode, NewEntry, Node, RangeRequest, Read,
+    Role, SearchRequest, Tree, TreeIndex, Window, LOG_INDEX_FILE, TREE_INDEX_FILE,
 };
 use std::fs::{self, File};
 use std::io::{self, Read as _, Seek, SeekFrom};
@@ -195,7 +195,7 @@ fn full(dir: &Path, case: &Case) -> io::Result<Answer> {
             Counted::open(&dir.join("tree.jsonl"))?,
             None,
         )?;
-        return search(&mut archive, request);
+        return Ok(search_found(&mut archive, request)?.map(|found| found.text));
     }
     let (entries, _) = parse_log(&read_counted(&dir.join("log.jsonl"))?);
     let (tree, _) = parse_tree(&read_counted(&dir.join("tree.jsonl"))?);
@@ -222,7 +222,7 @@ fn indexed(dir: &Path, case: &Case) -> io::Result<Answer> {
     Ok(match case {
         Case::Read(request) => archive.read(request)?.map(|page| page.render()),
         Case::Zoom(node) => archive.zoom(*node)?.map(|lines| lines.join("\n")),
-        Case::Search(request) => search(&mut archive, request)?,
+        Case::Search(request) => search_found(&mut archive, request)?.map(|found| found.text),
     })
 }
 

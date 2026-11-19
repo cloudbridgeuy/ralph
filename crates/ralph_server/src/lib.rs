@@ -16,6 +16,7 @@ pub mod cursor_owner;
 pub(crate) mod cursor_sweep;
 pub(crate) mod cursor_usage;
 pub mod disk_files;
+pub mod history_log;
 pub mod hook_bridge;
 pub mod invoke;
 pub(crate) mod json_file;

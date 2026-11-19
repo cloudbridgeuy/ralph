@@ -1,19 +1,23 @@
 use crate::chat::prompt::{ChatPrompt, Submitted};
 use crate::chat::queue::exit_notice;
-use crate::chat::thread::{self, Memory};
-use crate::cli::HistoryArgs;
+use crate::chat::route::history_call;
+use crate::chat::thread;
+use crate::cli::{HistoryArgs, HistorySub};
 use ralph_core::chat::{prompt_text, CustomPrompt};
 use ralph_core::chat_hold::hold_targets;
-use ralph_core::chat_memory::history_tool;
+use ralph_core::chat_memory::{history_tool, history_tool_named, CallSource};
 use ralph_core::chat_status::route_input;
 use ralph_core::chat_thread::{in_scope, ThreadName};
 use ralph_server::config::PromptFiles;
+use ralph_server::history_log;
 use ralph_server::warn::warn_if_err;
 use reedline::{HistoryItem, Reedline};
 use std::io;
 use std::path::{Path, PathBuf};
 
 use super::STORE_ENV;
+
+mod stats;
 
 pub(super) fn resolve_store(
     flag: Option<PathBuf>,
@@ -51,8 +55,14 @@ pub(super) fn print_history(
     store_dir: &Path,
     history: &HistoryArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let text = history_tool(
-        history.tool.name(),
+    let Some(tool) = history.tool else {
+        return match &history.stats {
+            Some(HistorySub::Stats(args)) => stats::print_stats(store_dir, args),
+            None => Err("history needs a tool or a subcommand".into()),
+        };
+    };
+    let parsed = history_tool(
+        tool.name(),
         &history.words.join(" "),
         history.cursor.as_deref(),
         history.tag.as_deref(),
@@ -60,8 +70,13 @@ pub(super) fn print_history(
     .and_then(|call| match &history.scope {
         Some(scope) => in_scope(call, scope),
         None => Ok(call),
-    })
-    .and_then(|call| Memory::open(store_dir)?.call(&call))?;
+    });
+    let call = parsed.inspect_err(|message| {
+        if let Some(tool) = history_tool_named(tool.name()) {
+            history_log::record_refusal(store_dir, tool, message, CallSource::Cli);
+        }
+    })?;
+    let text = history_call(store_dir, &call, CallSource::Cli)?.text;
     println!("{text}");
     Ok(())
 }

@@ -1,13 +1,34 @@
 use crate::chat::socket::forward;
-use crate::chat::thread::{config_root, Memory};
+use crate::chat::thread::{config_root, fork_of, Memory};
 use ralph_core::chat_help::config_help;
-use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
+use ralph_core::chat_memory::{
+    finish_call, handle_request, malformed_call, CallContext, CallMetrics, CallSource, ErrorScope,
+    Outcome,
+};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::mcp::tool_result;
 use ralph_server::chat::changes::run_changes;
+use ralph_server::history_log;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::time::Duration;
+
+fn record_malformed(store: &Path, request: &Value, response: &Value) {
+    if let Some(bad) = malformed_call(request, response) {
+        let fork = fork_of(store).map(|(_, name)| name);
+        history_log::record_error(
+            store,
+            &bad,
+            ErrorScope::Within(fork.as_ref()),
+            CallContext {
+                source: CallSource::Mcp,
+                took: Duration::ZERO,
+                metrics: CallMetrics::default(),
+            },
+        );
+    }
+}
 
 pub fn run_stdio_server(
     memory: &Memory,
@@ -29,8 +50,16 @@ pub fn run_stdio_server(
         };
         let response = match handle_request(&request) {
             Outcome::Silent => continue,
-            Outcome::Respond(v) => v,
-            Outcome::Call { id, call } => finish_call(id, memory.call(&call)),
+            Outcome::Respond(v) => {
+                record_malformed(memory.dir(), &request, &v);
+                v
+            }
+            Outcome::Call { id, call } => finish_call(
+                id,
+                memory
+                    .call(&call, CallSource::Mcp)
+                    .map(|answer| answer.text),
+            ),
             Outcome::Changes { id, request } => {
                 let result = std::env::current_dir()
                     .map_err(|e| format!("Could not read the working directory: {e}"))
@@ -219,10 +248,79 @@ mod tests {
             assert_eq!(
                 store
                     .call(&parsed.tool, Reach::default())
-                    .unwrap_or_else(|e| e),
+                    .map_or_else(|e| e, |answer| answer.text),
                 served,
                 "{name}"
             );
         }
+    }
+
+    fn history_rows(dir: &Path) -> Vec<Value> {
+        std::fs::read_to_string(ralph_core::chat_memory::history_path(dir))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_malformed_history_call_logs_an_error_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let socket = dir.path().join("chat-1.sock");
+        let lines = run(&store, &socket, &call("zoom", serde_json::json!({})));
+        assert_eq!(lines[0]["result"]["isError"], true);
+        let rows = history_rows(dir.path());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["tool"], "zoom");
+        assert_eq!(rows[0]["source"], "mcp");
+        assert_eq!(rows[0]["outcome"], "error");
+        assert_eq!(rows[0]["error"], text_of(&lines[0]));
+    }
+
+    #[test]
+    fn a_malformed_call_resolves_its_scope_like_a_served_call() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        std::fs::create_dir_all(&main).unwrap();
+        let auth = ralph_core::chat_thread::ThreadName::parse("auth").unwrap();
+        crate::chat::thread::ensure(&main, &auth).unwrap();
+        let thread = crate::chat::thread::thread_dir(&main, &auth);
+        let socket = root.path().join("chat-1.sock");
+        for (dir, expected) in [(&main, "main"), (&thread, "auth")] {
+            let store = Store::new(dir.to_path_buf());
+            run(&store, &socket, &call("zoom", serde_json::json!({})));
+            run(
+                &store,
+                &socket,
+                &call("zoom", serde_json::json!({"thread": "other"})),
+            );
+            let rows = history_rows(dir);
+            assert_eq!(rows[0]["scope"], expected);
+            assert_eq!(rows[1]["scope"], "other");
+        }
+    }
+
+    #[test]
+    fn a_served_history_call_logs_one_mcp_row_and_other_tools_log_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let socket = dir.path().join("chat-1.sock");
+        std::fs::write(
+            dir.path().join("log.jsonl"),
+            "{\"role\":\"user\",\"at\":\"t\",\"text\":\"hello\"}\n",
+        )
+        .unwrap();
+        ralph_server::history_log::write_turn(dir.path(), "run-1#2").unwrap();
+        let input = [
+            call("zoom", serde_json::json!({"id": "0"})),
+            call("nonsense", serde_json::json!({})),
+        ]
+        .concat();
+        run(&store, &socket, &input);
+        let rows = history_rows(dir.path());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["source"], "mcp");
+        assert_eq!(rows[0]["turn"], "run-1#2");
     }
 }

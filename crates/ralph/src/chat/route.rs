@@ -13,13 +13,16 @@ use crate::chat::workers;
 use crate::config::ConfigSnapshot;
 use crate::schedule_store::ScheduleStore;
 use ralph_core::chat_help::help_with_store;
+use ralph_core::chat_memory::{history_tool_of, CallSource, MemoryCall};
 use ralph_core::chat_status::Route;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::worker::TicketKeys;
+use ralph_server::chat::memory::Answer;
 use ralph_server::chat::watch;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::config::ChangesSection;
+use ralph_server::history_log;
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use std::collections::BTreeMap;
@@ -64,6 +67,18 @@ pub fn run_local(
     Ok(Some(output))
 }
 
+pub(super) fn history_call(
+    store: &Path,
+    call: &MemoryCall,
+    source: CallSource,
+) -> Result<Answer, String> {
+    Memory::open(store)
+        .inspect_err(|message| {
+            history_log::record_refusal(store, history_tool_of(&call.tool), message, source);
+        })?
+        .call(call, source)
+}
+
 fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<()> {
     match route {
         Route::ListInbox => inbox::list(ctx.inbox, out)?,
@@ -87,12 +102,15 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
         Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.display),
-        Route::History(call) => writeln!(
-            out,
-            "{}",
-            call.and_then(|call| Memory::open(ctx.store)?.call(&call))
-                .unwrap_or_else(|e| e)
-        )?,
+        Route::History(call) => {
+            let text = history_call(ctx.store, &call, CallSource::Slash)
+                .map_or_else(|e| e, |answer| answer.text);
+            writeln!(out, "{text}")?
+        }
+        Route::HistoryRefused { tool, message } => {
+            history_log::record_refusal(ctx.store, tool, &message, CallSource::Slash);
+            writeln!(out, "{message}")?
+        }
         Route::Send(_)
         | Route::Switch { .. }
         | Route::ThreadOp { .. }
@@ -107,4 +125,51 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         | Route::Ignore => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::thread::thread_dir;
+    use ralph_core::chat_memory::{history_path, parse_tool_call};
+    use ralph_core::chat_thread::ThreadName;
+    use serde_json::{json, Value};
+
+    fn recall() -> MemoryCall {
+        parse_tool_call("recall", &json!({"pattern": "x"})).unwrap()
+    }
+
+    fn rows(store: &Path) -> Vec<Value> {
+        std::fs::read_to_string(history_path(store))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_failed_open_of_an_existing_store_logs_an_error_row() {
+        let root = tempfile::tempdir().unwrap();
+        let auth = ThreadName::parse("auth").unwrap();
+        let thread = thread_dir(&root.path().join("chat"), &auth);
+        std::fs::create_dir_all(&thread).unwrap();
+        let err = history_call(&thread, &recall(), CallSource::Slash).unwrap_err();
+        let rows = rows(&thread);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["event"], "call");
+        assert_eq!(rows[0]["tool"], "recall");
+        assert_eq!(rows[0]["source"], "slash");
+        assert_eq!(rows[0]["outcome"], "error");
+        assert_eq!(rows[0]["error"], err);
+    }
+
+    #[test]
+    fn a_failed_open_of_a_missing_store_logs_nothing_and_creates_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let auth = ThreadName::parse("auth").unwrap();
+        let thread = thread_dir(&root.path().join("chat"), &auth);
+        assert!(history_call(&thread, &recall(), CallSource::Cli).is_err());
+        assert!(!thread.exists());
+        assert!(!root.path().join("chat").exists());
+    }
 }

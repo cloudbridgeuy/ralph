@@ -2,6 +2,9 @@ mod archive;
 mod claim;
 #[cfg(test)]
 mod corrupt_tests;
+mod facts;
+mod history_log;
+mod history_stats;
 mod index;
 mod log;
 mod lookup;
@@ -18,8 +21,20 @@ mod usage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite};
+pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite, NodeSource};
 pub use claim::{holder_pid, store_in_use_message};
+pub use facts::{cover_candidates, cover_size, found_metrics, read_metrics, zoom_metrics, Found};
+pub use history_log::{
+    count_turn_calls, encode_history, history_call_facts, history_call_row, history_error_row,
+    history_path, history_tool_named, history_tool_of, history_turn_row, malformed_call,
+    next_turn_number, parse_turn_id, resolve_scope, scope_label, turn_id, view_line_ids,
+    CallContext, CallMetrics, CallSource, ErrorScope, HistoryKey, HistoryRow, HistoryTool,
+    MalformedCall, TurnFacts,
+};
+pub use history_stats::{
+    build_stats, parse_history, parse_timing, render_stats, Parsed, Stats, StatsConfig,
+    TimingParsed,
+};
 pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
     INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,
@@ -28,13 +43,13 @@ pub use log::{
     encode_entry, encode_record, entry_or_corrupt, log_tail, parse_log, parse_tree, LogTail,
     CORRUPT_TEXT,
 };
-pub use lookup::{recall, zoom};
+pub use lookup::{recall_found, zoom};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
     nap_system, retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
 };
 pub use range::{read_range, Mode, RangeRequest, Read};
-pub use search::{parse_search_args, search, SearchRequest};
+pub use search::{parse_search_args, search_found, SearchRequest};
 pub use tag::{
     after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
     failure_kind, ids_with, isolated, next_size, parse_reply, restrict_decision, retake,

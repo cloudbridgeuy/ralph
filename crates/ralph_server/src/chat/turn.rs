@@ -2,6 +2,7 @@ use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::fork::{fork_view, Fork};
 use crate::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use crate::chat::suggestion::SuggestionCell;
+use crate::history_log;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::ledger;
 use crate::private_file::write_private;
@@ -23,12 +24,14 @@ use ralph_core::chat::{
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_local::{catch_up_prompt, unseen_lines};
 use ralph_core::chat_memory::{
-    carry_metadata, reply_entries, split_view, subagent_records, trigger_entries, turn_row,
-    usage_record, view_stats, CallSite, Trigger, TurnTiming, ViewSplit,
+    carry_metadata, reply_entries, resolve_scope, scope_label, split_view, subagent_records,
+    trigger_entries, turn_row, usage_record, view_line_ids, view_stats, CallSite, Trigger,
+    TurnTiming, ViewSplit,
 };
 use ralph_core::chat_process::{turn_cost, ResetReason};
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::chat_suggestion::from_reply;
+use ralph_core::chat_thread::Scope;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{extract_response_text, OutputBlock, VerboseToolsConfig};
 use ralph_core::stream::IterationMetadata;
@@ -111,6 +114,13 @@ impl Drop for PendingTurn<'_> {
 struct TurnInput<'a> {
     sent: &'a str,
     live: &'a str,
+    cancel: &'a CancelToken,
+}
+
+struct TurnRequest<'a> {
+    trigger: Trigger,
+    logged: &'a [String],
+    message: &'a str,
     cancel: &'a CancelToken,
 }
 
@@ -237,14 +247,30 @@ impl Turn<'_> {
         cancel: &CancelToken,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
         let started = Instant::now();
+        let mark = history_log::begin_turn(self.store_dir, self.run);
         *locked(&self.timing) = TurnTiming::default();
         locked(&self.last_cost_usd).take();
-        let outcome = self.run_turn(trigger, logged, message, cancel);
+        let mut view = Vec::new();
+        let request = TurnRequest {
+            trigger,
+            logged,
+            message,
+            cancel,
+        };
+        let outcome = self.run_turn(&request, &mut view);
         let elapsed = started.elapsed();
         let turn_timing = *locked(&self.timing);
         timing::record(self.store_dir, Some(self.run), |key| {
             turn_row(key, elapsed, &turn_timing, turn_ok(&outcome))
         });
+        let fork = self.fork.map(|fork| &fork.name);
+        history_log::end_turn(
+            self.store_dir,
+            self.run,
+            &mark,
+            &scope_label(&resolve_scope(&Scope::Own, fork)),
+            view,
+        );
         *locked(&self.last_turn_end) = Some(chrono::Utc::now());
         self.live
             .store(locked(&self.session).is_some(), Ordering::SeqCst);
@@ -253,11 +279,15 @@ impl Turn<'_> {
 
     fn run_turn(
         &self,
-        trigger: Trigger,
-        logged: &[String],
-        message: &str,
-        cancel: &CancelToken,
+        request: &TurnRequest,
+        view: &mut Vec<String>,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+        let TurnRequest {
+            trigger,
+            logged,
+            message,
+            cancel,
+        } = *request;
         self.store.set_pending_turn(trigger)?;
         let _pending = PendingTurn(self.store);
         let unseen = self.unseen().unwrap_or_else(|e| {
@@ -338,6 +368,16 @@ impl Turn<'_> {
             *held = carry_metadata(&held, launch.is_some(), &turn_metadata(&result));
             held.clone()
         };
+        if let Some(spawned) = &launch {
+            *view = view_line_ids(
+                &[
+                    spawned.split.older.as_slice(),
+                    spawned.split.middle.as_slice(),
+                    spawned.split.tail.as_slice(),
+                ]
+                .concat(),
+            );
+        }
         let at = chrono::Utc::now().to_rfc3339();
         if let Some((turn, mut record)) = recorded(&result).and_then(|turn| {
             usage_record(

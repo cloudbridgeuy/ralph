@@ -8,6 +8,7 @@
 ralph chat [--skill <PATH>]... [--permission-mode <MODE>] [--worktree-dir <DIR>] [--no-inbox-sound] [--no-inbox-notification] [--skip-summary]
 ralph                      # same as ralph chat with defaults
 ralph chat history <read|zoom|recall|search> <words>... [--cursor <C>] [--store <DIR>]
+ralph chat history stats [--gap <secs>] [--few-hits <n>] [--store <DIR>]
 ralph chat --thread <NAME> [--model <MODEL>]  # create or open a thread; see Threads
 ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pull <NAME>> [--store <DIR>]
 ```
@@ -494,13 +495,75 @@ The pure model is `crates/core/src/workers_view/remote.rs`; the shell is `crates
 
 ## History commands
 
-`/read <id> [raw|summary] [--cursor <c>]`, `/zoom <id>`, `/recall <regex>` and `/search <words> [--cursor <c>]` print the chat memory with the same text as the model's `read`, `zoom`, `recall` and `search` tools (see [MCP tools](#mcp-tools)). ralph answers them itself: no turn, no model call. They run during a turn too. `ralph chat history <tool> <words>... [--cursor <c>]` does the same outside chat; it resolves the store as `ralph chat` does (`--store`, `RALPH_CHAT_STORE`, `~/.ralph/chat`), prints the text and exits non-zero on a tool error.
+`/read <id> [raw|summary] [--cursor <c>]`, `/zoom <id>`, `/recall <regex>` and `/search <words> [--cursor <c>]` print the chat memory with the same text as the model's `read`, `zoom`, `recall` and `search` tools (see [MCP tools](#mcp-tools)). ralph answers them itself: no turn, no model call. They run during a turn too. Each call writes a row to the [history log](#history-log). `ralph chat history <tool> <words>... [--cursor <c>]` does the same outside chat; it resolves the store as `ralph chat` does (`--store`, `RALPH_CHAT_STORE`, `~/.ralph/chat`), prints the text and exits non-zero on a tool error.
 
 - One implementation: the pure `chat_memory::history_tool(name, words, cursor, tag)` builds the tool arguments and calls `parse_tool_call`, the parser of the model's calls, which returns a `MemoryCall` (scope and `Tool`). `thread::Memory::call` routes it to main or a thread (see [Threads](#threads)) and `Store::call` runs it, for the slash commands, the CLI and `chat-mcp`.
 - Words: `/read` takes an id and an optional mode; `/zoom` takes an id; the rest of a `/recall` line is the pattern, inner spaces kept; the rest of a `/search` line is the query. A last `--cursor <c>` pair on `/read` or `/search` is the cursor from a page's `next cursor:` line. `/search` has no role, date or limit filters; the defaults apply (20 hits a page). The CLI joins its words with one space.
 - Errors: bad words print the tool error (for example `Missing or empty string argument 'id'.` for a bare `/zoom`). `route_input` returns `Route::History(Err(..))` for them, so they are never sent to the model as a message. `/readme` and other longer words stay messages.
 - Locks: they take only the shared `LOCK` that the model's tools take (see [Index](#index)), never `CHAT` or `NAP`, so they work while a chat or a nap runs; a nap commit or an append makes them wait briefly. A missing store reads as empty and creates nothing. Like the model's tools, a read can save an index file it extended.
 - Tab does not complete them or their arguments.
+
+### History stats
+
+`ralph chat history stats [--gap <secs>] [--few-hits <n>]` reports how the model used the history tools. It reads `analytics/history.jsonl` and `analytics/timing.jsonl` in the store. It makes no model call and costs nothing. A missing file reads as empty. A thread store has its own analytics: pass `--thread` or `--store` to read it. Put `--store` and `--thread` before `history` or after `stats`, not between `history` and `stats`: clap then reads `stats` as a tool name and rejects it. `--cursor`, `--tag` and `--in` belong to the tool form and `stats` rejects them.
+
+- calls: calls per tool and per source (`mcp`, `slash`, `cli`, other).
+- rates: share of calls with an empty result and share that failed.
+- chains: a chain is 3 or more weak recall or search calls in a row in one turn (model or slash calls only). A gap over `--gap` seconds (default 120) ends it. A weak call has at most `--few-hits` hits (default 2).
+- unopened hits: counts hits, not calls. Each id in a search or recall `hit_ids` counts as opened when a later zoom or read in the turn covers it, and as unopened if not. A row without `hit_ids`, a CLI row and a row with no turn count as unknown: its `hits`, or 1 when it has no hit count.
+- no-history turns: turns with no history call. The report joins turn rows to timing rows by run and the nearest `at` within 2 s, because timing rows have no turn id. Matching is greedy in history order, so turns less than 2 s apart may swap timing rows. `with no history call` counts only turns that joined a timing row. With no timing log it prints `n/a`.
+- zoom depth: how many zooms went 0, 1, 2, 3 or 4+ levels deep, and the node size.
+- old reach: a call is old when it reaches below the start of the turn's view. It is undecided when the turn has no view.
+- The parser is lenient. It skips bad rows and counts them in `skipped rows`.
+- Code: the pure `build_stats` and `render_stats` in `crates/core/src/chat_memory/history_stats/`; the shell is `crates/ralph/src/chat/session/stats.rs`.
+
+Sample:
+
+```text
+history stats
+call rows: 5, turn rows: 1, skipped rows: 1
+
+calls
+tool     total   mcp slash   cli other
+read         1     1     0     0     0
+zoom         1     1     0     0     0
+recall       0     0     0     0     0
+search       3     3     0     0     0
+
+rates
+tool     empty error
+read        0%  100%
+zoom        0%    0%
+recall      0%    0%
+search      0%    0%
+
+chains
+chains: 1
+calls in chains: 3
+
+unopened hits
+opened hits: 0
+unopened hits: 3
+unknown (hits, or rows with no hit count): 0
+
+no-history turns
+turns: 1 (no timing log)
+joined: n/a
+with no history call: 0
+
+zoom depth
+0: 0
+1: 0
+2: 0
+3: 0
+4+: 0
+node size: count 0, max 0
+
+old reach
+old: 0
+decided: 0
+undecided: 0
+```
 
 ## Process reset
 
@@ -651,7 +714,7 @@ After each reply, chat starts a background pass that labels new messages `rule`,
 
 `[chat] mcp_servers` in the ralph config (default `["mcptools"]`) names servers to import. `select_servers` copies each entry verbatim from the top-level `mcpServers` of `~/.claude.json`. A name absent there, or equal to `ralph-chat`, prints one warning and chat starts without it. `ralph-chat` is inserted last, so an import cannot shadow it. claude and claude-tmux workers import the same list into their own `<store>/workers/<id>.json` ([details](headless-workers.md)). The file is written once at chat start: config changes need a restart. Imported entries can carry secrets, which is why they go in a file and not in argv. Turns run with the chat's permission mode (default `auto`), which decides whether imported tools need approval.
 
-Hidden `ralph chat-mcp --store <DIR> --socket <PATH>` speaks newline-delimited JSON-RPC 2.0 on stdio (server name `ralph-chat`). At chat start the shell writes `mcp.json` (mode `0600`) in the chat's private socket directory `/tmp/ralph-<uid>/<key>-<pid>/` holding `ralph-chat` plus the servers named in `[chat] mcp_servers`, and `build_mcp_args` passes `--mcp-config /tmp/ralph-<uid>/<key>-<pid>/mcp.json --allowedTools mcp__<server>__*,... --strict-mcp-config`, so only those servers load. The allow list names every server in `mcp.json`: `--setting-sources project,local` skips allow rules in `~/.claude/settings.json`, and without this list the auto-mode classifier blocks these MCP calls. `chat-mcp` takes no permission mode or worktree directory; the chat process owns both. `zoom`, `recall`, `read` and `search` each go through `Store::with_archive`: on an existing store each call holds a shared `LOCK` for the whole call and reads the log and tree fresh, so it sees every line committed before it took the lock (see [Index](#index)); on a missing store it takes no lock, reads as empty and creates nothing.
+Hidden `ralph chat-mcp --store <DIR> --socket <PATH>` speaks newline-delimited JSON-RPC 2.0 on stdio (server name `ralph-chat`). At chat start the shell writes `mcp.json` (mode `0600`) in the chat's private socket directory `/tmp/ralph-<uid>/<key>-<pid>/` holding `ralph-chat` plus the servers named in `[chat] mcp_servers`, and `build_mcp_args` passes `--mcp-config /tmp/ralph-<uid>/<key>-<pid>/mcp.json --allowedTools mcp__<server>__*,... --strict-mcp-config`, so only those servers load. The allow list names every server in `mcp.json`: `--setting-sources project,local` skips allow rules in `~/.claude/settings.json`, and without this list the auto-mode classifier blocks these MCP calls. `chat-mcp` takes no permission mode or worktree directory; the chat process owns both. `zoom`, `recall`, `read` and `search` each go through `Store::with_archive`: on an existing store each call holds a shared `LOCK` for the whole call and reads the log and tree fresh, so it sees every line committed before it took the lock (see [Index](#index)); on a missing store it takes no lock, reads as empty and creates nothing. Each call, and each malformed call, writes a row to the [history log](#history-log).
 
 Worker tools run inside `ralph chat`, not in `chat-mcp`. At start the chat creates the runtime root `/tmp/ralph-<uid>` (mode `0700`, `wire::store::ensure_store_root`: chat start fails if the root is a symlink, not a directory, owned by another user or not mode `0700`, and the message names the fix). The path is hardcoded and reads no environment variable. `<key>` is the first 12 hex characters of the SHA-256 of the canonical store path (`chat_socket::StoreKey`), so each store and thread has its own key. The chat sweeps, then creates the private directory `/tmp/ralph-<uid>/<key>-<pid>/` (mode `0700`, created with `DirBuilder` so it fails if the path exists; a leftover directory that the sweep kept makes chat start fail with a clear error), binds `chat.sock` inside it (then mode `0600`, so the socket is never reachable with looser rights), writes `mcp.json` in the same directory (and `system-prompt.md` at each launch), and writes the owner record `<store>/chat-<pid>.owner` (mode `0600`, JSON `pid` and `ps -o lstart=` start time). The sweep reads each `<key>-<pid>` directory of this store's key in the runtime root (directories of other stores are left alone) and each `.owner` record in `<store>`. The pure `chat_socket::socket_fate` deletes a directory and its record when the record is missing, unreadable or names another pid, or when the owner is dead or has a different start time; it keeps them only when the owner is alive with the same start time. An orphan `.owner` record, one with no `<key>-<pid>` directory, goes through `chat_socket::orphan_sidecar_fate` with the same rule: it is deleted unless its owner is alive with the same start time. Quitting the chat (Ctrl-D, or SIGTERM/SIGHUP during a turn) ends the main loop, and `SocketGuard` drops and removes its own directory (with the socket) and record. A SIGTERM/SIGHUP or a lost terminal stdin at the prompt goes through the input watcher instead: `ExitCleanup::run` kills watches, shuts down headless hosts, removes the same directory and record, then exits with code 129. A SIGKILL leaves both for the next start's sweep in the same store; a runtime directory whose store is gone stays until `/tmp` is cleared. `mcp.json` passes `--socket <path>` to `chat-mcp`. `chat-mcp` keeps `zoom` and `recall` and forwards `spawn_worker`, `reply`, `close_worker`, `watch`, `watch_list` and `watch_stop` to the socket as one JSON line `{tool, args}` per connection; the chat answers with one line `{text, is_error}` after it checks the turn marker (`command_allowed`) and parses the arguments (`worker::parse_command`). If nothing listens, the tool returns an error that starts with `no running ralph chat` and names the socket path; there is no fallback. `ralph ask` loads no `chat-mcp`, so it cannot spawn workers. A Unix socket path may not exceed 103 bytes (macOS `sun_path` is 104 with the NUL byte). The socket path does not depend on the store depth and is at most 55 bytes; a longer path makes chat start fail with a message that names the runtime root. A chat started by an older ralph keeps its `<store>/chat-<pid>/` directory, and its `mcp.json` still passes that path to `chat-mcp`; the new sweep does not remove those directories.
 
@@ -786,7 +849,7 @@ Local PNG, JPEG, GIF and WebP images in agent replies and in `!shell` cell outpu
 
 ## Storage and isolation
 
-- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `log.idx`, `tree.idx`, `LOCK`, `NAP`, `TAG`, `tags.jsonl`, `history.txt`, `editor.md`, `suggestions.jsonl`, `analytics/timing.jsonl` ([timing log](#timing-log)), `attachments/`, and an optional `config.toml` that overrides the global config per key for chats using this store (see [configuration](../configuration.md#configuration-precedence)). A store `config.toml` that fails to load falls back to the global config with a warning, and setting a security-relevant key warns once; details are in [configuration](../configuration.md). It is not project-scoped.
+- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `log.idx`, `tree.idx`, `LOCK`, `NAP`, `TAG`, `tags.jsonl`, `history.txt`, `editor.md`, `suggestions.jsonl`, `analytics/timing.jsonl` ([timing log](#timing-log)), `analytics/history.jsonl` ([history log](#history-log)), `TURN` (the current turn id, see the history log), `attachments/`, and an optional `config.toml` that overrides the global config per key for chats using this store (see [configuration](../configuration.md#configuration-precedence)). A store `config.toml` that fails to load falls back to the global config with a warning, and setting a security-relevant key warns once; details are in [configuration](../configuration.md). It is not project-scoped.
 - `LOCK` is a file lock: exclusive for append and for each nap commit, shared for settled load and the nap snapshot. `NAP` is an exclusive file lock held for the whole nap; `napping()` probes it. Store paths that are symlinks or multiply-linked files are rejected.
 - Isolation: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Chat turns can change this with `[chat]` keys (`Isolation::for_chat`): `user_settings = true` uses `user,project,local`; `user_claude_md = true` drops the home entry; `project_claude_md = false` adds `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` of the chat process directory (not ancestors). The key is left out when the list is empty. The merge and tag curators keep the default; the nap curator excludes every `CLAUDE.md` (see [Nap](#nap) curator). Project and local settings stay active; this is context isolation, not a sandbox. With `[claude] config_dir` set, the `CLAUDE.md` entry uses that folder and the command gets a `CLAUDE_CONFIG_DIR='<dir>'` prefix (turns, nap and `ralph ask`).
 - User agents in `~/.claude/agents` do not load, so `build_agents_args` passes the bundled `SUBAGENTS` (`evidence-collector` haiku, `implementer` sonnet, `reviser` opus) as `--agents <json>`. These copies may drift from `~/.claude/agents`.
@@ -817,6 +880,19 @@ A keepalive ping that times out kills its process. Since GUZ-1663, when the part
 - `nap_call`: one row per curator call of a nap, including calls that wrote no usage row. `node` (the node id, `lo` or `lo-hi`), `attempt` (1-based, up to `MAX_NAP_ATTEMPTS`), `duration_ms`, `outcome` (`ok`, `rejected` when `check_summary` refused the reply, `failed`, or `timeout`) and `exit` (the process exit code when known).
 
 Writes are best effort: an I/O error shows one warning and never fails a turn or a nap. Rows are one `write_all` on an `O_APPEND` file opened with `O_NOFOLLOW`, with no `LOCK`. `ralph thread merge` and keepalive pings write no timing rows. Limit: an `outage_retry` outcome is not written; a call's retries inside one curator run show only in the usage rows and the final outcome.
+
+### History log
+
+`<store>/analytics/history.jsonl` holds one JSON line per history call and one per model turn. Every row has `v` (1), `at` (RFC 3339), `store` (the canonical store path), `event` (`call` or `turn`), `run` and `turn`. `run` and `turn` are absent when the writer has none. A reader must ignore fields it does not know. Optional fields are left out when empty.
+
+- `call`: one row per `read`, `zoom`, `recall` or `search` call. `source` (`mcp` for the model's chat-mcp tool, `slash` for `/read` and the like, `cli` for `ralph chat history`), `tool`, `scope` (`own`, `main` or a thread name), `args`, `outcome` (`ok`, `empty` or `error`), `error` (capped at 300 chars), `hits`, `truncated`, `result_bytes`, `duration_ms`, `node_size`, `depth`, `oldest_hit`, `top_cover_size` and `hit_ids`. `hit_ids` is for `search` and `recall` only: the ids of the hits the call returned, in returned order, up to 10 (a search page lists only its own hits; a thread hit reads `name:id`). It is absent when there are no hits, on `read`, `zoom` and error rows, and on rows written before it existed. A tool sets only the metrics that fit it; the others are absent. `in_view` is never written today, because the chat-mcp and slash processes have no model view. Text args are capped at 200 chars. `args` holds the parsed call: `zoom` logs `id`; `recall` logs `pattern`; `read` logs `from`, `to`, `mode`, `budget` and `has_cursor`; `search` logs `query`, `role`, `tag`, `since`, `until` (the dates as typed), `limit` (the parsed value, so the default shows) and `has_cursor`, taken from the parsed request; a filter that was not given is left out. A malformed call has no parsed form, so its error row logs the raw arguments that were present, including the search filters; the slash and CLI refusals pass no arguments, so their `args` is empty. The scope of a malformed call is the `thread` it names or the prefix of its `id`; with neither, chat-mcp resolves it like a served call (`main`, or the thread name in a thread store), and the slash and CLI refusals log `own`.
+- `turn`: one row per model turn, written when the turn ends, even with no calls. `scope` (`main` or the thread name), `history_calls` (the `call` rows with source `mcp` and this turn id written during the turn; slash calls typed during the turn are not counted), and the memory view the model got at launch: `view_ids` (the entry ids), or, over 64 ids, `view_hash` (first 16 hex chars of a SHA-256 of the ids), `view_first` and `view_last`. A turn that reused its session and sent no new view logs an empty `view_ids`.
+
+The turn id is `<run>#<n>`, where `<run>` is the usage-row run id and `n` is a counter for the whole run. The turn shell (`turn.rs`) writes it to `<store>/TURN` at turn start (`begin_turn`). A successful chat claim in `Store::claim_chat` clears the file, so a new chat process starts at 1. `chat-mcp` and the slash commands read `TURN` and stamp `run` and `turn` on their rows; a slash call between turns carries the previous turn id. The CLI never reads `TURN`, so its rows carry no `run` or `turn`.
+
+A malformed call writes an `error` row on all three paths: chat-mcp (the tool result has `isError`), slash and CLI (the parse fails). A call to an unknown tool name writes no row. A parsed slash or CLI call whose `Memory::open` fails (for example a thread store with an unreadable `thread.json`) also writes an `error` row, with scope `own` and empty `args`; if the store directory does not exist, no row is written, as for every row.
+
+Writes are best effort: an I/O error shows one warning and never changes the tool result. Rows are one `write_all` on an `O_APPEND` file opened with `O_NOFOLLOW`, with no `LOCK`. A store directory that does not exist gets no row and no directory.
 
 ### Claude worker usage
 

@@ -4,7 +4,9 @@ use crate::cli::{ThreadArgs, ThreadCommand, MERGE_TIMEOUT_SECS};
 use crate::schedule_store::ScheduleStore;
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
-use ralph_core::chat_memory::{view, CallSite, Entry, MemoryCall, Tree};
+use ralph_core::chat_memory::{
+    resolve_scope, view, CallContext, CallSite, CallSource, Entry, MemoryCall, Tree,
+};
 pub use ralph_core::chat_thread::config_root;
 pub(super) use ralph_core::chat_thread::fork_of;
 use ralph_core::chat_thread::{
@@ -24,17 +26,21 @@ pub use ralph_server::chat::fork::open_fork;
 pub(super) use ralph_server::chat::fork::read_meta;
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::memory::Store;
+use ralph_server::history_log;
 use ralph_server::private_file::check_path;
 use ralph_server::watch_store::WatchStore;
 use ralph_server::workers::{canonical_store, running_workers};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
-use ralph_server::chat::memory::Reach;
+use ralph_server::chat::memory::{Answer, Reach};
 
 pub(crate) mod close;
 mod graph;
+#[cfg(test)]
+mod history_tests;
 pub(super) mod landing;
 mod list;
 pub(super) mod open;
@@ -56,7 +62,30 @@ impl Memory {
         })
     }
 
-    pub fn call(&self, call: &MemoryCall) -> Result<String, String> {
+    pub fn call(&self, call: &MemoryCall, source: CallSource) -> Result<Answer, String> {
+        let started = Instant::now();
+        let result = self.dispatch(call);
+        let resolved = MemoryCall {
+            scope: resolve_scope(&call.scope, self.fork.as_ref().map(|fork| &fork.name)),
+            tool: call.tool.clone(),
+        };
+        history_log::record_call(
+            self.dir(),
+            &resolved,
+            &result.clone().map(|answer| answer.text),
+            CallContext {
+                source,
+                took: started.elapsed(),
+                metrics: result
+                    .as_ref()
+                    .map(|answer| answer.facts.clone())
+                    .unwrap_or_default(),
+            },
+        );
+        result
+    }
+
+    fn dispatch(&self, call: &MemoryCall) -> Result<Answer, String> {
         let own = |label| self.own.call(&call.tool, Reach { limit: None, label });
         match (&call.scope, &self.fork) {
             (Scope::Own | Scope::Main, None) => own(None),
@@ -422,7 +451,9 @@ mod tests {
     }
 
     fn call(memory: &Memory, tool: &str, args: serde_json::Value) -> Result<String, String> {
-        memory.call(&parse_tool_call(tool, &args).unwrap())
+        memory
+            .call(&parse_tool_call(tool, &args).unwrap(), CallSource::Cli)
+            .map(|answer| answer.text)
     }
 
     #[cfg(unix)]

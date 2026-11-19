@@ -2,7 +2,7 @@ use super::query::tokenize;
 use super::request::{check_cursor, check_fingerprint, passes, SearchCursor, SearchRequest};
 use crate::chat_memory::archive::{Archive, ByteSource};
 use crate::chat_memory::lookup::excerpt;
-use crate::chat_memory::{Entry, Role};
+use crate::chat_memory::{Entry, Found, Role};
 use std::io;
 
 pub(super) const CHUNK_ENTRIES: usize = 256;
@@ -100,12 +100,16 @@ impl<'a> Scan<'a> {
     }
 }
 
+fn page_bounds(request: &SearchRequest, total: usize) -> (usize, usize) {
+    let offset = request.cursor.map_or(0, |c| c.offset).min(total);
+    (offset, (offset + request.limit).min(total))
+}
+
 fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String {
     if ranked.is_empty() {
         return format!("no hits for {}", request.text);
     }
-    let offset = request.cursor.map_or(0, |c| c.offset).min(ranked.len());
-    let end = (offset + request.limit).min(ranked.len());
+    let (offset, end) = page_bounds(request, ranked.len());
     let mut lines: Vec<String> = ranked[offset..end]
         .iter()
         .map(|hit| {
@@ -132,10 +136,10 @@ fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String
     lines.join("\n")
 }
 
-pub fn search<B: ByteSource>(
+pub fn search_found<B: ByteSource>(
     archive: &mut Archive<B>,
     request: &SearchRequest,
-) -> io::Result<Result<String, String>> {
+) -> io::Result<Result<Found, String>> {
     if let Err(message) = check_fingerprint(request) {
         return Ok(Err(message));
     }
@@ -144,5 +148,14 @@ pub fn search<B: ByteSource>(
     if let Err(message) = check_cursor(request, count) {
         return Ok(Err(message));
     }
-    Ok(Ok(render(request, count, &scan.ranked())))
+    let ranked = scan.ranked();
+    let (offset, end) = page_bounds(request, ranked.len());
+    Ok(Ok(Found {
+        text: render(request, count, &ranked),
+        hits: ranked.len(),
+        truncated: None,
+        oldest: ranked.iter().map(|hit| hit.id).min(),
+        top: ranked.first().map(|hit| hit.id),
+        shown: ranked[offset..end].iter().map(|hit| hit.id).collect(),
+    }))
 }
