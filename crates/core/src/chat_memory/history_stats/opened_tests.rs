@@ -136,3 +136,17 @@ fn shown_ids_raise_a_total_hit_count_that_is_too_low() {
     }))]);
     assert_eq!(found.unknown, 1);
 }
+
+#[test]
+fn a_cli_row_without_a_hit_count_counts_its_shown_ids() {
+    let found = opened(&[call(json!({
+        "hits": null, "hit_ids": ["5", "6", "7"], "source": "cli", "turn": null, "run": null
+    }))]);
+    assert_eq!(found.unknown, 3);
+}
+
+#[test]
+fn a_row_with_no_hit_count_and_no_ids_is_not_a_hit_row() {
+    let found = opened(&[call(json!({"hits": null, "source": "cli"}))]);
+    assert_eq!(found, Opened::default());
+}
