@@ -162,6 +162,33 @@ fn conclude(
     }
 }
 
+const AGY_LIVE_REQUIRED_CHECKS: &[&str] = &[
+    "version",
+    "initialize",
+    "session/new",
+    "settings/new",
+    "mcp/new",
+    "session/close",
+    "session/load",
+    "settings/load",
+    "mcp/load",
+    "session/close reload",
+    "live session",
+    "live settings",
+    "live prompt",
+    "live report",
+    "live usage",
+    "live close",
+];
+
+fn agy_required_checks(live: bool) -> &'static [&'static str] {
+    if live {
+        AGY_LIVE_REQUIRED_CHECKS
+    } else {
+        AGY_REQUIRED_CHECKS
+    }
+}
+
 pub fn run(
     agent: HarnessId,
     live: bool,
@@ -203,7 +230,7 @@ pub fn run(
                 let remaining = verify_limit(live).saturating_sub(started.elapsed());
                 acp_worker::verify_agy(live, dir.path(), &checks, version, remaining);
             }
-            (version, AGY_REQUIRED_CHECKS)
+            (version, agy_required_checks(live))
         }
         HarnessId::Cursor => (
             acp_worker::verify(live, dir.path(), &checks),
@@ -283,6 +310,48 @@ mod tests {
             model: None,
             live: false,
             passed: version.is_some(),
+        }
+    }
+
+    #[test]
+    fn agy_live_requires_more_than_the_free_protocol_checks() {
+        let checks: Vec<_> = AGY_REQUIRED_CHECKS
+            .iter()
+            .map(|name| CheckResult::pass(name, "ok"))
+            .collect();
+        assert!(spec_passed(
+            &checks,
+            Some("1.5.12"),
+            agy_required_checks(false)
+        ));
+        assert!(!spec_passed(
+            &checks,
+            Some("1.5.12"),
+            agy_required_checks(true)
+        ));
+        let all: Vec<_> = agy_required_checks(true)
+            .iter()
+            .map(|name| CheckResult::pass(name, "ok"))
+            .collect();
+        assert!(spec_passed(&all, Some("1.5.12"), agy_required_checks(true)));
+        for missing in [
+            "live session",
+            "live settings",
+            "live prompt",
+            "live report",
+            "live usage",
+            "live close",
+        ] {
+            let partial: Vec<_> = all
+                .iter()
+                .filter(|check| check.name != missing)
+                .cloned()
+                .collect();
+            assert!(!spec_passed(
+                &partial,
+                Some("1.5.12"),
+                agy_required_checks(true)
+            ));
         }
     }
 

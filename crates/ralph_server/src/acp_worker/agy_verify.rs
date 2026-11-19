@@ -3,6 +3,8 @@ use crate::worker_verify::{step, Checks};
 use agent_client_protocol::schema::v1::{CloseSessionRequest, McpServerStdio};
 use ralph_core::worker::{CheckResult, AGY_AGENT};
 
+mod live;
+
 const STUB: &str = r#"import json, sys
 from pathlib import Path
 for line in sys.stdin:
@@ -95,13 +97,27 @@ fn settings(selection: &agy_settings::Selection) -> Result<String, String> {
     }
 }
 
-async fn run(
-    connection: ConnectionTo<Agent>,
+struct Run {
     dir: PathBuf,
     checks: Checks,
     version: String,
     updates: agy_settings::Updates,
+    live: bool,
+    allow_report: Arc<AtomicBool>,
+}
+
+async fn run(
+    connection: ConnectionTo<Agent>,
+    run: Run,
 ) -> Result<(), agent_client_protocol::Error> {
+    let Run {
+        dir,
+        checks,
+        version,
+        updates,
+        live,
+        allow_report,
+    } = run;
     let init = match initialize(&connection, &AGY_AGENT).await {
         Ok(result) => result.and_then(|init| identity(&init, &version).map(|()| init)),
         Err(error) => Err(format!("agy initialize failed: {}", error.message)),
@@ -138,7 +154,7 @@ async fn run(
     if step(&checks, "session/close", closed, Clone::clone).is_none() {
         return Ok(());
     }
-    let load = opening(&dir, "load.receipt", updates);
+    let load = opening(&dir, "load.receipt", Arc::clone(&updates));
     let loaded = agy_settings::load(&connection, &load, id.clone()).await;
     let Some((_, selected)) = step(&checks, "session/load", loaded, |_| {
         "session loaded".to_string()
@@ -155,18 +171,13 @@ async fn run(
         return Ok(());
     }
     let closed = close(&connection, &id).await;
-    step(&checks, "session/close reload", closed, Clone::clone);
+    if step(&checks, "session/close reload", closed, Clone::clone).is_some() && live {
+        live::run(&connection, &dir, &checks, updates, &allow_report).await;
+    }
     Ok(())
 }
 
 pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, remaining: Duration) {
-    if live {
-        checks.add(CheckResult::fail(
-            "live",
-            "agy live verification is not available yet",
-        ));
-        return;
-    }
     if remaining.is_zero() {
         checks.add(CheckResult::fail(
             "timeout",
@@ -214,12 +225,33 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
             stop_groups(&[group], Duration::from_millis(200), || false);
         }
     });
+    let allow_report = Arc::new(AtomicBool::new(false));
+    let permission = Arc::clone(&allow_report);
     let updates = Arc::new(Mutex::new(None));
     let observer = Arc::clone(&updates);
     let version = version.to_string();
     let outcome = block_on(
         Client
             .builder()
+            .on_receive_request(
+                async move |request: RequestPermissionRequest, responder, _cx| {
+                    let content =
+                        permission_content(&serde_json::to_value(&request).unwrap_or_default());
+                    let option = auto_allow_option(PermissionMode::Ask, &content)
+                        .filter(|_| permission.swap(false, Ordering::SeqCst));
+                    let outcome = match option {
+                        Some(option) => RequestPermissionOutcome::Selected(
+                            SelectedPermissionOutcome::new(option.option_id.clone()),
+                        ),
+                        None => RequestPermissionOutcome::Cancelled,
+                    };
+                    responder
+                        .respond(RequestPermissionResponse::new(outcome))
+                        .ok();
+                    Ok(())
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
             .on_receive_notification(
                 async move |notification: SessionNotification, _cx| {
                     if let Ok(update) = serde_json::to_value(&notification.update) {
@@ -235,7 +267,20 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
             )
             .connect_with(transport::streams(stdin, stdout, log), {
                 let (dir, checks) = (dir.to_path_buf(), checks.clone());
-                async move |connection| run(connection, dir, checks, version, updates).await
+                async move |connection| {
+                    run(
+                        connection,
+                        Run {
+                            dir,
+                            checks,
+                            version,
+                            updates,
+                            live,
+                            allow_report,
+                        },
+                    )
+                    .await
+                }
             }),
     );
     done.send(()).ok();
@@ -248,7 +293,10 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, version: &str, rem
     if timed_out.load(Ordering::SeqCst) {
         checks.add(CheckResult::fail(
             "timeout",
-            "agy verification exceeded 90 seconds",
+            format!(
+                "agy verification exceeded {} seconds",
+                ralph_core::worker::verify_limit(live).as_secs()
+            ),
         ));
     } else if let Err(error) = outcome {
         checks.add(CheckResult::fail(
