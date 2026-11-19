@@ -2,13 +2,31 @@ use crate::schedule_store::ScheduleStore;
 use crate::warn::warn_if_err;
 use crate::worker_mcp::Inbox;
 use chrono::{DateTime, Local, Utc};
-use ralph_core::schedule::Task;
+use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_repeat::{plan_rearm, plan_worker_rearm, repeat_stopped_text};
 use ralph_core::schedule_worker::{chat_report, WorkerEnd};
 
+#[derive(Debug, PartialEq, Eq)]
+enum Settle {
+    Skip,
+    Remove,
+    Save(Task),
+}
+
+fn settle_plan(current: Option<&Task>, next: Option<Task>) -> Settle {
+    match (current, next) {
+        (Some(current), Some(next)) if current.status == TaskStatus::Running => Settle::Save(next),
+        (Some(current), None) if current.status == TaskStatus::Running => Settle::Remove,
+        _ => Settle::Skip,
+    }
+}
+
 fn settle(store: &ScheduleStore, task: &Task, next: Option<Task>) {
-    match next {
-        Some(next) => {
+    let current = store.load_all().into_iter().find(|row| row.id == task.id);
+    match settle_plan(current.as_ref(), next) {
+        Settle::Skip => {}
+        Settle::Remove => store.remove(&task.id),
+        Settle::Save(next) => {
             let saved = store.save(&next);
             if saved.is_err() {
                 store.remove(&task.id);
@@ -18,7 +36,6 @@ fn settle(store: &ScheduleStore, task: &Task, next: Option<Task>) {
                 format!("repeat stopped: re-arming scheduled task {}", task.id),
             );
         }
-        None => store.remove(&task.id),
     }
 }
 
@@ -110,6 +127,85 @@ mod tests {
         finish_task(&store, &t, Utc::now());
         assert!(store.load_all().is_empty());
         assert!(!dir.path().join(name).exists());
+    }
+
+    fn with_status(mut task: Task, status: TaskStatus) -> Task {
+        task.status = status;
+        task
+    }
+
+    #[test]
+    fn settle_plan_skips_a_row_that_is_gone() {
+        let next = with_status(task(command(), hourly()), TaskStatus::Pending);
+        assert_eq!(settle_plan(None, Some(next)), Settle::Skip);
+        assert_eq!(settle_plan(None, None), Settle::Skip);
+    }
+
+    #[test]
+    fn settle_plan_skips_a_row_that_is_no_longer_running() {
+        for status in [TaskStatus::Pending, TaskStatus::Proposed] {
+            let current = with_status(task(command(), hourly()), status);
+            let next = with_status(task(command(), hourly()), TaskStatus::Pending);
+            assert_eq!(settle_plan(Some(&current), Some(next)), Settle::Skip);
+            assert_eq!(settle_plan(Some(&current), None), Settle::Skip);
+        }
+    }
+
+    #[test]
+    fn settle_plan_removes_a_running_row_with_no_next_run() {
+        let current = task(command(), None);
+        assert_eq!(settle_plan(Some(&current), None), Settle::Remove);
+    }
+
+    #[test]
+    fn settle_plan_saves_the_next_run_of_a_running_row() {
+        let current = task(command(), hourly());
+        let next = with_status(task(command(), hourly()), TaskStatus::Pending);
+        assert_eq!(
+            settle_plan(Some(&current), Some(next.clone())),
+            Settle::Save(next)
+        );
+    }
+
+    #[test]
+    fn a_cancelled_repeating_task_is_not_revived() {
+        let t = task(command(), hourly());
+        let (dir, store) = saved(&t);
+        store.remove(&t.id);
+        finish_task(&store, &t, Utc::now());
+        assert!(store.load_all().is_empty());
+        assert!(!dir
+            .path()
+            .join(ralph_core::watch_store::file_name(&t.id))
+            .exists());
+    }
+
+    #[test]
+    fn a_cancelled_repeating_worker_is_not_revived() {
+        let t = task(worker(), hourly());
+        let (dir, store) = saved(&t);
+        let inbox = inbox_in(&dir);
+        store.remove(&t.id);
+        finish_worker(&store, &inbox, &t, &WorkerEnd::Done, Utc::now());
+        assert!(store.load_all().is_empty());
+    }
+
+    #[test]
+    fn a_row_proposed_again_under_the_same_id_is_left_alone() {
+        let t = task(command(), hourly());
+        let proposed = with_status(task(command(), None), TaskStatus::Proposed);
+        let (_dir, store) = saved(&proposed);
+        finish_task(&store, &t, Utc::now());
+        assert_eq!(store.load_all(), vec![proposed]);
+    }
+
+    #[test]
+    fn a_pending_row_is_not_overwritten() {
+        let t = task(command(), hourly());
+        let pending = with_status(task(command(), hourly()), TaskStatus::Pending);
+        let (_dir, store) = saved(&pending);
+        finish_task(&store, &t, Utc::now());
+        assert_eq!(store.load_all(), vec![pending]);
     }
 
     fn assert_rearmed(store: &ScheduleStore, now: DateTime<Utc>) {
