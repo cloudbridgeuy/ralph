@@ -505,7 +505,7 @@ The pure model is `crates/core/src/workers_view/remote.rs`; the shell is `crates
 
 ### History stats
 
-`ralph chat history stats [--gap <secs>] [--few-hits <n>]` reports how the model used the history tools. It reads `analytics/history.jsonl` and `analytics/timing.jsonl` in the store. It makes no model call and costs nothing. A missing file reads as empty. A thread store has its own analytics: pass `--thread` or `--store` to read it.
+`ralph chat history stats [--gap <secs>] [--few-hits <n>]` reports how the model used the history tools. It reads `analytics/history.jsonl` and `analytics/timing.jsonl` in the store. It makes no model call and costs nothing. A missing file reads as empty. A thread store has its own analytics: pass `--thread` or `--store` to read it. Put `--store` and `--thread` before `history` or after `stats`, not between `history` and `stats`: clap then reads `stats` as a tool name and rejects it. `--cursor`, `--tag` and `--in` belong to the tool form and `stats` rejects them.
 
 - calls: calls per tool and per source (`mcp`, `slash`, `cli`, other).
 - rates: share of calls with an empty result and share that failed.
