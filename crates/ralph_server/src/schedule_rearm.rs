@@ -3,8 +3,12 @@ use crate::warn::warn_if_err;
 use crate::worker_mcp::Inbox;
 use chrono::{DateTime, Local, Utc};
 use ralph_core::schedule::{Task, TaskStatus};
-use ralph_core::schedule_repeat::{plan_rearm, plan_worker_rearm, repeat_stopped_text};
-use ralph_core::schedule_worker::{chat_report, WorkerEnd};
+use ralph_core::schedule_repeat::{
+    open_branch_decision, plan_rearm, plan_worker_rearm, repeat_stopped_text, OpenBranch,
+};
+use ralph_core::schedule_worker::{chat_report, worker_id, WorkerEnd};
+use ralph_core::worker::{branch_name, worktree_for_branch};
+use std::path::Path;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Settle {
@@ -58,6 +62,66 @@ pub fn finish_worker(
         );
     }
     settle(store, task, plan_worker_rearm(task, end, now, &Local));
+}
+
+fn git_output(repo: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+}
+
+fn branch_open(repo: &Path, branch: &str) -> bool {
+    let ref_name = format!("refs/heads/{branch}");
+    let probe = git_output(repo, &["rev-parse", "--verify", "--quiet", &ref_name]);
+    let listing = git_output(repo, &["worktree", "list", "--porcelain"]);
+    match (probe, listing) {
+        (Ok(probe), Ok(listing)) => {
+            probe.status.success()
+                || worktree_for_branch(&String::from_utf8_lossy(&listing.stdout), branch).is_some()
+        }
+        (Err(error), _) | (_, Err(error)) => {
+            crate::warn::warn(format!("checking branch {branch}: {error}"));
+            false
+        }
+    }
+}
+
+fn stop_if_open(
+    repo: &Path,
+    store: &ScheduleStore,
+    inbox: &Inbox,
+    task: &Task,
+    now: DateTime<Utc>,
+) -> bool {
+    if open_branch_decision(task, true) == OpenBranch::Start {
+        return false;
+    }
+    let branch = branch_name(&worker_id(&task.id));
+    match open_branch_decision(task, branch_open(repo, &branch)) {
+        OpenBranch::Start => false,
+        OpenBranch::Stop(text) => {
+            let report = chat_report(&task.id, text, &now.to_rfc3339());
+            warn_if_err(
+                inbox.post(&report, 0),
+                format!("posting schedule {}", task.id),
+            );
+            store.remove(&task.id);
+            true
+        }
+    }
+}
+
+pub fn refuse_open_branch(
+    monitor: &crate::chat::monitor::Monitor,
+    task: &Task,
+    now: DateTime<Utc>,
+) -> bool {
+    stop_if_open(Path::new("."), &monitor.schedule, &monitor.inbox, task, now)
 }
 
 #[cfg(test)]
@@ -280,5 +344,118 @@ mod tests {
         store.save(&task(command(), hourly())).unwrap();
         fire_due(&store, &watches, &inbox);
         assert_rearmed(&store, Utc::now());
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    fn repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        git(dir.path(), &["commit", "-q", "--allow-empty", "-m", "x"]);
+        dir
+    }
+
+    fn posted_texts(dir: &tempfile::TempDir) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(dir.path().join("inbox")) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(|entry| std::fs::read(entry.ok()?.path()).ok())
+            .filter_map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .map(|value| value.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_missing_branch_is_not_open() {
+        let repo = repo();
+        assert!(!branch_open(repo.path(), "worker/sched-x"));
+    }
+
+    #[test]
+    fn an_existing_branch_is_open() {
+        let repo = repo();
+        git(repo.path(), &["branch", "worker/sched-x"]);
+        assert!(branch_open(repo.path(), "worker/sched-x"));
+    }
+
+    #[test]
+    fn a_branch_with_a_worktree_is_open() {
+        let repo = repo();
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("wt");
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                path.to_str().unwrap(),
+                "-b",
+                "worker/sched-y",
+            ],
+        );
+        assert!(branch_open(repo.path(), "worker/sched-y"));
+    }
+
+    #[test]
+    fn a_failed_git_run_is_not_open() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!branch_open(&dir.path().join("missing"), "worker/sched-x"));
+    }
+
+    fn worker_task(repeat: Option<Repeat>) -> Task {
+        Task {
+            id: "x".to_string(),
+            ..task(worker(), repeat)
+        }
+    }
+
+    #[test]
+    fn a_repeating_worker_with_an_open_branch_is_refused() {
+        let repo = repo();
+        git(repo.path(), &["branch", "worker/sched-x"]);
+        let t = worker_task(hourly());
+        let (dir, store) = saved(&t);
+        let inbox = inbox_in(&dir);
+        assert!(stop_if_open(repo.path(), &store, &inbox, &t, Utc::now()));
+        assert!(store.load_all().is_empty());
+        assert_eq!(posted_workers(&dir), vec!["schedule:x".to_string()]);
+        let text = "Scheduled worker x: the previous run's branch worker/sched-x is still open; repeat (every 1h) stopped. Land or close it, then propose the schedule again.";
+        assert!(posted_texts(&dir).iter().any(|body| body.contains(text)));
+    }
+
+    #[test]
+    fn a_repeating_worker_without_a_branch_is_not_refused() {
+        let repo = repo();
+        let t = worker_task(hourly());
+        let (dir, store) = saved(&t);
+        let inbox = inbox_in(&dir);
+        assert!(!stop_if_open(repo.path(), &store, &inbox, &t, Utc::now()));
+        assert_eq!(store.load_all(), vec![t]);
+        assert!(posted_workers(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_one_shot_worker_with_an_open_branch_is_not_refused() {
+        let repo = repo();
+        git(repo.path(), &["branch", "worker/sched-x"]);
+        let t = worker_task(None);
+        let (dir, store) = saved(&t);
+        let inbox = inbox_in(&dir);
+        assert!(!stop_if_open(repo.path(), &store, &inbox, &t, Utc::now()));
+        assert_eq!(store.load_all(), vec![t]);
     }
 }

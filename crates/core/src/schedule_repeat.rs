@@ -1,5 +1,6 @@
 use crate::schedule::{escape_controls, format_span, parse_after, Task, TaskKind, TaskStatus};
-use crate::schedule_worker::WorkerEnd;
+use crate::schedule_worker::{is_worker_task, worker_id, WorkerEnd};
+use crate::worker::branch_name;
 use chrono::{DateTime, Days, Duration, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -203,6 +204,27 @@ pub fn repeat_stopped_text(task: &Task, end: &WorkerEnd) -> Option<String> {
             repeat_label(repeat)
         )
     })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum OpenBranch {
+    Start,
+    Stop(String),
+}
+
+pub fn open_branch_decision(task: &Task, branch_open: bool) -> OpenBranch {
+    let Some(repeat) = task.repeat.as_ref() else {
+        return OpenBranch::Start;
+    };
+    if !branch_open || !is_worker_task(task) {
+        return OpenBranch::Start;
+    }
+    OpenBranch::Stop(format!(
+        "Scheduled worker {}: the previous run's branch {} is still open; repeat ({}) stopped. Land or close it, then propose the schedule again.",
+        escape_controls(&task.id),
+        escape_controls(&branch_name(&worker_id(&task.id))),
+        repeat_label(repeat)
+    ))
 }
 
 #[cfg(test)]
@@ -751,5 +773,49 @@ mod tests {
         assert_eq!(repeating_cap_refusal(&rows), None);
         rows.push(task_with(Some(every(3600)), TaskStatus::Proposed));
         assert!(repeating_cap_refusal(&rows).is_some());
+    }
+
+    fn worker_row(id: &str, repeat: Option<Repeat>) -> Task {
+        Task {
+            id: id.to_string(),
+            kind: worker(),
+            ..row(repeat)
+        }
+    }
+
+    #[test]
+    fn a_repeating_worker_with_an_open_branch_is_stopped() {
+        let task = worker_row("a", Some(every(3600)));
+        assert_eq!(
+            open_branch_decision(&task, true),
+            OpenBranch::Stop("Scheduled worker a: the previous run's branch worker/sched-a is still open; repeat (every 1h) stopped. Land or close it, then propose the schedule again.".to_string())
+        );
+    }
+
+    #[test]
+    fn a_repeating_worker_without_an_open_branch_starts() {
+        let task = worker_row("a", Some(every(3600)));
+        assert_eq!(open_branch_decision(&task, false), OpenBranch::Start);
+    }
+
+    #[test]
+    fn a_one_shot_worker_with_an_open_branch_starts() {
+        let task = worker_row("a", None);
+        assert_eq!(open_branch_decision(&task, true), OpenBranch::Start);
+    }
+
+    #[test]
+    fn a_repeating_command_with_an_open_branch_starts() {
+        let task = row(Some(every(3600)));
+        assert_eq!(open_branch_decision(&task, true), OpenBranch::Start);
+    }
+
+    #[test]
+    fn the_open_branch_notice_escapes_control_characters_in_the_id() {
+        let task = worker_row("a\x1bb", Some(every(3600)));
+        let OpenBranch::Stop(text) = open_branch_decision(&task, true) else {
+            panic!("expected stop");
+        };
+        assert!(!text.contains('\x1b'), "{text:?}");
     }
 }

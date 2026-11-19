@@ -109,6 +109,9 @@ fn settle_done(workers: &Workers, worker: &str) {
 }
 
 fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono::Utc>) {
+    if crate::schedule_rearm::refuse_open_branch(monitor, fire.task, now) {
+        return;
+    }
     let task = Task {
         status: TaskStatus::Running,
         late: fire.late,
