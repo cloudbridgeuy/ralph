@@ -1,16 +1,19 @@
+use crate::chat::editor::open_in_editor;
 use crate::chat::terminal::{poll_input, read_input, Input, POLL_MS};
 use crate::signal;
 use ralph_core::cancel::CancelToken;
-use ralph_core::schedule::{approval_question, parse_answer, proposed, Answer, Task, TaskStatus};
+use ralph_core::schedule::{approval_question, proposed, Task, TaskStatus};
 use ralph_core::schedule_command::{
     cancel_message, list_tasks, plan_cancel, CancelPlan, CancelStop, ScheduleCommand,
     SCHEDULE_USAGE,
 };
+use ralph_server::chat::ask::{yes_no, Ask};
 use ralph_server::schedule_store::ScheduleStore;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::Watches;
 use ralph_server::workers::Workers;
 use std::io::{self, Write};
+use std::path::Path;
 use std::time::Duration;
 
 pub(super) fn read_answer() -> Option<String> {
@@ -31,20 +34,41 @@ pub(super) fn read_answer() -> Option<String> {
     }
 }
 
+pub(super) struct Keyboard<'a> {
+    pub editor: &'a [String],
+}
+
+impl Ask for Keyboard<'_> {
+    fn answer(&mut self, prompt: &str) -> Option<String> {
+        let mut out = io::stdout();
+        say_raw(&mut out, prompt);
+        let line = read_answer();
+        if line.is_none() {
+            say_raw(&mut out, "\n");
+        }
+        line
+    }
+
+    fn edit(&mut self, path: &Path) -> io::Result<()> {
+        open_in_editor(self.editor, path)
+    }
+}
+
 pub(super) fn approve_proposed(store: &ScheduleStore, default_timeout: Duration) -> bool {
     let mut out = io::stdout();
-    approve_with(store, default_timeout, &mut read_answer, &mut out)
+    let mut keyboard = Keyboard { editor: &[] };
+    approve_with(store, default_timeout, &mut keyboard, &mut out)
 }
 
 fn approve_with(
     store: &ScheduleStore,
     default_timeout: Duration,
-    read: &mut impl FnMut() -> Option<String>,
+    ask: &mut dyn Ask,
     out: &mut impl Write,
 ) -> bool {
     let tasks = proposed(store.load_all());
     for task in &tasks {
-        if decide(task, default_timeout, read, out) {
+        if decide(task, default_timeout, ask) {
             let armed = store.save(&Task {
                 status: TaskStatus::Pending,
                 ..task.clone()
@@ -61,45 +85,13 @@ fn approve_with(
     !tasks.is_empty()
 }
 
-fn decide(
-    task: &Task,
-    default_timeout: Duration,
-    read: &mut impl FnMut() -> Option<String>,
-    out: &mut impl Write,
-) -> bool {
+fn decide(task: &Task, default_timeout: Duration, ask: &mut dyn Ask) -> bool {
     let question = || {
         let now = chrono::Utc::now();
         let offset = *chrono::Local::now().offset();
         approval_question(task, now, offset, default_timeout)
     };
-    ask_yes_no(question, read, out)
-}
-
-pub(super) fn ask_yes_no(
-    question: impl Fn() -> String,
-    read: &mut impl FnMut() -> Option<String>,
-    out: &mut impl Write,
-) -> bool {
-    ask_answer(question, read, out).unwrap_or(false)
-}
-
-pub(super) fn ask_answer(
-    question: impl Fn() -> String,
-    read: &mut impl FnMut() -> Option<String>,
-    out: &mut impl Write,
-) -> Option<bool> {
-    loop {
-        say_raw(out, &question());
-        let Some(line) = read() else {
-            say_raw(out, "\n");
-            return None;
-        };
-        match parse_answer(&line) {
-            Answer::Yes => return Some(true),
-            Answer::No => return Some(false),
-            Answer::Ask => {}
-        }
-    }
+    yes_no(ask, question).unwrap_or(false)
 }
 
 pub(super) fn run(
@@ -150,60 +142,6 @@ mod tests {
     use chrono::Utc;
     use ralph_core::schedule::TaskKind;
 
-    fn answers(lines: &[&str]) -> impl FnMut() -> Option<String> {
-        let mut lines: Vec<String> = lines.iter().rev().map(|l| l.to_string()).collect();
-        move || lines.pop()
-    }
-
-    #[test]
-    fn y_confirms_and_n_declines() {
-        let mut out = Vec::new();
-        assert!(ask_yes_no(
-            || "go? ".to_string(),
-            &mut answers(&["y"]),
-            &mut out
-        ));
-        assert!(!ask_yes_no(
-            || "go? ".to_string(),
-            &mut answers(&["n"]),
-            &mut out
-        ));
-    }
-
-    #[test]
-    fn another_answer_asks_again() {
-        let mut out = Vec::new();
-        assert!(ask_yes_no(
-            || "go? ".to_string(),
-            &mut answers(&["maybe", "", "yes"]),
-            &mut out
-        ));
-        assert_eq!(String::from_utf8(out).unwrap().matches("go? ").count(), 3);
-    }
-
-    #[test]
-    fn a_closed_input_is_no_answer() {
-        let mut out = Vec::new();
-        assert_eq!(
-            ask_answer(|| "go? ".to_string(), &mut answers(&[]), &mut out),
-            None
-        );
-        assert_eq!(
-            ask_answer(|| "go? ".to_string(), &mut answers(&["no"]), &mut out),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn a_closed_input_declines() {
-        let mut out = Vec::new();
-        assert!(!ask_yes_no(
-            || "go? ".to_string(),
-            &mut answers(&[]),
-            &mut out
-        ));
-    }
-
     fn propose(store: &ScheduleStore, id: &str, minutes: i64) {
         store
             .save(&Task {
@@ -221,16 +159,34 @@ mod tests {
             .unwrap();
     }
 
+    struct Scripted {
+        queue: std::vec::IntoIter<Option<String>>,
+        prompts: String,
+    }
+
+    impl Ask for Scripted {
+        fn answer(&mut self, prompt: &str) -> Option<String> {
+            self.prompts.push_str(prompt);
+            self.queue.next().flatten()
+        }
+
+        fn edit(&mut self, _path: &Path) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     fn run(store: &ScheduleStore, answers: &[Option<&str>]) -> (bool, String) {
-        let mut queue = answers.iter().map(|a| a.map(str::to_string));
+        let mut ask = Scripted {
+            queue: answers
+                .iter()
+                .map(|a| a.map(str::to_string))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            prompts: String::new(),
+        };
         let mut out = Vec::new();
-        let asked = approve_with(
-            store,
-            Duration::from_secs(60),
-            &mut || queue.next().flatten(),
-            &mut out,
-        );
-        (asked, String::from_utf8(out).unwrap())
+        let asked = approve_with(store, Duration::from_secs(60), &mut ask, &mut out);
+        (asked, ask.prompts + &String::from_utf8(out).unwrap())
     }
 
     fn statuses(store: &ScheduleStore) -> Vec<(String, TaskStatus)> {

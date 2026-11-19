@@ -2,7 +2,7 @@ use super::{
     drop_precheck, drop_thread, merge_precheck, merge_thread, read_meta, running_ids, thread_dir,
     write_meta,
 };
-use crate::chat::schedule::read_answer;
+use crate::chat::schedule::Keyboard;
 use crate::chat::thread_cmd::{merge_line, record_cli_merge};
 use crate::cli::MERGE_TIMEOUT_SECS;
 use crate::{run_curator, Curator};
@@ -12,10 +12,10 @@ use ralph_core::chat_thread_auto::{
     clear_closed, close_answer, close_question, close_refusal, PendingClose,
 };
 use ralph_core::chat_thread_cmd::{merge_posted_message, merging_notice};
+use ralph_server::chat::ask::Ask;
 use ralph_server::chat::settle::pending;
 use ralph_server::warn::warn_if_err;
 use ralph_server::worker_mcp::Inbox;
-use std::io::Write;
 use std::path::Path;
 
 pub(in crate::chat) fn scan(main: &Path, inbox: &Inbox) -> bool {
@@ -26,10 +26,10 @@ pub(in crate::chat) fn scan(main: &Path, inbox: &Inbox) -> bool {
     let messages = settle(
         main,
         &mut |question: &str| {
-            print!("{question} ");
-            std::io::stdout().flush().ok();
-            let line = read_answer();
-            println!();
+            let line = Keyboard { editor: &[] }.answer(&format!("{question} "));
+            if line.is_some() {
+                println!();
+            }
             line
         },
         &mut |name: &ThreadName, prompt: &str| {
