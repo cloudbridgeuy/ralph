@@ -1,14 +1,19 @@
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ralph_core::stream::blocks::{Files, ImageFile};
-
-use crate::render::image::resolve;
 
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
 pub struct DiskFiles;
+
+pub fn resolve(path: &str) -> PathBuf {
+    match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+        _ => PathBuf::from(path),
+    }
+}
 
 fn read_capped(path: &Path) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();

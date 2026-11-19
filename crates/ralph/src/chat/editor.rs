@@ -2,8 +2,6 @@ use crate::chat::monitor::Monitor;
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::thread::{fork_of, open_names};
 use crate::clipboard::PASTE_IMAGE;
-use crate::render::image::resolve;
-use crate::signal::default_sigttou_in;
 use ralph_core::chat_direct::direct_completions;
 use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
 use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
@@ -14,6 +12,7 @@ use ralph_core::chat_path::{path_completion, path_word, PathRoot, MAX_READ};
 use ralph_core::chat_switch::switch_completions;
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use ralph_server::chat::memory::Store;
+use ralph_server::disk_files::resolve;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     default_vi_visual_keybindings, ColumnarMenu, Completer, CompletionResult, EditCommand,
@@ -373,7 +372,7 @@ pub(super) fn open_in_editor(argv: &[String], path: &Path) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("editor command is empty"))?;
     let mut command = Command::new(program);
     command.args(args).arg(path);
-    default_sigttou_in(&mut command);
+    ralph_server::subprocess::default_sigttou_in(&mut command);
     let status = command.status()?;
     if !status.success() {
         return Err(io::Error::other(format!("editor exited with {status}")));

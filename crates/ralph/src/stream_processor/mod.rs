@@ -1,6 +1,4 @@
 mod block_renderer;
-mod disk_files;
-pub(crate) use disk_files::DiskFiles;
 #[cfg(test)]
 mod processor;
 mod render_block;

@@ -1,8 +1,8 @@
-use crate::stream_processor::extract_response_text;
 use crate::subprocess::{StreamingSubprocessResult, SubprocessError};
+use crate::warn::warn;
 use ralph_core::chat_memory::tag_failure_kind;
 use ralph_core::retry::{classify, retry_delay, FailureInput, FailureKind, OUTAGE_BACKOFF_SECS};
-use ralph_server::warn::warn;
+use ralph_core::stream::blocks::extract_response_text;
 use std::time::{Duration, Instant};
 
 const WAIT_SLICE: Duration = Duration::from_millis(100);
@@ -197,8 +197,8 @@ mod tests {
     }
 
     fn replied(exit_code: i32, response: &str) -> SubprocessOutcome {
-        use crate::stream_processor::OutputBlock;
         use ralph_core::chunk::{ChunkType, ParsedChunk};
+        use ralph_core::stream::blocks::OutputBlock;
         let mut done = finished(exit_code, "");
         done.stream_result
             .output_blocks

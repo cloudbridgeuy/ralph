@@ -9,7 +9,6 @@ use crate::highlight::{ThemeConfig, ThemeError};
 use crate::render::wrap_width;
 use crate::signal::is_terminated;
 use crate::spinner::SpinnerSessionInfo;
-use crate::subprocess::OutputGate;
 use crate::turn_sink::TerminalSink;
 use ralph_core::chat_close::{idle_step, IdleSignal, IdleStep};
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
@@ -19,6 +18,7 @@ use ralph_core::chat_thread_auto::close_footer;
 use ralph_core::status_queue::QueueCell;
 use ralph_core::turn_event::TurnSink;
 use ralph_core::worker::ATTACHMENTS_DIR;
+use ralph_server::subprocess::OutputGate;
 use reedline::{
     EditCommand, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
     PromptViMode, Reedline, Signal, DEFAULT_MULTILINE_INDICATOR,

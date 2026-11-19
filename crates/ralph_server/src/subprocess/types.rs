@@ -1,7 +1,6 @@
 //! Core types for subprocess operations.
 
-use crate::highlight::ThemeError;
-use crate::stream_processor::StreamProcessorResult;
+use ralph_core::stream::blocks::StreamProcessorResult;
 use std::io;
 
 /// Default gap threshold before showing spinner (in milliseconds).
@@ -47,7 +46,7 @@ pub enum SubprocessError {
     },
 
     #[error("Invalid theme configuration: {0}")]
-    ThemeError(#[from] ThemeError),
+    Theme(String),
 }
 
 impl SubprocessError {
@@ -88,18 +87,20 @@ pub struct StreamingSubprocessResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::disk_files::DiskFiles;
+    use ralph_core::stream::blocks::{StreamCollector, VerboseToolsConfig};
 
     const RESULT_LINE: &str = r#"{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0024,"duration_ms":4404,"session_id":"s1","usage":{"input_tokens":2,"output_tokens":774}}"#;
 
     fn partial(line: Option<&str>) -> StreamingSubprocessResult {
-        let mut processor = crate::stream_processor::StreamProcessor::new();
+        let mut collector = StreamCollector::new(false, VerboseToolsConfig::new());
         if let Some(line) = line {
-            processor.process_line(line);
+            collector.process_line(line, &DiskFiles);
         }
         StreamingSubprocessResult {
             exit_code: EXIT_CODE_KILLED,
             stderr: String::new(),
-            stream_result: processor.finish(),
+            stream_result: collector.finish(&DiskFiles).1,
             request_at: None,
             cost_before: None,
             logged_before: None,

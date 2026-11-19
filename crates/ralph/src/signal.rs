@@ -5,8 +5,6 @@ use signal_hook::flag::register;
 use signal_hook::low_level::unregister;
 use signal_hook::SigId;
 use std::io;
-use std::os::unix::process::CommandExt;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Once};
 
@@ -57,20 +55,5 @@ pub fn ignore_sigttou() {
     // installs no handler code.
     unsafe {
         libc::signal(libc::SIGTTOU, libc::SIG_IGN);
-    }
-}
-
-/// An ignored SIGTTOU survives exec, so a child of `ralph chat` (claude -p, a
-/// cell) would not stop on background terminal writes the way it should. This
-/// puts the default disposition back in the child before exec.
-pub fn default_sigttou_in(command: &mut Command) {
-    // SAFETY: signal(2) is async-signal-safe, so it may run between fork and exec.
-    unsafe {
-        command.pre_exec(|| {
-            if libc::signal(libc::SIGTTOU, libc::SIG_DFL) == libc::SIG_ERR {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        });
     }
 }

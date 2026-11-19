@@ -3,14 +3,10 @@ use super::editor::{
     IDLE_CTRL_C, OPEN_EDITOR,
 };
 use super::resolve_store;
-use super::turn::{draft_after, logged_before_reply, shown_output, TurnOutcome};
-use crate::stream_processor::OutputBlock;
 use crate::turn_sink::{rule, rule_skin};
 use crossterm::event::{Event, KeyEvent};
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_help::{KeyHelp, PROMPT_KEYS, QUEUE_KEYS, VI_KEYS};
-use ralph_core::chat_memory::Trigger;
-use ralph_core::chunk::{ChunkType, ParsedChunk};
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     EditCommand, EditMode, KeyCode, KeyModifiers, Keybindings, PromptEditMode, PromptViMode,
@@ -18,35 +14,6 @@ use reedline::{
 };
 use std::path::{Path, PathBuf};
 use termimad::MadSkin;
-
-#[test]
-fn only_worker_turns_log_before_the_reply() {
-    assert!(logged_before_reply(Trigger::Worker));
-    assert!(!logged_before_reply(Trigger::User));
-}
-
-#[test]
-fn unanswered_turn_restores_the_draft() {
-    assert_eq!(
-        draft_after(TurnOutcome::Unanswered, "hi".into()),
-        Some("hi".into())
-    );
-    assert_eq!(draft_after(TurnOutcome::Replied, "hi".into()), None);
-    assert_eq!(draft_after(TurnOutcome::Exit, "hi".into()), None);
-}
-
-#[test]
-fn rule_follows_shown_output_only() {
-    assert!(!shown_output(&[]));
-    assert!(!shown_output(&[OutputBlock::Separator]));
-    assert!(shown_output(&[
-        OutputBlock::Separator,
-        OutputBlock::text(ParsedChunk {
-            chunk_type: ChunkType::Prose,
-            content: "x".to_string(),
-        })
-    ]));
-}
 
 #[test]
 fn rule_spans_the_given_width() {
