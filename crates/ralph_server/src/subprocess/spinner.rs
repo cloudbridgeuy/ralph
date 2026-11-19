@@ -4,13 +4,13 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
     EXIT_CODE_KILLED,
 };
-use crate::stream_processor::{OutputBlock, VerboseToolsConfig};
+use super::{default_sigttou_in, kill_process_group};
+use crate::disk_files::DiskFiles;
 use ralph_core::cancel::CancelToken;
 use ralph_core::stream::blocks::StreamCollector;
+use ralph_core::stream::blocks::{OutputBlock, VerboseToolsConfig};
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
-use ralph_server::disk_files::DiskFiles;
-use ralph_server::subprocess::{default_sigttou_in, kill_process_group};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -302,7 +302,7 @@ fn prompt_write_warning(outcome: &PromptWrite) -> Option<String> {
 
 fn report_prompt_write(writer: Option<thread::JoinHandle<io::Result<()>>>) {
     if let Some(message) = writer.and_then(|handle| prompt_write_warning(&handle.join())) {
-        ralph_server::warn::warn(message);
+        crate::warn::warn(message);
     }
 }
 
@@ -367,7 +367,6 @@ fn run_subprocess_with_spinner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream_processor::OutputBlock;
     use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
     use std::sync::Mutex;
 

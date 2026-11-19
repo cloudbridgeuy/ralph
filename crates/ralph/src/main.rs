@@ -36,7 +36,6 @@ mod upgrade;
 mod usage_cmd;
 
 pub mod stream_processor;
-pub mod subprocess;
 mod version;
 pub mod warn;
 mod watch_requests;
@@ -50,6 +49,7 @@ use cli::{
 use invoke::InvocationConfig;
 use ralph_core::cancel::CancelToken;
 use ralph_core::worker::HarnessId;
+use ralph_server::subprocess;
 use ralph_server::version_drift::DriftRun;
 use ralph_server::warn::{warn, warn_if_err};
 use std::io::IsTerminal;

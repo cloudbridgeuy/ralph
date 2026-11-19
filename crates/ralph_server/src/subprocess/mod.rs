@@ -3,8 +3,20 @@ use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 
+mod gate;
 mod groups;
+mod session;
+mod spinner;
 mod timed;
+mod timeout;
+mod types;
+
+pub use gate::{write_to, OutputGate, Stream};
+pub use session::{RunningCosts, Session};
+pub use spinner::{
+    invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,
+};
+pub use types::{recorded, StreamingSubprocessResult, SubprocessError};
 
 pub(crate) use groups::Registered;
 pub(crate) use groups::{kill_registered_groups, register_group, unregister_group};

@@ -1,15 +1,15 @@
 use crate::highlight::ThemeConfig;
 use crate::stream_processor::VerboseToolsConfig;
-use crate::subprocess::{
-    invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
-    SubprocessError,
-};
 use crate::turn_sink::TerminalSink;
 use ralph_core::cancel::CancelToken;
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::worker::inbox_env;
 use ralph_server::config::ChatSection;
+use ralph_server::subprocess::{
+    invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
+    SubprocessError,
+};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

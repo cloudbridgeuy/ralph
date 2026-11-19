@@ -1,7 +1,7 @@
 use crate::stream_processor::extract_response_text;
-use crate::subprocess::{StreamingSubprocessResult, SubprocessError};
 use ralph_core::chat_memory::tag_failure_kind;
 use ralph_core::retry::{classify, retry_delay, FailureInput, FailureKind, OUTAGE_BACKOFF_SECS};
+use ralph_server::subprocess::{StreamingSubprocessResult, SubprocessError};
 use ralph_server::warn::warn;
 use std::time::{Duration, Instant};
 

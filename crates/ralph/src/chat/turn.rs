@@ -5,10 +5,6 @@ use crate::chat::thread::{fork_view, Fork};
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
-use crate::subprocess::{
-    recorded, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
-    SubprocessError,
-};
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, build_tag_args, hit_blocking_limit,
@@ -31,6 +27,10 @@ use ralph_server::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use ralph_server::ledger;
 use ralph_server::private_file::write_private;
 use ralph_server::subprocess::spawn_detached;
+use ralph_server::subprocess::{
+    recorded, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
+    SubprocessError,
+};
 use ralph_server::timing;
 use ralph_server::watches::locked;
 use ralph_server::workers::usage_store;
