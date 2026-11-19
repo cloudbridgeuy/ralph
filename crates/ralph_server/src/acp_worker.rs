@@ -47,6 +47,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod agy_verify;
 mod cursor_worker;
 mod model;
 mod permissions;
@@ -58,6 +59,7 @@ mod turns;
 mod verify;
 
 use crate::permission_queue::{host_process_token, PermissionQueue};
+pub(crate) use agy_verify::verify as verify_agy;
 use cursor_worker::CursorWorker;
 use permissions::Permissions;
 use print::PrintWorker;

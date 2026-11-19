@@ -105,7 +105,16 @@ impl CheckResult {
     }
 }
 
-pub const AGY_REQUIRED_CHECKS: &[&str] = &["version"];
+pub const AGY_REQUIRED_CHECKS: &[&str] = &[
+    "version",
+    "initialize",
+    "session/new",
+    "mcp/new",
+    "session/close",
+    "session/load",
+    "mcp/load",
+    "session/close reload",
+];
 pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
 pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
 
@@ -642,4 +651,17 @@ mod tests {
             "UNKNOWN cancel (does not fail the spec): no turn"
         );
     }
+}
+#[test]
+fn agy_requires_discovery_and_reload() {
+    let version = [CheckResult::pass("version", "1.5.12")];
+    assert!(!spec_passed(&version, Some("1.5.12"), AGY_REQUIRED_CHECKS));
+    let initial = [
+        CheckResult::pass("version", "1.5.12"),
+        CheckResult::pass("initialize", "ok"),
+        CheckResult::pass("session/new", "ok"),
+        CheckResult::pass("mcp/new", "ok"),
+        CheckResult::pass("session/close", "ok"),
+    ];
+    assert!(!spec_passed(&initial, Some("1.5.12"), AGY_REQUIRED_CHECKS));
 }

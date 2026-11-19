@@ -198,10 +198,9 @@ pub fn run(
                 }),
                 |version| version.clone(),
             );
-            checks.add(CheckResult::fail(
-                "protocol",
-                "agy protocol verification is not available yet",
-            ));
+            if version.is_some() {
+                acp_worker::verify_agy(live, dir.path(), &checks);
+            }
             (version, AGY_REQUIRED_CHECKS)
         }
         HarnessId::Cursor => (
