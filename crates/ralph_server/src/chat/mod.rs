@@ -10,5 +10,6 @@ pub mod snapshots;
 pub mod socket;
 pub mod suggestion;
 pub mod tag_store;
+pub mod turn;
 pub mod watch;
 pub mod workers_remote;

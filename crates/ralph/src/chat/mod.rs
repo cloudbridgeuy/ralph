@@ -35,7 +35,6 @@ mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
 mod thread_cmd;
-mod turn;
 mod view;
 mod workers;
 
@@ -59,7 +58,6 @@ use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::{chat_exit, check as check_switch, Leave};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
-use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::cli::{ChatArgs, ChatCommand};
 use crate::config::{load_for_chat, ConfigSnapshot, FileState, MermaidStyleExt, ThemeWarnings};
@@ -108,6 +106,7 @@ use ralph_server::chat::skills::{
 };
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::suggestion::SuggestionCell;
+use ralph_server::chat::turn::{draft_after, Turn, TurnOutcome};
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};

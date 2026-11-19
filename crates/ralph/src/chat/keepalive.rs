@@ -17,7 +17,7 @@ use std::time::Duration;
 const CHECK_EVERY: Duration = Duration::from_secs(30);
 pub(super) const PING_TIMEOUT: Duration = Duration::from_secs(60);
 
-pub(super) type Stamp = Arc<Mutex<Option<DateTime<Utc>>>>;
+pub(super) use ralph_server::chat::turn::Stamp;
 
 #[derive(Default)]
 pub(super) struct Keeps {

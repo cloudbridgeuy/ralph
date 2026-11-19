@@ -1,6 +1,19 @@
-use crate::chat::keepalive::Stamp;
-use crate::stream_processor::VerboseToolsConfig;
-use crate::stream_processor::{extract_response_text, OutputBlock};
+use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
+use crate::chat::fork::{fork_view, Fork};
+use crate::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
+use crate::chat::suggestion::SuggestionCell;
+use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
+use crate::ledger;
+use crate::private_file::write_private;
+use crate::subprocess::spawn_detached;
+use crate::subprocess::{
+    recorded, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
+    SubprocessError,
+};
+use crate::timing;
+use crate::watches::locked;
+use crate::workers::usage_store;
+use chrono::{DateTime, Utc};
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, build_tag_args, hit_blocking_limit,
@@ -17,23 +30,9 @@ use ralph_core::chat_process::{turn_cost, ResetReason};
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::chat_suggestion::from_reply;
 use ralph_core::sanitize::strip_controls;
+use ralph_core::stream::blocks::{extract_response_text, OutputBlock, VerboseToolsConfig};
 use ralph_core::stream::IterationMetadata;
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
-use ralph_server::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
-use ralph_server::chat::fork::{fork_view, Fork};
-use ralph_server::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
-use ralph_server::chat::suggestion::SuggestionCell;
-use ralph_server::invoke::{build_chat_command, with_chat_inbox, Isolation};
-use ralph_server::ledger;
-use ralph_server::private_file::write_private;
-use ralph_server::subprocess::spawn_detached;
-use ralph_server::subprocess::{
-    recorded, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
-    SubprocessError,
-};
-use ralph_server::timing;
-use ralph_server::watches::locked;
-use ralph_server::workers::usage_store;
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::{self};
@@ -43,7 +42,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Instant;
 
-pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
+fn shown_output(blocks: &[OutputBlock]) -> bool {
     blocks
         .iter()
         .any(|block| !matches!(block, OutputBlock::Separator))
@@ -82,13 +81,13 @@ fn spawn_tag(exe: Option<&Path>, store: &Path, run: &str) -> io::Result<()> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TurnOutcome {
+pub enum TurnOutcome {
     Replied,
     Unanswered,
     Exit,
 }
 
-pub(super) fn logged_before_reply(trigger: Trigger) -> bool {
+fn logged_before_reply(trigger: Trigger) -> bool {
     trigger == Trigger::Worker
 }
 
@@ -96,7 +95,7 @@ fn turn_ok(outcome: &Result<TurnOutcome, Box<dyn std::error::Error>>) -> bool {
     matches!(outcome, Ok(TurnOutcome::Replied))
 }
 
-pub(super) fn draft_after(outcome: TurnOutcome, message: String) -> Option<String> {
+pub fn draft_after(outcome: TurnOutcome, message: String) -> Option<String> {
     (outcome == TurnOutcome::Unanswered).then_some(message)
 }
 
@@ -122,37 +121,39 @@ struct Launch {
     reset: Option<ResetReason>,
 }
 
-pub(super) struct Turn<'a> {
-    pub(super) store: &'a Store,
-    pub(super) store_dir: &'a Path,
-    pub(super) fork: Option<&'a Fork>,
-    pub(super) mcp_args: &'a [String],
-    pub(super) system_prompt_file: &'a Path,
-    pub(super) permission_mode: &'a str,
-    pub(super) plugin_args: &'a [String],
-    pub(super) model_args: &'a [String],
-    pub(super) skills: &'a [ChatSkill],
-    pub(super) custom_prompt: &'a CustomPrompt,
-    pub(super) reply_images: ReplyImages,
-    pub(super) isolation: &'a Isolation,
-    pub(super) session: Arc<Mutex<Option<Session>>>,
-    pub(super) process_turns: AtomicU64,
-    pub(super) reset: Mutex<Option<ResetReason>>,
-    pub(super) live: Arc<AtomicBool>,
-    pub(super) reset_limits: ResetLimits,
-    pub(super) recent_history_tokens: usize,
-    pub(super) gate: Arc<OutputGate>,
-    pub(super) run: &'a str,
-    pub(super) suggestions: SuggestionCell,
-    pub(super) last_turn_end: Stamp,
-    pub(super) identity: Arc<Mutex<IterationMetadata>>,
-    pub(super) last_cost_usd: Mutex<Option<f64>>,
-    pub(super) timing: Mutex<TurnTiming>,
-    pub(super) seen_len: Mutex<Option<usize>>,
-    pub(super) sink: Arc<dyn TurnSink>,
-    pub(super) show_tools: bool,
-    pub(super) terminated: fn() -> bool,
-    pub(super) exe: Option<&'a Path>,
+pub type Stamp = Arc<Mutex<Option<DateTime<Utc>>>>;
+
+pub struct Turn<'a> {
+    pub store: &'a Store,
+    pub store_dir: &'a Path,
+    pub fork: Option<&'a Fork>,
+    pub mcp_args: &'a [String],
+    pub system_prompt_file: &'a Path,
+    pub permission_mode: &'a str,
+    pub plugin_args: &'a [String],
+    pub model_args: &'a [String],
+    pub skills: &'a [ChatSkill],
+    pub custom_prompt: &'a CustomPrompt,
+    pub reply_images: ReplyImages,
+    pub isolation: &'a Isolation,
+    pub session: Arc<Mutex<Option<Session>>>,
+    pub process_turns: AtomicU64,
+    pub reset: Mutex<Option<ResetReason>>,
+    pub live: Arc<AtomicBool>,
+    pub reset_limits: ResetLimits,
+    pub recent_history_tokens: usize,
+    pub gate: Arc<OutputGate>,
+    pub run: &'a str,
+    pub suggestions: SuggestionCell,
+    pub last_turn_end: Stamp,
+    pub identity: Arc<Mutex<IterationMetadata>>,
+    pub last_cost_usd: Mutex<Option<f64>>,
+    pub timing: Mutex<TurnTiming>,
+    pub seen_len: Mutex<Option<usize>>,
+    pub sink: Arc<dyn TurnSink>,
+    pub show_tools: bool,
+    pub terminated: fn() -> bool,
+    pub exe: Option<&'a Path>,
 }
 
 impl Turn<'_> {
@@ -204,7 +205,7 @@ impl Turn<'_> {
         }
     }
 
-    pub(super) fn take_cost(&self) -> Option<f64> {
+    pub fn take_cost(&self) -> Option<f64> {
         locked(&self.last_cost_usd).take()
     }
 
@@ -228,7 +229,7 @@ impl Turn<'_> {
         }
     }
 
-    pub(super) fn run(
+    pub fn run(
         &self,
         trigger: Trigger,
         logged: &[String],
@@ -601,7 +602,9 @@ fn stopped(cancel: &CancelToken, terminated: fn() -> bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream_processor::StreamProcessorResult;
+    use crate::disk_files::DiskFiles;
+    use ralph_core::chunk::{ChunkType, ParsedChunk};
+    use ralph_core::stream::blocks::{StreamCollector, StreamProcessorResult};
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
@@ -653,19 +656,19 @@ mod tests {
 
     #[test]
     fn turn_row_names_the_model_from_the_claude_init_line() {
-        let mut processor = crate::stream_processor::StreamProcessor::new();
+        let mut processor = StreamCollector::new(false, VerboseToolsConfig::new());
         [
             r#"{"type":"system","subtype":"init","session_id":"s1","tools":["Task","Bash","mcp__chat__help"],"mcp_servers":[{"name":"chat","status":"connected"}],"model":"claude-haiku-5-5","permissionMode":"default","slash_commands":["compact"],"agents":["general-purpose"]}"#,
             r#"{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0018,"usage":{"input_tokens":3,"output_tokens":5},"session_id":"s1"}"#,
         ]
         .iter()
         .for_each(|line| {
-            processor.process_line(line);
+            processor.process_line(line, &DiskFiles);
         });
         let result = Ok(StreamingSubprocessResult {
             exit_code: 0,
             stderr: String::new(),
-            stream_result: processor.finish(),
+            stream_result: processor.finish(&DiskFiles).1,
             request_at: None,
             cost_before: None,
             logged_before: None,
@@ -689,12 +692,12 @@ mod tests {
     const PROBE_RESULT: &str = r#"{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0024732699999999996,"duration_ms":4404,"session_id":"47488cc1","usage":{"input_tokens":2,"cache_creation_input_tokens":10086,"cache_read_input_tokens":6887,"output_tokens":774,"output_tokens_details":{"thinking_tokens":565},"cache_creation":{"ephemeral_1h_input_tokens":10086,"ephemeral_5m_input_tokens":0}}}"#;
 
     fn probe_partial() -> StreamingSubprocessResult {
-        let mut processor = crate::stream_processor::StreamProcessor::new();
-        processor.process_line(PROBE_RESULT);
+        let mut processor = StreamCollector::new(false, VerboseToolsConfig::new());
+        processor.process_line(PROBE_RESULT, &DiskFiles);
         StreamingSubprocessResult {
             exit_code: 1,
             stderr: String::new(),
-            stream_result: processor.finish(),
+            stream_result: processor.finish(&DiskFiles).1,
             request_at: None,
             cost_before: None,
             logged_before: None,
@@ -910,5 +913,34 @@ mod tests {
         assert_eq!(value["ok"], false);
         assert_eq!(value["memory_wait_ms"], 12);
         assert_eq!(value["outage_retries"], 1);
+    }
+
+    #[test]
+    fn only_worker_turns_log_before_the_reply() {
+        assert!(logged_before_reply(Trigger::Worker));
+        assert!(!logged_before_reply(Trigger::User));
+    }
+
+    #[test]
+    fn unanswered_turn_restores_the_draft() {
+        assert_eq!(
+            draft_after(TurnOutcome::Unanswered, "hi".into()),
+            Some("hi".into())
+        );
+        assert_eq!(draft_after(TurnOutcome::Replied, "hi".into()), None);
+        assert_eq!(draft_after(TurnOutcome::Exit, "hi".into()), None);
+    }
+
+    #[test]
+    fn rule_follows_shown_output_only() {
+        assert!(!shown_output(&[]));
+        assert!(!shown_output(&[OutputBlock::Separator]));
+        assert!(shown_output(&[
+            OutputBlock::Separator,
+            OutputBlock::text(ParsedChunk {
+                chunk_type: ChunkType::Prose,
+                content: "x".to_string(),
+            })
+        ]));
     }
 }
