@@ -1,6 +1,5 @@
 //! Core types for subprocess operations.
 
-use crate::highlight::ThemeError;
 use crate::stream_processor::StreamProcessorResult;
 use std::io;
 
@@ -47,7 +46,7 @@ pub enum SubprocessError {
     },
 
     #[error("Invalid theme configuration: {0}")]
-    ThemeError(#[from] ThemeError),
+    Theme(String),
 }
 
 impl SubprocessError {

@@ -198,7 +198,10 @@ pub fn build_command(
 }
 
 pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, SubprocessError> {
-    let sink = Arc::new(TerminalSink::plain(&config.theme_config)?);
+    let sink = Arc::new(
+        TerminalSink::plain(&config.theme_config)
+            .map_err(|error| SubprocessError::Theme(error.to_string()))?,
+    );
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
         command: build_command(
             &config.permission_mode,

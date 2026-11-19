@@ -553,7 +553,7 @@ fn run_memory_command(
         || {
             backoff::attempt_from(
                 turn_sink::TerminalSink::plain(&theme_config)
-                    .map_err(subprocess::SubprocessError::from)
+                    .map_err(|error| subprocess::SubprocessError::Theme(error.to_string()))
                     .and_then(|sink| {
                         subprocess::invoke_subprocess_silent(&subprocess::SpinnerSubprocessConfig {
                             command: command.to_string(),
