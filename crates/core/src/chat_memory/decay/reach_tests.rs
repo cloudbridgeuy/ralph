@@ -2,6 +2,7 @@ use super::anchors::{Anchor, Group};
 use super::reach::{
     bucket, cover_ancestor, probe, reach_tally, recall_position, search_rank, Bucket, Outcome,
 };
+use super::survival::Cell;
 use super::tokens::{Class, Key};
 use crate::chat_memory::fixtures::{n, texted};
 use crate::chat_memory::{Entry, Tree};
@@ -72,7 +73,7 @@ fn search_rank_of_anchor() {
         found.outcome,
         Outcome::Reached {
             search: Bucket::One,
-            recall: Bucket::TwoToFive
+            recall: true
         }
     );
 }
@@ -131,8 +132,7 @@ fn reach_tally_counts_outcomes_and_skips_uncompressed() {
         .collect();
     let tally = reach_tally(&probes);
     assert_eq!(tally.search.values().sum::<usize>(), 2);
-    assert_eq!(tally.recall.values().sum::<usize>(), 2);
-    assert_eq!(tally.recall[&Bucket::Miss], 1);
+    assert_eq!(tally.recall, Cell { kept: 1, total: 2 });
 }
 
 #[test]

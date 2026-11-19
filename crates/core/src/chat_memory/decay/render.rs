@@ -1,6 +1,6 @@
 use super::anchors::Group;
 use super::era::{Block, Section, ERAS};
-use super::reach::{recall_cell, Bucket, ReachTally};
+use super::reach::{Bucket, ReachTally};
 use super::survival::{Cell, Table};
 use super::tokens::Class;
 use super::Decay;
@@ -69,7 +69,7 @@ fn reach_lines(reach: &ReachTally) -> Vec<String> {
         ),
         format!(
             "recall found (newest {RECALL_MAX_LINES}): {}",
-            show(recall_cell(reach))
+            show(reach.recall)
         ),
     ]
 }

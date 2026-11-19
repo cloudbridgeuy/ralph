@@ -26,7 +26,7 @@ fn sample_block() -> Block {
         reach: ReachTally {
             unreachable: 1,
             search: BTreeMap::from([(Bucket::One, 1), (Bucket::Miss, 1)]),
-            recall: BTreeMap::from([(Bucket::TwoToFive, 1), (Bucket::Miss, 1)]),
+            recall: Cell { kept: 1, total: 2 },
         },
     }
 }

@@ -19,7 +19,7 @@ pub enum Bucket {
 pub enum Outcome {
     Uncompressed,
     Unreachable,
-    Reached { search: Bucket, recall: Bucket },
+    Reached { search: Bucket, recall: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +33,7 @@ pub struct Probe {
 pub struct ReachTally {
     pub unreachable: usize,
     pub search: BTreeMap<Bucket, usize>,
-    pub recall: BTreeMap<Bucket, usize>,
+    pub recall: Cell,
 }
 
 pub fn bucket(rank: Option<usize>) -> Bucket {
@@ -100,7 +100,7 @@ pub fn probe(anchor: &Anchor, entries: &[Entry], tree: &Tree, cover: &[Node]) ->
         } else {
             Outcome::Reached {
                 search: bucket(search_rank(entries, anchor.id, &words)),
-                recall: bucket(recall_position(entries, anchor.id, &words)),
+                recall: recall_position(entries, anchor.id, &words).is_some(),
             }
         }
     };
@@ -119,18 +119,9 @@ pub fn reach_tally<'a>(probes: impl IntoIterator<Item = &'a Probe>) -> ReachTall
             Outcome::Unreachable => tally.unreachable += 1,
             Outcome::Reached { search, recall } => {
                 *tally.search.entry(search).or_insert(0) += 1;
-                *tally.recall.entry(recall).or_insert(0) += 1;
+                tally.recall.add(recall);
             }
         }
     }
     tally
-}
-
-pub fn recall_cell(tally: &ReachTally) -> Cell {
-    let total: usize = tally.recall.values().sum();
-    let missed = tally.recall.get(&Bucket::Miss).copied().unwrap_or(0);
-    Cell {
-        kept: total - missed,
-        total,
-    }
 }
