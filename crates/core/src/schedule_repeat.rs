@@ -1,4 +1,5 @@
-use crate::schedule::{format_span, parse_after, TaskKind};
+use crate::schedule::{format_span, parse_after, Task, TaskKind, TaskStatus};
+use crate::schedule_worker::WorkerEnd;
 use chrono::{DateTime, Days, Duration, LocalResult, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -124,10 +125,33 @@ pub fn repeat_label(repeat: &Repeat) -> String {
     }
 }
 
+pub fn plan_rearm<Tz: TimeZone>(task: &Task, now: DateTime<Utc>, zone: &Tz) -> Option<Task> {
+    let repeat = task.repeat.as_ref()?;
+    let at = next_fire(repeat, task.at, now, zone)?;
+    Some(Task {
+        status: TaskStatus::Pending,
+        at,
+        late: false,
+        deadline: None,
+        ..task.clone()
+    })
+}
+
+pub fn plan_worker_rearm<Tz: TimeZone>(
+    task: &Task,
+    end: &WorkerEnd,
+    now: DateTime<Utc>,
+    zone: &Tz,
+) -> Option<Task> {
+    match end {
+        WorkerEnd::Attention => None,
+        WorkerEnd::Done | WorkerEnd::TimedOut | WorkerEnd::Vanished => plan_rearm(task, now, zone),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schedule::{Task, TaskStatus};
     use chrono::{
         Duration as ChronoDuration, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
     };
@@ -391,5 +415,90 @@ mod tests {
     fn labels_name_the_repeat() {
         assert_eq!(repeat_label(&every(21600)), "every 6h");
         assert_eq!(repeat_label(&daily("02:00")), "daily 02:00");
+    }
+
+    fn running(repeat: Option<Repeat>) -> Task {
+        Task {
+            status: TaskStatus::Running,
+            late: true,
+            deadline: Some(utc("2026-01-01T10:30:00Z")),
+            follow_up: Some("next".to_string()),
+            timeout_secs: Some(90),
+            ..row(repeat)
+        }
+    }
+
+    #[test]
+    fn a_one_shot_task_is_not_rearmed() {
+        let now = utc("2026-01-01T10:05:00Z");
+        assert_eq!(plan_rearm(&running(None), now, &Utc), None);
+    }
+
+    #[test]
+    fn a_late_every_task_is_rearmed_on_the_grid_after_now() {
+        let mut task = running(Some(every(3600)));
+        task.at = utc("2026-01-01T07:00:00Z");
+        task.kind = worker();
+        let now = utc("2026-01-01T10:00:00Z");
+        let next = plan_rearm(&task, now, &Utc).unwrap();
+        assert_eq!(next.at, utc("2026-01-01T11:00:00Z"));
+        assert_eq!(next.status, TaskStatus::Pending);
+        assert!(!next.late);
+        assert_eq!(next.deadline, None);
+        assert_eq!(next.id, task.id);
+        assert_eq!(next.kind, task.kind);
+        assert_eq!(next.follow_up, task.follow_up);
+        assert_eq!(next.timeout_secs, task.timeout_secs);
+        assert_eq!(next.repeat, task.repeat);
+    }
+
+    #[test]
+    fn a_running_command_loses_its_deadline_when_rearmed() {
+        let task = running(Some(every(600)));
+        let next = plan_rearm(&task, utc("2026-01-01T10:05:00Z"), &Utc).unwrap();
+        assert_eq!(next.deadline, None);
+        assert_eq!(next.at, utc("2026-01-01T10:10:00Z"));
+    }
+
+    #[test]
+    fn a_daily_task_is_rearmed_for_the_next_day() {
+        let mut task = running(Some(daily("10:00")));
+        task.at = utc("2026-01-01T10:00:00Z");
+        let next = plan_rearm(&task, utc("2026-01-01T10:00:05Z"), &Utc).unwrap();
+        assert_eq!(next.at, utc("2026-01-02T10:00:00Z"));
+    }
+
+    #[test]
+    fn a_repeat_with_no_next_fire_stops_the_schedule() {
+        let task = running(Some(every(0)));
+        assert_eq!(plan_rearm(&task, utc("2026-01-01T10:05:00Z"), &Utc), None);
+    }
+
+    #[test]
+    fn a_worker_is_rearmed_after_done_timed_out_or_vanished() {
+        let task = running(Some(every(3600)));
+        let now = utc("2026-01-01T10:05:00Z");
+        for end in [WorkerEnd::Done, WorkerEnd::TimedOut, WorkerEnd::Vanished] {
+            let next = plan_worker_rearm(&task, &end, now, &Utc).unwrap();
+            assert_eq!(next.at, utc("2026-01-01T11:00:00Z"));
+            assert_eq!(next.status, TaskStatus::Pending);
+        }
+    }
+
+    #[test]
+    fn a_worker_that_needs_attention_is_not_rearmed() {
+        let task = running(Some(every(3600)));
+        let now = utc("2026-01-01T10:05:00Z");
+        assert_eq!(
+            plan_worker_rearm(&task, &WorkerEnd::Attention, now, &Utc),
+            None
+        );
+    }
+
+    #[test]
+    fn a_one_shot_worker_is_not_rearmed() {
+        let task = running(None);
+        let now = utc("2026-01-01T10:05:00Z");
+        assert_eq!(plan_worker_rearm(&task, &WorkerEnd::Done, now, &Utc), None);
     }
 }
