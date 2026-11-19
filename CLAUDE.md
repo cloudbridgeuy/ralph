@@ -14,7 +14,7 @@ cargo install --locked --path crates/ralph --root /usr/local --force  # Custom p
 ralph wraps `claude -p` with rich terminal rendering. Commands:
 
 - `ralph` / `ralph chat` - persistent chat with a compressed memory tree ([details](docs/context/ralph-chat.md))
-- `ralph chat history <read|zoom|recall|search> …` - print the chat memory as the model's tools see it; no model, no turn ([details](docs/context/ralph-chat.md#history-commands))
+- `ralph chat history <read|zoom|recall|search|stats> …` - print the chat memory as the model's tools see it, or report how they were used; no model, no turn ([details](docs/context/ralph-chat.md#history-commands))
 - `ralph chat --thread <name> [--model <m>]` / `ralph thread <ls|log|drop|merge [--view]|park|revive|pull>` - named side chats forked from main; in a chat, `/thread <ls|open <name> [--auto-merge|--auto-drop] [--model <m>] (new Rex block)|switch <name>|main|merge <name> [--view]|park <name>|revive <name>|drop <name>|pull <name>>` mirrors the CLI; `log` prints main and its threads as a unicode graph with no model and no cost ([details](docs/context/ralph-chat.md#threads), [log](docs/context/threads.md#thread-log))
 - `/send-it <instructions>` / `/send-it <status|edit|go|off|save|templates>` - in a chat, run an approved plan of steps with exit criteria and no input ([details](docs/context/send-it.md))
 - `@<id> <text>` - in a chat, send `<text>` to worker `<id>` as written, with no model turn and no cost ([details](docs/context/ralph-chat.md#id-text))

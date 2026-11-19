@@ -2,7 +2,7 @@ use crate::chat::prompt::{ChatPrompt, Submitted};
 use crate::chat::queue::exit_notice;
 use crate::chat::route::history_call;
 use crate::chat::thread;
-use crate::cli::HistoryArgs;
+use crate::cli::{HistoryArgs, HistorySub};
 use ralph_core::chat::{prompt_text, CustomPrompt};
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_memory::{history_tool, history_tool_named, CallSource};
@@ -16,6 +16,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::STORE_ENV;
+
+mod stats;
 
 pub(super) fn resolve_store(
     flag: Option<PathBuf>,
@@ -53,8 +55,14 @@ pub(super) fn print_history(
     store_dir: &Path,
     history: &HistoryArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(tool) = history.tool else {
+        return match &history.stats {
+            Some(HistorySub::Stats(args)) => stats::print_stats(store_dir, args),
+            None => Err("history needs a tool or a subcommand".into()),
+        };
+    };
     let parsed = history_tool(
-        history.tool.name(),
+        tool.name(),
         &history.words.join(" "),
         history.cursor.as_deref(),
         history.tag.as_deref(),
@@ -64,7 +72,7 @@ pub(super) fn print_history(
         None => Ok(call),
     });
     let call = parsed.inspect_err(|message| {
-        if let Some(tool) = history_tool_named(history.tool.name()) {
+        if let Some(tool) = history_tool_named(tool.name()) {
             history_log::record_refusal(store_dir, tool, message, CallSource::Cli);
         }
     })?;

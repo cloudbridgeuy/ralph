@@ -584,9 +584,13 @@ partial page with `next cursor:`; pass it back as --cursor."
 }
 
 #[derive(clap::Args, Debug)]
+#[command(args_conflicts_with_subcommands = true, arg_required_else_help = true)]
 pub struct HistoryArgs {
-    #[arg(value_enum, help = "Model tool to run")]
-    pub tool: HistoryTool,
+    #[command(subcommand)]
+    pub stats: Option<HistorySub>,
+
+    #[arg(value_enum, required = true, help = "Model tool to run")]
+    pub tool: Option<HistoryTool>,
 
     #[arg(
         required = true,
@@ -613,6 +617,35 @@ pub struct HistoryArgs {
         help = "Recall or search in main or a named thread instead of this chat"
     )]
     pub scope: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HistorySub {
+    #[command(
+        about = "Report how the model used the history tools: calls, weak searches, reach and timing.",
+        long_about = "Reads analytics/history.jsonl and analytics/timing.jsonl from the store. \
+It calls no model and costs nothing."
+    )]
+    Stats(StatsArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct StatsArgs {
+    #[arg(
+        long,
+        value_name = "SECS",
+        default_value_t = 120,
+        help = "Seconds between two calls that start a new chain"
+    )]
+    pub gap: u64,
+
+    #[arg(
+        long = "few-hits",
+        value_name = "N",
+        default_value_t = 2,
+        help = "A search with at most N hits counts as weak"
+    )]
+    pub few_hits: u64,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

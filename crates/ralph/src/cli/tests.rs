@@ -282,7 +282,7 @@ fn test_cli_chat_history_takes_a_tool_words_cursor_and_store() {
     let Some(ChatCommand::History(history)) = chat.command else {
         panic!("expected chat history");
     };
-    assert_eq!(history.tool, HistoryTool::Search);
+    assert_eq!(history.tool, Some(HistoryTool::Search));
     assert_eq!(history.words, ["rate", "limit"]);
     assert_eq!(history.cursor.as_deref(), Some("c1"));
     assert_eq!(history.scope, None);
@@ -590,4 +590,59 @@ fn test_cli_chat_history_search_takes_a_tag() {
         panic!("expected chat history");
     };
     assert_eq!(history.tag.as_deref(), Some("rule"));
+}
+
+#[test]
+fn test_cli_chat_history_stats_parses() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "history", "stats"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected chat");
+    };
+    let Some(ChatCommand::History(history)) = chat.command else {
+        panic!("expected chat history");
+    };
+    let Some(HistorySub::Stats(stats)) = history.stats else {
+        panic!("expected stats");
+    };
+    assert_eq!((stats.gap, stats.few_hits), (120, 2));
+    assert_eq!(history.tool, None);
+}
+
+#[test]
+fn test_cli_chat_history_stats_takes_gap_and_few_hits() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from([
+        "ralph",
+        "chat",
+        "history",
+        "stats",
+        "--gap",
+        "30",
+        "--few-hits",
+        "5",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected chat");
+    };
+    let Some(ChatCommand::History(history)) = chat.command else {
+        panic!("expected chat history");
+    };
+    let Some(HistorySub::Stats(stats)) = history.stats else {
+        panic!("expected stats");
+    };
+    assert_eq!((stats.gap, stats.few_hits), (30, 5));
+}
+
+#[test]
+fn test_cli_chat_history_recall_without_words_still_errors() {
+    let err = Cli::try_parse_from(["ralph", "chat", "history", "recall"]).unwrap_err();
+    assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+}
+
+#[test]
+fn test_cli_chat_history_without_a_tool_errors() {
+    assert!(Cli::try_parse_from(["ralph", "chat", "history"]).is_err());
 }

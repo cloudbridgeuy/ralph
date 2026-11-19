@@ -8,6 +8,7 @@
 ralph chat [--skill <PATH>]... [--permission-mode <MODE>] [--worktree-dir <DIR>] [--no-inbox-sound] [--no-inbox-notification] [--skip-summary]
 ralph                      # same as ralph chat with defaults
 ralph chat history <read|zoom|recall|search> <words>... [--cursor <C>] [--store <DIR>]
+ralph chat history stats [--gap <secs>] [--few-hits <n>] [--store <DIR>]
 ralph chat --thread <NAME> [--model <MODEL>]  # create or open a thread; see Threads
 ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pull <NAME>> [--store <DIR>]
 ```
@@ -501,6 +502,68 @@ The pure model is `crates/core/src/workers_view/remote.rs`; the shell is `crates
 - Errors: bad words print the tool error (for example `Missing or empty string argument 'id'.` for a bare `/zoom`). `route_input` returns `Route::History(Err(..))` for them, so they are never sent to the model as a message. `/readme` and other longer words stay messages.
 - Locks: they take only the shared `LOCK` that the model's tools take (see [Index](#index)), never `CHAT` or `NAP`, so they work while a chat or a nap runs; a nap commit or an append makes them wait briefly. A missing store reads as empty and creates nothing. Like the model's tools, a read can save an index file it extended.
 - Tab does not complete them or their arguments.
+
+### History stats
+
+`ralph chat history stats [--gap <secs>] [--few-hits <n>]` reports how the model used the history tools. It reads `analytics/history.jsonl` and `analytics/timing.jsonl` in the store. It makes no model call and costs nothing. A missing file reads as empty. A thread store has its own analytics: pass `--thread` or `--store` to read it.
+
+- calls: calls per tool and per source (`mcp`, `slash`, `cli`, other).
+- rates: share of calls with an empty result and share that failed.
+- chains: a chain is 3 or more weak recall or search calls in a row in one turn (model or slash calls only). A gap over `--gap` seconds (default 120) ends it. A weak call has at most `--few-hits` hits (default 2).
+- unopened hits: a search hit counts as opened when a later zoom or read in the turn names its `hit_ids`. A row without `hit_ids` counts as unknown.
+- no-history turns: turns with no history call. The report joins turn rows to timing rows by run and the nearest `at` within 2 s, because timing rows have no turn id. With no timing log it prints `n/a`.
+- zoom depth: how many zooms went 0, 1, 2, 3 or 4+ levels deep, and the node size.
+- old reach: a call is old when it reaches below the start of the turn's view. It is undecided when the turn has no view.
+- The parser is lenient. It skips bad rows and counts them in `skipped rows`.
+- Code: the pure `build_stats` and `render_stats` in `crates/core/src/chat_memory/history_stats/`; the shell is `crates/ralph/src/chat/session/stats.rs`.
+
+Sample:
+
+```text
+history stats
+call rows: 5, turn rows: 1, skipped rows: 1
+
+calls
+tool     total   mcp slash   cli other
+read         1     1     0     0     0
+zoom         1     1     0     0     0
+recall       0     0     0     0     0
+search       3     3     0     0     0
+
+rates
+tool     empty error
+read        0%  100%
+zoom        0%    0%
+recall      0%    0%
+search      0%    0%
+
+chains
+chains: 1
+calls in chains: 3
+
+unopened hits
+opened: 0
+unopened: 3
+unknown: 0
+
+no-history turns
+turns: 1 (no timing log)
+joined: n/a
+with no history call: 0
+
+zoom depth
+0: 0
+1: 0
+2: 0
+3: 0
+4+: 0
+node size: count 0, max 0
+
+old reach
+old: 0
+decided: 0
+undecided: 0
+```
 
 ## Process reset
 
