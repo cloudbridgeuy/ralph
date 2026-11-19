@@ -1,5 +1,5 @@
 use super::{
-    CLAUDE_ANSWER_DIR, CLAUDE_CLOSE_DIR, CLAUDE_ERROR_DIR, CLAUDE_INTERRUPT_DIR,
+    AGY_OWNER_DIR, CLAUDE_ANSWER_DIR, CLAUDE_CLOSE_DIR, CLAUDE_ERROR_DIR, CLAUDE_INTERRUPT_DIR,
     CLAUDE_INTERRUPT_RESULT_DIR, CLAUDE_OWNER_DIR, CLAUDE_PROMPT_DIR, CLAUDE_SESSION_DIR,
     CLAUDE_SPAWN_DIR, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_ERROR_DIR, CODEX_INTERRUPT_DIR,
     CODEX_INTERRUPT_RESULT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SESSION_DIR,
@@ -11,6 +11,18 @@ use super::{
     OPENCODE_SPAWN_DIR,
 };
 use std::path::{Path, PathBuf};
+
+const AGY_DIRS: [&str; 9] = [
+    "agy-spawn",
+    "agy-close",
+    "agy-error",
+    AGY_OWNER_DIR,
+    "agy-answer",
+    "agy-prompt",
+    "agy-interrupt",
+    "agy-interrupt-result",
+    "agy-session",
+];
 
 const CURSOR_DIRS: [&str; 9] = [
     CURSOR_SPAWN_DIR,
@@ -80,6 +92,10 @@ pub struct HandoffFiles {
 }
 
 impl HandoffFiles {
+    pub fn agy(store: &Path, id: &str) -> Self {
+        Self::in_dirs(store, id, AGY_DIRS)
+    }
+
     pub fn cursor(store: &Path, id: &str) -> Self {
         Self::in_dirs(store, id, CURSOR_DIRS)
     }
@@ -143,6 +159,17 @@ impl HandoffFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agy_handoffs_are_separate_from_cursor() {
+        let agy = HandoffFiles::agy(Path::new("/s"), "A");
+        let cursor = HandoffFiles::cursor(Path::new("/s"), "A");
+        assert_eq!(agy.owner, PathBuf::from("/s/agy/A"));
+        assert_eq!(agy.session, PathBuf::from("/s/agy-session/A"));
+        for path in agy.all() {
+            assert!(!cursor.all().contains(&path));
+        }
+    }
 
     #[test]
     fn paths_keep_their_on_disk_directories() {

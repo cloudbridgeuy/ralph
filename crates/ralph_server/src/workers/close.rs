@@ -72,6 +72,7 @@ impl Workers {
             .ok()
             .and_then(|raw| decode_spawn_record(&raw));
         let live = LiveHarness {
+            agy: HandoffFiles::agy(&self.store_dir, id).owner.exists(),
             cursor: HandoffFiles::cursor(&self.store_dir, id).owner.exists(),
             codex: self.codex_running(id),
             claude: self.claude_running(id),
@@ -138,10 +139,16 @@ impl Workers {
             warn_if_err(changes.clear(), "Failed to clear worker snapshots");
         }
         let unset_warning = unset_legacy_base(&repo, id);
-        let files = HandoffFiles::cursor(&self.store_dir, id);
-        clear_marker(&files.session)?;
-        clear_marker(&files.interrupt_result)?;
-        clear_marker(&HandoffFiles::codex(&self.store_dir, id).session)?;
+        if state.kind == HarnessId::Agy {
+            let files = HandoffFiles::agy(&self.store_dir, id);
+            clear_marker(&files.session)?;
+            clear_marker(&files.interrupt_result)?;
+        } else {
+            let files = HandoffFiles::cursor(&self.store_dir, id);
+            clear_marker(&files.session)?;
+            clear_marker(&files.interrupt_result)?;
+            clear_marker(&HandoffFiles::codex(&self.store_dir, id).session)?;
+        }
         if steps == [CloseStep::ClearMarkers] {
             return Ok(unset_warning.into_iter().fold(
                 with_warning(format!(

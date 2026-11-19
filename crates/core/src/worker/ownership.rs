@@ -157,6 +157,7 @@ pub struct CloseState {
 pub enum CloseStep {
     RemoveOpencodeSession,
     KillSession(String),
+    TerminateAgy,
     TerminateCursor,
     TerminateCodex,
     TerminateClaude,
@@ -221,7 +222,7 @@ pub fn close_plan(
         steps.push(CloseStep::RemoveOpencodeSession);
     }
     match state.kind {
-        HarnessId::Agy => return Err("agy workers are not supported yet".to_string()),
+        HarnessId::Agy => steps.push(CloseStep::TerminateAgy),
         HarnessId::Cursor => steps.push(CloseStep::TerminateCursor),
         HarnessId::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
         HarnessId::Codex => steps.push(CloseStep::TerminateCodex),
@@ -248,6 +249,7 @@ pub fn close_summary(id: &str, steps: &[CloseStep]) -> String {
         .iter()
         .filter_map(|step| match step {
             CloseStep::KillSession(session) => Some(format!("killed tmux session {session}")),
+            CloseStep::TerminateAgy => Some("stopped its agy process".into()),
             CloseStep::TerminateCursor => Some("stopped its cursor process".into()),
             CloseStep::TerminateCodex => Some("stopped its codex process".into()),
             CloseStep::TerminateClaude => Some("stopped its claude process".into()),
@@ -404,6 +406,15 @@ mod tests {
                 CloseStep::ClearMarkers,
             ])
         );
+    }
+
+    #[test]
+    fn agy_close_terminates_only_the_agy_worker() {
+        let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+        state.kind = HarnessId::Agy;
+        let steps = close_plan(&state, false, false).unwrap();
+        assert!(steps.contains(&CloseStep::TerminateAgy));
+        assert!(!steps.contains(&CloseStep::TerminateCursor));
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub use permissions::*;
 pub use protocol::*;
 pub use turns::*;
 
+pub const AGY_OWNER_DIR: &str = "agy";
+
 pub const CURSOR_HARNESS: &str = "cursor";
 pub const CURSOR_SPAWN_DIR: &str = "cursor-spawn";
 pub const CURSOR_CLOSE_DIR: &str = "cursor-close";

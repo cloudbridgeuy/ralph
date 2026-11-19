@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::cursor_owner::{
-    caller_owns, owned_claude_ids, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file,
+    caller_owns, owned_agy_ids, owned_claude_ids, owned_codex_ids, owned_cursor_ids, sweep_owner,
+    write_file,
 };
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::outcome_log;
@@ -216,6 +217,10 @@ impl Workers {
     }
 
     fn headless_files(&self, id: &str) -> Option<(HarnessId, HandoffFiles)> {
+        let agy = HandoffFiles::agy(&self.store_dir, id);
+        if agy.owner.exists() {
+            return Some((HarnessId::Agy, agy));
+        }
         let cursor = HandoffFiles::cursor(&self.store_dir, id);
         if cursor.owner.exists() {
             return Some((HarnessId::Cursor, cursor));
@@ -328,6 +333,12 @@ impl Workers {
             CloseStep::RemoveOpencodeSession => {
                 self.terminate_opencode(id)?;
             }
+            CloseStep::TerminateAgy => {
+                let files = HandoffFiles::agy(&self.store_dir, id);
+                if files.owner.exists() {
+                    self.terminate_headless(&files, "agy")?;
+                }
+            }
             CloseStep::TerminateCursor => {
                 if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
                     self.terminate_headless(&HandoffFiles::cursor(&self.store_dir, id), "cursor")?;
@@ -419,8 +430,14 @@ impl Workers {
     }
 
     fn refuse_busy_headless(&self, id: &str, closing: bool) -> io::Result<()> {
-        for harness in [HarnessId::Cursor, HarnessId::Codex, HarnessId::Claude] {
+        for harness in [
+            HarnessId::Agy,
+            HarnessId::Cursor,
+            HarnessId::Codex,
+            HarnessId::Claude,
+        ] {
             let files = match harness {
+                HarnessId::Agy => HandoffFiles::agy(&self.store_dir, id),
                 HarnessId::Codex => HandoffFiles::codex(&self.store_dir, id),
                 HarnessId::Claude => HandoffFiles::claude(&self.store_dir, id),
                 _ => HandoffFiles::cursor(&self.store_dir, id),
@@ -651,6 +668,11 @@ fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {
 pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     let mut workers = store_workers(&tmux_listing(), &store_dir.to_string_lossy());
     workers.extend(
+        owned_agy_ids(store_dir)
+            .iter()
+            .map(|id| RunningWorker::headless(id, HarnessId::Agy)),
+    );
+    workers.extend(
         owned_cursor_ids(store_dir)
             .iter()
             .map(|id| RunningWorker::headless(id, HarnessId::Cursor)),
@@ -720,6 +742,17 @@ fn stdout_line(output: Output) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn agy_owner_is_discovered_as_its_own_headless_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        super::write_file(&dir.path().join("agy/A"), "owner").unwrap();
+        assert_eq!(
+            workers.headless_files("A").map(|(kind, _)| kind),
+            Some(ralph_core::worker::HarnessId::Agy)
+        );
+    }
     use super::*;
     use std::time::Duration;
 

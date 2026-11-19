@@ -3,7 +3,7 @@ use crate::transport::stdio::stop_group;
 use crate::warn::warn;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
-    sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep,
+    sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep, AGY_OWNER_DIR,
     CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
     CURSOR_SESSION_DIR,
 };
@@ -88,6 +88,10 @@ fn owned_ids(store_dir: &Path, dir: &str, files: fn(&Path, &str) -> HandoffFiles
     ids
 }
 
+pub fn owned_agy_ids(store_dir: &Path) -> Vec<String> {
+    owned_ids(store_dir, AGY_OWNER_DIR, HandoffFiles::agy)
+}
+
 pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
     owned_ids(store_dir, CURSOR_OWNER_DIR, HandoffFiles::cursor)
 }
@@ -128,15 +132,22 @@ fn owner_facts(owner: &Path) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
         .is_some_and(|r| alive_since(r.chat_pid, &r.chat_start));
     let facts = OwnerFacts {
         chat_alive,
-        group_alive: record.as_ref().is_some_and(group_alive),
+        group_alive: record
+            .as_ref()
+            .is_some_and(|record| group_alive(record, owner)),
         mine: chat_alive && record.as_ref().is_some_and(|r| r.chat_pid == process::id()),
     };
     Some((record, facts))
 }
 
-fn group_alive(record: &OwnerRecord) -> bool {
+fn group_alive(record: &OwnerRecord, owner: &Path) -> bool {
     let leader = process_start(record.group);
-    let reclaimable = leader.is_none() && cursor_group_reclaimable(&group_table(), record.group);
+    let reclaimable = leader.is_none()
+        && owner
+            .parent()
+            .and_then(Path::file_name)
+            .is_none_or(|name| name != AGY_OWNER_DIR)
+        && cursor_group_reclaimable(&group_table(), record.group);
     group_live(leader.as_deref(), &record.group_start, reclaimable)
 }
 
