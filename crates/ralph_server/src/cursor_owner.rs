@@ -170,6 +170,23 @@ pub fn sweep_owner(files: &HandoffFiles) -> Option<Sweep> {
     Some(decision)
 }
 
+pub(crate) fn reclaim_agy(owner: &Path) -> bool {
+    let Some((Some(record), facts)) = owner_facts(owner) else {
+        return !owner.exists();
+    };
+    let decision = sweep_decision(facts);
+    if let Sweep::Reclaim { kill_group: true } = decision {
+        stop_group(record.group, || {
+            alive_since(record.group, &record.group_start)
+        });
+    }
+    reclaim_agy_decision(owner, decision)
+}
+
+pub(crate) fn reclaim_agy_decision(owner: &Path, decision: Sweep) -> bool {
+    matches!(decision, Sweep::Reclaim { .. }) && fs::remove_file(owner).is_ok()
+}
+
 pub fn write_owner_record(owner: &Path, group: u32, agent: &str) -> Result<(), String> {
     let chat = process::id();
     let record = OwnerRecord {

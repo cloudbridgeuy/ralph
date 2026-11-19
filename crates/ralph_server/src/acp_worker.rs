@@ -474,7 +474,15 @@ impl AcpWorker {
     }
 
     fn write_owner(&self, agent: &AcpAgent) -> Result<(), String> {
-        write_owner_record(&self.owner, self.child.id(), agent.name)
+        if *agent == AGY_AGENT {
+            let _lock = recovery::lock(&self.owner).map_err(|e| e.to_string())?;
+            if !recovery::owned(&self.owner) {
+                return Err("agy owner claim was lost".into());
+            }
+            write_owner_record(&self.owner, self.child.id(), agent.name)
+        } else {
+            write_owner_record(&self.owner, self.child.id(), agent.name)
+        }
     }
 
     fn reap_exit(&mut self) {
@@ -512,7 +520,9 @@ impl AcpWorker {
         if !self.exit_seen {
             stop_child(&mut self.child);
         }
-        fs::remove_file(&self.owner).ok();
+        if self.agent != AGY_AGENT {
+            fs::remove_file(&self.owner).ok();
+        }
     }
 
     pub fn terminate(&mut self) {
@@ -634,11 +644,7 @@ impl CursorHost {
     }
 
     fn handles(&self, id: &str) -> bool {
-        !self.agy
-            || !matches!(
-                crate::workers::headless::queued_owner(&self.files(id).owner),
-                ralph_core::worker::QueuedOwner::Foreign
-            )
+        !self.agy || !self.files(id).owner.exists() || recovery::owned(&self.files(id).owner)
     }
 
     fn reap_exits(&self) {
@@ -704,7 +710,7 @@ impl CursorHost {
         let deadline = Instant::now() + SHUTDOWN_GRACE;
         for (id, worker) in &mut drained {
             worker.finish_stop(deadline);
-            self.forget(id);
+            self.forget(id, false);
         }
         let starting: Vec<(String, u32)> = locked(&self.starting).drain().collect();
         if starting.is_empty() {
@@ -713,26 +719,24 @@ impl CursorHost {
         let groups: Vec<u32> = starting.iter().map(|(_, group)| *group).collect();
         stop_groups(&groups, SHUTDOWN_GRACE, || true);
         for (id, _) in &starting {
-            self.forget(id);
+            self.forget(id, false);
         }
     }
 
-    fn forget(&self, id: &str) {
+    fn forget(&self, id: &str, close: bool) {
         let files = self.files(id);
-        fs::remove_file(&files.owner).ok();
-        fs::remove_file(&files.answer).ok();
-        fs::remove_dir_all(&files.prompt).ok();
-        fs::remove_dir_all(&files.interrupt).ok();
-        fs::remove_dir_all(&files.interrupt_result).ok();
-        fs::remove_file(activity_path(&self.store_dir, id)).ok();
-        fs::remove_file(gone_path(&self.store_dir, id)).ok();
-    }
-
-    pub fn cancel_pending(&self, id: &str) {
-        let permissions = self.workers().get(id).and_then(CursorWorker::permissions);
-        if let Some(permissions) = permissions {
-            permissions.cancel_all();
-        }
+        let _lock = if self.agy {
+            let Ok(lock) = recovery::lock(&files.owner) else {
+                return;
+            };
+            if !recovery::owned(&files.owner) {
+                return;
+            }
+            Some(lock)
+        } else {
+            None
+        };
+        self.cleanup(id, &files, close);
     }
 
     fn answer(&self, id: &str) {
@@ -744,22 +748,6 @@ impl CursorHost {
                     .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
             })
         });
-    }
-
-    fn close(&self, id: &str) {
-        if self.agy && !self.workers().contains_key(id) {
-            return;
-        }
-        self.cancel_pending(id);
-        let removed = self.workers().remove(id);
-        if let Some(mut worker) = removed {
-            worker.send(WorkerCommand::Close).ok();
-            worker.apply_events();
-        }
-        self.forget(id);
-        fs::remove_file(ready_path(&self.store_dir, id)).ok();
-        fs::remove_file(&self.files(id).session).ok();
-        fs::remove_file(&self.files(id).close).ok();
     }
 
     fn spawn(&self, id: &str) {
@@ -775,14 +763,9 @@ impl CursorHost {
             self.fail(id, "worker is already running");
             return;
         }
-        let claim = if self.agy {
-            if claim_owner(&files.owner).is_err() {
-                return;
-            }
-            fs::read_to_string(&files.owner).ok()
-        } else {
-            None
-        };
+        if self.agy && !recovery::claim(&files.owner) {
+            return;
+        }
         let started = if self.agy {
             self.launch(id, &request, Launch::Fresh)
                 .map(|worker| CursorWorker::Acp(Box::new(worker)))
@@ -793,12 +776,11 @@ impl CursorHost {
         match started {
             Ok(worker) => self.adopt(id, worker, self.agy.then(|| task_prompt(&request.task))),
             Err(message) => {
-                if claim.as_ref().is_some_and(|claim| {
-                    fs::read_to_string(&files.owner).as_ref().ok() == Some(claim)
-                }) {
-                    fs::remove_file(&files.owner).ok();
+                if self.agy {
+                    self.forget(id, true);
+                } else {
+                    fs::remove_file(&files.session).ok();
                 }
-                fs::remove_file(&files.session).ok();
                 self.fail(id, &message);
             }
         }
@@ -834,7 +816,7 @@ impl CursorHost {
 
     fn resume(&self, id: &str) {
         let files = self.files(id);
-        if files.owner.exists() {
+        if files.owner.exists() && !self.agy {
             warn(format!(
                 "{} session {id} not resumed: a running chat owns it",
                 CURSOR_AGENT.name
@@ -895,14 +877,9 @@ impl CursorHost {
             ),
             model: record.model.clone(),
         };
-        let claimed = if self.agy {
-            if claim_owner(&files.owner).is_err() {
-                return;
-            }
-            fs::read_to_string(&files.owner).ok()
-        } else {
-            None
-        };
+        if self.agy && !recovery::claim(&files.owner) {
+            return;
+        }
         let started = if !self.agy && record.permissions.is_some() {
             let Some(mode) = record.permissions else {
                 return;
@@ -919,10 +896,8 @@ impl CursorHost {
         match started {
             Ok(worker) => self.adopt_resumed(id, worker),
             Err(message) => {
-                if claimed.as_ref().is_some_and(|claim| {
-                    fs::read_to_string(&files.owner).as_ref().ok() == Some(claim)
-                }) {
-                    fs::remove_file(&files.owner).ok();
+                if self.agy {
+                    recovery::remove_owned(&files.owner);
                 }
                 warn(message.clone());
                 write_file(&files.error, &message).ok();
@@ -936,24 +911,29 @@ impl CursorHost {
             self.workers().insert(id.to_string(), worker);
         } else {
             drop(worker);
-            fs::remove_file(ready).ok();
+            if self.agy {
+                self.forget(id, false);
+            }
+            if !self.agy {
+                fs::remove_file(ready).ok();
+            }
         }
     }
     fn adopt(&self, id: &str, mut worker: CursorWorker, task: Option<String>) {
         let files = self.files(id);
         let claimed = !self.closed.load(Ordering::SeqCst)
-            && (!self.agy
-                || matches!(
-                    crate::workers::headless::queued_owner(&files.owner),
-                    ralph_core::worker::QueuedOwner::Mine
-                ))
+            && (!self.agy || recovery::owned(&files.owner))
             && fs::remove_file(&files.spawn).is_ok()
             && write_file(&ready_path(&self.store_dir, id), "").is_ok();
         if claimed {
             if let Some(task) = task {
                 if let Err(error) = worker.send(WorkerCommand::Prompt(task)) {
                     drop(worker);
-                    fs::remove_file(ready_path(&self.store_dir, id)).ok();
+                    if self.agy {
+                        self.forget(id, true);
+                    } else {
+                        fs::remove_file(ready_path(&self.store_dir, id)).ok();
+                    }
                     self.fail(id, &error);
                     return;
                 }
@@ -961,8 +941,12 @@ impl CursorHost {
             self.workers().insert(id.to_string(), worker);
         } else {
             drop(worker);
-            fs::remove_file(ready_path(&self.store_dir, id)).ok();
-            fs::remove_file(&files.session).ok();
+            if self.agy {
+                self.forget(id, true);
+            } else {
+                fs::remove_file(ready_path(&self.store_dir, id)).ok();
+                fs::remove_file(&files.session).ok();
+            }
         }
     }
 
@@ -975,9 +959,7 @@ impl CursorHost {
 
 impl HeadlessHost for CursorHost {
     fn resume(&self) {
-        if !self.agy {
-            self.resume_all();
-        }
+        self.resume_all();
     }
 
     fn poll(&self) -> bool {
