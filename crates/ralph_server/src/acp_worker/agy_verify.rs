@@ -2,6 +2,7 @@ use super::*;
 use crate::worker_verify::{step, Checks};
 use agent_client_protocol::schema::v1::{CloseSessionRequest, McpServerStdio};
 use ralph_core::worker::{CheckResult, AGY_AGENT};
+use std::sync::atomic::AtomicUsize;
 
 mod evidence;
 mod live;
@@ -121,6 +122,7 @@ struct Run {
     updates: agy_settings::Updates,
     live: Option<PermissionMode>,
     allow_report: Arc<AtomicBool>,
+    requests: Arc<AtomicUsize>,
 }
 
 async fn run(
@@ -134,6 +136,7 @@ async fn run(
         updates,
         live,
         allow_report,
+        requests,
     } = run;
     let init = match initialize(&connection, &AGY_AGENT).await {
         Ok(result) => result.and_then(|init| identity(&init, &version).map(|()| init)),
@@ -200,7 +203,13 @@ async fn run(
     let closed = close(&connection, &id).await;
     if step(&checks, "session/close reload", closed, Clone::clone).is_some() {
         if let Some(mode) = live {
-            live::run(&connection, &dir, &checks, (mode, updates), &allow_report).await;
+            let live = live::Live {
+                mode,
+                updates,
+                allow_report,
+                requests,
+            };
+            live::run(&connection, &dir, &checks, live).await;
         }
     }
     Ok(())
@@ -281,6 +290,8 @@ pub(crate) fn verify(
     });
     let allow_report = Arc::new(AtomicBool::new(false));
     let permission = Arc::clone(&allow_report);
+    let requests = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&requests);
     let updates = Arc::new(Mutex::new(None));
     let observer = Arc::clone(&updates);
     let version = version.to_string();
@@ -289,6 +300,7 @@ pub(crate) fn verify(
             .builder()
             .on_receive_request(
                 async move |request: RawPermissionRequest, responder, _cx| {
+                    counted.fetch_add(1, Ordering::SeqCst);
                     let content = permission_content(&request.0);
                     let option = agy_auto_allow_option(&request.0, &content)
                         .filter(|_| permission.load(Ordering::SeqCst));
@@ -343,6 +355,7 @@ pub(crate) fn verify(
                                 updates,
                                 live,
                                 allow_report,
+                                requests,
                             },
                         )
                         .await

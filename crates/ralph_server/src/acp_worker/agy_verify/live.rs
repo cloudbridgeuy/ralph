@@ -7,6 +7,8 @@ use serde_json::Value;
 const ID: &str = "verify";
 const TEXT: &str = "verify";
 const PROMPT: &str = "Call the ralph-worker report tool exactly once with status done and text verify. Do not call any other tool. Then stop.";
+const SHELL_PROMPT: &str =
+    "Run the shell command `date +%Y` and reply with its output. Do not call any other tool.";
 
 fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
     if delivered
@@ -49,6 +51,35 @@ fn usage(text: &str, session: &str, model: &str, total: u64) -> Result<String, S
     }
 }
 
+fn yolo_check(requests: usize, stop: &Result<String, String>) -> Result<String, String> {
+    match (requests, stop.as_deref()) {
+        (0, Ok("end_turn")) => Ok(
+            "agy raised 0 permission requests for an MCP report and a shell command".to_string(),
+        ),
+        (count, Ok("end_turn")) => Err(format!(
+            "agy raised {count} permission requests in yolo mode"
+        )),
+        (count, Ok(reason)) => Err(format!(
+            "agy shell turn ended with `{reason}` after {count} permission requests"
+        )),
+        (_, Err(message)) => Err(format!("agy shell prompt failed: {message}")),
+    }
+}
+
+async fn shell_turn(connection: &ConnectionTo<Agent>, id: &SessionId) -> Result<String, String> {
+    connection
+        .send_request(PromptRequest::new(id.clone(), vec![SHELL_PROMPT.into()]))
+        .block_task()
+        .await
+        .map(|done| {
+            serde_json::to_value(done.stop_reason)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_default()
+        })
+        .map_err(|error| error.message)
+}
+
 fn prepare(
     dir: &Path,
     mode: PermissionMode,
@@ -78,13 +109,20 @@ fn report_then_usage(
         && step(checks, "live usage", usage(), Clone::clone).is_some()
 }
 
-pub(super) async fn run(
-    connection: &ConnectionTo<Agent>,
-    dir: &Path,
-    checks: &Checks,
-    (mode, updates): (PermissionMode, agy_settings::Updates),
-    allow_report: &AtomicBool,
-) {
+pub(super) struct Live {
+    pub(super) mode: PermissionMode,
+    pub(super) updates: agy_settings::Updates,
+    pub(super) allow_report: Arc<AtomicBool>,
+    pub(super) requests: Arc<AtomicUsize>,
+}
+
+pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &Checks, live: Live) {
+    let Live {
+        mode,
+        updates,
+        allow_report,
+        requests,
+    } = live;
     let Some(opening) = step(checks, "live setup", prepare(dir, mode, updates), |_| {
         "temporary worker MCP prepared".to_string()
     }) else {
@@ -148,6 +186,15 @@ pub(super) async fn run(
     } else {
         false
     };
+    if passed && mode == PermissionMode::Yolo {
+        let stop = shell_turn(connection, &id).await;
+        step(
+            checks,
+            "live yolo",
+            yolo_check(requests.load(Ordering::SeqCst), &stop),
+            Clone::clone,
+        );
+    }
     let result = close(connection, &id).await;
     if passed {
         step(checks, "live close", result, Clone::clone);
@@ -158,6 +205,19 @@ pub(super) async fn run(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn yolo_passes_only_with_no_requests_and_a_normal_end() {
+        let ended = Ok("end_turn".to_string());
+        assert!(yolo_check(0, &ended).is_ok());
+        let many = yolo_check(2, &ended).err().unwrap_or_default();
+        assert!(many.contains('2'), "{many}");
+        let cancelled = yolo_check(0, &Ok("cancelled".to_string()))
+            .err()
+            .unwrap_or_default();
+        assert!(cancelled.contains("cancelled"), "{cancelled}");
+        assert!(yolo_check(0, &Err("boom".to_string())).is_err());
+    }
 
     #[test]
     fn report_failure_skips_usage_execution() {

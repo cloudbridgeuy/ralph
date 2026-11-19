@@ -181,11 +181,31 @@ const AGY_LIVE_REQUIRED_CHECKS: &[&str] = &[
     "live close",
 ];
 
-fn agy_required_checks(live: bool) -> &'static [&'static str] {
-    if live {
-        AGY_LIVE_REQUIRED_CHECKS
-    } else {
-        AGY_REQUIRED_CHECKS
+const AGY_YOLO_REQUIRED_CHECKS: &[&str] = &[
+    "version",
+    "initialize",
+    "session/new",
+    "settings/new",
+    "mcp/new",
+    "session/close",
+    "session/load",
+    "settings/load",
+    "mcp/load",
+    "session/close reload",
+    "live session",
+    "live settings",
+    "live prompt",
+    "live report",
+    "live usage",
+    "live yolo",
+    "live close",
+];
+
+fn agy_required_checks(live: bool, yolo: bool) -> &'static [&'static str] {
+    match (live, yolo) {
+        (false, _) => AGY_REQUIRED_CHECKS,
+        (true, false) => AGY_LIVE_REQUIRED_CHECKS,
+        (true, true) => AGY_YOLO_REQUIRED_CHECKS,
     }
 }
 
@@ -239,7 +259,7 @@ pub fn run(
                 let remaining = verify_limit(live).saturating_sub(started.elapsed());
                 acp_worker::verify_agy(agy_live, dir.path(), &checks, version, remaining);
             }
-            (version, agy_required_checks(live))
+            (version, agy_required_checks(live, yolo))
         }
         HarnessId::Cursor => (
             acp_worker::verify(live, dir.path(), &checks),
@@ -331,18 +351,22 @@ mod tests {
         assert!(spec_passed(
             &checks,
             Some("1.5.12"),
-            agy_required_checks(false)
+            agy_required_checks(false, false)
         ));
         assert!(!spec_passed(
             &checks,
             Some("1.5.12"),
-            agy_required_checks(true)
+            agy_required_checks(true, false)
         ));
-        let all: Vec<_> = agy_required_checks(true)
+        let all: Vec<_> = agy_required_checks(true, false)
             .iter()
             .map(|name| CheckResult::pass(name, "ok"))
             .collect();
-        assert!(spec_passed(&all, Some("1.5.12"), agy_required_checks(true)));
+        assert!(spec_passed(
+            &all,
+            Some("1.5.12"),
+            agy_required_checks(true, false)
+        ));
         for missing in [
             "live session",
             "live settings",
@@ -359,9 +383,16 @@ mod tests {
             assert!(!spec_passed(
                 &partial,
                 Some("1.5.12"),
-                agy_required_checks(true)
+                agy_required_checks(true, false)
             ));
         }
+    }
+
+    #[test]
+    fn only_yolo_runs_require_the_yolo_check() {
+        assert!(agy_required_checks(true, true).contains(&"live yolo"));
+        assert!(!agy_required_checks(true, false).contains(&"live yolo"));
+        assert!(!agy_required_checks(false, false).contains(&"live yolo"));
     }
 
     #[test]
