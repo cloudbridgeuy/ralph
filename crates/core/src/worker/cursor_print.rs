@@ -173,10 +173,25 @@ pub struct PrintVerify {
 }
 
 pub fn print_verify(lines: &[String], model: &str) -> PrintVerify {
-    let _ = (lines, model);
-    PrintVerify {
-        prompt: CheckResult::fail("print prompt", "not implemented"),
-        usage: None,
+    let result = lines
+        .iter()
+        .find_map(|line| match decode_print_line(line, model) {
+            PrintEvent::Result { end, usage } => Some((end, usage)),
+            _ => None,
+        });
+    match result {
+        Some((TurnEnd::Failed { message, .. }, _)) => PrintVerify {
+            prompt: CheckResult::fail("print prompt", message),
+            usage: None,
+        },
+        Some((_, usage)) => PrintVerify {
+            prompt: CheckResult::pass("print prompt", "the print-mode turn succeeded"),
+            usage,
+        },
+        None => PrintVerify {
+            prompt: CheckResult::fail("print prompt", "the cursor agent sent no result"),
+            usage: None,
+        },
     }
 }
 

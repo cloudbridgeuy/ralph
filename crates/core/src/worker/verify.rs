@@ -118,9 +118,15 @@ pub const AGY_REQUIRED_CHECKS: &[&str] = &[
     "session/close reload",
 ];
 pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
+const CURSOR_LIVE_REQUIRED_CHECKS: &[&str] =
+    &["initialize", "session/new", "print prompt", "print usage"];
+
 pub fn cursor_required_checks(live: bool) -> &'static [&'static str] {
-    let _ = live;
-    CURSOR_REQUIRED_CHECKS
+    if live {
+        CURSOR_LIVE_REQUIRED_CHECKS
+    } else {
+        CURSOR_REQUIRED_CHECKS
+    }
 }
 pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
 

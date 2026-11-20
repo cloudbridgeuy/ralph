@@ -15,26 +15,41 @@ pub struct CursorTurn<'a> {
 
 pub fn record_cursor_usage(turn: &CursorTurn, usage: &ModelUsage) {
     warn_if_err(
-        append(turn, usage, &usage_path()),
+        append(turn, usage, worker_site(turn), &usage_path()),
         "Failed to record cursor worker usage",
     );
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired by the cursor verify print turn")
+)]
 pub fn record_cursor_verify(
     turn: &CursorTurn,
     usage: &ModelUsage,
     ledger: &Path,
 ) -> io::Result<()> {
-    append(turn, usage, ledger)
+    let site = CallSite::Verify {
+        worker_id: turn.worker.to_string(),
+    };
+    append(turn, usage, site, ledger)
 }
 
-fn append(turn: &CursorTurn, usage: &ModelUsage, usage_file: &Path) -> io::Result<()> {
-    let at = chrono::Utc::now().to_rfc3339();
-    let kind = CallSite::Worker {
+fn worker_site(turn: &CursorTurn) -> CallSite {
+    CallSite::Worker {
         worker_id: turn.worker.to_string(),
         turn_id: turn.turn_id,
-    };
-    let row = print_usage_record(kind, at, turn.chat.map(str::to_string), usage)
+    }
+}
+
+fn append(
+    turn: &CursorTurn,
+    usage: &ModelUsage,
+    site: CallSite,
+    usage_file: &Path,
+) -> io::Result<()> {
+    let at = chrono::Utc::now().to_rfc3339();
+    let row = print_usage_record(site, at, turn.chat.map(str::to_string), usage)
         .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()))
         .with_ticket(ledger::worker_ticket(turn.store, turn.worker));
     ledger::record(usage_file, &row)
@@ -58,7 +73,7 @@ mod tests {
             store: Some(dir.path()),
             turn_id: None,
         };
-        append(&turn, &usage, &file).unwrap();
+        append(&turn, &usage, worker_site(&turn), &file).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert_eq!(text.lines().count(), 1);
         let row: Value = serde_json::from_str(text.trim()).unwrap();
@@ -105,7 +120,7 @@ mod tests {
             store: Some(dir.path()),
             turn_id: None,
         };
-        append(&turn, &usage, &file).unwrap();
+        append(&turn, &usage, worker_site(&turn), &file).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         let row: Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(row["ticket"], "GUZ-9");
