@@ -328,3 +328,110 @@ fn an_icon_pill_never_breaks_and_counts_the_icon_as_one_column() {
         }
     }
 }
+
+const ALL_WORDS: &str =
+    "[[Done]] [[Failed]] [[Warning]] [[Note]] [[Info]] [[Decision]] [[Next]] x\n";
+
+fn full_style_without_emphasis() -> MarkdownTheme {
+    MarkdownTheme::default().with_pill_style(PillStyle::resolve(true, true, false))
+}
+
+#[test]
+fn colour_off_leaves_every_pill_word_raw_with_round_and_icons_requested() {
+    let theme = full_style_without_emphasis();
+    let plain_theme = MarkdownTheme::default();
+    for cols in [30, 80] {
+        for terminal in [true, false] {
+            let out = render(ALL_WORDS, cols, &theme, terminal, false);
+            assert_eq!(
+                out,
+                render(ALL_WORDS, cols, &plain_theme, terminal, false),
+                "{cols} {terminal}"
+            );
+            assert!(
+                out.contains("[[Done]]") && out.contains("[[Failed]]"),
+                "{out:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn colour_off_with_round_and_icons_matches_the_mark_free_pipeline() {
+    let theme = full_style_without_emphasis();
+    for cols in [30, 80] {
+        assert_eq!(
+            render(ALL_WORDS, cols, &theme, true, false),
+            mark_free(ALL_WORDS, cols, &theme)
+        );
+    }
+}
+
+#[test]
+fn emphasis_without_a_terminal_ignores_round_and_icons() {
+    let theme = icons_on(true);
+    assert_eq!(
+        render(ALL_WORDS, 80, &theme, false, false),
+        render(ALL_WORDS, 80, &MarkdownTheme::default(), false, false)
+    );
+}
+
+#[test]
+fn colour_off_resolution_clears_round_and_icons() {
+    let active = crate::render::pill::emphasis_active(true, false);
+    assert!(!active);
+    let style = PillStyle::resolve(true, true, active);
+    assert!(!style.round && !style.icons);
+    assert_eq!(style, PillStyle::default());
+}
+
+#[test]
+fn square_pills_without_flags_keep_the_exact_bytes_for_every_tone() {
+    let theme = on();
+    for (text, bg, label) in [
+        ("[[Done]]", "42", "Done"),
+        ("[[Failed]]", "41", "Failed"),
+        ("[[Warning]]", "43", "Warning"),
+        ("[[Note]]", "104", "Note"),
+        ("[[Info]]", "104", "Info"),
+        ("[[Decision]]", "104", "Decision"),
+        ("[[Next]]", "104", "Next"),
+    ] {
+        let out = render(text, 80, &theme, true, false);
+        assert_eq!(
+            out,
+            format!("\x1b[1m\x1b[{bg}m\x1b[97m{NB}{label}{NB}\x1b[22m\x1b[39m\x1b[49m\n"),
+            "{text}"
+        );
+        assert_eq!(
+            out,
+            render(
+                text,
+                80,
+                &on().with_pill_style(PillStyle::default()),
+                true,
+                false
+            ),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn nerd_font_glyphs_outside_pills_survive_with_round_and_icons_on() {
+    let text = "a\u{E000}b\u{E00A}c\u{E0B0}d\u{E0B6}e\u{E0B4}f\u{F00C}g";
+    for round in [false, true] {
+        let out = render(
+            &format!("{text} [[Done]]"),
+            80,
+            &icons_on(round),
+            true,
+            false,
+        );
+        let shown = visible(&out);
+        assert!(shown.starts_with(&format!("{text} ")), "{round}: {out:?}");
+        assert_eq!(out.matches("\x1b[42m").count(), 1, "{round}: {out:?}");
+    }
+    let alone = render(text, 80, &icons_on(true), true, false);
+    assert_eq!(alone, format!("{text}\n"));
+}
