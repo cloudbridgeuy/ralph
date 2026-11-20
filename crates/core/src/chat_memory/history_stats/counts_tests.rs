@@ -61,3 +61,18 @@ fn percent_rounds_and_guards_zero() {
     assert_eq!(percent(2, 3), 67);
     assert_eq!(percent(5, 0), 0);
 }
+
+#[test]
+fn a_tag_only_search_row_counts_as_a_search_call() {
+    let parsed = history(&[call(json!({
+        "args": {"query": "", "tag": "rule", "limit": 20, "has_cursor": false},
+        "hits": 4
+    }))]);
+    let counts = count_calls(&parsed.calls);
+    let search = counts
+        .tools
+        .iter()
+        .find(|row| row.tool == Tool::Search)
+        .unwrap();
+    assert_eq!((search.total, search.mcp, search.ok), (1, 1, 1));
+}

@@ -127,3 +127,18 @@ fn parse_skips_a_hit_count_above_u64() {
     assert!(parsed.calls.is_empty());
     assert_eq!(parsed.skipped, 1);
 }
+
+#[test]
+fn parse_keeps_a_tag_only_search_row_with_its_hits() {
+    let parsed = parse_history(&call(json!({
+        "args": {"query": "", "tag": "rule", "limit": 20, "has_cursor": false},
+        "hits": 4,
+        "hit_ids": ["9", "7", "4", "2"]
+    })));
+    assert_eq!(parsed.calls.len(), 1);
+    let first = &parsed.calls[0];
+    assert_eq!(first.args["query"], "");
+    assert_eq!(first.args["tag"], "rule");
+    assert_eq!(first.hits, Some(4));
+    assert_eq!(first.hit_ids.as_ref().map(Vec::len), Some(4));
+}

@@ -558,3 +558,15 @@ fn an_old_row_without_hit_ids_still_parses() {
     let row: HistoryRow = serde_json::from_str(line).unwrap();
     assert!(value(&row).get("hit_ids").is_none());
 }
+
+#[test]
+fn a_tag_only_search_row_logs_an_empty_query_and_the_tag() {
+    let request = parse_search_args(&json!({"tag": "rule"})).unwrap();
+    let tool = Tool::Search(request);
+    let v = call(tool, Ok("#3 hit\n#1 hit".into()), ctx());
+    assert_eq!(v["v"], 1);
+    assert_eq!(
+        v["args"],
+        json!({"query": "", "tag": "rule", "limit": 20, "has_cursor": false})
+    );
+}

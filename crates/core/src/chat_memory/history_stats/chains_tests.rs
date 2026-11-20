@@ -134,3 +134,29 @@ fn chains_group_by_turn_and_ignore_other_tools() {
         }
     );
 }
+
+#[test]
+fn tag_only_listings_with_few_hits_count_as_weak_calls() {
+    let listing = |second, hits| {
+        weak(
+            second,
+            json!({
+                "outcome": "ok",
+                "hits": hits,
+                "args": {"query": "", "tag": "rule", "limit": 20, "has_cursor": false}
+            }),
+        )
+    };
+    let found = chains(&[listing(0, 2), listing(10, 1), listing(20, 2)]);
+    assert_eq!(
+        found,
+        Chains {
+            chains: 1,
+            calls_in_chains: 3
+        }
+    );
+    assert_eq!(
+        chains(&[listing(0, 2), listing(10, 1), listing(20, 5)]),
+        Chains::default()
+    );
+}
