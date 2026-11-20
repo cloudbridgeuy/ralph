@@ -188,6 +188,16 @@ fn the_classifier_separates_ok_empty_and_error() {
 }
 
 #[test]
+fn classify_call_marks_an_empty_tag_listing_empty() {
+    let text = "no entries tagged rule\n(tags exist only for messages written after tagging began; older messages are not listed)";
+    assert_eq!(classify_call(&Ok(text.into())), HistoryOutcome::Empty);
+    assert_eq!(
+        classify_call(&Ok("#1 rule entry\n#2 rule entry".into())),
+        HistoryOutcome::Ok
+    );
+}
+
+#[test]
 fn an_error_result_sets_the_error_and_skips_hits() {
     let v = call(Tool::Recall("(".into()), Err("bad regex".into()), ctx());
     assert_eq!(v["outcome"], "error");

@@ -307,11 +307,14 @@ pub fn history_tool_of(tool: &Tool) -> HistoryTool {
 pub fn classify_call(result: &Result<String, String>) -> HistoryOutcome {
     match result {
         Err(_) => HistoryOutcome::Error,
-        Ok(text) if text.trim().is_empty() || text.starts_with("no hits for ") => {
-            HistoryOutcome::Empty
-        }
+        Ok(text) if is_empty_listing(text) => HistoryOutcome::Empty,
         Ok(_) => HistoryOutcome::Ok,
     }
+}
+
+fn is_empty_listing(text: &str) -> bool {
+    const EMPTY_PREFIXES: [&str; 2] = ["no hits for ", "no entries tagged "];
+    text.trim().is_empty() || EMPTY_PREFIXES.iter().any(|p| text.starts_with(p))
 }
 
 fn text_arg(raw: &Value, key: &str) -> Option<Value> {
