@@ -556,7 +556,7 @@ fn run_memory_command(
     prompt: &str,
     curator: &Curator,
 ) -> Result<MemoryRun, ralph_core::chat_memory::CuratorError> {
-    let theme_config = highlight::ThemeConfig::from_config_and_env();
+    let theme_config = highlight::ThemeConfig::from_config_and_env().without_emphasis();
     let stdin = invoke::prompt_stdin(prompt);
     let outcome = backoff::retry_on_outage(
         "chat memory curator",
