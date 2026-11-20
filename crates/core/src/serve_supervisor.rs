@@ -15,6 +15,7 @@ pub enum Input {
     Send(SessionKey),
     TurnDone(SessionKey),
     Thread(ThreadOp),
+    Open(SessionKey),
     Closed(SessionKey),
 }
 
@@ -61,9 +62,22 @@ impl Supervisor {
                 vec![Effect::Refuse(format!("{key} is not open"))]
             }
             (_, Input::Send(_)) => vec![Effect::Refuse("ralph serve is shutting down".to_string())],
-            (Phase::Running, Input::Thread(op)) => match self.busy_target(&op) {
-                Some(key) => vec![Effect::Refuse(format!("{key} is busy"))],
-                None => vec![Effect::RunThread(op)],
+            (Phase::Running, Input::Open(key)) if self.open.contains(&key) => {
+                vec![Effect::Refuse(format!("{key} is already open"))]
+            }
+            (Phase::Running, Input::Open(key)) => {
+                self.open.push(key.clone());
+                vec![Effect::Open(key)]
+            }
+            (_, Input::Open(_)) => vec![Effect::Refuse("ralph serve is shutting down".to_string())],
+            (Phase::Running, Input::Thread(op)) => match claimed_by(&op) {
+                Some(key) if self.busy.contains(&key) => {
+                    vec![Effect::Refuse(format!("{key} is busy"))]
+                }
+                Some(key) if self.open.contains(&key) => {
+                    vec![Effect::Close(key), Effect::RunThread(op)]
+                }
+                _ => vec![Effect::RunThread(op)],
             },
             (_, Input::Thread(_)) => {
                 vec![Effect::Refuse("ralph serve is shutting down".to_string())]
@@ -99,14 +113,13 @@ impl Supervisor {
     }
 }
 
-impl Supervisor {
-    fn busy_target(&self, op: &ThreadOp) -> Option<SessionKey> {
-        let name = match op {
-            ThreadOp::Merge { name, .. } | ThreadOp::Park(name) | ThreadOp::Drop(name) => name,
-            _ => return None,
-        };
-        let key = SessionKey::Thread(name.clone());
-        self.busy.contains(&key).then_some(key)
+fn claimed_by(op: &ThreadOp) -> Option<SessionKey> {
+    match op {
+        ThreadOp::Pull(name)
+        | ThreadOp::Park(name)
+        | ThreadOp::Drop(name)
+        | ThreadOp::Merge { name, .. } => Some(SessionKey::Thread(name.clone())),
+        _ => None,
     }
 }
 
@@ -236,10 +249,41 @@ mod tests {
                 vec![Effect::Refuse("thread side is busy".to_string())]
             );
         }
-        let pull = ThreadOp::Pull(side());
+        let revive = ThreadOp::Revive(side());
         assert_eq!(
-            sup.step(Input::Thread(pull.clone())),
-            vec![Effect::RunThread(pull)]
+            sup.step(Input::Thread(revive.clone())),
+            vec![Effect::RunThread(revive)]
+        );
+    }
+
+    #[test]
+    fn duplicate_open_is_refused() {
+        let (mut sup, _) = Supervisor::start();
+        let key = SessionKey::Thread(side());
+        assert_eq!(
+            sup.step(Input::Open(key.clone())),
+            vec![Effect::Open(key.clone())]
+        );
+        assert_eq!(
+            sup.step(Input::Open(key)),
+            vec![Effect::Refuse("thread side is already open".to_string())]
+        );
+    }
+
+    #[test]
+    fn drop_closes_the_thread_session() {
+        let (mut sup, _) = Supervisor::start();
+        let key = SessionKey::Thread(side());
+        sup.step(Input::Open(key.clone()));
+        let drop = ThreadOp::Drop(side());
+        assert_eq!(
+            sup.step(Input::Thread(drop.clone())),
+            vec![Effect::Close(key), Effect::RunThread(drop)]
+        );
+        let elsewhere = ThreadOp::Drop(ThreadName::parse("other").unwrap());
+        assert_eq!(
+            sup.step(Input::Thread(elsewhere.clone())),
+            vec![Effect::RunThread(elsewhere)]
         );
     }
 

@@ -34,7 +34,7 @@ pub(crate) mod close;
 mod graph;
 pub(super) mod landing;
 mod list;
-pub(super) mod open;
+pub(crate) mod open;
 pub(super) mod settle;
 mod tombstone;
 pub use list::rows;
@@ -216,7 +216,7 @@ fn known_meta(dir: &Path, name: &ThreadName) -> Result<ThreadMeta, String> {
     read_meta(dir).map_err(|e| format!("thread {name}: {e}"))
 }
 
-pub(super) fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
+pub(crate) fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
     Store::new(dir.to_path_buf())
         .claim_chat()
         .map_err(|e| format!("could not claim thread {name}: {e}"))?

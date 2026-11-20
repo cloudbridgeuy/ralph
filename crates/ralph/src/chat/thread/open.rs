@@ -6,7 +6,7 @@ use ralph_core::chat_thread_model::{build_model_args, with_model};
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub(super) fn prepare_open(store: &Path, opts: &OpenOpts) -> Result<PathBuf, String> {
+pub(crate) fn prepare_open(store: &Path, opts: &OpenOpts) -> Result<PathBuf, String> {
     let main = open_ready(store, &opts.name)?;
     if opts.auto.is_some() || opts.model.is_some() {
         let dir = thread_dir(&main, &opts.name);
@@ -36,7 +36,7 @@ pub(in crate::chat) fn reopen(
     Ok(updated.unwrap_or(meta).model)
 }
 
-pub(in crate::chat) fn model_args(
+pub(crate) fn model_args(
     store: &Path,
     thread: Option<&ThreadName>,
     model: Option<&str>,

@@ -2,12 +2,15 @@ mod connection;
 mod open;
 mod sink;
 
+use crate::chat::thread::open::model_args;
+use crate::chat::thread::{claim_closed, config_root, thread_dir};
 use crate::chat::STORE_ENV;
 use crate::cli::ServeArgs;
 use crate::signal;
 use open::{open_session, Sessions};
 use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::{runtime_root, serve_socket_path, StoreKey};
+use ralph_core::chat_thread::ThreadName;
 use ralph_core::serve::{serve_refusal, serve_store_gate};
 use ralph_core::serve_supervisor::{Effect, Input, Supervisor};
 use ralph_server::chat::claim::ChatClaim;
@@ -30,6 +33,7 @@ struct Host {
     supervisor: Mutex<Supervisor>,
     sessions: Sessions,
     store_dir: PathBuf,
+    claim: Mutex<Option<ChatClaim>>,
     stop: AtomicBool,
 }
 
@@ -40,16 +44,15 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&requested)?;
     let store_dir = canonical_store(requested);
     ralph_server::config::set_store_layer(&store_dir);
-    let store = Store::new(store_dir.clone());
     let (supervisor, effects) = Supervisor::start();
     let host = Arc::new(Host {
         supervisor: Mutex::new(supervisor),
         sessions: Sessions::default(),
         store_dir: store_dir.clone(),
+        claim: Mutex::new(None),
         stop: AtomicBool::new(false),
     });
-    let mut claim = None;
-    drive(&host, &store, &mut claim, effects)?;
+    drive(&host, effects)?;
     let root = runtime_root(current_uid());
     let path = serve_socket_path(&root, &StoreKey::of(&store_dir));
     let socket = ServeSocket::bind(&root, &path)?;
@@ -57,7 +60,7 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         if signal::is_terminated() || host.stop.load(Ordering::SeqCst) {
             let effects = step(&host.supervisor, Input::Stop)?;
-            if drive(&host, &store, &mut claim, effects)? {
+            if drive(&host, effects)? {
                 break;
             }
         }
@@ -80,35 +83,50 @@ fn step(supervisor: &Mutex<Supervisor>, input: Input) -> Result<Vec<Effect>, Str
         .map_err(|_| POISONED.to_string())
 }
 
-fn drive(
-    host: &Host,
-    store: &Store,
-    claim: &mut Option<ChatClaim>,
-    effects: Vec<Effect>,
-) -> Result<bool, Box<dyn std::error::Error>> {
+fn drive(host: &Host, effects: Vec<Effect>) -> Result<bool, Box<dyn std::error::Error>> {
     let mut queue = VecDeque::from(effects);
     while let Some(effect) = queue.pop_front() {
         match effect {
             Effect::Open(SessionKey::Main) => {
+                let store = Store::new(host.store_dir.clone());
                 let held = store
                     .claim_chat()?
                     .map_err(|holder| serve_refusal(store.dir(), holder))?;
-                *claim = Some(held);
+                *host
+                    .claim
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(held);
                 host.sessions
-                    .insert(SessionKey::Main, open_session(store.dir())?);
+                    .insert(SessionKey::Main, open_session(store.dir(), Vec::new())?);
             }
-            Effect::Close(SessionKey::Main) => {
-                if let Some(open) = host.sessions.remove(&SessionKey::Main) {
+            Effect::Open(SessionKey::Thread(name)) => open_thread_session(host, &name)?,
+            Effect::Close(key) => {
+                if let Some(open) = host.sessions.remove(&key) {
                     open.end();
                 }
-                claim.take();
-                queue.extend(step(&host.supervisor, Input::Closed(SessionKey::Main))?);
+                if key == SessionKey::Main {
+                    host.claim
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .take();
+                }
+                queue.extend(step(&host.supervisor, Input::Closed(key))?);
             }
             Effect::Exit => return Ok(true),
             _ => {}
         }
     }
     Ok(false)
+}
+
+fn open_thread_session(host: &Host, name: &ThreadName) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = thread_dir(&config_root(&host.store_dir), name);
+    let model_args = model_args(&host.store_dir, Some(name), None)?;
+    let claim = claim_closed(&dir, name)?;
+    let session = open_session(&dir, model_args)?.holding(claim);
+    host.sessions
+        .insert(SessionKey::Thread(name.clone()), session);
+    Ok(())
 }
 
 fn spawn_connection(stream: UnixStream, host: &Arc<Host>) {

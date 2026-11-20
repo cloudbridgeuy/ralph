@@ -6,6 +6,8 @@ use ralph_core::chat::ReplyImages;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_process::SessionKey;
 use ralph_core::turn_event::TurnSink;
+use ralph_server::chat::claim::ChatClaim;
+use ralph_server::chat::fork::open_fork;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::session::Session;
 use ralph_server::chat::socket::serve::SocketGuard;
@@ -22,6 +24,7 @@ pub(super) struct OpenSession {
     pub(super) sink: Arc<SocketSink>,
     cancel: CancelToken,
     turning: Mutex<()>,
+    _claim: Option<ChatClaim>,
     _guard: SocketGuard,
     _plugin: Option<tempfile::TempDir>,
     _close: CloseGuard,
@@ -45,6 +48,11 @@ impl OpenSession {
         ran.ok_or("snapshots did not run the turn")?
     }
 
+    pub(super) fn holding(mut self, claim: ChatClaim) -> Self {
+        self._claim = Some(claim);
+        self
+    }
+
     pub(super) fn end(&self) {
         self.cancel.cancel();
         let _turning = self
@@ -55,7 +63,10 @@ impl OpenSession {
     }
 }
 
-pub(super) fn open_session(store_dir: &Path) -> Result<OpenSession, Box<dyn Error>> {
+pub(super) fn open_session(
+    store_dir: &Path,
+    model_args: Vec<String>,
+) -> Result<OpenSession, Box<dyn Error>> {
     let settings = load_settings(store_dir, None, None)?;
     let files = settings
         .loaded
@@ -76,8 +87,8 @@ pub(super) fn open_session(store_dir: &Path) -> Result<OpenSession, Box<dyn Erro
         store_dir,
         store_root: store_dir.to_path_buf(),
         settings: &settings,
-        fork: None,
-        model_args: Vec::new(),
+        fork: open_fork(store_dir)?,
+        model_args,
         skills: &[],
         worktree_dir: None,
         custom_prompt,
@@ -94,6 +105,7 @@ pub(super) fn open_session(store_dir: &Path) -> Result<OpenSession, Box<dyn Erro
         sink,
         cancel: CancelToken::default(),
         turning: Mutex::new(()),
+        _claim: None,
         _guard: guard,
         _plugin: plugin,
         _close: close,
