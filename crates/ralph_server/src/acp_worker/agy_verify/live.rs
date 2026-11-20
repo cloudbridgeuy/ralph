@@ -3,6 +3,7 @@ use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{CancelNotification, PromptResponse, StopReason};
 use ralph_core::worker::{reported_path, Report};
 use serde_json::Value;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -84,13 +85,22 @@ fn record_usage(
         .usage
         .as_ref()
         .map_or(0, |usage| usage.total_tokens);
+    let offset = fs::metadata(ledger).map_or(0, |meta| meta.len());
     agy_usage::record_verify(ledger, &target, response)
         .map_err(|error| format!("could not record verify usage: {error}"))
         .and_then(|()| {
-            fs::read_to_string(ledger)
+            appended_since(ledger, offset)
                 .map_err(|error| format!("could not read verify usage: {error}"))
         })
         .and_then(|text| usage(&text, session, model, total))
+}
+
+fn appended_since(ledger: &Path, offset: u64) -> std::io::Result<String> {
+    let mut file = fs::File::open(ledger)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    Ok(text)
 }
 
 fn yolo_check(
@@ -460,6 +470,20 @@ mod tests {
         record_usage(&path, "s", "m", &response)?;
         let text = fs::read_to_string(path)?;
         assert!(text.contains(r#""kind":"verify""#), "{text}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_bad_line_before_the_run_does_not_fail_the_check() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("usage.jsonl");
+        fs::write(&path, "not json\n")?;
+        let response = serde_json::from_value(
+            json!({"stopReason":"end_turn", "usage":{"inputTokens":8,"outputTokens":2,"totalTokens":10}}),
+        )?;
+        let result = record_usage(&path, "s", "m", &response);
+        assert!(result.is_ok(), "{result:?}");
         Ok(())
     }
 
