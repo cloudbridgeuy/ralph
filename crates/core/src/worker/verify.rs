@@ -202,10 +202,10 @@ pub fn render_check(result: &CheckResult) -> String {
 }
 
 pub fn render_summary(agent: &str, version: &str, live: bool, passed: bool) -> String {
-    let scope = if live {
-        "free and live checks"
-    } else {
-        "free checks only; --live adds prompt, permission and cancel checks"
+    let scope = match (live, agent) {
+        (true, _) => "free and live checks",
+        (false, "cursor") => "free checks only; --live adds print prompt and print usage checks",
+        (false, _) => "free checks only; --live adds prompt, permission and cancel checks",
     };
     let outcome = if passed { "PASS" } else { "FAIL" };
     format!("{outcome}: {agent} {version} ({scope})")
@@ -442,6 +442,16 @@ mod tests {
             render_summary("cursor", "unknown version", true, false),
             "FAIL: cursor unknown version (free and live checks)"
         );
+    }
+
+    #[test]
+    fn the_cursor_free_summary_names_the_print_checks() {
+        let summary = render_summary("cursor", "2026.10.22", false, true);
+        assert_eq!(
+            summary,
+            "PASS: cursor 2026.10.22 (free checks only; --live adds print prompt and print usage checks)"
+        );
+        assert!(!summary.contains("permission") && !summary.contains("cancel"));
     }
 
     #[test]
