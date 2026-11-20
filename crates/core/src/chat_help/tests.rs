@@ -504,6 +504,16 @@ fn history_help_rows_name_the_model_tools() {
 }
 
 #[test]
+fn the_rules_help_row_names_the_main_era_command() {
+    let text = help_text(2_000);
+    let label = "/rules [--cursor <c>]";
+    assert!(has_row(&text, label), "{label}");
+    let row = text.lines().find(|line| line.contains(label)).unwrap();
+    assert!(row.contains("--tag rule --in main"), "{row}");
+    assert!(row.contains("starts no turn"), "{row}");
+}
+
+#[test]
 fn the_direct_message_row_follows_the_nudge_rows() {
     let text = help_text(2_000);
     let rows: Vec<&str> = text.lines().collect();
