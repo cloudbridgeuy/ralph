@@ -274,7 +274,7 @@ pub fn run(
             CURSOR_REQUIRED_CHECKS,
         ),
         HarnessId::Codex => (
-            codex_worker::verify(live, dir.path(), &checks),
+            codex_worker::verify(live.then_some(ledger), dir.path(), &checks),
             CODEX_REQUIRED_CHECKS,
         ),
         HarnessId::Claude => (
