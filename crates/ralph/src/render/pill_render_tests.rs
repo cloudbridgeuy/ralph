@@ -143,3 +143,22 @@ fn the_image_path_applies_pills_to_each_text_piece() {
     assert_eq!(out.matches("\x1b[104m").count(), 1, "{out:?}");
     assert!(!out.contains("[["), "{out:?}");
 }
+
+#[test]
+fn bidi_controls_survive_the_styled_pipeline_with_emphasis_off() {
+    let text = "shalom \u{200F}\u{2066}x\u{2069} \u{202A}y\u{202C} \u{061C}z";
+    let theme = MarkdownTheme::default();
+    assert_eq!(render(text, 80, &theme, true, false), format!("{text}\n"));
+}
+
+#[test]
+fn bidi_controls_survive_the_styled_pipeline_with_emphasis_on() {
+    let text = "shalom \u{200F}\u{2066}x\u{2069} \u{202A}y\u{202C} \u{061C}z";
+    assert_eq!(render(text, 80, &on(), true, false), format!("{text}\n"));
+}
+
+#[test]
+fn private_use_markers_in_input_are_stripped() {
+    let text = "a\u{E000}b\u{E005}c\u{E00A}d";
+    assert_eq!(render(text, 80, &on(), true, false), "abcd\n");
+}

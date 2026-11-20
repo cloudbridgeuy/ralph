@@ -165,7 +165,7 @@ fn break_opportunities(text: &str) -> Vec<usize> {
 fn hard_cut(text: &str, start: usize, limit: usize) -> usize {
     let mut used = 0;
     for (index, ch) in text[start..].char_indices() {
-        used += ch.width().unwrap_or(0);
+        used += marker_free_width(ch);
         if used > limit && index > 0 {
             return start + index;
         }
@@ -174,7 +174,15 @@ fn hard_cut(text: &str, start: usize, limit: usize) -> usize {
 }
 
 fn columns(text: &str) -> usize {
-    text.chars().map(|ch| ch.width().unwrap_or(0)).sum()
+    text.chars().map(marker_free_width).sum()
+}
+
+fn marker_free_width(ch: char) -> usize {
+    if is_marker(ch) {
+        0
+    } else {
+        ch.width().unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
@@ -187,6 +195,17 @@ mod tests {
         assert_eq!(capped_width(200, None), 200);
         assert_eq!(capped_width(200, Some(80)), 80);
         assert_eq!(capped_width(60, Some(80)), 60);
+    }
+
+    #[test]
+    fn markers_take_no_columns_when_breaking() {
+        let text = "\u{E001}abcd\u{E000} ef";
+        assert_eq!(columns(text), 7);
+        assert_eq!(wrap(text, 7), vec![text]);
+        assert_eq!(
+            hard_cut("\u{E001}ab\u{E000}cd", 0, 3),
+            "\u{E001}ab\u{E000}c".len()
+        );
     }
 
     fn wrap(text: &str, width: usize) -> Vec<&str> {
