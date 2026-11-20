@@ -185,3 +185,16 @@ fn pills_with_diffstat_or_memory_ref_detail_are_painted_whole() {
         assert_eq!(out.matches("\x1b[39m").count(), 1, "{out:?}");
     }
 }
+
+#[test]
+fn backslashes_in_the_detail_survive_the_styled_pipeline() {
+    for (text, want) in [
+        ("[[Done a\\]]\n", "Done a\\"),
+        ("[[Done a\\b]]\n", "Done a\\b"),
+    ] {
+        let out = render(text, 80, &on(), true, false);
+        let pill = format!("{NB}{}{NB}", want.replace(' ', &NB.to_string()));
+        assert!(visible(&out).contains(&pill), "{text:?}: {out:?}");
+        assert!(!out.contains("[["), "{text:?}: {out:?}");
+    }
+}
