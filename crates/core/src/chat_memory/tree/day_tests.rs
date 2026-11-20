@@ -92,11 +92,11 @@ fn each_view_part_starts_its_own_day_header() {
 fn zoom_and_nap_lines_keep_the_full_timestamp() {
     let entries = on_days(&["2026-01-01"]);
     assert_eq!(
-        leaf_line(0, &entries[0], &Tree::new()).unwrap(),
+        leaf_line(0, &entries[0], &Tree::new(), None).unwrap(),
         "#0 user 2026-01-01T00:00:00.123456+00:00 m0 xxxxx"
     );
     assert_eq!(
-        entry_line(0, &entries[0], "body"),
+        entry_line(0, &entries[0], "body", None),
         "#0 user 2026-01-01T00:00:00.123456+00:00 body"
     );
 }

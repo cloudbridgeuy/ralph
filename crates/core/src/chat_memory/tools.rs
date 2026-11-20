@@ -65,7 +65,7 @@ fn memory_tool_definitions() -> Value {
     json!([
         {
             "name": "zoom",
-            "description": "Open one node of the chat memory. A block id like 4-7 shows its two halves; a single index like 5 shows the raw message. Copy ids from the memory view. In a thread, its own ids carry the thread name (auth:4-7); ids without a prefix are the main chat before the fork.",
+            "description": "Open one node of the chat memory. A block id like 4-7 shows its two halves; a single index like 5 shows the raw message. Copy ids from the memory view. In a thread, its own ids carry the thread name (auth:4-7); ids without a prefix are the main chat before the fork. Tagged leaf lines show [rule], [approval] or [decision] after the role; marks can join, as [rule,decision]. Summary lines show none.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -76,7 +76,7 @@ fn memory_tool_definitions() -> Value {
         },
         {
             "name": "recall",
-            "description": "Search the raw chat messages with a case-insensitive regex. Returns an index of every hit, newest first, one line each: `#<id> · <role> · <date> · <preview>`, where the preview is a short window around the match. At most 50 lines; narrow the pattern if more. Call zoom with an id for the full text.",
+            "description": "Search the raw chat messages with a case-insensitive regex. Returns an index of every hit, newest first, one line each: `#<id> · <role> · <date> · <preview>`, where the preview is a short window around the match. At most 50 lines; narrow the pattern if more. Call zoom with an id for the full text. Tagged lines show [rule], [approval] or [decision] after the role; marks can join, as [rule,decision].",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -88,7 +88,7 @@ fn memory_tool_definitions() -> Value {
         },
         {
             "name": "read",
-            "description": "Read a flat range of the chat in order, a page at a time. Each message shows as `#<id> · <role> · <date> · <n> chars` and then its text. mode raw (default) gives the original text; summary gives the leaf summary for long messages (`[not summarized]` when none exists). A message too long for the page is split into parts marked `chars a-b`. When more remains the page ends with `next cursor: <cursor>`; pass it back as cursor, with the same id and mode, for the next page. A cursor only works in the mode that issued it. Messages added after the first call never appear in later pages.",
+            "description": "Read a flat range of the chat in order, a page at a time. Each message shows as `#<id> · <role> · <date> · <n> chars` and then its text. mode raw (default) gives the original text; summary gives the leaf summary for long messages (`[not summarized]` when none exists). A message too long for the page is split into parts marked `chars a-b`. When more remains the page ends with `next cursor: <cursor>`; pass it back as cursor, with the same id and mode, for the next page. A cursor only works in the mode that issued it. Messages added after the first call never appear in later pages. Tagged lines show [rule], [approval] or [decision] after the role; marks can join, as [rule,decision].",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -102,7 +102,7 @@ fn memory_tool_definitions() -> Value {
         },
         {
             "name": "search",
-            "description": "Ranked search over the original chat messages. Unlike recall (a regex, every hit newest first), search scores messages by how well they match bare words, \"quoted phrases\" (the words must appear together, in order), and identifiers such as GUZ-709 or foo_bar (matched whole: GUZ-709 does not match GUZ-7090). A plain word also matches inside a joined one: rate finds rate-limited. Rarer words weigh more; ties go to the newer message. Each hit is `#<id> · <role> · <timestamp> · <snippet>`. When more hits remain the page ends with `next cursor: <cursor>`; pass it back as cursor with the same query and filters. Call read with an id for the full text. With a tag and no query, every message carrying that tag is listed newest first, with the same paging; tags exist only for messages written after tagging began.",
+            "description": "Ranked search over the original chat messages. Unlike recall (a regex, every hit newest first), search scores messages by how well they match bare words, \"quoted phrases\" (the words must appear together, in order), and identifiers such as GUZ-709 or foo_bar (matched whole: GUZ-709 does not match GUZ-7090). A plain word also matches inside a joined one: rate finds rate-limited. Rarer words weigh more; ties go to the newer message. Each hit is `#<id> · <role> · <timestamp> · <snippet>`. When more hits remain the page ends with `next cursor: <cursor>`; pass it back as cursor with the same query and filters. Call read with an id for the full text. With a tag and no query, every message carrying that tag is listed newest first, with the same paging; tags exist only for messages written after tagging began. Tagged lines show [rule], [approval] or [decision] after the role; marks can join, as [rule,decision].",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -214,7 +214,7 @@ pub fn finish_call(id: Value, result: Result<String, String>) -> Value {
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::entry;
-    use crate::chat_memory::{read_range, recall_found, zoom, Entry, Read, Tree, Window};
+    use crate::chat_memory::{read_range, recall_found, zoom, Entry, Marks, Read, Tree, Window};
 
     fn call(name: &str, args: Value) -> Outcome {
         handle_request(
@@ -233,7 +233,9 @@ mod tests {
         let window = Window::full(entries);
         match tool {
             Tool::Zoom(node) => zoom(&window, tree, *node).map(|lines| lines.join("\n")),
-            Tool::Recall(pattern) => recall_found(entries, pattern).map(|found| found.text),
+            Tool::Recall(pattern) => {
+                recall_found(entries, pattern, &Marks::new()).map(|found| found.text)
+            }
             Tool::Read(request) => match read_range(&window, tree, request)? {
                 Read::Page(page) => Ok(page.render()),
                 Read::More => panic!("a full window never needs more"),
@@ -252,6 +254,28 @@ mod tests {
             | Outcome::ConfigHelp { .. } => {
                 panic!("not a memory call")
             }
+        }
+    }
+
+    #[test]
+    fn history_tool_descriptions_name_the_tag_marks() {
+        let tools = memory_tool_definitions();
+        for name in ["zoom", "recall", "read", "search"] {
+            let description = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .and_then(|tool| tool["description"].as_str())
+                .unwrap();
+            for mark in ["[rule]", "[approval]", "[decision]", "[rule,decision]"] {
+                assert!(description.contains(mark), "{name} lacks {mark}");
+            }
+            assert_eq!(
+                description.contains("Summary lines show none"),
+                name == "zoom",
+                "{name} summary phrase"
+            );
         }
     }
 

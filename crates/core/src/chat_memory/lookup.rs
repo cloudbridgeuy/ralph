@@ -1,5 +1,5 @@
 use super::tree::{block_line, collapse, entry_line, leaf_line};
-use super::{Entry, Found, Node, Tree, Window};
+use super::{role_label, Entry, Found, Marks, Node, Tree, Window};
 use regex::RegexBuilder;
 
 /// Entries that `zoom` reads: the leaf itself, or both leaves of a pair.
@@ -25,7 +25,12 @@ pub fn zoom(window: &Window, tree: &Tree, node: Node) -> Result<Vec<String>, Str
     let entry = |i: usize| window.get(i).ok_or_else(|| format!("#{i} is not loaded."));
     if node.size() == 1 {
         let entry = entry(node.lo)?;
-        return Ok(vec![entry_line(node.lo, entry, &entry.text)]);
+        return Ok(vec![entry_line(
+            node.lo,
+            entry,
+            &entry.text,
+            window.marks.get(&node.lo),
+        )]);
     }
     let (left, right) = node.halves();
     [left, right]
@@ -33,7 +38,7 @@ pub fn zoom(window: &Window, tree: &Tree, node: Node) -> Result<Vec<String>, Str
         .filter(|half| half.lo < t)
         .map(|half| {
             let line = if half.size() == 1 {
-                leaf_line(half.lo, entry(half.lo)?, tree)
+                leaf_line(half.lo, entry(half.lo)?, tree, window.marks.get(&half.lo))
             } else {
                 block_line(tree, half)
             };
@@ -67,7 +72,7 @@ pub(super) fn date_of(at: &str) -> &str {
     at.split('T').next().unwrap_or(at)
 }
 
-fn format_recall(pattern: &str, hits: &[(usize, &Entry, String)]) -> String {
+fn format_recall(pattern: &str, hits: &[(usize, &Entry, String)], marks: &Marks) -> String {
     if hits.is_empty() {
         return format!("no hits for {pattern}");
     }
@@ -77,7 +82,7 @@ fn format_recall(pattern: &str, hits: &[(usize, &Entry, String)]) -> String {
         .map(|(i, entry, preview)| {
             format!(
                 "#{i} · {} · {} · {preview}",
-                entry.role.as_str(),
+                role_label(entry.role, marks.get(i)),
                 date_of(&entry.at)
             )
         })
@@ -92,7 +97,7 @@ fn format_recall(pattern: &str, hits: &[(usize, &Entry, String)]) -> String {
     lines.join("\n")
 }
 
-pub fn recall_found(entries: &[Entry], pattern: &str) -> Result<Found, String> {
+pub fn recall_found(entries: &[Entry], pattern: &str, marks: &Marks) -> Result<Found, String> {
     let re = RegexBuilder::new(pattern)
         .case_insensitive(true)
         .build()
@@ -108,7 +113,7 @@ pub fn recall_found(entries: &[Entry], pattern: &str) -> Result<Found, String> {
         })
         .collect();
     Ok(Found {
-        text: format_recall(pattern, &hits),
+        text: format_recall(pattern, &hits, marks),
         hits: hits.len(),
         truncated: Some(hits.len() > RECALL_MAX_LINES),
         oldest: hits.iter().map(|(i, _, _)| *i).min(),
@@ -160,7 +165,9 @@ mod tests {
     #[test]
     fn recall_lists_newest_first_with_footer() {
         let entries = texted(3, |i| format!("note {i} needle"));
-        let out = recall_found(&entries, "NEEDLE").unwrap().text;
+        let out = recall_found(&entries, "NEEDLE", &Marks::new())
+            .unwrap()
+            .text;
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 4);
         assert_eq!(lines[0], "#2 · user · 2026-01-01 · note 2 needle");
@@ -176,7 +183,9 @@ mod tests {
             "b ".repeat(100)
         );
         let entries = texted(1, |_| text.clone());
-        let out = recall_found(&entries, "needle").unwrap().text;
+        let out = recall_found(&entries, "needle", &Marks::new())
+            .unwrap()
+            .text;
         let line = out.lines().next().unwrap();
         let body = line.splitn(4, " · ").nth(3).unwrap();
         assert!(body.contains("needle") && !body.contains("START"));
@@ -187,14 +196,16 @@ mod tests {
     #[test]
     fn recall_preview_is_char_safe_and_untruncated_when_short() {
         let entries = texted(1, |_| "ñandú  needle\ncafé".into());
-        let out = recall_found(&entries, "needle").unwrap().text;
+        let out = recall_found(&entries, "needle", &Marks::new())
+            .unwrap()
+            .text;
         assert!(out.starts_with("#0 · user · 2026-01-01 · ñandú needle café\n"));
     }
 
     #[test]
     fn recall_caps_lines_and_counts_the_rest() {
         let entries = texted(53, |i| format!("hit {i}"));
-        let out = recall_found(&entries, "hit").unwrap().text;
+        let out = recall_found(&entries, "hit", &Marks::new()).unwrap().text;
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 52);
         assert!(lines[0].starts_with("#52 · "));
@@ -207,21 +218,25 @@ mod tests {
     fn recall_handles_no_hits_and_bad_regex() {
         let entries = texted(2, |i| format!("m{i}"));
         assert_eq!(
-            recall_found(&entries, "zzz").unwrap().text,
+            recall_found(&entries, "zzz", &Marks::new()).unwrap().text,
             "no hits for zzz"
         );
-        assert!(recall_found(&entries, "(").is_err());
+        assert!(recall_found(&entries, "(", &Marks::new()).is_err());
     }
 
     #[test]
     fn recall_skips_corrupt_placeholders_and_keeps_ids() {
         let mut entries = texted(3, |i| format!("needle {i}"));
         entries[1] = Entry::corrupt();
-        let out = recall_found(&entries, "needle|corrupt").unwrap().text;
+        let out = recall_found(&entries, "needle|corrupt", &Marks::new())
+            .unwrap()
+            .text;
         assert!(out.starts_with("#2 · "), "{out}");
         assert!(out.contains("#0 · ") && !out.contains("#1 · "), "{out}");
         assert_eq!(
-            recall_found(&entries[1..2], "corrupt").unwrap().text,
+            recall_found(&entries[1..2], "corrupt", &Marks::new())
+                .unwrap()
+                .text,
             "no hits for corrupt"
         );
     }

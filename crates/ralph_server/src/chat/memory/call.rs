@@ -1,9 +1,11 @@
+use super::super::tag_store::{with_tag_state, TagStore};
 use super::{Reach, Store, RECALL_CHUNK_ENTRIES};
 use ralph_core::chat_memory::{
     cover_candidates, cover_size, found_metrics, read_metrics, recall_found, search_found,
-    zoom_metrics, Archive, ByteSource, CallMetrics, Found, NodeSource, Tool,
+    zoom_metrics, Archive, ByteSource, CallMetrics, Found, Marks, NodeSource, Tool,
 };
 use ralph_core::chat_thread::{label_item, label_lines, ThreadName};
+use std::io;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answer {
@@ -46,16 +48,19 @@ impl Store {
             Some(name) => label_lines(&text, name),
             None => text,
         };
+        let state = TagStore::new(self.dir.clone()).read_state();
+        let no_marks = Marks::new();
+        let marks = state.as_ref().map_or(&no_marks, |state| &state.tags);
         let result = self.with_archive(|archive| {
             if let Some(end) = reach.limit {
                 archive.limit_to(end);
             }
             Ok(match tool {
-                Tool::Zoom(node) => archive.zoom(*node)?.map(|items| Answer {
+                Tool::Zoom(node) => archive.zoom(*node, marks)?.map(|items| Answer {
                     text: items.iter().map(item).collect::<Vec<_>>().join("\n"),
                     facts: zoom_metrics(*node),
                 }),
-                Tool::Read(request) => archive.read(request)?.map(|mut page| {
+                Tool::Read(request) => archive.read(request, marks)?.map(|mut page| {
                     page.blocks = page.blocks.iter().map(item).collect();
                     Answer {
                         text: page.render(),
@@ -67,12 +72,15 @@ impl Store {
                     archive.scan_entries(RECALL_CHUNK_ENTRIES, |_, entry| {
                         entries.push(entry.clone())
                     })?;
-                    recall_found(&entries, pattern)
+                    recall_found(&entries, pattern, marks)
                         .map(|found| lookup_answer(archive, found, reach.label, lines))
                 }
                 Tool::Search(request) => {
-                    let request = super::super::tag_store::with_tags(&self.dir, request)?;
-                    search_found(archive, &request)?
+                    let request = match (request.tag(), &state) {
+                        (Some(_), Err(e)) => return Err(io::Error::new(e.kind(), e.to_string())),
+                        _ => with_tag_state(state.as_ref().ok(), request),
+                    };
+                    search_found(archive, &request, marks)?
                         .map(|found| lookup_answer(archive, found, reach.label, lines))
                 }
             })
@@ -80,3 +88,7 @@ impl Store {
         result.unwrap_or_else(|e| Err(format!("Could not read chat memory: {e}")))
     }
 }
+
+#[cfg(test)]
+#[path = "call_marks_tests.rs"]
+mod marks_tests;

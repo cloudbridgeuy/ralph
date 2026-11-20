@@ -9,6 +9,8 @@ mod history_stats;
 mod index;
 mod log;
 mod lookup;
+#[cfg(test)]
+mod marks_tests;
 mod nap;
 mod notice;
 mod range;
@@ -56,10 +58,10 @@ pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search_found, SearchRequest};
 pub use tag::{
     after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
-    failure_kind, ids_with, isolated, next_size, parse_reply, restrict_decision, retake,
-    tag_failure_kind, tag_plan, tag_reply, take_confirmed, untagged, CallReply, Label, PassHealth,
-    RowKind, TagPlan, TagRow, TagState, Verdict, BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION,
-    TAGS_FILE, TAG_MODEL, TAG_PROMPT,
+    failure_kind, ids_with, isolated, mark_of, next_size, parse_reply, restrict_decision, retake,
+    role_label, tag_failure_kind, tag_plan, tag_reply, take_confirmed, untagged, CallReply, Flags,
+    Label, Marks, PassHealth, RowKind, TagPlan, TagRow, TagState, Verdict, BATCH_LADDER,
+    MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL, TAG_PROMPT,
 };
 pub use timing::{
     call_facts, encode_timing, nap_call_row, nap_row, timing_path, turn_row, CallOutcome,
@@ -154,7 +156,10 @@ pub struct Window<'a> {
     pub start: usize,
     pub total: usize,
     pub entries: &'a [Entry],
+    pub marks: &'a Marks,
 }
+
+static NO_MARKS: Marks = Marks::new();
 
 impl<'a> Window<'a> {
     pub fn full(entries: &'a [Entry]) -> Self {
@@ -162,7 +167,12 @@ impl<'a> Window<'a> {
             start: 0,
             total: entries.len(),
             entries,
+            marks: &NO_MARKS,
         }
+    }
+
+    pub fn with_marks(self, marks: &'a Marks) -> Self {
+        Window { marks, ..self }
     }
 
     pub fn get(&self, i: usize) -> Option<&'a Entry> {

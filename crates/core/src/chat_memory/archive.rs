@@ -4,7 +4,7 @@ use super::lookup::{zoom, zoom_entries};
 use super::range::{
     read_range, Mode, RangePage, RangeRequest, Read, BUDGET_RANGE, BYTES_PER_TOKEN,
 };
-use super::{Entry, Node, Record, Tree, Window, SUMMARY_BYTES};
+use super::{Entry, Marks, Node, Record, Tree, Window, SUMMARY_BYTES};
 use std::collections::HashSet;
 use std::io;
 
@@ -124,12 +124,21 @@ impl<B: ByteSource> Archive<B> {
         })
     }
 
-    pub fn read(&mut self, request: &RangeRequest) -> io::Result<Result<RangePage, String>> {
-        self.retry(|a| read_page(&mut a.log, &a.log_index, &mut a.tree, &mut a.notes, request))
+    pub fn read(
+        &mut self,
+        request: &RangeRequest,
+        marks: &Marks,
+    ) -> io::Result<Result<RangePage, String>> {
+        let ask = Ask {
+            what: request,
+            marks,
+        };
+        self.retry(|a| read_page(&mut a.log, &a.log_index, &mut a.tree, &mut a.notes, &ask))
     }
 
-    pub fn zoom(&mut self, node: Node) -> io::Result<Result<Vec<String>, String>> {
-        self.retry(|a| zoom_node(&mut a.log, &a.log_index, &mut a.tree, &mut a.notes, node))
+    pub fn zoom(&mut self, node: Node, marks: &Marks) -> io::Result<Result<Vec<String>, String>> {
+        let ask = Ask { what: node, marks };
+        self.retry(|a| zoom_node(&mut a.log, &a.log_index, &mut a.tree, &mut a.notes, &ask))
     }
 
     pub fn count(&self) -> usize {
@@ -317,6 +326,11 @@ fn long_leaves(start: usize, entries: &[Entry]) -> Vec<Node> {
         .collect()
 }
 
+struct Ask<'a, T> {
+    what: T,
+    marks: &'a Marks,
+}
+
 /// One `read` page, loading only a window of entries from the cursor on. The
 /// window doubles while the page runs past it before the budget is spent.
 fn read_page(
@@ -324,8 +338,9 @@ fn read_page(
     index: &LogIndex,
     nodes: &mut impl NodeSource,
     notes: &mut Notes,
-    request: &RangeRequest,
+    ask: &Ask<&RangeRequest>,
 ) -> io::Result<Result<RangePage, String>> {
+    let request = ask.what;
     let total = index.count();
     let start = request.cursor.map_or(request.from, |c| c.next).min(total);
     let budget = request.budget.min(*BUDGET_RANGE.end());
@@ -341,6 +356,7 @@ fn read_page(
             start,
             total,
             entries: &entries,
+            marks: ask.marks,
         };
         match read_range(&window, &tree, request) {
             Ok(Read::Page(page)) => return Ok(Ok(page)),
@@ -357,8 +373,9 @@ fn zoom_node(
     index: &LogIndex,
     nodes: &mut impl NodeSource,
     notes: &mut Notes,
-    node: Node,
+    ask: &Ask<Node>,
 ) -> io::Result<Result<Vec<String>, String>> {
+    let node = ask.what;
     let total = index.count();
     let (start, end) = zoom_entries(node, total);
     let entries = load(log, index, notes, start, end)?;
@@ -372,6 +389,7 @@ fn zoom_node(
         start,
         total,
         entries: &entries,
+        marks: ask.marks,
     };
     Ok(zoom(&window, &tree, node))
 }
@@ -383,6 +401,15 @@ mod tests {
     use crate::chat_memory::index::NodeSlot;
     use crate::chat_memory::range::Cursor;
     use crate::chat_memory::{encode_record, pending};
+
+    fn ask<T>(what: T) -> Ask<'static, T> {
+        Ask {
+            what,
+            marks: &NO_MARKS,
+        }
+    }
+
+    static NO_MARKS: Marks = Marks::new();
 
     struct Bytes {
         data: Vec<u8>,
@@ -619,7 +646,7 @@ mod tests {
                             &index,
                             &mut nodes,
                             &mut Notes::default(),
-                            &request,
+                            &ask(&request),
                         )
                         .unwrap();
                         let full = full_page(&entries, &tree, &request);
@@ -681,8 +708,14 @@ mod tests {
             stale(7, 0, 9),
             stale(2, 999, 4),
         ] {
-            let windowed =
-                read_page(&mut log, &index, &mut tree, &mut Notes::default(), &request).unwrap();
+            let windowed = read_page(
+                &mut log,
+                &index,
+                &mut tree,
+                &mut Notes::default(),
+                &ask(&request),
+            )
+            .unwrap();
             assert!(windowed.is_err(), "{request:?}");
             assert_eq!(windowed, full_page(&entries, &tree, &request));
         }
@@ -706,7 +739,7 @@ mod tests {
             &index,
             &mut Tree::new(),
             &mut Notes::default(),
-            &request,
+            &ask(&request),
         )
         .unwrap()
         .unwrap();
@@ -723,8 +756,14 @@ mod tests {
         for size in [1, 2, 4, 8, 16, 32] {
             for lo in (0..40).step_by(size) {
                 let node = n(lo, lo + size);
-                let windowed =
-                    zoom_node(&mut log, &index, &mut nodes, &mut Notes::default(), node).unwrap();
+                let windowed = zoom_node(
+                    &mut log,
+                    &index,
+                    &mut nodes,
+                    &mut Notes::default(),
+                    &ask(node),
+                )
+                .unwrap();
                 assert_eq!(
                     windowed,
                     zoom(&Window::full(&entries), &tree, node),
@@ -759,7 +798,7 @@ mod tests {
         assert_eq!(archive.stale, Stale::default());
         let node = n(0, 8);
         let want = zoom(&Window::full(&entries), &tree, node);
-        assert_eq!(archive.zoom(node).unwrap(), want);
+        assert_eq!(archive.zoom(node, &Marks::new()).unwrap(), want);
         assert_eq!(archive.stale, Stale::default());
         assert!(archive.warnings().is_empty());
     }
@@ -777,7 +816,7 @@ mod tests {
                 budget: 16384,
                 cursor: None,
             };
-            let page = archive.read(&request).unwrap();
+            let page = archive.read(&request, &Marks::new()).unwrap();
             assert_eq!(page, full_page(&entries, &tree, &request));
             assert_eq!(
                 archive.stale,
@@ -788,7 +827,7 @@ mod tests {
             );
             let mut archive = damaged(&entries, &tree, |log, _| log.slots[5] += shift);
             let want = zoom(&Window::full(&entries), &tree, n(5, 6));
-            assert_eq!(archive.zoom(n(5, 6)).unwrap(), want);
+            assert_eq!(archive.zoom(n(5, 6), &Marks::new()).unwrap(), want);
         }
     }
 
@@ -804,7 +843,7 @@ mod tests {
             slot.node = left;
         });
         let want = zoom(&Window::full(&entries), &tree, node);
-        assert_eq!(archive.zoom(node).unwrap(), want);
+        assert_eq!(archive.zoom(node, &Marks::new()).unwrap(), want);
         assert!(archive.stale.tree);
     }
 
@@ -856,14 +895,18 @@ mod tests {
             budget: 16384,
             cursor: None,
         };
-        let page = archive.read(&request).unwrap().unwrap().render();
+        let page = archive
+            .read(&request, &Marks::new())
+            .unwrap()
+            .unwrap()
+            .render();
         assert!(
             page.contains("#2 · worker ·  · 15 chars\n[corrupt entry]"),
             "{page}"
         );
         assert!(page.contains("#3 · user · "), "{page}");
         assert!(page.contains(&entries[2].text), "{page}");
-        let zoomed = archive.zoom(n(3, 4)).unwrap().unwrap();
+        let zoomed = archive.zoom(n(3, 4), &Marks::new()).unwrap().unwrap();
         assert!(zoomed[0].starts_with("#3 "), "{zoomed:?}");
         assert!(zoomed[0].contains(&entries[2].text), "{zoomed:?}");
         let warnings = archive.warnings();

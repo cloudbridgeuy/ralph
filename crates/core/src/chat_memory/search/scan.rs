@@ -2,7 +2,7 @@ use super::query::tokenize;
 use super::request::{check_cursor, check_fingerprint, passes, SearchCursor, SearchRequest};
 use crate::chat_memory::archive::{Archive, ByteSource};
 use crate::chat_memory::lookup::excerpt;
-use crate::chat_memory::{Entry, Found, Role};
+use crate::chat_memory::{role_label, Entry, Found, Marks, Role};
 use std::io;
 
 pub(super) const CHUNK_ENTRIES: usize = 256;
@@ -123,7 +123,7 @@ fn page_bounds(request: &SearchRequest, total: usize) -> (usize, usize) {
     (offset, (offset + request.limit).min(total))
 }
 
-fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String {
+fn render(request: &SearchRequest, count: usize, ranked: &[Candidate], marks: &Marks) -> String {
     if ranked.is_empty() {
         return match request.tag().filter(|_| request.tag_only()) {
             Some(tag) => format!("no entries tagged {}\n{TAG_NOTICE}", tag.as_str()),
@@ -137,7 +137,7 @@ fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String
             format!(
                 "#{} · {} · {} · {}",
                 hit.id,
-                hit.role.as_str(),
+                role_label(hit.role, marks.get(&hit.id)),
                 hit.at,
                 hit.snippet
             )
@@ -171,6 +171,7 @@ pub(crate) fn rank_ids(entries: &[Entry], request: &SearchRequest) -> Vec<usize>
 pub fn search_found<B: ByteSource>(
     archive: &mut Archive<B>,
     request: &SearchRequest,
+    marks: &Marks,
 ) -> io::Result<Result<Found, String>> {
     if let Err(message) = check_fingerprint(request) {
         return Ok(Err(message));
@@ -183,7 +184,7 @@ pub fn search_found<B: ByteSource>(
     let ranked = scan.ranked();
     let (offset, end) = page_bounds(request, ranked.len());
     Ok(Ok(Found {
-        text: render(request, count, &ranked),
+        text: render(request, count, &ranked, marks),
         hits: ranked.len(),
         truncated: None,
         oldest: ranked.iter().map(|hit| hit.id).min(),

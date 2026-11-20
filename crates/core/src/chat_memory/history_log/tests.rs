@@ -580,3 +580,28 @@ fn a_tag_only_search_row_logs_an_empty_query_and_the_tag() {
         json!({"query": "", "tag": "rule", "limit": 20, "has_cursor": false})
     );
 }
+
+#[test]
+fn marked_lines_give_the_same_ids_and_class_as_unmarked_ones() {
+    let unmarked = [
+        "#5 · user · 2026-10-20T10:00:00+00:00 · ship it",
+        "#auth:6 user 2026-10-20T10:00:00+00:00 ship it",
+    ];
+    let marked = [
+        "#5 · user [rule] · 2026-10-20T10:00:00+00:00 · ship it",
+        "#auth:6 user [rule,approval] 2026-10-20T10:00:00+00:00 ship it",
+    ];
+    let lines = |texts: &[&str]| texts.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+    assert_eq!(view_line_ids(&lines(&marked)), ["5", "auth:6"]);
+    assert_eq!(
+        view_line_ids(&lines(&marked)),
+        view_line_ids(&lines(&unmarked))
+    );
+    for (plain, tagged) in unmarked.iter().zip(marked) {
+        assert_eq!(
+            classify_call(&Ok(plain.to_string())),
+            classify_call(&Ok(tagged.to_string()))
+        );
+        assert_eq!(classify_call(&Ok(tagged.to_string())), HistoryOutcome::Ok);
+    }
+}

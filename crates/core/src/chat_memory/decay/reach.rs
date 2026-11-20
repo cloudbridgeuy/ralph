@@ -2,7 +2,7 @@ use super::anchors::{Anchor, Group};
 use super::survival::Cell;
 use super::tokens::{text_words, Key};
 use crate::chat_memory::search::rank_ids;
-use crate::chat_memory::{parse_search_args, recall_found, Entry, Node, Tree};
+use crate::chat_memory::{parse_search_args, recall_found, Entry, Marks, Node, Tree};
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -75,7 +75,7 @@ pub fn recall_hit(entries: &[Entry], id: usize, words: &[&str]) -> bool {
         .map(|word| regex::escape(word))
         .collect::<Vec<_>>()
         .join("|");
-    recall_found(entries, &pattern).is_ok_and(|found| found.shown.contains(&id))
+    recall_found(entries, &pattern, &Marks::new()).is_ok_and(|found| found.shown.contains(&id))
 }
 
 pub fn probe(anchor: &Anchor, entries: &[Entry], tree: &Tree, cover: &[Node]) -> Option<Probe> {
