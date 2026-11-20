@@ -311,8 +311,10 @@ fn a_result_usage_becomes_a_cursor_worker_ledger_row() {
         json!({"inputTokens":8680,"outputTokens":36,"cacheReadTokens":6016,"cacheWriteTokens":0});
     let mapped = map_print_usage(&usage, VARIANT).unwrap();
     let row = print_usage_record(
-        "w1",
-        Some(4),
+        CallSite::Worker {
+            worker_id: "w1".to_string(),
+            turn_id: Some(4),
+        },
         "2026-01-01T00:00:00Z".to_string(),
         Some(SESSION.to_string()),
         &mapped,

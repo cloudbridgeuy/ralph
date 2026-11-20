@@ -1,6 +1,7 @@
 use crate::chat::memory::usage_path;
 use crate::ledger;
 use crate::warn::warn_if_err;
+use ralph_core::chat_memory::CallSite;
 use ralph_core::worker::{print_usage_record, ModelUsage};
 use std::io;
 use std::path::Path;
@@ -21,15 +22,13 @@ pub fn record_cursor_usage(turn: &CursorTurn, usage: &ModelUsage) {
 
 fn append(turn: &CursorTurn, usage: &ModelUsage, usage_file: &Path) -> io::Result<()> {
     let at = chrono::Utc::now().to_rfc3339();
-    let row = print_usage_record(
-        turn.worker,
-        turn.turn_id,
-        at,
-        turn.chat.map(str::to_string),
-        usage,
-    )
-    .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()))
-    .with_ticket(ledger::worker_ticket(turn.store, turn.worker));
+    let kind = CallSite::Worker {
+        worker_id: turn.worker.to_string(),
+        turn_id: turn.turn_id,
+    };
+    let row = print_usage_record(kind, at, turn.chat.map(str::to_string), usage)
+        .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()))
+        .with_ticket(ledger::worker_ticket(turn.store, turn.worker));
     ledger::record(usage_file, &row)
 }
 

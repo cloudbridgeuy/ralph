@@ -158,16 +158,11 @@ pub fn map_print_usage(usage: &Value, model: &str) -> Option<ModelUsage> {
 }
 
 pub fn print_usage_record(
-    worker_id: &str,
-    turn_id: Option<u64>,
+    kind: CallSite,
     at: String,
     chat: Option<String>,
     usage: &ModelUsage,
 ) -> LedgerRow {
-    let kind = CallSite::Worker {
-        worker_id: worker_id.to_string(),
-        turn_id,
-    };
     worker_usage_record(kind, at, chat, HARNESS, usage)
 }
 
