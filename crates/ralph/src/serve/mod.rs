@@ -18,6 +18,7 @@ use ralph_server::wire::store::current_uid;
 use ralph_server::workers::canonical_store;
 use std::collections::VecDeque;
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +29,7 @@ const POISONED: &str = "ralph serve: internal state unavailable";
 struct Host {
     supervisor: Mutex<Supervisor>,
     sessions: Sessions,
+    store_dir: PathBuf,
     stop: AtomicBool,
 }
 
@@ -43,6 +45,7 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let host = Arc::new(Host {
         supervisor: Mutex::new(supervisor),
         sessions: Sessions::default(),
+        store_dir: store_dir.clone(),
         stop: AtomicBool::new(false),
     });
     let mut claim = None;

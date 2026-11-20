@@ -6,7 +6,7 @@ use crate::chat::thread::{
     park_thread, pull_thread, revive_thread, rows, thread_dir, view_thread,
 };
 use crate::cli::MERGE_TIMEOUT_SECS;
-use crate::{run_curator, Curator};
+use crate::Curator;
 use ralph_core::chat_local::local_record;
 use ralph_core::chat_memory::CallSite;
 use ralph_core::chat_memory::Role;
@@ -20,14 +20,16 @@ use ralph_server::chat::memory::Store;
 use ralph_server::warn::warn_if_err;
 use std::path::Path;
 
-pub(super) struct ThreadEnv<'a> {
+pub(crate) struct ThreadEnv<'a> {
     pub store_dir: &'a Path,
     pub in_thread: bool,
     pub width: usize,
-    pub display: &'a Display<'a>,
+    pub display: Option<&'a Display<'a>>,
+    pub notice: &'a dyn Fn(&str),
+    pub curate: &'a dyn Fn(&str, &Curator) -> Result<String, String>,
 }
 
-pub(super) fn run(
+pub(crate) fn run(
     op: &ThreadOp,
     env: &ThreadEnv,
     confirm: &mut impl FnMut(&str) -> Option<bool>,
@@ -41,7 +43,8 @@ pub(super) fn run(
         ThreadOp::Ls => {
             let listed = rows(&main, &|name| running_of(name).len())
                 .map_err(|e| format!("could not list threads: {e}"))?;
-            Ok(listing(&listed, env.display, env.width, "no threads"))
+            let display = env.display.ok_or("thread listing needs a terminal")?;
+            Ok(listing(&listed, display, env.width, "no threads"))
         }
         ThreadOp::Open(opts) => open_thread(env.store_dir, opts),
         ThreadOp::Pull(name) => pull_thread(&main, name),
@@ -65,7 +68,7 @@ pub(super) fn run(
                 return Ok("merge cancelled.".to_string());
             }
             let running = running_of(name);
-            println!("{}", merging_notice(name));
+            (env.notice)(&merging_notice(name));
             let dir = thread_dir(&main, name);
             let curator = Curator {
                 kind: CallSite::Merge,
@@ -74,21 +77,21 @@ pub(super) fn run(
                 timeout: MERGE_TIMEOUT_SECS,
             };
             merge_thread(&main, name, &running, &mut |prompt: &str| {
-                run_curator(prompt, &curator)
+                (env.curate)(prompt, &curator)
             })
             .map(|message| merge_posted_message(name, &message))
         }
     }
 }
 
-pub(super) fn merge_line(name: &ThreadName, view: bool) -> String {
+pub(crate) fn merge_line(name: &ThreadName, view: bool) -> String {
     match view {
         true => format!("/thread merge {name} {VIEW_FLAG}"),
         false => format!("/thread merge {name}"),
     }
 }
 
-pub(super) fn record_cli_merge(main: &Path, name: &ThreadName, line: &str, output: &str) {
+pub(crate) fn record_cli_merge(main: &Path, name: &ThreadName, line: &str, output: &str) {
     let kept = Path::new(THREADS_DIR).join(name.as_str()).join(THREAD_FILE);
     let store = Store::new(main.to_path_buf());
     let appended = store.append_id(Role::User, &local_record(line, output));
@@ -270,7 +273,9 @@ mod tests {
             store_dir: main,
             in_thread,
             width: 200,
-            display: &display,
+            display: Some(&display),
+            notice: &|_| {},
+            curate: &|_, _| Err("no curator in this test".to_string()),
         })
     }
 
@@ -291,7 +296,9 @@ mod tests {
             store_dir: &main,
             in_thread: false,
             width: 200,
-            display: &display,
+            display: Some(&display),
+            notice: &|_| {},
+            curate: &|_, _| Err("no curator in this test".to_string()),
         };
         let text = run(&ThreadOp::Ls, &env, &mut |_: &str| None, &idle).unwrap();
         // The in-chat prose wraps to the terminal's own width, so check only the border.
@@ -343,6 +350,25 @@ mod tests {
         });
         assert_eq!(result, Ok("merge cancelled.".to_string()));
         assert_eq!(asked, 1);
+    }
+
+    #[test]
+    fn the_merge_notice_goes_to_the_callback() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let noticed = std::cell::RefCell::new(Vec::new());
+        let env = ThreadEnv {
+            store_dir: &main,
+            in_thread: false,
+            width: 200,
+            display: None,
+            notice: &|text| noticed.borrow_mut().push(text.to_string()),
+            curate: &|_, _| Ok("Picked x.".to_string()),
+        };
+        let _ = run(&merge_auth(), &env, &mut |_: &str| Some(true), &idle);
+        assert_eq!(*noticed.borrow(), vec![merging_notice(&auth)]);
     }
 
     #[test]

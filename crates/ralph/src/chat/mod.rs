@@ -31,7 +31,7 @@ mod term_loop;
 mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
-mod thread_cmd;
+pub(crate) mod thread_cmd;
 mod view;
 mod workers;
 

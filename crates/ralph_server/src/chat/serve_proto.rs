@@ -1,4 +1,6 @@
 use ralph_core::chat_socket::{decode_line, encode_line, MAX_FRAME_BYTES};
+use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::turn_event::TurnEvent;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,31 @@ pub struct Envelope<B> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum ThreadCmd {
+    Pull { name: String },
+    Park { name: String },
+    Revive { name: String },
+    Drop { name: String },
+    Merge { name: String, view: bool },
+}
+
+impl ThreadCmd {
+    pub fn parse(self) -> Result<ThreadOp, String> {
+        let name = |name: &str| ThreadName::parse(name);
+        match self {
+            ThreadCmd::Pull { name: n } => name(&n).map(ThreadOp::Pull),
+            ThreadCmd::Park { name: n } => name(&n).map(ThreadOp::Park),
+            ThreadCmd::Revive { name: n } => name(&n).map(ThreadOp::Revive),
+            ThreadCmd::Drop { name: n } => name(&n).map(ThreadOp::Drop),
+            ThreadCmd::Merge { name: n, view } => {
+                name(&n).map(|name| ThreadOp::Merge { name, view })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
     Hello {
@@ -23,6 +50,7 @@ pub enum ClientMsg {
         thread: Option<String>,
         text: String,
     },
+    Thread(ThreadCmd),
     Shutdown,
 }
 
@@ -33,6 +61,7 @@ pub enum ServerMsg {
     Hello { proto: u32 },
     Turn { event: TurnEvent },
     TurnDone,
+    Done { message: String },
 }
 
 pub fn hello_reply(proto: u32) -> ServerMsg {
@@ -85,6 +114,9 @@ mod tests {
                 event: TurnEvent::Idle,
             },
             ServerMsg::TurnDone,
+            ServerMsg::Done {
+                message: "ok".into(),
+            },
         ]
     }
 
@@ -99,6 +131,10 @@ mod tests {
                 thread: Some("side".into()),
                 text: "hi".into(),
             },
+            ClientMsg::Thread(ThreadCmd::Merge {
+                name: "side".into(),
+                view: true,
+            }),
             ClientMsg::Shutdown,
         ]
     }
@@ -142,6 +178,45 @@ mod tests {
             line.trim_end(),
             r#"{"v":1,"id":3,"body":{"type":"turn","event":{"Busy":"Tool"}}}"#
         );
+    }
+
+    #[test]
+    fn a_thread_command_travels_under_the_thread_type() {
+        let line = encode_frame(
+            2,
+            &ClientMsg::Thread(ThreadCmd::Pull {
+                name: "auth".into(),
+            }),
+        );
+        assert_eq!(
+            line.trim_end(),
+            r#"{"v":1,"id":2,"body":{"type":"thread","op":"pull","name":"auth"}}"#
+        );
+    }
+
+    #[test]
+    fn a_thread_command_parses_names_at_the_boundary() {
+        let merge = ThreadCmd::Merge {
+            name: "auth".into(),
+            view: true,
+        };
+        assert_eq!(
+            merge.parse(),
+            Ok(ThreadOp::Merge {
+                name: ThreadName::parse("auth").unwrap(),
+                view: true
+            })
+        );
+        assert!(ThreadCmd::Drop {
+            name: "../x".into()
+        }
+        .parse()
+        .is_err());
+        assert!(ThreadCmd::Pull {
+            name: "main".into()
+        }
+        .parse()
+        .is_err());
     }
 
     #[test]

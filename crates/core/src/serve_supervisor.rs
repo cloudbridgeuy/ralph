@@ -1,4 +1,5 @@
 use crate::chat_process::SessionKey;
+use crate::chat_thread_cmd::ThreadOp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -13,6 +14,7 @@ pub enum Input {
     Stop,
     Send(SessionKey),
     TurnDone(SessionKey),
+    Thread(ThreadOp),
     Closed(SessionKey),
 }
 
@@ -22,6 +24,7 @@ pub enum Effect {
     Answer { proto: u32 },
     Refuse(String),
     Run(SessionKey),
+    RunThread(ThreadOp),
     Close(SessionKey),
     Exit,
 }
@@ -58,6 +61,13 @@ impl Supervisor {
                 vec![Effect::Refuse(format!("{key} is not open"))]
             }
             (_, Input::Send(_)) => vec![Effect::Refuse("ralph serve is shutting down".to_string())],
+            (Phase::Running, Input::Thread(op)) => match self.busy_target(&op) {
+                Some(key) => vec![Effect::Refuse(format!("{key} is busy"))],
+                None => vec![Effect::RunThread(op)],
+            },
+            (_, Input::Thread(_)) => {
+                vec![Effect::Refuse("ralph serve is shutting down".to_string())]
+            }
             (_, Input::Hello { .. }) => {
                 vec![Effect::Refuse("ralph serve is shutting down".to_string())]
             }
@@ -86,6 +96,17 @@ impl Supervisor {
                 }
             }
         }
+    }
+}
+
+impl Supervisor {
+    fn busy_target(&self, op: &ThreadOp) -> Option<SessionKey> {
+        let name = match op {
+            ThreadOp::Merge { name, .. } | ThreadOp::Park(name) | ThreadOp::Drop(name) => name,
+            _ => return None,
+        };
+        let key = SessionKey::Thread(name.clone());
+        self.busy.contains(&key).then_some(key)
     }
 }
 
@@ -190,6 +211,45 @@ mod tests {
         assert_eq!(
             sup.step(Input::Closed(SessionKey::Main)),
             vec![Effect::Exit]
+        );
+    }
+
+    fn side() -> ThreadName {
+        ThreadName::parse("side").unwrap()
+    }
+
+    #[test]
+    fn merge_of_busy_thread_is_refused() {
+        let (mut sup, _) = Supervisor::start();
+        sup.open.push(SessionKey::Thread(side()));
+        sup.step(Input::Send(SessionKey::Thread(side())));
+        for op in [
+            ThreadOp::Merge {
+                name: side(),
+                view: false,
+            },
+            ThreadOp::Park(side()),
+            ThreadOp::Drop(side()),
+        ] {
+            assert_eq!(
+                sup.step(Input::Thread(op)),
+                vec![Effect::Refuse("thread side is busy".to_string())]
+            );
+        }
+        let pull = ThreadOp::Pull(side());
+        assert_eq!(
+            sup.step(Input::Thread(pull.clone())),
+            vec![Effect::RunThread(pull)]
+        );
+    }
+
+    #[test]
+    fn draining_refuses_thread_ops() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Stop);
+        assert_eq!(
+            sup.step(Input::Thread(ThreadOp::Pull(side()))),
+            vec![Effect::Refuse("ralph serve is shutting down".to_string())]
         );
     }
 

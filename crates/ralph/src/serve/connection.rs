@@ -1,11 +1,16 @@
 use super::{step, Host, POISONED};
+use crate::chat::thread::running_ids;
+use crate::chat::thread_cmd::{merge_line, record_cli_merge, run as run_thread, ThreadEnv};
 use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::MAX_FRAME_BYTES;
+use ralph_core::chat_thread::config_root;
 use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::serve_supervisor::{Effect, Input};
 use ralph_server::chat::serve_proto::{
     decode_frame, encode_frame, hello_reply, ClientMsg, ServerMsg,
 };
+use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::Ordering;
@@ -17,6 +22,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 enum Action {
     Hello(u32),
     Send { key: SessionKey, text: String },
+    Thread(ThreadOp),
     Shutdown,
     Refuse(String),
 }
@@ -42,6 +48,7 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 Err(message) => ServerMsg::Error { message },
             },
             Action::Send { key, text } => send(host, &key, &text, id, &writer),
+            Action::Thread(op) => thread(host, op),
         };
         writer.write_all(encode_frame(id, &reply).as_bytes())?;
         if closes && matches!(reply, ServerMsg::Error { .. }) {
@@ -51,6 +58,38 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
         writer.set_read_timeout(read_timeout(greeted))?;
     }
     Ok(())
+}
+
+fn thread(host: &Host, op: ThreadOp) -> ServerMsg {
+    let result = step(&host.supervisor, Input::Thread(op.clone()))
+        .and_then(|effects| permit_thread(&effects))
+        .and_then(|op| run_thread_op(host, &op));
+    match result {
+        Ok(message) => ServerMsg::Done { message },
+        Err(message) => ServerMsg::Error { message },
+    }
+}
+
+fn run_thread_op(host: &Host, op: &ThreadOp) -> Result<String, String> {
+    let main = config_root(&host.store_dir);
+    let notices = RefCell::new(Vec::new());
+    let env = ThreadEnv {
+        store_dir: &host.store_dir,
+        in_thread: false,
+        width: 80,
+        display: None,
+        notice: &|text| notices.borrow_mut().push(text.to_string()),
+        curate: &|prompt, curator| crate::run_curator(prompt, curator),
+    };
+    let message = run_thread(op, &env, &mut |_| Some(true), &|name| {
+        running_ids(&main, name)
+    })?;
+    if let ThreadOp::Merge { name, view } = op {
+        record_cli_merge(&main, name, &merge_line(name, *view), &message);
+    }
+    let mut lines = notices.into_inner();
+    lines.push(message);
+    Ok(lines.join("\n"))
 }
 
 fn send(host: &Host, key: &SessionKey, text: &str, id: u64, writer: &UnixStream) -> ServerMsg {
@@ -85,7 +124,7 @@ fn run_turn(
 }
 
 fn closes_on_error(action: &Action) -> bool {
-    !matches!(action, Action::Send { .. })
+    !matches!(action, Action::Send { .. } | Action::Thread(_))
 }
 
 fn read_timeout(greeted: bool) -> Option<Duration> {
@@ -116,8 +155,23 @@ fn classify(greeted: bool, frame: Result<ClientMsg, String>) -> Action {
             Ok(key) => Action::Send { key, text },
             Err(message) => Action::Refuse(message),
         },
+        Ok(ClientMsg::Thread(cmd)) => match cmd.parse() {
+            Ok(op) => Action::Thread(op),
+            Err(message) => Action::Refuse(message),
+        },
         Ok(ClientMsg::Shutdown) => Action::Shutdown,
     }
+}
+
+fn permit_thread(effects: &[Effect]) -> Result<ThreadOp, String> {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::RunThread(op) => Some(Ok(op.clone())),
+            Effect::Refuse(message) => Some(Err(message.clone())),
+            _ => None,
+        })
+        .unwrap_or_else(|| Err(POISONED.to_string()))
 }
 
 fn permit(effects: &[Effect]) -> Result<SessionKey, String> {
@@ -218,6 +272,7 @@ mod tests {
             text: "hi".into(),
         };
         assert!(!closes_on_error(&send));
+        assert!(!closes_on_error(&Action::Thread(ThreadOp::Ls)));
         assert!(closes_on_error(&Action::Hello(1)));
         assert!(closes_on_error(&Action::Refuse("bad".into())));
     }
