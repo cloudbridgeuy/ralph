@@ -1,4 +1,5 @@
 use crate::chat::ResetLimits;
+use crate::chat_thread::ThreadName;
 use crate::worker_costs::window::instant;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -94,8 +95,17 @@ pub struct ProcessCell {
     pub cost: Option<SessionCost>,
 }
 
-pub fn run_id(pid: u32, started: DateTime<Utc>) -> String {
-    format!("{pid}-{}", started.to_rfc3339())
+pub enum SessionKey {
+    Main,
+    Thread(ThreadName),
+}
+
+pub fn run_id(pid: u32, key: &SessionKey, started: DateTime<Utc>) -> String {
+    let started = started.to_rfc3339();
+    match key {
+        SessionKey::Main => format!("{pid}-main-{started}"),
+        SessionKey::Thread(name) => format!("{pid}-thread-{name}-{started}"),
+    }
 }
 
 fn main_rows(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {

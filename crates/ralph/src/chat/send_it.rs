@@ -250,7 +250,7 @@ pub(super) fn took_over(send_it: &SendIt, active: &Active) -> Driven {
 }
 
 pub(super) struct InboxTurn<'a> {
-    pub(super) turn: &'a Turn<'a>,
+    pub(super) turn: &'a Turn,
     pub(super) snapshots: &'a TurnSnapshots,
     pub(super) keys: &'a Keys<'a>,
     pub(super) monitor: &'a Monitor,

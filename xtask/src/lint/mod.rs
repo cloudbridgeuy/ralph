@@ -283,19 +283,36 @@ async fn run_cargo_clippy(global: &crate::Global) -> Result<bool> {
     }
 }
 
+const GIT_ENV_SCRUBBED: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_PREFIX",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+];
+
+fn test_command(verbose: bool) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("cargo");
+    cmd.args(["test", "--all-targets"]);
+
+    if !verbose {
+        cmd.arg("--quiet");
+    }
+
+    for name in GIT_ENV_SCRUBBED {
+        cmd.env_remove(name);
+    }
+
+    cmd
+}
+
 async fn run_cargo_test(global: &crate::Global) -> Result<bool> {
     if !global.is_silent() {
         aprintln!("{} {}", p_b("🔧"), p_b("Running cargo test..."));
     }
 
-    let mut cmd = tokio::process::Command::new("cargo");
-    cmd.args(["test", "--all-targets"]);
-
-    if !global.is_verbose() {
-        cmd.arg("--quiet");
-    }
-
-    let status = cmd.status().await?;
+    let status = test_command(global.is_verbose()).status().await?;
 
     if status.success() {
         if !global.is_silent() {
@@ -468,5 +485,51 @@ async fn run_file_length_check(global: &crate::Global) -> Result<bool> {
             );
         }
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    fn args_of(cmd: &tokio::process::Command) -> Vec<String> {
+        cmd.as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn test_command_removes_git_env() {
+        let cmd = test_command(false);
+        let envs: Vec<_> = cmd.as_std().get_envs().collect();
+        let expected = [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_PREFIX",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT",
+        ];
+        for name in expected {
+            assert!(
+                envs.contains(&(OsStr::new(name), None)),
+                "{name} not removed"
+            );
+        }
+    }
+
+    #[test]
+    fn test_command_verbose_omits_quiet() {
+        assert_eq!(args_of(&test_command(true)), ["test", "--all-targets"]);
+    }
+
+    #[test]
+    fn test_command_quiet_when_not_verbose() {
+        assert_eq!(
+            args_of(&test_command(false)),
+            ["test", "--all-targets", "--quiet"]
+        );
     }
 }

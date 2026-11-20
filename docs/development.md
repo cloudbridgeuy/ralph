@@ -128,6 +128,8 @@ cargo xtask lint --test-hooks
 cargo xtask lint --uninstall-hooks
 ```
 
+The xtask test run (`cargo xtask lint`, also run by the pre-commit hook) clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_PREFIX`, `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`. Tests that spawn git cannot be pointed at the hook's gitdir, index or `-c` config. A test that runs git without setting `current_dir` to a tempdir still acts on the real repo.
+
 ## Installing Locally
 
 Install ralph to your local bin directory:
