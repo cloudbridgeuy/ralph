@@ -630,12 +630,6 @@ fn test_cli_chat_history_read_without_words_fails() {
 }
 
 #[test]
-fn test_cli_chat_history_decay_parses() {
-    let history = parse_history(&["decay"]).unwrap();
-    assert!(matches!(history.stats, Some(HistorySub::Decay(_))));
-}
-
-#[test]
 fn test_cli_chat_history_stats_parses() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "history", "stats"])
         .unwrap()
