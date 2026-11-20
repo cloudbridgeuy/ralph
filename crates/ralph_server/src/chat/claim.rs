@@ -1,6 +1,6 @@
-use crate::cursor_owner::process_start;
+use crate::cursor_owner::own_instance;
 use crate::private_file::check_path;
-use ralph_core::chat_memory::{holder_pid, instance_id, next_lease};
+use ralph_core::chat_memory::{holder_pid, next_lease};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -28,7 +28,7 @@ pub(super) fn claim_chat(dir: &Path) -> io::Result<Result<ChatClaim, Option<u32>
         return Ok(Err(holder_pid(&previous)));
     }
     let pid = std::process::id();
-    let holder = process_start(pid).map(|start| instance_id(pid, &start));
+    let holder = own_instance().map(str::to_string);
     file.set_len(0)?;
     file.seek(SeekFrom::Start(0))?;
     write!(file, "{}", next_lease(&previous, pid, holder).render())?;
