@@ -74,6 +74,7 @@ pub mod schedule_request;
 pub mod schedule_worker;
 pub mod semver;
 pub mod serve;
+pub mod serve_supervisor;
 pub mod shell_format;
 pub mod snapshot;
 pub mod status_mode;

@@ -95,6 +95,7 @@ pub struct ProcessCell {
     pub cost: Option<SessionCost>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionKey {
     Main,
     Thread(ThreadName),
