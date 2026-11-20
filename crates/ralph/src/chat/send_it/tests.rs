@@ -1,20 +1,21 @@
 use super::*;
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
-use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Seen, StepResult, VerifyMode};
+use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Limits, Seen, StepResult, VerifyMode};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
-use ralph_server::chat::ask::Notices;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::send_it::{Screen, NOT_PROPOSED, NO_RUN};
+use ralph_server::chat::session::{Emit, Event};
 use ralph_server::chat::socket::serve::{respond, Shared};
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 pub(in crate::chat) mod held;
 mod screen;
@@ -32,7 +33,7 @@ fn plan_args() -> Value {
     })
 }
 
-fn go(send_it: &ServerSendIt, shown: Option<&str>, typed: bool) -> (String, Option<Ticked>) {
+fn go(send_it: &SendIt, shown: Option<&str>, typed: bool) -> (String, Option<Ticked>) {
     send_it.go(
         shown,
         typed,
@@ -229,7 +230,8 @@ fn judging_on(send_it: SendIt) -> (SendIt, Active) {
     send_it.propose(&args).unwrap();
     let hash = send_it.status(80).shown.unwrap();
     let started = go(&send_it, Some(&hash), true).1.unwrap();
-    let ticked = send_it.tick(
+    let ticked = tick(
+        &send_it,
         &Active {
             driving: started.driving,
             watched: None,
@@ -252,13 +254,13 @@ fn the_next_tick_takes_the_recorded_step_result_once() {
         met: true,
         evidence: "all 3 fixed".to_string(),
     });
-    let ticked = send_it.tick(&active, ended());
+    let ticked = tick(&send_it, &active, ended());
     assert_eq!(ticked.next, Next::Done);
     assert_eq!(
         ticked.met.as_deref(),
         Some("send-it: step 1/1 met: all 3 fixed")
     );
-    let Next::Send(line) = send_it.tick(&active, ended()).next else {
+    let Next::Send(line) = tick(&send_it, &active, ended()).next else {
         panic!("a second tick must not see the old result")
     };
     assert!(line.contains("judge: not met: "), "{line}");
@@ -279,7 +281,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: (*send_it).clone(),
+        send_it: send_it.clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
@@ -299,7 +301,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     assert!(call(json!({"met": true})).is_error);
     let recorded = call(met);
     assert!(!recorded.is_error, "{}", recorded.text);
-    assert_eq!(send_it.tick(&active, ended()).next, Next::Done);
+    assert_eq!(tick(&send_it, &active, ended()).next, Next::Done);
 }
 
 #[test]
@@ -340,11 +342,11 @@ fn the_next_tick_takes_the_answered_workers_once() {
     };
     send_it.answer("E1".to_string());
     assert_eq!(
-        send_it.tick(&active, with_question()).next,
+        tick(&send_it, &active, with_question()).next,
         Next::Check("cargo xtask lint".to_string())
     );
     assert!(matches!(
-        send_it.tick(&active, with_question()).next,
+        tick(&send_it, &active, with_question()).next,
         Next::Stop(StopReason::WorkerFlagged { .. })
     ));
 }
@@ -355,13 +357,13 @@ fn a_refusal_from_the_socket_stops_the_next_tick_once_and_keeps_the_approval() {
     let (send_it, active) = started(dir.path());
     send_it.clone().refuse("spawn_worker codex".to_string());
     assert_eq!(
-        send_it.tick(&active, ended()).next,
+        tick(&send_it, &active, ended()).next,
         Next::Stop(StopReason::Refused {
             tool: "spawn_worker codex".to_string()
         })
     );
     assert_eq!(
-        send_it.tick(&active, ended()).next,
+        tick(&send_it, &active, ended()).next,
         Next::Check("cargo xtask lint".to_string())
     );
     assert!(send_it.load().unwrap().unwrap().is_approved());
@@ -373,7 +375,7 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: (*quiet(dir.path())).clone(),
+        send_it: quiet(dir.path()),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
@@ -415,7 +417,7 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: (*quiet(dir.path())).clone(),
+        send_it: quiet(dir.path()),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
@@ -566,17 +568,17 @@ fn every_tick_reads_the_plan_file_again() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active) = started(dir.path());
     assert_eq!(
-        send_it.tick(&active, ended()).next,
+        tick(&send_it, &active, ended()).next,
         Next::Check("cargo xtask lint".to_string())
     );
     send_it.release(&active.driving.hash, None).unwrap();
     assert_eq!(
-        send_it.tick(&active, ended()).next,
+        tick(&send_it, &active, ended()).next,
         Next::Stop(StopReason::PlanChanged)
     );
     send_it.off();
     assert_eq!(
-        send_it.tick(&active, ended()).next,
+        tick(&send_it, &active, ended()).next,
         Next::Stop(StopReason::Off)
     );
 }
@@ -585,7 +587,7 @@ fn every_tick_reads_the_plan_file_again() {
 fn a_tick_takes_the_outcome_the_watch_left_in_its_slot() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active) = started(dir.path());
-    let waiting = send_it.tick(&active, ended()).driving;
+    let waiting = tick(&send_it, &active, ended()).driving;
     for (outcome, next) in [
         (WatchOutcome::Exited(0), Next::Done),
         (
@@ -597,7 +599,7 @@ fn a_tick_takes_the_outcome_the_watch_left_in_its_slot() {
             driving: waiting.clone(),
             watched: Some(OutcomeSlot::new(Mutex::new(Some(outcome)))),
         };
-        assert_eq!(send_it.tick(&active, ended()).next, next);
+        assert_eq!(tick(&send_it, &active, ended()).next, next);
     }
 }
 
@@ -612,9 +614,10 @@ fn a_replied_tick_collects_the_pending_lines_of_the_last_assistant_entry() {
         met: false,
         evidence: "open".to_string(),
     });
-    let ticked = send_it.tick(&active, ended());
+    let ticked = tick(&send_it, &active, ended());
     assert_eq!(ticked.driving.tally.pending, ["push main"]);
-    let silent = send_it.tick(
+    let silent = tick(
+        &send_it,
         &active,
         Ended {
             replied: false,
@@ -640,7 +643,7 @@ fn a_dispatched_notice_is_logged_once() {
         met: None,
         notice: Some(notice.clone()),
     };
-    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    dispatch(&send_it, ticked, &held::monitor(dir.path()));
     assert_eq!(logged_texts(dir.path()), vec![notice_record(&notice)]);
 }
 
@@ -654,7 +657,7 @@ fn a_dispatched_met_line_is_logged_once() {
         met: Some("Step 1 met".to_string()),
         notice: None,
     };
-    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    dispatch(&send_it, ticked, &held::monitor(dir.path()));
     assert_eq!(logged_texts(dir.path()), vec![notice_record("Step 1 met")]);
 }
 
@@ -668,7 +671,7 @@ fn a_dispatched_notice_is_logged_before_its_met_line() {
         met: Some("Step 1 met".to_string()),
         notice: Some("Step 1: the check would block the worker".to_string()),
     };
-    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    dispatch(&send_it, ticked, &held::monitor(dir.path()));
     assert_eq!(
         logged_texts(dir.path()),
         vec![
@@ -688,7 +691,7 @@ fn a_dispatched_done_tick_logs_no_met_line() {
         met: Some("Step 1 met".to_string()),
         notice: None,
     };
-    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    dispatch(&send_it, ticked, &held::monitor(dir.path()));
     let logged = logged_texts(dir.path());
     assert_eq!(logged.len(), 1, "{logged:?}");
     assert!(
@@ -708,7 +711,7 @@ fn a_done_tick_without_a_plan_still_logs_its_met_line() {
         met: Some("Step 1 met".to_string()),
         notice: None,
     };
-    send_it.dispatch(ticked, &held::monitor(dir.path()));
+    dispatch(&send_it, ticked, &held::monitor(dir.path()));
     assert_eq!(logged_texts(dir.path()), vec![notice_record("Step 1 met")]);
 }
 
@@ -733,9 +736,13 @@ fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
             WatchOutcome::Exited(1),
         )))),
     });
-    send_it
-        .held_item(&mut sending, Position::FIRST, &held::monitor(dir.path()))
-        .unwrap();
+    held_item(
+        &send_it,
+        &mut sending,
+        Position::FIRST,
+        &held::monitor(dir.path()),
+    )
+    .unwrap();
     let logged = logged_texts(dir.path());
     let at = |needle: &str| {
         logged
@@ -765,9 +772,13 @@ fn a_settled_last_check_logs_only_the_done_notice() {
             WatchOutcome::Exited(0),
         )))),
     });
-    send_it
-        .held_item(&mut sending, Position::FIRST, &held::monitor(dir.path()))
-        .unwrap();
+    held_item(
+        &send_it,
+        &mut sending,
+        Position::FIRST,
+        &held::monitor(dir.path()),
+    )
+    .unwrap();
     let logged = logged_texts(dir.path());
     assert_eq!(logged.len(), 1, "{logged:?}");
     assert!(
@@ -784,19 +795,21 @@ impl Printed {
         self.0.lock().unwrap().clone()
     }
 
-    fn sink(&self) -> Notices {
+    fn sink(&self) -> Emit {
         let lines = self.0.clone();
-        Arc::new(move |line| {
-            let mut lines = lines.lock().unwrap();
-            lines.push_str(line);
-            lines.push('\n');
+        Arc::new(move |event| {
+            if let Event::Notice(line) = event {
+                let mut lines = lines.lock().unwrap();
+                lines.push_str(&line);
+                lines.push('\n');
+            }
         })
     }
 }
 
 fn printing(dir: &Path) -> (SendIt, Active, Printed) {
     let printed = Printed::default();
-    let send_it = SendIt(ServerSendIt::new(dir, LIMITS, printed.sink()));
+    let send_it = SendIt::new(dir, LIMITS, printed.sink());
     let (send_it, active) = judging_on(send_it);
     (send_it, active, printed)
 }
@@ -815,7 +828,11 @@ fn a_done_tick_without_a_plan_prints_and_logs_its_met_line_once() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active, printed) = printing(dir.path());
     send_it.off();
-    send_it.dispatch(done(active, Some("Step 1 met")), &held::monitor(dir.path()));
+    dispatch(
+        &send_it,
+        done(active, Some("Step 1 met")),
+        &held::monitor(dir.path()),
+    );
     assert_eq!(printed.text(), "Step 1 met\n");
     assert_eq!(logged_texts(dir.path()), vec![notice_record("Step 1 met")]);
 }
@@ -825,7 +842,7 @@ fn a_done_tick_without_a_plan_or_a_met_line_stays_silent() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active, printed) = printing(dir.path());
     send_it.off();
-    send_it.dispatch(done(active, None), &held::monitor(dir.path()));
+    dispatch(&send_it, done(active, None), &held::monitor(dir.path()));
     assert_eq!(printed.text(), "");
     assert!(logged_texts(dir.path()).is_empty());
 }
@@ -834,7 +851,11 @@ fn a_done_tick_without_a_plan_or_a_met_line_stays_silent() {
 fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, active, printed) = printing(dir.path());
-    send_it.dispatch(done(active, Some("Step 1 met")), &held::monitor(dir.path()));
+    dispatch(
+        &send_it,
+        done(active, Some("Step 1 met")),
+        &held::monitor(dir.path()),
+    );
     let logged = logged_texts(dir.path());
     assert_eq!(logged.len(), 1, "{logged:?}");
     assert!(logged[0].contains("send-it done"), "{logged:?}");
@@ -848,5 +869,5 @@ fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
 }
 
 fn quiet(dir: &Path) -> SendIt {
-    SendIt(ServerSendIt::new(dir, LIMITS, Printed::default().sink()))
+    SendIt::new(dir, LIMITS, Printed::default().sink())
 }

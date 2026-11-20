@@ -1,5 +1,4 @@
 use crate::ansi::{DIM, RESET};
-use crate::chat::client_monitor::Monitor;
 use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR};
 use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
@@ -18,6 +17,7 @@ use ralph_core::chat_thread_auto::close_footer;
 use ralph_core::status_queue::QueueCell;
 use ralph_core::turn_event::TurnSink;
 use ralph_core::worker::ATTACHMENTS_DIR;
+use ralph_server::chat::monitor::Monitor;
 use ralph_server::subprocess::OutputGate;
 use reedline::{
     EditCommand, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus,
