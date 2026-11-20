@@ -149,8 +149,7 @@ fn an_unforked_own_scope_logs_as_main() {
     assert_eq!(rows(&dir)[0]["scope"], "main");
 }
 
-#[test]
-fn a_tagged_search_from_a_thread_lists_main_era_entries_tagged_in_mains_tags() {
+fn thread_over_tagged_main(tagged: &[usize]) -> tempfile::TempDir {
     let main = tempfile::tempdir().unwrap();
     let entry = |n: usize| {
         format!(
@@ -164,11 +163,8 @@ fn a_tagged_search_from_a_thread_lists_main_era_entries_tagged_in_mains_tags() {
             "{{\"v\":1,\"n\":{n},\"rule\":true,\"approval\":false,\"model\":\"m\",\"prompt\":\"v1\",\"at\":\"t\"}}\n"
         )
     };
-    fs::write(
-        main.path().join("tags.jsonl"),
-        format!("{}{}", tag(1), tag(3)),
-    )
-    .unwrap();
+    let tags: String = tagged.iter().map(|n| tag(*n)).collect();
+    fs::write(main.path().join("tags.jsonl"), tags).unwrap();
     let thread = main.path().join("threads").join("auth");
     fs::create_dir_all(&thread).unwrap();
     fs::write(
@@ -177,8 +173,14 @@ fn a_tagged_search_from_a_thread_lists_main_era_entries_tagged_in_mains_tags() {
     )
     .unwrap();
     fs::write(thread.join("log.jsonl"), format!("{}\n", entry(5))).unwrap();
+    main
+}
+
+#[test]
+fn a_tagged_search_from_a_thread_lists_main_era_entries_tagged_in_mains_tags() {
+    let main = thread_over_tagged_main(&[1, 3]);
     let text = call(
-        &thread,
+        &main.path().join("threads").join("auth"),
         "search",
         json!({"query": "ship", "tag": "rule", "thread": "main"}),
         CallSource::Mcp,
@@ -187,4 +189,26 @@ fn a_tagged_search_from_a_thread_lists_main_era_entries_tagged_in_mains_tags() {
     assert!(text.contains("#1 "), "{text}");
     assert!(!text.contains("#0 "), "{text}");
     assert!(!text.contains("#3 "), "{text}");
+}
+
+#[test]
+fn a_tag_only_search_from_a_thread_lists_tagged_main_era_entries_newest_first() {
+    let main = thread_over_tagged_main(&[0, 1, 3]);
+    let text = call(
+        &main.path().join("threads").join("auth"),
+        "search",
+        json!({"tag": "rule", "thread": "main"}),
+        CallSource::Mcp,
+    )
+    .unwrap();
+    let one = text.find("#1 ").unwrap();
+    let zero = text.find("#0 ").unwrap();
+    assert!(one < zero, "{text}");
+    assert!(!text.contains("#3 "), "{text}");
+    assert!(
+        text.trim_end().ends_with(
+            "(tags exist only for messages written after tagging began; older messages are not listed)"
+        ),
+        "{text}"
+    );
 }
