@@ -35,6 +35,7 @@ use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::worker::INBOX_DIR;
 use ralph_core::worker_check::logged_states;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -42,7 +43,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
     Notice(String),
     Blocked(String),
@@ -244,12 +245,26 @@ pub struct Proposal {
     before: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Reply {
     pub screen: Screen,
     pub note: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "some_even_if_null"
+    )]
     pub shown: Option<Option<String>>,
+    #[serde(skip)]
     pub started: Option<Ticked>,
+    #[serde(skip)]
     pub proposal: Option<Proposal>,
+}
+
+fn some_even_if_null<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 impl Reply {

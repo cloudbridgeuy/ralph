@@ -13,6 +13,7 @@ pub mod name;
 pub mod schedule;
 pub mod schedule_worker;
 pub mod send_it;
+pub mod serve_proto;
 pub mod session;
 pub mod settle;
 pub mod skills;
