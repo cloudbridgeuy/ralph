@@ -56,14 +56,17 @@ fn record(target: &UsageTarget, payload: &str, turn_id: Option<u64>) -> io::Resu
         transcript: &session.transcript_path,
         harness: HarnessId::ClaudeTmux,
     };
-    record_session(target, &session, turn_id)
+    record_session(target, &session, worker_site(target, turn_id))
 }
 
-fn record_session(
-    target: &UsageTarget,
-    session: &UsageSession,
-    turn_id: Option<u64>,
-) -> io::Result<()> {
+fn worker_site(target: &UsageTarget, turn_id: Option<u64>) -> CallSite {
+    CallSite::Worker {
+        worker_id: target.worker.clone(),
+        turn_id,
+    }
+}
+
+fn record_session(target: &UsageTarget, session: &UsageSession, site: CallSite) -> io::Result<()> {
     let mut lines = read_or_empty(session.transcript)?;
     lines.push('\n');
     lines.push_str(&subagent_lines(&subagents_dir(session.transcript))?);
@@ -74,13 +77,9 @@ fn record_session(
     let found = transcript_usage(&lines, &seen);
     let at = chrono::Utc::now().to_rfc3339();
     for row in &found.rows {
-        let kind = CallSite::Worker {
-            worker_id: target.worker.clone(),
-            turn_id,
-        };
         let session_id = Some(session.session_id.to_string());
         let harness = session.harness.as_str();
-        let usage = worker_usage_record(kind, at.clone(), session_id, harness, row)
+        let usage = worker_usage_record(site.clone(), at.clone(), session_id, harness, row)
             .with_store(
                 target
                     .store
@@ -115,8 +114,18 @@ pub fn record_or_warn(target: &UsageTarget, payload: &str, turn_id: Option<u64>)
 
 pub fn record_session_or_warn(target: &UsageTarget, session: &UsageSession) {
     warn_if_err(
-        record_session(target, session, None),
+        record_session(target, session, worker_site(target, None)),
         "Failed to record worker usage",
+    );
+}
+
+pub fn record_verify_session_or_warn(target: &UsageTarget, session: &UsageSession) {
+    let site = CallSite::Verify {
+        worker_id: target.worker.clone(),
+    };
+    warn_if_err(
+        record_session(target, session, site),
+        "Failed to record verify usage",
     );
 }
 
@@ -170,6 +179,33 @@ mod tests {
 m2
 "
         );
+    }
+
+    #[test]
+    fn a_verify_session_appends_a_verify_row_for_the_claude_harness() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("s1.jsonl");
+        fs::write(&transcript, assistant("m1", "opus", r#""end_turn""#)).unwrap();
+        let target = UsageTarget {
+            worker: "verify".into(),
+            seen: dir.path().join("verify.usage-seen"),
+            store: None,
+            usage: dir.path().join("usage.jsonl"),
+        };
+        let session = UsageSession {
+            session_id: "s1",
+            transcript: &transcript,
+            harness: HarnessId::Claude,
+        };
+        record_verify_session_or_warn(&target, &session);
+        let written = fs::read_to_string(&target.usage).unwrap_or_default();
+        assert_eq!(written.lines().count(), 1);
+        let row: serde_json::Value = serde_json::from_str(written.trim()).unwrap();
+        assert_eq!(row["kind"], "verify");
+        assert_eq!(row["harness"], "claude");
+        assert_eq!(row["session_id"], "s1");
+        assert_eq!(row["model"], "opus");
+        assert!(row["store"].is_null());
     }
 
     #[test]

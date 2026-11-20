@@ -6,15 +6,18 @@ use crate::config::AppConfig;
 use crate::subprocess::timed_output;
 use crate::transport::stdio::{spawn_piped, stop_child};
 use crate::watches::locked;
+use crate::worker_usage::{record_verify_session_or_warn, UsageSession, UsageTarget};
 use crate::worker_verify::{step, version_probe, Budget, Checks};
-use ralph_core::claude_leftovers::{configured_dir, CLAUDE_CONFIG_DIR_ENV};
+use ralph_core::claude_leftovers::{
+    claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
+};
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, argv_check, cancel_check, claude_args, claude_mcp_config,
     claude_probed_version, claude_verify_spawns, fold_claude_line, init_check, mcp_check,
     new_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeArgs,
-    ClaudeFold, ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode, PermissionSetup,
-    StderrRead, CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED,
+    ClaudeFold, ClaudePlan, ClaudeSession, ClaudeSpawn, HarnessId, InboxFile, PermissionMode,
+    PermissionSetup, StderrRead, CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED,
     CLAUDE_PERMISSION_PROMPT, CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::fs;
@@ -243,13 +246,13 @@ fn claude_command(args: &[String], dir: &Path, config: &Result<AppConfig, String
 }
 
 pub(crate) fn verify(
-    live: bool,
+    live: Option<&Path>,
     dir: &Path,
     checks: &Checks,
     config: &Result<AppConfig, String>,
     model: Option<&str>,
 ) -> Option<String> {
-    let budget = Budget::new(live);
+    let budget = Budget::new(live.is_some());
     let probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -269,8 +272,9 @@ pub(crate) fn verify(
         config,
         model,
         budget,
+        ledger: live,
     };
-    for spawn in claude_verify_spawns(live) {
+    for spawn in claude_verify_spawns(live.is_some()) {
         if !budget.allows(checks, spawn_name(*spawn)) {
             break;
         }
@@ -293,6 +297,34 @@ struct SpawnScope<'a> {
     config: &'a Result<AppConfig, String>,
     model: Option<&'a str>,
     budget: Budget,
+    ledger: Option<&'a Path>,
+}
+
+fn record_usage(scope: &SpawnScope, ledger: &Path, session: &str) {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let inherited = std::env::var_os(CLAUDE_CONFIG_DIR_ENV).map(PathBuf::from);
+    let config_dir = scope
+        .config
+        .as_ref()
+        .ok()
+        .and_then(|config| config.claude.config_dir.as_deref());
+    let claude_dir = spawned_claude_dir(config_dir, inherited.as_deref(), &home, scope.dir);
+    let cwd = scope.dir.canonicalize().unwrap_or(scope.dir.to_path_buf());
+    let transcript = claude_transcript_path(&claude_dir, &cwd.to_string_lossy(), session);
+    let target = UsageTarget {
+        worker: VERIFY_ID.to_string(),
+        seen: scope.dir.join("usage-seen"),
+        store: None,
+        usage: ledger.to_path_buf(),
+    };
+    let session = UsageSession {
+        session_id: session,
+        transcript: &transcript,
+        harness: HarnessId::Claude,
+    };
+    record_verify_session_or_warn(&target, &session);
 }
 
 fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
@@ -301,6 +333,7 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
         config,
         model,
         budget,
+        ledger,
     } = *scope;
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
         let exe = std::env::current_exe()
@@ -344,6 +377,9 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
         }
     }
     stop_child(&mut child);
+    if let (ClaudeSpawn::Turns, Some(ledger)) = (kind, ledger) {
+        record_usage(scope, ledger, &session);
+    }
     true
 }
 

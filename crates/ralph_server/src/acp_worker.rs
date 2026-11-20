@@ -65,7 +65,7 @@ mod turns;
 mod verify;
 
 use crate::permission_queue::{host_process_token, PermissionQueue};
-pub(crate) use agy_verify::verify as verify_agy;
+pub(crate) use agy_verify::{verify as verify_agy, LiveRun};
 use cursor_worker::CursorWorker;
 use permissions::{Permissions, RawPermissionRequest};
 use print::PrintWorker;

@@ -3,7 +3,8 @@ use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{CancelNotification, PromptResponse, StopReason};
 use ralph_core::worker::{reported_path, Report};
 use serde_json::Value;
-use std::path::Path;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const ID: &str = "verify";
@@ -35,11 +36,16 @@ fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
 }
 
 fn usage(text: &str, session: &str, model: &str, total: u64) -> Result<String, String> {
-    let rows: Vec<Value> = text
+    let rows = text
         .lines()
         .map(serde_json::from_str)
-        .collect::<Result<_, _>>()
-        .map_err(|error| format!("invalid usage ledger: {error}"))?;
+        .collect::<Result<Vec<Value>, _>>()
+        .map_err(|error| format!("invalid usage ledger: {error}"))
+        .map(|rows: Vec<Value>| {
+            rows.into_iter()
+                .filter(|row| row["session_id"] == session)
+                .collect::<Vec<_>>()
+        })?;
     let tokens = |row: &Value| {
         [
             "input_tokens",
@@ -60,6 +66,41 @@ fn usage(text: &str, session: &str, model: &str, total: u64) -> Result<String, S
             rows.len()
         ))
     }
+}
+
+fn record_usage(
+    ledger: &Path,
+    session: &str,
+    model: &str,
+    response: &PromptResponse,
+) -> Result<String, String> {
+    let target = agy_usage::Target {
+        worker: ID,
+        session,
+        model,
+        store: None,
+        turn_id: None,
+    };
+    let total = response
+        .usage
+        .as_ref()
+        .map_or(0, |usage| usage.total_tokens);
+    let offset = fs::metadata(ledger).map_or(0, |meta| meta.len());
+    agy_usage::record_verify(ledger, &target, response)
+        .map_err(|error| format!("could not record verify usage: {error}"))
+        .and_then(|()| {
+            appended_since(ledger, offset)
+                .map_err(|error| format!("could not read verify usage: {error}"))
+        })
+        .and_then(|text| usage(&text, session, model, total))
+}
+
+fn appended_since(ledger: &Path, offset: u64) -> std::io::Result<String> {
+    let mut file = fs::File::open(ledger)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    Ok(text)
 }
 
 fn yolo_check(
@@ -200,6 +241,7 @@ pub(super) struct Live {
     pub(super) updates: agy_settings::Updates,
     pub(super) allow_report: Arc<AtomicBool>,
     pub(super) requests: Arc<AtomicUsize>,
+    pub(super) ledger: PathBuf,
     pub(super) signals: queue::UnboundedReceiver<()>,
 }
 
@@ -209,6 +251,7 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
         updates,
         allow_report,
         requests,
+        ledger,
         mut signals,
     } = live;
     let Some(opening) = step(checks, "live setup", prepare(dir, mode, updates), |_| {
@@ -250,26 +293,7 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
             .map_err(|error| format!("could not read verify inbox: {error}"))
             .and_then(|items| report(&items, reported_path(dir, ID).is_file()));
         report_then_usage(checks, delivered, || {
-            let session = id.to_string();
-            let path = dir.join("usage.jsonl");
-            let target = agy_usage::Target {
-                worker: ID,
-                session: &session,
-                model: &selected.model,
-                store: Some(dir),
-                turn_id: None,
-            };
-            let total = response
-                .usage
-                .as_ref()
-                .map_or(0, |usage| usage.total_tokens);
-            agy_usage::record(&path, &target, &response)
-                .map_err(|error| format!("could not record verify usage: {error}"))
-                .and_then(|()| {
-                    fs::read_to_string(&path)
-                        .map_err(|error| format!("could not read verify usage: {error}"))
-                })
-                .and_then(|text| usage(&text, &session, &selected.model, total))
+            record_usage(&ledger, &id.to_string(), &selected.model, &response)
         })
     } else {
         false
@@ -437,9 +461,40 @@ mod tests {
     }
 
     #[test]
+    fn the_verify_row_is_marked_verify_in_the_ledger() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("usage.jsonl");
+        let response = serde_json::from_value(
+            json!({"stopReason":"end_turn", "usage":{"inputTokens":8,"outputTokens":2,"totalTokens":10}}),
+        )?;
+        record_usage(&path, "s", "m", &response)?;
+        let text = fs::read_to_string(path)?;
+        assert!(text.contains(r#""kind":"verify""#), "{text}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_bad_line_before_the_run_does_not_fail_the_check() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("usage.jsonl");
+        fs::write(&path, "not json\n")?;
+        let response = serde_json::from_value(
+            json!({"stopReason":"end_turn", "usage":{"inputTokens":8,"outputTokens":2,"totalTokens":10}}),
+        )?;
+        let result = record_usage(&path, "s", "m", &response);
+        assert!(result.is_ok(), "{result:?}");
+        Ok(())
+    }
+
+    #[test]
     fn usage_requires_one_exact_unpriced_row() {
         let row = json!({"worker_id": ID, "session_id": "s", "model": "m", "harness": "agy", "cost_usd": null, "input_tokens": 8, "output_tokens": 2, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0});
         assert!(usage(&row.to_string(), "s", "m", 10).is_ok());
+        let mut other = row.clone();
+        other["session_id"] = json!("other");
+        assert!(usage(&format!("{other}\n{row}"), "s", "m", 10).is_ok());
+        assert!(usage(&other.to_string(), "s", "m", 10).is_err());
         assert!(usage("", "s", "m", 10).is_err());
         assert!(usage(&format!("{row}\n{row}"), "s", "m", 10).is_err());
         for (key, value) in [

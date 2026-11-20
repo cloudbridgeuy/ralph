@@ -76,40 +76,61 @@ impl CodexUsage {
         bound.active = true;
     }
 
+    fn drain(&self) -> (String, Vec<ModelUsage>) {
+        let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+        bound.active = false;
+        (bound.thread.clone(), bound.turn.take())
+    }
+
     pub fn flush(&self, turn_id: Option<u64>) {
-        let (thread, rows) = {
-            let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
-            bound.active = false;
-            (bound.thread.clone(), bound.turn.take())
-        };
+        let (thread, rows) = self.drain();
         warn_if_err(
-            self.append(&thread, &rows, turn_id, &usage_path()),
+            self.append(&thread, &rows, self.worker_site(turn_id), &usage_path()),
             "Failed to record codex worker usage",
         );
+    }
+
+    pub fn flush_verify(&self, ledger: &Path) {
+        let (thread, rows) = self.drain();
+        let site = CallSite::Verify {
+            worker_id: self.worker.clone(),
+        };
+        warn_if_err(
+            self.append(&thread, &rows, site, ledger),
+            "Failed to record codex verify usage",
+        );
+    }
+
+    fn worker_site(&self, turn_id: Option<u64>) -> CallSite {
+        CallSite::Worker {
+            worker_id: self.worker.clone(),
+            turn_id,
+        }
     }
 
     fn append(
         &self,
         thread: &str,
         rows: &[ModelUsage],
-        turn_id: Option<u64>,
+        site: CallSite,
         usage_file: &Path,
     ) -> io::Result<()> {
         let at = chrono::Utc::now().to_rfc3339();
         for row in rows {
-            let kind = CallSite::Worker {
-                worker_id: self.worker.clone(),
-                turn_id,
-            };
-            let usage =
-                worker_usage_record(kind, at.clone(), Some(thread.to_string()), HARNESS, row)
-                    .with_per_thread_usage()
-                    .with_store(
-                        self.store
-                            .as_ref()
-                            .map(|store| store.to_string_lossy().into_owned()),
-                    )
-                    .with_ticket(ledger::worker_ticket(self.store.as_deref(), &self.worker));
+            let usage = worker_usage_record(
+                site.clone(),
+                at.clone(),
+                Some(thread.to_string()),
+                HARNESS,
+                row,
+            )
+            .with_per_thread_usage()
+            .with_store(
+                self.store
+                    .as_ref()
+                    .map(|store| store.to_string_lossy().into_owned()),
+            )
+            .with_ticket(ledger::worker_ticket(self.store.as_deref(), &self.worker));
             ledger::record(usage_file, &usage)?;
         }
         Ok(())
@@ -129,7 +150,9 @@ mod tests {
         let params = serde_json::json!({"turnId": "u", "tokenUsage": {"last": {"inputTokens": 9, "cachedInputTokens": 4, "outputTokens": 2}, "total": {"inputTokens": 9, "cachedInputTokens": 4, "outputTokens": 2}}});
         usage.observe("thread/tokenUsage/updated", &params, true);
         let rows = usage.bound.lock().unwrap().turn.take();
-        usage.append("th1", &rows, Some(3), &file).unwrap();
+        usage
+            .append("th1", &rows, usage.worker_site(Some(3)), &file)
+            .unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         let row: Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(row["kind"], "worker");
@@ -140,6 +163,31 @@ mod tests {
         assert_eq!(row["turn_id"], 3);
         assert_eq!(row["per_thread_usage"], true);
         assert!(usage.bound.lock().unwrap().turn.take().is_empty());
+    }
+
+    #[test]
+    fn a_verify_flush_appends_one_verify_row_to_the_given_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("usage.jsonl");
+        let usage = CodexUsage::new("verify", None);
+        usage.bind("th1", Some("gpt".into()));
+        usage.start_turn();
+        usage.observe(
+            "thread/tokenUsage/updated",
+            &usage_params("th1", 7, 7),
+            true,
+        );
+        usage.flush_verify(&file);
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        assert_eq!(text.lines().count(), 1);
+        let row: Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(row["kind"], "verify");
+        assert_eq!(row["harness"], "codex");
+        assert_eq!(row["session_id"], "th1");
+        assert_eq!(row["model"], "gpt");
+        assert_eq!(row["input_tokens"], 7);
+        assert!(row["cost_usd"].is_null());
+        assert!(row["store"].is_null());
     }
 
     fn usage_params(thread: &str, input: u64, total: u64) -> Value {
@@ -264,7 +312,9 @@ mod tests {
             true,
         );
         let rows = usage.bound.lock().unwrap().turn.take();
-        usage.append("parent", &rows, None, &file).unwrap();
+        usage
+            .append("parent", &rows, usage.worker_site(None), &file)
+            .unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         let row: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
         assert_eq!(row["ticket"], "GUZ-9");

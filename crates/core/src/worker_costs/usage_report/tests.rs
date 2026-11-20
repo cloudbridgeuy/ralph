@@ -152,6 +152,37 @@ fn filters_narrow_by_store_harness_model_kind_and_ticket() {
 }
 
 #[test]
+fn an_unpriced_verify_row_is_its_own_role_and_shows_no_price() {
+    let row = with(
+        with(
+            row("verify", "2026-11-05T10:00:00Z"),
+            "harness",
+            json!("agy"),
+        ),
+        "cost_usd",
+        Value::Null,
+    );
+    let report = grouped(
+        Dim::Kind,
+        std::slice::from_ref(&row),
+        &[],
+        &Filter::default(),
+    );
+    assert_eq!(keys(&report), ["verify"]);
+    assert_eq!(report.groups[0].line(), "verify: no price");
+    let only = Filter {
+        kind: Some("verify".into()),
+        ..Filter::default()
+    };
+    assert_eq!(
+        grouped(Dim::Kind, std::slice::from_ref(&row), &[], &only)
+            .total
+            .metered,
+        1
+    );
+}
+
+#[test]
 fn groups_by_every_dimension() {
     let at = "2026-11-05T10:00:00Z";
     let rows = [
