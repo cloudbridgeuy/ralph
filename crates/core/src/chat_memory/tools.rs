@@ -65,7 +65,7 @@ fn memory_tool_definitions() -> Value {
     json!([
         {
             "name": "zoom",
-            "description": "Open one node of the chat memory. A block id like 4-7 shows its two halves; a single index like 5 shows the raw message. Copy ids from the memory view. In a thread, its own ids carry the thread name (auth:4-7); ids without a prefix are the main chat before the fork. Tagged leaf lines show [rule], [approval] or [decision] after the role; marks can join, as [rule,decision]. summary lines show none.",
+            "description": "Open one node of the chat memory. A block id like 4-7 shows its two halves; a single index like 5 shows the raw message. Copy ids from the memory view. In a thread, its own ids carry the thread name (auth:4-7); ids without a prefix are the main chat before the fork. Tagged leaf lines show [rule], [approval] or [decision] after the role; marks can join, as [rule,decision]. Summary lines show none.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -272,7 +272,7 @@ mod tests {
                 assert!(description.contains(mark), "{name} lacks {mark}");
             }
             assert_eq!(
-                description.contains("summary lines show none"),
+                description.contains("Summary lines show none"),
                 name == "zoom",
                 "{name} summary phrase"
             );
