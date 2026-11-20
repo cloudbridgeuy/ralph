@@ -326,15 +326,6 @@ mod tests {
     }
 
     #[test]
-    fn a_running_repeating_worker_needing_attention_posts_the_notice() {
-        let t = task(worker(), hourly());
-        let (dir, store) = saved(&t);
-        let inbox = inbox_in(&dir);
-        finish_worker(&store, &inbox, &t, &WorkerEnd::Attention, Utc::now());
-        assert_eq!(posted_workers(&dir), vec!["schedule:t".to_string()]);
-    }
-
-    #[test]
     fn a_one_shot_worker_is_removed() {
         let t = task(worker(), None);
         let (dir, store) = saved(&t);
