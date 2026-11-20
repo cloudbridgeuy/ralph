@@ -219,7 +219,7 @@ Every Cursor, opencode and Codex cell of the capability matrix (`Capabilities::s
 
 ### Cursor probe (cursor-agent 2026.10.14, 2026-10-22)
 
-Usage: Cursor ACP workers write no usage rows. The ACP SDK exposes prompt-response usage; the agy adapter records it as described above. Cursor print workers record usable result usage as described in [Cursor print mode](#cursor-print-mode).
+Usage: Cursor ACP workers write no usage rows. The ACP SDK exposes prompt-response usage; the agy adapter records it as described above. Cursor `session/prompt` results carry no `usage` and no session update carries tokens (measured: 12 local cursor ACP logs, about 25 prompt results, 2026-10-21 to 2026-11-03, every result `{"stopReason":"end_turn"}`), so `ralph worker verify cursor --live` records no row. Real cursor workers run print mode and record usable result usage from the `result` line as described in [Cursor print mode](#cursor-print-mode).
 
 | Feature | Matrix value | Tag | Probe note |
 | --- | --- | --- | --- |
