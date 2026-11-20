@@ -162,3 +162,19 @@ fn private_use_markers_in_input_are_stripped() {
     let text = "a\u{E000}b\u{E005}c\u{E00A}d";
     assert_eq!(render(text, 80, &on(), true, false), "abcd\n");
 }
+
+#[test]
+fn pills_with_diffstat_or_memory_ref_detail_are_painted_whole() {
+    for (text, shown) in [
+        ("[[Done +3 tests]]", "Done +3 tests"),
+        ("[[Failed -2 files]]", "Failed -2 files"),
+        ("[[Done #303]]", "Done #303"),
+    ] {
+        let out = render(text, 80, &on(), true, false);
+        let want = format!("{NB}{}{NB}", shown.replace(' ', &NB.to_string()));
+        assert!(visible(&out).contains(&want), "{out:?}");
+        assert!(out.contains("\x1b[1m"), "{out:?}");
+        assert!(out.ends_with("\x1b[22m\x1b[39m\x1b[49m\n"), "{out:?}");
+        assert_eq!(out.matches("\x1b[39m").count(), 1, "{out:?}");
+    }
+}

@@ -1,7 +1,8 @@
 use super::link::{code_span_end, is_table_or_heading_line};
 use super::marker::{
-    MARKERS, MARK_ACCENT, MARK_BAD, MARK_BORDER, MARK_DONE, MARK_END, PILL_ACCENT, PILL_BAD,
-    PILL_END, PILL_INFO, PILL_OK, PILL_WARN,
+    ADD_START, DEL_START, DIFF_END, MARKERS, MARK_ACCENT, MARK_BAD, MARK_BORDER, MARK_DONE,
+    MARK_END, MEMORY_END, MEMORY_START, PILL_ACCENT, PILL_BAD, PILL_END, PILL_INFO, PILL_OK,
+    PILL_WARN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +60,15 @@ pub const PILL_WORDS: &[PillWord] = &[
 
 const NBSP: char = '\u{00A0}';
 const MAX_INNER: usize = 32;
+const INNER_MARKERS: [char; 5] = [ADD_START, DEL_START, DIFF_END, MEMORY_START, MEMORY_END];
+
+fn inner_text(chars: &[char]) -> Vec<char> {
+    chars
+        .iter()
+        .copied()
+        .filter(|ch| !INNER_MARKERS.contains(ch))
+        .collect()
+}
 
 fn tone_marker(tone: Tone) -> char {
     match tone {
@@ -95,7 +105,7 @@ fn parse_pill(chars: &[char], open: usize) -> Option<Pill> {
         .iter()
         .position(|&ch| matches!(ch, ']' | '[' | '\n'))?;
     let close = inner_start + inner_len;
-    let inner = &chars[inner_start..close];
+    let inner = inner_text(&chars[inner_start..close]);
     let closed = chars.get(close) == Some(&']') && chars.get(close + 1) == Some(&']');
     let after = chars.get(close + 2);
     if !closed || matches!(after, Some('(' | ']')) {
@@ -123,9 +133,9 @@ fn push_pill(chars: &[char], open: usize, pill: &Pill, out: &mut String) {
     out.push(tone_marker(pill.tone));
     out.push(NBSP);
     out.extend(
-        chars[open + 2..pill.end - 2]
-            .iter()
-            .map(|&ch| if ch == ' ' { NBSP } else { ch }),
+        inner_text(&chars[open + 2..pill.end - 2])
+            .into_iter()
+            .map(|ch| if ch == ' ' { NBSP } else { ch }),
     );
     out.push(NBSP);
     out.push(PILL_END);
@@ -306,6 +316,27 @@ mod tests {
         for text in cases {
             assert_eq!(mark_pills(text), text, "{text:?}");
         }
+    }
+
+    #[test]
+    fn diffstat_and_memory_ref_inside_a_pill_still_make_a_pill() {
+        use crate::render::link::mark_links;
+        let cases = [
+            ("[[Done +3 tests]]", pill(PILL_OK, "Done +3 tests")),
+            ("[[Failed -2 files]]", pill(PILL_BAD, "Failed -2 files")),
+            ("[[Done #303]]", pill(PILL_OK, "Done #303")),
+            ("[[Done +3 -2]]", pill(PILL_OK, "Done +3 -2")),
+        ];
+        for (text, want) in cases {
+            assert_eq!(mark_pills(&mark_links(text)), want, "{text}");
+        }
+    }
+
+    #[test]
+    fn link_markers_inside_a_pill_keep_it_literal() {
+        use crate::render::link::mark_links;
+        let marked = mark_links("[[Done [a](u)]]");
+        assert!(!mark_pills(&marked).contains(PILL_OK));
     }
 
     #[test]
