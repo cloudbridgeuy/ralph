@@ -67,6 +67,32 @@ fn usage(text: &str, session: &str, model: &str, total: u64) -> Result<String, S
     }
 }
 
+fn record_usage(
+    ledger: &Path,
+    session: &str,
+    model: &str,
+    response: &PromptResponse,
+) -> Result<String, String> {
+    let target = agy_usage::Target {
+        worker: ID,
+        session,
+        model,
+        store: None,
+        turn_id: None,
+    };
+    let total = response
+        .usage
+        .as_ref()
+        .map_or(0, |usage| usage.total_tokens);
+    agy_usage::record_verify(ledger, &target, response)
+        .map_err(|error| format!("could not record verify usage: {error}"))
+        .and_then(|()| {
+            fs::read_to_string(ledger)
+                .map_err(|error| format!("could not read verify usage: {error}"))
+        })
+        .and_then(|text| usage(&text, session, model, total))
+}
+
 fn yolo_check(
     requests: usize,
     stop: &Result<String, String>,
@@ -257,25 +283,7 @@ pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &C
             .map_err(|error| format!("could not read verify inbox: {error}"))
             .and_then(|items| report(&items, reported_path(dir, ID).is_file()));
         report_then_usage(checks, delivered, || {
-            let session = id.to_string();
-            let target = agy_usage::Target {
-                worker: ID,
-                session: &session,
-                model: &selected.model,
-                store: None,
-                turn_id: None,
-            };
-            let total = response
-                .usage
-                .as_ref()
-                .map_or(0, |usage| usage.total_tokens);
-            agy_usage::record(&ledger, &target, &response)
-                .map_err(|error| format!("could not record verify usage: {error}"))
-                .and_then(|()| {
-                    fs::read_to_string(&ledger)
-                        .map_err(|error| format!("could not read verify usage: {error}"))
-                })
-                .and_then(|text| usage(&text, &session, &selected.model, total))
+            record_usage(&ledger, &id.to_string(), &selected.model, &response)
         })
     } else {
         false
@@ -439,6 +447,19 @@ mod tests {
         };
         agy_usage::record(&path, &target, &response)?;
         assert!(usage(&fs::read_to_string(path)?, "s", "m", 10).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn the_verify_row_is_marked_verify_in_the_ledger() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("usage.jsonl");
+        let response = serde_json::from_value(
+            json!({"stopReason":"end_turn", "usage":{"inputTokens":8,"outputTokens":2,"totalTokens":10}}),
+        )?;
+        record_usage(&path, "s", "m", &response)?;
+        let text = fs::read_to_string(path)?;
+        assert!(text.contains(r#""kind":"verify""#), "{text}");
         Ok(())
     }
 

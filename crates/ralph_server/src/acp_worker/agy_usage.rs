@@ -18,6 +18,30 @@ pub(crate) fn record(
     target: &Target<'_>,
     response: &PromptResponse,
 ) -> io::Result<()> {
+    let kind = CallSite::Worker {
+        worker_id: target.worker.to_string(),
+        turn_id: target.turn_id,
+    };
+    record_as(path, target, response, kind)
+}
+
+pub(crate) fn record_verify(
+    path: &Path,
+    target: &Target<'_>,
+    response: &PromptResponse,
+) -> io::Result<()> {
+    let kind = CallSite::Verify {
+        worker_id: target.worker.to_string(),
+    };
+    record_as(path, target, response, kind)
+}
+
+fn record_as(
+    path: &Path,
+    target: &Target<'_>,
+    response: &PromptResponse,
+    kind: CallSite,
+) -> io::Result<()> {
     let Some(raw) = &response.usage else {
         return Ok(());
     };
@@ -41,10 +65,7 @@ pub(crate) fn record(
         long_prompt: false,
     };
     let row = worker_usage_record(
-        CallSite::Worker {
-            worker_id: target.worker.to_string(),
-            turn_id: target.turn_id,
-        },
+        kind,
         chrono::Utc::now().to_rfc3339(),
         Some(target.session.to_string()),
         "agy",

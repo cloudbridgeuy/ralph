@@ -35,6 +35,7 @@ pub enum Role {
     Ask,
     Subagent,
     Worker,
+    Verify,
 }
 
 impl Role {
@@ -46,6 +47,7 @@ impl Role {
             "ask" => Some(Role::Ask),
             "subagent" => Some(Role::Subagent),
             "worker" => Some(Role::Worker),
+            "verify" => Some(Role::Verify),
             _ => None,
         }
     }
@@ -58,6 +60,7 @@ impl Role {
             Role::Ask => "ask",
             Role::Subagent => "subagent",
             Role::Worker => "worker",
+            Role::Verify => "verify",
         }
     }
 }

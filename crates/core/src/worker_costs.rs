@@ -36,7 +36,7 @@ impl Source {
             "nap" | "merge" | "tag" => Some(Source::Nap),
             "ask" => Some(Source::Ask),
             "subagent" => Some(Source::Subagent),
-            "worker" => Some(Source::Worker(
+            "worker" | "verify" => Some(Source::Worker(
                 line.harness.clone().unwrap_or_else(|| UNKNOWN.to_string()),
             )),
             _ => None,
