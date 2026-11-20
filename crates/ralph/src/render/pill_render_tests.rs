@@ -158,9 +158,16 @@ fn bidi_controls_survive_the_styled_pipeline_with_emphasis_on() {
 }
 
 #[test]
-fn private_use_markers_in_input_are_stripped() {
-    let text = "a\u{E000}b\u{E005}c\u{E00A}d";
+fn noncharacter_markers_in_input_are_stripped() {
+    let text = "a\u{FDD0}b\u{FDD5}c\u{FDDA}d";
     assert_eq!(render(text, 80, &on(), true, false), "abcd\n");
+}
+
+#[test]
+fn nerd_font_glyphs_survive_the_styled_pipeline_with_emphasis_off() {
+    let text = "a\u{E000}b\u{E00A}c\u{E0B0}d";
+    let theme = MarkdownTheme::default();
+    assert_eq!(render(text, 80, &theme, true, false), format!("{text}\n"));
 }
 
 #[test]

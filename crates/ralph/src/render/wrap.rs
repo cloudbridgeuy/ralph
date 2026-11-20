@@ -199,13 +199,23 @@ mod tests {
 
     #[test]
     fn markers_take_no_columns_when_breaking() {
-        let text = "\u{E001}abcd\u{E000} ef";
+        let text = "\u{FDD1}abcd\u{FDD0} ef";
         assert_eq!(columns(text), 7);
         assert_eq!(wrap(text, 7), vec![text]);
         assert_eq!(
-            hard_cut("\u{E001}ab\u{E000}cd", 0, 3),
-            "\u{E001}ab\u{E000}c".len()
+            hard_cut("\u{FDD1}ab\u{FDD0}cd", 0, 3),
+            "\u{FDD1}ab\u{FDD0}c".len()
         );
+    }
+
+    #[test]
+    fn noncharacter_markers_report_zero_width_only_through_the_marker_check() {
+        for code in 0xFDD0..=0xFDDA {
+            let ch = char::from_u32(code).unwrap();
+            assert!(is_marker(ch));
+            assert_eq!(marker_free_width(ch), 0);
+        }
+        assert_eq!(marker_free_width('\u{E000}'), 1);
     }
 
     fn wrap(text: &str, width: usize) -> Vec<&str> {
