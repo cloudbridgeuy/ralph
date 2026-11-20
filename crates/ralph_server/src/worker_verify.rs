@@ -278,7 +278,13 @@ pub fn run(
             CODEX_REQUIRED_CHECKS,
         ),
         HarnessId::Claude => (
-            claude_worker::verify(live, dir.path(), &checks, &config, model.as_deref()),
+            claude_worker::verify(
+                live.then_some(ledger),
+                dir.path(),
+                &checks,
+                &config,
+                model.as_deref(),
+            ),
             CLAUDE_REQUIRED_CHECKS,
         ),
         HarnessId::Opencode => (
