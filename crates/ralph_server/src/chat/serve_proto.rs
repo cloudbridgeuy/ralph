@@ -21,6 +21,8 @@ pub struct Envelope<B> {
 pub enum ClientMsg {
     Send { text: String },
     SendIt { command: SendItCommand, width: u16 },
+    Hello { proto: u32 },
+    Shutdown,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -31,6 +33,17 @@ pub enum ServerMsg {
     Host(HostEvent),
     Turn(TurnEvent),
     Error { message: String },
+    Hello { proto: u32 },
+}
+
+pub fn hello_reply(proto: u32) -> ServerMsg {
+    if proto == VERSION {
+        ServerMsg::Hello { proto: VERSION }
+    } else {
+        ServerMsg::Error {
+            message: format!("Unsupported serve protocol {proto}, expected {VERSION}"),
+        }
+    }
 }
 
 pub fn encode_frame<B: Serialize>(id: u64, body: &B) -> String {
@@ -92,6 +105,7 @@ mod tests {
             ServerMsg::Error {
                 message: "m".into(),
             },
+            ServerMsg::Hello { proto: VERSION },
         ]
     }
 
@@ -109,6 +123,8 @@ mod tests {
                 command: SendItCommand::Go,
                 width: 120,
             },
+            ClientMsg::Hello { proto: VERSION },
+            ClientMsg::Shutdown,
         ]
     }
 
@@ -151,6 +167,23 @@ mod tests {
             assert_eq!(back.screen, Screen::text("hi"));
             assert!(back.started.is_none() && back.proposal.is_none());
         }
+    }
+
+    #[test]
+    fn hello_is_answered_with_the_served_version() {
+        assert!(matches!(
+            hello_reply(VERSION),
+            ServerMsg::Hello { proto } if proto == VERSION
+        ));
+    }
+
+    #[test]
+    fn hello_with_another_version_is_an_error_naming_both() {
+        let ServerMsg::Error { message } = hello_reply(VERSION + 1) else {
+            panic!("not an error");
+        };
+        assert!(message.contains(&(VERSION + 1).to_string()), "{message}");
+        assert!(message.contains("expected"), "{message}");
     }
 
     #[test]
