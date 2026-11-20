@@ -1,11 +1,18 @@
 use crate::ledger;
 use crate::warn::warn_if_err;
 use ralph_core::chat_memory::{worker_usage_record, CallSite};
-use ralph_core::worker::{parse_stop_session, subagents_dir, transcript_usage, HarnessId};
+use ralph_core::worker::{
+    parse_stop_session, subagents_dir, transcript_usage, turn_settled, HarnessId,
+};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const STOP_SETTLE_WAIT: Duration = Duration::from_secs(2);
+const STOP_SETTLE_POLL: Duration = Duration::from_millis(50);
 
 pub struct UsageTarget {
     pub worker: String,
@@ -49,6 +56,14 @@ pub struct UsageSession<'a> {
     pub harness: HarnessId,
 }
 
+fn wait_for_settled(transcript: &Path) -> io::Result<()> {
+    let started = Instant::now();
+    while !turn_settled(&read_or_empty(transcript)?) && started.elapsed() < STOP_SETTLE_WAIT {
+        thread::sleep(STOP_SETTLE_POLL);
+    }
+    Ok(())
+}
+
 fn record(target: &UsageTarget, payload: &str, site: CallSite) -> io::Result<()> {
     let session = parse_stop_session(payload).map_err(io::Error::other)?;
     let session = UsageSession {
@@ -56,6 +71,7 @@ fn record(target: &UsageTarget, payload: &str, site: CallSite) -> io::Result<()>
         transcript: &session.transcript_path,
         harness: HarnessId::ClaudeTmux,
     };
+    wait_for_settled(session.transcript)?;
     record_session(target, &session, site)
 }
 
