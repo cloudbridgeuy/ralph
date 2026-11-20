@@ -20,6 +20,14 @@ pub fn record_cursor_usage(turn: &CursorTurn, usage: &ModelUsage) {
     );
 }
 
+pub fn record_cursor_verify(
+    turn: &CursorTurn,
+    usage: &ModelUsage,
+    ledger: &Path,
+) -> io::Result<()> {
+    append(turn, usage, ledger)
+}
+
 fn append(turn: &CursorTurn, usage: &ModelUsage, usage_file: &Path) -> io::Result<()> {
     let at = chrono::Utc::now().to_rfc3339();
     let kind = CallSite::Worker {
@@ -58,6 +66,29 @@ mod tests {
         assert_eq!(row["input_tokens"], 8680);
         assert_eq!(row["session_id"], "chat-1");
         assert_eq!(row["store"], dir.path().to_string_lossy().as_ref());
+    }
+
+    #[test]
+    fn a_verify_row_is_unpriced_and_has_the_verify_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("usage.jsonl");
+        let counters =
+            json!({"inputTokens":8,"outputTokens":3,"cacheReadTokens":0,"cacheWriteTokens":0});
+        let usage = map_print_usage(&counters, "composer-2").unwrap();
+        let turn = CursorTurn {
+            worker: "verify",
+            chat: None,
+            store: None,
+            turn_id: None,
+        };
+        record_cursor_verify(&turn, &usage, &file).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        let row: Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(row["kind"], "verify");
+        assert_eq!(row["role"], "verify");
+        assert_eq!(row["harness"], "cursor");
+        assert_eq!(row["worker_id"], "verify");
+        assert!(row["cost_usd"].is_null());
     }
 
     #[test]

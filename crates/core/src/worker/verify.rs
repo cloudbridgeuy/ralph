@@ -118,6 +118,10 @@ pub const AGY_REQUIRED_CHECKS: &[&str] = &[
     "session/close reload",
 ];
 pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
+pub fn cursor_required_checks(live: bool) -> &'static [&'static str] {
+    let _ = live;
+    CURSOR_REQUIRED_CHECKS
+}
 pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
 
 pub const FREE_VERIFY_LIMIT: Duration = Duration::from_secs(90);
@@ -459,6 +463,14 @@ mod tests {
         let failure = limit_failure("session/read", Duration::ZERO, verify_limit(true)).unwrap();
         assert!(failure.detail.contains("540s"), "{}", failure.detail);
         assert_eq!(verify_limit(false), Duration::from_secs(90));
+    }
+
+    #[test]
+    fn a_live_cursor_verify_requires_the_print_prompt_and_usage() {
+        let live = cursor_required_checks(true);
+        assert!(live.contains(&"print prompt"));
+        assert!(live.contains(&"print usage"));
+        assert!(!cursor_required_checks(false).contains(&"print prompt"));
     }
 
     #[test]

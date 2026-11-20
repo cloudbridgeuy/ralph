@@ -1,4 +1,5 @@
 use super::transcript_usage::ModelUsage;
+use super::verify::CheckResult;
 use super::{Action, ThreadSignal, TurnEnd, REPORT_REMINDER, SERVER_NAME};
 use crate::chat_memory::{worker_usage_record, CallSite, LedgerRow};
 use crate::stream::result_is_error;
@@ -164,6 +165,19 @@ pub fn print_usage_record(
     usage: &ModelUsage,
 ) -> LedgerRow {
     worker_usage_record(kind, at, chat, HARNESS, usage)
+}
+
+pub struct PrintVerify {
+    pub prompt: CheckResult,
+    pub usage: Option<ModelUsage>,
+}
+
+pub fn print_verify(lines: &[String], model: &str) -> PrintVerify {
+    let _ = (lines, model);
+    PrintVerify {
+        prompt: CheckResult::fail("print prompt", "not implemented"),
+        usage: None,
+    }
 }
 
 pub fn turn_end_for(outcome: ExitOutcome, result: Option<TurnEnd>) -> TurnEnd {
