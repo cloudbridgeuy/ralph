@@ -316,14 +316,6 @@ impl MarkdownTheme {
         self.pill_style = pill_style;
         self
     }
-
-    pub fn round(&self) -> bool {
-        self.pill_style.round
-    }
-
-    pub fn icons(&self) -> bool {
-        self.pill_style.icons
-    }
 }
 
 impl Default for MarkdownTheme {
@@ -407,10 +399,10 @@ mod tests {
     #[test]
     fn markdown_theme_pill_style_defaults_off_and_is_settable() {
         let theme = MarkdownTheme::default();
-        assert!(!theme.round() && !theme.icons());
+        assert!(!theme.pill_style.round && !theme.pill_style.icons);
         let styled = theme.with_pill_style(PillStyle::resolve(true, false, true));
-        assert!(styled.round());
-        assert!(!styled.icons());
+        assert!(styled.pill_style.round);
+        assert!(!styled.pill_style.icons);
     }
 
     use super::*;
