@@ -22,6 +22,7 @@ mod marker;
 pub mod mermaid;
 pub mod mermaid_picture;
 pub(crate) mod pill;
+pub(crate) mod pill_glyph;
 #[cfg(test)]
 mod pill_render_tests;
 pub(crate) mod pill_style;

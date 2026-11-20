@@ -4,6 +4,7 @@ use super::marker::{
     MARK_END, MEMORY_END, MEMORY_START, PILL_ACCENT, PILL_BAD, PILL_BODY, PILL_END, PILL_INFO,
     PILL_OK, PILL_WARN,
 };
+use super::pill_glyph::icon_for;
 use super::pill_style::PillStyle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,19 +84,17 @@ fn tone_marker(tone: Tone) -> char {
     }
 }
 
-fn tone_of(token: &str) -> Option<Tone> {
-    PILL_WORDS
-        .iter()
-        .find(|entry| {
-            std::iter::once(&entry.word)
-                .chain(entry.synonyms)
-                .any(|word| word.eq_ignore_ascii_case(token))
-        })
-        .map(|entry| entry.tone)
+fn entry_of(token: &str) -> Option<&'static PillWord> {
+    PILL_WORDS.iter().find(|entry| {
+        std::iter::once(&entry.word)
+            .chain(entry.synonyms)
+            .any(|word| word.eq_ignore_ascii_case(token))
+    })
 }
 
 struct Pill {
     tone: Tone,
+    word: &'static str,
     end: usize,
 }
 
@@ -125,9 +124,10 @@ fn parse_pill(chars: &[char], open: usize) -> Option<Pill> {
         return None;
     }
     let text: String = inner.iter().collect();
-    let tone = tone_of(text.split_whitespace().next()?)?;
+    let entry = entry_of(text.split_whitespace().next()?)?;
     Some(Pill {
-        tone,
+        tone: entry.tone,
+        word: entry.word,
         end: close + 2,
     })
 }
@@ -139,6 +139,10 @@ fn push_pill(chars: &[char], open: usize, pill: &Pill, style: PillStyle, out: &m
         out.push(PILL_BODY);
     }
     out.push(NBSP);
+    if let Some(icon) = style.icons.then(|| icon_for(pill.word)).flatten() {
+        out.push(icon);
+        out.push(NBSP);
+    }
     out.extend(
         inner_text(&chars[open + 2..pill.end - 2])
             .into_iter()
@@ -509,6 +513,68 @@ mod tests {
     fn round_mode_leaves_marks_and_near_misses_alone() {
         assert_eq!(
             super::mark_pills("✓ [[Nope]]", round()),
+            format!("{MARK_DONE}✓{MARK_END} [[Nope]]")
+        );
+    }
+
+    fn icon_style(round: bool) -> PillStyle {
+        PillStyle { round, icons: true }
+    }
+
+    fn icon_pill(start: char, icon: char, inner: &str, round: bool) -> String {
+        let body: String = inner.replace(' ', &NB.to_string());
+        if round {
+            format!("{start}{CAP_L}{PILL_BODY}{NB}{icon}{NB}{body}{NB}{PILL_END}{CAP_R}{MARK_END}")
+        } else {
+            format!("{start}{NB}{icon}{NB}{body}{NB}{PILL_END}")
+        }
+    }
+
+    #[test]
+    fn icons_sit_between_nbsp_guards_before_the_words() {
+        let cases = [
+            ("[[Done]]", PILL_OK, '\u{F00C}', "Done"),
+            ("[[Fixed x]]", PILL_OK, '\u{F00C}', "Fixed x"),
+            ("[[Error]]", PILL_BAD, '\u{F00D}', "Error"),
+            ("[[Risk a b]]", PILL_WARN, '\u{F071}', "Risk a b"),
+            ("[[Info]]", PILL_INFO, '\u{F05A}', "Info"),
+            ("[[Question]]", PILL_INFO, '\u{F059}', "Question"),
+            ("[[Decision]]", PILL_ACCENT, '\u{F0E3}', "Decision"),
+            ("[[Next]]", PILL_ACCENT, '\u{F061}', "Next"),
+        ];
+        for (text, start, icon, inner) in cases {
+            for round in [false, true] {
+                assert_eq!(
+                    super::mark_pills(text, icon_style(round)),
+                    icon_pill(start, icon, inner, round),
+                    "{text} round={round}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn icon_pills_contain_no_plain_space() {
+        let out = super::mark_pills("[[Done 3 files]]", icon_style(true));
+        assert!(!out.contains(' '), "{out:?}");
+    }
+
+    #[test]
+    fn the_inner_limit_ignores_the_icon() {
+        let inner = format!("Done {}", "x".repeat(27));
+        let text = format!("[[{inner}]]");
+        assert_eq!(
+            super::mark_pills(&text, icon_style(false)),
+            icon_pill(PILL_OK, '\u{F00C}', &inner, false)
+        );
+        let long = format!("[[Done {}]]", "x".repeat(28));
+        assert_eq!(super::mark_pills(&long, icon_style(false)), long);
+    }
+
+    #[test]
+    fn icons_do_not_touch_marks_or_near_misses() {
+        assert_eq!(
+            super::mark_pills("✓ [[Nope]]", icon_style(true)),
             format!("{MARK_DONE}✓{MARK_END} [[Nope]]")
         );
     }

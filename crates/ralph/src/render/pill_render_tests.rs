@@ -272,3 +272,59 @@ fn a_round_pill_in_a_blockquote_adds_no_extra_background() {
     assert_eq!(out.matches("\x1b[42m").count(), 1, "{out:?}");
     assert_eq!(out.matches("\x1b[49m").count(), 1, "{out:?}");
 }
+
+fn icons_on(round: bool) -> MarkdownTheme {
+    on().with_pill_style(PillStyle { round, icons: true })
+}
+
+const DONE_ICON: char = '\u{F00C}';
+
+#[test]
+fn square_icon_pills_paint_the_icon_inside_the_body() {
+    let out = render("[[Done]]", 80, &icons_on(false), true, false);
+    assert_eq!(
+        out,
+        format!("\x1b[1m\x1b[42m\x1b[97m{NB}{DONE_ICON}{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m\n")
+    );
+}
+
+#[test]
+fn round_icon_pills_paint_caps_around_the_icon_body() {
+    let theme = icons_on(true);
+    let out = render("[[Done]]", 80, &theme, true, false);
+    let tone = crate::ansi::fg(theme.palette.pill_ok);
+    let want = format!(
+        "{tone}{CAP_L}\x1b[1m\x1b[42m\x1b[97m{NB}{DONE_ICON}{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m{tone}{CAP_R}\x1b[39m\n"
+    );
+    assert_eq!(out, want);
+}
+
+#[test]
+fn icons_flag_without_emphasis_draws_nothing() {
+    let theme = MarkdownTheme::default().with_pill_style(PillStyle {
+        round: false,
+        icons: true,
+    });
+    assert_eq!(render("[[Done]]", 80, &theme, true, false), "[[Done]]\n");
+}
+
+#[test]
+fn an_icon_pill_never_breaks_and_counts_the_icon_as_one_column() {
+    let text = "aaaa bbbb [[Done 3 files]] cccc dddd eeee\n";
+    let whole = format!("{NB}{DONE_ICON}{NB}Done{NB}3{NB}files{NB}");
+    for round in [false, true] {
+        for cols in 17..=40 {
+            let shown = visible(&render(text, cols, &icons_on(round), true, false));
+            let lines: Vec<&str> = shown.lines().collect();
+            assert_eq!(
+                lines.iter().filter(|line| line.contains(&whole)).count(),
+                1,
+                "{round} {cols}: {lines:?}"
+            );
+            for line in lines {
+                let width: usize = line.chars().map(|ch| ch.width().unwrap_or(0)).sum();
+                assert!(width <= usize::from(cols), "{round} {cols}: {line:?}");
+            }
+        }
+    }
+}
