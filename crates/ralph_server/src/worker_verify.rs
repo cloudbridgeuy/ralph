@@ -283,7 +283,7 @@ pub fn run(
         ),
         HarnessId::Opencode => (
             opencode_worker::verify(
-                live,
+                live.then_some(ledger),
                 dir.path(),
                 &checks,
                 model.as_deref().unwrap_or(DEFAULT_OPENCODE_MODEL),

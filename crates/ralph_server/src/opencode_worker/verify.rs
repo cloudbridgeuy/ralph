@@ -2,6 +2,7 @@ use super::{
     free_port, open_log, post_prompt, random_password, read_lines, Feed, Server, EVENTS_PATH,
     MESSAGE_LIMIT,
 };
+use crate::opencode_usage::{record_opencode_verify, OpencodeTurn};
 use crate::subprocess::{register_group, timed_output};
 use crate::transport::http::HttpSse;
 use crate::worker_verify::{step, version_probe, Budget, Checks};
@@ -10,8 +11,8 @@ use ralph_core::worker::{
     opencode_probed_version, opencode_serve_command, opencode_server_log, opencode_session_id,
     permission_check, permission_reply_body, permission_reply_path, prompt_check, reply_count,
     session_check, spawn_failure, start_failure, verify_session_body, CheckResult, OpencodeAction,
-    OpencodeFold, OpencodePlan, PermissionSetup, Verdict, OPENCODE_COMMAND, OPENCODE_ENDED,
-    OPENCODE_INTERRUPTED, OPENCODE_PASSWORD_ENV, VERSION_PROBE_LIMIT,
+    OpencodeFold, OpencodePlan, OpencodeTurnUsage, PermissionSetup, Verdict, OPENCODE_COMMAND,
+    OPENCODE_ENDED, OPENCODE_INTERRUPTED, OPENCODE_PASSWORD_ENV, VERSION_PROBE_LIMIT,
 };
 use std::fs;
 use std::os::unix::process::CommandExt;
@@ -78,6 +79,7 @@ fn interrupt(api: &HttpSse, id: &str) -> Result<String, String> {
 #[derive(Clone, Copy)]
 struct Scope<'a> {
     dir: &'a Path,
+    ledger: Option<&'a Path>,
     model: &'a str,
     budget: Budget,
 }
@@ -174,13 +176,32 @@ fn run_turn(
     fold
 }
 
+fn record_usage(scope: Scope, session: &str, fold: OpencodeFold) {
+    let Some(ledger) = scope.ledger else {
+        return;
+    };
+    let mut usage = OpencodeTurnUsage::new(scope.model);
+    fold.usage
+        .into_iter()
+        .for_each(|event| usage.observe(event));
+    let turn = OpencodeTurn {
+        worker: MAIN_SESSION,
+        session_id: session,
+        store: None,
+        turn_id: None,
+    };
+    record_opencode_verify(&turn, &usage.take(), ledger);
+}
+
 fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, checks: &Checks) {
     if !scope.budget.allows(checks, "prompt/reply") {
         return;
     }
     let plain = run_turn(api, feed, id, REPLY_PROMPT, OpencodePlan::Plain);
     checks.add(prompt_check(&plain.summary, OPENCODE_ENDED));
-    if plain.summary.stop.is_err() {
+    let plain_stopped = plain.summary.stop.is_err();
+    record_usage(scope, id, plain);
+    if plain_stopped {
         return;
     }
     if !scope.budget.allows(checks, "permission") {
@@ -195,6 +216,7 @@ fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, che
                 OPENCODE_ENDED,
                 &PermissionSetup::opencode(),
             ));
+            record_usage(scope, &ask_id, allowed);
             api.delete(&session_path(&ask_id)).ok();
         }
         Err(message) => checks.add(CheckResult::fail("permission", message)),
@@ -204,6 +226,7 @@ fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, che
     }
     let cancelled = run_turn(api, feed, id, CANCEL_PROMPT, OpencodePlan::Cancel);
     checks.add(cancel_check(&cancelled.summary, OPENCODE_INTERRUPTED));
+    record_usage(scope, id, cancelled);
 }
 
 fn open_events(api: &HttpSse, path: &str, limit: Duration) -> Result<Receiver<Feed>, String> {
@@ -230,7 +253,7 @@ fn open_events(api: &HttpSse, path: &str, limit: Duration) -> Result<Receiver<Fe
     }
 }
 
-fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
+fn run_checks(api: &HttpSse, scope: Scope, checks: &Checks) {
     let budget = scope.budget;
     if !budget.allows(checks, "events") {
         return;
@@ -269,7 +292,7 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
         interrupt(api, &id),
         interrupt_idle_check,
     );
-    if let Some(feed) = feed.as_ref().filter(|_| live) {
+    if let Some(feed) = feed.as_ref().filter(|_| scope.ledger.is_some()) {
         live_checks(api, feed, scope, &id, checks);
     }
     checks.add(delete_result(
@@ -279,8 +302,13 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
     ));
 }
 
-pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Option<String> {
-    let budget = Budget::new(live);
+pub(crate) fn verify(
+    live: Option<&Path>,
+    dir: &Path,
+    checks: &Checks,
+    model: &str,
+) -> Option<String> {
+    let budget = Budget::new(live.is_some());
     let probe = version_probe(timed_output(
         Command::new(OPENCODE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -303,7 +331,13 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Op
     }) else {
         return Some(version);
     };
-    run_checks(&server.api, Scope { dir, model, budget }, live, checks);
+    let scope = Scope {
+        dir,
+        ledger: live,
+        model,
+        budget,
+    };
+    run_checks(&server.api, scope, checks);
     server.snapshot();
     server.stop();
     Some(version)
@@ -317,6 +351,7 @@ mod tests {
     fn session_body_carries_the_scope_model() {
         let scope = Scope {
             dir: Path::new("/tmp/verify-dir"),
+            ledger: None,
             model: "anthropic/claude-haiku-5-5",
             budget: Budget::new(false),
         };
