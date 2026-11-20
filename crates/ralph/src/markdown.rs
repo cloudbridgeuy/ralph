@@ -86,6 +86,11 @@ pub struct Palette {
     pub done: Option<Color>,
     pub blocked: Option<Color>,
     pub waiting: Option<Color>,
+    pub pill_ok: Option<Color>,
+    pub pill_bad: Option<Color>,
+    pub pill_warn: Option<Color>,
+    pub pill_info: Option<Color>,
+    pub pill_accent: Option<Color>,
 }
 
 impl Default for Palette {
@@ -106,6 +111,11 @@ impl Default for Palette {
             done: Some(Color::DarkGreen),
             blocked: Some(Color::DarkRed),
             waiting: Some(Color::DarkYellow),
+            pill_ok: Some(Color::DarkGreen),
+            pill_bad: Some(Color::DarkRed),
+            pill_warn: Some(Color::DarkYellow),
+            pill_info: Some(Color::Blue),
+            pill_accent: Some(Color::Blue),
         }
     }
 }
@@ -130,6 +140,11 @@ impl Palette {
             "done" => Some(&mut self.done),
             "blocked" => Some(&mut self.blocked),
             "waiting" => Some(&mut self.waiting),
+            "pill_ok" => Some(&mut self.pill_ok),
+            "pill_bad" => Some(&mut self.pill_bad),
+            "pill_warn" => Some(&mut self.pill_warn),
+            "pill_info" => Some(&mut self.pill_info),
+            "pill_accent" => Some(&mut self.pill_accent),
             _ => None,
         }
     }
@@ -432,6 +447,16 @@ mod tests {
     }
 
     #[test]
+    fn pill_slots_default_to_the_status_and_link_colours() {
+        let palette = Palette::default();
+        assert_eq!(palette.pill_ok, palette.done);
+        assert_eq!(palette.pill_bad, palette.blocked);
+        assert_eq!(palette.pill_warn, palette.waiting);
+        assert_eq!(palette.pill_info, palette.link);
+        assert_eq!(palette.pill_accent, palette.link);
+    }
+
+    #[test]
     fn role_theme_sets_every_palette_slot() {
         let keys = [
             "heading1",
@@ -451,6 +476,11 @@ mod tests {
             "done",
             "blocked",
             "waiting",
+            "pill_ok",
+            "pill_bad",
+            "pill_warn",
+            "pill_info",
+            "pill_accent",
         ];
         let values: Vec<String> = (1..=keys.len()).map(|n| format!("#0000{n:02x}")).collect();
         let pairs: Vec<(&str, &str)> = keys
@@ -479,6 +509,11 @@ mod tests {
                 done: rgb(15),
                 blocked: rgb(16),
                 waiting: rgb(17),
+                pill_ok: rgb(18),
+                pill_bad: rgb(19),
+                pill_warn: rgb(20),
+                pill_info: rgb(21),
+                pill_accent: rgb(22),
             }
         );
     }
