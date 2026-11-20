@@ -1,4 +1,5 @@
-use super::{Entry, Node, Tree, Window, SUMMARY_BYTES, UNAVAILABLE_MARK};
+use super::tag::Flags;
+use super::{role_label, Entry, Node, Tree, Window, SUMMARY_BYTES, UNAVAILABLE_MARK};
 use crate::mcp::string_arg;
 use serde_json::Value;
 use std::ops::RangeInclusive;
@@ -181,6 +182,7 @@ struct Slice<'a> {
     entry: &'a Entry,
     total: usize,
     offset: usize,
+    flags: Option<&'a Flags>,
 }
 
 impl Slice<'_> {
@@ -188,7 +190,7 @@ impl Slice<'_> {
         let base = format!(
             "#{} · {} · {} · {} chars",
             self.index,
-            self.entry.role.as_str(),
+            role_label(self.entry.role, self.flags),
             self.entry.at,
             self.total
         );
@@ -316,6 +318,7 @@ pub fn read_range(window: &Window, tree: &Tree, request: &RangeRequest) -> Resul
             entry,
             total,
             offset: cursor.offset,
+            flags: window.marks.get(&cursor.next),
         };
         let remaining = total - cursor.offset;
         let whole = slice.block(&text, remaining);

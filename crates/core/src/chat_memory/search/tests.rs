@@ -3,10 +3,12 @@ use super::scan::{rank_ids, CHUNK_ENTRIES, SNIPPET_CHARS};
 use super::{parse_search_args, search_found};
 use crate::chat_memory::archive::{Archive, ByteSource};
 use crate::chat_memory::fixtures::written;
+use crate::chat_memory::Marks;
 use crate::chat_memory::{Entry, Role};
 use serde_json::{json, Value};
 use std::io;
 
+mod marks;
 mod tag_only;
 
 struct Bytes(Vec<u8>);
@@ -50,14 +52,14 @@ fn archive(entries: &[Entry]) -> Archive<Bytes> {
 
 fn run(entries: &[Entry], args: Value) -> Result<String, String> {
     let request = parse_search_args(&args)?;
-    search_found(&mut archive(entries), &request)
+    search_found(&mut archive(entries), &request, &Marks::new())
         .unwrap()
         .map(|found| found.text)
 }
 
 fn run_tagged(entries: &[Entry], args: Value, tagged: &[usize]) -> Result<String, String> {
     let request = parse_search_args(&args)?.with_tag_ids(tagged.iter().copied().collect());
-    search_found(&mut archive(entries), &request)
+    search_found(&mut archive(entries), &request, &Marks::new())
         .unwrap()
         .map(|found| found.text)
 }
@@ -220,7 +222,10 @@ fn a_rebuild_mid_search_keeps_new_entries_and_the_cursor_valid() {
     entries.extend(extra);
     archive.log_index.slots[CHUNK_ENTRIES + 10] += 1;
     let request = parse_search_args(&json!({"query": "needle", "limit": 1})).unwrap();
-    let out = search_found(&mut archive, &request).unwrap().unwrap().text;
+    let out = search_found(&mut archive, &request, &Marks::new())
+        .unwrap()
+        .unwrap()
+        .text;
     assert_eq!(ids(&out), [entries.len() - 1]);
     let cursor = cursor_of(&out).unwrap();
     assert!(cursor.contains(&format!(".{}.", entries.len())));
@@ -300,7 +305,10 @@ fn corrupt_placeholders_keep_their_ids_and_never_match() {
     let mut archive =
         Archive::open(Bytes(log.into_bytes()), None, Bytes(Vec::new()), None).unwrap();
     let request = parse_search_args(&json!({"query": "corrupt entry needle"})).unwrap();
-    let out = search_found(&mut archive, &request).unwrap().unwrap().text;
+    let out = search_found(&mut archive, &request, &Marks::new())
+        .unwrap()
+        .unwrap()
+        .text;
     assert_eq!(ids(&out), [0, 2]);
 }
 

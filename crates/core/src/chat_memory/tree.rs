@@ -1,7 +1,8 @@
 use super::lookup::date_of;
 use super::nap::fallback_summary;
 use super::notice::{merge_notices, Shown};
-use super::{Entry, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
+use super::tag::Flags;
+use super::{role_label, Entry, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
 use crate::chat::{OLDER_VIEW_STEP, TAIL_STEP};
 
 fn cover_at(t: usize, alpha: f64) -> Vec<(usize, usize)> {
@@ -96,8 +97,8 @@ pub(super) fn collapse(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub(super) fn entry_line(i: usize, entry: &Entry, body: &str) -> String {
-    format!("#{i} {} {} {body}", entry.role.as_str(), entry.at)
+pub(super) fn entry_line(i: usize, entry: &Entry, body: &str, flags: Option<&Flags>) -> String {
+    format!("#{i} {} {} {body}", role_label(entry.role, flags), entry.at)
 }
 
 fn view_leaf(i: usize, entry: &Entry, body: &str) -> Shown {
@@ -115,8 +116,13 @@ fn leaf_body(i: usize, entry: &Entry, tree: &Tree) -> Option<String> {
     }
 }
 
-pub(super) fn leaf_line(i: usize, entry: &Entry, tree: &Tree) -> Option<String> {
-    leaf_body(i, entry, tree).map(|body| entry_line(i, entry, &body))
+pub(super) fn leaf_line(
+    i: usize,
+    entry: &Entry,
+    tree: &Tree,
+    flags: Option<&Flags>,
+) -> Option<String> {
+    leaf_body(i, entry, tree).map(|body| entry_line(i, entry, &body, flags))
 }
 
 pub(super) fn block_line(tree: &Tree, node: Node) -> Option<String> {
@@ -125,7 +131,7 @@ pub(super) fn block_line(tree: &Tree, node: Node) -> Option<String> {
 
 pub(super) fn node_line(entries: &[Entry], tree: &Tree, node: Node) -> Option<String> {
     if node.size() == 1 {
-        leaf_line(node.lo, &entries[node.lo], tree)
+        leaf_line(node.lo, &entries[node.lo], tree, None)
     } else {
         block_line(tree, node)
     }

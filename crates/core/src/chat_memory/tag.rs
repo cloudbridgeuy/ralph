@@ -27,6 +27,27 @@ pub struct Flags {
     pub approval: bool,
 }
 
+pub type Marks = BTreeMap<usize, Flags>;
+
+pub fn mark_of(flags: &Flags) -> Option<String> {
+    let labels: Vec<&str> = [
+        (flags.rule, "rule"),
+        (flags.approval, "approval"),
+        (flags.decision, "decision"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    (!labels.is_empty()).then(|| format!("[{}]", labels.join(",")))
+}
+
+pub fn role_label(role: Role, flags: Option<&Flags>) -> String {
+    match flags.and_then(mark_of) {
+        Some(mark) => format!("{} {mark}", role.as_str()),
+        None => role.as_str().to_string(),
+    }
+}
+
 pub fn restrict_decision(role: Role, text: &str, flags: Flags) -> Flags {
     Flags {
         decision: flags.decision && role == Role::User && !is_local_record(text),

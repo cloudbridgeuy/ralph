@@ -74,7 +74,7 @@ pub fn nap_source(entries: &[Entry], tree: &Tree, node: Node) -> Result<String, 
     }
     if node.size() == 1 {
         let entry = &entries[node.lo];
-        return Ok(entry_line(node.lo, entry, &entry.text));
+        return Ok(entry_line(node.lo, entry, &entry.text, None));
     }
     let (left, right) = node.halves();
     Ok([left, right]

@@ -1,7 +1,7 @@
 use super::{Reach, Store, RECALL_CHUNK_ENTRIES};
 use ralph_core::chat_memory::{
     cover_candidates, cover_size, found_metrics, read_metrics, recall_found, search_found,
-    zoom_metrics, Archive, ByteSource, CallMetrics, Found, NodeSource, Tool,
+    zoom_metrics, Archive, ByteSource, CallMetrics, Found, Marks, NodeSource, Tool,
 };
 use ralph_core::chat_thread::{label_item, label_lines, ThreadName};
 
@@ -46,16 +46,17 @@ impl Store {
             Some(name) => label_lines(&text, name),
             None => text,
         };
+        let marks = Marks::new();
         let result = self.with_archive(|archive| {
             if let Some(end) = reach.limit {
                 archive.limit_to(end);
             }
             Ok(match tool {
-                Tool::Zoom(node) => archive.zoom(*node)?.map(|items| Answer {
+                Tool::Zoom(node) => archive.zoom(*node, &marks)?.map(|items| Answer {
                     text: items.iter().map(item).collect::<Vec<_>>().join("\n"),
                     facts: zoom_metrics(*node),
                 }),
-                Tool::Read(request) => archive.read(request)?.map(|mut page| {
+                Tool::Read(request) => archive.read(request, &marks)?.map(|mut page| {
                     page.blocks = page.blocks.iter().map(item).collect();
                     Answer {
                         text: page.render(),
@@ -67,12 +68,12 @@ impl Store {
                     archive.scan_entries(RECALL_CHUNK_ENTRIES, |_, entry| {
                         entries.push(entry.clone())
                     })?;
-                    recall_found(&entries, pattern)
+                    recall_found(&entries, pattern, &marks)
                         .map(|found| lookup_answer(archive, found, reach.label, lines))
                 }
                 Tool::Search(request) => {
                     let request = super::super::tag_store::with_tags(&self.dir, request)?;
-                    search_found(archive, &request)?
+                    search_found(archive, &request, &marks)?
                         .map(|found| lookup_answer(archive, found, reach.label, lines))
                 }
             })

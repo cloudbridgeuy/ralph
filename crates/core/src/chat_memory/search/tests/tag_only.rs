@@ -1,7 +1,7 @@
 use super::{at, cursor_of, ids, run_tagged, timed, user, Bytes};
 use crate::chat_memory::fixtures::written;
 use crate::chat_memory::search::{parse_search_args, search_found};
-use crate::chat_memory::{Archive, Role};
+use crate::chat_memory::{Archive, Marks, Role};
 use serde_json::json;
 
 const NOTICE: &str =
@@ -159,7 +159,10 @@ fn corrupt_entries_are_skipped() {
     let request = parse_search_args(&json!({"tag": "rule"}))
         .unwrap()
         .with_tag_ids([0, 1, 2].into_iter().collect());
-    let out = search_found(&mut archive, &request).unwrap().unwrap().text;
+    let out = search_found(&mut archive, &request, &Marks::new())
+        .unwrap()
+        .unwrap()
+        .text;
     assert_eq!(ids(&out), [2, 0]);
 }
 
