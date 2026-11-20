@@ -230,7 +230,7 @@ pub(super) fn passes(request: &SearchRequest, id: usize, entry: &Entry) -> bool 
     if request.role.is_some_and(|role| role != entry.role) {
         return false;
     }
-    if request.tag == Some(Label::Decision) && entry.role != Role::User {
+    if request.tag.is_some_and(|label| !label.admits(entry.role)) {
         return false;
     }
     if request.tag.is_some()

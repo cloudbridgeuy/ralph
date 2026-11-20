@@ -27,6 +27,15 @@ pub struct Flags {
     pub approval: bool,
 }
 
+impl Flags {
+    pub fn effective(self, role: Role) -> Flags {
+        Flags {
+            decision: self.decision && Label::Decision.admits(role),
+            ..self
+        }
+    }
+}
+
 pub type Marks = BTreeMap<usize, Flags>;
 
 pub fn mark_of(flags: &Flags) -> Option<String> {
@@ -42,7 +51,7 @@ pub fn mark_of(flags: &Flags) -> Option<String> {
 }
 
 pub fn role_label(role: Role, flags: Option<&Flags>) -> String {
-    match flags.and_then(mark_of) {
+    match flags.and_then(|flags| mark_of(&flags.effective(role))) {
         Some(mark) => format!("{} {mark}", role.as_str()),
         None => role.as_str().to_string(),
     }
@@ -81,6 +90,10 @@ impl Label {
             Label::Decision => "decision",
             Label::Approval => "approval",
         }
+    }
+
+    pub fn admits(self, role: Role) -> bool {
+        self != Label::Decision || role == Role::User
     }
 
     fn set_in(self, flags: Flags) -> bool {

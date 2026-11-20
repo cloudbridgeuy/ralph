@@ -71,6 +71,33 @@ fn role_label_appends_the_mark() {
 }
 
 #[test]
+fn non_user_roles_never_show_the_decision_mark() {
+    for role in [Role::Assistant, Role::Worker] {
+        assert_eq!(
+            role_label(role, Some(&flags(true, true, false))),
+            format!("{} [rule]", role.as_str())
+        );
+        assert_eq!(
+            role_label(role, Some(&flags(false, true, false))),
+            role.as_str()
+        );
+    }
+    assert_eq!(
+        role_label(Role::User, Some(&flags(true, true, false))),
+        "user [rule,decision]"
+    );
+}
+
+#[test]
+fn effective_flags_clear_decision_off_the_user_role() {
+    let all = flags(true, true, true);
+    assert_eq!(all.effective(Role::User), all);
+    for role in [Role::Assistant, Role::Worker] {
+        assert_eq!(all.effective(role), flags(true, false, true));
+    }
+}
+
+#[test]
 fn entry_line_marks_the_role() {
     let e = entry(0, 5);
     assert_eq!(
