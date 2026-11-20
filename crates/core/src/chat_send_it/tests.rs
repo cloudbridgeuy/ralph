@@ -21,6 +21,7 @@ mod verify_limits;
 mod verify_mode;
 mod verify_tick;
 mod warnings;
+mod wire;
 
 fn limits() -> Limits {
     Limits {

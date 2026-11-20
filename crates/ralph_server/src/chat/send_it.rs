@@ -13,6 +13,7 @@ use ralph_core::chat_send_it::{
     render_status_styled, start_run, stop_file, tick, with_reply, write_run, Action, Driving,
     Ended, Limits, RunFile, Seen, StepResult, Ticked,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
 use std::fs;
@@ -339,7 +340,7 @@ impl SendIt {
 pub const NOT_PROPOSED: &str =
     "No new run plan was stored. Try /send-it again with clearer instructions.";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Screen {
     pub text: String,
     pub styled: String,

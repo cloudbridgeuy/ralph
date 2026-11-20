@@ -42,6 +42,8 @@ pub struct SocketResponse {
     pub is_error: bool,
 }
 
+pub const MAX_FRAME_BYTES: usize = 1 << 20;
+
 pub fn encode_line<T: Serialize>(message: &T) -> String {
     format!("{}\n", json!(message))
 }
