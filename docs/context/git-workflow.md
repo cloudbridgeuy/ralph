@@ -165,8 +165,6 @@ Work follows a two-phase workflow.
 4. Implement the feature
 5. Run `cargo xtask lint` to verify
 
-The xtask test run clears GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and GIT_PREFIX, so tests that spawn git cannot change the repo that runs the pre-commit hook.
-
 ### Phase 2: Commit
 
 1. Update documentation per Progressive Disclosure:

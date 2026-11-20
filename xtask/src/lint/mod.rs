@@ -277,7 +277,14 @@ async fn run_cargo_clippy(global: &crate::Global) -> Result<bool> {
     }
 }
 
-const GIT_ENV_SCRUBBED: [&str; 4] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX"];
+const GIT_ENV_SCRUBBED: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_PREFIX",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+];
 
 fn test_command(verbose: bool) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("cargo");
@@ -491,7 +498,15 @@ mod tests {
     fn test_command_removes_git_env() {
         let cmd = test_command(false);
         let envs: Vec<_> = cmd.as_std().get_envs().collect();
-        for name in GIT_ENV_SCRUBBED {
+        let expected = [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_PREFIX",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT",
+        ];
+        for name in expected {
             assert!(
                 envs.contains(&(OsStr::new(name), None)),
                 "{name} not removed"
