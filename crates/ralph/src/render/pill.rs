@@ -438,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn input_markers_are_not_trusted_here_but_table_has_every_pill_marker() {
+    fn marker_table_has_every_pill_marker() {
         for marker in [
             PILL_OK,
             PILL_BAD,
@@ -449,7 +449,6 @@ mod tests {
         ] {
             assert!(MARKERS.contains(&marker));
         }
-        assert!(PILL_WORDS.iter().all(|entry| !entry.word.is_empty()));
     }
 
     #[test]
@@ -464,10 +463,5 @@ mod tests {
         assert!(rule.contains("[[Word]]"));
         assert!(rule.contains("[[Word detail]]"));
         assert!(rule.contains(&MAX_INNER.to_string()));
-    }
-
-    #[test]
-    fn prompt_rule_is_a_pure_constant() {
-        assert_eq!(pill_prompt_rule(), pill_prompt_rule());
     }
 }

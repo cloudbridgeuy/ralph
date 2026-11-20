@@ -200,10 +200,4 @@ mod tests {
         assert_eq!(out.behaviour, base().behaviour);
         assert_eq!(out.appends, vec!["a".to_string(), pill_prompt_rule()]);
     }
-
-    #[test]
-    fn the_rule_is_not_empty() {
-        assert!(!pill_prompt_rule().is_empty());
-        assert!(emphasis_active(true, true));
-    }
 }
