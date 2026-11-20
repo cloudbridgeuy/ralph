@@ -36,6 +36,9 @@ fn stop_hook_command(
             .flat_map(WorkerSite::args)
             .map(|arg| shell_quote(&arg)),
     );
+    if usage.verify {
+        words.push("--verify-usage".to_string());
+    }
     if let Some(path) = config_store.filter(|_| site.is_some()) {
         words.push("--config-store".to_string());
         words.push(shell_quote(&path.to_string_lossy()));
@@ -48,6 +51,7 @@ pub struct UsageSink<'a> {
     pub store: &'a Path,
     pub worker: &'a str,
     pub usage: &'a Path,
+    pub verify: bool,
 }
 
 fn touch_command(path: &Path) -> String {
@@ -206,6 +210,7 @@ mod tests {
             store: Path::new("/s"),
             worker: "A",
             usage: Path::new("/u/usage.jsonl"),
+            verify: false,
         }
     }
 

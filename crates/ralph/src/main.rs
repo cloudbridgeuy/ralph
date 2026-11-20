@@ -398,6 +398,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
             activity: args.activity.as_deref(),
             changes: changes.as_ref(),
             usage: usage.as_ref(),
+            verify: args.verify_usage,
         },
         std::io::stdin().lock(),
         std::io::stdout().lock(),
