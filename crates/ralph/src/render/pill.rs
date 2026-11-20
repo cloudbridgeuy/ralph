@@ -192,11 +192,11 @@ pub fn mark_pills(text: &str) -> String {
                 i = end;
             }
             ch => {
-                let plain = is_table_or_heading_line(&chars, i);
-                let pill = (ch == '[' && !plain)
-                    .then(|| parse_pill(&chars, i))
-                    .flatten();
-                let mark = (!plain).then(|| mark_for(&chars, i)).flatten();
+                let pill = (ch == '[').then(|| parse_pill(&chars, i)).flatten();
+                let mark = mark_for(&chars, i);
+                let plain =
+                    (pill.is_some() || mark.is_some()) && is_table_or_heading_line(&chars, i);
+                let (pill, mark) = if plain { (None, None) } else { (pill, mark) };
                 match (pill, mark) {
                     (Some(pill), _) => {
                         push_pill(&chars, i, &pill, &mut out);
