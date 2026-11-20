@@ -151,7 +151,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         config.chat.cell_output_limit,
         config.chat.cell_output_bytes,
     )?;
-    let wiring = Wiring::open(&WiringConfig {
+    let mut wiring = Wiring::open(&WiringConfig {
         store_dir: &store_dir,
         exe: &exe,
         config: &config,
@@ -194,9 +194,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         config.claude.config_dir.as_deref(),
     );
     let live = Arc::new(AtomicBool::new(false));
-    let key = fork.as_ref().map_or(SessionKey::Main, |fork| {
-        SessionKey::Thread(fork.name.clone())
-    });
+    let thread = fork.as_ref().map(|fork| fork.name.clone());
+    let key = thread.clone().map_or(SessionKey::Main, SessionKey::Thread);
     let run = run_id(std::process::id(), &key, chrono::Utc::now());
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let image_settings = crate::render::image::detect(color);
@@ -209,18 +208,18 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let last_ping: Stamp = Arc::default();
     let (gate, sink) = prompt::turn_output(&theme_config)?;
     let turn = Turn {
-        store: &store,
-        store_dir: &store_dir,
-        fork: fork.as_ref(),
-        mcp_args: &wiring.mcp_args,
-        system_prompt_file: &wiring.system_prompt_file,
-        permission_mode: &permission_mode,
-        plugin_args: &wiring.plugin_args,
-        model_args: &model_args,
-        skills: &wiring.skills,
-        custom_prompt: &custom_prompt,
+        store: Store::new(store_dir.clone()),
+        store_dir: store_dir.clone(),
+        fork,
+        mcp_args: std::mem::take(&mut wiring.mcp_args),
+        system_prompt_file: wiring.system_prompt_file.clone(),
+        permission_mode: permission_mode.clone(),
+        plugin_args: std::mem::take(&mut wiring.plugin_args),
+        model_args: model_args.clone(),
+        skills: std::mem::take(&mut wiring.skills),
+        custom_prompt,
         reply_images,
-        isolation: &isolation,
+        isolation,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),
@@ -228,7 +227,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         reset_limits,
         recent_history_tokens,
         gate,
-        run: &run,
+        run: run.clone(),
         suggestions: suggestions.clone(),
         last_turn_end: Arc::clone(&last_turn_end),
         identity: Arc::default(),
@@ -238,7 +237,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         sink,
         show_tools: io::stdout().is_terminal(),
         terminated: signal::is_terminated,
-        exe: Some(&exe),
+        exe: Some(exe.clone()),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -281,7 +280,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         &cwd,
         name::resolved_home().as_deref(),
     );
-    let thread_name = fork.as_ref().map(|fork| fork.name.as_str());
+    let thread_name = thread.as_ref().map(|name| name.as_str());
     term.start_title(&ralph_core::chat_name::title_name(
         &session_name,
         thread_name,
@@ -513,7 +512,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         shell: cell::ShellState::default(),
         keys: &keys,
         cell_limits,
-        in_thread: fork.is_some(),
+        in_thread: thread.is_some(),
         shown_plan: None,
         at_prompt: &at_prompt,
         prompt_sink,
