@@ -15,6 +15,7 @@ use crate::chat::switch::{chat_exit, check as check_switch, ChatExit, Leave};
 use crate::chat::{thread, thread_cmd};
 use crate::signal;
 use crate::warn::print_above_prompt;
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat_cell::CellLimits;
 use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_hold::HoldFilter;
@@ -31,6 +32,7 @@ use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::session::{phase_after, trigger_for, At, Session};
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::turn::{draft_after, TurnOutcome};
@@ -76,6 +78,23 @@ pub(super) struct TerminalLoop<'a> {
     pub(super) leaving: Option<ChatExit>,
 }
 
+pub(super) fn run_turn(
+    port: &dyn SessionPort,
+    call: &TurnCall,
+    during: impl FnOnce(&mut dyn FnMut(&CancelToken)) -> Queue,
+) -> Result<(TurnOutcome, Queue), Box<dyn Error>> {
+    let mut during = Some(during);
+    let mut ran = None;
+    let mut queue = Queue::default();
+    port.around(&mut || {
+        if let Some(during) = during.take() {
+            queue = during(&mut |cancel| ran = Some(port.turn(call, cancel)));
+        }
+    });
+    let outcome = ran.ok_or("keyboard did not run the turn")??;
+    Ok((outcome, queue))
+}
+
 pub(super) struct Ending {
     pub(super) outcome: TurnOutcome,
     pub(super) draft: Option<String>,
@@ -95,7 +114,7 @@ impl TerminalLoop<'_> {
         let monitor = &session.core;
         let settles_closes = !self.in_thread;
         if settles_closes && thread::settle::scan(self.store_dir, &monitor.inbox) {
-            monitor.refresh(true);
+            session.refresh();
         }
         loop {
             warn_if_err(self.editor.sync_history(), "Failed to save chat history");
@@ -110,7 +129,7 @@ impl TerminalLoop<'_> {
                     print_above_prompt(None);
                     self.at_prompt.store(false, Ordering::SeqCst);
                     self.idle.store(false, Ordering::SeqCst);
-                    monitor.set_phase(Phase::Prompt);
+                    session.set_phase(Phase::Prompt);
                     submitted?
                         .map_err(|exit| {
                             if matches!(exit, ChatExit::Closed) {
@@ -147,8 +166,8 @@ impl TerminalLoop<'_> {
                 && typed_line.trim().is_empty()
                 && thread::settle::scan(self.store_dir, &monitor.inbox);
             if asked {
-                monitor.refresh(true);
-                if !(matches!(route, Route::ReadInbox(_)) && monitor.status().unread > 0) {
+                session.refresh();
+                if !(matches!(route, Route::ReadInbox(_)) && session.status().unread > 0) {
                     continue;
                 }
             }
@@ -196,7 +215,7 @@ impl TerminalLoop<'_> {
                 },
                 local => {
                     if let Some(output) = run_local(local, self.local, &mut io::stdout(), || {
-                        monitor.refresh(true);
+                        session.refresh();
                     })? {
                         self.note(&record, &output);
                     }
@@ -228,25 +247,25 @@ impl TerminalLoop<'_> {
         trigger: Trigger,
         sent: &str,
     ) -> Result<(TurnOutcome, Queue), Box<dyn Error>> {
-        let session = self.session;
         let logged = [sent.to_owned()];
-        let (result, queue) = session.snapshots.around(|| {
-            self.keys
-                .during(|cancel| session.turn.run(trigger, &logged, sent, cancel))
-        });
-        Ok((result?, queue))
+        let call = TurnCall {
+            trigger,
+            logged: &logged,
+            sent,
+        };
+        run_turn(self.session, &call, |run| self.keys.during(run).1)
     }
 
     pub(super) fn send(&mut self, message: String) -> Result<Ending, Box<dyn Error>> {
         crate::render::image::print_attachments(&message);
-        self.session.core.set_phase(Phase::Cell);
+        self.session.set_phase(Phase::Cell);
         let (outcome, queue) =
             match cell::prepare(&message, self.cell_limits, &mut self.shell, self.color) {
                 Ok(prepared) => {
                     if let Some(shown) = &prepared.shown {
                         cell::show(&mut std::io::stdout(), self.display, shown);
                     }
-                    self.session.core.set_phase(Phase::Turn);
+                    self.session.set_phase(Phase::Turn);
                     self.run_turn(trigger_for(self.sending.is_some()), &prepared.sent)?
                 }
                 Err(outcome) => (outcome, Queue::default()),
@@ -290,7 +309,7 @@ impl TerminalLoop<'_> {
             }
             return Ok(None);
         };
-        session.core.set_phase(Phase::Turn);
+        session.set_phase(Phase::Turn);
         let (outcome, queue) = self.run_turn(Trigger::User, &proposal.sent)?;
         let screen = session.proposed(proposal, screen_columns());
         println!("{}", screen.for_terminal(self.color));
@@ -327,7 +346,7 @@ impl TerminalLoop<'_> {
                 println!("{text}");
                 let id = self.note(record, &text);
                 thread_cmd::land(&main, merged, id);
-                self.session.core.refresh(true);
+                self.session.refresh();
                 self.queue_next();
             }
             Err(refusal) => {
@@ -343,11 +362,11 @@ impl TerminalLoop<'_> {
     }
 
     pub(super) fn shell(&mut self, line: &str) -> Result<Flow, Box<dyn Error>> {
-        let monitor = &self.session.core;
-        monitor.set_phase(Phase::Cell);
+        let session = self.session;
+        session.set_phase(Phase::Cell);
         let ran = cell::run_local(line, &mut self.shell, self.color);
-        monitor.set_phase(Phase::Prompt);
-        monitor.refresh(true);
+        session.set_phase(Phase::Prompt);
+        session.refresh();
         match ran {
             Ok(shown) => {
                 cell::show(&mut std::io::stdout(), self.display, &shown);
@@ -369,7 +388,7 @@ impl TerminalLoop<'_> {
     pub(super) fn hold(&mut self, filter: &HoldFilter) -> Result<Flow, Box<dyn Error>> {
         let session = self.session;
         self.idle.store(true, Ordering::SeqCst);
-        session.core.set_phase(Phase::Turn);
+        session.set_phase(Phase::Turn);
         let held = hold::run(filter, &session.core, &self.prompt.bar);
         self.idle.store(false, Ordering::SeqCst);
         match held {
@@ -379,7 +398,7 @@ impl TerminalLoop<'_> {
                 self.pending = driven.enter(&mut self.editor);
             }
             Held::Left => {
-                session.core.set_phase(Phase::Prompt);
+                session.set_phase(Phase::Prompt);
                 if let Some(active) = self.sending.take() {
                     took_over(&session.send_it, &active).enter(&mut self.editor);
                 }
@@ -430,12 +449,7 @@ impl TerminalLoop<'_> {
         print_exit_notice(lost.len(), saved);
         warn_if_err(self.editor.sync_history(), "Failed to save chat history");
         self.idle.store(false, Ordering::SeqCst);
-        *self
-            .session
-            .turn
-            .session
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
+        self.session.end_session();
         self.leaving = Some(ChatExit::Switch(target, self.switch_argv.clone()));
         Ok(Flow::Stop)
     }
@@ -452,8 +466,8 @@ impl TerminalLoop<'_> {
         queue
             .entries
             .splice(0..0, std::mem::take(&mut self.carried));
-        monitor.set_phase(phase_after(outcome));
-        monitor.refresh(true);
+        session.set_phase(phase_after(outcome));
+        session.refresh();
         if outcome == TurnOutcome::Exit {
             let lost = unsent(&queue);
             let saved = save_unsent(&mut self.editor, &lost);
@@ -464,14 +478,14 @@ impl TerminalLoop<'_> {
         }
         let asked = approve_proposed(&monitor.schedule, self.watch_timeout);
         if let Some(active) = self.sending.take() {
-            let unread = monitor.inbox.peek().unwrap_or_default();
+            let unread = session.unread();
             let ended = Ended {
                 file: None,
                 replied: outcome == TurnOutcome::Replied,
                 asked,
                 typed: queue.held || !queue.typed.is_empty(),
                 queued: &queue.entries,
-                cost_usd: session.turn.take_cost().unwrap_or_default(),
+                cost_usd: session.take_cost().unwrap_or_default(),
                 step_result: None,
                 drained: &drained,
                 unread: &unread,
@@ -505,14 +519,14 @@ impl TerminalLoop<'_> {
         let replied = outcome == TurnOutcome::Replied && !asked;
         self.shown.clear();
         self.offered = None;
-        let turn_number = session.turn.process_turns.load(Ordering::SeqCst);
+        let turn_number = session.turns();
         let suggested = suggestion.clone();
         let next = turn_end(TurnEnd {
             auto_hold: self.auto_hold,
             replied,
             draft,
             suggestion,
-            status: &monitor.status(),
+            status: &session.status(),
         });
         match next {
             Next::Hold(filter) => {
@@ -544,3 +558,6 @@ impl TerminalLoop<'_> {
         Ok(Flow::Next)
     }
 }
+
+#[cfg(test)]
+mod tests;
