@@ -69,12 +69,13 @@ fn prepare(paths: &VerifyPaths) -> io::Result<()> {
 
 fn launch(
     dir: &Path,
+    ledger: &Path,
     config: &Result<AppConfig, String>,
     model: Option<&str>,
 ) -> Result<(Session, VerifyPaths), String> {
     let dir = fs::canonicalize(dir)
         .map_err(|error| format!("could not resolve {}: {error}", dir.display()))?;
-    let paths = VerifyPaths::new(&dir);
+    let paths = VerifyPaths::new(&dir, ledger);
     prepare(&paths).map_err(|error| format!("could not prepare the verify folder: {error}"))?;
     let (shell, _) = resolve_claude_shell(
         config
@@ -165,13 +166,13 @@ fn permission_turn(session: &Session, paths: &VerifyPaths) -> CheckResult {
 }
 
 pub(crate) fn verify(
-    live: bool,
+    live: Option<&Path>,
     dir: &Path,
     checks: &Checks,
     config: &Result<AppConfig, String>,
     model: Option<&str>,
 ) -> Option<String> {
-    let budget = Budget::new(live);
+    let budget = Budget::new(live.is_some());
     let probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -204,10 +205,13 @@ pub(crate) fn verify(
     if tmux.is_none() || !flags_ok {
         return Some(version);
     }
-    if !live || !budget.allows(checks, "session start") {
+    let Some(ledger) = live else {
+        return Some(version);
+    };
+    if !budget.allows(checks, "session start") {
         return Some(version);
     }
-    let launched = launch(dir, config, model);
+    let launched = launch(dir, ledger, config, model);
     let (session, paths) = match launched {
         Ok(started) => started,
         Err(message) => {

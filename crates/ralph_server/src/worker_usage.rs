@@ -49,20 +49,26 @@ pub struct UsageSession<'a> {
     pub harness: HarnessId,
 }
 
-fn record(target: &UsageTarget, payload: &str, turn_id: Option<u64>) -> io::Result<()> {
+fn record(target: &UsageTarget, payload: &str, site: CallSite) -> io::Result<()> {
     let session = parse_stop_session(payload).map_err(io::Error::other)?;
     let session = UsageSession {
         session_id: &session.session_id,
         transcript: &session.transcript_path,
         harness: HarnessId::ClaudeTmux,
     };
-    record_session(target, &session, worker_site(target, turn_id))
+    record_session(target, &session, site)
 }
 
 fn worker_site(target: &UsageTarget, turn_id: Option<u64>) -> CallSite {
     CallSite::Worker {
         worker_id: target.worker.clone(),
         turn_id,
+    }
+}
+
+fn verify_site(target: &UsageTarget) -> CallSite {
+    CallSite::Verify {
+        worker_id: target.worker.clone(),
     }
 }
 
@@ -107,8 +113,15 @@ fn record_session(target: &UsageTarget, session: &UsageSession, site: CallSite) 
 
 pub fn record_or_warn(target: &UsageTarget, payload: &str, turn_id: Option<u64>) {
     warn_if_err(
-        record(target, payload, turn_id),
+        record(target, payload, worker_site(target, turn_id)),
         "Failed to record worker usage",
+    );
+}
+
+pub fn record_verify_or_warn(target: &UsageTarget, payload: &str) {
+    warn_if_err(
+        record(target, payload, verify_site(target)),
+        "Failed to record verify usage",
     );
 }
 
@@ -120,11 +133,8 @@ pub fn record_session_or_warn(target: &UsageTarget, session: &UsageSession) {
 }
 
 pub fn record_verify_session_or_warn(target: &UsageTarget, session: &UsageSession) {
-    let site = CallSite::Verify {
-        worker_id: target.worker.clone(),
-    };
     warn_if_err(
-        record_session(target, session, site),
+        record_session(target, session, verify_site(target)),
         "Failed to record verify usage",
     );
 }
@@ -166,8 +176,8 @@ mod tests {
             r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
             transcript.display()
         );
-        record(&target, &payload, Some(3)).unwrap();
-        record(&target, &payload, Some(4)).unwrap();
+        record(&target, &payload, worker_site(&target, Some(3))).unwrap();
+        record(&target, &payload, worker_site(&target, Some(4))).unwrap();
         let written = fs::read_to_string(&target.usage).unwrap();
         assert_eq!(written.lines().count(), 2);
         assert!(written.contains(r#""kind":"worker""#));
@@ -224,7 +234,7 @@ m2
             r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
             transcript.display()
         );
-        record(&target, &payload, None).unwrap();
+        record(&target, &payload, worker_site(&target, None)).unwrap();
         let written = fs::read_to_string(&target.usage).unwrap();
         let row: serde_json::Value = serde_json::from_str(written.trim()).unwrap();
         assert_eq!(row["ticket"], "GUZ-9");
@@ -245,7 +255,7 @@ m2
             r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
             transcript.display()
         );
-        record(&target, &payload, None).unwrap();
+        record(&target, &payload, worker_site(&target, None)).unwrap();
         let written = fs::read_to_string(&target.usage).unwrap();
         let row: serde_json::Value = serde_json::from_str(written.trim()).unwrap();
         assert!(row.get("ticket").is_none());

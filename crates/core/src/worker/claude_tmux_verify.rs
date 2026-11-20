@@ -43,7 +43,7 @@ pub struct VerifyPaths {
 }
 
 impl VerifyPaths {
-    pub fn new(dir: &Path) -> Self {
+    pub fn new(dir: &Path, ledger: &Path) -> Self {
         let store = dir.join("store");
         Self {
             work: dir.join("work"),
@@ -51,7 +51,7 @@ impl VerifyPaths {
             task_dir: task_dir_path(&store, VERIFY_ID),
             settings: dir.join("settings.json"),
             mcp_config: dir.join("mcp.json"),
-            usage: dir.join("usage.jsonl"),
+            usage: ledger.to_path_buf(),
             markers: WorkerMarkers::new(&store, VERIFY_ID),
             store,
         }
@@ -66,6 +66,7 @@ impl VerifyPaths {
                 store: &self.store,
                 worker: VERIFY_ID,
                 usage: &self.usage,
+                verify: true,
             },
         )
     }
@@ -248,14 +249,19 @@ mod tests {
 
     #[test]
     fn verify_settings_hooks_write_only_to_the_verify_dir() {
+        const LEDGER: &str = "/tmp/ledger/usage.jsonl";
         let dir = Path::new("/tmp/verify-dir");
         let exe = Path::new("/opt/ralph");
-        let settings = VerifyPaths::new(dir).settings_json(exe).to_string();
+        let settings = VerifyPaths::new(dir, Path::new(LEDGER))
+            .settings_json(exe)
+            .to_string();
         let paths: Vec<&str> = settings
             .split('\'')
             .skip(1)
             .step_by(2)
-            .filter(|quoted| quoted.starts_with('/') && *quoted != "/opt/ralph")
+            .filter(|quoted| {
+                quoted.starts_with('/') && *quoted != "/opt/ralph" && *quoted != LEDGER
+            })
             .collect();
         assert!(!paths.is_empty());
         for path in paths {
@@ -264,8 +270,25 @@ mod tests {
     }
 
     #[test]
+    fn verify_stop_hook_appends_verify_rows_to_the_given_ledger() {
+        let paths = VerifyPaths::new(
+            Path::new("/tmp/verify-dir"),
+            Path::new("/home/u/.ralph/usage.jsonl"),
+        );
+        let settings = paths.settings_json(Path::new("/opt/ralph")).to_string();
+        assert!(
+            settings.contains("--usage '/home/u/.ralph/usage.jsonl'"),
+            "{settings}"
+        );
+        assert!(settings.contains("--verify-usage"), "{settings}");
+    }
+
+    #[test]
     fn verify_launch_sends_no_task_prompt() {
-        let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
+        let paths = VerifyPaths::new(
+            Path::new("/tmp/verify-dir"),
+            Path::new("/tmp/verify-dir/usage.jsonl"),
+        );
         let command = paths.command(ClaudeShell::default(), None, None);
         assert!(
             command
@@ -282,7 +305,10 @@ mod tests {
 
     #[test]
     fn verify_launch_passes_the_configured_model() {
-        let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
+        let paths = VerifyPaths::new(
+            Path::new("/tmp/verify-dir"),
+            Path::new("/tmp/verify-dir/usage.jsonl"),
+        );
         let with = paths.command(ClaudeShell::default(), None, Some("claude-haiku-5-5"));
         let at = with.iter().position(|word| word == "--model").unwrap();
         assert_eq!(with[at + 1], "claude-haiku-5-5");
@@ -292,7 +318,10 @@ mod tests {
 
     #[test]
     fn verify_launch_isolates_user_settings() {
-        let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
+        let paths = VerifyPaths::new(
+            Path::new("/tmp/verify-dir"),
+            Path::new("/tmp/verify-dir/usage.jsonl"),
+        );
         let command = paths.command(ClaudeShell::default(), None, None);
         let at = command
             .iter()
@@ -311,7 +340,10 @@ mod tests {
 
     #[test]
     fn worker_launch_does_not_restrict_setting_sources() {
-        let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
+        let paths = VerifyPaths::new(
+            Path::new("/tmp/verify-dir"),
+            Path::new("/tmp/verify-dir/usage.jsonl"),
+        );
         let args = ClaudeWorkerArgs {
             store: &paths.store,
             mcp_config: &paths.mcp_config,

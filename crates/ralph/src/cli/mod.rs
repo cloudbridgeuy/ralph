@@ -751,6 +751,9 @@ pub struct WorkerStopHookArgs {
     )]
     pub usage: Option<std::path::PathBuf>,
 
+    #[arg(long, requires = "usage_seen")]
+    pub verify_usage: bool,
+
     #[arg(long, value_name = "DIR", requires_all = ["id", "worktree"])]
     pub store: Option<std::path::PathBuf>,
 
