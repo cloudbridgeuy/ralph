@@ -211,6 +211,27 @@ pub fn render_summary(agent: &str, version: &str, live: bool, passed: bool) -> S
     format!("{outcome}: {agent} {version} ({scope})")
 }
 
+pub const STDERR_TAIL_CAP: usize = 2048;
+
+pub fn stderr_tail(bytes: &[u8], cap: usize) -> String {
+    let tail = &bytes[bytes.len().saturating_sub(cap)..];
+    let start = tail
+        .iter()
+        .position(|byte| byte & 0xC0 != 0x80)
+        .unwrap_or(tail.len());
+    String::from_utf8_lossy(&tail[start..]).trim().to_string()
+}
+
+pub fn with_stderr_tail(result: CheckResult, tail: &str) -> CheckResult {
+    if result.verdict != Verdict::Fail || tail.is_empty() {
+        return result;
+    }
+    CheckResult {
+        detail: format!("{}; agent stderr: {tail}", result.detail),
+        ..result
+    }
+}
+
 pub fn verified_entry(agent: &str, version: &str, live: bool, today: &str) -> VerifiedAgent {
     VerifiedAgent {
         agent: agent.to_string(),
@@ -452,6 +473,31 @@ mod tests {
             "PASS: cursor 2026.10.22 (free checks only; --live adds print prompt and print usage checks)"
         );
         assert!(!summary.contains("permission") && !summary.contains("cancel"));
+    }
+
+    #[test]
+    fn the_stderr_tail_keeps_the_last_bytes_and_trims() {
+        assert_eq!(stderr_tail(b"abcdef\n", 4), "def");
+        assert_eq!(stderr_tail(b"  short \n", 100), "short");
+        assert_eq!(stderr_tail(b"", 4), "");
+    }
+
+    #[test]
+    fn the_stderr_tail_never_splits_a_char() {
+        assert_eq!(stderr_tail("a\u{e9}b".as_bytes(), 2), "b");
+        assert_eq!(stderr_tail("a\u{e9}b".as_bytes(), 3), "\u{e9}b");
+    }
+
+    #[test]
+    fn a_failed_row_gains_the_stderr_tail_and_other_rows_do_not() {
+        let failed = CheckResult::fail("initialize", "no answer");
+        assert_eq!(
+            with_stderr_tail(failed.clone(), "boom").detail,
+            "no answer; agent stderr: boom"
+        );
+        assert_eq!(with_stderr_tail(failed.clone(), ""), failed);
+        let passed = CheckResult::pass("initialize", "ok");
+        assert_eq!(with_stderr_tail(passed.clone(), "boom"), passed);
     }
 
     #[test]

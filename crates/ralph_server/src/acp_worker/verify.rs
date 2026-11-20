@@ -5,10 +5,11 @@ use crate::worker_verify::{step, Checks};
 use agent_client_protocol::ByteStreams;
 use ralph_core::worker::{
     cursor_verify_leftovers, cursor_verify_project, decode_print_line, print_args, print_model,
-    print_verify, probed_version, CheckResult, PrintArgs, PrintEvent, VersionProbe,
+    print_verify, probed_version, stderr_tail, CheckResult, PrintArgs, PrintEvent, VersionProbe,
     ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
+    STDERR_TAIL_CAP,
 };
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 
 const FREE_DEADLINE: Duration = Duration::from_secs(90);
 const PRINT_DEADLINE: Duration = Duration::from_secs(120);
@@ -173,7 +174,17 @@ fn exercise(dir: &Path, checks: &Checks) {
     }) else {
         return;
     };
-    drain_stderr(stderr, CappedLog::new(None, "verify"));
+    let first_row = checks.len();
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let reader = {
+        let captured = Arc::clone(&captured);
+        thread::spawn(move || {
+            let mut stderr = stderr;
+            let mut buffer = Vec::new();
+            stderr.read_to_end(&mut buffer).ok();
+            *locked(&captured) = buffer;
+        })
+    };
     let done = watchdog(child.id(), FREE_DEADLINE);
     let outcome = block_on(Client.builder().connect_with(
         ByteStreams::new(
@@ -193,6 +204,9 @@ fn exercise(dir: &Path, checks: &Checks) {
             format!("{} agent connection failed: {error}", agent.name),
         ));
     }
+    reader.join().ok();
+    let tail = stderr_tail(&locked(&captured), STDERR_TAIL_CAP);
+    checks.append_stderr_since(first_row, &tail);
 }
 
 fn print_lines(dir: &Path, model: &str) -> Result<Vec<String>, String> {

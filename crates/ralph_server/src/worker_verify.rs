@@ -8,8 +8,8 @@ use ralph_core::worker::{
     check_agent_version, claude_required_checks, cursor_required_checks, finish_plan,
     finished_probe, limit_failure, probed_version, render_check, render_summary, required_failure,
     resolve_claude_model, resolve_opencode_model, spec_passed, verified_entry, verify_limit,
-    CheckResult, HarnessId, PermissionMode, Verdict, VerifiedAgent, VersionProbe, AGY_AGENT,
-    AGY_GATE, AGY_REQUIRED_CHECKS, CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS,
+    with_stderr_tail, CheckResult, HarnessId, PermissionMode, Verdict, VerifiedAgent, VersionProbe,
+    AGY_AGENT, AGY_GATE, AGY_REQUIRED_CHECKS, CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS,
     DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
 };
 use std::path::Path;
@@ -23,6 +23,21 @@ impl Checks {
     pub(crate) fn add(&self, result: CheckResult) {
         println!("{}", render_check(&result));
         locked(&self.0).push(result);
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        locked(&self.0).len()
+    }
+
+    pub(crate) fn append_stderr_since(&self, start: usize, tail: &str) {
+        let mut rows = locked(&self.0);
+        for row in rows.iter_mut().skip(start) {
+            let amended = with_stderr_tail(row.clone(), tail);
+            if amended != *row {
+                println!("{}", render_check(&amended));
+                *row = amended;
+            }
+        }
     }
 
     pub(crate) fn results(&self) -> Vec<CheckResult> {
