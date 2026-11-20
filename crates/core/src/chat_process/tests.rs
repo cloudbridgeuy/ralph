@@ -143,9 +143,32 @@ fn session_rows_skip_worker_usage_lines() {
     assert_eq!(session_rows(&text, RUN).len(), 1);
 }
 
+fn thread(name: &str) -> SessionKey {
+    SessionKey::Thread(ThreadName::parse(name).unwrap())
+}
+
 #[test]
-fn run_id_joins_the_pid_and_the_start_time() {
-    assert_eq!(run_id(42, time(0)), format!("42-{}", time(0).to_rfc3339()));
+fn run_id_joins_the_pid_the_session_and_the_start_time() {
+    let at = time(0).to_rfc3339();
+    assert_eq!(
+        run_id(42, &SessionKey::Main, time(0)),
+        format!("42-main-{at}")
+    );
+    assert_eq!(
+        run_id(42, &thread("x"), time(0)),
+        format!("42-thread-x-{at}")
+    );
+}
+
+#[test]
+fn run_ids_of_two_sessions_in_one_pid_never_collide() {
+    let ids = [
+        run_id(42, &SessionKey::Main, time(0)),
+        run_id(42, &thread("a"), time(0)),
+        run_id(42, &thread("b"), time(0)),
+    ];
+    let unique: std::collections::BTreeSet<_> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
 }
 
 #[test]

@@ -62,7 +62,7 @@ use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::store_in_use_message;
-use ralph_core::chat_process::run_id;
+use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
@@ -194,7 +194,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         config.claude.config_dir.as_deref(),
     );
     let live = Arc::new(AtomicBool::new(false));
-    let run = run_id(std::process::id(), chrono::Utc::now());
+    let key = fork.as_ref().map_or(SessionKey::Main, |fork| {
+        SessionKey::Thread(fork.name.clone())
+    });
+    let run = run_id(std::process::id(), &key, chrono::Utc::now());
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let image_settings = crate::render::image::detect(color);
     let reply_images = if image_settings.is_some() {
