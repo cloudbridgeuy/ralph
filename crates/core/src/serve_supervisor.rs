@@ -12,6 +12,7 @@ pub enum Input {
     Hello { proto: u32 },
     Stop,
     Send(SessionKey),
+    TurnDone(SessionKey),
     Closed(SessionKey),
 }
 
@@ -28,6 +29,7 @@ pub enum Effect {
 pub struct Supervisor {
     phase: Phase,
     open: Vec<SessionKey>,
+    busy: Vec<SessionKey>,
 }
 
 impl Supervisor {
@@ -36,6 +38,7 @@ impl Supervisor {
             Self {
                 phase: Phase::Running,
                 open: vec![SessionKey::Main],
+                busy: Vec::new(),
             },
             vec![Effect::Open(SessionKey::Main)],
         )
@@ -44,7 +47,11 @@ impl Supervisor {
     pub fn step(&mut self, input: Input) -> Vec<Effect> {
         match (self.phase, input) {
             (Phase::Running, Input::Hello { proto }) => vec![Effect::Answer { proto }],
+            (Phase::Running, Input::Send(key)) if self.busy.contains(&key) => {
+                vec![Effect::Refuse(format!("{key} is busy"))]
+            }
             (Phase::Running, Input::Send(key)) if self.open.contains(&key) => {
+                self.busy.push(key.clone());
                 vec![Effect::Run(key)]
             }
             (Phase::Running, Input::Send(key)) => {
@@ -63,9 +70,14 @@ impl Supervisor {
                 self.open.iter().cloned().map(Effect::Close).collect()
             }
             (_, Input::Stop) => Vec::new(),
+            (_, Input::TurnDone(key)) => {
+                self.busy.retain(|busy| *busy != key);
+                Vec::new()
+            }
             (phase, Input::Closed(key)) => {
                 let before = self.open.len();
                 self.open.retain(|open| *open != key);
+                self.busy.retain(|busy| *busy != key);
                 if phase == Phase::Draining && before != self.open.len() && self.open.is_empty() {
                     self.phase = Phase::Done;
                     vec![Effect::Exit]
@@ -145,6 +157,39 @@ mod tests {
         assert_eq!(
             sup.step(Input::Send(SessionKey::Main)),
             vec![Effect::Refuse("ralph serve is shutting down".to_string())]
+        );
+    }
+
+    #[test]
+    fn send_to_busy_session_is_refused() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Send(SessionKey::Main));
+        assert_eq!(
+            sup.step(Input::Send(SessionKey::Main)),
+            vec![Effect::Refuse("main is busy".to_string())]
+        );
+    }
+
+    #[test]
+    fn turn_done_frees_the_session() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Send(SessionKey::Main));
+        sup.step(Input::TurnDone(SessionKey::Main));
+        assert_eq!(
+            sup.step(Input::Send(SessionKey::Main)),
+            vec![Effect::Run(SessionKey::Main)]
+        );
+    }
+
+    #[test]
+    fn stop_while_busy_closes_after() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Send(SessionKey::Main));
+        assert_eq!(sup.step(Input::Stop), vec![Effect::Close(SessionKey::Main)]);
+        assert_eq!(sup.step(Input::TurnDone(SessionKey::Main)), Vec::new());
+        assert_eq!(
+            sup.step(Input::Closed(SessionKey::Main)),
+            vec![Effect::Exit]
         );
     }
 

@@ -29,7 +29,9 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
     while let Some(line) = read_frame(&mut reader)? {
         let frame = decode_frame::<ClientMsg>(line.trim_end());
         let id = frame.as_ref().map_or(0, |envelope| envelope.id);
-        let reply = match classify(greeted, frame.map(|envelope| envelope.body)) {
+        let action = classify(greeted, frame.map(|envelope| envelope.body));
+        let closes = closes_on_error(&action);
+        let reply = match action {
             Action::Shutdown => {
                 host.stop.store(true, Ordering::SeqCst);
                 return Ok(());
@@ -42,7 +44,7 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
             Action::Send { key, text } => send(host, &key, &text, id, &writer),
         };
         writer.write_all(encode_frame(id, &reply).as_bytes())?;
-        if matches!(reply, ServerMsg::Error { .. }) {
+        if closes && matches!(reply, ServerMsg::Error { .. }) {
             return Ok(());
         }
         greeted = true;
@@ -54,20 +56,36 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
 fn send(host: &Host, key: &SessionKey, text: &str, id: u64, writer: &UnixStream) -> ServerMsg {
     let run = step(&host.supervisor, Input::Send(key.clone())).and_then(|effects| permit(&effects));
     let result = run.and_then(|key| {
-        let open = host
-            .sessions
-            .get(&key)
-            .ok_or_else(|| format!("{key} is not open"))?;
-        let bound = writer.try_clone().map_err(|e| e.to_string())?;
-        open.sink.bind(id, bound);
-        let outcome = open.turn(text);
-        open.sink.unbind();
-        outcome.map_err(|e| e.to_string())
+        let outcome = run_turn(host, &key, text, id, writer);
+        step(&host.supervisor, Input::TurnDone(key))?;
+        outcome
     });
     match result {
-        Ok(_) => ServerMsg::TurnDone,
+        Ok(()) => ServerMsg::TurnDone,
         Err(message) => ServerMsg::Error { message },
     }
+}
+
+fn run_turn(
+    host: &Host,
+    key: &SessionKey,
+    text: &str,
+    id: u64,
+    writer: &UnixStream,
+) -> Result<(), String> {
+    let open = host
+        .sessions
+        .get(key)
+        .ok_or_else(|| format!("{key} is not open"))?;
+    let bound = writer.try_clone().map_err(|e| e.to_string())?;
+    open.sink.bind(id, bound);
+    let outcome = open.turn(text);
+    open.sink.unbind();
+    outcome.map(|_| ()).map_err(|e| e.to_string())
+}
+
+fn closes_on_error(action: &Action) -> bool {
+    !matches!(action, Action::Send { .. })
 }
 
 fn read_timeout(greeted: bool) -> Option<Duration> {
@@ -191,6 +209,17 @@ mod tests {
             ),
             Action::Refuse("unexpected message before hello".into())
         );
+    }
+
+    #[test]
+    fn refusal_keeps_the_connection_open() {
+        let send = Action::Send {
+            key: SessionKey::Main,
+            text: "hi".into(),
+        };
+        assert!(!closes_on_error(&send));
+        assert!(closes_on_error(&Action::Hello(1)));
+        assert!(closes_on_error(&Action::Refuse("bad".into())));
     }
 
     #[test]

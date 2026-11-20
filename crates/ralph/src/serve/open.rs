@@ -20,6 +20,8 @@ use std::sync::{Arc, Mutex};
 pub(super) struct OpenSession {
     session: Session,
     pub(super) sink: Arc<SocketSink>,
+    cancel: CancelToken,
+    turning: Mutex<()>,
     _guard: SocketGuard,
     _plugin: Option<tempfile::TempDir>,
     _close: CloseGuard,
@@ -33,14 +35,22 @@ impl OpenSession {
             logged: &logged,
             sent: text,
         };
-        let cancel = CancelToken::default();
+        let _turning = self
+            .turning
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut ran = None;
         self.session
-            .around(&mut || ran = Some(self.session.turn(&call, &cancel)));
+            .around(&mut || ran = Some(self.session.turn(&call, &self.cancel)));
         ran.ok_or("snapshots did not run the turn")?
     }
 
     pub(super) fn end(&self) {
+        self.cancel.cancel();
+        let _turning = self
+            .turning
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.session.end_session();
     }
 }
@@ -82,6 +92,8 @@ pub(super) fn open_session(store_dir: &Path) -> Result<OpenSession, Box<dyn Erro
     Ok(OpenSession {
         session,
         sink,
+        cancel: CancelToken::default(),
+        turning: Mutex::new(()),
         _guard: guard,
         _plugin: plugin,
         _close: close,
