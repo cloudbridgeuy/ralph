@@ -1,4 +1,4 @@
-use crate::cursor_leftovers::{cursor_slug, socket_project_dir};
+use crate::cursor_leftovers::{cursor_slug, project_dirs};
 use crate::worker::BlockedContent;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -254,10 +254,19 @@ pub fn cursor_verify_project(home: &Path, workspace: &Path) -> PathBuf {
         .join(cursor_slug(&workspace.to_string_lossy()))
 }
 
-pub fn cursor_verify_leftover(home: &Path, real: &Path, project: &Path) -> Option<PathBuf> {
-    real.to_str()
-        .and_then(|real| socket_project_dir(&home.join(".cursor/projects"), real))
-        .filter(|leftover| leftover != project)
+pub fn cursor_verify_leftovers(home: &Path, workspace: &Path, real: &Path) -> Vec<PathBuf> {
+    let projects = home.join(".cursor/projects");
+    let project = cursor_verify_project(home, workspace);
+    let mut leftovers: Vec<PathBuf> = Vec::new();
+    for path in [workspace, real] {
+        let Some(path) = path.to_str() else { continue };
+        for dir in project_dirs(&projects, path) {
+            if dir != project && !leftovers.contains(&dir) {
+                leftovers.push(dir);
+            }
+        }
+    }
+    leftovers
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -591,15 +600,39 @@ mod tests {
         let dir = Path::new("/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2");
         let real = Path::new("/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2");
         assert_eq!(
-            cursor_verify_leftover(home, real, &cursor_verify_project(home, dir)),
-            Some(PathBuf::from(
-                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-bc092f5"
-            ))
+            cursor_verify_leftovers(home, dir, real),
+            vec![
+                PathBuf::from("/Users/guzmanmonne/.cursor/projects/var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-60693f2"),
+                PathBuf::from("/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-tmpX4HBM2"),
+                PathBuf::from("/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-bc092f5"),
+            ]
         );
         let short = Path::new("/tmp/x");
         assert_eq!(
-            cursor_verify_leftover(home, short, &cursor_verify_project(home, short)),
-            None
+            cursor_verify_leftovers(home, short, short),
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn cursor_verify_removes_every_folder_the_print_turn_makes() {
+        let home = Path::new("/Users/guzmanmonne");
+        let dir = Path::new("/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpdLJVd5");
+        let real = Path::new("/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpdLJVd5");
+        let projects = "/Users/guzmanmonne/.cursor/projects";
+        assert_eq!(
+            cursor_verify_leftovers(home, dir, real),
+            vec![
+                PathBuf::from(format!(
+                    "{projects}/var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-0323e50"
+                )),
+                PathBuf::from(format!(
+                    "{projects}/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-tmpdLJVd5"
+                )),
+                PathBuf::from(format!(
+                    "{projects}/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-6d07eb7"
+                )),
+            ]
         );
     }
 

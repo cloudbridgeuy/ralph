@@ -4,7 +4,7 @@ use crate::cursor_usage::{record_cursor_verify, CursorTurn};
 use crate::worker_verify::{step, Checks};
 use agent_client_protocol::ByteStreams;
 use ralph_core::worker::{
-    cursor_verify_leftover, cursor_verify_project, decode_print_line, print_args, print_model,
+    cursor_verify_leftovers, cursor_verify_project, decode_print_line, print_args, print_model,
     print_verify, probed_version, CheckResult, PrintArgs, PrintEvent, VersionProbe,
     ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
 };
@@ -124,10 +124,13 @@ pub(crate) fn verify(live: Option<&Path>, dir: &Path, checks: &Checks) -> Option
         ));
         return version;
     }
-    let leftover = fs::canonicalize(dir)
+    let leftovers: Vec<PathBuf> = fs::canonicalize(dir)
         .ok()
-        .and_then(|real| cursor_verify_leftover(&home, &real, &project))
-        .filter(|leftover| !leftover.exists());
+        .map(|real| cursor_verify_leftovers(&home, dir, &real))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|leftover| !leftover.exists())
+        .collect();
     let hooks = project.join(CURSOR_HOOKS_FILE);
     let written = hooks
         .parent()
@@ -149,8 +152,8 @@ pub(crate) fn verify(live: Option<&Path>, dir: &Path, checks: &Checks) -> Option
     step(checks, "hooks cleanup", removed, |()| {
         format!("removed {}", project.display())
     });
-    if let Some(leftover) = leftover.filter(|leftover| leftover.exists()) {
-        let removed = fs::remove_dir_all(&leftover)
+    for leftover in leftovers.iter().filter(|leftover| leftover.exists()) {
+        let removed = fs::remove_dir_all(leftover)
             .map_err(|error| format!("could not remove {}: {error}", leftover.display()));
         step(checks, "cursor cleanup", removed, |()| {
             format!("removed {}", leftover.display())
