@@ -8,6 +8,8 @@ use std::io;
 pub(super) const CHUNK_ENTRIES: usize = 256;
 pub(super) const SNIPPET_CHARS: usize = 160;
 const SNIPPET_LEAD_CHARS: usize = 40;
+const TAG_NOTICE: &str =
+    "(tags exist only for messages written after tagging began; older messages are not listed)";
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
 
@@ -41,6 +43,17 @@ impl<'a> Scan<'a> {
 
     fn push(&mut self, id: usize, entry: &Entry) {
         if entry.is_corrupt() || !passes(self.request, id, entry) {
+            return;
+        }
+        if self.request.tag_only() {
+            self.candidates.push(Candidate {
+                id,
+                role: entry.role,
+                at: entry.at.clone(),
+                counts: Vec::new(),
+                length: 0,
+                snippet: excerpt(&entry.text, 0, 0, SNIPPET_CHARS),
+            });
             return;
         }
         let tokens = tokenize(&entry.text);
@@ -107,7 +120,10 @@ fn page_bounds(request: &SearchRequest, total: usize) -> (usize, usize) {
 
 fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String {
     if ranked.is_empty() {
-        return format!("no hits for {}", request.text);
+        return match request.tag().filter(|_| request.tag_only()) {
+            Some(tag) => format!("no entries tagged {}\n{TAG_NOTICE}", tag.as_str()),
+            None => format!("no hits for {}", request.text),
+        };
     }
     let (offset, end) = page_bounds(request, ranked.len());
     let mut lines: Vec<String> = ranked[offset..end]
@@ -133,6 +149,9 @@ fn render(request: &SearchRequest, count: usize, ranked: &[Candidate]) -> String
         "(end of results)".to_string()
     });
     lines.push("(read <id> for the full text)".to_string());
+    if request.tag_only() {
+        lines.push(TAG_NOTICE.to_string());
+    }
     lines.join("\n")
 }
 

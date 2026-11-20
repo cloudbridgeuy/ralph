@@ -1,7 +1,6 @@
 use super::query::Query;
 use crate::chat_memory::index::fnv1a;
 use crate::chat_memory::{Entry, Label, Role};
-use crate::mcp::string_arg;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -26,6 +25,10 @@ impl SearchRequest {
 
     pub fn tag(&self) -> Option<Label> {
         self.tag
+    }
+
+    pub fn tag_only(&self) -> bool {
+        self.query.is_empty()
     }
 
     pub fn text(&self) -> &str {
@@ -169,13 +172,18 @@ fn fingerprint(query: &Query, request: &SearchRequest) -> u64 {
 }
 
 pub fn parse_search_args(args: &Value) -> Result<SearchRequest, String> {
-    let text = string_arg(args, "query")?;
-    let query = Query::parse(&text)?;
+    let text = optional_str(args, "query")?.unwrap_or_default().to_string();
+    let tag = optional_str(args, "tag")?.map(Label::parse).transpose()?;
+    let query = if tag.is_some() {
+        Query::parse_or_empty(&text)?
+    } else {
+        Query::parse(&text)?
+    };
     let mut request = SearchRequest {
         text,
         query,
         role: optional_str(args, "role")?.map(parse_role).transpose()?,
-        tag: optional_str(args, "tag")?.map(Label::parse).transpose()?,
+        tag,
         tag_ids: None,
         since: optional_str(args, "since")?
             .map(|s| parse_edge(s, Edge::Since))

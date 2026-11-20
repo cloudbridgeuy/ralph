@@ -7,6 +7,8 @@ use crate::chat_memory::{Entry, Role};
 use serde_json::{json, Value};
 use std::io;
 
+mod tag_only;
+
 struct Bytes(Vec<u8>);
 
 impl ByteSource for Bytes {

@@ -111,6 +111,18 @@ pub(super) struct Query {
 
 impl Query {
     pub(super) fn parse(text: &str) -> Result<Query, String> {
+        let query = Query::parse_or_empty(text)?;
+        if query.is_empty() {
+            return Err("query has no searchable words.".to_string());
+        }
+        Ok(query)
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.units.is_empty()
+    }
+
+    pub(super) fn parse_or_empty(text: &str) -> Result<Query, String> {
         if text.matches('"').count() % 2 == 1 {
             return Err("unclosed quote in query.".to_string());
         }
@@ -139,9 +151,6 @@ impl Query {
                     None => units.push(unit),
                 }
             }
-        }
-        if units.is_empty() {
-            return Err("query has no searchable words.".to_string());
         }
         Ok(Query { units })
     }

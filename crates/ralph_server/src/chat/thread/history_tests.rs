@@ -148,3 +148,43 @@ fn an_unforked_own_scope_logs_as_main() {
         .unwrap();
     assert_eq!(rows(&dir)[0]["scope"], "main");
 }
+
+#[test]
+fn a_tagged_search_from_a_thread_lists_main_era_entries_tagged_in_mains_tags() {
+    let main = tempfile::tempdir().unwrap();
+    let entry = |n: usize| {
+        format!(
+            "{{\"role\":\"user\",\"at\":\"2026-10-20T10:00:0{n}+00:00\",\"text\":\"ship {n}\"}}"
+        )
+    };
+    let log: String = (0..4).map(|n| format!("{}\n", entry(n))).collect();
+    fs::write(main.path().join("log.jsonl"), log).unwrap();
+    let tag = |n: usize| {
+        format!(
+            "{{\"v\":1,\"n\":{n},\"rule\":true,\"approval\":false,\"model\":\"m\",\"prompt\":\"v1\",\"at\":\"t\"}}\n"
+        )
+    };
+    fs::write(
+        main.path().join("tags.jsonl"),
+        format!("{}{}", tag(1), tag(3)),
+    )
+    .unwrap();
+    let thread = main.path().join("threads").join("auth");
+    fs::create_dir_all(&thread).unwrap();
+    fs::write(
+        thread.join("thread.json"),
+        "{\"base\":2,\"created\":\"2026-10-20T10:00:00+00:00\"}",
+    )
+    .unwrap();
+    fs::write(thread.join("log.jsonl"), format!("{}\n", entry(5))).unwrap();
+    let text = call(
+        &thread,
+        "search",
+        json!({"query": "ship", "tag": "rule", "thread": "main"}),
+        CallSource::Mcp,
+    )
+    .unwrap();
+    assert!(text.contains("#1 "), "{text}");
+    assert!(!text.contains("#0 "), "{text}");
+    assert!(!text.contains("#3 "), "{text}");
+}

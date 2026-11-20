@@ -102,11 +102,11 @@ fn memory_tool_definitions() -> Value {
         },
         {
             "name": "search",
-            "description": "Ranked search over the original chat messages. Unlike recall (a regex, every hit newest first), search scores messages by how well they match bare words, \"quoted phrases\" (the words must appear together, in order), and identifiers such as GUZ-709 or foo_bar (matched whole: GUZ-709 does not match GUZ-7090). A plain word also matches inside a joined one: rate finds rate-limited. Rarer words weigh more; ties go to the newer message. Each hit is `#<id> · <role> · <timestamp> · <snippet>`. When more hits remain the page ends with `next cursor: <cursor>`; pass it back as cursor with the same query and filters. Call read with an id for the full text.",
+            "description": "Ranked search over the original chat messages. Unlike recall (a regex, every hit newest first), search scores messages by how well they match bare words, \"quoted phrases\" (the words must appear together, in order), and identifiers such as GUZ-709 or foo_bar (matched whole: GUZ-709 does not match GUZ-7090). A plain word also matches inside a joined one: rate finds rate-limited. Rarer words weigh more; ties go to the newer message. Each hit is `#<id> · <role> · <timestamp> · <snippet>`. When more hits remain the page ends with `next cursor: <cursor>`; pass it back as cursor with the same query and filters. Call read with an id for the full text. With a tag and no query, every message carrying that tag is listed newest first, with the same paging; tags exist only for messages written after tagging began.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Words, \"quoted phrases\", and identifiers. A message needs every phrase and at least one word or phrase."},
+                    "query": {"type": "string", "description": "Words, \"quoted phrases\", and identifiers. A message needs every phrase and at least one word or phrase. May be omitted when tag is given: then all tagged messages are listed newest first, with the same paging."},
                     "role": {"type": "string", "enum": ["user", "assistant", "worker"], "description": "Only messages from this role."},
                     "tag": {"type": "string", "enum": ["rule", "decision", "approval"], "description": "Only messages tagged this way. Tags exist only for messages written after tagging began."},
                     "since": {"type": "string", "description": "Earliest time: an RFC 3339 timestamp or a date like 2026-10-20."},
@@ -114,8 +114,7 @@ fn memory_tool_definitions() -> Value {
                     "limit": {"type": "integer", "description": "Hits per page, 1 to 50. Default 20."},
                     "cursor": {"type": "string", "description": "The `next cursor:` value from the previous page."},
                     "thread": {"type": "string", "description": "Search main or a named thread instead of this chat's own messages."}
-                },
-                "required": ["query"]
+                }
             }
         },
         changes_tool_definition(),
@@ -385,6 +384,28 @@ mod tests {
                 true
             );
         }
+    }
+
+    #[test]
+    fn the_search_schema_does_not_require_a_query() {
+        let defs = tool_definitions();
+        let search = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "search")
+            .unwrap();
+        assert!(search["inputSchema"].get("required").is_none());
+    }
+
+    #[test]
+    fn history_search_with_a_tag_and_no_words_is_a_listing() {
+        let call = history_tool("search", "", None, Some("rule")).unwrap();
+        let Tool::Search(request) = call.tool else {
+            panic!("expected search")
+        };
+        assert_eq!(request.tag(), Some(crate::chat_memory::Label::Rule));
+        assert!(history_tool("search", "", None, None).is_err());
     }
 
     #[test]
