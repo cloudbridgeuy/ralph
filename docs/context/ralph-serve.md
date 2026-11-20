@@ -62,8 +62,8 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 
 ## Threads
 
-- `open` runs `prepare_open` (checks the thread, writes `model` and `auto` to its meta) and then opens a session in the `serve` process. It does not start a Rex block. A second `open` of an open thread gets `thread <name> is already open`.
-- `auto` is stored but not run when the session closes. Chat does that with a model call, and `serve` does not.
+- `open` runs `prepare_open` (checks the thread, writes `model` to its meta) and then opens a session in the `serve` process. It does not start a Rex block. A second `open` of an open thread gets `thread <name> is already open`.
+- `open` with `auto` set is refused with `auto merge/drop is not supported by serve yet`. The connection stays open and nothing is created. Running auto at close is a later ticket.
 - `pull`, `park`, `drop` and `merge` need the thread claim. If the thread is open, `serve` closes its session first, then runs the operation. A failed or refused operation leaves the thread closed. Reopen it with `open`. `revive` does not close.
 - These operations are refused with `<key> is busy` while the thread runs a turn.
 - `merge` without `view` is confirmed by the client: `serve` answers yes. The merge notice is part of the `done` message. The merge is recorded in main as the CLI does.

@@ -70,6 +70,11 @@ impl Supervisor {
                 vec![Effect::Open(key)]
             }
             (_, Input::Open(_)) => vec![Effect::Refuse("ralph serve is shutting down".to_string())],
+            (Phase::Running, Input::Thread(ThreadOp::Open(opts))) if opts.auto.is_some() => {
+                vec![Effect::Refuse(
+                    "auto merge/drop is not supported by serve yet".to_string(),
+                )]
+            }
             (Phase::Running, Input::Thread(op)) => match claimed_by(&op) {
                 Some(key) if self.busy.contains(&key) => {
                     vec![Effect::Refuse(format!("{key} is busy"))]
@@ -284,6 +289,30 @@ mod tests {
         assert_eq!(
             sup.step(Input::Thread(elsewhere.clone())),
             vec![Effect::RunThread(elsewhere)]
+        );
+    }
+
+    #[test]
+    fn open_with_auto_is_refused() {
+        use crate::chat_thread::AutoMode;
+        use crate::chat_thread_cmd::OpenOpts;
+        let (mut sup, _) = Supervisor::start();
+        let open = |auto| {
+            ThreadOp::Open(OpenOpts {
+                name: side(),
+                auto,
+                model: None,
+            })
+        };
+        assert_eq!(
+            sup.step(Input::Thread(open(Some(AutoMode::Merge)))),
+            vec![Effect::Refuse(
+                "auto merge/drop is not supported by serve yet".to_string()
+            )]
+        );
+        assert_eq!(
+            sup.step(Input::Thread(open(None))),
+            vec![Effect::RunThread(open(None))]
         );
     }
 

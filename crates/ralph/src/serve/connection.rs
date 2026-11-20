@@ -88,6 +88,10 @@ fn thread(host: &Host, op: ThreadOp) -> ServerMsg {
 
 fn open(host: &Host, opts: &OpenOpts) -> Result<String, String> {
     let key = SessionKey::Thread(opts.name.clone());
+    permit_open(&step(
+        &host.supervisor,
+        Input::Thread(ThreadOp::Open(opts.clone())),
+    )?)?;
     let effects = step(&host.supervisor, Input::Open(key.clone()))?;
     permit_open(&effects)?;
     let opened = prepare_open(&host.store_dir, opts)
