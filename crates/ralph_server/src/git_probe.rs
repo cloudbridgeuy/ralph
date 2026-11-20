@@ -15,15 +15,14 @@ pub fn branch_exists(repo: &Path, branch: &str) -> io::Result<bool> {
         .success())
 }
 
+fn probe_command(repo: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(repo).args(args);
+    command
+}
+
 fn git_output(repo: &Path, args: &[&str]) -> io::Result<Output> {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
+    probe_command(repo, args).output()
 }
 
 pub fn branch_open(repo: &Path, branch: &str) -> bool {
@@ -58,6 +57,16 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn the_probe_command_removes_no_git_env_var() {
+        let command = probe_command(Path::new("."), &["status"]);
+        let removed: Vec<_> = command
+            .get_envs()
+            .filter(|(key, value)| value.is_none() && key.to_string_lossy().starts_with("GIT_"))
+            .collect();
+        assert!(removed.is_empty(), "{removed:?}");
     }
 
     #[test]

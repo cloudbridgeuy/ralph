@@ -564,7 +564,7 @@ fn lost_marker(entry: &Path) -> Option<PathBuf> {
     Some(entry.with_file_name(lost_marker_name(&name)))
 }
 
-fn repo_root() -> io::Result<PathBuf> {
+pub(crate) fn repo_root() -> io::Result<PathBuf> {
     Ok(PathBuf::from(stdout_line(run(
         Command::new("git").args(["rev-parse", "--show-toplevel"])
     )?)))

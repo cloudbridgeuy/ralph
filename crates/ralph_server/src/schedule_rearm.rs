@@ -2,6 +2,7 @@ use crate::git_probe::branch_open;
 use crate::schedule_store::ScheduleStore;
 use crate::warn::warn_if_err;
 use crate::worker_mcp::Inbox;
+use crate::workers::repo_root;
 use chrono::{DateTime, Local, Utc};
 use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_repeat::{
@@ -102,7 +103,16 @@ pub fn refuse_open_branch(
     task: &Task,
     now: DateTime<Utc>,
 ) -> bool {
-    stop_if_open(Path::new("."), &monitor.schedule, &monitor.inbox, task, now)
+    match repo_root() {
+        Ok(repo) => stop_if_open(&repo, &monitor.schedule, &monitor.inbox, task, now),
+        Err(error) => {
+            crate::warn::warn(format!(
+                "locating the repo for schedule {}: {error}",
+                task.id
+            ));
+            false
+        }
+    }
 }
 
 #[cfg(test)]
