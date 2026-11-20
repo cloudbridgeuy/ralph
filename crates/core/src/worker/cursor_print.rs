@@ -1,4 +1,5 @@
 use super::transcript_usage::ModelUsage;
+use super::verify::CheckResult;
 use super::{Action, ThreadSignal, TurnEnd, REPORT_REMINDER, SERVER_NAME};
 use crate::chat_memory::{worker_usage_record, CallSite, LedgerRow};
 use crate::stream::result_is_error;
@@ -158,17 +159,40 @@ pub fn map_print_usage(usage: &Value, model: &str) -> Option<ModelUsage> {
 }
 
 pub fn print_usage_record(
-    worker_id: &str,
-    turn_id: Option<u64>,
+    kind: CallSite,
     at: String,
     chat: Option<String>,
     usage: &ModelUsage,
 ) -> LedgerRow {
-    let kind = CallSite::Worker {
-        worker_id: worker_id.to_string(),
-        turn_id,
-    };
     worker_usage_record(kind, at, chat, HARNESS, usage)
+}
+
+pub struct PrintVerify {
+    pub prompt: CheckResult,
+    pub usage: Option<ModelUsage>,
+}
+
+pub fn print_verify(lines: &[String], model: &str) -> PrintVerify {
+    let result = lines
+        .iter()
+        .find_map(|line| match decode_print_line(line, model) {
+            PrintEvent::Result { end, usage } => Some((end, usage)),
+            _ => None,
+        });
+    match result {
+        Some((TurnEnd::Failed { message, .. }, _)) => PrintVerify {
+            prompt: CheckResult::fail("print prompt", message),
+            usage: None,
+        },
+        Some((_, usage)) => PrintVerify {
+            prompt: CheckResult::pass("print prompt", "the print-mode turn succeeded"),
+            usage,
+        },
+        None => PrintVerify {
+            prompt: CheckResult::fail("print prompt", "the cursor agent sent no result"),
+            usage: None,
+        },
+    }
 }
 
 pub fn turn_end_for(outcome: ExitOutcome, result: Option<TurnEnd>) -> TurnEnd {
