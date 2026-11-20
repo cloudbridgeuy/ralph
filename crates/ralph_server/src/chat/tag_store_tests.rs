@@ -263,19 +263,28 @@ fn roles_in_the_batch_come_from_the_log() {
 }
 
 #[test]
-fn with_tags_reads_the_ids_for_a_tagged_request_only() {
-    let dir = tempfile::tempdir().unwrap();
+fn with_tag_state_adds_the_ids_for_a_tagged_request_only() {
     let row = r#"{"v":1,"n":4,"rule":true,"approval":false,"model":"m","prompt":"v1","at":"t"}"#;
-    fs::write(dir.path().join(TAGS_FILE), format!("{row}\n")).unwrap();
+    let state = decode_rows(format!("{row}\n").as_bytes());
     let tagged = ralph_core::chat_memory::parse_search_args(
         &serde_json::json!({"query": "x", "tag": "rule"}),
     )
     .unwrap();
     let expected = tagged.clone().with_tag_ids(BTreeSet::from([4]));
-    assert_eq!(with_tags(dir.path(), &tagged).unwrap(), expected);
+    assert_eq!(with_tag_state(Some(&state), &tagged), expected);
     let plain =
         ralph_core::chat_memory::parse_search_args(&serde_json::json!({"query": "x"})).unwrap();
-    assert_eq!(with_tags(dir.path(), &plain).unwrap(), plain);
+    assert_eq!(with_tag_state(Some(&state), &plain), plain);
+}
+
+#[test]
+fn with_tag_state_without_a_state_matches_nothing_for_a_tagged_request() {
+    let tagged = ralph_core::chat_memory::parse_search_args(
+        &serde_json::json!({"query": "x", "tag": "rule"}),
+    )
+    .unwrap();
+    let expected = tagged.clone().with_tag_ids(BTreeSet::new());
+    assert_eq!(with_tag_state(None, &tagged), expected);
 }
 
 #[test]

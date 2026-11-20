@@ -212,3 +212,36 @@ fn a_tag_only_search_from_a_thread_lists_tagged_main_era_entries_newest_first() 
         "{text}"
     );
 }
+
+fn thread_call(main: &tempfile::TempDir, tool: &str, args: Value) -> String {
+    call(
+        &main.path().join("threads").join("auth"),
+        tool,
+        args,
+        CallSource::Cli,
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_cli_zoom_and_read_of_main_from_a_thread_show_mains_marks() {
+    let main = thread_over_tagged_main(&[1]);
+    let zoom = thread_call(&main, "zoom", json!({"id": "1", "thread": "main"}));
+    assert!(zoom.contains("#1 user [rule] "), "{zoom}");
+    let read = thread_call(&main, "read", json!({"id": "0-1", "thread": "main"}));
+    assert!(read.contains("#1 · user [rule] "), "{read}");
+    assert!(read.contains("#0 · user · "), "{read}");
+}
+
+#[test]
+fn a_thread_scope_read_uses_the_thread_tags_not_mains() {
+    let main = thread_over_tagged_main(&[2, 3]);
+    let thread = main.path().join("threads").join("auth");
+    let own = |tags: &str| {
+        fs::write(thread.join("tags.jsonl"), tags).unwrap();
+        thread_call(&main, "read", json!({"id": "auth:0"}))
+    };
+    assert!(!own("").contains("[rule]"));
+    let row = "{\"v\":1,\"n\":0,\"rule\":true,\"approval\":false,\"model\":\"m\",\"prompt\":\"v1\",\"at\":\"t\"}\n";
+    assert!(own(row).contains("[rule]"));
+}

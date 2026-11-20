@@ -11,7 +11,7 @@ use ralph_core::chat_memory::{
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct TagStore {
     dir: PathBuf,
@@ -299,15 +299,15 @@ impl Round<'_> {
     }
 }
 
-/// Adds the tagged ids to a search request that filters by tag. Other
-/// requests pass through without reading `tags.jsonl`.
-pub fn with_tags(dir: &Path, request: &SearchRequest) -> io::Result<SearchRequest> {
+pub fn with_tag_state(state: Option<&TagState>, request: &SearchRequest) -> SearchRequest {
     match request.tag() {
         Some(label) => {
-            let state = TagStore::new(dir.to_path_buf()).read_state()?;
-            Ok(request.clone().with_tag_ids(ids_with(&state, label)))
+            let ids = state
+                .map(|state| ids_with(state, label))
+                .unwrap_or_default();
+            request.clone().with_tag_ids(ids)
         }
-        None => Ok(request.clone()),
+        None => request.clone(),
     }
 }
 
