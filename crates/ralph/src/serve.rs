@@ -124,7 +124,7 @@ fn handle(
     supervisor: &Mutex<Supervisor>,
     stop: &AtomicBool,
 ) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(READ_TIMEOUT))?;
+    stream.set_read_timeout(read_timeout(false))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
     let mut greeted = false;
@@ -147,8 +147,13 @@ fn handle(
             return Ok(());
         }
         greeted = true;
+        writer.set_read_timeout(read_timeout(greeted))?;
     }
     Ok(())
+}
+
+fn read_timeout(greeted: bool) -> Option<Duration> {
+    (!greeted).then_some(READ_TIMEOUT)
 }
 
 fn read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
@@ -202,6 +207,12 @@ mod tests {
             panic!("expected error");
         };
         assert_eq!(message, "down");
+    }
+
+    #[test]
+    fn a_greeted_connection_has_no_read_timeout() {
+        assert_eq!(read_timeout(false), Some(READ_TIMEOUT));
+        assert_eq!(read_timeout(true), None);
     }
 
     #[test]
