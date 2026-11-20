@@ -600,8 +600,8 @@ pub struct HistoryArgs {
     pub tool: Option<HistoryTool>,
 
     #[arg(
-        required = true,
-        help = "The id, pattern or words, as in the chat slash command"
+        required_unless_present = "tag",
+        help = "The id, pattern or words, as in the chat slash command; search may omit them with --tag"
     )]
     pub words: Vec<String>,
 
@@ -614,7 +614,7 @@ pub struct HistoryArgs {
     #[arg(
         long,
         value_name = "LABEL",
-        help = "Search only messages tagged rule, decision or approval"
+        help = "Search only messages tagged rule, decision or approval; search then needs no words"
     )]
     pub tag: Option<String>,
 

@@ -592,6 +592,49 @@ fn test_cli_chat_history_search_takes_a_tag() {
     assert_eq!(history.tag.as_deref(), Some("rule"));
 }
 
+fn parse_history(args: &[&str]) -> Result<HistoryArgs, clap::Error> {
+    let mut argv = vec!["ralph", "chat", "history"];
+    argv.extend_from_slice(args);
+    let cli = Cli::try_parse_from(argv)?;
+    let Some(Commands::Chat(chat)) = cli.command else {
+        panic!("expected chat");
+    };
+    let Some(ChatCommand::History(history)) = chat.command else {
+        panic!("expected chat history");
+    };
+    Ok(history)
+}
+
+#[test]
+fn test_cli_chat_history_search_tag_alone_has_no_words() {
+    let history = parse_history(&["search", "--tag", "rule"]).unwrap();
+    assert!(history.words.is_empty());
+    assert_eq!(history.tag.as_deref(), Some("rule"));
+}
+
+#[test]
+fn test_cli_chat_history_search_with_words_and_tag_keeps_both() {
+    let history = parse_history(&["search", "ship", "--tag", "rule"]).unwrap();
+    assert_eq!(history.words, vec!["ship".to_string()]);
+    assert_eq!(history.tag.as_deref(), Some("rule"));
+}
+
+#[test]
+fn test_cli_chat_history_search_without_tag_or_words_fails() {
+    assert!(parse_history(&["search"]).is_err());
+}
+
+#[test]
+fn test_cli_chat_history_read_without_words_fails() {
+    assert!(parse_history(&["read"]).is_err());
+}
+
+#[test]
+fn test_cli_chat_history_decay_parses() {
+    let history = parse_history(&["decay"]).unwrap();
+    assert!(matches!(history.stats, Some(HistorySub::Decay(_))));
+}
+
 #[test]
 fn test_cli_chat_history_stats_parses() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "history", "stats"])
