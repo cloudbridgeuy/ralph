@@ -38,6 +38,9 @@ pub enum CallSite {
         worker_id: String,
         turn_id: Option<u64>,
     },
+    Verify {
+        worker_id: String,
+    },
     Ping,
     Merge,
     Ask,
@@ -52,6 +55,7 @@ enum LedgerRole {
     Tag,
     Merge,
     Worker,
+    Verify,
     Ask,
     Subagent,
 }
@@ -64,6 +68,7 @@ impl CallSite {
             CallSite::Tag => LedgerRole::Tag,
             CallSite::Merge => LedgerRole::Merge,
             CallSite::Worker { .. } => LedgerRole::Worker,
+            CallSite::Verify { .. } => LedgerRole::Verify,
             CallSite::Ask => LedgerRole::Ask,
             CallSite::Subagent => LedgerRole::Subagent,
         }

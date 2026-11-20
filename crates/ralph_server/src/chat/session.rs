@@ -225,8 +225,8 @@ pub fn phase_after(outcome: TurnOutcome) -> Phase {
     }
 }
 
-pub struct Session<'s> {
-    pub turn: Turn<'s>,
+pub struct Session {
+    pub turn: Turn,
     pub core: Arc<Monitor>,
     pub send_it: SendIt,
     pub limits: Limits,
@@ -281,7 +281,7 @@ impl Reply {
     }
 }
 
-impl Session<'_> {
+impl Session {
     pub fn worker_states(&self) -> (HashMap<String, String>, Vec<String>) {
         let mut last = Store::new(self.core.store_dir.clone())
             .load()

@@ -24,6 +24,7 @@ enum Plan {
 }
 
 struct TurnRun<'a> {
+    usage: &'a CodexUsage,
     thread: &'a str,
     text: &'a str,
     plan: Plan,
@@ -46,6 +47,7 @@ fn run_turn(wire: &mut Wire, run: &TurnRun) -> TurnSummary {
         }
     };
     let turn = decode_turn_id(&started).unwrap_or_default();
+    run.usage.start_turn();
     loop {
         let incoming = match wire.next(Some(run.deadline)) {
             Ok(incoming) => incoming,
@@ -54,6 +56,9 @@ fn run_turn(wire: &mut Wire, run: &TurnRun) -> TurnSummary {
                 return summary;
             }
         };
+        if let Incoming::Notification { method, params } = &incoming {
+            run.usage.observe(method, params, true);
+        }
         match incoming {
             Incoming::Notification { method, params } if method == TURN_COMPLETED => {
                 summary.stop = Ok(params["turn"]["status"]
@@ -97,9 +102,18 @@ fn run_turn(wire: &mut Wire, run: &TurnRun) -> TurnSummary {
     }
 }
 
-fn live_checks(wire: &mut Wire, thread: &str, checks: &Checks, deadline: Instant) {
+fn live_checks(
+    wire: &mut Wire,
+    thread: &ThreadInfo,
+    ledger: &Path,
+    checks: &Checks,
+    deadline: Instant,
+) {
+    let usage = CodexUsage::new("verify", None);
+    usage.bind(&thread.id, thread.model.clone());
     let run = |plan, text| TurnRun {
-        thread,
+        usage: &usage,
+        thread: &thread.id,
         text,
         plan,
         deadline,
@@ -117,6 +131,7 @@ fn live_checks(wire: &mut Wire, thread: &str, checks: &Checks, deadline: Instant
         &run_turn(wire, &run(Plan::Cancel, CANCEL_PROMPT)),
         INTERRUPTED,
     ));
+    usage.flush_verify(ledger);
 }
 
 fn identify(wire: &mut Wire, checks: &Checks, deadline: Instant) -> Option<String> {
@@ -148,7 +163,7 @@ fn identify(wire: &mut Wire, checks: &Checks, deadline: Instant) -> Option<Strin
     version
 }
 
-fn exercise(wire: &mut Wire, live: bool, dir: &Path, checks: &Checks, deadline: Instant) {
+fn exercise(wire: &mut Wire, live: Option<&Path>, dir: &Path, checks: &Checks, deadline: Instant) {
     let account = wire
         .call(ACCOUNT_READ, json!({}), deadline)
         .and_then(|account| check_login(&account).map(|()| account));
@@ -180,8 +195,8 @@ fn exercise(wire: &mut Wire, live: bool, dir: &Path, checks: &Checks, deadline: 
     }) else {
         return;
     };
-    if live {
-        live_checks(wire, &thread.id, checks, deadline);
+    if let Some(ledger) = live {
+        live_checks(wire, &thread, ledger, checks, deadline);
     }
     step(
         checks,
@@ -191,7 +206,7 @@ fn exercise(wire: &mut Wire, live: bool, dir: &Path, checks: &Checks, deadline: 
     );
 }
 
-pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> {
+pub(crate) fn verify(live: Option<&Path>, dir: &Path, checks: &Checks) -> Option<String> {
     let mut command = Command::new(CODEX_COMMAND);
     command
         .args(["app-server", "--listen", "stdio://"])
@@ -205,7 +220,11 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     drain_stderr(stderr, Arc::clone(&log));
     let (lines, _) = pipe_lines(stdout, &log);
     let stdin = logged_stdin(stdin, &log);
-    let limit = if live { LIVE_DEADLINE } else { FREE_DEADLINE };
+    let limit = if live.is_some() {
+        LIVE_DEADLINE
+    } else {
+        FREE_DEADLINE
+    };
     let mut wire = Wire {
         rpc: Rpc::default(),
         stdin: Arc::clone(&stdin),

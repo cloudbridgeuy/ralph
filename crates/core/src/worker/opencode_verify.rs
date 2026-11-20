@@ -1,8 +1,8 @@
 use super::{
-    create_session_body, opencode_blocked_content, parse_event, parse_interrupted,
-    session_permissions, session_update, turn_result, turn_stop, ApiData, CheckResult,
-    PermissionDecision, SessionMessage, SessionUpdate, TurnSummary, VersionProbe,
-    VERSION_PROBE_LIMIT,
+    create_session_body, decode_opencode_usage, opencode_blocked_content, parse_event,
+    parse_interrupted, session_permissions, session_update, turn_result, turn_stop, ApiData,
+    CheckResult, OpencodeUsageEvent, PermissionDecision, SessionMessage, SessionUpdate,
+    TurnSummary, VersionProbe, VERSION_PROBE_LIMIT,
 };
 use serde_json::{json, Value};
 
@@ -47,10 +47,11 @@ pub enum OpencodeAction {
     Interrupt,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpencodeFold {
     pub summary: TurnSummary,
     pub ended: bool,
+    pub usage: Vec<OpencodeUsageEvent>,
 }
 
 impl Default for OpencodeFold {
@@ -63,6 +64,7 @@ impl Default for OpencodeFold {
                 cancel_sent: false,
             },
             ended: false,
+            usage: Vec::new(),
         }
     }
 }
@@ -77,6 +79,7 @@ pub fn fold_opencode_event(
     else {
         return Vec::new();
     };
+    fold.usage.extend(decode_opencode_usage(&event));
     match session_update(&event) {
         Some(SessionUpdate::Blocked(asked)) => {
             let decision = match plan {
@@ -245,6 +248,21 @@ mod tests {
             .iter()
             .flat_map(|line| fold_opencode_event(fold, SESSION, line, plan))
             .collect()
+    }
+
+    #[test]
+    fn a_step_end_keeps_its_tokens_and_cost_for_the_usage_row() {
+        let mut fold = OpencodeFold::default();
+        let line = event(
+            "session.step.ended",
+            json!({"sessionID":SESSION,"cost":0.5,"tokens":{"input":9,"output":2,"reasoning":1,"cache":{"read":4,"write":0}}}),
+        );
+        feed(&mut fold, OpencodePlan::Plain, &[line]);
+        assert_eq!(fold.usage.len(), 1);
+        assert!(matches!(
+            fold.usage[0],
+            OpencodeUsageEvent::Step { cost, .. } if cost == 0.5
+        ));
     }
 
     #[test]
