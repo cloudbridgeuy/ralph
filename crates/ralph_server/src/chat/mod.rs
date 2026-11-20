@@ -15,6 +15,7 @@ pub mod schedule;
 pub mod schedule_worker;
 pub mod send_it;
 pub mod serve_proto;
+pub mod serve_socket;
 pub mod session;
 pub mod settle;
 pub mod skills;
