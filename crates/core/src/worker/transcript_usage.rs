@@ -104,8 +104,17 @@ pub fn transcript_usage(lines: &str, seen: &HashSet<String>) -> TranscriptUsage 
     }
 }
 
-pub fn turn_settled(_lines: &str) -> bool {
-    true
+pub fn turn_settled(lines: &str) -> bool {
+    lines
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .rfind(|value| matches!(value["type"].as_str(), Some("user" | "assistant")))
+        .is_some_and(|last| {
+            last["type"] == "assistant"
+                && last["message"]["stop_reason"]
+                    .as_str()
+                    .is_some_and(|stop| stop != "tool_use")
+        })
 }
 
 #[cfg(test)]
