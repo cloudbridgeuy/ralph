@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite, NodeSource};
-pub use claim::{holder_pid, store_in_use_message};
+pub use claim::{
+    holder_pid, instance_id, next_lease, parse_lease, store_in_use_message, ChatLease,
+};
 pub use decay::{build_decay, render_decay, Decay, DecayConfig};
 pub use facts::{cover_candidates, cover_size, found_metrics, read_metrics, zoom_metrics, Found};
 pub use history_log::{

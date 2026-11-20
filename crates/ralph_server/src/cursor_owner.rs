@@ -1,17 +1,19 @@
 use crate::process_tree::group_table;
 use crate::transport::stdio::stop_group;
 use crate::warn::warn;
+use ralph_core::chat_memory::instance_id;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
-    sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep, AGY_OWNER_DIR,
-    CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
-    CURSOR_SESSION_DIR, OPENCODE_SESSION_DIR,
+    owned_by, sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep,
+    AGY_OWNER_DIR, CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR,
+    CURSOR_OWNER_DIR, CURSOR_SESSION_DIR, OPENCODE_SESSION_DIR,
 };
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const TERM_GRACE: Duration = Duration::from_secs(3);
@@ -37,6 +39,19 @@ pub fn process_start(pid: u32) -> Option<String> {
         .filter(|output| output.status.success())?;
     let start = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!start.is_empty()).then_some(start)
+}
+
+pub fn own_instance() -> Option<&'static str> {
+    static OWN: OnceLock<Option<String>> = OnceLock::new();
+    OWN.get_or_init(|| {
+        let pid = process::id();
+        process_start(pid).map(|start| instance_id(pid, &start))
+    })
+    .as_deref()
+}
+
+pub(crate) fn mine(record: &OwnerRecord) -> bool {
+    owned_by(record, process::id(), own_instance())
 }
 
 fn alive_since(pid: u32, start: &str) -> bool {
@@ -137,7 +152,7 @@ fn owner_facts(owner: &Path) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
         group_alive: record
             .as_ref()
             .is_some_and(|record| group_alive(record, owner)),
-        mine: chat_alive && record.as_ref().is_some_and(|r| r.chat_pid == process::id()),
+        mine: chat_alive && record.as_ref().is_some_and(mine),
     };
     Some((record, facts))
 }
@@ -241,9 +256,11 @@ pub(crate) fn reclaim_agy_decision(owner: &Path, decision: Sweep) -> bool {
 
 pub fn write_owner_record(owner: &Path, group: u32, agent: &str) -> Result<(), String> {
     let chat = process::id();
+    let chat_start = process_start(chat).ok_or("could not read the chat start time")?;
     let record = OwnerRecord {
         chat_pid: chat,
-        chat_start: process_start(chat).ok_or("could not read the chat start time")?,
+        instance: Some(instance_id(chat, &chat_start)),
+        chat_start,
         group,
         group_start: process_start(group)
             .ok_or_else(|| format!("could not read the {agent} agent start time"))?,
@@ -260,6 +277,7 @@ pub fn claim_owner(owner: &Path) -> io::Result<()> {
         chat_pid: chat,
         chat_start: start.clone(),
         group: chat,
+        instance: Some(instance_id(chat, &start)),
         group_start: start,
     };
     let name = owner.file_name().unwrap_or_default().to_string_lossy();

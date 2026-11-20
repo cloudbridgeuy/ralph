@@ -93,7 +93,7 @@ pub(crate) fn queued_owner(owner: &Path) -> QueuedOwner {
     match fs::read_to_string(owner) {
         Err(_) => QueuedOwner::Missing,
         Ok(text) => match OwnerRecord::parse(&text) {
-            Some(record) if record.chat_pid == std::process::id() => QueuedOwner::Mine,
+            Some(record) if crate::cursor_owner::mine(&record) => QueuedOwner::Mine,
             _ => QueuedOwner::Foreign,
         },
     }

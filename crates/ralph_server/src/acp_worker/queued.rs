@@ -74,6 +74,7 @@ mod tests {
                 chat_start: "other".into(),
                 group: 1,
                 group_start: "other".into(),
+                instance: None,
             }
             .render(),
         )?;

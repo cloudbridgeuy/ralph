@@ -38,10 +38,8 @@ fn decode_interrupt(text: &str, entry: &str) -> (String, Option<String>) {
 
 fn token(store: &Path, id: &str, generation: u64, group: u32) -> Option<String> {
     let owner = fs::read_to_string(HandoffFiles::agy(store, id).owner).ok()?;
-    if ralph_core::worker::OwnerRecord::parse(&owner)?.group != group {
-        return None;
-    }
-    Some(format!("{owner}#{generation}"))
+    let record = ralph_core::worker::OwnerRecord::parse(&owner)?;
+    (record.group == group).then(|| ralph_core::worker::turn_token(&record, generation))
 }
 
 pub(super) fn publish_turn(
@@ -205,6 +203,7 @@ mod tests {
             chat_start: "chat".into(),
             group: 7,
             group_start: "agent".into(),
+            instance: None,
         };
         write_file(&owner, &record.render())?;
         let old = publish_turn(store.path(), "A", 1, 7)?;

@@ -10,6 +10,8 @@ pub struct OwnerRecord {
     pub chat_start: String,
     pub group: u32,
     pub group_start: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
 }
 
 impl OwnerRecord {
@@ -108,6 +110,21 @@ pub fn agent_held(facts: OwnerFacts) -> bool {
 
 pub fn group_live(leader_start_now: Option<&str>, recorded_start: &str, reclaimable: bool) -> bool {
     leader_start_now.map_or(reclaimable, |start| start == recorded_start)
+}
+
+pub fn owned_by(record: &OwnerRecord, pid: u32, instance: Option<&str>) -> bool {
+    match (record.instance.as_deref(), instance) {
+        (Some(theirs), Some(mine)) => theirs == mine,
+        _ => record.chat_pid == pid,
+    }
+}
+
+pub fn turn_token(record: &OwnerRecord, generation: u64) -> String {
+    let without_instance = OwnerRecord {
+        instance: None,
+        ..record.clone()
+    };
+    format!("{}#{generation}", without_instance.render())
 }
 
 pub fn caller_owns_worker(owner_chat_pid: u32, caller_ancestry: &[u32]) -> bool {
@@ -236,9 +253,76 @@ mod tests {
             chat_start: "Mon Oct 15 10:00:00 2026".into(),
             group: 2,
             group_start: "Mon Oct 15 10:00:01 2026".into(),
+            instance: None,
         };
         assert_eq!(OwnerRecord::parse(&record.render()), Some(record));
         assert_eq!(OwnerRecord::parse("4242"), None);
+    }
+
+    const OLD_OWNER: &str = r#"{"chat_pid":1,"chat_start":"c","group":2,"group_start":"g"}"#;
+
+    fn owner(chat_pid: u32, instance: Option<&str>) -> OwnerRecord {
+        OwnerRecord {
+            chat_pid,
+            chat_start: "c".into(),
+            group: 2,
+            group_start: "g".into(),
+            instance: instance.map(str::to_string),
+        }
+    }
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct Main0475OwnerRecord {
+        chat_pid: u32,
+        chat_start: String,
+        group: u32,
+        group_start: String,
+    }
+
+    #[test]
+    fn new_reader_parses_an_old_owner_record_and_renders_it_byte_for_byte() {
+        assert_eq!(OwnerRecord::parse(OLD_OWNER), Some(owner(1, None)));
+        assert_eq!(owner(1, None).render(), OLD_OWNER);
+    }
+
+    #[test]
+    fn old_reader_parses_a_new_owner_record() {
+        let new = owner(1, Some("1@c")).render();
+        assert_eq!(
+            new,
+            r#"{"chat_pid":1,"chat_start":"c","group":2,"group_start":"g","instance":"1@c"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<Main0475OwnerRecord>(&new).ok(),
+            Some(Main0475OwnerRecord {
+                chat_pid: 1,
+                chat_start: "c".into(),
+                group: 2,
+                group_start: "g".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn owned_by_matches_the_instance_when_both_have_one_else_the_pid() {
+        assert!(owned_by(&owner(1, Some("1@c")), 1, Some("1@c")));
+        assert!(!owned_by(&owner(1, Some("1@c")), 1, Some("1@reused")));
+        assert!(owned_by(&owner(1, None), 1, Some("1@c")));
+        assert!(owned_by(&owner(1, Some("1@c")), 1, None));
+        assert!(!owned_by(&owner(1, None), 9, Some("9@c")));
+    }
+
+    #[test]
+    fn turn_token_of_an_old_record_keeps_the_old_bytes() {
+        assert_eq!(turn_token(&owner(1, None), 3), format!("{OLD_OWNER}#3"));
+    }
+
+    #[test]
+    fn turn_token_ignores_the_instance_so_it_survives_an_upgrade() {
+        assert_eq!(
+            turn_token(&owner(1, Some("1@c")), 3),
+            turn_token(&owner(1, None), 3)
+        );
     }
 
     #[test]
