@@ -7,7 +7,6 @@ use crate::watch_requests;
 use ralph_core::program_status;
 use ralph_core::worker::{Report, INBOX_DIR};
 use ralph_core::worker_check::check_every_polls;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 const MEMORY_EVERY_POLLS: u64 = 10;
@@ -61,7 +60,7 @@ fn run_ticks(monitor: &Monitor, sink: &impl Fn(HostEvent)) -> ! {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostEvent {
     Fresh { fresh: Vec<Report>, unread: usize },
     Repaint,

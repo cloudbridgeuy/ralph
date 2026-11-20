@@ -166,7 +166,6 @@ fn classify(greeted: bool, frame: Result<ClientMsg, String>) -> Action {
         Ok(ClientMsg::Hello { proto }) => Action::Hello(proto),
         Ok(_) if !greeted => Action::Refuse("unexpected message before hello".to_string()),
         Ok(ClientMsg::Shutdown) => Action::Shutdown,
-        Ok(_) => Action::Refuse("unsupported message".to_string()),
     }
 }
 
@@ -216,10 +215,6 @@ mod tests {
             Action::Refuse("unexpected message before hello".into())
         );
         assert_eq!(classify(true, Ok(ClientMsg::Shutdown)), Action::Shutdown);
-        assert_eq!(
-            classify(true, Ok(ClientMsg::Send { text: "x".into() })),
-            Action::Refuse("unsupported message".into())
-        );
         assert_eq!(
             classify(true, Err("bad".into())),
             Action::Refuse("bad".into())

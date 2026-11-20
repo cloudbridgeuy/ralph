@@ -1,7 +1,6 @@
 use crate::stream::blocks::OutputBlock;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wait {
     Response,
     Memory,
@@ -19,7 +18,7 @@ impl Wait {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TurnEvent {
     Rule,
     Warning(String),
@@ -46,20 +45,5 @@ mod tests {
     #[test]
     fn a_gap_with_a_pending_tool_is_a_tool_wait() {
         assert_eq!(Wait::after_gap(2), Wait::Tool);
-    }
-
-    #[test]
-    fn turn_events_round_trip_through_json() {
-        let events = [
-            TurnEvent::Rule,
-            TurnEvent::Busy(Wait::Memory),
-            TurnEvent::Resume(Wait::Tool),
-            TurnEvent::Blocks(Vec::new()),
-            TurnEvent::Stderr("x".into()),
-        ];
-        for event in events {
-            let json = serde_json::to_string(&event).unwrap();
-            assert_eq!(serde_json::from_str::<TurnEvent>(&json).unwrap(), event);
-        }
     }
 }

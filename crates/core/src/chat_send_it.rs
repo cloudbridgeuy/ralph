@@ -366,7 +366,7 @@ pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
         .collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendItCommand {
     Usage,
     Propose(String),
