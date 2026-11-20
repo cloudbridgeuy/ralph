@@ -147,6 +147,7 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
             drift
                 .zip(inbox)
                 .map(|(version, inbox)| DriftRun::new(version, inbox)),
+            &ralph_server::chat::memory::usage_path(),
         ),
         WorkerCommand::DriftCheck { inbox } => {
             ralph_server::version_drift::run_daily(&inbox);

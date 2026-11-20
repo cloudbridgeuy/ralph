@@ -1,3 +1,4 @@
+use crate::acp_worker::LiveRun;
 use crate::config::AppConfig;
 use crate::subprocess::TimedOutput;
 use crate::version_drift::{record_manual, DriftRun};
@@ -11,6 +12,7 @@ use ralph_core::worker::{
     CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL,
     OPENCODE_REQUIRED_CHECKS,
 };
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -216,6 +218,7 @@ pub fn run(
     live: bool,
     yolo: bool,
     drift: Option<DriftRun>,
+    ledger: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if yolo && agent != HarnessId::Agy {
         return Err("--yolo is only supported for agy".into());
@@ -233,10 +236,13 @@ pub fn run(
     if let Some(drift) = &drift {
         drift.watch(name);
     }
-    let agy_live = live.then_some(if yolo {
-        PermissionMode::Yolo
-    } else {
-        PermissionMode::Ask
+    let agy_live = live.then(|| LiveRun {
+        mode: if yolo {
+            PermissionMode::Yolo
+        } else {
+            PermissionMode::Ask
+        },
+        ledger: ledger.to_path_buf(),
     });
     let checks = Checks::default();
     let config = AppConfig::load().map_err(|error| error.to_string());

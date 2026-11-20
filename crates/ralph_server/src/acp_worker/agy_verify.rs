@@ -115,12 +115,17 @@ fn settings(selection: &agy_settings::Selection) -> Result<String, String> {
     }
 }
 
+pub(crate) struct LiveRun {
+    pub(crate) mode: PermissionMode,
+    pub(crate) ledger: PathBuf,
+}
+
 struct Run {
     dir: PathBuf,
     checks: Checks,
     version: String,
     updates: agy_settings::Updates,
-    live: Option<PermissionMode>,
+    live: Option<LiveRun>,
     allow_report: Arc<AtomicBool>,
     requests: Arc<AtomicUsize>,
     signals: queue::UnboundedReceiver<()>,
@@ -204,12 +209,13 @@ async fn run(
     }
     let closed = close(&connection, &id).await;
     if step(&checks, "session/close reload", closed, Clone::clone).is_some() {
-        if let Some(mode) = live {
+        if let Some(LiveRun { mode, ledger }) = live {
             let live = live::Live {
                 mode,
                 updates,
                 allow_report,
                 requests,
+                ledger,
                 signals,
             };
             live::run(&connection, &dir, &checks, live).await;
@@ -219,7 +225,7 @@ async fn run(
 }
 
 pub(crate) fn verify(
-    live: Option<PermissionMode>,
+    live: Option<LiveRun>,
     dir: &Path,
     checks: &Checks,
     version: &str,
@@ -250,8 +256,9 @@ pub(crate) fn verify(
     {
         return;
     }
-    let mode = live.unwrap_or(PermissionMode::Ask);
-    let evidence = if live.is_some() {
+    let live_enabled = live.is_some();
+    let mode = live.as_ref().map_or(PermissionMode::Ask, |live| live.mode);
+    let evidence = if live_enabled {
         match evidence::Evidence::create() {
             Ok((evidence, path)) => {
                 println!("agy permission evidence: {}", path.display());
@@ -399,7 +406,7 @@ pub(crate) fn verify(
             "timeout",
             format!(
                 "agy verification exceeded {} seconds",
-                ralph_core::worker::verify_limit(live.is_some()).as_secs()
+                ralph_core::worker::verify_limit(live_enabled).as_secs()
             ),
         ));
     } else if let Err(ref error) = outcome {
