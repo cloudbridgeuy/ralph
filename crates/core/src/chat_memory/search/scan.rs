@@ -105,7 +105,12 @@ impl<'a> Scan<'a> {
             .sum()
     }
 
-    fn ranked(self) -> Vec<Candidate> {
+    fn ranked(mut self) -> Vec<Candidate> {
+        if self.request.tag_only() {
+            self.candidates
+                .sort_by_key(|candidate| std::cmp::Reverse(candidate.id));
+            return self.candidates;
+        }
         let scores: Vec<f64> = self.candidates.iter().map(|c| self.score(c)).collect();
         let mut scored: Vec<(f64, Candidate)> = scores.into_iter().zip(self.candidates).collect();
         scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.id.cmp(&a.1.id)));
