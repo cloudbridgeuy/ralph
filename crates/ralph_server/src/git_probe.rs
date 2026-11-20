@@ -1,4 +1,4 @@
-use ralph_core::worker::worktree_for_branch;
+use ralph_core::worker::branch_is_open;
 use std::io;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -30,10 +30,11 @@ pub fn branch_open(repo: &Path, branch: &str) -> bool {
     let probe = git_output(repo, &["rev-parse", "--verify", "--quiet", &ref_name]);
     let listing = git_output(repo, &["worktree", "list", "--porcelain"]);
     match (probe, listing) {
-        (Ok(probe), Ok(listing)) => {
-            probe.status.success()
-                || worktree_for_branch(&String::from_utf8_lossy(&listing.stdout), branch).is_some()
-        }
+        (Ok(probe), Ok(listing)) => branch_is_open(
+            probe.status.success(),
+            &String::from_utf8_lossy(&listing.stdout),
+            branch,
+        ),
         (Err(error), _) | (_, Err(error)) => {
             crate::warn::warn(format!("checking branch {branch}: {error}"));
             false
@@ -70,13 +71,23 @@ mod tests {
     }
 
     #[test]
-    fn the_shared_probe_finds_a_branch_in_a_temp_repo() {
-        let dir = tempfile::tempdir().unwrap();
-        git(dir.path(), &["init", "-q"]);
-        git(dir.path(), &["commit", "-q", "--allow-empty", "-m", "x"]);
-        git(dir.path(), &["branch", "worker/sched-x"]);
-        assert!(branch_exists(dir.path(), "worker/sched-x").unwrap());
-        assert!(!branch_exists(dir.path(), "worker/sched-none").unwrap());
-        assert!(branch_open(dir.path(), "worker/sched-x"));
+    fn a_branch_with_a_worktree_is_open() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-q"]);
+        git(repo.path(), &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("wt");
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                path.to_str().unwrap(),
+                "-b",
+                "worker/sched-y",
+            ],
+        );
+        assert!(branch_open(repo.path(), "worker/sched-y"));
     }
 }

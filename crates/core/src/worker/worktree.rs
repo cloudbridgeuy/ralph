@@ -56,6 +56,10 @@ pub fn worktree_for_branch(porcelain: &str, branch: &str) -> Option<PathBuf> {
     })
 }
 
+pub fn branch_is_open(ref_exists: bool, porcelain: &str, branch: &str) -> bool {
+    ref_exists || worktree_for_branch(porcelain, branch).is_some()
+}
+
 pub fn worktree_paths(porcelain: &str) -> Vec<String> {
     porcelain
         .lines()
@@ -144,5 +148,26 @@ mod tests {
         );
         assert_eq!(worktree_for_branch(porcelain, "worker/GUZ"), None);
         assert_eq!(worktree_for_branch("", "worker/GUZ-1"), None);
+    }
+
+    #[test]
+    fn a_branch_is_open_when_its_ref_exists_or_a_worktree_holds_it() {
+        let held = "worktree /wt\nHEAD 2\nbranch refs/heads/worker/sched-x\n";
+        let other = "worktree /repo\nHEAD 1\nbranch refs/heads/main\n";
+        let cases = [
+            (false, "", false),
+            (false, other, false),
+            (true, "", true),
+            (true, other, true),
+            (false, held, true),
+            (true, held, true),
+        ];
+        for (ref_exists, porcelain, open) in cases {
+            assert_eq!(
+                branch_is_open(ref_exists, porcelain, "worker/sched-x"),
+                open,
+                "{ref_exists} {porcelain}"
+            );
+        }
     }
 }

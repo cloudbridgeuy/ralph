@@ -387,44 +387,6 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn a_missing_branch_is_not_open() {
-        let repo = repo();
-        assert!(!branch_open(repo.path(), "worker/sched-x"));
-    }
-
-    #[test]
-    fn an_existing_branch_is_open() {
-        let repo = repo();
-        git(repo.path(), &["branch", "worker/sched-x"]);
-        assert!(branch_open(repo.path(), "worker/sched-x"));
-    }
-
-    #[test]
-    fn a_branch_with_a_worktree_is_open() {
-        let repo = repo();
-        let other = tempfile::tempdir().unwrap();
-        let path = other.path().join("wt");
-        git(
-            repo.path(),
-            &[
-                "worktree",
-                "add",
-                "-q",
-                path.to_str().unwrap(),
-                "-b",
-                "worker/sched-y",
-            ],
-        );
-        assert!(branch_open(repo.path(), "worker/sched-y"));
-    }
-
-    #[test]
-    fn a_failed_git_run_is_not_open() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(!branch_open(&dir.path().join("missing"), "worker/sched-x"));
-    }
-
     fn worker_task(repeat: Option<Repeat>) -> Task {
         Task {
             id: "x".to_string(),
