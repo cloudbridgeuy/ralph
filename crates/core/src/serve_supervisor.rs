@@ -1,7 +1,7 @@
 use crate::chat_process::SessionKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
+enum Phase {
     Running,
     Draining,
     Done,
@@ -66,10 +66,6 @@ impl Supervisor {
             }
         }
     }
-
-    pub fn phase(&self) -> Phase {
-        self.phase
-    }
 }
 
 #[cfg(test)]
@@ -78,21 +74,18 @@ mod tests {
 
     #[test]
     fn start_opens_main() {
-        let (sup, effects) = Supervisor::start();
+        let (_, effects) = Supervisor::start();
         assert_eq!(effects, vec![Effect::Open(SessionKey::Main)]);
-        assert_eq!(sup.phase(), Phase::Running);
     }
 
     #[test]
     fn exit_only_after_main_closed() {
         let (mut sup, _) = Supervisor::start();
         assert_eq!(sup.step(Input::Stop), vec![Effect::Close(SessionKey::Main)]);
-        assert_eq!(sup.phase(), Phase::Draining);
         assert_eq!(
             sup.step(Input::Closed(SessionKey::Main)),
             vec![Effect::Exit]
         );
-        assert_eq!(sup.phase(), Phase::Done);
     }
 
     #[test]
@@ -100,7 +93,6 @@ mod tests {
         let (mut sup, _) = Supervisor::start();
         sup.step(Input::Stop);
         assert_eq!(sup.step(Input::Stop), Vec::new());
-        assert_eq!(sup.phase(), Phase::Draining);
     }
 
     #[test]
@@ -121,7 +113,6 @@ mod tests {
     fn closed_unknown_key_is_ignored() {
         let (mut sup, _) = Supervisor::start();
         sup.step(Input::Closed(SessionKey::Main));
-        sup.step(Input::Closed(SessionKey::Main));
-        assert_eq!(sup.phase(), Phase::Running);
+        assert_eq!(sup.step(Input::Closed(SessionKey::Main)), Vec::new());
     }
 }

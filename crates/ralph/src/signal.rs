@@ -33,6 +33,13 @@ pub fn init() -> io::Result<()> {
     Ok(())
 }
 
+pub fn init_serve() -> io::Result<()> {
+    for signal in [SIGINT, SIGTERM, SIGHUP] {
+        register(signal, Arc::clone(&TERMINATED))?;
+    }
+    Ok(())
+}
+
 // The sink's SigId is dropped on purpose and the Once never resets: with no
 // SIGINT action left installed, a Ctrl-C between turns would kill ralph.
 fn install_sigint_sink() -> io::Result<()> {
