@@ -5,12 +5,12 @@ use crate::version_drift::{record_manual, DriftRun};
 use crate::watches::locked;
 use crate::{acp_worker, claude_worker, codex_worker, opencode_worker, verified_agents, workers};
 use ralph_core::worker::{
-    check_agent_version, claude_required_checks, finish_plan, finished_probe, limit_failure,
-    probed_version, render_check, render_summary, required_failure, resolve_claude_model,
-    resolve_opencode_model, spec_passed, verified_entry, verify_limit, CheckResult, HarnessId,
-    PermissionMode, Verdict, VerifiedAgent, VersionProbe, AGY_AGENT, AGY_GATE, AGY_REQUIRED_CHECKS,
-    CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL,
-    OPENCODE_REQUIRED_CHECKS,
+    check_agent_version, claude_required_checks, cursor_required_checks, finish_plan,
+    finished_probe, limit_failure, probed_version, render_check, render_summary, required_failure,
+    resolve_claude_model, resolve_opencode_model, spec_passed, verified_entry, verify_limit,
+    CheckResult, HarnessId, PermissionMode, Verdict, VerifiedAgent, VersionProbe, AGY_AGENT,
+    AGY_GATE, AGY_REQUIRED_CHECKS, CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS,
+    DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -270,8 +270,8 @@ pub fn run(
             (version, agy_required_checks(live, yolo))
         }
         HarnessId::Cursor => (
-            acp_worker::verify(live, dir.path(), &checks),
-            CURSOR_REQUIRED_CHECKS,
+            acp_worker::verify(live.then_some(ledger), dir.path(), &checks),
+            cursor_required_checks(live),
         ),
         HarnessId::Codex => (
             codex_worker::verify(live.then_some(ledger), dir.path(), &checks),

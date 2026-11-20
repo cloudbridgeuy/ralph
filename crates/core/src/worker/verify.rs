@@ -267,16 +267,6 @@ pub struct PermissionSetup {
 }
 
 impl PermissionSetup {
-    pub fn cursor(hooks: &Path) -> Self {
-        Self {
-            label: format!("{} asks before every shell command", hooks.display()),
-            no_request: format!(
-                "Cursor sent no permission request although {} asks before every shell command; Cursor may have changed its project slug or how it loads hooks",
-                hooks.display()
-            ),
-        }
-    }
-
     pub fn claude() -> Self {
         let label =
             "setting-sources project,local with permission-mode default and prompt-tool stdio";
@@ -611,19 +601,6 @@ mod tests {
             cursor_verify_leftover(home, short, &cursor_verify_project(home, short)),
             None
         );
-    }
-
-    #[test]
-    fn the_cursor_setup_names_the_hook_file_and_the_likely_cause() {
-        let setup = PermissionSetup::cursor(Path::new("/p/.cursor/hooks.json"));
-        assert_eq!(
-            setup.label,
-            "/p/.cursor/hooks.json asks before every shell command"
-        );
-        assert!(setup.no_request.contains("/p/.cursor/hooks.json"));
-        assert!(setup
-            .no_request
-            .contains("project slug or how it loads hooks"));
     }
 
     #[test]

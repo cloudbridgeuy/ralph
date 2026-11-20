@@ -20,10 +20,6 @@ pub fn record_cursor_usage(turn: &CursorTurn, usage: &ModelUsage) {
     );
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired by the cursor verify print turn")
-)]
 pub fn record_cursor_verify(
     turn: &CursorTurn,
     usage: &ModelUsage,
