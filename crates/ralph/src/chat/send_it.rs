@@ -3,6 +3,7 @@ use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
 use crate::chat::prompt::{screen_columns, Submitted};
 use crate::chat::queue::Queue;
+use crate::chat::term_loop::run_turn;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{
@@ -16,9 +17,9 @@ use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_server::chat::monitor::Monitor;
+use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::SendIt;
-use ralph_server::chat::snapshots::TurnSnapshots;
-use ralph_server::chat::turn::{Turn, TurnOutcome};
+use ralph_server::chat::turn::TurnOutcome;
 use ralph_server::watches::{locked, OutcomeSlot};
 use reedline::{EditCommand, Reedline};
 use std::io;
@@ -250,8 +251,7 @@ pub(super) fn took_over(send_it: &SendIt, active: &Active) -> Driven {
 }
 
 pub(super) struct InboxTurn<'a> {
-    pub(super) turn: &'a Turn,
-    pub(super) snapshots: &'a TurnSnapshots,
+    pub(super) port: &'a dyn SessionPort,
     pub(super) keys: &'a Keys<'a>,
     pub(super) monitor: &'a Monitor,
 }
@@ -270,9 +270,9 @@ impl InboxTurn<'_> {
         display: &Display,
         sending: &mut Option<Active>,
     ) -> Result<Option<Read>, Box<dyn std::error::Error>> {
-        self.monitor.set_phase(Phase::Turn);
+        self.port.set_phase(Phase::Turn);
         let drained = self.monitor.drain(selection)?;
-        self.monitor.refresh(true);
+        self.port.refresh();
         let Some(unread) = inbox::read(
             selection,
             &drained,
@@ -281,18 +281,18 @@ impl InboxTurn<'_> {
             &mut io::stdout(),
         )?
         else {
-            self.monitor.set_phase(Phase::Prompt);
+            self.port.set_phase(Phase::Prompt);
             return Ok(None);
         };
         let message = brief_unread(send_it, sending, unread.message);
-        let (result, queue) = self.snapshots.around(|| {
-            self.keys.during(|cancel| {
-                self.turn
-                    .run(Trigger::Worker, &unread.logged, &message, cancel)
-            })
-        });
+        let call = TurnCall {
+            trigger: Trigger::Worker,
+            logged: &unread.logged,
+            sent: &message,
+        };
+        let (outcome, queue) = run_turn(self.port, &call, |run| self.keys.during(run).1)?;
         Ok(Some(Read {
-            outcome: result?,
+            outcome,
             queue,
             drained,
         }))

@@ -3,6 +3,7 @@ use crate::chat::check::CheckState;
 use crate::chat::keepalive::Stamp;
 use crate::chat::memory::{self, Store};
 use crate::chat::monitor::{Monitor, ProcessMemo};
+use crate::chat::port::{SessionPort, TurnCall};
 use crate::chat::schedule::restore_schedule;
 use crate::chat::schedule_worker::alive_worker_ids;
 use crate::chat::send_it::{Screen, SendIt};
@@ -20,6 +21,7 @@ use crate::watches::{locked, Watches};
 use crate::wire::store::current_uid;
 use crate::worker_mcp::Inbox;
 use crate::workers::{running_workers, Workers};
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat::{
     resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
     select_servers, ResetLimits,
@@ -33,12 +35,13 @@ use ralph_core::chat_socket::{runtime_root, system_prompt_path};
 use ralph_core::chat_status::{latest_states, Status};
 use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
-use ralph_core::worker::INBOX_DIR;
+use ralph_core::worker::{Report, INBOX_DIR};
 use ralph_core::worker_check::logged_states;
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -295,8 +298,18 @@ impl Session {
             .collect();
         (last, running)
     }
+}
 
-    pub fn send_it(&self, command: SendItCommand, at: &At, ask: &mut dyn Ask) -> Reply {
+impl SessionPort for Session {
+    fn around(&self, run: &mut dyn FnMut()) {
+        self.snapshots.around(run);
+    }
+
+    fn turn(&self, call: &TurnCall, cancel: &CancelToken) -> Result<TurnOutcome, Box<dyn Error>> {
+        self.turn.run(call.trigger, call.logged, call.sent, cancel)
+    }
+
+    fn send_it(&self, command: SendItCommand, at: &At, ask: &mut dyn Ask) -> Reply {
         match command {
             SendItCommand::Propose(text) => {
                 if let Some((ticket, name)) = self.send_it.template_use(&text) {
@@ -340,8 +353,36 @@ impl Session {
         }
     }
 
-    pub fn proposed(&self, proposal: Proposal, width: usize) -> Screen {
+    fn proposed(&self, proposal: Proposal, width: usize) -> Screen {
         self.send_it.proposed(proposal.before, width)
+    }
+
+    fn set_phase(&self, phase: Phase) {
+        self.core.set_phase(phase);
+    }
+
+    fn refresh(&self) {
+        self.core.refresh(true);
+    }
+
+    fn status(&self) -> Status {
+        self.core.status()
+    }
+
+    fn unread(&self) -> Vec<Report> {
+        self.core.inbox.peek().unwrap_or_default()
+    }
+
+    fn take_cost(&self) -> Option<f64> {
+        self.turn.take_cost()
+    }
+
+    fn turns(&self) -> u64 {
+        self.turn.process_turns.load(Ordering::SeqCst)
+    }
+
+    fn end_session(&self) {
+        *locked(&self.turn.session) = None;
     }
 }
 

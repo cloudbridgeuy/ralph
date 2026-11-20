@@ -315,9 +315,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         limits: send_it_limits,
         snapshots,
     };
-    let Session {
-        turn, snapshots, ..
-    } = &session;
+    let Session { turn, .. } = &session;
     monitor.refresh(true);
     let running = running_workers(&monitor.store_dir);
     if let Some(hint) = orphan_hint(
@@ -478,8 +476,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         editor: &prompt.editor,
     };
     let inbox_turn = InboxTurn {
-        turn,
-        snapshots,
+        port: &session,
         keys: &keys,
         monitor: &monitor,
     };
