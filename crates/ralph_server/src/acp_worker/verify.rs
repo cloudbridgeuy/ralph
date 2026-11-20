@@ -5,9 +5,9 @@ use crate::worker_verify::{step, Checks};
 use agent_client_protocol::ByteStreams;
 use ralph_core::worker::{
     cursor_verify_leftovers, cursor_verify_project, decode_print_line, print_args, print_model,
-    print_verify, probed_version, stderr_tail, trim_to_last, CheckResult, PrintArgs, PrintEvent,
-    VersionProbe, ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
-    STDERR_TAIL_CAP,
+    print_verify, probed_version, stderr_tail, trim_to_last, with_stderr_tail, CheckResult,
+    PrintArgs, PrintEvent, VersionProbe, ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE,
+    CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS, STDERR_TAIL_CAP,
 };
 use std::io::{BufRead, BufReader, Read, Write};
 
@@ -175,7 +175,7 @@ fn exercise(dir: &Path, checks: &Checks) {
     }) else {
         return;
     };
-    let first_row = checks.len();
+    let held = Checks::held();
     let captured = Arc::new(Mutex::new(Vec::new()));
     let (finished, eof) = mpsc::channel();
     {
@@ -201,21 +201,23 @@ fn exercise(dir: &Path, checks: &Checks) {
             blocking::Unblock::new(stdout),
         ),
         {
-            let (dir, checks) = (dir.to_path_buf(), checks.clone());
+            let (dir, checks) = (dir.to_path_buf(), held.clone());
             async move |connection: ConnectionTo<Agent>| run_checks(connection, dir, checks).await
         },
     ));
     done.send(()).ok();
     stop_child(&mut child);
     if let Err(error) = outcome {
-        checks.add(CheckResult::fail(
+        held.add(CheckResult::fail(
             "connection",
             format!("{} agent connection failed: {error}", agent.name),
         ));
     }
     eof.recv_timeout(STDERR_SETTLE).ok();
     let tail = stderr_tail(&locked(&captured), STDERR_TAIL_CAP);
-    checks.append_stderr_since(first_row, &tail);
+    for row in held.results() {
+        checks.add(with_stderr_tail(row, &tail));
+    }
 }
 
 fn print_lines(dir: &Path, model: &str) -> Result<Vec<String>, String> {
