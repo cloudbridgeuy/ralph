@@ -390,6 +390,45 @@ mod tests {
     }
 
     #[test]
+    fn emphasis_row_shows_its_value_and_source() {
+        let mut chat = Table::new();
+        chat.insert("emphasis".into(), Value::Boolean(true));
+        let mut global = Table::new();
+        global.insert("chat".into(), Value::Table(chat));
+        let layers = StartLayers {
+            global,
+            store: Table::new(),
+            loaded: true,
+            fell_back: false,
+        };
+        let mut effective = default_table();
+        assert_eq!(
+            chat_rows(
+                &effective,
+                StartLayers {
+                    global: Table::new(),
+                    store: Table::new(),
+                    loaded: true,
+                    fell_back: false
+                }
+            )
+            .iter()
+            .find(|row| row.key == "chat.emphasis")
+            .map(|row| (row.value.clone(), row.source)),
+            Some((Value::Boolean(false), Source::Default))
+        );
+        effective
+            .get_mut("chat")
+            .and_then(Value::as_table_mut)
+            .unwrap()
+            .insert("emphasis".into(), Value::Boolean(true));
+        let rows = chat_rows(&effective, layers);
+        let row = rows.iter().find(|row| row.key == "chat.emphasis").unwrap();
+        assert_eq!(row.value, Value::Boolean(true));
+        assert_eq!(row.source, Source::Global);
+    }
+
+    #[test]
     fn store_fallback_tags_no_row_store() {
         let layers = StartLayers {
             global: sound_layer(false),

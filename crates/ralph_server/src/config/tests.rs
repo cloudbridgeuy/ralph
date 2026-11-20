@@ -771,3 +771,13 @@ fn agy_effort_is_known() {
     let parsed = AppConfig::parse_reporting_unknown("[agy]\neffort = \"high\"\n", "c");
     assert!(matches!(parsed, Ok((_, unknown)) if unknown.is_empty()));
 }
+
+#[test]
+fn chat_emphasis_defaults_off_and_can_be_enabled() {
+    assert!(!AppConfig::new().chat.emphasis);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(&path, "[chat]\nemphasis = true\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(config.chat.emphasis);
+}

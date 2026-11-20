@@ -102,9 +102,14 @@ pub struct ThemeConfig {
     diff: DiffColors,
     tools: ToolColors,
     ui: UiColors,
+    emphasis: bool,
 }
 
 impl ThemeConfig {
+    pub fn emphasis(&self) -> bool {
+        self.emphasis
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -129,6 +134,7 @@ impl ThemeConfig {
             diff: DiffColors::default(),
             tools: ToolColors::default(),
             ui: UiColors::default(),
+            emphasis: false,
         }
     }
 
@@ -158,6 +164,7 @@ impl ThemeConfig {
             .as_ref()
             .map(|c| c.theme.ui.resolve().0)
             .unwrap_or_default();
+        let emphasis = app_config.as_ref().is_some_and(|c| c.chat.emphasis);
         let config_no_background = app_config.map(|c| c.theme.no_background).unwrap_or(false);
 
         let env_theme = std::env::var(RALPH_THEME_ENV).ok();
@@ -175,6 +182,7 @@ impl ThemeConfig {
             diff,
             tools,
             ui,
+            emphasis,
         }
     }
 
@@ -511,6 +519,11 @@ mod tests {
     fn test_highlighter_default() {
         let highlighter = Highlighter::default();
         assert!(!highlighter.supported_languages().is_empty());
+    }
+
+    #[test]
+    fn theme_config_emphasis_defaults_off() {
+        assert!(!ThemeConfig::new().emphasis());
     }
 
     #[test]

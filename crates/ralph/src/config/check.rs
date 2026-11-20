@@ -162,6 +162,12 @@ mod tests {
     }
 
     #[test]
+    fn a_non_bool_emphasis_is_an_error_and_a_bool_is_not() {
+        assert!(check("[chat]\nemphasis = \"yes\"\n", "c").is_err());
+        assert!(errors("[chat]\nemphasis = true\n").is_empty());
+    }
+
+    #[test]
     fn agy_permissions_are_validated() {
         let valid = check("[agy]\npermissions = \"ask\"\n", "c");
         assert!(matches!(valid, Ok(report) if report.errors.is_empty()));
