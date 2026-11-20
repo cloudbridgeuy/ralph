@@ -20,6 +20,8 @@ const SOCKET_TOOLS: [&str; 10] = [
 const SOCKET_PREFIX: &str = "chat-";
 const RUNTIME_ROOT_PREFIX: &str = "/tmp/ralph-";
 const STORE_KEY_HEX_CHARS: usize = 12;
+const SERVE_DIR_PREFIX: &str = "serve-";
+const SERVE_SOCKET_FILE: &str = "serve.sock";
 const SOCKET_FILE: &str = "chat.sock";
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const SYSTEM_PROMPT_FILE: &str = "system-prompt.md";
@@ -41,6 +43,8 @@ pub struct SocketResponse {
     pub text: String,
     pub is_error: bool,
 }
+
+pub const MAX_FRAME_BYTES: usize = 1 << 20;
 
 pub fn encode_line<T: Serialize>(message: &T) -> String {
     format!("{}\n", json!(message))
@@ -72,6 +76,11 @@ pub fn runtime_root(uid: u32) -> PathBuf {
 
 pub fn runtime_dir_name(key: &StoreKey, pid: u32) -> String {
     format!("{}-{pid}", key.0)
+}
+
+pub fn serve_socket_path(root: &Path, key: &StoreKey) -> PathBuf {
+    root.join(format!("{SERVE_DIR_PREFIX}{}", key.0))
+        .join(SERVE_SOCKET_FILE)
 }
 
 pub fn runtime_dir_pid(key: &StoreKey, file_name: &str) -> Option<u32> {
@@ -180,6 +189,17 @@ mod tests {
             system_prompt_path(Path::new("/s/chat-1/chat.sock")),
             PathBuf::from("/s/chat-1/system-prompt.md")
         );
+    }
+
+    #[test]
+    fn the_serve_socket_lives_in_a_per_store_dir_apart_from_chat_runtime_dirs() {
+        let key = StoreKey::of(Path::new("/s/store"));
+        let path = serve_socket_path(Path::new("/tmp/ralph-1"), &key);
+        assert_eq!(
+            path,
+            PathBuf::from(format!("/tmp/ralph-1/serve-{}/serve.sock", key.0))
+        );
+        assert_eq!(path.parent().unwrap().file_name().unwrap().len(), 18);
     }
 
     fn owner(pid: u32, start: &str) -> SocketOwner {

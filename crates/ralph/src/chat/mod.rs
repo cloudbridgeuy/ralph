@@ -99,7 +99,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 pub(crate) use switch::ChatExit;
 
-const STORE_ENV: &str = "RALPH_CHAT_STORE";
+pub(crate) const STORE_ENV: &str = "RALPH_CHAT_STORE";
 const REX_SESSION_ENV: &str = "REX_SESSION";
 const PROMPT_ROWS: usize = 256;
 pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";

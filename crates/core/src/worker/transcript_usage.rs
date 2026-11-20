@@ -104,6 +104,19 @@ pub fn transcript_usage(lines: &str, seen: &HashSet<String>) -> TranscriptUsage 
     }
 }
 
+pub fn turn_settled(lines: &str) -> bool {
+    lines
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .rfind(|value| matches!(value["type"].as_str(), Some("user" | "assistant")))
+        .is_some_and(|last| {
+            last["type"] == "assistant"
+                && last["message"]["stop_reason"]
+                    .as_str()
+                    .is_some_and(|stop| stop != "tool_use")
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +337,56 @@ mod tests {
             subagents_dir(Path::new("/p/abc.jsonl")),
             Path::new("/p/abc/subagents")
         );
+    }
+
+    fn entry(kind: &str, stop: Option<&str>) -> String {
+        serde_json::json!({"type": kind, "message": {"stop_reason": stop}}).to_string()
+    }
+
+    fn joined(entries: &[String]) -> String {
+        entries.join("\n")
+    }
+
+    #[test]
+    fn prompt_only_is_not_settled() {
+        assert!(!turn_settled(&entry("user", None)));
+    }
+
+    #[test]
+    fn tool_use_then_tool_result_is_not_settled() {
+        let lines = joined(&[
+            entry("user", None),
+            entry("assistant", Some("tool_use")),
+            entry("user", None),
+        ]);
+        assert!(!turn_settled(&lines));
+    }
+
+    #[test]
+    fn unfinished_final_line_is_not_settled() {
+        let lines = joined(&[entry("user", None), entry("assistant", None)]);
+        assert!(!turn_settled(&lines));
+    }
+
+    #[test]
+    fn end_turn_after_tool_result_is_settled() {
+        let lines = joined(&[
+            entry("user", None),
+            entry("assistant", Some("tool_use")),
+            entry("user", None),
+            entry("assistant", Some("end_turn")),
+        ]);
+        assert!(turn_settled(&lines));
+    }
+
+    #[test]
+    fn attachment_and_system_lines_after_end_turn_stay_settled() {
+        let lines = joined(&[
+            entry("user", None),
+            entry("assistant", Some("end_turn")),
+            entry("attachment", None),
+            entry("system", None),
+        ]);
+        assert!(turn_settled(&lines));
     }
 }

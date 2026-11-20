@@ -5,8 +5,8 @@ use crate::chat::index_files::{
 use crate::private_file::check_path;
 use crate::warn::warn;
 use ralph_core::chat_memory::{
-    commit_decision, encode_entry, encode_record, holder_pid, log_tail, parse_log, parse_tree,
-    Archive, Commit, Entry, LogTail, NewEntry, Node, NodeSlot, Role, Tree, Trigger,
+    commit_decision, encode_entry, encode_record, log_tail, parse_log, parse_tree, Archive, Commit,
+    Entry, LogTail, NewEntry, Node, NodeSlot, Role, Tree, Trigger,
 };
 use ralph_core::chat_process::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::chat_suggestion::SuggestionRecord;
@@ -217,29 +217,7 @@ impl Store {
     }
 
     pub fn claim_chat(&self) -> io::Result<Result<ChatClaim, Option<u32>>> {
-        fs::create_dir_all(&self.dir)?;
-        let path = self.dir.join("CHAT");
-        check_path(&path)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)?;
-        match file.try_lock() {
-            Ok(()) => {
-                file.set_len(0)?;
-                write!(file, "{}", std::process::id())?;
-                crate::history_log::clear_turn(&self.dir);
-                Ok(Ok(ChatClaim(file)))
-            }
-            Err(TryLockError::WouldBlock) => {
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)?;
-                Ok(Err(holder_pid(&contents)))
-            }
-            Err(TryLockError::Error(e)) => Err(e),
-        }
+        crate::chat::claim::claim_chat(&self.dir)
     }
 
     fn lock(&self) -> io::Result<File> {
@@ -415,8 +393,8 @@ fn trim_torn_tail(file: &mut File) -> io::Result<()> {
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
-        parse_search_args, split_view, LogIndex, RangeRequest, Tool, TreeIndex, FALLBACK_MARK,
-        LOG_INDEX_FILE, MAX_NAP_ATTEMPTS, TREE_INDEX_FILE,
+        instance_id, parse_lease, parse_search_args, split_view, ChatLease, LogIndex, RangeRequest,
+        Tool, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE, MAX_NAP_ATTEMPTS, TREE_INDEX_FILE,
     };
 
     #[test]
@@ -424,10 +402,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
         let guard = store.claim_chat().unwrap().unwrap();
-        assert_eq!(
-            fs::read_to_string(dir.path().join("CHAT")).unwrap(),
-            std::process::id().to_string()
-        );
+        let pid = std::process::id();
+        let holder = crate::cursor_owner::process_start(pid).map(|start| instance_id(pid, &start));
+        let lease = |generation| ChatLease {
+            pid,
+            holder: holder.clone(),
+            generation,
+        };
+        let read = || parse_lease(&fs::read_to_string(dir.path().join("CHAT")).unwrap());
+        assert_eq!(read(), Some(lease(1)));
         assert_eq!(
             store.claim_chat().unwrap().unwrap_err(),
             Some(std::process::id())
@@ -438,6 +421,7 @@ mod tests {
         assert!(nap.try_lock().is_ok());
         drop(guard);
         assert!(store.claim_chat().unwrap().is_ok());
+        assert_eq!(read(), Some(lease(2)));
     }
 
     #[test]

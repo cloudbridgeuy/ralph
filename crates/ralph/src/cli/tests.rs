@@ -45,6 +45,23 @@ fn test_cli_chat_tag_takes_store_run_and_timeout() {
 }
 
 #[test]
+fn test_cli_serve_requires_store_and_is_hidden() {
+    use clap::CommandFactory;
+    let Some(Commands::Serve(serve)) = Cli::try_parse_from(["ralph", "serve", "--store", "/x"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected serve");
+    };
+    assert_eq!(serve.store, std::path::PathBuf::from("/x"));
+    assert!(Cli::try_parse_from(["ralph", "serve"]).is_err());
+    assert!(Cli::command()
+        .find_subcommand("serve")
+        .unwrap()
+        .is_hide_set());
+}
+
+#[test]
 fn test_cli_chat_tag_is_hidden() {
     use clap::CommandFactory;
     let cli = Cli::command();

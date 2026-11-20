@@ -22,6 +22,7 @@ pub mod markdown;
 mod mermaid_guard;
 pub mod prompt_source;
 pub mod render;
+mod serve;
 pub mod signal;
 pub mod spinner;
 pub mod startup;
@@ -86,6 +87,7 @@ fn main() -> ExitCode {
         Commands::Worker(args) => execute_worker(args),
         Commands::Upgrade(args) => upgrade::run(args),
         Commands::Usage(args) => usage_cmd::run(args),
+        Commands::Serve(args) => serve::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::ChatTag(args) => execute_chat_tag(args),
