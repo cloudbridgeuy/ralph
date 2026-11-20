@@ -89,3 +89,12 @@ fn a_screen_reply_replaces_the_shown_plan() {
     assert!(reply.note);
     assert_eq!(reply.shown, Some(Some("abc".to_string())));
 }
+
+#[test]
+fn a_session_owns_its_data() {
+    struct Server {
+        _session: Session,
+    }
+    fn owned<T: 'static>() {}
+    owned::<Server>();
+}

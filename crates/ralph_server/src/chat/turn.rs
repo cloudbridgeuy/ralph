@@ -133,19 +133,19 @@ struct Launch {
 
 pub type Stamp = Arc<Mutex<Option<DateTime<Utc>>>>;
 
-pub struct Turn<'a> {
-    pub store: &'a Store,
-    pub store_dir: &'a Path,
-    pub fork: Option<&'a Fork>,
-    pub mcp_args: &'a [String],
-    pub system_prompt_file: &'a Path,
-    pub permission_mode: &'a str,
-    pub plugin_args: &'a [String],
-    pub model_args: &'a [String],
-    pub skills: &'a [ChatSkill],
-    pub custom_prompt: &'a CustomPrompt,
+pub struct Turn {
+    pub store: Store,
+    pub store_dir: PathBuf,
+    pub fork: Option<Fork>,
+    pub mcp_args: Vec<String>,
+    pub system_prompt_file: PathBuf,
+    pub permission_mode: String,
+    pub plugin_args: Vec<String>,
+    pub model_args: Vec<String>,
+    pub skills: Vec<ChatSkill>,
+    pub custom_prompt: CustomPrompt,
     pub reply_images: ReplyImages,
-    pub isolation: &'a Isolation,
+    pub isolation: Isolation,
     pub session: Arc<Mutex<Option<Session>>>,
     pub process_turns: AtomicU64,
     pub reset: Mutex<Option<ResetReason>>,
@@ -153,7 +153,7 @@ pub struct Turn<'a> {
     pub reset_limits: ResetLimits,
     pub recent_history_tokens: usize,
     pub gate: Arc<OutputGate>,
-    pub run: &'a str,
+    pub run: String,
     pub suggestions: SuggestionCell,
     pub last_turn_end: Stamp,
     pub identity: Arc<Mutex<IterationMetadata>>,
@@ -163,10 +163,10 @@ pub struct Turn<'a> {
     pub sink: Arc<dyn TurnSink>,
     pub show_tools: bool,
     pub terminated: fn() -> bool,
-    pub exe: Option<&'a Path>,
+    pub exe: Option<PathBuf>,
 }
 
-impl Turn<'_> {
+impl Turn {
     fn print_rule(&self) {
         self.sink.emit(TurnEvent::Rule);
     }
@@ -247,7 +247,7 @@ impl Turn<'_> {
         cancel: &CancelToken,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
         let started = Instant::now();
-        let mark = history_log::begin_turn(self.store_dir, self.run);
+        let mark = history_log::begin_turn(&self.store_dir, &self.run);
         *locked(&self.timing) = TurnTiming::default();
         locked(&self.last_cost_usd).take();
         let mut view = Vec::new();
@@ -260,13 +260,13 @@ impl Turn<'_> {
         let outcome = self.run_turn(&request, &mut view);
         let elapsed = started.elapsed();
         let turn_timing = *locked(&self.timing);
-        timing::record(self.store_dir, Some(self.run), |key| {
+        timing::record(&self.store_dir, Some(&self.run), |key| {
             turn_row(key, elapsed, &turn_timing, turn_ok(&outcome))
         });
-        let fork = self.fork.map(|fork| &fork.name);
+        let fork = self.fork.as_ref().map(|fork| &fork.name);
         history_log::end_turn(
-            self.store_dir,
-            self.run,
+            &self.store_dir,
+            &self.run,
             &mark,
             &scope_label(&resolve_scope(&Scope::Own, fork)),
             view,
@@ -289,7 +289,7 @@ impl Turn<'_> {
             cancel,
         } = *request;
         self.store.set_pending_turn(trigger)?;
-        let _pending = PendingTurn(self.store);
+        let _pending = PendingTurn(&self.store);
         let unseen = self.unseen().unwrap_or_else(|e| {
             self.warn(format!("Failed to read the chat log for the catch-up: {e}"));
             Vec::new()
@@ -301,7 +301,7 @@ impl Turn<'_> {
             self.append_logged(trigger, logged)?;
         }
         let sent = match trigger {
-            Trigger::User | Trigger::SendIt => expand_slash_command(message, self.skills),
+            Trigger::User | Trigger::SendIt => expand_slash_command(message, &self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
         let live = catch_up_prompt(&unseen, &sent);
@@ -405,7 +405,7 @@ impl Turn<'_> {
                 .with_request_at(turn.request_at.map(|at| at.to_rfc3339()))
                 .with_reset(launch.as_ref().and_then(|spawned| spawned.reset))
                 .with_run(Some(self.run.to_string()))
-                .with_store(Some(usage_store(self.store_dir)));
+                .with_store(Some(usage_store(&self.store_dir)));
             self.warn_if_err(
                 ledger::record(&usage_path(), &record),
                 "Failed to record chat usage",
@@ -414,7 +414,7 @@ impl Turn<'_> {
                 .into_iter()
                 .map(|row| {
                     row.with_run(Some(self.run.to_string()))
-                        .with_store(Some(usage_store(self.store_dir)))
+                        .with_store(Some(usage_store(&self.store_dir)))
                 });
             self.warn_if_err(
                 ledger::record_all(&usage_path(), subagents),
@@ -460,11 +460,11 @@ impl Turn<'_> {
                     self.suggestions.set(suggestion);
                 }
                 self.warn_if_err(
-                    spawn_nap(self.exe, self.store_dir, self.run),
+                    spawn_nap(self.exe.as_deref(), &self.store_dir, &self.run),
                     "Failed to start chat memory nap",
                 );
                 self.warn_if_err(
-                    spawn_tag(self.exe, self.store_dir, self.run),
+                    spawn_tag(self.exe.as_deref(), &self.store_dir, &self.run),
                     "Failed to start chat entry tagging",
                 );
                 if let Some(reason) = reset_reason(&self.reset_limits, process_turns, costs) {
@@ -552,7 +552,7 @@ impl Turn<'_> {
             entries.truncate(len);
         }
         let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
-        let split = match self.fork {
+        let split = match &self.fork {
             Some(fork) => fork_view(fork, split)?,
             None => split,
         };
@@ -560,11 +560,11 @@ impl Turn<'_> {
             &[split.middle.as_slice(), split.tail.as_slice()].concat(),
             sent,
         );
-        let system = turn_system_prompt(self.custom_prompt, self.reply_images, &split.older);
-        write_system_prompt(self.system_prompt_file, &system)?;
+        let system = turn_system_prompt(&self.custom_prompt, self.reply_images, &split.older);
+        write_system_prompt(&self.system_prompt_file, &system)?;
         let args = [
             self.mcp_args.to_vec(),
-            build_attachments_args(self.store_dir),
+            build_attachments_args(&self.store_dir),
             build_agents_args(),
             self.plugin_args.to_vec(),
             self.model_args.to_vec(),
@@ -573,13 +573,13 @@ impl Turn<'_> {
         let config = SpinnerSubprocessConfig {
             command: with_chat_inbox(
                 build_chat_command(
-                    self.system_prompt_file,
+                    &self.system_prompt_file,
                     &args,
-                    self.permission_mode,
+                    &self.permission_mode,
                     dirs::home_dir().as_deref(),
-                    self.isolation,
+                    &self.isolation,
                 ),
-                self.store_dir,
+                &self.store_dir,
             )?,
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),

@@ -43,8 +43,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::time::Duration;
 
-pub(super) struct TerminalLoop<'a, 's> {
-    pub(super) session: &'a Session<'s>,
+pub(super) struct TerminalLoop<'a> {
+    pub(super) session: &'a Session,
     pub(super) prompt: &'a ChatPrompt,
     pub(super) store: &'a Store,
     pub(super) run: &'a str,
@@ -89,7 +89,7 @@ pub(super) enum Flow {
     Stop,
 }
 
-impl TerminalLoop<'_, '_> {
+impl TerminalLoop<'_> {
     pub(super) fn run(mut self) -> Result<ChatExit, Box<dyn Error>> {
         let session = self.session;
         let monitor = &session.core;
