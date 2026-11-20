@@ -30,12 +30,26 @@ pub fn branch_open(repo: &Path, branch: &str) -> bool {
     branch_open_with(probe_command, repo, branch)
 }
 
+fn porcelain(success: bool, stdout: &[u8], stderr: &[u8]) -> Result<String, String> {
+    if success {
+        Ok(String::from_utf8_lossy(stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(stderr).trim().to_string())
+    }
+}
+
 fn branch_open_with(make: impl Fn(&Path, &[&str]) -> Command, repo: &Path, branch: &str) -> bool {
     let probe = branch_exists_with(&make, repo, branch);
     let listing = make(repo, &["worktree", "list", "--porcelain"]).output();
     match (probe, listing) {
         (Ok(probe), Ok(listing)) => {
-            branch_is_open(probe, &String::from_utf8_lossy(&listing.stdout), branch)
+            match porcelain(listing.status.success(), &listing.stdout, &listing.stderr) {
+                Ok(text) => branch_is_open(probe, &text, branch),
+                Err(stderr) => {
+                    crate::warn::warn(format!("listing worktrees for {branch}: {stderr}"));
+                    false
+                }
+            }
         }
         (Err(error), _) | (_, Err(error)) => {
             crate::warn::warn(format!("checking branch {branch}: {error}"));
@@ -112,5 +126,36 @@ mod tests {
             ],
         );
         assert!(branch_open_scrubbed(repo.path(), "worker/sched-y"));
+    }
+
+    #[test]
+    fn a_successful_listing_is_its_stdout() {
+        assert_eq!(
+            porcelain(true, b"worktree /p\n", b"ignored"),
+            Ok("worktree /p\n".to_string())
+        );
+    }
+
+    #[test]
+    fn a_failed_listing_is_its_trimmed_stderr() {
+        assert_eq!(
+            porcelain(false, b"worktree /p\n", b" fatal: bad\n"),
+            Err("fatal: bad".to_string())
+        );
+    }
+
+    #[test]
+    fn a_listing_that_exits_non_zero_leaves_the_branch_not_open() {
+        let make = |_: &Path, args: &[&str]| {
+            let mut command = Command::new("sh");
+            let script = if args[0] == "rev-parse" {
+                "exit 1"
+            } else {
+                "echo 'worktree /p'; echo 'branch refs/heads/worker/sched-z'; echo oops >&2; exit 1"
+            };
+            command.args(["-c", script]);
+            command
+        };
+        assert!(!branch_open_with(make, Path::new("."), "worker/sched-z"));
     }
 }
