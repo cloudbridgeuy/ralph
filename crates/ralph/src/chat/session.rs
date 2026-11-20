@@ -3,6 +3,7 @@ use crate::chat::queue::exit_notice;
 use crate::chat::route::history_call;
 use crate::chat::thread;
 use crate::cli::{HistoryArgs, HistorySub};
+use crate::render::pill::{emphasis_active, pill_prompt_rule};
 use ralph_core::chat::{prompt_text, CustomPrompt};
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_memory::{history_tool, history_tool_named, CallSource};
@@ -13,6 +14,7 @@ use ralph_server::history_log;
 use ralph_server::warn::warn_if_err;
 use reedline::{HistoryItem, Reedline};
 use std::io;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use super::STORE_ENV;
@@ -88,6 +90,13 @@ fn read_prompt_file(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("Skipping prompt file {}: {e}", path.display()))
 }
 
+fn with_pill_rule(mut prompt: CustomPrompt, emphasis: bool, color: bool) -> CustomPrompt {
+    if emphasis_active(emphasis, color) {
+        prompt.appends.push(pill_prompt_rule());
+    }
+    prompt
+}
+
 pub(super) fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
     let (behaviour, behaviour_warning) = match files.behaviour.as_deref() {
         Some(path) => match read_prompt_file(path) {
@@ -110,11 +119,16 @@ pub(super) fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<Stri
         .iter()
         .map(|path| read_prompt_file(path))
         .partition(Result::is_ok);
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     (
-        CustomPrompt {
-            behaviour,
-            appends: appends.into_iter().flatten().collect(),
-        },
+        with_pill_rule(
+            CustomPrompt {
+                behaviour,
+                appends: appends.into_iter().flatten().collect(),
+            },
+            files.emphasis,
+            color,
+        ),
         behaviour_warning
             .into_iter()
             .chain(append_warnings.into_iter().filter_map(Result::err))
@@ -155,5 +169,41 @@ pub(super) fn save_unsent(editor: &mut Reedline, lost: &[String]) -> bool {
 pub(super) fn print_exit_notice(count: usize, saved: bool) {
     if let Some(notice) = exit_notice(count, saved) {
         eprintln!("{notice}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base() -> CustomPrompt {
+        CustomPrompt {
+            behaviour: Some("b".to_string()),
+            appends: vec!["a".to_string()],
+        }
+    }
+
+    #[test]
+    fn flag_off_leaves_the_prompt_unchanged() {
+        assert_eq!(with_pill_rule(base(), false, true), base());
+        assert_eq!(with_pill_rule(base(), false, false), base());
+    }
+
+    #[test]
+    fn flag_on_without_colour_leaves_the_prompt_unchanged() {
+        assert_eq!(with_pill_rule(base(), true, false), base());
+    }
+
+    #[test]
+    fn flag_on_with_colour_appends_the_rule_once_after_existing_appends() {
+        let out = with_pill_rule(base(), true, true);
+        assert_eq!(out.behaviour, base().behaviour);
+        assert_eq!(out.appends, vec!["a".to_string(), pill_prompt_rule()]);
+    }
+
+    #[test]
+    fn the_rule_is_not_empty() {
+        assert!(!pill_prompt_rule().is_empty());
+        assert!(emphasis_active(true, true));
     }
 }

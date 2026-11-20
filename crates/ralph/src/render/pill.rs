@@ -147,6 +147,25 @@ pub fn emphasis_active(flag: bool, color: bool) -> bool {
     flag && color
 }
 
+pub fn pill_prompt_rule() -> String {
+    let words = PILL_WORDS
+        .iter()
+        .map(|entry| {
+            if entry.synonyms.is_empty() {
+                entry.word.to_string()
+            } else {
+                format!("{} ({})", entry.word, entry.synonyms.join(", "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Status pills: the terminal draws [[Word]] or [[Word detail]] as a coloured pill. \
+The text inside the brackets is 1 to {MAX_INNER} characters. Words: {words}. \
+Use pills sparingly, only to flag status. Never put them inside code."
+    )
+}
+
 pub fn mark_pills(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -388,5 +407,24 @@ mod tests {
             assert!(MARKERS.contains(&marker));
         }
         assert!(PILL_WORDS.iter().all(|entry| !entry.word.is_empty()));
+    }
+
+    #[test]
+    fn prompt_rule_lists_every_word_and_synonym_and_the_limit() {
+        let rule = pill_prompt_rule();
+        for entry in PILL_WORDS {
+            assert!(rule.contains(entry.word), "{}", entry.word);
+            for synonym in entry.synonyms {
+                assert!(rule.contains(synonym), "{synonym}");
+            }
+        }
+        assert!(rule.contains("[[Word]]"));
+        assert!(rule.contains("[[Word detail]]"));
+        assert!(rule.contains(&MAX_INNER.to_string()));
+    }
+
+    #[test]
+    fn prompt_rule_is_a_pure_constant() {
+        assert_eq!(pill_prompt_rule(), pill_prompt_rule());
     }
 }

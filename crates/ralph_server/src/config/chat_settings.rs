@@ -54,6 +54,7 @@ pub fn clamp_send_it(max_turns: u32, max_usd: f64) -> (Limits, Vec<String>) {
 pub struct PromptFiles {
     pub behaviour: Option<PathBuf>,
     pub appends: Vec<PathBuf>,
+    pub emphasis: bool,
 }
 
 impl ChatSection {
@@ -68,6 +69,7 @@ impl ChatSection {
                 .iter()
                 .map(|path| expand_home(path, home))
                 .collect(),
+            emphasis: self.emphasis,
         }
     }
 
@@ -148,8 +150,15 @@ mod tests {
             PromptFiles {
                 behaviour: Some(PathBuf::from("/h/p.md")),
                 appends: vec![PathBuf::from("/cfg/a.md"), PathBuf::from("/h")],
+                emphasis: false,
             }
         );
+        let on = ChatSection {
+            emphasis: true,
+            ..ChatSection::default()
+        };
+        assert!(on.prompt_files(None).emphasis);
+        assert!(!ChatSection::default().prompt_files(None).emphasis);
         assert_eq!(
             chat.prompt_files(None).behaviour,
             Some(PathBuf::from("~/p.md"))
