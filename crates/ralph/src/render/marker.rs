@@ -80,14 +80,20 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
     ];
     let mut out = String::with_capacity(rendered.len());
     let mut open: Option<&str> = None;
+    let mut in_label = false;
     for ch in rendered.chars() {
+        if in_label && is_mark_marker(ch) {
+            continue;
+        }
         if let Some((_, style)) = starts.iter().find(|(start, _)| *start == ch) {
+            in_label |= ch == LABEL_START;
             open = Some(style);
             out.push_str(style);
             continue;
         }
         match ch {
             LABEL_END => {
+                in_label = false;
                 open = None;
                 out.push_str(LABEL_STYLE_OFF);
             }
@@ -113,6 +119,13 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
     out
 }
 
+fn is_mark_marker(ch: char) -> bool {
+    matches!(
+        ch,
+        MARK_DONE | MARK_BAD | MARK_ACCENT | MARK_BORDER | MARK_END
+    )
+}
+
 fn pill_style(tone: Option<Color>) -> String {
     format!("{BOLD}{}{}", bg(tone), fg(Some(contrast(tone))))
 }
@@ -129,5 +142,29 @@ fn contrast(tone: Option<Color>) -> Color {
         Color::Black
     } else {
         Color::White
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marks_inside_a_link_label_keep_the_link_colour() {
+        let palette = Palette::default();
+        let marked = format!("{LABEL_START}{MARK_DONE}\u{2713}{MARK_END} done{LABEL_END}");
+        let plain = format!("{LABEL_START}\u{2713} done{LABEL_END}");
+        assert_eq!(
+            paint_links(&marked, &palette),
+            paint_links(&plain, &palette)
+        );
+    }
+
+    #[test]
+    fn marks_after_a_link_label_are_painted_again() {
+        let palette = Palette::default();
+        let marked = format!("{LABEL_START}a{LABEL_END} {MARK_DONE}\u{2713}{MARK_END}");
+        let painted = paint_links(&marked, &palette);
+        assert!(painted.ends_with(&format!("{}\u{2713}{COLOR_OFF}", fg(palette.done))));
     }
 }
