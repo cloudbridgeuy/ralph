@@ -35,13 +35,13 @@ use ralph_core::chat_socket::{runtime_root, system_prompt_path};
 use ralph_core::chat_status::{latest_states, Status};
 use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
-use ralph_core::worker::INBOX_DIR;
+use ralph_core::worker::{Report, INBOX_DIR};
 use ralph_core::worker_check::logged_states;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -355,6 +355,34 @@ impl SessionPort for Session {
 
     fn proposed(&self, proposal: Proposal, width: usize) -> Screen {
         self.send_it.proposed(proposal.before, width)
+    }
+
+    fn set_phase(&self, phase: Phase) {
+        self.core.set_phase(phase);
+    }
+
+    fn refresh(&self) {
+        self.core.refresh(true);
+    }
+
+    fn status(&self) -> Status {
+        self.core.status()
+    }
+
+    fn unread(&self) -> Vec<Report> {
+        self.core.inbox.peek().unwrap_or_default()
+    }
+
+    fn take_cost(&self) -> Option<f64> {
+        self.turn.take_cost()
+    }
+
+    fn turns(&self) -> u64 {
+        self.turn.process_turns.load(Ordering::SeqCst)
+    }
+
+    fn end_session(&self) {
+        *locked(&self.turn.session) = None;
     }
 }
 

@@ -3,6 +3,9 @@ use crate::chat::queue::Queue;
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::SendItCommand;
+use ralph_core::chat_status::Status;
+use ralph_core::program_status::Phase;
+use ralph_core::worker::Report;
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
@@ -51,6 +54,28 @@ impl SessionPort for FakePort {
     fn proposed(&self, _proposal: Proposal, _width: usize) -> Screen {
         Screen::text("")
     }
+
+    fn set_phase(&self, _phase: Phase) {}
+
+    fn refresh(&self) {}
+
+    fn status(&self) -> Status {
+        Status::default()
+    }
+
+    fn unread(&self) -> Vec<Report> {
+        Vec::new()
+    }
+
+    fn take_cost(&self) -> Option<f64> {
+        None
+    }
+
+    fn turns(&self) -> u64 {
+        0
+    }
+
+    fn end_session(&self) {}
 }
 
 const LOGGED: [String; 0] = [];
