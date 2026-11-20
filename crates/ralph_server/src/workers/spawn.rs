@@ -614,6 +614,7 @@ impl Workers {
                     store: &self.store_dir,
                     worker: id,
                     usage: &usage,
+                    verify: false,
                 },
                 Some(&self.written_store),
             )

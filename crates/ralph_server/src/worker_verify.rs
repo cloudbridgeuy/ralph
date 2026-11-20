@@ -297,7 +297,13 @@ pub fn run(
             OPENCODE_REQUIRED_CHECKS,
         ),
         HarnessId::ClaudeTmux => (
-            workers::verify(live, dir.path(), &checks, &config, model.as_deref()),
+            workers::verify(
+                live.then_some(ledger),
+                dir.path(),
+                &checks,
+                &config,
+                model.as_deref(),
+            ),
             claude_required_checks(live),
         ),
     };

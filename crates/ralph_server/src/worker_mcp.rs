@@ -16,7 +16,7 @@ use std::sync::{Mutex, PoisonError};
 use crate::cursor_owner::{now_secs, write_file};
 use crate::outcome_log;
 use crate::worker_changes::WorkerChanges;
-use crate::worker_usage::{record_or_warn, UsageTarget};
+use crate::worker_usage::{record_or_warn, record_verify_or_warn, UsageTarget};
 
 const DROP_LOG: &str = "inbox-drops.jsonl";
 
@@ -345,6 +345,7 @@ pub struct StopHook<'a> {
     pub activity: Option<&'a Path>,
     pub changes: Option<&'a WorkerChanges>,
     pub usage: Option<&'a UsageTarget>,
+    pub verify: bool,
 }
 
 pub fn run_stop_hook(
@@ -362,7 +363,11 @@ pub fn run_stop_hook(
     }
     let turn_id = hook.changes.and_then(WorkerChanges::snapshot_turn_or_warn);
     if let Some(usage) = hook.usage {
-        record_or_warn(usage, &payload, turn_id);
+        if hook.verify {
+            record_verify_or_warn(usage, &payload);
+        } else {
+            record_or_warn(usage, &payload, turn_id);
+        }
     }
     let StopHook {
         reported,
@@ -405,6 +410,7 @@ mod tests {
             activity: None,
             changes: None,
             usage: None,
+            verify: false,
         };
         run_stop_hook(&hook, payload.as_bytes(), &mut out).unwrap();
         String::from_utf8(out).unwrap()
@@ -429,9 +435,57 @@ mod tests {
             activity: Some(&activity),
             changes: None,
             usage: None,
+            verify: false,
         };
         run_stop_hook(&hook, payload.as_bytes(), Vec::new()).unwrap();
         fs::read_to_string(activity).unwrap()
+    }
+
+    fn stop_row(verify: bool) -> serde_json::Value {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("s1.jsonl");
+        fs::write(
+            &transcript,
+            r#"{"type":"assistant","message":{"id":"m1","model":"opus","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2}}}"#,
+        )
+        .unwrap();
+        let target = UsageTarget {
+            worker: "verify".into(),
+            seen: dir.path().join("verify.usage-seen"),
+            store: None,
+            usage: dir.path().join("usage.jsonl"),
+        };
+        let unreported = dir.path().join("unreported");
+        let hook = StopHook {
+            reported: &dir.path().join("reported"),
+            unreported: &unreported,
+            activity: None,
+            changes: None,
+            usage: Some(&target),
+            verify,
+        };
+        let payload = format!(
+            r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
+            transcript.display()
+        );
+        run_stop_hook(&hook, payload.as_bytes(), Vec::new()).unwrap();
+        let written = fs::read_to_string(&target.usage).unwrap();
+        assert_eq!(written.lines().count(), 1);
+        serde_json::from_str(written.trim()).unwrap()
+    }
+
+    #[test]
+    fn a_verify_stop_hook_appends_one_verify_row_priced_like_a_worker_row() {
+        let worker = stop_row(false);
+        assert_eq!(worker["kind"], "worker");
+        let row = stop_row(true);
+        assert_eq!(row["kind"], "verify");
+        assert_eq!(row["role"], "verify");
+        assert_eq!(row["harness"], "claude-tmux");
+        assert_eq!(row["cost_usd"], worker["cost_usd"]);
+        if worker["cost_usd"].is_null() {
+            assert!(row["cost_usd"].is_null());
+        }
     }
 
     #[test]

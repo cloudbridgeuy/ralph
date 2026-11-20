@@ -209,6 +209,13 @@ fn test_cli_stop_hook_usage_requires_usage_seen() {
 }
 
 #[test]
+fn test_cli_stop_hook_verify_usage_needs_usage_seen() {
+    let args = stop_hook_args(&["--worker", "X", "--usage-seen", "P", "--verify-usage"]).unwrap();
+    assert!(args.verify_usage);
+    assert!(stop_hook_args(&["--verify-usage"]).is_err());
+}
+
+#[test]
 fn test_cli_stop_hook_usage_seen_does_not_require_usage() {
     let args = stop_hook_args(&["--worker", "X", "--usage-seen", "P"]).unwrap();
     assert_eq!(args.usage, None);
