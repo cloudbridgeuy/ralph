@@ -111,6 +111,11 @@ impl ThemeConfig {
         self.emphasis
     }
 
+    pub fn without_emphasis(mut self) -> Self {
+        self.emphasis = false;
+        self
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -528,6 +533,16 @@ mod tests {
     #[test]
     fn theme_config_emphasis_defaults_off() {
         assert!(!ThemeConfig::new().emphasis());
+    }
+
+    #[test]
+    fn without_emphasis_turns_a_configured_emphasis_off() {
+        let config = ThemeConfig {
+            emphasis: true,
+            ..ThemeConfig::new()
+        };
+        assert!(config.emphasis());
+        assert!(!config.without_emphasis().emphasis());
     }
 
     #[test]

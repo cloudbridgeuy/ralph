@@ -267,7 +267,8 @@ fn record_ask(result: &subprocess::StreamingSubprocessResult) {
 
 fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
     let theme_config = highlight::ThemeConfig::from_config_and_env()
-        .merge_cli(args.theme.as_deref(), args.no_background);
+        .merge_cli(args.theme.as_deref(), args.no_background)
+        .without_emphasis();
     let verbose_tools = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
     for warning in verbose_tools.warnings() {
         warn(warning);
