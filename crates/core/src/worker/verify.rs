@@ -222,6 +222,11 @@ pub fn stderr_tail(bytes: &[u8], cap: usize) -> String {
     String::from_utf8_lossy(&tail[start..]).trim().to_string()
 }
 
+pub fn trim_to_last(buffer: &mut Vec<u8>, keep: usize) {
+    let excess = buffer.len().saturating_sub(keep);
+    buffer.drain(..excess);
+}
+
 pub fn with_stderr_tail(result: CheckResult, tail: &str) -> CheckResult {
     if result.verdict != Verdict::Fail || tail.is_empty() {
         return result;
@@ -480,6 +485,15 @@ mod tests {
         assert_eq!(stderr_tail(b"abcdef\n", 4), "def");
         assert_eq!(stderr_tail(b"  short \n", 100), "short");
         assert_eq!(stderr_tail(b"", 4), "");
+    }
+
+    #[test]
+    fn trimming_keeps_only_the_last_bytes() {
+        let mut buffer = b"abcdef".to_vec();
+        trim_to_last(&mut buffer, 4);
+        assert_eq!(buffer, b"cdef");
+        trim_to_last(&mut buffer, 10);
+        assert_eq!(buffer, b"cdef");
     }
 
     #[test]

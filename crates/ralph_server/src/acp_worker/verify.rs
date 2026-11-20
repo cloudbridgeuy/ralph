@@ -5,14 +5,15 @@ use crate::worker_verify::{step, Checks};
 use agent_client_protocol::ByteStreams;
 use ralph_core::worker::{
     cursor_verify_leftovers, cursor_verify_project, decode_print_line, print_args, print_model,
-    print_verify, probed_version, stderr_tail, CheckResult, PrintArgs, PrintEvent, VersionProbe,
-    ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
+    print_verify, probed_version, stderr_tail, trim_to_last, CheckResult, PrintArgs, PrintEvent,
+    VersionProbe, ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
     STDERR_TAIL_CAP,
 };
 use std::io::{BufRead, BufReader, Read, Write};
 
 const FREE_DEADLINE: Duration = Duration::from_secs(90);
 const PRINT_DEADLINE: Duration = Duration::from_secs(120);
+const STDERR_SETTLE: Duration = Duration::from_secs(2);
 const KILL_GRACE: Duration = Duration::from_millis(200);
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
 
@@ -176,15 +177,23 @@ fn exercise(dir: &Path, checks: &Checks) {
     };
     let first_row = checks.len();
     let captured = Arc::new(Mutex::new(Vec::new()));
-    let reader = {
+    let (finished, eof) = mpsc::channel();
+    {
         let captured = Arc::clone(&captured);
         thread::spawn(move || {
             let mut stderr = stderr;
-            let mut buffer = Vec::new();
-            stderr.read_to_end(&mut buffer).ok();
-            *locked(&captured) = buffer;
-        })
-    };
+            let mut chunk = [0u8; 4096];
+            while let Ok(read) = stderr.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                let mut buffer = locked(&captured);
+                buffer.extend_from_slice(&chunk[..read]);
+                trim_to_last(&mut buffer, 2 * STDERR_TAIL_CAP);
+            }
+            finished.send(()).ok();
+        });
+    }
     let done = watchdog(child.id(), FREE_DEADLINE);
     let outcome = block_on(Client.builder().connect_with(
         ByteStreams::new(
@@ -204,7 +213,7 @@ fn exercise(dir: &Path, checks: &Checks) {
             format!("{} agent connection failed: {error}", agent.name),
         ));
     }
-    reader.join().ok();
+    eof.recv_timeout(STDERR_SETTLE).ok();
     let tail = stderr_tail(&locked(&captured), STDERR_TAIL_CAP);
     checks.append_stderr_since(first_row, &tail);
 }
