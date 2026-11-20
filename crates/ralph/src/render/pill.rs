@@ -115,7 +115,7 @@ fn parse_pill(chars: &[char], open: usize) -> Option<Pill> {
         || inner.len() > MAX_INNER
         || inner
             .iter()
-            .any(|ch| MARKERS.contains(ch) || ch.is_control())
+            .any(|ch| MARKERS.contains(ch) || ch.is_control() || matches!(ch, '*' | '_' | '`'))
         || inner[0].is_whitespace()
         || inner[inner.len() - 1].is_whitespace()
     {
@@ -337,6 +337,18 @@ mod tests {
         use crate::render::link::mark_links;
         let marked = mark_links("[[Done [a](u)]]");
         assert!(!mark_pills(&marked).contains(PILL_OK));
+    }
+
+    #[test]
+    fn style_characters_in_the_detail_keep_the_pill_literal() {
+        for text in [
+            "[[Done *x*]]",
+            "[[Done a_b]]",
+            "[[Done `x`]]",
+            "[[Done **x]]",
+        ] {
+            assert_eq!(mark_pills(text), text, "{text}");
+        }
     }
 
     #[test]
