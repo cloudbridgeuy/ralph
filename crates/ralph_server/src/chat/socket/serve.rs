@@ -15,6 +15,7 @@ use ralph_core::chat_send_it::{parse_step_result, STEP_RESULT};
 use ralph_core::chat_socket::{
     check_socket_path, decode_line, encode_line, orphan_sidecar_fate, runtime_dir_pid, sidecar_pid,
     socket_fate, SocketFacts, SocketFate, SocketOwner, SocketRequest, SocketResponse, StoreKey,
+    MAX_FRAME_BYTES,
 };
 use ralph_core::schedule_repeat::repeating_cap_refusal;
 use ralph_core::schedule_request::{
@@ -39,7 +40,7 @@ const PROPOSE_RUN: &str = "propose_run";
 type Roster = Box<dyn Fn() -> String + Send + Sync>;
 const WORKERS: &str = "workers";
 const WATCH_LIST: &str = "watch_list";
-const REQUEST_LIMIT_BYTES: u64 = 1 << 20;
+const REQUEST_LIMIT_BYTES: u64 = MAX_FRAME_BYTES as u64;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
 

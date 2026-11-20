@@ -113,6 +113,9 @@ from source) unless --force. Running chats and workers keep the old build until 
     Usage(UsageArgs),
 
     #[command(hide = true)]
+    Serve(ServeArgs),
+
+    #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
 
     #[command(hide = true)]
@@ -783,6 +786,12 @@ pub struct ChatNapArgs {
 
     #[arg(long, default_value_t = NAP_TIMEOUT_SECS)]
     pub timeout: u64,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ServeArgs {
+    #[arg(long, value_name = "DIR")]
+    pub store: std::path::PathBuf,
 }
 
 #[derive(clap::Args, Debug)]
