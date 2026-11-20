@@ -25,11 +25,14 @@ fn settle_plan(current: Option<&Task>, next: Option<Task>) -> Settle {
     }
 }
 
-fn settle(store: &ScheduleStore, task: &Task, next: Option<Task>) {
+fn settle(store: &ScheduleStore, task: &Task, next: Option<Task>) -> bool {
     let current = store.load_all().into_iter().find(|row| row.id == task.id);
     match settle_plan(current.as_ref(), next) {
-        Settle::Skip => {}
-        Settle::Remove => store.remove(&task.id),
+        Settle::Skip => false,
+        Settle::Remove => {
+            store.remove(&task.id);
+            true
+        }
         Settle::Save(next) => {
             let saved = store.save(&next);
             if saved.is_err() {
@@ -39,6 +42,7 @@ fn settle(store: &ScheduleStore, task: &Task, next: Option<Task>) {
                 saved,
                 format!("repeat stopped: re-arming scheduled task {}", task.id),
             );
+            true
         }
     }
 }
@@ -54,6 +58,10 @@ pub fn finish_worker(
     end: &WorkerEnd,
     now: DateTime<Utc>,
 ) {
+    let acted = settle(store, task, plan_worker_rearm(task, end, now, &Local));
+    if !acted {
+        return;
+    }
     if let Some(text) = repeat_stopped_text(task, end) {
         let report = chat_report(&task.id, text, &now.to_rfc3339());
         warn_if_err(
@@ -61,7 +69,6 @@ pub fn finish_worker(
             format!("posting schedule {}", task.id),
         );
     }
-    settle(store, task, plan_worker_rearm(task, end, now, &Local));
 }
 
 fn git_output(repo: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -316,6 +323,24 @@ mod tests {
         let inbox = inbox_in(&dir);
         finish_worker(&store, &inbox, &t, &WorkerEnd::Attention, Utc::now());
         assert!(store.load_all().is_empty());
+        assert_eq!(posted_workers(&dir), vec!["schedule:t".to_string()]);
+    }
+
+    #[test]
+    fn a_repeating_worker_no_longer_running_needing_attention_posts_no_notice() {
+        let t = task(worker(), hourly());
+        let (dir, store) = saved(&with_status(t.clone(), TaskStatus::Pending));
+        let inbox = inbox_in(&dir);
+        finish_worker(&store, &inbox, &t, &WorkerEnd::Attention, Utc::now());
+        assert!(posted_workers(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_running_repeating_worker_needing_attention_posts_the_notice() {
+        let t = task(worker(), hourly());
+        let (dir, store) = saved(&t);
+        let inbox = inbox_in(&dir);
+        finish_worker(&store, &inbox, &t, &WorkerEnd::Attention, Utc::now());
         assert_eq!(posted_workers(&dir), vec!["schedule:t".to_string()]);
     }
 
