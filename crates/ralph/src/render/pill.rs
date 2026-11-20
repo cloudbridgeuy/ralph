@@ -1,9 +1,10 @@
 use super::link::{code_span_end, is_table_or_heading_line};
 use super::marker::{
     ADD_START, DEL_START, DIFF_END, MARKERS, MARK_ACCENT, MARK_BAD, MARK_BORDER, MARK_DONE,
-    MARK_END, MEMORY_END, MEMORY_START, PILL_ACCENT, PILL_BAD, PILL_END, PILL_INFO, PILL_OK,
-    PILL_WARN,
+    MARK_END, MEMORY_END, MEMORY_START, PILL_ACCENT, PILL_BAD, PILL_BODY, PILL_END, PILL_INFO,
+    PILL_OK, PILL_WARN,
 };
+use super::pill_style::PillStyle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
@@ -58,6 +59,8 @@ pub const PILL_WORDS: &[PillWord] = &[
     },
 ];
 
+pub(super) const CAP_LEFT: char = '\u{E0B6}';
+pub(super) const CAP_RIGHT: char = '\u{E0B4}';
 const NBSP: char = '\u{00A0}';
 const MAX_INNER: usize = 32;
 const INNER_MARKERS: [char; 5] = [ADD_START, DEL_START, DIFF_END, MEMORY_START, MEMORY_END];
@@ -129,8 +132,12 @@ fn parse_pill(chars: &[char], open: usize) -> Option<Pill> {
     })
 }
 
-fn push_pill(chars: &[char], open: usize, pill: &Pill, out: &mut String) {
+fn push_pill(chars: &[char], open: usize, pill: &Pill, style: PillStyle, out: &mut String) {
     out.push(tone_marker(pill.tone));
+    if style.round {
+        out.push(CAP_LEFT);
+        out.push(PILL_BODY);
+    }
     out.push(NBSP);
     out.extend(
         inner_text(&chars[open + 2..pill.end - 2])
@@ -139,6 +146,10 @@ fn push_pill(chars: &[char], open: usize, pill: &Pill, out: &mut String) {
     );
     out.push(NBSP);
     out.push(PILL_END);
+    if style.round {
+        out.push(CAP_RIGHT);
+        out.push(MARK_END);
+    }
 }
 
 fn mark_for(chars: &[char], at: usize) -> Option<(char, usize)> {
@@ -176,7 +187,7 @@ Use pills sparingly, only to flag status. Never put them inside code."
     )
 }
 
-pub fn mark_pills(text: &str) -> String {
+pub fn mark_pills(text: &str, style: PillStyle) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
@@ -199,7 +210,7 @@ pub fn mark_pills(text: &str) -> String {
                 let (pill, mark) = if plain { (None, None) } else { (pill, mark) };
                 match (pill, mark) {
                     (Some(pill), _) => {
-                        push_pill(&chars, i, &pill, &mut out);
+                        push_pill(&chars, i, &pill, style, &mut out);
                         i = pill.end;
                     }
                     (None, Some((marker, len))) => {
@@ -223,6 +234,11 @@ pub fn mark_pills(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::markdown::Palette;
+
+    fn mark_pills(text: &str) -> String {
+        super::mark_pills(text, PillStyle::default())
+    }
+
     use crate::render::marker::paint_links;
 
     const NB: char = '\u{00A0}';
@@ -449,6 +465,81 @@ mod tests {
         ] {
             assert!(MARKERS.contains(&marker));
         }
+    }
+
+    const CAP_L: char = '\u{E0B6}';
+    const CAP_R: char = '\u{E0B4}';
+
+    fn round() -> PillStyle {
+        PillStyle {
+            round: true,
+            icons: false,
+        }
+    }
+
+    fn round_pill(start: char, inner: &str) -> String {
+        let body: String = inner.replace(' ', &NB.to_string());
+        format!("{start}{CAP_L}{PILL_BODY}{NB}{body}{NB}{PILL_END}{CAP_R}{MARK_END}")
+    }
+
+    #[test]
+    fn round_pills_get_caps_and_a_body_marker() {
+        let cases = [
+            ("[[Done]]", round_pill(PILL_OK, "Done")),
+            ("[[Failed x y]]", round_pill(PILL_BAD, "Failed x y")),
+            (
+                "a [[Next]] b",
+                format!("a {} b", round_pill(PILL_ACCENT, "Next")),
+            ),
+        ];
+        for (text, want) in cases {
+            assert_eq!(super::mark_pills(text, round()), want, "{text}");
+        }
+    }
+
+    #[test]
+    fn square_pills_ignore_the_caps() {
+        assert_eq!(
+            super::mark_pills("[[Done]]", PillStyle::default()),
+            pill(PILL_OK, "Done")
+        );
+    }
+
+    #[test]
+    fn round_mode_leaves_marks_and_near_misses_alone() {
+        assert_eq!(
+            super::mark_pills("✓ [[Nope]]", round()),
+            format!("{MARK_DONE}✓{MARK_END} [[Nope]]")
+        );
+    }
+
+    #[test]
+    fn body_marker_is_in_the_marker_table() {
+        assert!(MARKERS.contains(&PILL_BODY));
+    }
+
+    #[test]
+    fn paint_round_pill_uses_tone_fg_caps_around_a_styled_body() {
+        let palette = Palette::default();
+        let painted = paint_links(&round_pill(PILL_OK, "Done"), &palette);
+        let tone = crate::ansi::fg(palette.pill_ok);
+        let body = "\x1b[1m\x1b[42m\x1b[97m";
+        let want =
+            format!("{tone}{CAP_L}{body}{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m{tone}{CAP_R}\x1b[39m");
+        assert_eq!(painted, want);
+    }
+
+    #[test]
+    fn paint_square_pill_after_a_round_pill_stays_square() {
+        let palette = Palette::default();
+        let text = format!(
+            "{}{}",
+            round_pill(PILL_OK, "Done"),
+            pill(PILL_BAD, "Failed")
+        );
+        let painted = paint_links(&text, &palette);
+        assert!(painted.ends_with("\x1b[22m\x1b[39m\x1b[49m"), "{painted:?}");
+        assert!(painted.contains("\x1b[1m\x1b[41m"), "{painted:?}");
     }
 
     #[test]

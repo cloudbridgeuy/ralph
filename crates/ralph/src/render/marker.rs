@@ -19,7 +19,8 @@ pub(super) const MARK_DONE: char = '\u{FDD7}';
 pub(super) const MARK_BAD: char = '\u{FDD8}';
 pub(super) const MARK_ACCENT: char = '\u{FDD9}';
 pub(super) const MARK_BORDER: char = '\u{FDDA}';
-pub(super) const MARKERS: [char; 21] = [
+pub(super) const PILL_BODY: char = '\u{FDDB}';
+pub(super) const MARKERS: [char; 22] = [
     LABEL_START,
     LABEL_END,
     URL_START,
@@ -41,8 +42,10 @@ pub(super) const MARKERS: [char; 21] = [
     MARK_BAD,
     MARK_ACCENT,
     MARK_BORDER,
+    PILL_BODY,
 ];
 
+use super::pill::CAP_LEFT;
 use crate::ansi::{bg, fg};
 use crate::markdown::Palette;
 use termimad::crossterm::style::Color;
@@ -62,6 +65,13 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
         Some(_) => fg(palette.inline_code),
         None => COLOR_OFF.to_string(),
     };
+    let pill_tones = [
+        (PILL_OK, palette.pill_ok),
+        (PILL_BAD, palette.pill_bad),
+        (PILL_WARN, palette.pill_warn),
+        (PILL_INFO, palette.pill_info),
+        (PILL_ACCENT, palette.pill_accent),
+    ];
     let starts = [
         (LABEL_START, format!("{UNDERLINE}{}", fg(palette.link))),
         (URL_START, fg(palette.url)),
@@ -81,8 +91,25 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
     let mut out = String::with_capacity(rendered.len());
     let mut open: Option<&str> = None;
     let mut in_label = false;
-    for ch in rendered.chars() {
+    let mut tone = None;
+    let mut round = false;
+    let mut chars = rendered.chars().peekable();
+    while let Some(ch) = chars.next() {
         if in_label && is_mark_marker(ch) {
+            continue;
+        }
+        if let Some((_, color)) = pill_tones.iter().find(|(start, _)| *start == ch) {
+            tone = *color;
+            if chars.peek() == Some(&CAP_LEFT) {
+                open = None;
+                out.push_str(&fg(tone));
+                continue;
+            }
+        }
+        if ch == PILL_BODY {
+            round = true;
+            open = None;
+            out.push_str(&pill_style(tone));
             continue;
         }
         if let Some((_, style)) = starts.iter().find(|(start, _)| *start == ch) {
@@ -108,6 +135,10 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
             PILL_END => {
                 open = None;
                 out.push_str(PILL_OFF);
+                if round {
+                    round = false;
+                    out.push_str(&fg(tone));
+                }
             }
             '\n' => {
                 out.push('\n');

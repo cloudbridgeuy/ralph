@@ -99,7 +99,7 @@ fn apc_in_place(content: &str, render_text: impl Fn(&str) -> String) -> String {
 fn render_styled_prose(theme: &MarkdownTheme, text: &str, width: usize) -> String {
     let marked = mark_links(text);
     let marked = if theme.emphasis {
-        mark_pills(&marked)
+        mark_pills(&marked, theme.pill_style)
     } else {
         marked
     };

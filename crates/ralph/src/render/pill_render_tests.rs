@@ -9,6 +9,7 @@ use super::wrap::wrap_width;
 use super::{ImageSettings, RenderContext, Viewport};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::markdown::MarkdownTheme;
+use crate::render::pill_style::PillStyle;
 
 const NB: char = '\u{00A0}';
 const APC: &str = "\x1b_Gf=100,a=T;QQ==\x1b\\";
@@ -197,4 +198,77 @@ fn backslashes_in_the_detail_survive_the_styled_pipeline() {
         assert!(visible(&out).contains(&pill), "{text:?}: {out:?}");
         assert!(!out.contains("[["), "{text:?}: {out:?}");
     }
+}
+
+fn round_on() -> MarkdownTheme {
+    on().with_pill_style(PillStyle {
+        round: true,
+        icons: false,
+    })
+}
+
+const CAP_L: char = '\u{E0B6}';
+const CAP_R: char = '\u{E0B4}';
+
+#[test]
+fn round_pills_paint_caps_in_the_tone_colour_around_the_body() {
+    let theme = round_on();
+    let out = render("[[Done]]", 80, &theme, true, false);
+    let tone = crate::ansi::fg(theme.palette.pill_ok);
+    let want = format!(
+        "{tone}{CAP_L}\x1b[1m\x1b[42m\x1b[97m{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m{tone}{CAP_R}\x1b[39m\n"
+    );
+    assert_eq!(out, want);
+}
+
+#[test]
+fn square_pills_keep_the_exact_guz_1650_bytes() {
+    let out = render("[[Done]]", 80, &on(), true, false);
+    assert_eq!(
+        out,
+        format!("\x1b[1m\x1b[42m\x1b[97m{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m\n")
+    );
+}
+
+#[test]
+fn round_flag_without_emphasis_draws_nothing() {
+    let theme = MarkdownTheme::default().with_pill_style(PillStyle {
+        round: true,
+        icons: false,
+    });
+    let out = render("[[Done]]", 80, &theme, true, false);
+    assert_eq!(out, "[[Done]]\n");
+}
+
+#[test]
+fn a_round_pill_never_breaks_and_counts_each_cap_as_one_column() {
+    let text = "aaaa bbbb [[Done 3 files]] cccc dddd eeee\n";
+    let inner = format!("{NB}Done{NB}3{NB}files{NB}");
+    let whole = format!("{CAP_L}{inner}{CAP_R}");
+    for cols in 17..=40 {
+        let shown = visible(&render(text, cols, &round_on(), true, false));
+        let lines: Vec<&str> = shown.lines().collect();
+        assert_eq!(
+            lines.iter().filter(|line| line.contains(&whole)).count(),
+            1,
+            "{cols}: {lines:?}"
+        );
+        for line in lines {
+            let width: usize = line.chars().map(|ch| ch.width().unwrap_or(0)).sum();
+            assert!(width <= usize::from(cols), "{cols}: {line:?}");
+        }
+    }
+}
+
+#[test]
+fn a_round_pill_in_a_blockquote_adds_no_extra_background() {
+    let theme = round_on();
+    let out = render("> [[Done]] ok\n", 80, &theme, true, false);
+    let tone = crate::ansi::fg(theme.palette.pill_ok);
+    assert!(
+        out.contains(&format!("{tone}{CAP_L}\x1b[1m\x1b[42m")),
+        "{out:?}"
+    );
+    assert_eq!(out.matches("\x1b[42m").count(), 1, "{out:?}");
+    assert_eq!(out.matches("\x1b[49m").count(), 1, "{out:?}");
 }

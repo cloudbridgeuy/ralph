@@ -305,6 +305,21 @@ mod tests {
     }
 
     #[test]
+    fn round_pill_caps_count_one_column_and_never_split() {
+        let pill = "\u{FDD1}\u{E0B6}\u{FDDB}\u{A0}Done\u{A0}3\u{A0}\u{FDD0}\u{E0B4}\u{FDD6}";
+        let text = format!("aa {pill} bb");
+        assert_eq!(columns(&text), 3 + 1 + 8 + 1 + 3);
+        for width in 10..=20 {
+            let lines = wrap(&text, width);
+            assert_eq!(
+                lines.iter().filter(|line| line.contains(pill)).count(),
+                1,
+                "{width}: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
     fn markers_add_no_break_opportunity() {
         assert_eq!(
             wrap("(\u{200B}abc\u{200C})", 3),
