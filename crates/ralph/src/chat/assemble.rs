@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
-pub(super) struct Settings {
+pub(crate) struct Settings {
     pub exe: PathBuf,
     pub cwd: PathBuf,
     pub global_config: PathBuf,
@@ -35,7 +35,7 @@ pub(super) struct Settings {
     pub tuning: Tuning,
 }
 
-pub(super) fn load_settings(
+pub(crate) fn load_settings(
     store_dir: &Path,
     permission_mode: Option<&str>,
     recent_history_tokens: Option<usize>,
@@ -63,14 +63,14 @@ pub(super) fn load_settings(
     })
 }
 
-pub(super) struct TurnOutput {
+pub(crate) struct TurnOutput {
     pub gate: Arc<OutputGate>,
     pub sink: Arc<dyn TurnSink>,
     pub reply_images: ReplyImages,
     pub show_tools: bool,
 }
 
-pub(super) struct AssembleOptions<'a> {
+pub(crate) struct AssembleOptions<'a> {
     pub store_dir: &'a Path,
     pub store_root: PathBuf,
     pub settings: &'a Settings,
@@ -83,7 +83,7 @@ pub(super) struct AssembleOptions<'a> {
     pub events: Emit,
 }
 
-pub(super) struct Assembled {
+pub(crate) struct Assembled {
     pub session: Session,
     pub guard: SocketGuard,
     pub plugin: Option<tempfile::TempDir>,
@@ -93,7 +93,7 @@ pub(super) struct Assembled {
     pub close: CloseGuard,
 }
 
-pub(super) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn std::error::Error>> {
+pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn std::error::Error>> {
     let (store_dir, settings) = (options.store_dir, options.settings);
     let config = &settings.loaded.config;
     let chat_config = &config.chat;

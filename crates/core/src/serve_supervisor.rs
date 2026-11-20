@@ -11,6 +11,7 @@ enum Phase {
 pub enum Input {
     Hello { proto: u32 },
     Stop,
+    Send(SessionKey),
     Closed(SessionKey),
 }
 
@@ -19,6 +20,7 @@ pub enum Effect {
     Open(SessionKey),
     Answer { proto: u32 },
     Refuse(String),
+    Run(SessionKey),
     Close(SessionKey),
     Exit,
 }
@@ -42,6 +44,13 @@ impl Supervisor {
     pub fn step(&mut self, input: Input) -> Vec<Effect> {
         match (self.phase, input) {
             (Phase::Running, Input::Hello { proto }) => vec![Effect::Answer { proto }],
+            (Phase::Running, Input::Send(key)) if self.open.contains(&key) => {
+                vec![Effect::Run(key)]
+            }
+            (Phase::Running, Input::Send(key)) => {
+                vec![Effect::Refuse(format!("{key} is not open"))]
+            }
+            (_, Input::Send(_)) => vec![Effect::Refuse("ralph serve is shutting down".to_string())],
             (_, Input::Hello { .. }) => {
                 vec![Effect::Refuse("ralph serve is shutting down".to_string())]
             }
@@ -71,6 +80,7 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat_thread::ThreadName;
 
     #[test]
     fn start_opens_main() {
@@ -105,6 +115,35 @@ mod tests {
         sup.step(Input::Stop);
         assert_eq!(
             sup.step(Input::Hello { proto: 1 }),
+            vec![Effect::Refuse("ralph serve is shutting down".to_string())]
+        );
+    }
+
+    #[test]
+    fn send_to_open_main_runs_a_turn() {
+        let (mut sup, _) = Supervisor::start();
+        assert_eq!(
+            sup.step(Input::Send(SessionKey::Main)),
+            vec![Effect::Run(SessionKey::Main)]
+        );
+    }
+
+    #[test]
+    fn send_to_a_closed_thread_is_refused() {
+        let (mut sup, _) = Supervisor::start();
+        let key = SessionKey::Thread(ThreadName::parse("side").unwrap());
+        assert_eq!(
+            sup.step(Input::Send(key)),
+            vec![Effect::Refuse("thread side is not open".to_string())]
+        );
+    }
+
+    #[test]
+    fn send_while_draining_is_refused() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Stop);
+        assert_eq!(
+            sup.step(Input::Send(SessionKey::Main)),
             vec![Effect::Refuse("ralph serve is shutting down".to_string())]
         );
     }

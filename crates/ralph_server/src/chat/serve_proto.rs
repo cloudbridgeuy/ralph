@@ -1,4 +1,5 @@
 use ralph_core::chat_socket::{decode_line, encode_line, MAX_FRAME_BYTES};
+use ralph_core::turn_event::TurnEvent;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,7 +16,13 @@ pub struct Envelope<B> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    Hello { proto: u32 },
+    Hello {
+        proto: u32,
+    },
+    Send {
+        thread: Option<String>,
+        text: String,
+    },
     Shutdown,
 }
 
@@ -24,6 +31,8 @@ pub enum ClientMsg {
 pub enum ServerMsg {
     Error { message: String },
     Hello { proto: u32 },
+    Turn { event: TurnEvent },
+    TurnDone,
 }
 
 pub fn hello_reply(proto: u32) -> ServerMsg {
@@ -61,6 +70,7 @@ pub fn decode_frame<B: DeserializeOwned>(line: &str) -> Result<Envelope<B>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::turn_event::Wait;
 
     fn server_messages() -> Vec<ServerMsg> {
         vec![
@@ -68,11 +78,29 @@ mod tests {
                 message: "m".into(),
             },
             ServerMsg::Hello { proto: VERSION },
+            ServerMsg::Turn {
+                event: TurnEvent::Busy(Wait::Tool),
+            },
+            ServerMsg::Turn {
+                event: TurnEvent::Idle,
+            },
+            ServerMsg::TurnDone,
         ]
     }
 
     fn client_messages() -> Vec<ClientMsg> {
-        vec![ClientMsg::Hello { proto: VERSION }, ClientMsg::Shutdown]
+        vec![
+            ClientMsg::Hello { proto: VERSION },
+            ClientMsg::Send {
+                thread: None,
+                text: "hi".into(),
+            },
+            ClientMsg::Send {
+                thread: Some("side".into()),
+                text: "hi".into(),
+            },
+            ClientMsg::Shutdown,
+        ]
     }
 
     #[test]
@@ -100,6 +128,20 @@ mod tests {
                 serde_json::to_value(&msg).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn a_turn_event_travels_under_the_turn_type() {
+        let line = encode_frame(
+            3,
+            &ServerMsg::Turn {
+                event: TurnEvent::Busy(Wait::Tool),
+            },
+        );
+        assert_eq!(
+            line.trim_end(),
+            r#"{"v":1,"id":3,"body":{"type":"turn","event":{"Busy":"Tool"}}}"#
+        );
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use super::{step, Host, POISONED};
+use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::MAX_FRAME_BYTES;
+use ralph_core::chat_thread::ThreadName;
 use ralph_core::serve_supervisor::{Effect, Input};
 use ralph_server::chat::serve_proto::{
     decode_frame, encode_frame, hello_reply, ClientMsg, ServerMsg,
@@ -14,6 +16,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     Hello(u32),
+    Send { key: SessionKey, text: String },
     Shutdown,
     Refuse(String),
 }
@@ -36,6 +39,7 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 Ok(effects) => answer(&effects),
                 Err(message) => ServerMsg::Error { message },
             },
+            Action::Send { key, text } => send(host, &key, &text, id, &writer),
         };
         writer.write_all(encode_frame(id, &reply).as_bytes())?;
         if matches!(reply, ServerMsg::Error { .. }) {
@@ -45,6 +49,25 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
         writer.set_read_timeout(read_timeout(greeted))?;
     }
     Ok(())
+}
+
+fn send(host: &Host, key: &SessionKey, text: &str, id: u64, writer: &UnixStream) -> ServerMsg {
+    let run = step(&host.supervisor, Input::Send(key.clone())).and_then(|effects| permit(&effects));
+    let result = run.and_then(|key| {
+        let open = host
+            .sessions
+            .get(&key)
+            .ok_or_else(|| format!("{key} is not open"))?;
+        let bound = writer.try_clone().map_err(|e| e.to_string())?;
+        open.sink.bind(id, bound);
+        let outcome = open.turn(text);
+        open.sink.unbind();
+        outcome.map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(_) => ServerMsg::TurnDone,
+        Err(message) => ServerMsg::Error { message },
+    }
 }
 
 fn read_timeout(greeted: bool) -> Option<Duration> {
@@ -60,13 +83,34 @@ fn read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
     Ok((read > 0).then_some(line))
 }
 
+fn session_key(thread: Option<&str>) -> Result<SessionKey, String> {
+    thread.map_or(Ok(SessionKey::Main), |name| {
+        ThreadName::parse(name).map(SessionKey::Thread)
+    })
+}
+
 fn classify(greeted: bool, frame: Result<ClientMsg, String>) -> Action {
     match frame {
         Err(message) => Action::Refuse(message),
         Ok(ClientMsg::Hello { proto }) => Action::Hello(proto),
         Ok(_) if !greeted => Action::Refuse("unexpected message before hello".to_string()),
+        Ok(ClientMsg::Send { thread, text }) => match session_key(thread.as_deref()) {
+            Ok(key) => Action::Send { key, text },
+            Err(message) => Action::Refuse(message),
+        },
         Ok(ClientMsg::Shutdown) => Action::Shutdown,
     }
+}
+
+fn permit(effects: &[Effect]) -> Result<SessionKey, String> {
+    effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Run(key) => Some(Ok(key.clone())),
+            Effect::Refuse(message) => Some(Err(message.clone())),
+            _ => None,
+        })
+        .unwrap_or_else(|| Err(POISONED.to_string()))
 }
 
 fn answer(effects: &[Effect]) -> ServerMsg {
@@ -108,6 +152,57 @@ mod tests {
     fn a_greeted_connection_has_no_read_timeout() {
         assert_eq!(read_timeout(false), Some(READ_TIMEOUT));
         assert_eq!(read_timeout(true), None);
+    }
+
+    #[test]
+    fn classify_routes_a_send_to_a_session_key() {
+        let send = |thread: Option<&str>| {
+            classify(
+                true,
+                Ok(ClientMsg::Send {
+                    thread: thread.map(str::to_string),
+                    text: "hi".into(),
+                }),
+            )
+        };
+        assert_eq!(
+            send(None),
+            Action::Send {
+                key: SessionKey::Main,
+                text: "hi".into()
+            }
+        );
+        assert_eq!(
+            send(Some("side")),
+            Action::Send {
+                key: SessionKey::Thread(ThreadName::parse("side").unwrap()),
+                text: "hi".into()
+            }
+        );
+        assert!(matches!(send(Some("../x")), Action::Refuse(_)));
+        assert!(matches!(send(Some("main")), Action::Refuse(_)));
+        assert_eq!(
+            classify(
+                false,
+                Ok(ClientMsg::Send {
+                    thread: None,
+                    text: "hi".into()
+                })
+            ),
+            Action::Refuse("unexpected message before hello".into())
+        );
+    }
+
+    #[test]
+    fn permit_maps_run_and_refusals() {
+        assert_eq!(
+            permit(&[Effect::Run(SessionKey::Main)]),
+            Ok(SessionKey::Main)
+        );
+        assert_eq!(
+            permit(&[Effect::Refuse("down".into())]),
+            Err("down".to_string())
+        );
     }
 
     #[test]

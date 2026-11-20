@@ -7,7 +7,7 @@
 | Component | File | Description |
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | hidden `Serve(ServeArgs)`, required `--store <DIR>` |
-| Shell | `crates/ralph/src/serve.rs` | `run()`, accept loop, connection threads, `classify()`, `answer()` |
+| Shell | `crates/ralph/src/serve/` | `run()`, accept loop, `connection.rs` (`classify()`, `answer()`), session sink |
 | Signals | `crates/ralph/src/signal.rs` | `init_serve()`: SIGINT, SIGTERM and SIGHUP set the stop flag |
 | Store gate, refusal | `crates/core/src/serve.rs` | `serve_store_gate()`, `serve_refusal()` |
 | Supervisor | `crates/core/src/serve_supervisor.rs` | pure state machine: `Supervisor::start()`, `step()`, `Input`, `Effect` |

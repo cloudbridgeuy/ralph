@@ -1,4 +1,4 @@
-mod assemble;
+pub(crate) mod assemble;
 mod bounded;
 pub(crate) mod cell;
 mod client_monitor;

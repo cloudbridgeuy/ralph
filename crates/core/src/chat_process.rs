@@ -101,6 +101,15 @@ pub enum SessionKey {
     Thread(ThreadName),
 }
 
+impl std::fmt::Display for SessionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionKey::Main => f.write_str("main"),
+            SessionKey::Thread(name) => write!(f, "thread {name}"),
+        }
+    }
+}
+
 pub fn run_id(pid: u32, key: &SessionKey, started: DateTime<Utc>) -> String {
     let started = started.to_rfc3339();
     match key {

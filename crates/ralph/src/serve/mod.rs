@@ -1,8 +1,11 @@
 mod connection;
+mod open;
+mod sink;
 
 use crate::chat::STORE_ENV;
 use crate::cli::ServeArgs;
 use crate::signal;
+use open::{open_session, Sessions};
 use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::{runtime_root, serve_socket_path, StoreKey};
 use ralph_core::serve::{serve_refusal, serve_store_gate};
@@ -24,6 +27,7 @@ const POISONED: &str = "ralph serve: internal state unavailable";
 
 struct Host {
     supervisor: Mutex<Supervisor>,
+    sessions: Sessions,
     stop: AtomicBool,
 }
 
@@ -33,10 +37,12 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let requested = std::env::current_dir()?.join(&args.store);
     std::fs::create_dir_all(&requested)?;
     let store_dir = canonical_store(requested);
+    ralph_server::config::set_store_layer(&store_dir);
     let store = Store::new(store_dir.clone());
     let (supervisor, effects) = Supervisor::start();
     let host = Arc::new(Host {
         supervisor: Mutex::new(supervisor),
+        sessions: Sessions::default(),
         stop: AtomicBool::new(false),
     });
     let mut claim = None;
@@ -85,8 +91,13 @@ fn drive(
                     .claim_chat()?
                     .map_err(|holder| serve_refusal(store.dir(), holder))?;
                 *claim = Some(held);
+                host.sessions
+                    .insert(SessionKey::Main, open_session(store.dir())?);
             }
             Effect::Close(SessionKey::Main) => {
+                if let Some(open) = host.sessions.remove(&SessionKey::Main) {
+                    open.end();
+                }
                 claim.take();
                 queue.extend(step(&host.supervisor, Input::Closed(SessionKey::Main))?);
             }
