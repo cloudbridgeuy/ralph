@@ -675,3 +675,9 @@ fn test_cli_chat_history_without_a_tool_errors() {
 fn verify_accepts_agy() {
     assert!(Cli::try_parse_from(["ralph", "worker", "verify", "agy"]).is_ok());
 }
+
+#[test]
+fn verify_yolo_requires_live() {
+    assert!(Cli::try_parse_from(["ralph", "worker", "verify", "agy", "--yolo"]).is_err());
+    assert!(Cli::try_parse_from(["ralph", "worker", "verify", "agy", "--live", "--yolo"]).is_ok());
+}

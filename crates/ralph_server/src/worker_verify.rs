@@ -7,7 +7,7 @@ use ralph_core::worker::{
     check_agent_version, claude_required_checks, finish_plan, finished_probe, limit_failure,
     probed_version, render_check, render_summary, required_failure, resolve_claude_model,
     resolve_opencode_model, spec_passed, verified_entry, verify_limit, CheckResult, HarnessId,
-    Verdict, VerifiedAgent, VersionProbe, AGY_AGENT, AGY_GATE, AGY_REQUIRED_CHECKS,
+    PermissionMode, Verdict, VerifiedAgent, VersionProbe, AGY_AGENT, AGY_GATE, AGY_REQUIRED_CHECKS,
     CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL,
     OPENCODE_REQUIRED_CHECKS,
 };
@@ -178,22 +178,48 @@ const AGY_LIVE_REQUIRED_CHECKS: &[&str] = &[
     "live prompt",
     "live report",
     "live usage",
+    "live cancel",
     "live close",
 ];
 
-fn agy_required_checks(live: bool) -> &'static [&'static str] {
-    if live {
-        AGY_LIVE_REQUIRED_CHECKS
-    } else {
-        AGY_REQUIRED_CHECKS
+const AGY_YOLO_REQUIRED_CHECKS: &[&str] = &[
+    "version",
+    "initialize",
+    "session/new",
+    "settings/new",
+    "mcp/new",
+    "session/close",
+    "session/load",
+    "settings/load",
+    "mcp/load",
+    "session/close reload",
+    "live session",
+    "live settings",
+    "live prompt",
+    "live report",
+    "live usage",
+    "live yolo",
+    "live cancel",
+    "live close",
+];
+
+fn agy_required_checks(live: bool, yolo: bool) -> &'static [&'static str] {
+    match (live, yolo) {
+        (false, _) => AGY_REQUIRED_CHECKS,
+        (true, false) => AGY_LIVE_REQUIRED_CHECKS,
+        (true, true) => AGY_YOLO_REQUIRED_CHECKS,
     }
 }
 
 pub fn run(
     agent: HarnessId,
     live: bool,
+    yolo: bool,
     drift: Option<DriftRun>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if yolo && agent != HarnessId::Agy {
+        return Err("--yolo is only supported for agy".into());
+    }
     let dir = tempfile::tempdir()?;
     let name = agent.as_str();
     let drift = match drift {
@@ -207,6 +233,11 @@ pub fn run(
     if let Some(drift) = &drift {
         drift.watch(name);
     }
+    let agy_live = live.then_some(if yolo {
+        PermissionMode::Yolo
+    } else {
+        PermissionMode::Ask
+    });
     let checks = Checks::default();
     let config = AppConfig::load().map_err(|error| error.to_string());
     let (model, warning) = resolved_model(agent, &config);
@@ -228,9 +259,9 @@ pub fn run(
             );
             if let Some(version) = version.as_deref() {
                 let remaining = verify_limit(live).saturating_sub(started.elapsed());
-                acp_worker::verify_agy(live, dir.path(), &checks, version, remaining);
+                acp_worker::verify_agy(agy_live, dir.path(), &checks, version, remaining);
             }
-            (version, agy_required_checks(live))
+            (version, agy_required_checks(live, yolo))
         }
         HarnessId::Cursor => (
             acp_worker::verify(live, dir.path(), &checks),
@@ -322,24 +353,29 @@ mod tests {
         assert!(spec_passed(
             &checks,
             Some("1.5.12"),
-            agy_required_checks(false)
+            agy_required_checks(false, false)
         ));
         assert!(!spec_passed(
             &checks,
             Some("1.5.12"),
-            agy_required_checks(true)
+            agy_required_checks(true, false)
         ));
-        let all: Vec<_> = agy_required_checks(true)
+        let all: Vec<_> = agy_required_checks(true, false)
             .iter()
             .map(|name| CheckResult::pass(name, "ok"))
             .collect();
-        assert!(spec_passed(&all, Some("1.5.12"), agy_required_checks(true)));
+        assert!(spec_passed(
+            &all,
+            Some("1.5.12"),
+            agy_required_checks(true, false)
+        ));
         for missing in [
             "live session",
             "live settings",
             "live prompt",
             "live report",
             "live usage",
+            "live cancel",
             "live close",
         ] {
             let partial: Vec<_> = all
@@ -350,9 +386,16 @@ mod tests {
             assert!(!spec_passed(
                 &partial,
                 Some("1.5.12"),
-                agy_required_checks(true)
+                agy_required_checks(true, false)
             ));
         }
+    }
+
+    #[test]
+    fn only_yolo_runs_require_the_yolo_check() {
+        assert!(agy_required_checks(true, true).contains(&"live yolo"));
+        assert!(!agy_required_checks(true, false).contains(&"live yolo"));
+        assert!(!agy_required_checks(false, false).contains(&"live yolo"));
     }
 
     #[test]

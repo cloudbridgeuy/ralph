@@ -1,12 +1,25 @@
 use super::*;
 use crate::worker_mcp::Inbox;
-use agent_client_protocol::schema::v1::StopReason;
+use agent_client_protocol::schema::v1::{CancelNotification, PromptResponse, StopReason};
 use ralph_core::worker::{reported_path, Report};
 use serde_json::Value;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const ID: &str = "verify";
 const TEXT: &str = "verify";
 const PROMPT: &str = "Call the ralph-worker report tool exactly once with status done and text verify. Do not call any other tool. Then stop.";
+const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
+
+fn shell_prompt(target: &Path) -> String {
+    let path = target.display().to_string();
+    let path = if path.contains(char::is_whitespace) {
+        format!("'{path}'")
+    } else {
+        path
+    };
+    format!("Run the shell command `date +%s > {path}` exactly as written. Do not call any other tool. Then stop.")
+}
 
 fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
     if delivered
@@ -49,7 +62,115 @@ fn usage(text: &str, session: &str, model: &str, total: u64) -> Result<String, S
     }
 }
 
-fn prepare(dir: &Path, updates: agy_settings::Updates) -> Result<Opening, String> {
+fn yolo_check(
+    requests: usize,
+    stop: &Result<String, String>,
+    written: Option<&str>,
+    window: (u64, u64),
+) -> Result<String, String> {
+    let (start, end) = window;
+    match (requests, stop.as_deref()) {
+        (0, Ok("end_turn")) => match written {
+            None => Err("yolo.txt missing after the shell turn".to_string()),
+            Some(text) if text.trim().parse::<u64>().is_ok_and(|time| (start..=end).contains(&time)) => Ok(
+                "agy raised 0 permission requests and ran `date +%s` (yolo.txt within the turn)"
+                    .to_string(),
+            ),
+            Some(text) => Err(format!(
+                "yolo.txt holds `{}`, not a time in {start}..={end}",
+                text.trim()
+            )),
+        },
+        (count, Ok("end_turn")) => Err(format!(
+            "agy raised {count} permission requests in yolo mode"
+        )),
+        (count, Ok(reason)) => Err(format!(
+            "agy shell turn ended with `{reason}` after {count} permission requests"
+        )),
+        (_, Err(message)) => Err(format!("agy shell prompt failed: {message}")),
+    }
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+fn stop_name(
+    result: Result<PromptResponse, agent_client_protocol::Error>,
+) -> Result<String, String> {
+    result
+        .map(|done| {
+            serde_json::to_value(done.stop_reason)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_default()
+        })
+        .map_err(|error| error.message)
+}
+
+async fn shell_turn(
+    connection: &ConnectionTo<Agent>,
+    id: &SessionId,
+    target: &Path,
+) -> Result<String, String> {
+    stop_name(
+        connection
+            .send_request(PromptRequest::new(
+                id.clone(),
+                vec![shell_prompt(target).into()],
+            ))
+            .block_task()
+            .await,
+    )
+}
+
+fn live_cancel(stop: &Result<String, String>, cancel_sent: bool) -> Result<String, String> {
+    match (stop.as_deref(), cancel_sent) {
+        (Err(message), _) => Err(format!("agy cancel prompt failed: {message}")),
+        (Ok(_), false) => {
+            Err("agy ended the turn before any output, so no cancel was sent".to_string())
+        }
+        (Ok("cancelled"), true) => Ok("turn ended with `cancelled` after the cancel".to_string()),
+        (Ok(reason), true) => Err(format!("turn ended with `{reason}` after the cancel")),
+    }
+}
+
+async fn cancel_turn(
+    connection: &ConnectionTo<Agent>,
+    id: &SessionId,
+    signals: &mut queue::UnboundedReceiver<()>,
+) -> (Result<String, String>, bool) {
+    while signals.try_recv().is_ok() {}
+    let mut sent = Box::pin(
+        connection
+            .send_request(PromptRequest::new(id.clone(), vec![CANCEL_PROMPT.into()]))
+            .block_task(),
+    )
+    .fuse();
+    let mut cancel_sent = false;
+    let result = loop {
+        select! {
+            result = sent => break result,
+            _ = signals.select_next_some() => {
+                if !cancel_sent {
+                    cancel_sent = true;
+                    connection
+                        .send_notification(CancelNotification::new(id.clone()))
+                        .ok();
+                }
+            }
+        }
+    };
+    (stop_name(result), cancel_sent)
+}
+
+fn prepare(
+    dir: &Path,
+    mode: PermissionMode,
+    updates: agy_settings::Updates,
+) -> Result<Opening, String> {
     let owner = dir.join("owner");
     fs::write(&owner, "verify")
         .map_err(|error| format!("could not create verify owner: {error}"))?;
@@ -58,7 +179,7 @@ fn prepare(dir: &Path, updates: agy_settings::Updates) -> Result<Opening, String
     let worktree = dir.join("worktree");
     fs::create_dir(&worktree)
         .map_err(|error| format!("could not create verify worktree: {error}"))?;
-    let mut opening = opening(dir, "unused", updates);
+    let mut opening = opening(dir, "unused", mode, updates);
     opening.cwd = worktree;
     opening.server = serde_json::from_value(acp_mcp_server(&exe, ID, &opening.inbox, &owner, None))
         .map_err(|error| format!("could not configure worker MCP: {error}"))?;
@@ -74,14 +195,23 @@ fn report_then_usage(
         && step(checks, "live usage", usage(), Clone::clone).is_some()
 }
 
-pub(super) async fn run(
-    connection: &ConnectionTo<Agent>,
-    dir: &Path,
-    checks: &Checks,
-    updates: agy_settings::Updates,
-    allow_report: &AtomicBool,
-) {
-    let Some(opening) = step(checks, "live setup", prepare(dir, updates), |_| {
+pub(super) struct Live {
+    pub(super) mode: PermissionMode,
+    pub(super) updates: agy_settings::Updates,
+    pub(super) allow_report: Arc<AtomicBool>,
+    pub(super) requests: Arc<AtomicUsize>,
+    pub(super) signals: queue::UnboundedReceiver<()>,
+}
+
+pub(super) async fn run(connection: &ConnectionTo<Agent>, dir: &Path, checks: &Checks, live: Live) {
+    let Live {
+        mode,
+        updates,
+        allow_report,
+        requests,
+        mut signals,
+    } = live;
+    let Some(opening) = step(checks, "live setup", prepare(dir, mode, updates), |_| {
         "temporary worker MCP prepared".to_string()
     }) else {
         return;
@@ -144,6 +274,33 @@ pub(super) async fn run(
     } else {
         false
     };
+    if passed && mode == PermissionMode::Yolo {
+        let start = unix_seconds();
+        let target = opening.cwd.join("yolo.txt");
+        let stop = shell_turn(connection, &id, &target).await;
+        let end = unix_seconds();
+        let written = fs::read_to_string(&target).ok();
+        step(
+            checks,
+            "live yolo",
+            yolo_check(
+                requests.load(Ordering::SeqCst),
+                &stop,
+                written.as_deref(),
+                (start, end),
+            ),
+            Clone::clone,
+        );
+    }
+    if passed {
+        let (stop, cancel_sent) = cancel_turn(connection, &id, &mut signals).await;
+        step(
+            checks,
+            "live cancel",
+            live_cancel(&stop, cancel_sent),
+            Clone::clone,
+        );
+    }
     let result = close(connection, &id).await;
     if passed {
         step(checks, "live close", result, Clone::clone);
@@ -154,6 +311,69 @@ pub(super) async fn run(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn shell_prompt_targets_the_absolute_path() {
+        let prompt = shell_prompt(Path::new("/x/worktree/yolo.txt"));
+        assert!(
+            prompt.contains("`date +%s > /x/worktree/yolo.txt`"),
+            "{prompt}"
+        );
+    }
+
+    #[test]
+    fn yolo_passes_only_with_no_requests_a_normal_end_and_a_timestamp_in_the_window() {
+        let ended = Ok("end_turn".to_string());
+        let window = (100, 110);
+        assert!(yolo_check(0, &ended, Some("105\n"), window).is_ok());
+        assert!(yolo_check(0, &ended, Some("100"), window).is_ok());
+        assert!(yolo_check(0, &ended, Some("110"), window).is_ok());
+        let many = yolo_check(2, &ended, Some("105"), window)
+            .err()
+            .unwrap_or_default();
+        assert!(many.contains('2'), "{many}");
+        let cancelled = yolo_check(0, &Ok("cancelled".to_string()), Some("105"), window)
+            .err()
+            .unwrap_or_default();
+        assert!(cancelled.contains("cancelled"), "{cancelled}");
+        assert!(yolo_check(0, &Err("boom".to_string()), Some("105"), window).is_err());
+        let missing = yolo_check(0, &ended, None, window)
+            .err()
+            .unwrap_or_default();
+        assert!(missing.contains("yolo.txt missing"), "{missing}");
+        let text = yolo_check(0, &ended, Some("2026"), window)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            text.contains("`2026`") && text.contains("100..=110"),
+            "{text}"
+        );
+        let word = yolo_check(0, &ended, Some("soon"), window)
+            .err()
+            .unwrap_or_default();
+        assert!(word.contains("`soon`"), "{word}");
+        assert!(yolo_check(0, &ended, Some("111"), window).is_err());
+        assert!(yolo_check(0, &ended, Some("99"), window).is_err());
+    }
+
+    #[test]
+    fn cancel_passes_only_when_sent_and_the_turn_ends_cancelled() {
+        let stopped = |reason: &str| Ok(reason.to_string());
+        assert!(live_cancel(&stopped("cancelled"), true).is_ok());
+        let unsent = live_cancel(&stopped("end_turn"), false)
+            .err()
+            .unwrap_or_default();
+        assert!(unsent.contains("no cancel was sent"), "{unsent}");
+        let late = live_cancel(&stopped("end_turn"), true)
+            .err()
+            .unwrap_or_default();
+        assert!(late.contains("end_turn"), "{late}");
+        assert!(live_cancel(&stopped("cancelled"), false).is_err());
+        let failed = live_cancel(&Err("boom".to_string()), true)
+            .err()
+            .unwrap_or_default();
+        assert!(failed.contains("boom"), "{failed}");
+    }
 
     #[test]
     fn report_failure_skips_usage_execution() {
