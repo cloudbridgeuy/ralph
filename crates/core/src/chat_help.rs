@@ -28,10 +28,11 @@ pub enum Command {
     Zoom,
     Recall,
     Search,
+    Rules,
 }
 
 impl Command {
-    pub const ALL: [Command; 17] = [
+    pub const ALL: [Command; 18] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -49,6 +50,7 @@ impl Command {
         Command::Zoom,
         Command::Recall,
         Command::Search,
+        Command::Rules,
     ];
 
     pub fn name(self) -> &'static str {
@@ -70,6 +72,7 @@ impl Command {
             Command::Zoom => "/zoom",
             Command::Recall => "/recall",
             Command::Search => "/search",
+            Command::Rules => "/rules",
         }
     }
 
@@ -282,6 +285,10 @@ impl Command {
             Command::Search => &[(
                 "/search <words> [--cursor <c>]",
                 "rank the raw messages by bare words, \"quoted phrases\" and identifiers such as GUZ-709; more hits end with `next cursor:`, pass it as --cursor with the same words; the same text as the model's search tool, without its role, date and limit filters; starts no turn",
+            )],
+            Command::Rules => &[(
+                "/rules [--cursor <c>]",
+                "list the entries the tagging pass labelled rule, newest first, with ids and dates; the same text as search with tag rule; tags exist only for messages written after tagging began, older messages are not listed; lists this chat's own scope, in a thread use `ralph chat history search --tag rule --in main` for main-era rules; more hits end with `next cursor:`, pass it as --cursor; starts no turn",
             )],
         }
     }

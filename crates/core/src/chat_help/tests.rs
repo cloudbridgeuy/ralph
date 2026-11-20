@@ -92,7 +92,8 @@ fn lists_hold_every_variant() {
             Read,
             Zoom,
             Recall,
-            Search
+            Search,
+            Rules
         }
     );
     assert_lists_every!(

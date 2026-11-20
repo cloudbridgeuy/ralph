@@ -851,6 +851,57 @@ fn history_commands_run_mid_turn() {
     }
 }
 
+fn rules_call(cursor: Option<&str>) -> Route {
+    Route::History(crate::chat_memory::history_tool("search", "", cursor, Some("rule")).unwrap())
+}
+
+#[test]
+fn rules_routes_to_a_tag_only_search() {
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    assert_eq!(route("/rules"), rules_call(None));
+    assert_eq!(route("  /rules  "), rules_call(None));
+}
+
+#[test]
+fn rules_passes_a_trailing_cursor() {
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    let cursor = "5.10.00000000000000ff";
+    assert_eq!(
+        route(&format!("/rules --cursor {cursor}")),
+        rules_call(Some(cursor))
+    );
+}
+
+#[test]
+fn rules_with_words_is_refused_with_usage() {
+    use crate::chat_memory::HistoryTool;
+    for line in ["/rules foo", "/rules --cursor", "/rules a --cursor 1"] {
+        match route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()) {
+            Route::HistoryRefused { tool, message } => {
+                assert_eq!(tool, HistoryTool::Search, "{line}");
+                assert_eq!(message, "Usage: /rules [--cursor <c>]", "{line}");
+            }
+            other => panic!("{line}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn rules_runs_mid_turn() {
+    for line in ["/rules", "/rules --cursor 1", "/rules foo"] {
+        assert!(
+            route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()).runs_mid_turn(),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn rules_is_not_matched_inside_another_word() {
+    let route = route_input("/rulesx", 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    assert_eq!(route, Route::Send("/rulesx".into()));
+}
+
 #[test]
 fn route_input_parses_send_it_commands() {
     let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());

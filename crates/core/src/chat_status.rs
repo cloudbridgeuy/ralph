@@ -2,7 +2,7 @@ use crate::chat_cell::{bang, Bang};
 use crate::chat_direct::{parse_direct, Direct, DirectLine};
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
-use crate::chat_memory::{history_tool, HistoryTool, MemoryCall};
+use crate::chat_memory::{history_tool, HistoryTool, Label, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
 use crate::chat_rerender::parse_rerender_args;
@@ -133,6 +133,28 @@ fn history_route(tool: HistoryTool, words: &str, cursor: Option<&str>) -> Route 
     }
 }
 
+fn rules_route(args: &str) -> Route {
+    let (words, cursor) = split_cursor(args);
+    if !words.trim().is_empty() {
+        return Route::HistoryRefused {
+            tool: HistoryTool::Search,
+            message: "Usage: /rules [--cursor <c>]".to_string(),
+        };
+    }
+    match history_tool(
+        HistoryTool::Search.name(),
+        "",
+        cursor,
+        Some(Label::Rule.as_str()),
+    ) {
+        Ok(call) => Route::History(call),
+        Err(message) => Route::HistoryRefused {
+            tool: HistoryTool::Search,
+            message,
+        },
+    }
+}
+
 impl Route {
     pub fn runs_mid_turn(&self) -> bool {
         match self {
@@ -225,6 +247,7 @@ pub fn route_input(
                     let (words, cursor) = split_cursor(args);
                     history_route(HistoryTool::Search, words, cursor)
                 }
+                Command::Rules => rules_route(args),
                 Command::Zoom => history_route(HistoryTool::Zoom, args, None),
                 Command::Recall => history_route(HistoryTool::Recall, args, None),
             };
