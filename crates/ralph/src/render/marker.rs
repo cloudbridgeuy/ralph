@@ -48,6 +48,7 @@ pub(super) const MARKERS: [char; 22] = [
 use super::pill::CAP_LEFT;
 use crate::ansi::{bg, fg};
 use crate::markdown::Palette;
+use std::borrow::Cow;
 use termimad::crossterm::style::Color;
 
 const UNDERLINE: &str = "\x1b[4m";
@@ -89,7 +90,7 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
         (MARK_BORDER, fg(palette.border)),
     ];
     let mut out = String::with_capacity(rendered.len());
-    let mut open: Option<&str> = None;
+    let mut open: Option<Cow<str>> = None;
     let mut in_label = false;
     let mut tone = None;
     let mut round = false;
@@ -101,20 +102,22 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
         if let Some((_, color)) = pill_tones.iter().find(|(start, _)| *start == ch) {
             tone = *color;
             if chars.peek() == Some(&CAP_LEFT) {
-                open = None;
-                out.push_str(&fg(tone));
+                let cap = fg(tone);
+                out.push_str(&cap);
+                open = Some(Cow::Owned(cap));
                 continue;
             }
         }
         if ch == PILL_BODY {
             round = true;
-            open = None;
-            out.push_str(&pill_style(tone));
+            let body = pill_style(tone);
+            out.push_str(&body);
+            open = Some(Cow::Owned(body));
             continue;
         }
         if let Some((_, style)) = starts.iter().find(|(start, _)| *start == ch) {
             in_label |= ch == LABEL_START;
-            open = Some(style);
+            open = Some(Cow::Borrowed(style.as_str()));
             out.push_str(style);
             continue;
         }
@@ -137,12 +140,14 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
                 out.push_str(PILL_OFF);
                 if round {
                     round = false;
-                    out.push_str(&fg(tone));
+                    let cap = fg(tone);
+                    out.push_str(&cap);
+                    open = Some(Cow::Owned(cap));
                 }
             }
             '\n' => {
                 out.push('\n');
-                out.push_str(open.unwrap_or_default());
+                out.push_str(open.as_deref().unwrap_or_default());
             }
             _ => out.push(ch),
         }

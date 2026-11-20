@@ -435,3 +435,49 @@ fn nerd_font_glyphs_outside_pills_survive_with_round_and_icons_on() {
     let alone = render(text, 80, &icons_on(true), true, false);
     assert_eq!(alone, format!("{text}\n"));
 }
+
+const BODY: &str = "\x1b[1m\x1b[42m\x1b[97m";
+const WIDE: &str = "[[Done 3 files changed in total]]";
+
+#[test]
+fn wrapped_pill_lines_reopen_the_body_style_for_every_shape() {
+    for (round, icons) in [(false, false), (false, true), (true, false), (true, true)] {
+        let theme = on().with_pill_style(PillStyle { round, icons });
+        for cols in 8..=14 {
+            let out = render(WIDE, cols, &theme, true, false);
+            let lines: Vec<&str> = out.lines().collect();
+            assert!(lines.len() >= 3, "{round} {icons} {cols}: {lines:?}");
+            let last = lines.len() - 1;
+            for (index, line) in lines.iter().enumerate().skip(1) {
+                let reopened = line.starts_with(BODY)
+                    || (index == last && line.starts_with(&crate::ansi::fg(theme.palette.pill_ok)));
+                assert!(reopened, "{round} {icons} {cols} {index}: {lines:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn wrapped_pill_ends_reset_with_no_leaked_background() {
+    for (round, icons) in [(false, false), (false, true), (true, false), (true, true)] {
+        let theme = on().with_pill_style(PillStyle { round, icons });
+        let tone = crate::ansi::fg(theme.palette.pill_ok);
+        let tail = if round {
+            format!("{CAP_R}\x1b[39m\n")
+        } else {
+            format!("{NB}\x1b[22m\x1b[39m\x1b[49m\n")
+        };
+        for cols in 8..=14 {
+            let out = render(WIDE, cols, &theme, true, false);
+            assert!(out.ends_with(&tail), "{round} {icons} {cols}: {out:?}");
+            assert!(out.contains("\x1b[49m"), "{round} {icons} {cols}: {out:?}");
+            if round {
+                let last = out.lines().last().unwrap_or_default();
+                assert!(
+                    last.starts_with(&tone) || last.starts_with(BODY),
+                    "{round} {icons} {cols}: {out:?}"
+                );
+            }
+        }
+    }
+}
