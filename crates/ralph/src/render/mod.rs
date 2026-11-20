@@ -18,6 +18,7 @@
 
 pub mod image;
 mod link;
+mod marker;
 pub mod mermaid;
 pub mod mermaid_picture;
 pub mod svg_picture;
@@ -35,7 +36,7 @@ pub use utils::{
 };
 
 pub use image::ImageSettings;
-pub(crate) use link::COLOR_OFF;
+pub(crate) use marker::COLOR_OFF;
 pub use wrap::{cap_wrap_width, wrap_width};
 
 // Re-export text rendering

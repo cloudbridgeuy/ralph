@@ -11,7 +11,8 @@ use ralph_core::shell_format::{format_fence, is_shell_fence};
 use ralph_core::stream::blocks::ImageFile;
 
 use super::image::{disk_image, render_with_markers, ImageBounds};
-use super::link::{mark_links, paint_links};
+use super::link::mark_links;
+use super::marker::paint_links;
 pub(crate) use super::wrap::render_prose;
 use super::wrap::wrap_width;
 use super::RenderContext;

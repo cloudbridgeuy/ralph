@@ -6,7 +6,7 @@ use termimad::{CompositeKind, FmtComposite, FmtLine, FmtText, MadSkin};
 use unicode_linebreak::linebreaks;
 use unicode_width::UnicodeWidthChar;
 
-use super::link::is_marker;
+use super::marker::is_marker;
 
 static WRAP_CAP: OnceLock<usize> = OnceLock::new();
 
