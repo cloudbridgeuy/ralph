@@ -358,7 +358,7 @@ fn digit_run(chars: &[char], start: usize) -> usize {
         .count()
 }
 
-fn is_table_or_heading_line(chars: &[char], at: usize) -> bool {
+pub(super) fn is_table_or_heading_line(chars: &[char], at: usize) -> bool {
     let line_start = chars[..at]
         .iter()
         .rposition(|&ch| ch == '\n')
@@ -391,7 +391,7 @@ fn memory_ref_end(chars: &[char], hash: usize) -> Option<usize> {
     (digits > 0 && !word_continues).then_some(end)
 }
 
-fn code_span_end(chars: &[char], start: usize) -> usize {
+pub(super) fn code_span_end(chars: &[char], start: usize) -> usize {
     let ticks = chars[start..].iter().take_while(|&&ch| ch == '`').count();
     let mut i = start + ticks;
     while i < chars.len() {
