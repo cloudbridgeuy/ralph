@@ -168,6 +168,14 @@ mod tests {
     }
 
     #[test]
+    fn non_bool_pill_style_keys_are_errors_and_bools_are_not() {
+        assert!(check("[chat]\nemphasis_round = \"yes\"\n", "c").is_err());
+        assert!(check("[chat]\nemphasis_icons = \"yes\"\n", "c").is_err());
+        assert!(errors("[chat]\nemphasis_round = true\n").is_empty());
+        assert!(errors("[chat]\nemphasis_icons = true\n").is_empty());
+    }
+
+    #[test]
     fn agy_permissions_are_validated() {
         let valid = check("[agy]\npermissions = \"ask\"\n", "c");
         assert!(matches!(valid, Ok(report) if report.errors.is_empty()));

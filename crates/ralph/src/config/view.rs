@@ -429,6 +429,49 @@ mod tests {
     }
 
     #[test]
+    fn pill_style_rows_show_default_and_source() {
+        let defaults = chat_rows(
+            &default_table(),
+            StartLayers {
+                global: Table::new(),
+                store: Table::new(),
+                loaded: true,
+                fell_back: false,
+            },
+        );
+        for key in ["chat.emphasis_round", "chat.emphasis_icons"] {
+            let row = defaults.iter().find(|row| row.key == key).unwrap();
+            assert_eq!(row.value, Value::Boolean(false));
+            assert_eq!(row.source, Source::Default);
+        }
+        let mut chat = Table::new();
+        chat.insert("emphasis_round".into(), Value::Boolean(true));
+        let mut global = Table::new();
+        global.insert("chat".into(), Value::Table(chat));
+        let mut effective = default_table();
+        effective
+            .get_mut("chat")
+            .and_then(Value::as_table_mut)
+            .unwrap()
+            .insert("emphasis_round".into(), Value::Boolean(true));
+        let rows = chat_rows(
+            &effective,
+            StartLayers {
+                global,
+                store: Table::new(),
+                loaded: true,
+                fell_back: false,
+            },
+        );
+        let row = rows
+            .iter()
+            .find(|row| row.key == "chat.emphasis_round")
+            .unwrap();
+        assert_eq!(row.value, Value::Boolean(true));
+        assert_eq!(row.source, Source::Global);
+    }
+
+    #[test]
     fn store_fallback_tags_no_row_store() {
         let layers = StartLayers {
             global: sound_layer(false),

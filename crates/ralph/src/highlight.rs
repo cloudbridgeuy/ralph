@@ -41,6 +41,7 @@ use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 use crate::diff_theme::DiffColors;
 use crate::markdown::{Palette, RolePalette, ThemeRole};
 use crate::render::pill::emphasis_active;
+use crate::render::pill_style::PillStyle;
 use crate::theme_slots::ResolveColors;
 use crate::tool_theme::ToolColors;
 use crate::ui_theme::UiColors;
@@ -104,6 +105,7 @@ pub struct ThemeConfig {
     tools: ToolColors,
     ui: UiColors,
     emphasis: bool,
+    pill_style: PillStyle,
 }
 
 impl ThemeConfig {
@@ -111,8 +113,13 @@ impl ThemeConfig {
         self.emphasis
     }
 
+    pub fn pill_style(&self) -> PillStyle {
+        self.pill_style
+    }
+
     pub fn without_emphasis(mut self) -> Self {
         self.emphasis = false;
+        self.pill_style = PillStyle::default();
         self
     }
 
@@ -141,6 +148,7 @@ impl ThemeConfig {
             tools: ToolColors::default(),
             ui: UiColors::default(),
             emphasis: false,
+            pill_style: PillStyle::default(),
         }
     }
 
@@ -174,6 +182,11 @@ impl ThemeConfig {
             app_config.as_ref().is_some_and(|c| c.chat.emphasis),
             std::env::var_os("NO_COLOR").is_none(),
         );
+        let pill_style = PillStyle::resolve(
+            app_config.as_ref().is_some_and(|c| c.chat.emphasis_round),
+            app_config.as_ref().is_some_and(|c| c.chat.emphasis_icons),
+            emphasis,
+        );
         let config_no_background = app_config.map(|c| c.theme.no_background).unwrap_or(false);
 
         let env_theme = std::env::var(RALPH_THEME_ENV).ok();
@@ -192,6 +205,7 @@ impl ThemeConfig {
             tools,
             ui,
             emphasis,
+            pill_style,
         }
     }
 
@@ -543,6 +557,22 @@ mod tests {
         };
         assert!(config.emphasis());
         assert!(!config.without_emphasis().emphasis());
+    }
+
+    #[test]
+    fn theme_config_pill_style_defaults_off() {
+        assert_eq!(ThemeConfig::new().pill_style(), PillStyle::default());
+    }
+
+    #[test]
+    fn without_emphasis_clears_the_pill_style() {
+        let config = ThemeConfig {
+            emphasis: true,
+            pill_style: PillStyle::resolve(true, true, true),
+            ..ThemeConfig::new()
+        };
+        assert!(config.pill_style().round && config.pill_style().icons);
+        assert_eq!(config.without_emphasis().pill_style(), PillStyle::default());
     }
 
     #[test]

@@ -2,6 +2,7 @@ use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::chat::inbox::Display;
 use crate::chat::prompt::screen_columns;
 use crate::markdown::{MarkdownTheme, Palette};
+use crate::render::pill_style::PillStyle;
 use crate::render::{render_markdown, COLOR_OFF};
 use ralph_core::chat_status::{RunningWorker, WorkerState};
 use ralph_core::wire::price::PriceOverride;
@@ -277,6 +278,7 @@ pub(super) fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
         skin,
         palette: theme.palette.clone(),
         emphasis: false,
+        pill_style: PillStyle::default(),
     }
 }
 

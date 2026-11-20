@@ -22,6 +22,7 @@
 //! let rendered = renderer.render("# Hello\n\nThis is **bold** text.");
 //! ```
 
+use crate::render::pill_style::PillStyle;
 use ralph_server::config::theme::RoleTheme;
 use termimad::crossterm::style::{Attribute, Color};
 #[cfg(test)]
@@ -293,6 +294,7 @@ pub struct MarkdownTheme {
     pub skin: MadSkin,
     pub palette: Palette,
     pub emphasis: bool,
+    pub pill_style: PillStyle,
 }
 
 impl MarkdownTheme {
@@ -301,12 +303,26 @@ impl MarkdownTheme {
             skin: markdown_skin(&palette),
             palette,
             emphasis: false,
+            pill_style: PillStyle::default(),
         }
     }
 
     pub fn with_emphasis(mut self, emphasis: bool) -> Self {
         self.emphasis = emphasis;
         self
+    }
+
+    pub fn with_pill_style(mut self, pill_style: PillStyle) -> Self {
+        self.pill_style = pill_style;
+        self
+    }
+
+    pub fn round(&self) -> bool {
+        self.pill_style.round
+    }
+
+    pub fn icons(&self) -> bool {
+        self.pill_style.icons
     }
 }
 
@@ -388,6 +404,15 @@ impl MarkdownRenderer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn markdown_theme_pill_style_defaults_off_and_is_settable() {
+        let theme = MarkdownTheme::default();
+        assert!(!theme.round() && !theme.icons());
+        let styled = theme.with_pill_style(PillStyle::resolve(true, false, true));
+        assert!(styled.round());
+        assert!(!styled.icons());
+    }
+
     use super::*;
 
     fn role_theme(pairs: &[(&str, &str)]) -> RoleTheme {

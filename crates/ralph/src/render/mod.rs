@@ -24,6 +24,7 @@ pub mod mermaid_picture;
 pub(crate) mod pill;
 #[cfg(test)]
 mod pill_render_tests;
+pub(crate) mod pill_style;
 pub mod svg_picture;
 #[cfg(test)]
 mod table_wrap_width_tests;

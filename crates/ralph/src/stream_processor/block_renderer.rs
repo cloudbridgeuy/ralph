@@ -30,7 +30,13 @@ impl BlockRenderer {
                 .map(|config| config.palette().clone())
                 .unwrap_or_default(),
         )
-        .with_emphasis(theme_config.as_ref().is_some_and(ThemeConfig::emphasis));
+        .with_emphasis(theme_config.as_ref().is_some_and(ThemeConfig::emphasis))
+        .with_pill_style(
+            theme_config
+                .as_ref()
+                .map(ThemeConfig::pill_style)
+                .unwrap_or_default(),
+        );
         let diff_colors = theme_config
             .as_ref()
             .map(|config| *config.diff())

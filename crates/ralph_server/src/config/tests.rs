@@ -781,3 +781,20 @@ fn chat_emphasis_defaults_off_and_can_be_enabled() {
     let config = AppConfig::load_layers(&path, None).unwrap();
     assert!(config.chat.emphasis);
 }
+
+#[test]
+fn chat_pill_style_keys_default_off_and_can_be_enabled() {
+    let defaults = AppConfig::new();
+    assert!(!defaults.chat.emphasis_round);
+    assert!(!defaults.chat.emphasis_icons);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(
+        &path,
+        "[chat]\nemphasis_round = true\nemphasis_icons = true\n",
+    )
+    .unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(config.chat.emphasis_round);
+    assert!(config.chat.emphasis_icons);
+}

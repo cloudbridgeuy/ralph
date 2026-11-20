@@ -268,6 +268,10 @@ pub struct ChatSection {
     #[serde(default)]
     pub emphasis: bool,
     #[serde(default)]
+    pub emphasis_round: bool,
+    #[serde(default)]
+    pub emphasis_icons: bool,
+    #[serde(default)]
     pub recent_history_tokens: Option<usize>,
     #[serde(default)]
     pub worker_check_secs: Option<u64>,
@@ -366,6 +370,8 @@ impl Default for ChatSection {
             user_claude_md: false,
             tag_entries: true,
             emphasis: false,
+            emphasis_round: false,
+            emphasis_icons: false,
             recent_history_tokens: None,
             worker_check_secs: None,
             keepalive_hours: None,
