@@ -134,6 +134,7 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
             inbox,
         } => ralph_server::worker_verify::run(
             match agent {
+                VerifyAgent::Agy => HarnessId::Agy,
                 VerifyAgent::Cursor => HarnessId::Cursor,
                 VerifyAgent::Codex => HarnessId::Codex,
                 VerifyAgent::Claude => HarnessId::Claude,
@@ -328,10 +329,10 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
     ralph_server::config::set_store_layer(&args.store);
-    let memory = chat::thread::Memory::open(&args.store)?;
+    let memory = ralph_server::chat::thread::Memory::open(&args.store)?;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    chat::mcp::run_stdio_server(&memory, &args.socket, stdin.lock(), stdout.lock())?;
+    ralph_server::chat::mcp::run_stdio_server(&memory, &args.socket, stdin.lock(), stdout.lock())?;
     Ok(())
 }
 

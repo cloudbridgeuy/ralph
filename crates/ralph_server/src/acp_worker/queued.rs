@@ -48,6 +48,7 @@ mod tests {
 
     fn host(store: &Path) -> CursorHost {
         CursorHost {
+            agy: false,
             store_dir: store.to_path_buf(),
             workers: Mutex::new(HashMap::new()),
             starting: Mutex::new(HashMap::new()),
@@ -58,6 +59,38 @@ mod tests {
     fn queued(dir: &Path, name: &str) -> PathBuf {
         write_file(&dir.join(name), "hello").unwrap();
         dir.join(name)
+    }
+
+    #[test]
+    fn agy_host_leaves_foreign_requests_and_cursor_files_alone(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let store = tempfile::tempdir()?;
+        let agy = HandoffFiles::agy(store.path(), "A");
+        let cursor = HandoffFiles::cursor(store.path(), "A");
+        write_file(
+            &agy.owner,
+            &ralph_core::worker::OwnerRecord {
+                chat_pid: std::process::id().wrapping_add(1),
+                chat_start: "other".into(),
+                group: 1,
+                group_start: "other".into(),
+            }
+            .render(),
+        )?;
+        write_file(&agy.spawn, "request")?;
+        write_file(&agy.close, "")?;
+        write_file(&agy.answer, "answer")?;
+        write_file(&agy.prompt.join("1"), "task")?;
+        write_file(&cursor.owner, "cursor")?;
+        let mut agy_host = host(store.path());
+        agy_host.agy = true;
+        agy_host.poll();
+        assert!(
+            agy.owner.exists() && agy.close.exists() && agy.answer.exists() && agy.spawn.exists()
+        );
+        assert!(agy.prompt.join("1").exists());
+        assert_eq!(fs::read_to_string(cursor.owner)?, "cursor");
+        Ok(())
     }
 
     #[test]

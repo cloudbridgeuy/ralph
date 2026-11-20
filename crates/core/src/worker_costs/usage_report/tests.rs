@@ -687,3 +687,30 @@ fn a_canonical_store_filter_keeps_the_ticket_of_a_window_in_the_same_store() {
     let report = grouped(Dim::Ticket, &rows, &workers, &filter);
     assert_eq!(keys(&report), ["GUZ-1"]);
 }
+#[test]
+fn agy_mixed_day_chart_marks_partial_price() {
+    let at = "2026-11-05T10:00:00Z";
+    let agy = with(worker("a", at), "harness", json!("agy"));
+    let (ledger, windows) = ledger(&[agy, row("ask", at)], &[], &TicketKeys::default());
+    let overrides = BTreeMap::new();
+    let provider = provider(ProviderId::Anthropic);
+    let pricing = Pricing {
+        provider: provider.as_ref(),
+        overrides: &overrides,
+    };
+    let report = daily(
+        &ledger,
+        &windows,
+        &Filter::default(),
+        &chrono::Utc,
+        &pricing,
+    );
+    let svg = chart::daily_svg(
+        &report.groups,
+        &chart::Heading {
+            title: "test",
+            subtitle: "test",
+        },
+    );
+    assert!(svg.contains("* = some rows have no price"), "{svg}");
+}

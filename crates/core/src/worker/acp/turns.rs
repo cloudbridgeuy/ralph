@@ -1,6 +1,4 @@
-use super::REPORT_TOOL;
-use crate::worker::{Report, ReportStatus, REPORT_REMINDER, SERVER_NAME, WORKER_PROMPT};
-use serde_json::Value;
+use crate::worker::{Report, ReportStatus, REPORT_REMINDER, WORKER_PROMPT};
 use std::collections::VecDeque;
 
 pub fn prompt_entry_name(nanos: u64, pid: u32) -> String {
@@ -26,6 +24,8 @@ pub enum TurnOutcome {
 pub enum Inbound {
     Prompt(String),
     Interrupt(String, String),
+    TrackedPrompt(String, String),
+    TrackedInterrupt(String, String, String, u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,20 +36,32 @@ pub enum Step {
 
 #[derive(Debug, Default)]
 pub struct PromptQueue {
-    pending: VecDeque<String>,
+    pending: VecDeque<(String, Option<String>)>,
     running: bool,
     interrupted: bool,
+    ordered: usize,
 }
 
 impl PromptQueue {
     pub fn accept(&mut self, inbound: Inbound) -> Vec<Step> {
         match inbound {
             Inbound::Prompt(text) => {
-                self.pending.push_back(text);
+                self.pending.push_back((text, None));
                 Vec::new()
             }
+            Inbound::TrackedPrompt(text, receipt) => {
+                self.pending.push_back((text, Some(receipt)));
+                Vec::new()
+            }
+            Inbound::TrackedInterrupt(text, entry, receipt, _) => {
+                let steps = self.accept(Inbound::Interrupt(text, entry));
+                if let Some((_, slot)) = self.pending.front_mut() {
+                    *slot = Some(receipt);
+                }
+                steps
+            }
             Inbound::Interrupt(text, _) => {
-                self.pending.push_front(text);
+                self.pending.push_front((text, None));
                 if self.running {
                     self.interrupted = true;
                     vec![Step::CancelPermissions, Step::CancelSession]
@@ -60,17 +72,27 @@ impl PromptQueue {
         }
     }
 
+    pub fn accept_ordered_interrupt(&mut self, text: String, receipt: String) {
+        self.pending.insert(self.ordered, (text, Some(receipt)));
+        self.ordered += 1;
+    }
+
     pub fn remind(&mut self) {
-        if !self.pending.iter().any(|text| text == REPORT_REMINDER) {
-            self.pending.push_back(REPORT_REMINDER.to_string());
+        if !self.pending.iter().any(|(text, _)| text == REPORT_REMINDER) {
+            self.pending.push_back((REPORT_REMINDER.to_string(), None));
         }
     }
 
-    pub fn start(&mut self) -> Option<String> {
+    pub fn start_tracked(&mut self) -> Option<(String, Option<String>)> {
         let text = self.pending.pop_front()?;
+        self.ordered = self.ordered.saturating_sub(1);
         self.running = true;
         self.interrupted = false;
         Some(text)
+    }
+
+    pub fn start(&mut self) -> Option<String> {
+        self.start_tracked().map(|(text, _)| text)
     }
 
     pub fn finish(&mut self) -> bool {
@@ -89,6 +111,8 @@ pub enum InterruptOutcome {
     Sent,
     Gone,
     Dropped,
+    Completed,
+    Unknown,
 }
 
 impl From<bool> for InterruptOutcome {
@@ -107,6 +131,8 @@ pub fn interrupt_result_text(outcome: InterruptOutcome) -> &'static str {
         InterruptOutcome::Sent => "sent",
         InterruptOutcome::Gone => "gone",
         InterruptOutcome::Dropped => "dropped",
+        InterruptOutcome::Completed => "completed",
+        InterruptOutcome::Unknown => "unknown",
     }
 }
 
@@ -116,6 +142,8 @@ pub fn parse_interrupt_result(text: &str) -> Option<InterruptOutcome> {
         "sent" => Some(InterruptOutcome::Sent),
         "gone" => Some(InterruptOutcome::Gone),
         "dropped" => Some(InterruptOutcome::Dropped),
+        "completed" => Some(InterruptOutcome::Completed),
+        "unknown" => Some(InterruptOutcome::Unknown),
         _ => None,
     }
 }
@@ -131,6 +159,8 @@ pub fn interrupt_reply(id: &str, outcome: Option<InterruptOutcome>) -> String {
         Some(InterruptOutcome::Gone) => {
             format!("Worker {id} exited: its turn ended and this message was not delivered.")
         }
+        Some(InterruptOutcome::Completed) => format!("Worker {id}: the prior turn ended before cancellation was confirmed; this message runs next."),
+        Some(InterruptOutcome::Unknown) => format!("Worker {id}: cancellation outcome unknown; this message is queued."),
         Some(InterruptOutcome::Dropped) => format!(
             "Worker {id}: the interrupt was not sent and this message runs next."
         ),
@@ -166,12 +196,6 @@ pub fn sweeps_permissions(stop: Result<&str, &str>, outcome: &TurnOutcome) -> bo
     stop == Ok("cancelled") || *outcome == TurnOutcome::Cancelled
 }
 
-pub fn is_report_tool_call(update: &Value) -> bool {
-    let title = format!("{SERVER_NAME}: {REPORT_TOOL}");
-    update["sessionUpdate"] == "tool_call_update"
-        && update["title"].as_str().is_some_and(|v| v.trim() == title)
-}
-
 pub fn stop_problem(agent: &str, reason: &str) -> String {
     format!("the {agent} agent ended its turn with `{reason}`")
 }
@@ -201,7 +225,6 @@ pub fn accept_report(owner_required: bool, owner_exists: bool) -> bool {
 mod tests {
     use super::super::CURSOR_AGENT;
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn only_a_flagged_server_refuses_a_repeat_report() {
@@ -386,12 +409,33 @@ mod tests {
     }
 
     #[test]
+    fn ordered_interrupts_keep_receipts_and_precede_prompts() {
+        let mut queue = PromptQueue::default();
+        queue.accept(Inbound::Prompt("ordinary".into()));
+        queue.accept_ordered_interrupt("first".into(), "one".into());
+        queue.accept_ordered_interrupt("second".into(), "two".into());
+        assert_eq!(
+            queue.start_tracked(),
+            Some(("first".into(), Some("one".into())))
+        );
+        queue.finish();
+        assert_eq!(
+            queue.start_tracked(),
+            Some(("second".into(), Some("two".into())))
+        );
+        queue.finish();
+        assert_eq!(queue.start_tracked(), Some(("ordinary".into(), None)));
+    }
+
+    #[test]
     fn interrupt_result_text_round_trips() {
         for outcome in [
             InterruptOutcome::Cancelled,
             InterruptOutcome::Sent,
             InterruptOutcome::Gone,
             InterruptOutcome::Dropped,
+            InterruptOutcome::Completed,
+            InterruptOutcome::Unknown,
         ] {
             assert_eq!(
                 parse_interrupt_result(interrupt_result_text(outcome)),
@@ -416,43 +460,6 @@ mod tests {
         assert_eq!(queue.start().as_deref(), Some("now"));
         assert!(!queue.finish());
         assert_eq!(queue.start(), None);
-    }
-
-    #[test]
-    fn only_the_worker_report_tool_call_counts_as_reported() {
-        let call = |kind: &str, title: &str| json!({"sessionUpdate": kind, "title": title});
-        assert!(is_report_tool_call(&json!({
-            "sessionUpdate": "tool_call_update",
-            "toolCallId": "t1",
-            "title": "ralph-worker: report",
-            "rawInput": {"toolName": "report", "status": "done", "text": "hi"}
-        })));
-        assert!(!is_report_tool_call(&json!({
-            "sessionUpdate": "tool_call",
-            "toolCallId": "t1",
-            "title": "MCP: tool",
-            "kind": "other"
-        })));
-        assert!(!is_report_tool_call(&call(
-            "tool_call",
-            "ralph-worker: report"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "tool_call_update",
-            "ralph-worker-report: report"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "tool_call_update",
-            "other-server: report"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "tool_call_update",
-            "ralph-worker: spawn"
-        )));
-        assert!(!is_report_tool_call(&call(
-            "agent_message_chunk",
-            "ralph-worker: report"
-        )));
     }
 
     #[test]

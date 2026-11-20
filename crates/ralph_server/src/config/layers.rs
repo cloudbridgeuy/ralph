@@ -83,13 +83,14 @@ pub fn culprit_path<'a, E: PartialEq>(
         .map_or(fallback, |(path, _)| path)
 }
 
-const SECURITY_KEYS: [&str; 15] = [
+const SECURITY_KEYS: [&str; 16] = [
     "chat.permission_mode",
     "chat.mcp_servers",
     "chat.user_settings",
     "chat.prompt_file",
     "chat.append_prompt_files",
     "chat.skills",
+    "agy.permissions",
     "codex.permissions",
     "cursor.permissions",
     "claude.permissions",

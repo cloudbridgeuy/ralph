@@ -406,3 +406,30 @@ fn other_views_keep_plain_keys() {
     );
     assert!(!text.contains("Thu"), "{text}");
 }
+#[test]
+fn agy_model_and_mixed_day_use_no_price() {
+    let at = "2026-11-05T10:00:00Z";
+    let agy = with(
+        with(
+            with(worker("a", at), "harness", json!("agy")),
+            "cost_usd",
+            Value::Null,
+        ),
+        "cost_source",
+        Value::Null,
+    );
+    let model = shown(View::By(Dim::Harness), std::slice::from_ref(&agy), &[]);
+    assert!(model.contains("agy: no price"), "{model}");
+    assert!(!model.contains("n/a") && !model.contains("$0"), "{model}");
+    let daily = shown(View::Daily, &[agy, row("ask", at)], &[]);
+    assert!(daily.contains("+ no price"), "{daily}");
+}
+
+#[test]
+fn agy_reported_cost_is_not_used() {
+    let at = "2026-11-05T10:00:00Z";
+    let agy = with(worker("a", at), "harness", json!("agy"));
+    let text = shown(View::By(Dim::Harness), &[agy], &[]);
+    assert!(text.contains("agy: no price"), "{text}");
+    assert!(!text.contains("$2.50"), "{text}");
+}

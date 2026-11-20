@@ -1,4 +1,14 @@
+use crate::chat::memory::Store;
 use crate::chat::send_it::SendIt;
+use crate::chat::socket::{SocketFiles, SocketPlace};
+use crate::cursor_owner::process_start;
+use crate::schedule_store::ScheduleStore;
+use crate::warn::{warn, warn_if_err};
+use crate::watch_requests;
+use crate::watches::Watches;
+use crate::wire::store::ensure_store_root;
+use crate::worker_mcp::Inbox;
+use crate::workers::{canonical_store, SpawnArgs, Workers};
 use chrono::{Local, Utc};
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{parse_step_result, STEP_RESULT};
@@ -13,16 +23,6 @@ use ralph_core::schedule_request::{
 use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command};
-use ralph_server::chat::memory::Store;
-use ralph_server::chat::socket::{SocketFiles, SocketPlace};
-use ralph_server::cursor_owner::process_start;
-use ralph_server::schedule_store::ScheduleStore;
-use ralph_server::warn::{warn, warn_if_err};
-use ralph_server::watch_requests;
-use ralph_server::watches::Watches;
-use ralph_server::wire::store::ensure_store_root;
-use ralph_server::worker_mcp::Inbox;
-use ralph_server::workers::{canonical_store, SpawnArgs, Workers};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs::{self, DirBuilder, OpenOptions};
@@ -43,15 +43,15 @@ const REQUEST_LIMIT_BYTES: u64 = 1 << 20;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
 
-pub(crate) struct Shared {
-    pub(crate) store: Store,
-    pub(crate) workers: Workers,
-    pub(crate) send_it: SendIt,
-    pub(crate) watches: Watches,
-    pub(crate) inbox: Arc<Inbox>,
+pub struct Shared {
+    pub store: Store,
+    pub workers: Workers,
+    pub send_it: SendIt,
+    pub watches: Watches,
+    pub inbox: Arc<Inbox>,
 }
 
-pub(crate) struct SocketGuard(pub(crate) SocketFiles);
+pub struct SocketGuard(pub SocketFiles);
 
 impl Drop for SocketGuard {
     fn drop(&mut self) {
@@ -59,13 +59,13 @@ impl Drop for SocketGuard {
     }
 }
 
-pub(crate) struct ChatSocket {
+pub struct ChatSocket {
     listener: UnixListener,
     files: SocketFiles,
 }
 
 impl ChatSocket {
-    pub(crate) fn bind(store_dir: &Path, root: &Path) -> io::Result<Self> {
+    pub fn bind(store_dir: &Path, root: &Path) -> io::Result<Self> {
         ensure_store_root(root)?;
         let place = SocketPlace {
             store: store_dir,
@@ -120,15 +120,15 @@ impl ChatSocket {
         Ok(())
     }
 
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.files.socket
     }
 
-    pub(crate) fn files(&self) -> &SocketFiles {
+    pub fn files(&self) -> &SocketFiles {
         &self.files
     }
 
-    pub(crate) fn serve(self, shared: Shared, roster: impl Fn() -> String + Send + Sync + 'static) {
+    pub fn serve(self, shared: Shared, roster: impl Fn() -> String + Send + Sync + 'static) {
         let shared = Arc::new((shared, Box::new(roster) as Roster));
         thread::spawn(move || {
             for connection in self.listener.incoming() {
@@ -326,7 +326,7 @@ fn record_step_result(
     Ok("Step result recorded. Reply in one short line; ralph decides the next step.".to_string())
 }
 
-pub(crate) fn respond(shared: &Shared, request: &SocketRequest) -> SocketResponse {
+pub fn respond(shared: &Shared, request: &SocketRequest) -> SocketResponse {
     to_response(run_command(shared, request))
 }
 
@@ -343,7 +343,7 @@ fn to_response(result: Result<String, String>) -> SocketResponse {
     }
 }
 
-pub(crate) fn forward(socket: &Path, request: &SocketRequest) -> Result<SocketResponse, String> {
+pub fn forward(socket: &Path, request: &SocketRequest) -> Result<SocketResponse, String> {
     let mut stream = UnixStream::connect(socket).map_err(|e| {
         format!(
             "no running ralph chat: cannot reach {} ({e}). Start `ralph chat` and try again.",
@@ -394,6 +394,7 @@ mod tests {
                     max_usd: 1.0,
                     verify: VerifyMode::Off,
                 },
+                Arc::new(|_| {}),
             ),
             watches: Watches::new(Arc::clone(&inbox), dir, Duration::from_secs(60)),
             inbox,

@@ -110,15 +110,25 @@ pub struct Usd {
     missing: bool,
     estimate: bool,
     reported: bool,
+    no_price: bool,
 }
 
 impl Usd {
+    fn agy(line: &UsageLine) -> Option<Usd> {
+        (line.harness.as_deref() == Some("agy")).then_some(Usd {
+            missing: true,
+            no_price: true,
+            ..Usd::default()
+        })
+    }
+
     fn of(cost: Option<f64>) -> Usd {
         Usd {
             known: cost,
             missing: cost.is_none(),
             estimate: false,
             reported: false,
+            no_price: false,
         }
     }
 
@@ -128,6 +138,7 @@ impl Usd {
             missing: false,
             estimate: false,
             reported: true,
+            no_price: false,
         }
     }
 
@@ -142,10 +153,22 @@ impl Usd {
             missing: self.missing || other.missing,
             estimate: self.estimate || other.estimate,
             reported: self.reported || other.reported,
+            no_price: self.no_price || other.no_price,
         }
     }
 
     fn text(self) -> String {
+        if self.no_price {
+            return self.known.map_or_else(
+                || "no price".to_string(),
+                |usd| {
+                    format!(
+                        "{}{usd:.2} + no price",
+                        if self.estimate { "~" } else { "" }
+                    )
+                },
+            );
+        }
         let mark = if self.estimate { "~" } else { "" };
         let source = if self.reported && !self.estimate {
             " reported"
@@ -213,6 +236,9 @@ fn tier_prompt(long: Option<bool>, summed: u64) -> u64 {
 }
 
 fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd {
+    if let Some(usd) = Usd::agy(line) {
+        return usd;
+    }
     let untiered = untiered_writes(line);
     let priced = line.model.as_deref().and_then(|model| {
         let mut usage = tiered_usage(line);
@@ -245,6 +271,7 @@ fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd 
         missing: priced.is_none_or(|(_, priced_tier)| untiered > 0 && !priced_tier),
         estimate: true,
         reported: false,
+        no_price: false,
     }
 }
 

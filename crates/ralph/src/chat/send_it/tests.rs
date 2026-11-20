@@ -1,14 +1,19 @@
 use super::*;
-use crate::chat::socket::{respond, Shared};
-use ralph_core::chat_memory::Trigger;
-use ralph_core::chat_send_it::{Awaiting, VerifyMode};
+use ralph_core::chat_local::notice_record;
+use ralph_core::chat_memory::{Role, Trigger};
+use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Seen, StepResult, VerifyMode};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
+use ralph_server::chat::ask::Notices;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::send_it::{Screen, NOT_PROPOSED, NO_RUN};
+use ralph_server::chat::socket::serve::{respond, Shared};
 use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
-use serde_json::json;
+use serde_json::{json, Value};
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 pub(in crate::chat) mod held;
@@ -27,7 +32,7 @@ fn plan_args() -> Value {
     })
 }
 
-fn go(send_it: &SendIt, shown: Option<&str>, typed: bool) -> (String, Option<Ticked>) {
+fn go(send_it: &ServerSendIt, shown: Option<&str>, typed: bool) -> (String, Option<Ticked>) {
     send_it.go(
         shown,
         typed,
@@ -41,80 +46,8 @@ fn go(send_it: &SendIt, shown: Option<&str>, typed: bool) -> (String, Option<Tic
 fn proposed(dir: &Path) -> (SendIt, String) {
     let send_it = quiet(dir);
     send_it.propose(&plan_args()).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     (send_it, hash)
-}
-
-#[test]
-fn propose_stores_the_plan_under_the_store() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let stored = send_it.propose(&plan_args()).unwrap();
-    let text = fs::read_to_string(dir.path().join("send-it/run.toml")).unwrap();
-    let file = read_run(&text, LIMITS).unwrap();
-    assert_eq!(file.approved, None);
-    let hash = plan_hash(&file.plan);
-    assert!(
-        stored.starts_with(&format!("Stored run plan {hash}.")),
-        "{stored}"
-    );
-}
-
-#[test]
-fn propose_adds_the_warning_line_after_the_stored_line_for_a_worker_done_plan_without_reply() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let mut args = plan_args();
-    args["steps"] = json!([{"do": "wait", "criterion": {"kind": "worker_done", "worker": "E1"}}]);
-    let stored = send_it.propose(&args).unwrap();
-    let lines: Vec<&str> = stored.lines().collect();
-    assert!(lines[0].starts_with("Stored run plan "), "{stored}");
-    assert_eq!(lines.len(), 2, "{stored}");
-    assert!(
-        lines[1].starts_with("Warning: step 1 waits for worker E1"),
-        "{stored}"
-    );
-    let clean = quiet(tempfile::tempdir().unwrap().path());
-    assert!(!clean.propose(&plan_args()).unwrap().contains("Warning:"));
-}
-
-#[test]
-fn propose_rejects_a_step_without_a_criterion_and_stores_nothing() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let args = json!({"goal": "g", "steps": [{"do": "x"}]});
-    assert_eq!(
-        send_it.propose(&args),
-        Err("Step 1 has no exit criterion. Give each step a check ralph can measure.".into())
-    );
-    assert!(!dir.path().join("send-it").exists());
-}
-
-#[test]
-fn propose_refuses_while_an_approved_plan_exists() {
-    let dir = tempfile::tempdir().unwrap();
-    let send_it = quiet(dir.path());
-    let plan = parse_run(&plan_args(), LIMITS).unwrap();
-    let hash = plan_hash(&plan);
-    let draft = RunFile {
-        plan,
-        approved: None,
-        stopped: None,
-    };
-    send_it.save(&draft).unwrap();
-    assert!(send_it.propose(&plan_args()).is_ok());
-    send_it
-        .save(&RunFile {
-            approved: Some(hash.clone()),
-            ..draft
-        })
-        .unwrap();
-    assert_eq!(
-        send_it.propose(&plan_args()),
-        Err(format!(
-            "Plan {hash} is approved and active. Stop it with /send-it off first."
-        ))
-    );
 }
 
 #[test]
@@ -171,16 +104,16 @@ fn using_a_template_stores_an_unapproved_plan_and_shows_its_hash() {
     let (send_it, hash) = proposed(dir.path());
     send_it.save_template("ship", Some("GUZ-1"));
     go(&send_it, Some(&hash), true);
-    let refused = send_it.use_template("GUZ-2", "ship");
+    let refused = send_it.use_template("GUZ-2", "ship", 80);
     assert!(refused.text.contains("approved and active"));
     assert_eq!(refused.shown, None);
     send_it.off();
-    let screen = send_it.use_template("GUZ-2", "ship");
+    let screen = send_it.use_template("GUZ-2", "ship", 80);
     let file = send_it.load().unwrap().unwrap();
     assert_eq!(file.plan.goal, "ship GUZ-2");
     assert_eq!(file.approved, None);
-    assert_eq!(screen, send_it.status());
-    let missing = send_it.use_template("GUZ-2", "gone");
+    assert_eq!(screen, send_it.status(80));
+    let missing = send_it.use_template("GUZ-2", "gone", 80);
     assert!(missing.text.starts_with("Could not read"));
 }
 
@@ -193,12 +126,12 @@ fn go_needs_the_prompt_and_the_hash_on_screen() {
         .contains("type it at the prompt"));
     assert!(go(&send_it, None, true).0.contains("/send-it status"));
     assert!(send_it
-        .status()
+        .status(80)
         .text
         .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
     go(&send_it, Some(&hash), true);
     assert!(send_it
-        .status()
+        .status(80)
         .text
         .ends_with(&format!("{hash} · approved")));
 }
@@ -207,7 +140,7 @@ fn go_needs_the_prompt_and_the_hash_on_screen() {
 fn the_status_screen_has_a_plain_text_and_a_styled_copy_of_it() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, _) = proposed(dir.path());
-    let screen = send_it.status();
+    let screen = send_it.status(80);
     assert!(screen.styled.contains('\x1b'), "{:?}", screen.styled);
     assert!(!screen.text.contains('\x1b'), "{:?}", screen.text);
     let mut plain = String::new();
@@ -228,33 +161,13 @@ fn the_status_screen_has_a_plain_text_and_a_styled_copy_of_it() {
 fn the_screens_after_a_proposal_and_a_template_use_carry_a_styled_copy() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, _) = proposed(dir.path());
-    let after_proposal = send_it.proposed(None);
+    let after_proposal = send_it.proposed(None, 80);
     assert!(after_proposal.styled.contains('\x1b'));
     assert!(!after_proposal.text.contains('\x1b'));
     send_it.save_template("ship", Some("GUZ-1"));
-    let after_template = send_it.use_template("GUZ-2", "ship");
+    let after_template = send_it.use_template("GUZ-2", "ship", 80);
     assert!(after_template.styled.contains('\x1b'));
     assert!(!after_template.text.contains('\x1b'));
-}
-
-#[test]
-fn clearing_after_an_edit_drops_the_approval_and_shows_the_plan() {
-    let dir = tempfile::tempdir().unwrap();
-    let (send_it, hash) = proposed(dir.path());
-    go(&send_it, Some(&hash), true);
-    let screen = send_it.clear_approval();
-    assert_eq!(screen.shown, Some(hash.clone()));
-    assert!(screen
-        .text
-        .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
-    fs::write(&send_it.path, "goal = ").unwrap();
-    let broken = send_it.clear_approval();
-    assert_eq!(broken.shown, None);
-    assert!(
-        broken.text.ends_with("Fix it with /send-it edit."),
-        "{}",
-        broken.text
-    );
 }
 
 #[test]
@@ -262,8 +175,7 @@ fn without_a_run_every_command_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = quiet(dir.path());
     let none = Screen::text(NO_RUN);
-    assert_eq!(send_it.status(), none);
-    assert_eq!(send_it.clear_approval(), none);
+    assert_eq!(send_it.status(80), none);
     assert_eq!(go(&send_it, Some("x"), true), (NO_RUN.to_string(), None));
     assert_eq!(send_it.off(), NO_RUN);
     assert!(NO_RUN.starts_with("No send-it run."));
@@ -273,10 +185,10 @@ fn without_a_run_every_command_says_so() {
 fn a_turn_that_stores_no_new_plan_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = quiet(dir.path());
-    assert_eq!(send_it.proposed(None).text, NOT_PROPOSED);
+    assert_eq!(send_it.proposed(None, 80).text, NOT_PROPOSED);
     let (send_it, hash) = proposed(dir.path());
-    assert_eq!(send_it.proposed(Some(hash.clone())).text, NOT_PROPOSED);
-    assert_eq!(send_it.proposed(None).shown, Some(hash));
+    assert_eq!(send_it.proposed(Some(hash.clone()), 80).text, NOT_PROPOSED);
+    assert_eq!(send_it.proposed(None, 80).shown, Some(hash));
 }
 
 fn started(dir: &Path) -> (SendIt, Active) {
@@ -315,7 +227,7 @@ fn judging_on(send_it: SendIt) -> (SendIt, Active) {
     args["steps"] =
         json!([{"do": "review", "criterion": {"kind": "judge", "question": "all fixed?"}}]);
     send_it.propose(&args).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     let started = go(&send_it, Some(&hash), true).1.unwrap();
     let ticked = send_it.tick(
         &Active {
@@ -367,7 +279,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: send_it.clone(),
+        send_it: (*send_it).clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
@@ -399,7 +311,7 @@ fn only_an_approved_plan_lends_its_allowed_list() {
     args["allowed"] = json!([{"kind": "reply"}, {"kind": "watch"}]);
     send_it.propose(&args).unwrap();
     assert_eq!(send_it.allowed(), None);
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     go(&send_it, Some(&hash), true);
     assert_eq!(send_it.allowed(), Some(vec![Action::Reply, Action::Watch]));
 }
@@ -411,7 +323,7 @@ fn the_next_tick_takes_the_answered_workers_once() {
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "reply"}]);
     send_it.propose(&args).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     let active = Active {
         driving: go(&send_it, Some(&hash), true).1.unwrap().driving,
         watched: None,
@@ -461,14 +373,14 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: quiet(dir.path()),
+        send_it: (*quiet(dir.path())).clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "watch"}]);
     shared.send_it.propose(&args).unwrap();
-    let hash = shared.send_it.status().shown.unwrap();
+    let hash = shared.send_it.status(80).shown.unwrap();
     let active = Active {
         driving: go(&shared.send_it, Some(&hash), true).1.unwrap().driving,
         watched: None,
@@ -487,7 +399,10 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
         "The approved run does not allow `reply`. The run stops; ralph tells the person."
     );
     assert_eq!(
-        shared.send_it.tick(&active, ended()).next,
+        shared
+            .send_it
+            .tick(&active.driving, active.watched.as_ref(), ended())
+            .next,
         Next::Stop(StopReason::Refused {
             tool: "reply".to_string()
         })
@@ -500,14 +415,14 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
         workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
-        send_it: quiet(dir.path()),
+        send_it: (*quiet(dir.path())).clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
     };
     let mut args = plan_args();
     args["allowed"] = json!([{"kind": "watch"}]);
     shared.send_it.propose(&args).unwrap();
-    let hash = shared.send_it.status().shown.unwrap();
+    let hash = shared.send_it.status(80).shown.unwrap();
     let driving = go(&shared.send_it, Some(&hash), true).1.unwrap().driving;
     let active = Active {
         driving,
@@ -539,7 +454,10 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
         spawned.text
     );
     assert_eq!(
-        shared.send_it.tick(&active, ended()).next,
+        shared
+            .send_it
+            .tick(&active.driving, active.watched.as_ref(), ended())
+            .next,
         Next::Stop(StopReason::Refused {
             tool: "spawn_worker codex".to_string()
         })
@@ -567,13 +485,13 @@ fn release_drops_the_run_s_approval_and_keeps_the_plan_for_save_and_reuse() {
     assert_eq!(file.approved, None);
     assert_eq!(plan_hash(&file.plan), hash);
     assert!(send_it
-        .status()
+        .status(80)
         .text
         .ends_with(&format!("{hash} · not approved · /send-it go to approve")));
     assert!(send_it
         .save_template("ship", None)
         .starts_with("Template ship saved"));
-    assert!(send_it.use_template("GUZ-2", "ship").shown.is_some());
+    assert!(send_it.use_template("GUZ-2", "ship", 80).shown.is_some());
     assert!(send_it.propose(&plan_args()).is_ok());
     send_it.release(&hash, None).unwrap();
     send_it.off();
@@ -592,12 +510,12 @@ fn a_stop_keeps_the_plan_until_off_and_go_resumes_at_the_stopped_step() {
         ]
     });
     send_it.propose(&args).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     let first = go(&send_it, Some(&hash), true).1.unwrap();
     let stopped = send_it.release(&hash, Some(2)).unwrap().unwrap();
     assert_eq!(stopped.approved, None);
     assert_eq!(send_it.load().unwrap(), Some(stopped));
-    let screen = send_it.status();
+    let screen = send_it.status(80);
     assert!(
         screen
             .text
@@ -612,7 +530,7 @@ fn a_stop_keeps_the_plan_until_off_and_go_resumes_at_the_stopped_step() {
     send_it.release(&hash, None).unwrap();
     assert_eq!(send_it.load().unwrap().unwrap().stopped, None);
     assert_eq!(send_it.off(), "send-it off: the run plan is deleted.");
-    assert_eq!(send_it.status().text, NO_RUN);
+    assert_eq!(send_it.status(80).text, NO_RUN);
 }
 
 #[test]
@@ -627,7 +545,7 @@ fn go_on_a_stopped_worker_step_skips_it_once_the_worker_reported_done() {
         ]
     });
     send_it.propose(&args).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     go(&send_it, Some(&hash), true);
     send_it.release(&hash, Some(1)).unwrap();
     let last = HashMap::from([("GUZ-1".to_string(), "done".to_string())]);
@@ -651,7 +569,7 @@ fn every_tick_reads_the_plan_file_again() {
         send_it.tick(&active, ended()).next,
         Next::Check("cargo xtask lint".to_string())
     );
-    send_it.clear_approval();
+    send_it.release(&active.driving.hash, None).unwrap();
     assert_eq!(
         send_it.tick(&active, ended()).next,
         Next::Stop(StopReason::PlanChanged)
@@ -804,7 +722,7 @@ fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
         {"do": "review", "criterion": {"kind": "judge", "question": "ok?"}}
     ]);
     send_it.propose(&args).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     let mut driving = go(&send_it, Some(&hash), true).1.unwrap().driving;
     driving.awaiting = Awaiting::Report("watch:send-it-1".to_string());
     driving.progress.verify = VerifyMode::Observe;
@@ -836,7 +754,7 @@ fn a_settled_last_check_logs_only_the_done_notice() {
     let dir = tempfile::tempdir().unwrap();
     let send_it = quiet(dir.path());
     send_it.propose(&plan_args()).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     let mut driving = go(&send_it, Some(&hash), true).1.unwrap().driving;
     driving.awaiting = Awaiting::Report("watch:send-it-1".to_string());
     driving.progress.verify = VerifyMode::Observe;
@@ -859,28 +777,26 @@ fn a_settled_last_check_logs_only_the_done_notice() {
 }
 
 #[derive(Clone, Default)]
-struct Printed(Arc<Mutex<Vec<u8>>>);
-
-impl io::Write for Printed {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
+struct Printed(Arc<Mutex<String>>);
 
 impl Printed {
     fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        self.0.lock().unwrap().clone()
+    }
+
+    fn sink(&self) -> Notices {
+        let lines = self.0.clone();
+        Arc::new(move |line| {
+            let mut lines = lines.lock().unwrap();
+            lines.push_str(line);
+            lines.push('\n');
+        })
     }
 }
 
 fn printing(dir: &Path) -> (SendIt, Active, Printed) {
     let printed = Printed::default();
-    let send_it = SendIt::with_output(dir, LIMITS, Arc::new(Mutex::new(printed.clone())));
+    let send_it = SendIt(ServerSendIt::new(dir, LIMITS, printed.sink()));
     let (send_it, active) = judging_on(send_it);
     (send_it, active, printed)
 }
@@ -932,5 +848,5 @@ fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
 }
 
 fn quiet(dir: &Path) -> SendIt {
-    SendIt::with_output(dir, LIMITS, Arc::new(Mutex::new(Printed::default())))
+    SendIt(ServerSendIt::new(dir, LIMITS, Printed::default().sink()))
 }

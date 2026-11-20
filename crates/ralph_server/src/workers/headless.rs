@@ -167,6 +167,7 @@ impl HeadlessShutdown {
         Self {
             hosts: vec![
                 CursorHost::new(store_dir.clone()),
+                CursorHost::agy(store_dir.clone()),
                 OpencodeHost::new(store_dir.clone()),
                 CodexHost::new(store_dir.clone()),
                 ClaudeHost::new(store_dir),

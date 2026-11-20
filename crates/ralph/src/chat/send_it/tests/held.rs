@@ -217,7 +217,7 @@ fn a_judge_turn_whose_plan_is_gone_carries_the_status_prefill() {
     args["steps"] =
         serde_json::json!([{"do": "review", "criterion": {"kind": "judge", "question": "ok?"}}]);
     send_it.propose(&args).unwrap();
-    let hash = send_it.status().shown.unwrap();
+    let hash = send_it.status(80).shown.unwrap();
     let started = super::go(&send_it, Some(&hash), true).1.unwrap();
     let active = Active {
         driving: started.driving,
@@ -225,7 +225,7 @@ fn a_judge_turn_whose_plan_is_gone_carries_the_status_prefill() {
     };
     let ticked = send_it.tick(&active, super::ended());
     assert_eq!(ticked.next, Next::Judge);
-    fs::remove_file(&send_it.path).unwrap();
+    send_it.off();
     let driven = send_it.dispatch(ticked, &monitor(dir.path()));
     assert_eq!(driven.prefill.as_deref(), Some("/send-it status"));
     assert!(driven.route.is_none());

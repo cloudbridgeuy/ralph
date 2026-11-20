@@ -761,3 +761,30 @@ fn codex_rows_show_excluded_in_the_model_view() {
         .unwrap();
     assert!(codex.ends_with("| excluded | excluded |"), "{codex}");
 }
+#[test]
+fn agy_builtin_prices_never_price_usage() {
+    let mut line = worker("w1", "s1", "claude-opus-5-5");
+    line["harness"] = json!("agy");
+    let usage = jsonl(&[line]);
+    let built_in = rows_of(&usage);
+    let usd = find(&built_in, "agy", "claude-opus-5-5").usd;
+    assert!(usd.known.is_none() && usd.missing);
+}
+
+#[test]
+fn agy_override_never_prices_usage() {
+    let mut line = worker("w1", "s1", "claude-opus-5-5");
+    line["harness"] = json!("agy");
+    let usage = jsonl(&[line]);
+    let overrides = BTreeMap::from([(
+        "claude-opus-5-5".to_string(),
+        PriceOverride {
+            input: 100.0,
+            output: Some(100.0),
+            ..Default::default()
+        },
+    )]);
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, None, pricing));
+    let usd = find(&rows, "agy", "claude-opus-5-5").usd;
+    assert!(usd.known.is_none() && usd.missing);
+}

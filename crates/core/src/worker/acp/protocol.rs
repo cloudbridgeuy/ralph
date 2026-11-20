@@ -20,6 +20,12 @@ pub const CURSOR_AGENT: AcpAgent = AcpAgent {
     tested_version: "2026.10.14",
     login_method: "cursor_login",
 };
+pub const AGY_AGENT: AcpAgent = AcpAgent {
+    name: "agy",
+    command: "agy",
+    tested_version: "1.5.12",
+    login_method: "",
+};
 pub const AUTH_REQUIRED_CODE: i32 = -32000;
 
 pub fn parse_agent_version(output: &str) -> Option<&str> {
