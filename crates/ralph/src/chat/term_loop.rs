@@ -15,6 +15,7 @@ use crate::chat::switch::{chat_exit, check as check_switch, ChatExit, Leave};
 use crate::chat::{thread, thread_cmd};
 use crate::signal;
 use crate::warn::print_above_prompt;
+use ralph_core::cancel::CancelToken;
 use ralph_core::chat_cell::CellLimits;
 use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_hold::HoldFilter;
@@ -31,6 +32,7 @@ use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::session::{phase_after, trigger_for, At, Session};
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::turn::{draft_after, TurnOutcome};
@@ -74,6 +76,23 @@ pub(super) struct TerminalLoop<'a> {
     pub(super) offered: Option<(String, u64)>,
     pub(super) carried: Vec<String>,
     pub(super) leaving: Option<ChatExit>,
+}
+
+pub(super) fn run_turn(
+    port: &dyn SessionPort,
+    call: &TurnCall,
+    during: impl FnOnce(&mut dyn FnMut(&CancelToken)) -> Queue,
+) -> Result<(TurnOutcome, Queue), Box<dyn Error>> {
+    let mut during = Some(during);
+    let mut ran = None;
+    let mut queue = Queue::default();
+    port.around(&mut || {
+        if let Some(during) = during.take() {
+            queue = during(&mut |cancel| ran = Some(port.turn(call, cancel)));
+        }
+    });
+    let outcome = ran.ok_or("keyboard did not run the turn")??;
+    Ok((outcome, queue))
 }
 
 pub(super) struct Ending {
@@ -228,13 +247,13 @@ impl TerminalLoop<'_> {
         trigger: Trigger,
         sent: &str,
     ) -> Result<(TurnOutcome, Queue), Box<dyn Error>> {
-        let session = self.session;
         let logged = [sent.to_owned()];
-        let (result, queue) = session.snapshots.around(|| {
-            self.keys
-                .during(|cancel| session.turn.run(trigger, &logged, sent, cancel))
-        });
-        Ok((result?, queue))
+        let call = TurnCall {
+            trigger,
+            logged: &logged,
+            sent,
+        };
+        run_turn(self.session, &call, |run| self.keys.during(run).1)
     }
 
     pub(super) fn send(&mut self, message: String) -> Result<Ending, Box<dyn Error>> {
@@ -544,3 +563,6 @@ impl TerminalLoop<'_> {
         Ok(Flow::Next)
     }
 }
+
+#[cfg(test)]
+mod tests;
