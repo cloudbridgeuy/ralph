@@ -4,11 +4,16 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub fn branch_exists(repo: &Path, branch: &str) -> io::Result<bool> {
-    Ok(Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", "--verify", "--quiet"])
-        .arg(format!("refs/heads/{branch}"))
+    branch_exists_with(probe_command, repo, branch)
+}
+
+fn branch_exists_with(
+    make: impl Fn(&Path, &[&str]) -> Command,
+    repo: &Path,
+    branch: &str,
+) -> io::Result<bool> {
+    let ref_name = format!("refs/heads/{branch}");
+    Ok(make(repo, &["rev-parse", "--verify", "--quiet", &ref_name])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .status()?
@@ -26,15 +31,12 @@ pub fn branch_open(repo: &Path, branch: &str) -> bool {
 }
 
 fn branch_open_with(make: impl Fn(&Path, &[&str]) -> Command, repo: &Path, branch: &str) -> bool {
-    let ref_name = format!("refs/heads/{branch}");
-    let probe = make(repo, &["rev-parse", "--verify", "--quiet", &ref_name]).output();
+    let probe = branch_exists_with(&make, repo, branch);
     let listing = make(repo, &["worktree", "list", "--porcelain"]).output();
     match (probe, listing) {
-        (Ok(probe), Ok(listing)) => branch_is_open(
-            probe.status.success(),
-            &String::from_utf8_lossy(&listing.stdout),
-            branch,
-        ),
+        (Ok(probe), Ok(listing)) => {
+            branch_is_open(probe, &String::from_utf8_lossy(&listing.stdout), branch)
+        }
         (Err(error), _) | (_, Err(error)) => {
             crate::warn::warn(format!("checking branch {branch}: {error}"));
             false
