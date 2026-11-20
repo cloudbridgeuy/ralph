@@ -1,55 +1,27 @@
-use crate::chat::client_monitor::Monitor;
 use crate::chat::hold_progress::git_out;
 use crate::chat::inbox::{self, Display};
 use crate::chat::keys::Keys;
 use crate::chat::prompt::{screen_columns, Submitted};
 use crate::chat::queue::Queue;
-use crate::inbox_alert;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{
-    awaits_check, blocked_alert, blocked_report, briefed_turn, done_block, done_notice, judge_echo,
-    judge_prompt, resolve_check, run_end_prefill, running_line, settle_check, step_line,
-    stop_block, verify_worker, Driving, Ended, Limits, Next, StopReason, Ticked,
+    awaits_check, briefed_turn, done_block, done_notice, judge_echo, judge_prompt, resolve_check,
+    run_end_prefill, running_line, settle_check, step_line, stop_block, verify_worker, Driving,
+    Ended, Next, StopReason, Ticked,
 };
-use ralph_core::chat_status::{latest_states, Route};
+use ralph_core::chat_status::Route;
 use ralph_core::chat_suggestion::driven_fill;
 use ralph_core::inbox::{Position, Selection};
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
-use ralph_core::worker_check::logged_states;
-use ralph_server::chat::memory::Store;
-use ralph_server::chat::send_it::SendIt as ServerSendIt;
+use ralph_server::chat::monitor::Monitor;
+use ralph_server::chat::send_it::SendIt;
 use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::turn::{Turn, TurnOutcome};
-use ralph_server::warn::warn_if_err;
 use ralph_server::watches::{locked, OutcomeSlot};
-use ralph_server::workers::running_workers;
 use reedline::{EditCommand, Reedline};
-use std::collections::HashMap;
-use std::io::{self, Write};
-use std::ops::Deref;
-use std::path::Path;
-use std::sync::Arc;
-
-fn print_line(line: &str) {
-    let mut out = io::stdout().lock();
-    warn_if_err(
-        writeln!(out, "{line}").and_then(|()| out.flush()),
-        "Failed to print the send-it line",
-    );
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SendIt(ServerSendIt);
-
-impl Deref for SendIt {
-    type Target = ServerSendIt;
-
-    fn deref(&self) -> &ServerSendIt {
-        &self.0
-    }
-}
+use std::io;
 
 pub(super) struct Active {
     driving: Driving,
@@ -101,202 +73,180 @@ impl Driven {
     }
 }
 
-pub(super) fn worker_states(monitor: &Monitor) -> (HashMap<String, String>, Vec<String>) {
-    let mut last = Store::new(monitor.store_dir.clone())
-        .load()
-        .map(|(entries, _)| logged_states(&entries))
-        .unwrap_or_default();
-    last.extend(locked(&monitor.seen).clone());
-    last.extend(latest_states(&monitor.inbox.peek().unwrap_or_default()));
-    let running = running_workers(&monitor.store_dir)
-        .into_iter()
-        .map(|worker| worker.id)
-        .collect();
-    (last, running)
+pub(super) fn tick(send_it: &SendIt, active: &Active, ended: Ended) -> Ticked {
+    send_it.tick(&active.driving, active.watched.as_ref(), ended)
 }
 
-impl SendIt {
-    pub(crate) fn new(store_dir: &Path, limits: Limits) -> Self {
-        Self(ServerSendIt::new(store_dir, limits, Arc::new(print_line)))
+pub(super) fn held_item(
+    send_it: &SendIt,
+    sending: &mut Option<Active>,
+    position: Position,
+    monitor: &Monitor,
+) -> io::Result<Driven> {
+    let read = Driven::reading(Route::ReadInbox(Selection::At(position)));
+    let outcome = sending
+        .as_ref()
+        .filter(|active| awaits_check(&active.driving))
+        .and_then(|active| active.watched.as_ref())
+        .and_then(|slot| locked(slot).clone());
+    let Some(outcome) = outcome else {
+        return Ok(read);
+    };
+    let reports = monitor.drain(Selection::At(position))?;
+    monitor.refresh(true);
+    let Some(active) = sending.take() else {
+        return Ok(read);
+    };
+    let file = send_it.load().ok().flatten();
+    let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
+    log_shown(send_it, &ticked);
+    let mut driven = route(send_it, ticked, monitor);
+    if driven.route.is_none() {
+        monitor.set_phase(Phase::Prompt);
     }
+    *sending = driven.active.take();
+    Ok(driven)
+}
 
-    pub(super) fn tick(&self, active: &Active, ended: Ended) -> Ticked {
-        self.0.tick(&active.driving, active.watched.as_ref(), ended)
+pub(super) fn brief_unread(
+    send_it: &SendIt,
+    sending: &mut Option<Active>,
+    message: String,
+) -> String {
+    let Some(active) = sending.as_mut().filter(|active| !active.driving.briefed) else {
+        return message;
+    };
+    let Some(file) = send_it.load().ok().flatten() else {
+        return message;
+    };
+    let (driving, text) = briefed_turn(&file.plan, active.driving.clone(), &message);
+    active.driving = driving;
+    text
+}
+
+pub(super) fn dispatch(send_it: &SendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
+    log_shown(send_it, &ticked);
+    route(send_it, ticked, monitor)
+}
+
+fn log_shown(send_it: &SendIt, ticked: &Ticked) {
+    for line in ticked.shown_lines() {
+        send_it.log_notice(line);
     }
+}
 
-    pub(super) fn held_item(
-        &self,
-        sending: &mut Option<Active>,
-        position: Position,
-        monitor: &Monitor,
-    ) -> io::Result<Driven> {
-        let read = Driven::reading(Route::ReadInbox(Selection::At(position)));
-        let outcome = sending
-            .as_ref()
-            .filter(|active| awaits_check(&active.driving))
-            .and_then(|active| active.watched.as_ref())
-            .and_then(|slot| locked(slot).clone());
-        let Some(outcome) = outcome else {
-            return Ok(read);
-        };
-        let reports = monitor.drain(Selection::At(position))?;
-        monitor.refresh(true);
-        let Some(active) = sending.take() else {
-            return Ok(read);
-        };
-        let file = self.load().ok().flatten();
-        let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
-        self.log_shown(&ticked);
-        let mut driven = self.route(ticked, monitor);
-        if driven.route.is_none() {
-            monitor.set_phase(Phase::Prompt);
-        }
-        *sending = driven.active.take();
-        Ok(driven)
+fn route(send_it: &SendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
+    for line in ticked.shown_lines() {
+        send_it.show(line);
     }
-
-    pub(super) fn brief_unread(&self, sending: &mut Option<Active>, message: String) -> String {
-        let Some(active) = sending.as_mut().filter(|active| !active.driving.briefed) else {
-            return message;
-        };
-        let Some(file) = self.load().ok().flatten() else {
-            return message;
-        };
-        let (driving, text) = briefed_turn(&file.plan, active.driving.clone(), &message);
-        active.driving = driving;
-        text
-    }
-
-    pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        self.log_shown(&ticked);
-        self.route(ticked, monitor)
-    }
-
-    fn log_shown(&self, ticked: &Ticked) {
-        for line in ticked.shown_lines() {
-            self.log_notice(line);
-        }
-    }
-
-    fn route(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
-        for line in ticked.shown_lines() {
-            self.show(line);
-        }
-        let plan = self.load().ok().flatten().map(|file| file.plan);
-        let driving = ticked.driving;
-        match ticked.next {
-            Next::Send(line) => {
-                if let Some(plan) = &plan {
-                    self.show(running_line(plan, &driving));
-                }
-                self.show(&line);
-                Driven::keep(driving, Route::Send(line), None)
+    let plan = send_it.load().ok().flatten().map(|file| file.plan);
+    let driving = ticked.driving;
+    match ticked.next {
+        Next::Send(line) => {
+            if let Some(plan) = &plan {
+                send_it.show(running_line(plan, &driving));
             }
-            Next::Judge => match plan.and_then(|plan| {
-                let prompt = judge_prompt(&plan, driving.progress)?;
-                let echo = judge_echo(&plan, driving.progress);
-                let (driving, prompt) = briefed_turn(&plan, driving.clone(), &prompt);
-                Some((driving, prompt, echo))
-            }) {
-                Some((driving, prompt, echo)) => {
-                    self.show(echo);
-                    Driven::keep(driving, Route::Send(prompt), None)
-                }
-                None => self.stopped(StopReason::PlanChanged, &driving, monitor),
-            },
-            Next::Hold(worker) => {
-                Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None)
+            send_it.show(&line);
+            Driven::keep(driving, Route::Send(line), None)
+        }
+        Next::Judge => match plan.and_then(|plan| {
+            let prompt = judge_prompt(&plan, driving.progress)?;
+            let echo = judge_echo(&plan, driving.progress);
+            let (driving, prompt) = briefed_turn(&plan, driving.clone(), &prompt);
+            Some((driving, prompt, echo))
+        }) {
+            Some((driving, prompt, echo)) => {
+                send_it.show(echo);
+                Driven::keep(driving, Route::Send(prompt), None)
             }
-            Next::Watch(command) | Next::Check(command) => {
-                if let Some(plan) = &plan {
-                    self.show(running_line(plan, &driving));
-                    if let Some(step) = plan.steps.get(driving.progress.step) {
-                        self.show(step_line(plan, driving.progress.step, step));
-                    }
-                }
-                let worker = plan
-                    .as_ref()
-                    .and_then(|plan| verify_worker(plan, driving.progress));
-                let porcelain =
-                    worker.and_then(|_| git_out(None, &["worktree", "list", "--porcelain"]));
-                let spec = match resolve_check(
-                    driving.progress.step,
-                    &command,
-                    worker,
-                    porcelain.as_deref(),
-                ) {
-                    Ok(spec) => spec,
-                    Err(reason) => return self.stopped(reason, &driving, monitor),
-                };
-                let id = spec.id.clone();
-                match monitor.watches.start(spec) {
-                    Ok(slot) => {
-                        Driven::keep(driving, Route::Hold(HoldFilter::Source(id)), Some(slot))
-                    }
-                    Err(error) => {
-                        self.show(&error);
-                        let step = driving.progress.step + 1;
-                        self.stopped(
-                            StopReason::CheckNotStarted {
-                                step,
-                                error: error.to_string(),
-                            },
-                            &driving,
-                            monitor,
-                        )
-                    }
+            None => stopped(send_it, StopReason::PlanChanged, &driving),
+        },
+        Next::Hold(worker) => Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None),
+        Next::Watch(command) | Next::Check(command) => {
+            if let Some(plan) = &plan {
+                send_it.show(running_line(plan, &driving));
+                if let Some(step) = plan.steps.get(driving.progress.step) {
+                    send_it.show(step_line(plan, driving.progress.step, step));
                 }
             }
-            Next::Stop(reason) => self.stopped(reason, &driving, monitor),
-            Next::Done => match &plan {
-                Some(plan) => self.ended(
-                    &done_notice(plan, &driving.run),
-                    &done_block(plan, &driving, screen_columns()),
-                    &driving,
-                ),
-                None => {
-                    if let Some(met) = ticked.met.as_deref() {
-                        self.show(met);
-                        self.log_notice(met);
-                    }
-                    Driven::ended()
+            let worker = plan
+                .as_ref()
+                .and_then(|plan| verify_worker(plan, driving.progress));
+            let porcelain =
+                worker.and_then(|_| git_out(None, &["worktree", "list", "--porcelain"]));
+            let spec = match resolve_check(
+                driving.progress.step,
+                &command,
+                worker,
+                porcelain.as_deref(),
+            ) {
+                Ok(spec) => spec,
+                Err(reason) => return stopped(send_it, reason, &driving),
+            };
+            let id = spec.id.clone();
+            match monitor.watches.start(spec) {
+                Ok(slot) => Driven::keep(driving, Route::Hold(HoldFilter::Source(id)), Some(slot)),
+                Err(error) => {
+                    send_it.show(&error);
+                    let step = driving.progress.step + 1;
+                    stopped(
+                        send_it,
+                        StopReason::CheckNotStarted {
+                            step,
+                            error: error.to_string(),
+                        },
+                        &driving,
+                    )
                 }
-            },
-            Next::Wait => Driven::ended(),
+            }
         }
+        Next::Stop(reason) => stopped(send_it, reason, &driving),
+        Next::Done => match &plan {
+            Some(plan) => ended(
+                send_it,
+                &done_notice(plan, &driving.run),
+                &done_block(plan, &driving, screen_columns()),
+                &driving,
+            ),
+            None => {
+                if let Some(met) = ticked.met.as_deref() {
+                    send_it.show(met);
+                    send_it.log_notice(met);
+                }
+                Driven::ended()
+            }
+        },
+        Next::Wait => Driven::ended(),
     }
+}
 
-    fn ended(&self, notice: &str, block: &str, driving: &Driving) -> Driven {
-        self.show(block);
-        self.log_notice(notice);
-        if let Err(error) = self.release(&driving.hash, None) {
-            self.show(error);
-        }
-        Driven::ended()
+fn ended(send_it: &SendIt, notice: &str, block: &str, driving: &Driving) -> Driven {
+    send_it.show(block);
+    send_it.log_notice(notice);
+    if let Err(error) = send_it.release(&driving.hash, None) {
+        send_it.show(error);
     }
+    Driven::ended()
+}
 
-    fn stopped(&self, reason: StopReason, driving: &Driving, monitor: &Monitor) -> Driven {
-        let kept = self.release(&driving.hash, Some(driving.progress.step + 1));
-        let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
-        let notice = reason.notice(&driving.run, kept_file);
-        self.show(stop_block(&reason, kept_file, driving, screen_columns()));
-        self.log_notice(&notice);
-        if let Err(error) = kept {
-            self.show(error);
-        }
-        if let Some(alert) = blocked_alert(&notice, &monitor.alert) {
-            inbox_alert::deliver(&alert);
-        }
-        monitor.term.send(&blocked_report(&notice));
-        Driven {
-            prefill: run_end_prefill(&Next::Stop(reason)),
-            ..Driven::ended()
-        }
+fn stopped(send_it: &SendIt, reason: StopReason, driving: &Driving) -> Driven {
+    let kept = send_it.release(&driving.hash, Some(driving.progress.step + 1));
+    let kept_file = kept.as_ref().ok().and_then(Option::as_ref);
+    let notice = reason.notice(&driving.run, kept_file);
+    send_it.show(stop_block(&reason, kept_file, driving, screen_columns()));
+    send_it.log_notice(&notice);
+    if let Err(error) = kept {
+        send_it.show(error);
     }
+    send_it.blocked(&notice);
+    Driven {
+        prefill: run_end_prefill(&Next::Stop(reason)),
+        ..Driven::ended()
+    }
+}
 
-    pub(super) fn took_over(&self, active: &Active, monitor: &Monitor) -> Driven {
-        self.stopped(StopReason::TookOver, &active.driving, monitor)
-    }
+pub(super) fn took_over(send_it: &SendIt, active: &Active) -> Driven {
+    stopped(send_it, StopReason::TookOver, &active.driving)
 }
 
 pub(super) struct InboxTurn<'a> {
@@ -334,7 +284,7 @@ impl InboxTurn<'_> {
             self.monitor.set_phase(Phase::Prompt);
             return Ok(None);
         };
-        let message = send_it.brief_unread(sending, unread.message);
+        let message = brief_unread(send_it, sending, unread.message);
         let (result, queue) = self.snapshots.around(|| {
             self.keys.during(|cancel| {
                 self.turn

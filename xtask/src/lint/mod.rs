@@ -3,6 +3,7 @@ use error::Result;
 use std::io::BufRead;
 
 mod colour;
+mod deps;
 pub mod error;
 mod hooks;
 mod install;
@@ -22,6 +23,7 @@ Rust checks:
 5. cargo rail unify --check - Dependency unification, unused deps, dead features
 6. File length check - Ensures no .rs file exceeds 1000 lines
 7. Raw colour check - Ensures no colour SGR escapes outside the ansi module
+8. Server deps check - Ensures ralph_server pulls no terminal crates
 
 When used with --install-hooks, this command also manages git pre-commit hooks that
 run these same checks automatically before each commit.
@@ -137,6 +139,10 @@ async fn run_lint_checks(command: &LintCommand, global: &crate::Global) -> Resul
     }
 
     if !install::run_install_lock_check(global).await? {
+        all_passed = false;
+    }
+
+    if !deps::run_server_deps_check(global).await? {
         all_passed = false;
     }
 

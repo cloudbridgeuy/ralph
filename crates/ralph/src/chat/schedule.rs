@@ -2,8 +2,9 @@ use crate::chat::editor::open_in_editor;
 use crate::chat::terminal::{poll_input, read_input, Input, POLL_MS};
 use crate::signal;
 use ralph_core::cancel::CancelToken;
-use ralph_server::chat::ask::{Ask, Notices};
+use ralph_server::chat::ask::Ask;
 use ralph_server::chat::schedule::approve_proposed as approve;
+use ralph_server::chat::session::{Emit, Event};
 use ralph_server::schedule_store::ScheduleStore;
 use std::io::{self, Write};
 use std::path::Path;
@@ -49,9 +50,13 @@ impl Ask for Keyboard<'_> {
 }
 
 pub(super) fn approve_proposed(store: &ScheduleStore, default_timeout: Duration) -> bool {
-    let notices: Notices = Arc::new(|line| println!("{line}"));
+    let emit: Emit = Arc::new(|event| {
+        if let Event::Notice(line) = event {
+            println!("{line}");
+        }
+    });
     let mut keyboard = Keyboard { editor: &[] };
-    approve(store, default_timeout, &mut keyboard, &notices)
+    approve(store, default_timeout, &mut keyboard, &emit)
 }
 
 fn say_raw(out: &mut impl Write, text: &str) {

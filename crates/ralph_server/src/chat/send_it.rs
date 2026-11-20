@@ -1,5 +1,6 @@
-use crate::chat::ask::{Ask, Notices};
+use crate::chat::ask::Ask;
 use crate::chat::memory::Store;
+use crate::chat::session::{Emit, Event};
 use crate::warn::warn_if_err;
 use crate::watches::{locked, OutcomeSlot};
 use ralph_core::chat_local::notice_record;
@@ -41,7 +42,7 @@ pub struct SendIt {
 }
 
 #[derive(Clone)]
-struct Out(Notices);
+struct Out(Emit);
 
 impl fmt::Debug for Out {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -50,7 +51,7 @@ impl fmt::Debug for Out {
 }
 
 impl SendIt {
-    pub fn new(store_dir: &Path, limits: Limits, notices: Notices) -> Self {
+    pub fn new(store_dir: &Path, limits: Limits, emit: Emit) -> Self {
         Self {
             log: store_dir.to_path_buf(),
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
@@ -59,12 +60,16 @@ impl SendIt {
             refused: Arc::default(),
             judged: Arc::default(),
             answered: Arc::default(),
-            out: Out(notices),
+            out: Out(emit),
         }
     }
 
     pub fn show(&self, line: impl fmt::Display) {
-        (self.out.0)(&line.to_string());
+        (self.out.0)(Event::Notice(line.to_string()));
+    }
+
+    pub fn blocked(&self, notice: &str) {
+        (self.out.0)(Event::Blocked(notice.to_string()));
     }
 
     pub fn load(&self) -> Result<Option<RunFile>, String> {
@@ -383,6 +388,35 @@ mod tests {
 
     fn quiet(dir: &Path) -> SendIt {
         SendIt::new(dir, LIMITS, Arc::new(|_| {}))
+    }
+
+    fn recording(dir: &Path) -> (SendIt, Arc<Mutex<Vec<Event>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let emit: Emit = Arc::new(move |event| locked(&sink).push(event));
+        (SendIt::new(dir, LIMITS, emit), events)
+    }
+
+    #[test]
+    fn show_emits_a_notice_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, events) = recording(dir.path());
+        send_it.show("Running step 1.");
+        assert_eq!(
+            *locked(&events),
+            vec![Event::Notice("Running step 1.".to_string())]
+        );
+    }
+
+    #[test]
+    fn blocked_emits_a_blocked_event_and_no_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, events) = recording(dir.path());
+        send_it.blocked("send-it stopped at step 2");
+        assert_eq!(
+            *locked(&events),
+            vec![Event::Blocked("send-it stopped at step 2".to_string())]
+        );
     }
 
     #[test]

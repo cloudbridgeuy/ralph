@@ -1,4 +1,3 @@
-use crate::chat::client_monitor::Monitor;
 use crate::chat::config;
 use crate::chat::diff::{self, DiffContext};
 use crate::chat::direct;
@@ -17,6 +16,7 @@ use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::worker::TicketKeys;
 use ralph_server::chat::memory::Answer;
+use ralph_server::chat::monitor::Monitor;
 use ralph_server::chat::schedule;
 use ralph_server::chat::watch;
 use ralph_server::chat::workers_remote::RemoteStatus;

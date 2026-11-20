@@ -1,6 +1,6 @@
-use crate::chat::client_monitor::Monitor;
 use ralph_core::chat_nudge::{failure_line, resolve_nudge, NudgeCommand};
 use ralph_core::worker::blocked_path;
+use ralph_server::chat::monitor::Monitor;
 
 pub fn run(command: NudgeCommand, monitor: &Monitor) -> String {
     let running: Vec<String> = monitor.status().workers.into_iter().map(|w| w.id).collect();

@@ -5,7 +5,7 @@ use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
     sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep, AGY_OWNER_DIR,
     CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
-    CURSOR_SESSION_DIR,
+    CURSOR_SESSION_DIR, OPENCODE_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -120,6 +120,8 @@ pub fn resumable_ids(store_dir: &Path) -> Vec<String> {
     let mut ids = request_ids(store_dir, CURSOR_SESSION_DIR);
     ids.extend(request_ids(store_dir, CODEX_SESSION_DIR));
     ids.extend(request_ids(store_dir, CLAUDE_SESSION_DIR));
+    ids.extend(request_ids(store_dir, "agy-session"));
+    ids.extend(request_ids(store_dir, OPENCODE_SESSION_DIR));
     ids.sort();
     ids
 }
@@ -478,10 +480,15 @@ mod tests {
             (CURSOR_SESSION_DIR, "C-1"),
             (CODEX_SESSION_DIR, "X-1"),
             (CLAUDE_SESSION_DIR, "H-1"),
+            ("agy-session", "A-1"),
+            (OPENCODE_SESSION_DIR, "O-1"),
         ] {
             fs::create_dir_all(store.path().join(dir)).unwrap();
             fs::write(store.path().join(dir).join(id), "{}").unwrap();
         }
-        assert_eq!(resumable_ids(store.path()), ["C-1", "H-1", "X-1"]);
+        assert_eq!(
+            resumable_ids(store.path()),
+            ["A-1", "C-1", "H-1", "O-1", "X-1"]
+        );
     }
 }

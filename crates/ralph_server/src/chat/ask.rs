@@ -1,14 +1,11 @@
 use ralph_core::schedule::{parse_answer, Answer};
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
 
 pub trait Ask {
     fn answer(&mut self, prompt: &str) -> Option<String>;
     fn edit(&mut self, path: &Path) -> io::Result<()>;
 }
-
-pub type Notices = Arc<dyn Fn(&str) + Send + Sync>;
 
 pub fn yes_no(ask: &mut dyn Ask, question: impl Fn() -> String) -> Option<bool> {
     loop {
