@@ -40,6 +40,7 @@ use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
 use crate::diff_theme::DiffColors;
 use crate::markdown::{Palette, RolePalette, ThemeRole};
+use crate::render::pill::emphasis_active;
 use crate::theme_slots::ResolveColors;
 use crate::tool_theme::ToolColors;
 use crate::ui_theme::UiColors;
@@ -164,7 +165,10 @@ impl ThemeConfig {
             .as_ref()
             .map(|c| c.theme.ui.resolve().0)
             .unwrap_or_default();
-        let emphasis = app_config.as_ref().is_some_and(|c| c.chat.emphasis);
+        let emphasis = emphasis_active(
+            app_config.as_ref().is_some_and(|c| c.chat.emphasis),
+            std::env::var_os("NO_COLOR").is_none(),
+        );
         let config_no_background = app_config.map(|c| c.theme.no_background).unwrap_or(false);
 
         let env_theme = std::env::var(RALPH_THEME_ENV).ok();

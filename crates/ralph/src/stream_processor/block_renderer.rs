@@ -29,7 +29,8 @@ impl BlockRenderer {
                 .as_ref()
                 .map(|config| config.palette().clone())
                 .unwrap_or_default(),
-        );
+        )
+        .with_emphasis(theme_config.as_ref().is_some_and(ThemeConfig::emphasis));
         let diff_colors = theme_config
             .as_ref()
             .map(|config| *config.diff())

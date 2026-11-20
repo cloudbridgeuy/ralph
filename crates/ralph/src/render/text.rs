@@ -13,6 +13,7 @@ use ralph_core::stream::blocks::ImageFile;
 use super::image::{disk_image, render_with_markers, ImageBounds};
 use super::link::mark_links;
 use super::marker::paint_links;
+use super::pill::mark_pills;
 pub(crate) use super::wrap::render_prose;
 use super::wrap::wrap_width;
 use super::RenderContext;
@@ -96,7 +97,13 @@ fn apc_in_place(content: &str, render_text: impl Fn(&str) -> String) -> String {
 }
 
 fn render_styled_prose(theme: &MarkdownTheme, text: &str, width: usize) -> String {
-    let rendered = render_prose(&theme.skin, &mark_links(text), width);
+    let marked = mark_links(text);
+    let marked = if theme.emphasis {
+        mark_pills(&marked)
+    } else {
+        marked
+    };
+    let rendered = render_prose(&theme.skin, &marked, width);
     paint_links(&enhance_tables(&rendered), &theme.palette)
 }
 
@@ -155,7 +162,7 @@ fn derive_bottom_border(separator: &str) -> String {
     map_border_chars(separator, '└', '┴', '┘')
 }
 
-fn enhance_tables(rendered: &str) -> String {
+pub(super) fn enhance_tables(rendered: &str) -> String {
     let lines: Vec<&str> = rendered.lines().collect();
 
     // Phase 1: Find table regions (start inclusive, end exclusive)

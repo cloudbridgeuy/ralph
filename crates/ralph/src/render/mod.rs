@@ -21,8 +21,9 @@ mod link;
 mod marker;
 pub mod mermaid;
 pub mod mermaid_picture;
-#[allow(dead_code, reason = "wired into prose rendering in the next commit")]
 pub(crate) mod pill;
+#[cfg(test)]
+mod pill_render_tests;
 pub mod svg_picture;
 #[cfg(test)]
 mod table_wrap_width_tests;

@@ -143,6 +143,10 @@ fn mark_for(chars: &[char], at: usize) -> Option<(char, usize)> {
     }
 }
 
+pub fn emphasis_active(flag: bool, color: bool) -> bool {
+    flag && color
+}
+
 pub fn mark_pills(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -201,6 +205,14 @@ mod tests {
 
     fn strip(text: &str) -> String {
         text.chars().filter(|ch| !MARKERS.contains(ch)).collect()
+    }
+
+    #[test]
+    fn emphasis_needs_the_flag_and_colour() {
+        assert!(emphasis_active(true, true));
+        assert!(!emphasis_active(true, false));
+        assert!(!emphasis_active(false, true));
+        assert!(!emphasis_active(false, false));
     }
 
     #[test]

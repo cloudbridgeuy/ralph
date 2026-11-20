@@ -292,6 +292,7 @@ fn render_skin_inline(skin: &MadSkin, src: &str, color: bool) -> String {
 pub struct MarkdownTheme {
     pub skin: MadSkin,
     pub palette: Palette,
+    pub emphasis: bool,
 }
 
 impl MarkdownTheme {
@@ -299,7 +300,13 @@ impl MarkdownTheme {
         Self {
             skin: markdown_skin(&palette),
             palette,
+            emphasis: false,
         }
+    }
+
+    pub fn with_emphasis(mut self, emphasis: bool) -> Self {
+        self.emphasis = emphasis;
+        self
     }
 }
 

@@ -276,6 +276,7 @@ pub(super) fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
     MarkdownTheme {
         skin,
         palette: theme.palette.clone(),
+        emphasis: false,
     }
 }
 
