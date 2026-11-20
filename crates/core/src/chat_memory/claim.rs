@@ -29,10 +29,10 @@ pub fn parse_lease(contents: &str) -> Option<ChatLease> {
     }
 }
 
-pub fn next_lease(previous: &str, pid: u32, holder: String) -> ChatLease {
+pub fn next_lease(previous: &str, pid: u32, holder: Option<String>) -> ChatLease {
     ChatLease {
         pid,
-        holder: Some(holder),
+        holder,
         generation: parse_lease(previous)
             .map_or(0, |lease| lease.generation)
             .saturating_add(1),
@@ -108,11 +108,17 @@ mod tests {
 
     #[test]
     fn each_claim_bumps_the_generation_of_the_previous_lease() {
-        assert_eq!(next_lease("", 7, "h".into()), lease(7, Some("h"), 1));
-        assert_eq!(next_lease("4242", 7, "h".into()), lease(7, Some("h"), 1));
-        assert_eq!(next_lease(NEW_LEASE, 7, "h".into()), lease(7, Some("h"), 4));
+        assert_eq!(next_lease("", 7, Some("h".into())), lease(7, Some("h"), 1));
         assert_eq!(
-            next_lease(&lease(1, None, u64::MAX).render(), 7, "h".into()).generation,
+            next_lease("4242", 7, Some("h".into())),
+            lease(7, Some("h"), 1)
+        );
+        assert_eq!(
+            next_lease(NEW_LEASE, 7, Some("h".into())),
+            lease(7, Some("h"), 4)
+        );
+        assert_eq!(
+            next_lease(&lease(1, None, u64::MAX).render(), 7, Some("h".into())).generation,
             u64::MAX
         );
     }
