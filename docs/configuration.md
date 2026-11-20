@@ -325,6 +325,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
 | `tag_entries` | bool | `true` | `false` turns off the background pass that tags new chat messages `rule`, `decision` or `approval` with Haiku after each reply; while it is off, messages written are never tagged later ([Tagging](context/ralph-chat.md#tagging)) |
 | `wrap_width` | integer | unset | Column cap for chat replies and the prompt area; `0` or unset wraps at the terminal width |
+| `emphasis` | bool | `false` | Draw status words in live chat replies as coloured pills (`[[Done]]`, `[[Failed]]`, and the other words in [Pills and marks](context/stream-processor-architecture.md#pills-and-marks)). Off when `NO_COLOR` is set or output is not a terminal; the raw `[[Word]]` text then stays visible. Also adds a short pill rule to the system prompt ([ralph chat](context/ralph-chat.md#turn-loop)) |
 | `cell_output_limit` | integer | `200` | Lines of cell output sent to Claude, per stream (stdout, stderr): first half and last half kept; `0` sends all |
 | `cell_output_bytes` | integer | `65536` | Bytes of cell output sent to Claude, per stream (stdout, stderr): head and tail kept; `0` sends all |
 | `worker_base` | string | unset | Base branch that `close_worker` checks for unmerged commits |
