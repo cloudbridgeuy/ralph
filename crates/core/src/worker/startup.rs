@@ -1,4 +1,8 @@
-const TRUST_ANSWER: &str = "Yes, I trust this folder";
+const TRUST_ANSWERS: [&str; 2] = ["Yes, I trust this folder", "Yes, add it"];
+
+fn shows_trust_answer(text: &str) -> bool {
+    TRUST_ANSWERS.iter().any(|answer| text.contains(answer))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Startup {
@@ -10,7 +14,7 @@ pub enum Startup {
 pub fn startup_state(pane: &str, ready: bool) -> Startup {
     if ready {
         Startup::Ready
-    } else if pane.contains(TRUST_ANSWER) {
+    } else if shows_trust_answer(pane) {
         Startup::TrustPrompt
     } else {
         Startup::Starting
@@ -18,7 +22,7 @@ pub fn startup_state(pane: &str, ready: bool) -> Startup {
 }
 
 pub fn trust_key(pane: &str, previous: Option<&str>) -> Option<&'static str> {
-    if previous != Some(pane) || !pane.contains(TRUST_ANSWER) {
+    if previous != Some(pane) || !shows_trust_answer(pane) {
         return None;
     }
     let selected = pane
@@ -26,7 +30,7 @@ pub fn trust_key(pane: &str, previous: Option<&str>) -> Option<&'static str> {
         .find(|line| line.trim_start().starts_with('❯'))?;
     if selected.contains("No, exit") {
         Some("Down")
-    } else if selected.contains(TRUST_ANSWER) {
+    } else if shows_trust_answer(selected) {
         Some("Enter")
     } else {
         None
@@ -63,5 +67,26 @@ mod tests {
             startup_state("  ctrl+p commands\n", false),
             Startup::Starting
         );
+    }
+
+    const ADD_DIR_ON_NO: &str = "\n────────────────────────────────────────────────────────────────────────────────\n Adding a new directory:\n /private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpz76MtI/store/atta\n chments\n This session hasn't worked here before. Is this a directory you created or one\n you trust?\n Claude Code'll be able to read, edit, and execute files here. Its skills,\n commands, and agents load and can run commands, and so can the git settings of\n its repository. Your answer holds for this session.\n Security guide\n ❯ No, exit\n   Yes, add it\n Enter to confirm · Esc to cancel\n";
+    const ADD_DIR_ON_YES: &str = "\n────────────────────────────────────────────────────────────────────────────────\n Adding a new directory:\n /private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpz76MtI/store/atta\n chments\n This session hasn't worked here before. Is this a directory you created or one\n you trust?\n Claude Code'll be able to read, edit, and execute files here. Its skills,\n commands, and agents load and can run commands, and so can the git settings of\n its repository. Your answer holds for this session.\n Security guide\n   No, exit\n ❯ Yes, add it\n Enter to confirm · Esc to cancel\n";
+
+    #[test]
+    fn add_dir_dialog_is_a_trust_prompt() {
+        assert_eq!(startup_state(ADD_DIR_ON_NO, false), Startup::TrustPrompt);
+        assert_eq!(startup_state(ADD_DIR_ON_YES, false), Startup::TrustPrompt);
+        assert_eq!(startup_state(ADD_DIR_ON_NO, true), Startup::Ready);
+    }
+
+    #[test]
+    fn add_dir_dialog_is_answered_only_when_stable() {
+        assert_eq!(trust_key(ADD_DIR_ON_NO, Some(ADD_DIR_ON_NO)), Some("Down"));
+        assert_eq!(
+            trust_key(ADD_DIR_ON_YES, Some(ADD_DIR_ON_YES)),
+            Some("Enter")
+        );
+        assert_eq!(trust_key(ADD_DIR_ON_NO, None), None);
+        assert_eq!(trust_key(ADD_DIR_ON_NO, Some(ADD_DIR_ON_YES)), None);
     }
 }
