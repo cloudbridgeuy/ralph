@@ -1,11 +1,12 @@
 use super::{
-    branch_exists, check, clear_marker, exclude, git_value, guard, locate_worktree, repo_root,
+    check, clear_marker, exclude, git_value, guard, locate_worktree, repo_root,
     resolve_base_branch, run, Workers,
 };
 use crate::chat::memory::usage_path;
 use crate::chat::skills::read_claude_config;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
+use crate::git_probe::branch_exists;
 use crate::outcome_log;
 use crate::paths::absolute_from;
 use crate::private_file::{check_path, write_private, write_worker_config};

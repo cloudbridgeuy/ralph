@@ -1,3 +1,4 @@
+use crate::git_probe::branch_open;
 use crate::schedule_store::ScheduleStore;
 use crate::warn::warn_if_err;
 use crate::worker_mcp::Inbox;
@@ -7,7 +8,7 @@ use ralph_core::schedule_repeat::{
     open_branch_decision, plan_rearm, plan_worker_rearm, repeat_stopped_text, OpenBranch,
 };
 use ralph_core::schedule_worker::{chat_report, worker_id, WorkerEnd};
-use ralph_core::worker::{branch_name, worktree_for_branch};
+use ralph_core::worker::branch_name;
 use std::path::Path;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -68,33 +69,6 @@ pub fn finish_worker(
             inbox.post(&report, 0),
             format!("posting schedule {}", task.id),
         );
-    }
-}
-
-fn git_output(repo: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
-    std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-}
-
-fn branch_open(repo: &Path, branch: &str) -> bool {
-    let ref_name = format!("refs/heads/{branch}");
-    let probe = git_output(repo, &["rev-parse", "--verify", "--quiet", &ref_name]);
-    let listing = git_output(repo, &["worktree", "list", "--porcelain"]);
-    match (probe, listing) {
-        (Ok(probe), Ok(listing)) => {
-            probe.status.success()
-                || worktree_for_branch(&String::from_utf8_lossy(&listing.stdout), branch).is_some()
-        }
-        (Err(error), _) | (_, Err(error)) => {
-            crate::warn::warn(format!("checking branch {branch}: {error}"));
-            false
-        }
     }
 }
 

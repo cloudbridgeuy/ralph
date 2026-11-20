@@ -1,11 +1,12 @@
 use super::{
-    branch_exists, clear_marker, locate_worktree, repo_root, resolve_base_branch, run, stdout_line,
+    clear_marker, locate_worktree, repo_root, resolve_base_branch, run, stdout_line,
     unset_legacy_base, Workers,
 };
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
 use crate::cursor_sweep::sweep_worker_server;
+use crate::git_probe::branch_exists;
 use crate::outcome_log;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;

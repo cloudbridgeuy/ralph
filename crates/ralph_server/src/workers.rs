@@ -657,18 +657,6 @@ fn unset_legacy_base(repo: &Path, id: &str) -> Option<String> {
     legacy_base_unset_warning(id, exit_code)
 }
 
-fn branch_exists(repo: &Path, branch: &str) -> io::Result<bool> {
-    Ok(Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", "--verify", "--quiet"])
-        .arg(format!("refs/heads/{branch}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .status()?
-        .success())
-}
-
 fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {
     let common = stdout_line(run(Command::new("git").arg("-C").arg(repo).args([
         "rev-parse",
