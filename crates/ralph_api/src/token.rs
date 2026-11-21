@@ -24,6 +24,11 @@ impl Token {
         Ok(Token(hex(&bytes)))
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_value(value: &str) -> Token {
+        Token(value.to_string())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
