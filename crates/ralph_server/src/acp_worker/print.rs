@@ -92,6 +92,12 @@ fn on_result(state: TurnProc) -> TurnProc {
     }
 }
 
+fn begin_result_grace(turns: &Mutex<Turns>, proc: &Mutex<TurnProc>) {
+    locked(turns).enter_grace();
+    let mut state = locked(proc);
+    *state = on_result(*state);
+}
+
 fn on_release() -> TurnProc {
     TurnProc::Idle
 }
@@ -387,8 +393,7 @@ impl Shared {
                     result = Some(end);
                     spend = usage;
                     result_at = Some(Instant::now());
-                    let mut state = locked(&self.proc);
-                    *state = on_result(*state);
+                    begin_result_grace(&self.turns, &self.proc);
                 }
             }
         }
@@ -597,7 +602,7 @@ fn write_mcp_config(id: &str, request: &SpawnRequest, files: &HandoffFiles) -> R
 mod tests {
     use super::*;
 
-    use ralph_core::worker::Report;
+    use ralph_core::worker::{InterruptOutcome, Report};
     use ralph_core::worker_check::last_reports;
 
     const GRACE: Duration = Duration::from_millis(1500);
@@ -916,5 +921,59 @@ mod tests {
             },
             GROUP
         ));
+    }
+
+    #[test]
+    fn second_interrupt_after_begin_result_grace_is_dropped() {
+        let turns = Mutex::new(Turns::default());
+        let proc = Mutex::new(TurnProc::Idle);
+        let started = {
+            let mut t = locked(&turns);
+            let actions = t.accept("task".into());
+            bind_started_turn(&mut t, actions, 0)
+        };
+        assert!(started.contains(&Action::Start("task".into())));
+        let (running, held) = on_spawned(begin_start(), GROUP);
+        assert_eq!(held, None);
+        *locked(&proc) = running;
+
+        let first = locked(&turns).interrupt("first".into(), "e1".into());
+        assert!(first.iter().any(|a| matches!(a, Action::Interrupt(_))));
+        let (next, plan) = on_interrupt(*locked(&proc));
+        *locked(&proc) = next;
+        assert_eq!(plan, InterruptPlan::Send(GROUP));
+
+        begin_result_grace(&turns, &proc);
+        assert_eq!(
+            *locked(&proc),
+            TurnProc::Grace {
+                pgid: PGID,
+                turn: TURN
+            }
+        );
+
+        let second = locked(&turns).interrupt("second".into(), "e2".into());
+        assert_eq!(
+            second,
+            [Action::InterruptResult {
+                entry: "e2".into(),
+                outcome: InterruptOutcome::Dropped,
+            }]
+        );
+
+        *locked(&proc) = on_release();
+        let ended: Vec<Action> = print_turn_signals(false, TurnEnd::Succeeded)
+            .into_iter()
+            .flat_map(|signal| locked(&turns).signal(signal, false))
+            .collect();
+        let results: Vec<(&str, InterruptOutcome)> = ended
+            .iter()
+            .filter_map(|a| match a {
+                Action::InterruptResult { entry, outcome } => Some((entry.as_str(), *outcome)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results, [("e1", InterruptOutcome::Sent)]);
+        assert!(ended.contains(&Action::Start("second".into())));
     }
 }
