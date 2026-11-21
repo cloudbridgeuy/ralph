@@ -42,6 +42,17 @@ fn bearer_token() {
 }
 
 #[test]
+fn bearer_scheme_is_case_insensitive() {
+    health_with(
+        "bearer_lowercase_scheme",
+        "GET",
+        |_| "/api/health".into(),
+        Host::Own,
+        |t| header("Authorization", format!("bearer {t}")),
+    );
+}
+
+#[test]
 fn query_token() {
     health_with(
         "query_token",

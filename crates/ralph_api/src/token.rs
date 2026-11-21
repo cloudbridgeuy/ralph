@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 
 const TOKEN_BYTES: usize = 16;
-const BEARER_PREFIX: &str = "Bearer ";
+const BEARER_SCHEME: &str = "Bearer";
 const QUERY_KEY: &str = "token";
 const COOKIE_NAME: &str = "ralph_token";
 
@@ -57,8 +57,10 @@ fn non_empty(value: &str) -> Option<&str> {
 }
 
 fn from_bearer(authorization: Option<&str>) -> Option<&str> {
-    authorization
-        .and_then(|value| value.strip_prefix(BEARER_PREFIX))
+    let (scheme, value) = authorization?.trim().split_once(' ')?;
+    scheme
+        .eq_ignore_ascii_case(BEARER_SCHEME)
+        .then_some(value.trim())
         .and_then(non_empty)
 }
 
@@ -188,5 +190,33 @@ mod tests {
         );
         assert_eq!(extract_token(None, "xtoken=a", None), None);
         assert_eq!(extract_token(Some("Bearer "), "", None), None);
+    }
+
+    #[test]
+    fn extract_bearer_scheme_is_case_insensitive() {
+        assert_eq!(
+            extract_token(Some("bearer t0k"), "", None),
+            Some("t0k".to_string())
+        );
+        assert_eq!(
+            extract_token(Some("BEARER t0k"), "", None),
+            Some("t0k".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_bearer_value_is_trimmed() {
+        assert_eq!(
+            extract_token(Some("Bearer   t0k  "), "", None),
+            Some("t0k".to_string())
+        );
+        assert_eq!(extract_token(Some("Bearer    "), "", None), None);
+    }
+
+    #[test]
+    fn extract_query_is_not_url_decoded() {
+        let extracted = extract_token(None, "token=a%62c", None).unwrap();
+        assert_eq!(extracted, "a%62c");
+        assert!(!token("abc").matches(&extracted));
     }
 }
