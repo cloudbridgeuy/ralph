@@ -75,6 +75,15 @@ mod tests {
     }
 
     #[test]
+    fn web_section_is_validated() {
+        assert!(check("[web]\nansi_dark = [\"#000\"]\n", "c").is_err());
+        assert!(check("[web]\nfont = \"Geist Mono, monospace\"\n", "c")
+            .unwrap()
+            .errors
+            .is_empty());
+    }
+
+    #[test]
     fn claude_shell_accepts_bash_and_rejects_unknown() {
         assert_eq!(
             errors("[claude]\nshell = \"fish\"\n"),

@@ -32,6 +32,7 @@ mod reset_limits_tests;
 mod resume_summary_tests;
 pub mod theme;
 mod usage;
+mod web;
 mod wire;
 mod workers;
 pub use agy::AgySection;
@@ -48,6 +49,7 @@ pub use permissions::{
     CHAT_DEFAULT_PERMISSION_MODE,
 };
 pub use usage::{configured_ledger, ledger_path, UsageSection};
+pub use web::WebSection;
 pub use wire::WireSection;
 pub use workers::{PrProvider, WorkersSection};
 
@@ -138,6 +140,9 @@ pub enum ConfigError {
 
     #[error("Invalid config at {path}: {message}")]
     InvalidUsage { path: String, message: String },
+
+    #[error("Invalid config at {path}: {message}")]
+    InvalidWeb { path: String, message: String },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -183,6 +188,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub usage: UsageSection,
+
+    #[serde(default)]
+    pub web: WebSection,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -595,6 +603,12 @@ impl AppConfig {
         self.usage
             .validate()
             .map_err(|message| ConfigError::InvalidUsage {
+                path: path.to_string(),
+                message,
+            })?;
+        self.web
+            .validate()
+            .map_err(|message| ConfigError::InvalidWeb {
                 path: path.to_string(),
                 message,
             })
