@@ -1,5 +1,7 @@
 use crate::chat::ResetLimits;
+use crate::chat_backend::{cache_ttl_secs, Caps};
 use crate::chat_thread::ThreadName;
+use crate::worker::Support;
 use crate::worker_costs::window::instant;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,15 +83,29 @@ pub struct ProcessEnv {
     pub live: bool,
     pub limits: ResetLimits,
     pub shift: Option<usize>,
+    pub caps: Caps,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ctx {
+    Hidden,
+    Unknown,
+    Percent(u64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cache {
+    Hidden,
+    Cold,
+    Left { minutes: u64, write_heavy: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessCell {
     pub turn: u64,
     pub max_turns: u64,
-    pub ctx_percent: Option<u64>,
-    pub cache_minutes: Option<u64>,
-    pub write_heavy: bool,
+    pub ctx: Ctx,
+    pub cache: Cache,
     pub reset: Option<ResetReason>,
     pub shift: Option<usize>,
     pub cost: Option<SessionCost>,
@@ -288,10 +304,11 @@ pub fn cache_left_minutes(
     last_ping: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
     live: bool,
+    ttl_secs: i64,
 ) -> Option<u64> {
     let touched = request_at.max(last_ping).filter(|_| live)?;
     let elapsed = (now - touched).num_seconds();
-    let left = u64::try_from(CACHE_TTL_SECS - elapsed.max(0)).ok()?;
+    let left = u64::try_from(ttl_secs - elapsed.max(0)).ok()?;
     (left > 0).then(|| left.div_ceil(60))
 }
 
@@ -316,50 +333,89 @@ pub fn process_cell(usage: Option<&ProcessUsage>, env: &ProcessEnv) -> ProcessCe
     ProcessCell {
         turn: live.map_or(0, |usage| usage.process_turn),
         max_turns: env.limits.turns,
-        ctx_percent: live
-            .and_then(|usage| usage.context_tokens)
-            .and_then(|tokens| (tokens * 100).checked_div(env.limits.tokens)),
-        cache_minutes: usage.and_then(|usage| {
-            cache_left_minutes(usage.request_at, env.last_ping, env.now, env.live)
-        }),
-        write_heavy: usage.is_some_and(|usage| usage.write_heavy),
+        ctx: ctx_cell(live, env),
+        cache: cache_cell(usage, env),
         reset: live.and_then(|usage| usage.reset),
         shift: env.shift,
         cost: usage.and_then(|usage| usage.cost),
     }
 }
 
-fn percent_text(cell: &ProcessCell) -> String {
-    cell.ctx_percent
-        .map_or(MISSING.to_string(), |percent| format!("{percent}%"))
+fn ctx_cell(live: Option<&ProcessUsage>, env: &ProcessEnv) -> Ctx {
+    if env.caps.context_tokens == Support::None {
+        return Ctx::Hidden;
+    }
+    live.and_then(|usage| usage.context_tokens)
+        .and_then(|tokens| (tokens * 100).checked_div(env.limits.tokens))
+        .map_or(Ctx::Unknown, Ctx::Percent)
 }
 
-fn cache_text(cell: &ProcessCell) -> String {
-    match cell.cache_minutes {
-        Some(minutes) if cell.write_heavy => format!("{minutes}m!"),
-        Some(minutes) => format!("{minutes}m"),
-        None => "cold".to_string(),
+fn cache_cell(usage: Option<&ProcessUsage>, env: &ProcessEnv) -> Cache {
+    let Some(ttl_secs) = cache_ttl_secs(&env.caps) else {
+        return Cache::Hidden;
+    };
+    usage
+        .and_then(|usage| {
+            let minutes =
+                cache_left_minutes(usage.request_at, env.last_ping, env.now, env.live, ttl_secs)?;
+            Some(Cache::Left {
+                minutes,
+                write_heavy: usage.write_heavy && env.caps.cache_tokens != Support::None,
+            })
+        })
+        .unwrap_or(Cache::Cold)
+}
+
+fn percent_text(ctx: Ctx) -> Option<String> {
+    match ctx {
+        Ctx::Hidden => None,
+        Ctx::Unknown => Some(MISSING.to_string()),
+        Ctx::Percent(percent) => Some(format!("{percent}%")),
     }
+}
+
+fn cache_text(cache: Cache) -> Option<String> {
+    match cache {
+        Cache::Hidden => None,
+        Cache::Cold => Some("cold".to_string()),
+        Cache::Left {
+            minutes,
+            write_heavy: true,
+        } => Some(format!("{minutes}m!")),
+        Cache::Left { minutes, .. } => Some(format!("{minutes}m")),
+    }
+}
+
+fn joined(separator: &str, parts: impl IntoIterator<Item = Option<String>>) -> String {
+    parts
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
 pub fn process_variants(cell: &ProcessCell) -> Vec<String> {
     let turns = format!("{}/{}", cell.turn, cell.max_turns);
-    let percent = percent_text(cell);
-    let cache = cache_text(cell);
+    let percent = percent_text(cell.ctx);
+    let cache = cache_text(cell.cache);
     let prefix = cell.reset.map_or(String::new(), |reason| {
         format!("↻ {}{SEPARATOR}", reason.label())
     });
-    let ctx = cell
-        .ctx_percent
-        .map_or(format!("ctx {MISSING}"), |_| format!("ctx {percent}"));
-    let shift = cell.shift.map_or(String::new(), |shift| {
-        format!("{SEPARATOR}shift ~{shift} msg")
-    });
+    let head = Some(format!("{prefix}T{turns}"));
+    let shift = cell.shift.map(|shift| format!("shift ~{shift} msg"));
     vec![
-        format!("{prefix}T{turns}{SEPARATOR}{ctx}{SEPARATOR}cache {cache}{shift}"),
-        format!("{prefix}T{turns}{SEPARATOR}{percent}{SEPARATOR}{cache}"),
-        format!("{turns} {percent} {cache}"),
-        cache,
+        joined(
+            SEPARATOR,
+            [
+                head.clone(),
+                percent.as_ref().map(|percent| format!("ctx {percent}")),
+                cache.as_ref().map(|cache| format!("cache {cache}")),
+                shift,
+            ],
+        ),
+        joined(SEPARATOR, [head, percent.clone(), cache.clone()]),
+        joined(" ", [Some(turns.clone()), percent, cache.clone()]),
+        cache.unwrap_or(turns),
     ]
 }
 

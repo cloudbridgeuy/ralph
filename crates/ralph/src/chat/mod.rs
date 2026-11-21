@@ -268,6 +268,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         identity: Arc::clone(&turn.identity),
         run: run.clone(),
         store: usage_store(&store_dir),
+        caps: turn.backend.capabilities(),
     });
     let headless = watch_headless(monitor.store_dir.clone());
     watch_input(

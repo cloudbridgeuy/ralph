@@ -1,4 +1,5 @@
 use super::*;
+use crate::chat_backend::CLAUDE;
 
 const LIMITS: ResetLimits = ResetLimits {
     turns: 30,
@@ -58,6 +59,7 @@ fn env(live: bool, shift: Option<usize>) -> ProcessEnv {
         live,
         limits: LIMITS,
         shift,
+        caps: CLAUDE,
     }
 }
 
@@ -65,9 +67,11 @@ fn cell() -> ProcessCell {
     ProcessCell {
         turn: 12,
         max_turns: 30,
-        ctx_percent: Some(62),
-        cache_minutes: Some(41),
-        write_heavy: true,
+        ctx: Ctx::Percent(62),
+        cache: Cache::Left {
+            minutes: 41,
+            write_heavy: true,
+        },
         reset: None,
         shift: Some(9),
         cost: None,
@@ -504,7 +508,7 @@ fn a_chunk_without_a_newline_consumes_nothing() {
 #[test]
 fn cache_minutes_follow_the_one_hour_window() {
     let at = Some(time(0));
-    let left = |elapsed: i64| cache_left_minutes(at, None, time(elapsed), true);
+    let left = |elapsed: i64| cache_left_minutes(at, None, time(elapsed), true, CACHE_TTL_SECS);
     assert_eq!(left(0), Some(60));
     assert_eq!(left(1), Some(60));
     assert_eq!(left(60), Some(59));
@@ -516,13 +520,16 @@ fn cache_minutes_follow_the_one_hour_window() {
 
 #[test]
 fn cache_is_cold_without_a_request_or_a_live_process() {
-    assert_eq!(cache_left_minutes(None, None, time(1), true), None);
     assert_eq!(
-        cache_left_minutes(Some(time(0)), None, time(1), false),
+        cache_left_minutes(None, None, time(1), true, CACHE_TTL_SECS),
         None
     );
     assert_eq!(
-        cache_left_minutes(None, Some(time(0)), time(3600), true),
+        cache_left_minutes(Some(time(0)), None, time(1), false, CACHE_TTL_SECS),
+        None
+    );
+    assert_eq!(
+        cache_left_minutes(None, Some(time(0)), time(3600), true, CACHE_TTL_SECS),
         None
     );
 }
@@ -530,7 +537,13 @@ fn cache_is_cold_without_a_request_or_a_live_process() {
 #[test]
 fn cache_counts_from_the_later_of_the_reply_and_the_ping() {
     let left = |request: Option<i64>, ping: Option<i64>, live| {
-        cache_left_minutes(request.map(time), ping.map(time), time(3000), live)
+        cache_left_minutes(
+            request.map(time),
+            ping.map(time),
+            time(3000),
+            live,
+            CACHE_TTL_SECS,
+        )
     };
     assert_eq!(left(Some(0), Some(2400), true), Some(50));
     assert_eq!(left(Some(2400), Some(0), true), Some(50));
@@ -603,8 +616,8 @@ fn process_cell_without_a_live_process_is_cold_at_turn_zero() {
     };
     let cell = process_cell(Some(&data), &env(false, Some(9)));
     assert_eq!(
-        (cell.turn, cell.ctx_percent, cell.cache_minutes, cell.reset),
-        (0, None, None, None)
+        (cell.turn, cell.ctx, cell.cache, cell.reset),
+        (0, Ctx::Unknown, Cache::Cold, None)
     );
     assert_eq!(cell.max_turns, 30);
     assert_eq!(cell.shift, Some(9));
@@ -619,10 +632,16 @@ fn process_cell_for_a_live_process_carries_the_display_data() {
     };
     let cell = process_cell(Some(&data), &env(true, None));
     assert_eq!(
-        (cell.turn, cell.ctx_percent, cell.cache_minutes),
-        (12, Some(62), Some(30))
+        (cell.turn, cell.ctx, cell.cache),
+        (
+            12,
+            Ctx::Percent(62),
+            Cache::Left {
+                minutes: 30,
+                write_heavy: true
+            }
+        )
     );
-    assert!(cell.write_heavy);
     assert_eq!(cell.reset, Some(ResetReason::Tokens));
     assert_eq!(cell.shift, None);
 }
@@ -631,8 +650,8 @@ fn process_cell_for_a_live_process_carries_the_display_data() {
 fn process_cell_without_usage_or_a_token_limit_has_no_context() {
     let cell = process_cell(None, &env(true, None));
     assert_eq!(
-        (cell.turn, cell.ctx_percent, cell.cache_minutes),
-        (0, None, None)
+        (cell.turn, cell.ctx, cell.cache),
+        (0, Ctx::Unknown, Cache::Cold)
     );
     let data = usage(Some(time(0)));
     let unlimited = ProcessEnv {
@@ -642,7 +661,7 @@ fn process_cell_without_usage_or_a_token_limit_has_no_context() {
         },
         ..env(true, None)
     };
-    assert_eq!(process_cell(Some(&data), &unlimited).ctx_percent, None);
+    assert_eq!(process_cell(Some(&data), &unlimited).ctx, Ctx::Unknown);
 }
 
 #[test]
@@ -661,7 +680,10 @@ fn process_variants_run_long_to_short() {
 #[test]
 fn process_variants_drop_the_shift_and_the_mark_when_absent() {
     let plain = ProcessCell {
-        write_heavy: false,
+        cache: Cache::Left {
+            minutes: 41,
+            write_heavy: false,
+        },
         shift: None,
         ..cell()
     };
@@ -680,9 +702,8 @@ fn process_variants_drop_the_shift_and_the_mark_when_absent() {
 fn process_variants_show_dashes_and_cold_without_a_process() {
     let idle = ProcessCell {
         turn: 0,
-        ctx_percent: None,
-        cache_minutes: None,
-        write_heavy: true,
+        ctx: Ctx::Unknown,
+        cache: Cache::Cold,
         shift: None,
         ..cell()
     };
@@ -730,4 +751,60 @@ fn cost_variants_show_the_delta_first() {
         ..cost
     };
     assert_eq!(cost_variants(&flat), ["$4.12"]);
+}
+
+fn missing(edit: impl FnOnce(&mut Caps)) -> ProcessEnv {
+    let mut caps = CLAUDE;
+    edit(&mut caps);
+    ProcessEnv {
+        caps,
+        ..env(true, Some(9))
+    }
+}
+
+#[test]
+fn missing_context_tokens_hide_the_context_from_every_variant() {
+    let env = missing(|caps| caps.context_tokens = Support::None);
+    let cell = process_cell(Some(&usage(Some(time(-1800)))), &env);
+    assert_eq!(cell.ctx, Ctx::Hidden);
+    for variant in process_variants(&cell) {
+        assert!(!variant.contains("ctx") && !variant.contains('–') && !variant.contains('%'));
+    }
+}
+
+#[test]
+fn missing_cache_ttl_hides_the_cache_from_every_variant() {
+    let env = missing(|caps| caps.cache_ttl = Support::None);
+    let cell = process_cell(Some(&usage(Some(time(-1800)))), &env);
+    assert_eq!(cell.cache, Cache::Hidden);
+    for variant in process_variants(&cell) {
+        assert!(!variant.contains("cache") && !variant.contains("cold"));
+    }
+}
+
+#[test]
+fn missing_cache_tokens_never_mark_a_write_heavy_turn() {
+    let env = missing(|caps| caps.cache_tokens = Support::None);
+    let heavy = ProcessUsage {
+        write_heavy: true,
+        ..usage(Some(time(-1800)))
+    };
+    let cell = process_cell(Some(&heavy), &env);
+    assert_eq!(
+        cell.cache,
+        Cache::Left {
+            minutes: 30,
+            write_heavy: false
+        }
+    );
+}
+
+#[test]
+fn unpriced_rows_leave_the_session_cost_absent() {
+    let row = format!(
+        r#"{{"at":"{}","kind":"turn","process_turn":1,"run":"{RUN}"}}"#,
+        time(0).to_rfc3339()
+    );
+    let usage = process_usage(&session_rows(&lines(&[row]), RUN)).unwrap();
+    assert_eq!(usage.cost, None);
 }

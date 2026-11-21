@@ -952,6 +952,19 @@ A codex worker appends the same kind of rows with `harness` `codex` and `session
 - Result of GUZ-1549 (is keepalive profitable): `ralph usage cache` on the ledger from 2026-10-28 to 2026-11-17 (read 2026-11-17, ledger still growing) showed 126 pings in 48 idle periods, $3.04 ping cost, next turn warm in 44, cold in 2, no next turn in 2. Cache misses were 125 in 2398 turns: reset 124, ttl expiry 1, unexplained 0, new run 0. The saving estimate (est.) was $18.11 net of the $3.04 ping cost, over 27 periods by the rule above (write $8.00/MTok at the 1h tier, read $0.20/MTok, claude-opus-5-5). This is an estimate, not a measurement. On this ledger the estimated saving is larger than the ping cost.
 - Not covered: the legacy per-store ledger. Keepalive `ping` rows are counted under `main`.
 
+## Backends and capabilities
+
+Chat runs a turn through the `ChatBackend` trait (`ralph_server/src/chat/backend.rs`). Each backend reports its `Caps` (`ralph_core::chat_backend`). `Caps` names the harness and gives a `Support` for each capability: `cost`, `cache_tokens`, `cache_ttl`, `context_tokens`, `cancel`, `mcp_tools`, `system_prompt` and `tool_blocks`. `Support` is the same type the worker spec uses (`worker/headless.rs`): `Full`, `Partial(note)` or `None`. `None` means Missing.
+
+`ClaudeBackend` returns `CLAUDE`, which is `Full` for every capability. Claude chat does not change.
+
+A feature that assumes Claude reads `Caps` through a pure function in `ralph_core`. When a capability is Missing, the feature hides or neutralises its output. It never errors.
+
+- Status bar (`process_cell`, `process_variants`): Missing `context_tokens` hides the `ctx` part. Missing `cache_ttl` hides the cache part. Missing `cache_tokens` never marks the cache `!` (write heavy). `cache_ttl_secs(&Caps)` gives the cache window, or `None`.
+- Keepalive (`keepalive_action`): the input carries `cache_ttl_secs`. `None` gives `Skip`. `Some(t)` is the cold-cache limit in place of one hour.
+- Usage rows (`usage_record`, `subagent_records`): `harness` comes from `Caps.harness`. Missing `cost` leaves `cost_usd` and `cost_source` empty, also when the harness reported a cost. Readers of stored rows (worker costs, cache saving) still compare `harness` with `claude`.
+- Limit: only Claude has a backend today. The other capabilities (`cancel`, `mcp_tools`, `system_prompt`, `tool_blocks`) are in `Caps` but no feature reads them yet.
+
 ## Out of scope (v1)
 
 - Mid-turn message injection.
