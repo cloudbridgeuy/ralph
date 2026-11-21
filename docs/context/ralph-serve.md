@@ -13,6 +13,8 @@
 | Supervisor | `crates/core/src/serve_supervisor.rs` | pure state machine: `Supervisor::start()`, `step()`, `Input`, `Effect` |
 | Socket path | `crates/core/src/chat_socket.rs` | `serve_socket_path()` |
 | Socket | `crates/ralph_server/src/chat/serve_socket.rs` | `ServeSocket::bind()`, `accept()` with the peer uid check |
+| CLI arg | `crates/ralph/src/cli/mod.rs` | hidden `ralph chat --connect <SOCK>` |
+| Client | `crates/ralph/src/chat/remote.rs` | `RemoteSession` (`SessionPort` over the socket), `run()`, `thread_request()`, `status_summary()` |
 | Frames | `crates/ralph_server/src/chat/serve_proto.rs` | `Envelope`, `ClientMsg`, `ThreadCmd`, `ServerMsg`, `hello_reply()` |
 
 ## Store
@@ -41,9 +43,11 @@ One JSON frame per line: `{"v":1,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYT
 | `{"type":"thread","op":"merge","name":"n","view":false}` | `done` |
 | `{"type":"thread","op":"open","name":"n","model":null\|"m","auto":null\|"merge"\|"drop"}` | `done` |
 | `{"type":"thread","op":"switch","name":"n"}` and `{"type":"thread","op":"main"}` | `done` with `attached to <key>` |
+| `{"type":"cancel","thread":null\|"name"}` | `{"type":"done","message":"cancelled <key>"}` |
+| `{"type":"status","thread":null\|"name"}` | `{"type":"status","report":{"state":"Idle","msg":null},"unread":0,"blocked":["id"],"turns":0}` |
 | `{"type":"shutdown"}` after hello | none; `serve` stops |
 
-`send` with `"thread":null` goes to the connection's attached session. It is main until `switch` or `main`. The attached key belongs to the connection only.
+`send`, `cancel` and `status` with `"thread":null` go to the connection's attached session. It is main until `switch` or `main`. The attached key belongs to the connection only.
 
 Every reply carries the request `id`. A failure replies `{"type":"error","message":"..."}`.
 
@@ -52,11 +56,14 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 | Error | Connection |
 |---|---|
 | frame before `hello`, bad frame, wrong `v`, `hello` with another `proto` | closed |
-| session busy, session not open, draining, invalid thread name, a failed thread op | stays open |
+| session busy, session not open, session not running a turn (`cancel`), draining, invalid thread name, a failed thread op | stays open |
 
 ## Turns
 
 - A session runs one turn at a time. A `send` to a busy session gets `error` `<key> is busy`. A `send` to a session that is not open gets `<key> is not open`.
+- `cancel` stops the turn of a session key. Send it on another connection: the sender is blocked while its own turn runs. A `cancel` to an idle session gets `<key> is not running a turn`.
+- Each turn gets a fresh cancel token. A `cancel` ends one turn only.
+- `status` is computed on request. Nothing is pushed. `report` is the prompt-phase program status. `blocked` is the sorted ids of workers waiting on a permission.
 - A turn streams on the connection that sent it. Other connections do not see its events.
 - `SendIt` events are dropped. `/send-it` is not served.
 
@@ -78,3 +85,25 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 - Serve sessions have no nap or host loop, no keepalive, no headless watchers and no attachments dir.
 - `NOTICE_SINK` and worker ownership (`own_instance`) are process-wide. All sessions share them. Per-session ownership is a follow-up ticket.
 - There is no live end-to-end test. Unit tests cover the supervisor, the frames and the routing.
+
+## Client (`ralph chat --connect <SOCK>`, hidden)
+
+Served:
+
+- Plain text: a `send` to the attached session.
+- `/thread switch|main|open [--model]|pull|park|revive|drop|merge [--view]`: one `thread` frame. The reply text is printed. The attached thread changes only after a `done` reply.
+- Ctrl-C: `cancel` for the attached key, sent on a second connection.
+- Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
+- Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
+
+Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.
+
+Errors:
+
+- An `error` frame (`main is busy`, `ralph serve is shutting down`) is printed. The prompt returns.
+- A closed connection or I/O error ends the client.
+
+Limits:
+
+- No re-bind of a running turn. A re-attach during a turn gets `<key> is busy`. That turn's events are lost.
+- A re-attach always goes to main.

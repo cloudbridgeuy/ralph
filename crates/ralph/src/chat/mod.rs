@@ -17,6 +17,7 @@ mod prompt;
 mod queue;
 mod recap;
 mod refusal;
+mod remote;
 mod rerender;
 mod route;
 mod schedule;
@@ -99,6 +100,9 @@ pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
 pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
 
 pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
+    if let Some(socket) = &args.connect {
+        return remote::run(socket);
+    }
     if let Some(ChatCommand::History(history)) = args.command {
         print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
         return Ok(chat_exit(LoopExit::History));

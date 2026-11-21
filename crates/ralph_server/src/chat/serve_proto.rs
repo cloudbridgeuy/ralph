@@ -1,7 +1,9 @@
 use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::{decode_line, encode_line, MAX_FRAME_BYTES};
+use ralph_core::chat_status::Status;
 use ralph_core::chat_thread::{AutoMode, ThreadName};
 use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
+use ralph_core::program_status::{report_for, Phase, Report};
 use ralph_core::turn_event::TurnEvent;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -87,6 +89,12 @@ pub enum ClientMsg {
         thread: Option<String>,
         text: String,
     },
+    Cancel {
+        thread: Option<String>,
+    },
+    Status {
+        thread: Option<String>,
+    },
     Thread(ThreadCmd),
     Shutdown,
 }
@@ -94,11 +102,41 @@ pub enum ClientMsg {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
-    Error { message: String },
-    Hello { proto: u32 },
-    Turn { event: TurnEvent },
+    Error {
+        message: String,
+    },
+    Hello {
+        proto: u32,
+    },
+    Turn {
+        event: TurnEvent,
+    },
     TurnDone,
-    Done { message: String },
+    Done {
+        message: String,
+    },
+    Status {
+        report: Report,
+        unread: usize,
+        blocked: Vec<String>,
+        turns: u64,
+    },
+}
+
+pub fn status_frame(status: &Status, turns: u64) -> ServerMsg {
+    let mut blocked: Vec<String> = status
+        .workers
+        .iter()
+        .filter(|worker| worker.is_blocked())
+        .map(|worker| worker.id.clone())
+        .collect();
+    blocked.sort();
+    ServerMsg::Status {
+        report: report_for(Phase::Prompt, status),
+        unread: status.unread,
+        blocked,
+        turns,
+    }
 }
 
 pub fn hello_reply(proto: u32) -> ServerMsg {
@@ -136,6 +174,8 @@ pub fn decode_frame<B: DeserializeOwned>(line: &str) -> Result<Envelope<B>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::chat_status::WorkerState;
+    use ralph_core::program_status::{Kind, State};
     use ralph_core::turn_event::Wait;
 
     fn server_messages() -> Vec<ServerMsg> {
@@ -153,6 +193,15 @@ mod tests {
             ServerMsg::TurnDone,
             ServerMsg::Done {
                 message: "ok".into(),
+            },
+            ServerMsg::Status {
+                report: Report {
+                    state: State::Blocked(Kind::Question),
+                    msg: Some("1 worker report".into()),
+                },
+                unread: 1,
+                blocked: vec!["w1".into()],
+                turns: 4,
             },
         ]
     }
@@ -172,6 +221,11 @@ mod tests {
                 name: "side".into(),
                 view: true,
             }),
+            ClientMsg::Cancel { thread: None },
+            ClientMsg::Cancel {
+                thread: Some("side".into()),
+            },
+            ClientMsg::Status { thread: None },
             ClientMsg::Shutdown,
         ]
     }
@@ -201,6 +255,45 @@ mod tests {
                 serde_json::to_value(&msg).unwrap()
             );
         }
+    }
+
+    fn worker(id: &str, state: &str) -> WorkerState {
+        WorkerState {
+            id: id.into(),
+            state: state.into(),
+        }
+    }
+
+    #[test]
+    fn status_frame_reports_sorted_blocked_workers_and_unread() {
+        let status = Status {
+            unread: 2,
+            workers: vec![
+                worker("b", "permission"),
+                worker("c", "running"),
+                worker("a", "permission"),
+            ],
+            ..Status::default()
+        };
+        let line = encode_frame(5, &status_frame(&status, 3));
+        assert_eq!(
+            line.trim_end(),
+            r#"{"v":1,"id":5,"body":{"type":"status","report":{"state":{"Blocked":"Question"},"msg":"2 worker reports"},"unread":2,"blocked":["a","b"],"turns":3}}"#
+        );
+    }
+
+    #[test]
+    fn a_cancel_travels_under_the_cancel_type() {
+        let line = encode_frame(
+            4,
+            &ClientMsg::Cancel {
+                thread: Some("side".into()),
+            },
+        );
+        assert_eq!(
+            line.trim_end(),
+            r#"{"v":1,"id":4,"body":{"type":"cancel","thread":"side"}}"#
+        );
     }
 
     #[test]

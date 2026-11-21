@@ -13,6 +13,7 @@ pub enum Input {
     Hello { proto: u32 },
     Stop,
     Send(SessionKey),
+    Cancel(SessionKey),
     TurnDone(SessionKey),
     Thread(ThreadOp),
     Open(SessionKey),
@@ -63,6 +64,18 @@ impl Supervisor {
                 vec![Effect::Refuse(format!("{key} is not open"))]
             }
             (_, Input::Send(_)) => vec![Effect::Refuse("ralph serve is shutting down".to_string())],
+            (Phase::Running, Input::Cancel(key)) if self.busy.contains(&key) => {
+                vec![Effect::Cancel(key)]
+            }
+            (Phase::Running, Input::Cancel(key)) if self.open.contains(&key) => {
+                vec![Effect::Refuse(format!("{key} is not running a turn"))]
+            }
+            (Phase::Running, Input::Cancel(key)) => {
+                vec![Effect::Refuse(format!("{key} is not open"))]
+            }
+            (_, Input::Cancel(_)) => {
+                vec![Effect::Refuse("ralph serve is shutting down".to_string())]
+            }
             (Phase::Running, Input::Open(key)) if self.open.contains(&key) => {
                 vec![Effect::Refuse(format!("{key} is already open"))]
             }
@@ -346,6 +359,40 @@ mod tests {
         sup.step(Input::Stop);
         assert_eq!(
             sup.step(Input::Thread(ThreadOp::Pull(side()))),
+            vec![Effect::Refuse("ralph serve is shutting down".to_string())]
+        );
+    }
+
+    #[test]
+    fn cancel_of_a_busy_session_cancels_it() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Send(SessionKey::Main));
+        assert_eq!(
+            sup.step(Input::Cancel(SessionKey::Main)),
+            vec![Effect::Cancel(SessionKey::Main)]
+        );
+    }
+
+    #[test]
+    fn cancel_of_an_idle_or_closed_session_is_refused() {
+        let (mut sup, _) = Supervisor::start();
+        assert_eq!(
+            sup.step(Input::Cancel(SessionKey::Main)),
+            vec![Effect::Refuse("main is not running a turn".to_string())]
+        );
+        assert_eq!(
+            sup.step(Input::Cancel(SessionKey::Thread(side()))),
+            vec![Effect::Refuse("thread side is not open".to_string())]
+        );
+    }
+
+    #[test]
+    fn cancel_while_draining_is_refused() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Send(SessionKey::Main));
+        sup.step(Input::Stop);
+        assert_eq!(
+            sup.step(Input::Cancel(SessionKey::Main)),
             vec![Effect::Refuse("ralph serve is shutting down".to_string())]
         );
     }
