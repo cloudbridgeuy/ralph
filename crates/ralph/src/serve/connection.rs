@@ -31,7 +31,7 @@ enum Action {
 }
 
 pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
-    stream.set_read_timeout(read_timeout(false))?;
+    stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
     let mut greeted = false;
@@ -72,8 +72,10 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
         if closes && matches!(reply, ServerMsg::Error { .. }) {
             return Ok(());
         }
-        greeted = true;
-        writer.set_read_timeout(read_timeout(greeted))?;
+        let was = std::mem::replace(&mut greeted, true);
+        if let Some(timeout) = timeout_change(was, greeted) {
+            writer.set_read_timeout(timeout)?;
+        }
     }
     Ok(())
 }
@@ -182,8 +184,8 @@ fn closes_on_error(action: &Action) -> bool {
     )
 }
 
-fn read_timeout(greeted: bool) -> Option<Duration> {
-    (!greeted).then_some(READ_TIMEOUT)
+fn timeout_change(was: bool, now: bool) -> Option<Option<Duration>> {
+    (!was && now).then_some(None)
 }
 
 fn read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
@@ -288,9 +290,10 @@ mod tests {
     }
 
     #[test]
-    fn a_greeted_connection_has_no_read_timeout() {
-        assert_eq!(read_timeout(false), Some(READ_TIMEOUT));
-        assert_eq!(read_timeout(true), None);
+    fn the_read_timeout_changes_only_when_a_connection_is_greeted() {
+        assert_eq!(timeout_change(false, true), Some(None));
+        assert_eq!(timeout_change(true, true), None);
+        assert_eq!(timeout_change(false, false), None);
     }
 
     #[test]
