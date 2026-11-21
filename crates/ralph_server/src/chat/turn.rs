@@ -1,4 +1,5 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
+use crate::chat::backend::{ChatBackend, ChatSession};
 use crate::chat::fork::{fork_view, Fork};
 use crate::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use crate::chat::suggestion::SuggestionCell;
@@ -8,8 +9,7 @@ use crate::ledger;
 use crate::private_file::write_private;
 use crate::subprocess::spawn_detached;
 use crate::subprocess::{
-    recorded, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
-    SubprocessError,
+    recorded, OutputGate, SpinnerSubprocessConfig, StreamingSubprocessResult, SubprocessError,
 };
 use crate::timing;
 use crate::watches::locked;
@@ -146,7 +146,8 @@ pub struct Turn {
     pub custom_prompt: CustomPrompt,
     pub reply_images: ReplyImages,
     pub isolation: Isolation,
-    pub session: Arc<Mutex<Option<Session>>>,
+    pub backend: Arc<dyn ChatBackend>,
+    pub session: Arc<Mutex<Option<Box<dyn ChatSession>>>>,
     pub process_turns: AtomicU64,
     pub reset: Mutex<Option<ResetReason>>,
     pub live: Arc<AtomicBool>,
@@ -196,7 +197,7 @@ impl Turn {
         locked(&self.reset).get_or_insert(reason);
     }
 
-    fn live_or_note(&self, held: Option<Session>) -> Option<Session> {
+    fn live_or_note(&self, held: Option<Box<dyn ChatSession>>) -> Option<Box<dyn ChatSession>> {
         let mut held = held?;
         if held.is_alive() {
             return Some(held);
@@ -219,7 +220,7 @@ impl Turn {
         locked(&self.last_cost_usd).take()
     }
 
-    fn take_session(&self) -> Option<Session> {
+    fn take_session(&self) -> Option<Box<dyn ChatSession>> {
         let held = match self.session.try_lock() {
             Ok(mut slot) => slot.take(),
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().take(),
@@ -492,12 +493,12 @@ impl Turn {
 
     fn attempt(
         &self,
-        reused: Option<Session>,
+        reused: Option<Box<dyn ChatSession>>,
         pre_log_len: Option<usize>,
         input: &TurnInput,
         launch: &mut Option<Launch>,
     ) -> (
-        Option<Session>,
+        Option<Box<dyn ChatSession>>,
         Result<StreamingSubprocessResult, SubprocessError>,
         bool,
     ) {
@@ -529,9 +530,9 @@ impl Turn {
         pre_log_len: Option<usize>,
         sent: &str,
         launch: &mut Option<Launch>,
-    ) -> Result<Session, SubprocessError> {
+    ) -> Result<Box<dyn ChatSession>, SubprocessError> {
         let mut spawned = self.launch(pre_log_len, sent)?;
-        let live = Session::spawn(&spawned.config)?;
+        let live = self.backend.spawn(&spawned.config)?;
         spawned.reset = locked(&self.reset).take();
         *launch = Some(spawned);
         Ok(live)

@@ -1,6 +1,7 @@
+use crate::chat::backend::ChatSession;
 use crate::chat::memory::usage_path;
 use crate::ledger;
-use crate::subprocess::{recorded, Session, StreamingSubprocessResult};
+use crate::subprocess::{recorded, StreamingSubprocessResult};
 use crate::warn::warn_if_err;
 use crate::watches::locked;
 use chrono::{DateTime, Utc};
@@ -28,7 +29,7 @@ pub struct Keeps {
 pub struct KeepaliveWatch {
     pub limit_hours: u64,
     pub idle: Arc<AtomicBool>,
-    pub session: Arc<Mutex<Option<Session>>>,
+    pub session: Arc<Mutex<Option<Box<dyn ChatSession>>>>,
     pub live: Arc<AtomicBool>,
     pub last_turn_end: Stamp,
     pub last_ping: Stamp,
@@ -65,7 +66,7 @@ impl KeepaliveWatch {
             idle_secs: (now - turn_end).num_seconds(),
             since_activity_secs: last_activity.map_or(0, |at| (now - at).num_seconds()),
             since_attempt_secs: (*locked(&self.last_attempt)).map(|at| (now - at).num_seconds()),
-            session_live: slot.as_mut().is_some_and(Session::is_alive),
+            session_live: slot.as_mut().is_some_and(|session| session.is_alive()),
             turn_running: !self.idle.load(Ordering::SeqCst),
             keeps,
         };

@@ -5,6 +5,7 @@ use ralph_core::chat::{CustomPrompt, ReplyImages};
 use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
+use ralph_server::chat::backend::ClaudeBackend;
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::keepalive::Stamp;
 use ralph_server::chat::memory::Store;
@@ -128,6 +129,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         custom_prompt: options.custom_prompt,
         reply_images: options.output.reply_images,
         isolation,
+        backend: Arc::new(ClaudeBackend),
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),
