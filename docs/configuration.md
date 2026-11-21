@@ -567,6 +567,7 @@ Set both tables to match your terminal. Then named colours look the same in the 
 Rules:
 
 - `font` must not be empty.
+- `font` may use only letters, digits, space, `,`, `-`, `_` and `.`, plus quoted names with balanced `"` or `'` quotes. For example `"Fira Code", monospace`. Any other character is an error.
 - Each table must have 16 entries.
 - Each entry must be `#rrggbb`.
 

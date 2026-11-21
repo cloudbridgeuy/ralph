@@ -71,11 +71,11 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 
 ## tokens.css
 
-`ralph web` loads the store `config.toml` over the global file. It builds the CSS once at start-up from the `[theme]` slots and `[web]`. See [configuration](../configuration.md#web---ralph-web-fonts-and-ansi-colours). The file does not change while `ralph web` runs. A bad `[web]` table stops `ralph web` at start-up with the config error.
+`ralph web` loads the store `config.toml` over the global file. It builds the CSS once at start-up from the `[theme]` slots and `[web]`. See [configuration](../configuration.md#web---ralph-web-fonts-and-ansi-colours). The file does not change while `ralph web` runs. Any invalid config stops `ralph web` before it binds, with the config error. This covers every section and both files, not only `[web]`.
 
 - Slots come from the assistant Palette and the status, diff, input, tools and ui groups. They come in this order.
 - Each slot is a variable `--r-<slot>`. Palette slots have no prefix, for example `--r-link`. Other groups have a prefix: `--r-status-mode-idle-fg`, `--r-diff-add-fg`, `--r-input-suggestion`, `--r-tools-name`, `--r-ui-spinner`.
-- `--r-font` holds the `font` value.
+- `--r-font` holds the `font` value. The generator drops `;`, braces, angle brackets, `\`, `/`, `*`, parentheses, square brackets, control characters and unbalanced quotes, so a font cannot break the stylesheet.
 - `--r-ansi-0` to `--r-ansi-15` hold the ANSI table.
 - A named colour or an index 0-15 becomes `var(--r-ansi-N)`.
 - An index 16-255 becomes `#rrggbb` through the xterm cube and greys.
