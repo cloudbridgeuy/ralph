@@ -15,7 +15,6 @@ path = "src/lib.rs"
 
 [dependencies]
 ralph_server = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tiny_http = { workspace = true }
