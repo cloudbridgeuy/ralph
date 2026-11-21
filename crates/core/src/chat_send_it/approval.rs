@@ -19,10 +19,14 @@ pub struct Approval {
 #[derive(Debug, Clone, Copy)]
 pub struct Trust<'a> {
     pub key: &'a [u8],
+    pub live: Option<&'a str>,
 }
 
 impl Trust<'static> {
-    pub const NONE: Self = Self { key: &[] };
+    pub const NONE: Self = Self {
+        key: &[],
+        live: None,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +35,7 @@ pub enum Refusal {
     Tampered,
     WrongKind,
     WrongPlan,
+    Replayed,
 }
 
 pub struct Signing<'a> {
@@ -78,6 +83,9 @@ pub fn verify(approval: Option<&Approval>, plan: &RunPlan, trust: Trust) -> Resu
     }
     if approval.subject_hash != full_hash(plan) {
         return Err(Refusal::WrongPlan);
+    }
+    if trust.live != Some(approval.nonce.as_str()) {
+        return Err(Refusal::Replayed);
     }
     Ok(())
 }

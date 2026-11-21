@@ -97,6 +97,7 @@ impl SendIt {
 
     pub fn save(&self, file: &RunFile) -> Result<(), String> {
         let text = write_run(file)?;
+        *locked(&self.live) = None;
         self.path
             .parent()
             .map_or(Ok(()), fs::create_dir_all)
@@ -105,8 +106,10 @@ impl SendIt {
     }
 
     fn gate<T>(&self, check: impl FnOnce(Trust) -> T) -> T {
+        let live = locked(&self.live).clone();
         check(Trust {
             key: self.key.as_slice(),
+            live: live.as_deref(),
         })
     }
 
@@ -159,6 +162,7 @@ impl SendIt {
     }
 
     pub fn off(&self) -> String {
+        *locked(&self.live) = None;
         match fs::remove_file(&self.path) {
             Ok(()) => "send-it off: the run plan is deleted.".to_string(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => NO_RUN.to_string(),

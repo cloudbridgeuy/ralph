@@ -3,7 +3,10 @@ use super::*;
 
 pub(super) const KEY: &[u8] = &[7; 32];
 pub(super) const NONCE: &str = "n1";
-pub(super) const TRUST: Trust<'static> = Trust { key: KEY };
+pub(super) const TRUST: Trust<'static> = Trust {
+    key: KEY,
+    live: Some(NONCE),
+};
 
 pub(super) fn signing() -> Signing<'static> {
     Signing {
@@ -125,7 +128,10 @@ fn an_edited_field_breaks_the_mac() {
 
 #[test]
 fn a_record_signed_with_another_key_is_tampered() {
-    let other = Trust { key: &[8; 32] };
+    let other = Trust {
+        key: &[8; 32],
+        ..TRUST
+    };
     assert_eq!(
         verdict(&signed(&plan()), &plan(), other),
         Err(Refusal::Tampered)
@@ -149,6 +155,17 @@ fn an_edited_plan_step_with_the_old_record_is_wrong_plan() {
     let mut edited = plan();
     edited.steps[0].task = "run the tests".to_string();
     assert_eq!(verdict(&approval, &edited, TRUST), Err(Refusal::WrongPlan));
+}
+
+#[test]
+fn a_record_whose_nonce_is_not_live_is_replayed() {
+    let approval = signed(&plan());
+    for live in [None, Some("n2")] {
+        assert_eq!(
+            verdict(&approval, &plan(), Trust { live, ..TRUST }),
+            Err(Refusal::Replayed)
+        );
+    }
 }
 
 #[test]
