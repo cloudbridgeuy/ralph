@@ -15,7 +15,7 @@
 
 ## Start
 
-`ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. It also prints the store path.
+`ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/api/health?token=<token>`. The `/` route does not exist yet. It also prints the store path.
 
 ## Token
 

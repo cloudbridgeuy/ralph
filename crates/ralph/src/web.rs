@@ -28,10 +28,27 @@ pub fn run(args: WebArgs) -> Result<(), Box<dyn Error>> {
         version: env!("CARGO_PKG_VERSION").to_string(),
     };
     println!(
-        "ralph web listening on http://127.0.0.1:{port}/?token={}",
-        token.as_str()
+        "ralph web listening on {}",
+        listen_url(port, token.as_str())
     );
     println!("store: {}", config.store.display());
     serve(server, &config, &token, &|| crate::signal::is_terminated())?;
     Ok(())
+}
+
+fn listen_url(port: u16, token: &str) -> String {
+    format!("http://127.0.0.1:{port}/api/health?token={token}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listen_url_points_at_health_with_the_token() {
+        assert_eq!(
+            listen_url(4000, "abc"),
+            "http://127.0.0.1:4000/api/health?token=abc"
+        );
+    }
 }

@@ -164,7 +164,7 @@ ralph web [--store DIR] [--port N]
 | `--store` | `RALPH_CHAT_STORE`, then `~/.ralph/chat` | Store directory; it must exist |
 | `--port` | `0` | Port on 127.0.0.1; `0` picks a free port |
 
-The command prints `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. Every request needs the token. The only route is `GET /api/health`.
+The command prints `ralph web listening on http://127.0.0.1:<port>/api/health?token=<token>`. Every request needs the token. The only route is `GET /api/health`.
 
 ---
 
