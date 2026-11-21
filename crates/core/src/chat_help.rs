@@ -2,7 +2,7 @@
 //! without a model turn.
 
 use crate::chat::OLDER_VIEW_STEP;
-use crate::chat_process::{process_variants, ProcessCell, ResetReason, CACHE_TTL_SECS};
+use crate::chat_process::{process_variants, Cache, Ctx, ProcessCell, ResetReason, CACHE_TTL_SECS};
 use crate::status_mode::Mode;
 use crate::status_segments::Kind;
 use serde_json::{json, Value};
@@ -506,9 +506,11 @@ fn reset_help(reason: ResetReason) -> &'static str {
 const EXAMPLE_PROCESS: ProcessCell = ProcessCell {
     turn: 12,
     max_turns: 30,
-    ctx_percent: Some(62),
-    cache_minutes: Some(41),
-    write_heavy: true,
+    ctx: Ctx::Percent(62),
+    cache: Cache::Left {
+        minutes: 41,
+        write_heavy: true,
+    },
     reset: None,
     shift: Some(9),
     cost: None,

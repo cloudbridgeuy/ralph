@@ -1,5 +1,5 @@
 use super::*;
-use crate::chat_process::{ProcessCell, SessionCost};
+use crate::chat_process::{Cache, Ctx, ProcessCell, SessionCost};
 use crate::chat_status::{ScheduleState, WatchState, WorkerState};
 
 pub(super) fn status() -> Status {
@@ -29,9 +29,11 @@ pub(super) fn process() -> ProcessCell {
     ProcessCell {
         turn: 12,
         max_turns: 30,
-        ctx_percent: Some(62),
-        cache_minutes: Some(41),
-        write_heavy: false,
+        ctx: Ctx::Percent(62),
+        cache: Cache::Left {
+            minutes: 41,
+            write_heavy: false,
+        },
         reset: None,
         shift: Some(9),
         cost: Some(SessionCost {

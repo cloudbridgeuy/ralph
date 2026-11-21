@@ -5,7 +5,7 @@ use ralph_core::chat::{CustomPrompt, ReplyImages};
 use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
-use ralph_server::chat::backend::ClaudeBackend;
+use ralph_server::chat::backend::{ChatBackend, ClaudeBackend};
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::keepalive::Stamp;
 use ralph_server::chat::memory::Store;
@@ -116,6 +116,8 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
     });
     let run = run_id(std::process::id(), &key, chrono::Utc::now());
     let last_ping: Stamp = Arc::default();
+    let backend: Arc<dyn ChatBackend> = Arc::new(ClaudeBackend);
+    let caps = backend.capabilities();
     let turn = Turn {
         store: Store::new(store_dir.to_path_buf()),
         store_dir: store_dir.to_path_buf(),
@@ -129,7 +131,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         custom_prompt: options.custom_prompt,
         reply_images: options.output.reply_images,
         isolation,
-        backend: Arc::new(ClaudeBackend),
+        backend,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),
@@ -168,6 +170,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         live,
         last_ping: Arc::clone(&last_ping),
         run,
+        caps,
     }));
     let roster = {
         let (monitor, store) = (Arc::clone(&monitor), Store::new(store_dir.to_path_buf()));

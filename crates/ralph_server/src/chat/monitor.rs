@@ -10,6 +10,7 @@ use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
 use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::ResetLimits;
+use ralph_core::chat_backend::Caps;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_memory::entries_to_shift;
 use ralph_core::chat_process::{process_cell, process_usage, ProcessEnv, ProcessUsage, UsageTail};
@@ -89,6 +90,7 @@ pub struct Monitor {
     pub last_ping: Stamp,
     pub run: String,
     pub reset_limits: ResetLimits,
+    pub caps: Caps,
     pub process: Mutex<ProcessMemo>,
     pub usage_tail: Mutex<UsageTail>,
     pub phase: Mutex<Phase>,
@@ -361,6 +363,7 @@ impl Monitor {
                     live: self.live.load(Ordering::SeqCst),
                     limits: self.reset_limits,
                     shift: memo.shift,
+                    caps: self.caps,
                 },
             )
         };

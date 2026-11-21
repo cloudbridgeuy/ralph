@@ -1,3 +1,4 @@
+use crate::chat_process::CACHE_TTL_SECS;
 use crate::worker::Support;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,13 @@ pub const CLAUDE: Caps = Caps {
     system_prompt: Support::Full,
     tool_blocks: Support::Full,
 };
+
+pub fn cache_ttl_secs(caps: &Caps) -> Option<i64> {
+    match caps.cache_ttl {
+        Support::None => None,
+        Support::Full | Support::Partial(_) => Some(CACHE_TTL_SECS),
+    }
+}
 
 #[cfg(test)]
 mod tests {

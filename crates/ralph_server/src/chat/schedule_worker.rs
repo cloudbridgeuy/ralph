@@ -224,6 +224,7 @@ mod tests {
                 turns: 0,
                 tokens: 0,
             },
+            caps: ralph_core::chat_backend::CLAUDE,
             process: Mutex::new(ProcessMemo::default()),
             usage_tail: Mutex::new(UsageTail::starting_at(&FileStamp { id: None, len: 0 })),
             phase: Mutex::new(Phase::Turn),
