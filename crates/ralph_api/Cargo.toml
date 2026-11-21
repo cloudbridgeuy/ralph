@@ -14,7 +14,6 @@ name = "ralph_api"
 path = "src/lib.rs"
 
 [dependencies]
-ralph_core = { workspace = true }
 ralph_server = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
