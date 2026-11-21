@@ -48,12 +48,35 @@ pub struct TokensInput<'a> {
 
 const MAX_ANSI: u8 = 15;
 
+fn quotes_balanced(text: &str) -> bool {
+    let mut open: Option<char> = None;
+    for c in text.chars() {
+        match (c, open) {
+            ('"' | '\'', None) => open = Some(c),
+            ('"' | '\'', Some(q)) if q == c => open = None,
+            _ => {}
+        }
+    }
+    open.is_none()
+}
+
 fn sanitize_font(font: &str) -> String {
-    font.chars()
-        .filter(|c| !c.is_control() && !matches!(c, ';' | '{' | '}' | '<' | '>' | '\\'))
-        .collect::<String>()
-        .trim()
-        .to_string()
+    let kept: String = font
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(
+                    c,
+                    ';' | '{' | '}' | '<' | '>' | '\\' | '/' | '*' | '(' | ')' | '[' | ']'
+                )
+        })
+        .collect();
+    let balanced = if quotes_balanced(&kept) {
+        kept
+    } else {
+        kept.chars().filter(|c| !matches!(c, '"' | '\'')).collect()
+    };
+    balanced.trim().to_string()
 }
 
 fn slot_line(slot: &Slot) -> Option<String> {
@@ -254,5 +277,38 @@ mod tests {
     fn font_is_trimmed() {
         let css = render("  Fira Code  ", &[]);
         assert!(css.contains("  --r-font: Fira Code;\n"));
+    }
+
+    fn font_line(font: &str) -> String {
+        let css = render(font, &[]);
+        css.lines()
+            .find(|l| l.contains("--r-font"))
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn font_comment_opener_is_dropped() {
+        assert_eq!(font_line("Fira /* x"), "  --r-font: Fira  x;");
+    }
+
+    #[test]
+    fn font_parens_and_brackets_are_dropped() {
+        assert_eq!(font_line("foo("), "  --r-font: foo;");
+        assert_eq!(font_line("a)[0]"), "  --r-font: a0;");
+    }
+
+    #[test]
+    fn font_unbalanced_quote_is_dropped() {
+        assert_eq!(font_line("\"Fira Code"), "  --r-font: Fira Code;");
+        assert_eq!(font_line("'a\" b"), "  --r-font: a b;");
+    }
+
+    #[test]
+    fn font_balanced_quotes_are_kept() {
+        assert_eq!(
+            font_line("\"Fira Code\", 'Menlo', monospace"),
+            "  --r-font: \"Fira Code\", 'Menlo', monospace;"
+        );
     }
 }

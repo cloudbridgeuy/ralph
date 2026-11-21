@@ -61,10 +61,30 @@ fn validate_table(name: &str, table: &[String]) -> Result<(), String> {
     }
 }
 
+fn font_is_plain(font: &str) -> bool {
+    let mut open: Option<char> = None;
+    for c in font.chars() {
+        match (c, open) {
+            ('"' | '\'', None) => open = Some(c),
+            ('"' | '\'', Some(q)) if q == c => open = None,
+            ('"' | '\'', Some(_)) => {}
+            (c, _) if c.is_alphanumeric() || matches!(c, ' ' | ',' | '-' | '_' | '.') => {}
+            _ => return false,
+        }
+    }
+    open.is_none()
+}
+
 impl WebSection {
     pub fn validate(&self) -> Result<(), String> {
         if self.font.trim().is_empty() {
             return Err("[web] font must not be empty".to_string());
+        }
+        if !font_is_plain(&self.font) {
+            return Err(format!(
+                "[web] font = \"{}\" may only use letters, digits, space, ',', '-', '_', '.' and balanced quotes",
+                self.font
+            ));
         }
         validate_table("ansi_dark", &self.ansi_dark)?;
         validate_table("ansi_light", &self.ansi_light)
@@ -181,6 +201,57 @@ mod tests {
             web.validate(),
             Err("[web] font must not be empty".to_string())
         );
+    }
+
+    fn font(value: &str) -> WebSection {
+        WebSection {
+            font: value.to_string(),
+            ..WebSection::default()
+        }
+    }
+
+    #[test]
+    fn fonts_that_break_the_stylesheet_are_errors() {
+        for bad in [
+            "Fira /* x",
+            "foo(",
+            "foo)",
+            "a[0]",
+            "\"Fira Code",
+            "'Fira Code",
+            "a; b",
+            "a } b",
+            "a: b",
+            "a\\b",
+        ] {
+            let result = font(bad).validate();
+            assert!(
+                matches!(&result, Err(message) if message.starts_with("[web] font")),
+                "{bad:?} gave {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_and_quoted_font_lists_are_accepted() {
+        for good in [
+            "ui-monospace, Menlo, monospace",
+            "Geist Mono, monospace",
+            "\"Fira Code\", 'Menlo', monospace",
+            "a_b.c-d",
+        ] {
+            assert_eq!(font(good).validate(), Ok(()), "{good:?}");
+        }
+    }
+
+    #[test]
+    fn bad_font_through_parse_is_invalid_web() {
+        match AppConfig::parse_reporting_unknown("[web]\nfont = \"foo(\"\n", "c") {
+            Err(ConfigError::InvalidWeb { message, .. }) => {
+                assert!(message.starts_with("[web] font"), "{message}");
+            }
+            other => panic!("expected InvalidWeb, got {other:?}"),
+        }
     }
 
     #[test]
