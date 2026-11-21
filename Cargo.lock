@@ -1604,6 +1604,7 @@ dependencies = [
  "dirs",
  "libc",
  "mermaid-text",
+ "ralph_api",
  "ralph_core",
  "ralph_server",
  "reedline",
@@ -1622,6 +1623,18 @@ dependencies = [
  "unicode-linebreak",
  "unicode-width 0.2.2",
  "ureq",
+]
+
+[[package]]
+name = "ralph_api"
+version = "0.4.0"
+dependencies = [
+ "ralph_core",
+ "ralph_server",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tiny_http",
 ]
 
 [[package]]
