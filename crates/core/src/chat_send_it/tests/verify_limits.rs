@@ -63,7 +63,7 @@ fn a_stray_verify_key_in_the_run_file_loads_and_the_current_limits_win() {
     for mode in [VerifyMode::Off, VerifyMode::Observe] {
         let file = read_run(&stray, limits_with(mode)).unwrap();
         assert_eq!(file.plan.limits.verify, mode);
-        assert!(file.is_approved());
+        assert!(file.is_approved(TRUST));
     }
 }
 

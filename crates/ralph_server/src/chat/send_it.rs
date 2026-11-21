@@ -11,10 +11,11 @@ use ralph_core::chat_send_it::template::{
 };
 use ralph_core::chat_send_it::{
     approve, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
-    render_status_styled, start_run, stop_file, tick, with_reply, write_run, Action, Driving,
-    Ended, Limits, RunFile, Seen, Signing, StepResult, Ticked,
+    render_status_styled, settle_check, start_run, stop_file, tick, with_reply, write_run, Action,
+    Driving, Ended, Limits, RunFile, Seen, Signing, StepResult, Ticked, Trust,
 };
-use ralph_core::worker::hex_encode;
+use ralph_core::watch::WatchOutcome;
+use ralph_core::worker::{hex_encode, Report};
 use serde_json::Value;
 use std::fmt;
 use std::fs;
@@ -103,12 +104,16 @@ impl SendIt {
             .map_err(|error| format!("Could not write {}: {error}", self.path.display()))
     }
 
+    fn gate<T>(&self, check: impl FnOnce(Trust) -> T) -> T {
+        check(Trust {
+            key: self.key.as_slice(),
+        })
+    }
+
     pub fn allowed(&self) -> Option<Vec<Action>> {
-        self.load()
-            .ok()
-            .flatten()
-            .filter(RunFile::is_approved)
-            .map(|file| file.plan.allowed)
+        let file = self.load().ok().flatten()?;
+        self.gate(|trust| file.is_approved(trust))
+            .then_some(file.plan.allowed)
     }
 
     pub fn refuse(&self, tool: String) {
@@ -124,7 +129,8 @@ impl SendIt {
     }
 
     pub fn refusal(&self) -> Option<String> {
-        propose_refusal(self.load().ok().flatten().as_ref())
+        let existing = self.load().ok().flatten();
+        self.gate(|trust| propose_refusal(existing.as_ref(), trust))
     }
 
     pub fn current_hash(&self) -> Option<String> {
@@ -222,11 +228,11 @@ impl SendIt {
 
     pub fn status(&self, width: usize) -> Screen {
         match self.load() {
-            Ok(Some(file)) => Screen {
-                text: render_status(&file, width),
-                styled: render_status_styled(&file, width),
+            Ok(Some(file)) => self.gate(|trust| Screen {
+                text: render_status(&file, width, trust),
+                styled: render_status_styled(&file, width, trust),
                 shown: Some(plan_hash(&file.plan)),
-            },
+            }),
             Ok(None) => Screen::text(NO_RUN),
             Err(text) => Screen::text(text),
         }
@@ -261,7 +267,7 @@ impl SendIt {
         match approved {
             Ok(approved) => (
                 format!("Plan {} approved. Running it.", plan_hash(&approved.plan)),
-                start_run(&approved, seen),
+                self.gate(|trust| start_run(&approved, seen, trust)),
             ),
             Err(text) => (text, None),
         }
@@ -287,6 +293,11 @@ impl SendIt {
         Ok(approved)
     }
 
+    pub fn settle(&self, driving: &Driving, outcome: &WatchOutcome, reports: &[Report]) -> Ticked {
+        let file = self.load().ok().flatten();
+        self.gate(|trust| settle_check(driving, file.as_ref(), outcome, reports, trust))
+    }
+
     pub fn tick(&self, driving: &Driving, watched: Option<&OutcomeSlot>, ended: Ended) -> Ticked {
         let file = self.load().ok().flatten();
         let watched = watched.and_then(|slot| locked(slot).clone());
@@ -294,17 +305,20 @@ impl SendIt {
         let judged = locked(&self.judged).take();
         let answered = std::mem::take(&mut *locked(&self.answered));
         let reply = ended.replied.then(|| self.last_reply()).flatten();
-        let ticked = tick(
-            driving,
-            &Ended {
-                file: file.as_ref(),
-                watched: watched.as_ref(),
-                refused: refused.as_deref(),
-                answered: &answered,
-                step_result: judged.as_ref(),
-                ..ended
-            },
-        );
+        let ticked = self.gate(|trust| {
+            tick(
+                driving,
+                &Ended {
+                    file: file.as_ref(),
+                    trust,
+                    watched: watched.as_ref(),
+                    refused: refused.as_deref(),
+                    answered: &answered,
+                    step_result: judged.as_ref(),
+                    ..ended
+                },
+            )
+        });
         match reply {
             Some(reply) => with_reply(ticked, &reply),
             None => ticked,

@@ -1,6 +1,6 @@
 use super::{
     hang_wrapped, plan_hash, plan_warnings, resume_step, Action, Criterion, RunFile, RunPlan, Step,
-    RUN_BY_RALPH_NOTE,
+    Trust, RUN_BY_RALPH_NOTE,
 };
 use crate::ansi::{BOLD, CYAN as CODE, DIM, GREEN, RESET, YELLOW};
 use crate::chat_help::wrap;
@@ -151,9 +151,9 @@ fn plan_rows(plan: &RunPlan, width: usize) -> Vec<Row> {
     rows
 }
 
-fn state_row(file: &RunFile) -> Row {
+fn state_row(file: &RunFile, trust: Trust) -> Row {
     let hash = plan_hash(&file.plan);
-    if file.is_approved() {
+    if file.is_approved(trust) {
         Row::new(Role::Footer(GREEN), format!("{hash} · approved"))
     } else if let Some(step) = resume_step(file) {
         Row::new(
@@ -171,9 +171,9 @@ fn state_row(file: &RunFile) -> Row {
     }
 }
 
-fn status_rows(file: &RunFile, width: usize) -> Vec<Row> {
+fn status_rows(file: &RunFile, width: usize, trust: Trust) -> Vec<Row> {
     let mut rows = plan_rows(&file.plan, width);
-    rows.push(state_row(file));
+    rows.push(state_row(file, trust));
     rows
 }
 
@@ -276,10 +276,10 @@ pub fn render_run(plan: &RunPlan) -> String {
     plain(&plan_rows(plan, NO_LIMIT), NO_LIMIT)
 }
 
-pub fn render_status(file: &RunFile, width: usize) -> String {
-    plain(&status_rows(file, width), width)
+pub fn render_status(file: &RunFile, width: usize, trust: Trust) -> String {
+    plain(&status_rows(file, width, trust), width)
 }
 
-pub fn render_status_styled(file: &RunFile, width: usize) -> String {
-    styled(&status_rows(file, width), width)
+pub fn render_status_styled(file: &RunFile, width: usize, trust: Trust) -> String {
+    styled(&status_rows(file, width, trust), width)
 }

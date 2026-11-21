@@ -226,6 +226,7 @@ pub struct Driving {
 
 pub struct Ended<'a> {
     pub file: Option<&'a RunFile>,
+    pub trust: Trust<'a>,
     pub replied: bool,
     pub asked: bool,
     pub typed: bool,
@@ -336,8 +337,8 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
     }
 }
 
-pub fn start_run(file: &RunFile, seen: &Seen) -> Option<Ticked> {
-    if !file.is_approved() {
+pub fn start_run(file: &RunFile, seen: &Seen, trust: Trust) -> Option<Ticked> {
+    if !file.is_approved(trust) {
         return None;
     }
     let hash = plan_hash(&file.plan);
@@ -433,9 +434,13 @@ fn unanswered_flag<'a>(ended: &Ended<'a>, file: &RunFile) -> Option<&'a Report> 
         })
 }
 
-fn current_plan<'a>(file: Option<&'a RunFile>, hash: &str) -> Result<&'a RunFile, StopReason> {
+fn current_plan<'a>(
+    file: Option<&'a RunFile>,
+    hash: &str,
+    trust: Trust,
+) -> Result<&'a RunFile, StopReason> {
     let file = file.ok_or(StopReason::Off)?;
-    if file.is_approved() && plan_hash(&file.plan) == hash {
+    if file.is_approved(trust) && plan_hash(&file.plan) == hash {
         Ok(file)
     } else {
         Err(StopReason::PlanChanged)
@@ -448,6 +453,7 @@ fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason
             .file
             .filter(|_| !ended.queued.iter().any(|line| is_off(line))),
         hash,
+        ended.trust,
     )?;
     let stop = if let Some(tool) = ended.refused {
         Some(StopReason::Refused {
@@ -565,6 +571,7 @@ pub fn settle_check(
     file: Option<&RunFile>,
     outcome: &WatchOutcome,
     reports: &[Report],
+    trust: Trust,
 ) -> Ticked {
     let finish = |progress: Progress, next: Next, met: Option<String>| Ticked {
         driving: Driving {
@@ -579,7 +586,7 @@ pub fn settle_check(
         met,
         notice: None,
     };
-    let plan = match current_plan(file, &driving.hash) {
+    let plan = match current_plan(file, &driving.hash, trust) {
         Ok(file) => &file.plan,
         Err(reason) => return finish(driving.progress, Next::Stop(reason), None),
     };

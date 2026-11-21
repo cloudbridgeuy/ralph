@@ -16,6 +16,23 @@ pub struct Approval {
     pub mac: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Trust<'a> {
+    pub key: &'a [u8],
+}
+
+impl Trust<'static> {
+    pub const NONE: Self = Self { key: &[] };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    Unsigned,
+    Tampered,
+    WrongKind,
+    WrongPlan,
+}
+
 pub struct Signing<'a> {
     pub key: &'a [u8],
     pub at: &'a str,
@@ -39,21 +56,51 @@ fn mac_over(key: &[u8], record: &Approval) -> Result<Hmac<Sha256>, String> {
     Ok(mac)
 }
 
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    text.as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect()
+}
+
+pub fn verify(approval: Option<&Approval>, plan: &RunPlan, trust: Trust) -> Result<(), Refusal> {
+    let approval = approval.ok_or(Refusal::Unsigned)?;
+    let given = unhex(&approval.mac).ok_or(Refusal::Tampered)?;
+    mac_over(trust.key, approval)
+        .map_err(|_| Refusal::Tampered)?
+        .verify_slice(&given)
+        .map_err(|_| Refusal::Tampered)?;
+    if approval.kind != KIND {
+        return Err(Refusal::WrongKind);
+    }
+    if approval.subject_hash != full_hash(plan) {
+        return Err(Refusal::WrongPlan);
+    }
+    Ok(())
+}
+
 impl Approval {
+    pub fn seal(self, key: &[u8]) -> Result<Self, String> {
+        let mac = mac_over(key, &self)
+            .map_err(|error| format!("Could not sign the approval: {error}"))?;
+        Ok(Self {
+            mac: hex_encode(&mac.finalize().into_bytes()),
+            ..self
+        })
+    }
+
     pub fn sign(signing: &Signing, plan: &RunPlan) -> Result<Self, String> {
-        let record = Self {
+        Self {
             kind: KIND.to_string(),
             subject_hash: full_hash(plan),
             at: signing.at.to_string(),
             peer_uid: signing.peer_uid,
             nonce: signing.nonce.to_string(),
             mac: String::new(),
-        };
-        let mac = mac_over(signing.key, &record)
-            .map_err(|error| format!("Could not sign the approval: {error}"))?;
-        Ok(Self {
-            mac: hex_encode(&mac.finalize().into_bytes()),
-            ..record
-        })
+        }
+        .seal(signing.key)
     }
 }

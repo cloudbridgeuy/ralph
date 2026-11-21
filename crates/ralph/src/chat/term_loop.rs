@@ -21,7 +21,7 @@ use ralph_core::chat_close::LoopExit;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_memory::Trigger;
-use ralph_core::chat_send_it::{Ended, SendItCommand};
+use ralph_core::chat_send_it::{Ended, SendItCommand, Trust};
 use ralph_core::chat_status::Route;
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
@@ -483,6 +483,7 @@ impl TerminalLoop<'_> {
             let unread = session.unread();
             let ended = Ended {
                 file: None,
+                trust: Trust::NONE,
                 replied: outcome == TurnOutcome::Replied,
                 asked,
                 typed: queue.held || !queue.typed.is_empty(),

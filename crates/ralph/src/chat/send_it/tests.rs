@@ -1,7 +1,9 @@
 use super::*;
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
-use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Limits, Seen, StepResult, VerifyMode};
+use ralph_core::chat_send_it::{
+    plan_hash, Action, Awaiting, Limits, Seen, StepResult, Trust, VerifyMode,
+};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
 use ralph_server::chat::memory::Store;
@@ -217,6 +219,7 @@ fn started(dir: &Path) -> (SendIt, Active) {
 fn ended() -> Ended<'static> {
     Ended {
         file: None,
+        trust: Trust::NONE,
         replied: true,
         asked: false,
         typed: false,
@@ -378,7 +381,7 @@ fn a_refusal_from_the_socket_stops_the_next_tick_once_and_keeps_the_approval() {
         tick(&send_it, &active, ended()).next,
         Next::Check("cargo xtask lint".to_string())
     );
-    assert!(send_it.load().unwrap().unwrap().is_approved());
+    assert!(send_it.allowed().is_some());
 }
 
 #[test]
@@ -493,7 +496,7 @@ fn release_drops_the_run_s_approval_and_keeps_the_plan_for_save_and_reuse() {
     let (send_it, active) = started(dir.path());
     let hash = active.driving.hash.clone();
     assert_eq!(send_it.release("000000000000", Some(1)), Ok(None));
-    assert!(send_it.load().unwrap().unwrap().is_approved());
+    assert!(send_it.allowed().is_some());
     send_it.release(&hash, None).unwrap();
     let file = send_it.load().unwrap().unwrap();
     assert_eq!(file.approved, None);

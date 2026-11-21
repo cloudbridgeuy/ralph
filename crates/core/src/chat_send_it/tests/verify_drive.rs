@@ -34,7 +34,7 @@ fn failed_check(driving: &Driving, file: &RunFile, outcome: &WatchOutcome) -> Ti
         text: "Watch done.\n\nOutput:\nassertion failed".to_string(),
         ..worker_report(WATCH_ID, "done")
     };
-    settle_check(driving, Some(file), outcome, &[output])
+    settle_check(driving, Some(file), outcome, &[output], TRUST)
 }
 
 fn waiting_on_check(mode: VerifyMode, file: &RunFile) -> Driving {
@@ -162,6 +162,7 @@ fn observe_logs_a_would_block_notice_on_a_timeout() {
         Some(&file),
         &WatchOutcome::TimedOut(Duration::from_secs(60)),
         &[],
+        TRUST,
     );
     assert!(ticked
         .notice
@@ -177,6 +178,7 @@ fn observe_logs_no_notice_when_verify_passes() {
         Some(&file),
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert_eq!(
         ticked.met.as_deref(),

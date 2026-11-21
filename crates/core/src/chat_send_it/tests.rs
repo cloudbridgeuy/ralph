@@ -280,6 +280,7 @@ fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Tic
             last: &last,
             running: &running,
         },
+        TRUST,
     )
 }
 
@@ -492,14 +493,6 @@ fn new_stop_notices_name_the_step() {
     }
 }
 
-fn approved(plan: RunPlan) -> RunFile {
-    RunFile {
-        approved: Some(signed(&plan)),
-        plan,
-        stopped: None,
-    }
-}
-
 fn driving(step: usize, awaiting: Awaiting, run: Run) -> Driving {
     Driving {
         hash: plan_hash(&plan()),
@@ -514,6 +507,7 @@ fn driving(step: usize, awaiting: Awaiting, run: Run) -> Driving {
 fn ended(file: &RunFile) -> Ended<'_> {
     Ended {
         file: Some(file),
+        trust: TRUST,
         replied: true,
         asked: false,
         typed: false,

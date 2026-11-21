@@ -17,7 +17,7 @@ mod end_block;
 mod render;
 pub mod template;
 
-pub use approval::{Approval, Signing};
+pub use approval::{Approval, Signing, Trust};
 pub use drive::*;
 pub use end_block::*;
 pub use render::*;
@@ -431,10 +431,8 @@ pub fn plan_hash(plan: &RunPlan) -> String {
 }
 
 impl RunFile {
-    pub fn is_approved(&self) -> bool {
-        self.approved
-            .as_ref()
-            .is_some_and(|approval| approval.subject_hash == full_hash(&self.plan))
+    pub fn is_approved(&self, trust: Trust) -> bool {
+        approval::verify(self.approved.as_ref(), &self.plan, trust).is_ok()
     }
 }
 
@@ -528,8 +526,8 @@ fn hang_wrapped(line: &str, width: usize) -> String {
     }
 }
 
-pub fn propose_refusal(existing: Option<&RunFile>) -> Option<String> {
-    existing.filter(|file| file.is_approved()).map(|file| {
+pub fn propose_refusal(existing: Option<&RunFile>, trust: Trust) -> Option<String> {
+    existing.filter(|file| file.is_approved(trust)).map(|file| {
         format!(
             "Plan {} is approved and active. Stop it with /send-it off first.",
             plan_hash(&file.plan)

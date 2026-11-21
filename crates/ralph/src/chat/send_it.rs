@@ -8,8 +8,8 @@ use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{
     awaits_check, briefed_turn, done_block, done_notice, judge_echo, judge_prompt, resolve_check,
-    run_end_prefill, running_line, settle_check, step_line, stop_block, verify_worker, Driving,
-    Ended, Next, StopReason, Ticked,
+    run_end_prefill, running_line, step_line, stop_block, verify_worker, Driving, Ended, Next,
+    StopReason, Ticked,
 };
 use ralph_core::chat_status::Route;
 use ralph_core::chat_suggestion::driven_fill;
@@ -98,8 +98,7 @@ pub(super) fn held_item(
     let Some(active) = sending.take() else {
         return Ok(read);
     };
-    let file = send_it.load().ok().flatten();
-    let ticked = settle_check(&active.driving, file.as_ref(), &outcome, &reports);
+    let ticked = send_it.settle(&active.driving, &outcome, &reports);
     log_shown(send_it, &ticked);
     let mut driven = route(send_it, ticked, monitor);
     if driven.route.is_none() {
