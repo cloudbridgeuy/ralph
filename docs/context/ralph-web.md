@@ -8,7 +8,7 @@
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | `Web(WebArgs)`: `--store`, `--port` |
 | Shell | `crates/ralph/src/web.rs` | `run()`: store, token, bind, print URL, serve |
-| Token | `crates/ralph_api/src/token.rs` | `Token::generate()`, `Token::matches()`, `extract_token()` |
+| Token | `crates/ralph_api/src/token.rs` | `Token::generate()`, `Token::matches()`, `extract_tokens()` |
 | Routes | `crates/ralph_api/src/route.rs` | pure `route()`: Host check, token check, paths |
 | Bind rule | `crates/ralph_api/src/addr.rs` | `BindPolicy`, `check_bind()`, `allowed_hosts()` |
 | Server | `crates/ralph_api/src/server.rs` | `bind()`, `serve()` on tiny_http |
@@ -25,6 +25,7 @@
   2. the `token=` query parameter
   3. the `ralph_token` cookie. A request can have many `Cookie` headers and many `ralph_token` cookies. One matching value is enough. Quotes around a value are removed.
 - The compare takes the same time for every wrong value of the same length.
+- The `token=` value is not URL-decoded. The token is hex, so it needs no decoding. A percent-encoded value does not match.
 - Every request needs the token, also a request for an unknown path.
 
 ## Loopback rule
@@ -54,8 +55,15 @@
 | `GET /api/health` | 200 `{"status":"ok","version":"<version>"}` |
 | other method on `/api/health` | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
+| more than 8 requests in progress | 503 `{"error":"busy"}` |
 
 Every answer is JSON with `Cache-Control: no-store`. The health answer does not show the store path.
+
+## Limits
+
+- The server handles each request on its own thread. It runs at most 8 at the same time. The next one gets 503 at once.
+- A client can send a long `Content-Length` and never send the body. That request keeps its slot until the client closes the socket. Read timeouts come with GUZ-1755.
+- A stalled request never blocks the stop check.
 
 ## Store
 
