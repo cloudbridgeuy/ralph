@@ -25,6 +25,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
 | `thread` | List, log, pull, merge, park, revive or drop chat threads ([guide](context/threads.md), [details](context/ralph-chat.md#threads)) |
 | `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
+| `web` | Serve a local HTTP API on 127.0.0.1 behind a per-run token ([details](context/ralph-web.md)) |
 | `inbox` | Post a report from an outside program to a chat inbox ([details](context/ralph-chat.md#external-reports)) |
 | `config` | `check` finds errors and unknown keys in `config.toml`; `show` prints the merged config with the source of each value ([details](#ralph-config)) |
 | `worker` | Verify an installed worker agent against ralph's local spec ([details](context/headless-workers.md#verify-an-agent-version)) |
@@ -147,6 +148,23 @@ ralph wire sessions [--dir PATH] [--json]
 | `N` | `show` | Call number (`seq`) from `ls` |
 | `A`, `B` | `diff` | Call numbers (`seq`); with only `A`, diff `A` against the earlier call sharing its longest prompt prefix |
 | `--json` | `ls`, `show`, `diff`, `sessions` | Print JSON instead of a table |
+
+---
+
+## ralph web
+
+Serve a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. Details: [ralph web](context/ralph-web.md).
+
+```bash
+ralph web [--store DIR] [--port N]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--store` | `RALPH_CHAT_STORE`, then `~/.ralph/chat` | Store directory; it must exist |
+| `--port` | `0` | Port on 127.0.0.1; `0` picks a free port |
+
+The command prints `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. Every request needs the token. The only route is `GET /api/health`.
 
 ---
 
