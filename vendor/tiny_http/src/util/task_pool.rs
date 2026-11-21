@@ -68,8 +68,16 @@ impl TaskPool {
     /// If no thread is available, spawns a new one.
     pub fn spawn(&self, code: Box<dyn FnMut() + Send>) {
         let mut queue = self.sharing.todo.lock().unwrap();
+        self.dispatch(&mut queue, code);
+    }
 
-        if self.sharing.waiting_tasks.load(Ordering::Acquire) == 0 {
+    fn dispatch(
+        &self,
+        queue: &mut VecDeque<Box<dyn FnMut() + Send>>,
+        code: Box<dyn FnMut() + Send>,
+    ) {
+        let waiting = self.sharing.waiting_tasks.load(Ordering::Acquire);
+        if needs_thread(waiting, queue.len()) {
             self.add_thread(Some(code));
         } else {
             queue.push_back(code);
@@ -133,5 +141,73 @@ impl Drop for TaskPool {
             .active_tasks
             .store(999_999_999, Ordering::Release);
         self.sharing.condvar.notify_all();
+    }
+}
+
+fn needs_thread(waiting: usize, queued: usize) -> bool {
+    let _ = queued;
+    waiting == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    #[test]
+    fn needs_thread_counts_queued_jobs_as_reserved_workers() {
+        assert!(needs_thread(0, 0));
+        assert!(needs_thread(1, 1));
+        assert!(needs_thread(4, 4));
+        assert!(!needs_thread(2, 1));
+    }
+
+    #[test]
+    fn a_burst_of_blocking_jobs_does_not_reserve_an_idle_worker_twice() {
+        let pool = TaskPool::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while pool.sharing.waiting_tasks.load(Ordering::Acquire) != MIN_THREADS {
+            assert!(Instant::now() < deadline, "workers never became idle");
+            thread::yield_now();
+        }
+
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let jobs = MIN_THREADS + 2;
+
+        let mut queue = pool.sharing.todo.lock().unwrap();
+        for _ in 0..jobs {
+            let started_tx = started_tx.clone();
+            let release = release.clone();
+            pool.dispatch(
+                &mut queue,
+                Box::new(move || {
+                    started_tx.send(()).unwrap();
+                    let (released, condvar) = &*release;
+                    let mut released = released.lock().unwrap();
+                    while !*released {
+                        released = condvar.wait(released).unwrap();
+                    }
+                }),
+            );
+        }
+        drop(queue);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut count = 0;
+        while count < jobs {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if started_rx.recv_timeout(remaining).is_err() {
+                break;
+            }
+            count += 1;
+        }
+
+        let (released, condvar) = &*release;
+        *released.lock().unwrap() = true;
+        condvar.notify_all();
+
+        assert_eq!(count, MIN_THREADS + 2, "queued connections were starved");
     }
 }
