@@ -89,6 +89,7 @@ fn lists_hold_every_variant() {
             Config,
             View,
             Rerender,
+            Answer,
             Read,
             Zoom,
             Recall,

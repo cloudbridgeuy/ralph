@@ -98,6 +98,12 @@ pub enum ClientMsg {
         thread: Option<String>,
     },
     Thread(ThreadCmd),
+    Answer {
+        thread: Option<String>,
+        worker: String,
+        request: String,
+        option: String,
+    },
     Shutdown,
 }
 

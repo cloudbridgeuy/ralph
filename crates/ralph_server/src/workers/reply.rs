@@ -11,12 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 impl Workers {
-    pub(super) fn answer_permission(
-        &self,
-        id: &str,
-        request_id: &str,
-        text: &str,
-    ) -> io::Result<String> {
+    pub fn answer_permission(&self, id: &str, request_id: &str, text: &str) -> io::Result<String> {
         let (kind, files) = self.headless_files(id).ok_or_else(|| {
             io::Error::other(format!(
                 "worker {id} is not a running Cursor, Codex, claude or opencode worker"

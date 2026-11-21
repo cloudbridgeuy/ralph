@@ -6,6 +6,7 @@ use crate::highlight::ThemeConfig;
 use crate::signal;
 use crate::turn_sink::TerminalSink;
 use ralph_core::cancel::CancelToken;
+use ralph_core::chat_answer::AnswerArgs;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::SendItCommand;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route, Status};
@@ -257,6 +258,20 @@ impl RemoteSession {
         }
     }
 
+    fn answer(&self, args: AnswerArgs) -> Result<String, Box<dyn Error>> {
+        let thread = self.attached.borrow().clone();
+        match self.ask(&ClientMsg::Answer {
+            thread,
+            worker: args.worker,
+            request: args.request,
+            option: args.option,
+        })? {
+            ServerMsg::Done { message } => Ok(message),
+            ServerMsg::Error { message } => Err(Refused(message).into()),
+            _ => Err("ralph serve did not answer the answer request".into()),
+        }
+    }
+
     fn write(&self, msg: &ClientMsg) -> io::Result<()> {
         let id = self.next_id.replace(self.next_id.get() + 1);
         self.stream
@@ -412,6 +427,13 @@ fn handle(remote: &RemoteSession, line: &str) -> Result<(), Box<dyn Error>> {
     let route = route_input(line, 0, &EmptySubmit::default(), &BTreeSet::new());
     if let Route::Send(text) = &route {
         return send(remote, text);
+    }
+    if let Route::Answer(parsed) = route {
+        match parsed {
+            Ok(args) => println!("{}", remote.answer(args)?),
+            Err(usage) => println!("{usage}"),
+        }
+        return Ok(());
     }
     match thread_request(&route) {
         Some(Ok(cmd)) => println!("{}", remote.thread(cmd)?),

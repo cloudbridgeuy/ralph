@@ -156,6 +156,10 @@ impl Sessions {
             .map(|(_, session)| Arc::clone(session))
     }
 
+    pub(super) fn store(&self, key: &SessionKey) -> Option<PathBuf> {
+        self.get(key).map(|session| session.store.clone())
+    }
+
     pub(super) fn stores(&self) -> Vec<(SessionKey, PathBuf)> {
         self.lock()
             .iter()
