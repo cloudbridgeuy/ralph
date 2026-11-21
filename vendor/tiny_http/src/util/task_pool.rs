@@ -145,8 +145,7 @@ impl Drop for TaskPool {
 }
 
 fn needs_thread(waiting: usize, queued: usize) -> bool {
-    let _ = queued;
-    waiting == 0
+    waiting <= queued
 }
 
 #[cfg(test)]
