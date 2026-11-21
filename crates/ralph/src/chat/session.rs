@@ -97,7 +97,7 @@ fn with_pill_rule(mut prompt: CustomPrompt, emphasis: bool, color: bool) -> Cust
     prompt
 }
 
-pub(super) fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
+pub(crate) fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
     let (behaviour, behaviour_warning) = match files.behaviour.as_deref() {
         Some(path) => match read_prompt_file(path) {
             Ok(text) => match prompt_text(text) {

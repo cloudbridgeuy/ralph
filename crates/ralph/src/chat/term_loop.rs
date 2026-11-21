@@ -335,7 +335,9 @@ impl TerminalLoop<'_> {
                 store_dir: self.store_dir,
                 in_thread: self.in_thread,
                 width: screen_columns(),
-                display: self.display,
+                display: Some(self.display),
+                notice: &|text| println!("{text}"),
+                curate: &|prompt, curator| crate::run_curator(prompt, curator),
             };
             thread_cmd::run(&op, &env, &mut thread_cmd::confirm, &|name| {
                 thread::running_ids(&main, name)

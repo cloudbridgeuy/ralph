@@ -1,4 +1,8 @@
+use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::{decode_line, encode_line, MAX_FRAME_BYTES};
+use ralph_core::chat_thread::{AutoMode, ThreadName};
+use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
+use ralph_core::turn_event::TurnEvent;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,9 +17,77 @@ pub struct Envelope<B> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum ThreadCmd {
+    Pull {
+        name: String,
+    },
+    Park {
+        name: String,
+    },
+    Revive {
+        name: String,
+    },
+    Drop {
+        name: String,
+    },
+    Merge {
+        name: String,
+        view: bool,
+    },
+    Open {
+        name: String,
+        model: Option<String>,
+        auto: Option<AutoMode>,
+    },
+    Switch {
+        name: String,
+    },
+    Main,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThreadRequest {
+    Op(ThreadOp),
+    Attach(SessionKey),
+}
+
+impl ThreadCmd {
+    pub fn parse(self) -> Result<ThreadRequest, String> {
+        let name = |name: &str| ThreadName::parse(name);
+        let op = |op: ThreadOp| ThreadRequest::Op(op);
+        match self {
+            ThreadCmd::Pull { name: n } => name(&n).map(|n| op(ThreadOp::Pull(n))),
+            ThreadCmd::Park { name: n } => name(&n).map(|n| op(ThreadOp::Park(n))),
+            ThreadCmd::Revive { name: n } => name(&n).map(|n| op(ThreadOp::Revive(n))),
+            ThreadCmd::Drop { name: n } => name(&n).map(|n| op(ThreadOp::Drop(n))),
+            ThreadCmd::Merge { name: n, view } => {
+                name(&n).map(|name| op(ThreadOp::Merge { name, view }))
+            }
+            ThreadCmd::Open {
+                name: n,
+                model,
+                auto,
+            } => name(&n).map(|name| op(ThreadOp::Open(OpenOpts { name, auto, model }))),
+            ThreadCmd::Switch { name: n } => {
+                name(&n).map(|n| ThreadRequest::Attach(SessionKey::Thread(n)))
+            }
+            ThreadCmd::Main => Ok(ThreadRequest::Attach(SessionKey::Main)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    Hello { proto: u32 },
+    Hello {
+        proto: u32,
+    },
+    Send {
+        thread: Option<String>,
+        text: String,
+    },
+    Thread(ThreadCmd),
     Shutdown,
 }
 
@@ -24,6 +96,9 @@ pub enum ClientMsg {
 pub enum ServerMsg {
     Error { message: String },
     Hello { proto: u32 },
+    Turn { event: TurnEvent },
+    TurnDone,
+    Done { message: String },
 }
 
 pub fn hello_reply(proto: u32) -> ServerMsg {
@@ -61,6 +136,7 @@ pub fn decode_frame<B: DeserializeOwned>(line: &str) -> Result<Envelope<B>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::turn_event::Wait;
 
     fn server_messages() -> Vec<ServerMsg> {
         vec![
@@ -68,11 +144,36 @@ mod tests {
                 message: "m".into(),
             },
             ServerMsg::Hello { proto: VERSION },
+            ServerMsg::Turn {
+                event: TurnEvent::Busy(Wait::Tool),
+            },
+            ServerMsg::Turn {
+                event: TurnEvent::Idle,
+            },
+            ServerMsg::TurnDone,
+            ServerMsg::Done {
+                message: "ok".into(),
+            },
         ]
     }
 
     fn client_messages() -> Vec<ClientMsg> {
-        vec![ClientMsg::Hello { proto: VERSION }, ClientMsg::Shutdown]
+        vec![
+            ClientMsg::Hello { proto: VERSION },
+            ClientMsg::Send {
+                thread: None,
+                text: "hi".into(),
+            },
+            ClientMsg::Send {
+                thread: Some("side".into()),
+                text: "hi".into(),
+            },
+            ClientMsg::Thread(ThreadCmd::Merge {
+                name: "side".into(),
+                view: true,
+            }),
+            ClientMsg::Shutdown,
+        ]
     }
 
     #[test]
@@ -100,6 +201,87 @@ mod tests {
                 serde_json::to_value(&msg).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn a_turn_event_travels_under_the_turn_type() {
+        let line = encode_frame(
+            3,
+            &ServerMsg::Turn {
+                event: TurnEvent::Busy(Wait::Tool),
+            },
+        );
+        assert_eq!(
+            line.trim_end(),
+            r#"{"v":1,"id":3,"body":{"type":"turn","event":{"Busy":"Tool"}}}"#
+        );
+    }
+
+    #[test]
+    fn a_thread_command_travels_under_the_thread_type() {
+        let line = encode_frame(
+            2,
+            &ClientMsg::Thread(ThreadCmd::Pull {
+                name: "auth".into(),
+            }),
+        );
+        assert_eq!(
+            line.trim_end(),
+            r#"{"v":1,"id":2,"body":{"type":"thread","op":"pull","name":"auth"}}"#
+        );
+    }
+
+    #[test]
+    fn a_thread_command_parses_names_at_the_boundary() {
+        let merge = ThreadCmd::Merge {
+            name: "auth".into(),
+            view: true,
+        };
+        assert_eq!(
+            merge.parse(),
+            Ok(ThreadRequest::Op(ThreadOp::Merge {
+                name: ThreadName::parse("auth").unwrap(),
+                view: true
+            }))
+        );
+        assert!(ThreadCmd::Drop {
+            name: "../x".into()
+        }
+        .parse()
+        .is_err());
+        assert!(ThreadCmd::Pull {
+            name: "main".into()
+        }
+        .parse()
+        .is_err());
+    }
+
+    #[test]
+    fn open_and_switch_parse_to_requests() {
+        let line = r#"{"type":"thread","op":"open","name":"auth","auto":"merge"}"#;
+        let ClientMsg::Thread(open) = serde_json::from_str(line).unwrap() else {
+            panic!("expected a thread command");
+        };
+        let auth = ThreadName::parse("auth").unwrap();
+        assert_eq!(
+            open.parse(),
+            Ok(ThreadRequest::Op(ThreadOp::Open(OpenOpts {
+                name: auth.clone(),
+                auto: Some(AutoMode::Merge),
+                model: None
+            })))
+        );
+        assert_eq!(
+            ThreadCmd::Switch {
+                name: "auth".into()
+            }
+            .parse(),
+            Ok(ThreadRequest::Attach(SessionKey::Thread(auth)))
+        );
+        assert_eq!(
+            ThreadCmd::Main.parse(),
+            Ok(ThreadRequest::Attach(SessionKey::Main))
+        );
     }
 
     #[test]
