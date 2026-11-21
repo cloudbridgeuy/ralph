@@ -1,4 +1,4 @@
-use super::{clear_marker, Workers};
+use super::{clear_marker, headless_files, Workers};
 use crate::cursor_owner::write_file;
 use ralph_core::worker::{
     capabilities, close_handoff, describe, Feature, Handoff, HandoffFiles, PermissionAnswer,
@@ -10,67 +10,82 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub fn answer_permission(
+    store_dir: &Path,
+    handoff_timeout: Duration,
+    id: &str,
+    request_id: &str,
+    text: &str,
+) -> io::Result<String> {
+    let (kind, files) = headless_files(store_dir, id).ok_or_else(|| {
+        io::Error::other(format!(
+            "worker {id} is not a running Cursor, Codex, claude or opencode worker"
+        ))
+    })?;
+    let caps = capabilities(kind);
+    if caps.support(Feature::PermAsk) == Support::None {
+        return Err(io::Error::other(describe(&caps, Feature::PermAsk)));
+    }
+    let HandoffFiles {
+        answer,
+        error,
+        claim,
+        ..
+    } = files;
+    let body = serde_json::to_string(&PermissionAnswer {
+        request_id: request_id.to_string(),
+        option_id: text.to_string(),
+    })?;
+    fs::create_dir_all(answer.parent().unwrap_or(store_dir))?;
+    let _lock = lock_reply(&reply_lock_path(store_dir, id), id, Instant::now())?;
+    if !settle(handoff_timeout, || claim.exists()) {
+        return Err(io::Error::other(format!(
+            "ralph chat is still handling an earlier permission answer for worker {id}"
+        )));
+    }
+    clear_marker(&error)?;
+    let staged = reply_staging_path(store_dir, id);
+    write_file(&staged, &body)?;
+    fs::rename(&staged, &answer).inspect_err(|_| {
+        fs::remove_file(&staged).ok();
+    })?;
+    if !settle(handoff_timeout, || answer.exists() || claim.exists()) {
+        let removed = match fs::remove_file(&answer) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error),
+        };
+        match timeout_outcome(removed, claim.exists()) {
+            TimeoutOutcome::NotPickedUp => {
+                return Err(io::Error::other(
+                    "ralph chat did not pick up the permission answer in time",
+                ));
+            }
+            TimeoutOutcome::OutcomeUnknown => {
+                return Err(io::Error::other(format!(
+                    "ralph chat took the permission answer for worker {id} but did not finish in time; outcome unknown"
+                )));
+            }
+            TimeoutOutcome::Finished => {}
+        }
+    }
+    match fs::read_to_string(&error) {
+        Ok(message) => {
+            clear_marker(&error)?;
+            Err(io::Error::other(message))
+        }
+        Err(_) => Ok(format!("Answered the permission request of worker {id}.")),
+    }
+}
+
 impl Workers {
-    pub fn answer_permission(&self, id: &str, request_id: &str, text: &str) -> io::Result<String> {
-        let (kind, files) = self.headless_files(id).ok_or_else(|| {
-            io::Error::other(format!(
-                "worker {id} is not a running Cursor, Codex, claude or opencode worker"
-            ))
-        })?;
-        let caps = capabilities(kind);
-        if caps.support(Feature::PermAsk) == Support::None {
-            return Err(io::Error::other(describe(&caps, Feature::PermAsk)));
-        }
-        let HandoffFiles {
-            answer,
-            error,
-            claim,
-            ..
-        } = files;
-        let body = serde_json::to_string(&PermissionAnswer {
-            request_id: request_id.to_string(),
-            option_id: text.to_string(),
-        })?;
-        fs::create_dir_all(answer.parent().unwrap_or(&self.store_dir))?;
-        let _lock = lock_reply(&reply_lock_path(&self.store_dir, id), id, Instant::now())?;
-        if !settle(self.handoff_timeout, || claim.exists()) {
-            return Err(io::Error::other(format!(
-                "ralph chat is still handling an earlier permission answer for worker {id}"
-            )));
-        }
-        clear_marker(&error)?;
-        let staged = reply_staging_path(&self.store_dir, id);
-        write_file(&staged, &body)?;
-        fs::rename(&staged, &answer).inspect_err(|_| {
-            fs::remove_file(&staged).ok();
-        })?;
-        if !settle(self.handoff_timeout, || answer.exists() || claim.exists()) {
-            let removed = match fs::remove_file(&answer) {
-                Ok(()) => true,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-                Err(error) => return Err(error),
-            };
-            match timeout_outcome(removed, claim.exists()) {
-                TimeoutOutcome::NotPickedUp => {
-                    return Err(io::Error::other(
-                        "ralph chat did not pick up the permission answer in time",
-                    ));
-                }
-                TimeoutOutcome::OutcomeUnknown => {
-                    return Err(io::Error::other(format!(
-                        "ralph chat took the permission answer for worker {id} but did not finish in time; outcome unknown"
-                    )));
-                }
-                TimeoutOutcome::Finished => {}
-            }
-        }
-        match fs::read_to_string(&error) {
-            Ok(message) => {
-                clear_marker(&error)?;
-                Err(io::Error::other(message))
-            }
-            Err(_) => Ok(format!("Answered the permission request of worker {id}.")),
-        }
+    pub(super) fn answer_permission(
+        &self,
+        id: &str,
+        request_id: &str,
+        text: &str,
+    ) -> io::Result<String> {
+        answer_permission(&self.store_dir, self.handoff_timeout, id, request_id, text)
     }
 }
 

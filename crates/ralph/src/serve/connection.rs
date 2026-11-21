@@ -9,15 +9,15 @@ use ralph_core::chat_thread::config_root;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
 use ralph_core::serve_supervisor::{Effect, Input};
+use ralph_core::worker::HANDOFF_TIMEOUT;
 use ralph_server::chat::serve_proto::{
     decode_frame, hello_reply, ClientMsg, ServerMsg, ThreadRequest,
 };
 use ralph_server::warn::warn;
-use ralph_server::workers::Workers;
+use ralph_server::workers::answer_permission as answer_worker_permission;
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -144,8 +144,13 @@ fn answer_permission(host: &Host, answer: &Answer) -> ServerMsg {
             message: format!("{} is not open", answer.key),
         };
     };
-    let workers = Workers::new(store, PathBuf::new(), String::new(), None);
-    match workers.answer_permission(&answer.worker, &answer.request, &answer.option) {
+    match answer_worker_permission(
+        &store,
+        HANDOFF_TIMEOUT,
+        &answer.worker,
+        &answer.request,
+        &answer.option,
+    ) {
         Ok(message) => ServerMsg::Done { message },
         Err(e) => ServerMsg::Error {
             message: e.to_string(),

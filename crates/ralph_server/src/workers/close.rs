@@ -75,7 +75,7 @@ impl Workers {
         let live = LiveHarness {
             agy: {
                 let files = HandoffFiles::agy(&self.store_dir, id);
-                files.owner.exists() || self.saved_agy(&files)
+                files.owner.exists() || super::agy::saved_agy(&self.store_dir, &files)
             },
             cursor: HandoffFiles::cursor(&self.store_dir, id).owner.exists(),
             codex: self.codex_running(id),
