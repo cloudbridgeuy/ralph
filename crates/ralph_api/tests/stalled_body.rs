@@ -4,7 +4,9 @@
 mod common;
 
 use common::{read_reply, Host, TestServer};
+use ralph_api::MAX_HANDLERS;
 use std::io::Write;
+use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 const BUDGET: Duration = Duration::from_secs(1);
@@ -46,5 +48,44 @@ fn stalled_body_gets_a_rejection_without_waiting_for_the_body() {
     let started = Instant::now();
     let reply = read_reply(&mut stalled);
     assert_eq!(reply.status, 405);
+    assert!(started.elapsed() < BUDGET);
+}
+
+fn stall_clients(server: &TestServer, count: usize) -> Vec<TcpStream> {
+    let clients = (0..count)
+        .map(|_| {
+            let mut client = server.connect();
+            let head = format!(
+                "POST /api/health?token={} HTTP/1.1\r\nHost: {}\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\nabc",
+                server.token(),
+                server.own_host()
+            );
+            client.write_all(head.as_bytes()).unwrap();
+            client
+        })
+        .collect();
+    std::thread::sleep(Duration::from_millis(400));
+    clients
+}
+
+#[test]
+fn stop_returns_when_every_slot_and_one_more_client_stall() {
+    let mut server = TestServer::start();
+    let _stalled = stall_clients(&server, MAX_HANDLERS + 1);
+    assert!(
+        server.stop_within(BUDGET),
+        "serve did not stop within {BUDGET:?}"
+    );
+}
+
+#[test]
+fn over_cap_request_gets_503_busy_while_slots_are_stalled() {
+    let server = TestServer::start();
+    let _stalled = stall_clients(&server, MAX_HANDLERS);
+    let started = Instant::now();
+    let target = format!("/api/health?token={}", server.token());
+    let reply = server.exchange("GET", &target, Host::Own, &[]);
+    assert_eq!(reply.status, 503);
+    assert_eq!(reply.body, r#"{"error":"busy"}"#);
     assert!(started.elapsed() < BUDGET);
 }

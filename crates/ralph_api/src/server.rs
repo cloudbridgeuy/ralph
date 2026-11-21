@@ -6,7 +6,7 @@ use ralph_server::warn::{warn, warn_if_err};
 use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tiny_http::{Header, Request, Response, Server};
 
@@ -50,7 +50,7 @@ pub fn serve(
         let Some(request) = received else { continue };
         match admit(active.load(Ordering::SeqCst), MAX_HANDLERS) {
             Admission::Accept => spawn_handler(request, &shared, &active),
-            Admission::Reject => respond(request, overloaded()),
+            Admission::Reject => run_off_loop(request, |request| respond(request, overloaded())),
         }
     }
     Ok(())
@@ -59,14 +59,32 @@ pub fn serve(
 fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Arc<AtomicUsize>) {
     active.fetch_add(1, Ordering::SeqCst);
     let (shared, active) = (Arc::clone(shared), Arc::clone(active));
-    let spawned = std::thread::Builder::new().spawn(move || {
+    run_off_loop(request, move |request| {
         let _slot = Slot(active);
         let (config, token) = &*shared;
         let response = route(&to_api_request(&request), config, token);
         respond(request, response);
     });
+}
+
+fn run_off_loop(request: Request, job: impl FnOnce(Request) + Send + 'static) {
+    let cell = Arc::new(Mutex::new(Some(request)));
+    let owned = Arc::clone(&cell);
+    let spawned = std::thread::Builder::new().spawn(move || {
+        let taken = owned.lock().ok().and_then(|mut guard| guard.take());
+        if let Some(request) = taken {
+            job(request);
+        }
+    });
     if let Err(error) = spawned {
         warn(format!("ralph web: could not start a handler: {error}"));
+        if let Some(request) = cell.lock().ok().and_then(|mut guard| guard.take()) {
+            #[allow(
+                clippy::mem_forget,
+                reason = "dropping a request drains its body and would block the loop"
+            )]
+            std::mem::forget(request);
+        }
     }
 }
 

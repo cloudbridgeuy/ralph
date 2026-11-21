@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -61,11 +61,21 @@ impl TestServer {
 
     pub fn stop_and_time(mut self) -> Duration {
         let started = Instant::now();
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(thread) = self.thread.take() {
-            thread.join().ok();
-        }
+        self.stop_within(Duration::from_secs(10));
         started.elapsed()
+    }
+
+    pub fn stop_within(&mut self, limit: Duration) -> bool {
+        self.stop.store(true, Ordering::SeqCst);
+        let Some(thread) = self.thread.take() else {
+            return true;
+        };
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            thread.join().ok();
+            done.send(()).ok();
+        });
+        finished.recv_timeout(limit).is_ok()
     }
 
     pub fn token(&self) -> &str {
@@ -114,10 +124,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        if let Some(thread) = self.thread.take() {
-            thread.join().ok();
-        }
+        self.stop_within(Duration::from_secs(2));
     }
 }
 
