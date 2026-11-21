@@ -15,6 +15,7 @@ pub mod cancel;
 pub mod changes;
 pub mod chat;
 pub mod chat_backend;
+pub mod chat_answer;
 pub mod chat_cell;
 pub mod chat_cell_stream;
 pub mod chat_close;

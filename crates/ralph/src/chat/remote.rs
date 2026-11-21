@@ -6,6 +6,7 @@ use crate::highlight::ThemeConfig;
 use crate::signal;
 use crate::turn_sink::TerminalSink;
 use ralph_core::cancel::CancelToken;
+use ralph_core::chat_answer::AnswerArgs;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::SendItCommand;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route, Status};
@@ -13,7 +14,7 @@ use ralph_core::chat_switch::SwitchTarget;
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::program_status::{Phase, State};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
-use ralph_core::worker::Report;
+use ralph_core::worker::{BlockedContent, Report};
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
@@ -22,7 +23,7 @@ use ralph_server::chat::serve_proto::{
 };
 use ralph_server::chat::session::{At, Proposal, Reply};
 use ralph_server::chat::turn::TurnOutcome;
-use ralph_server::warn::warn_if_err;
+use ralph_server::warn::{notice, warn_if_err};
 use reedline::{DefaultPrompt, Reedline, Signal};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
@@ -41,6 +42,7 @@ enum Step {
     Render(TurnEvent),
     Finished,
     Failed(String),
+    Notice(String),
     Ignored,
 }
 
@@ -49,9 +51,35 @@ fn on_frame(msg: ServerMsg) -> Step {
         ServerMsg::Turn { event } => Step::Render(event),
         ServerMsg::TurnDone => Step::Finished,
         ServerMsg::Error { message } => Step::Failed(message),
+        ServerMsg::Blocked {
+            thread,
+            worker,
+            content,
+        } => Step::Notice(blocked_notice(thread.as_deref(), &worker, content.as_ref())),
         ServerMsg::Hello { .. } | ServerMsg::Done { .. } | ServerMsg::Status { .. } => {
             Step::Ignored
         }
+    }
+}
+
+fn blocked_notice(thread: Option<&str>, worker: &str, content: Option<&BlockedContent>) -> String {
+    let label = thread.map_or_else(|| worker.to_string(), |name| format!("{name}/{worker}"));
+    match content {
+        Some(content) => {
+            let options: Vec<&str> = content
+                .options
+                .iter()
+                .map(|option| option.option_id.as_str())
+                .collect();
+            format!(
+                "{label} blocked: {} {} request {} options {}",
+                content.tool,
+                content.summary,
+                content.request_id,
+                options.join("|")
+            )
+        }
+        None => format!("{label} permission settled"),
     }
 }
 
@@ -170,7 +198,7 @@ impl RemoteSession {
             sink,
         };
         session.write(&ClientMsg::Hello { proto: VERSION })?;
-        match session.read_frame(&mut String::new(), None)? {
+        match session.read_reply()? {
             ServerMsg::Hello { .. } => Ok(session),
             ServerMsg::Error { message } => Err(message.into()),
             _ => Err("ralph serve did not answer the hello".into()),
@@ -179,7 +207,19 @@ impl RemoteSession {
 
     fn ask(&self, msg: &ClientMsg) -> Result<ServerMsg, Box<dyn Error>> {
         self.write(msg)?;
-        self.read_frame(&mut String::new(), None)
+        self.read_reply()
+    }
+
+    fn read_reply(&self) -> Result<ServerMsg, Box<dyn Error>> {
+        loop {
+            let msg = self.read_frame(&mut String::new(), None)?;
+            if !matches!(msg, ServerMsg::Blocked { .. }) {
+                return Ok(msg);
+            }
+            if let Step::Notice(text) = on_frame(msg) {
+                notice(text);
+            }
+        }
     }
 
     fn status_line(&self) -> Result<String, Box<dyn Error>> {
@@ -215,6 +255,20 @@ impl RemoteSession {
             }
             ServerMsg::Error { message } => Err(Refused(message).into()),
             _ => Err("ralph serve did not answer the thread request".into()),
+        }
+    }
+
+    fn answer(&self, args: AnswerArgs) -> Result<String, Box<dyn Error>> {
+        let thread = self.attached.borrow().clone();
+        match self.ask(&ClientMsg::Answer {
+            thread,
+            worker: args.worker,
+            request: args.request,
+            option: args.option,
+        })? {
+            ServerMsg::Done { message } => Ok(message),
+            ServerMsg::Error { message } => Err(Refused(message).into()),
+            _ => Err("ralph serve did not answer the answer request".into()),
         }
     }
 
@@ -300,6 +354,7 @@ impl SessionPort for RemoteSession {
                     return Ok(TurnOutcome::Replied);
                 }
                 Step::Failed(message) => return Err(Refused(message).into()),
+                Step::Notice(text) => notice(text),
                 Step::Ignored => {}
             }
         }
@@ -372,6 +427,13 @@ fn handle(remote: &RemoteSession, line: &str) -> Result<(), Box<dyn Error>> {
     let route = route_input(line, 0, &EmptySubmit::default(), &BTreeSet::new());
     if let Route::Send(text) = &route {
         return send(remote, text);
+    }
+    if let Route::Answer(parsed) = route {
+        match parsed {
+            Ok(args) => println!("{}", remote.answer(args)?),
+            Err(usage) => println!("{usage}"),
+        }
+        return Ok(());
     }
     match thread_request(&route) {
         Some(Ok(cmd)) => println!("{}", remote.thread(cmd)?),

@@ -1,3 +1,4 @@
+use crate::chat_answer::{parse_answer_args, AnswerArgs};
 use crate::chat_cell::{bang, Bang};
 use crate::chat_direct::{parse_direct, Direct, DirectLine};
 use crate::chat_help::Command;
@@ -118,6 +119,7 @@ pub enum Route {
         op: Result<ThreadOp, String>,
         line: String,
     },
+    Answer(Result<AnswerArgs, String>),
     History(MemoryCall),
     HistoryRefused {
         tool: HistoryTool,
@@ -168,6 +170,7 @@ impl Route {
             | Route::ListInbox
             | Route::Help
             | Route::Config
+            | Route::Answer(_)
             | Route::History(_)
             | Route::HistoryRefused { .. }
             | Route::InboxUsage
@@ -240,6 +243,7 @@ pub fn route_input(
                         line: line.to_string(),
                     },
                 },
+                Command::Answer => Route::Answer(parse_answer_args(args)),
                 Command::Config => Route::Config,
                 Command::View => Route::View(parse_view_args(args)),
                 Command::Rerender => Route::Rerender(parse_rerender_args(args)),

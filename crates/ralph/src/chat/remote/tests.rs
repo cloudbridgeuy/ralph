@@ -1,5 +1,6 @@
 use super::*;
 use ralph_core::program_status::{Report, State};
+use ralph_core::worker::PermissionOption;
 
 fn event() -> TurnEvent {
     TurnEvent::Warning("hi".into())
@@ -44,6 +45,43 @@ fn frames_that_do_not_belong_mid_turn_are_ignored() {
     ] {
         assert_eq!(on_frame(msg), Step::Ignored);
     }
+}
+
+#[test]
+fn a_blocked_push_becomes_a_notice() {
+    let content = BlockedContent {
+        request_id: "r1".into(),
+        tool: "Bash".into(),
+        summary: "ls".into(),
+        options: vec![
+            PermissionOption {
+                option_id: "a".into(),
+                name: "Allow".into(),
+                kind: "allow_once".into(),
+            },
+            PermissionOption {
+                option_id: "b".into(),
+                name: "Deny".into(),
+                kind: "reject_once".into(),
+            },
+        ],
+        pending: Vec::new(),
+    };
+    let raised = on_frame(ServerMsg::Blocked {
+        thread: Some("side".into()),
+        worker: "w1".into(),
+        content: Some(content),
+    });
+    assert_eq!(
+        raised,
+        Step::Notice("side/w1 blocked: Bash ls request r1 options a|b".into())
+    );
+    let settled = on_frame(ServerMsg::Blocked {
+        thread: None,
+        worker: "w1".into(),
+        content: None,
+    });
+    assert_eq!(settled, Step::Notice("w1 permission settled".into()));
 }
 
 #[test]

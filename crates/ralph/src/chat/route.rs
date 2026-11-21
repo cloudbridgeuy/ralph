@@ -98,6 +98,7 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::WorkerCosts(args) => {
             workers::costs(ctx.display, ctx.prices, ctx.tickets, ctx.store, args)
         }
+        Route::Answer(_) => writeln!(out, "/answer is only served over --connect")?,
         Route::Help => write!(out, "{}", help_with_store((ctx.columns)(), ctx.store))?,
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),

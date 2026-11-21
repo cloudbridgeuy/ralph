@@ -1,3 +1,5 @@
+mod blocked;
+mod clients;
 mod connection;
 mod open;
 mod sink;
@@ -7,6 +9,8 @@ use crate::chat::thread::{claim_closed, config_root, thread_dir};
 use crate::chat::STORE_ENV;
 use crate::cli::ServeArgs;
 use crate::signal;
+use blocked::read_blocked;
+use clients::Clients;
 use open::{open_session, Sessions};
 use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::{runtime_root, serve_socket_path, StoreKey};
@@ -15,6 +19,7 @@ use ralph_core::serve::{serve_refusal, serve_store_gate};
 use ralph_core::serve_supervisor::{Effect, Input, Supervisor};
 use ralph_server::chat::claim::ChatClaim;
 use ralph_server::chat::memory::Store;
+use ralph_server::chat::serve_proto::{blocked_pushes, BlockedMap};
 use ralph_server::chat::serve_socket::ServeSocket;
 use ralph_server::warn::warn;
 use ralph_server::wire::store::current_uid;
@@ -28,11 +33,13 @@ use std::time::{Duration, Instant};
 
 const DRAIN_BOUND: Duration = Duration::from_secs(5);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
+const BLOCKED_POLL: Duration = Duration::from_secs(1);
 const POISONED: &str = "ralph serve: internal state unavailable";
 
 struct Host {
     supervisor: Mutex<Supervisor>,
     sessions: Sessions,
+    clients: Clients,
     store_dir: PathBuf,
     claim: Mutex<Option<ChatClaim>>,
     stop: AtomicBool,
@@ -50,6 +57,7 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let host = Arc::new(Host {
         supervisor: Mutex::new(supervisor),
         sessions: Sessions::default(),
+        clients: Clients::default(),
         store_dir: store_dir.clone(),
         claim: Mutex::new(None),
         stop: AtomicBool::new(false),
@@ -61,7 +69,17 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let socket = ServeSocket::bind(&root, &path)?;
     eprintln!("ralph serve: listening on {}", path.display());
     let mut draining_since = None;
+    let mut seen = BlockedMap::new();
+    let mut polled = Instant::now();
     loop {
+        if polled.elapsed() >= BLOCKED_POLL {
+            polled = Instant::now();
+            let now = read_blocked(&host.sessions.stores());
+            blocked_pushes(&seen, &now)
+                .iter()
+                .for_each(|push| host.clients.push(push));
+            seen = now;
+        }
         if signal::is_terminated() || host.stop.load(Ordering::SeqCst) {
             let since = draining_since.get_or_insert_with(Instant::now);
             let effects = step(&host.supervisor, Input::Stop)?;

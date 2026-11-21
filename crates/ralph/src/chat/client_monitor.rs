@@ -64,7 +64,7 @@ pub(super) fn client_events(alert: AlertConfig, term: Arc<TermStatus>) -> Emit {
     })
 }
 
-pub(super) fn watch_headless(store_dir: PathBuf) -> HeadlessShutdown {
+pub(crate) fn watch_headless(store_dir: PathBuf) -> HeadlessShutdown {
     let headless = HeadlessShutdown::new(store_dir);
     for host in headless.hosts() {
         let resumed = Arc::clone(host);
