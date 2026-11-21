@@ -41,7 +41,7 @@ fn stopped_file() -> RunFile {
 }
 
 fn approved_file() -> RunFile {
-    approve(&plain_file(), Some(&plan_hash(&plan())), true).unwrap()
+    signed_go(&plain_file(), Some(&plan_hash(&plan())), true).unwrap()
 }
 
 #[test]

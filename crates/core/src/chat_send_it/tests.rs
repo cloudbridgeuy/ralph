@@ -2,6 +2,7 @@ use super::*;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
+use signing::*;
 
 mod block;
 mod drive;
@@ -12,6 +13,7 @@ mod noise;
 mod plan;
 mod render;
 mod resume;
+mod signing;
 mod steer;
 mod template;
 mod verify;
@@ -492,7 +494,7 @@ fn new_stop_notices_name_the_step() {
 
 fn approved(plan: RunPlan) -> RunFile {
     RunFile {
-        approved: Some(plan_hash(&plan)),
+        approved: Some(signed(&plan)),
         plan,
         stopped: None,
     }
@@ -898,7 +900,7 @@ fn a_stop_keeps_the_stopped_step_and_a_finished_run_clears_it() {
             stopped: stopped_at(2),
         }
     );
-    let resumed = approve(&stopped, Some(&hash), true).unwrap();
+    let resumed = signed_go(&stopped, Some(&hash), true).unwrap();
     assert_eq!(resumed.stopped, stopped_at(2));
     assert_eq!(stop_file(&resumed, &hash, None).unwrap().stopped, None);
 }

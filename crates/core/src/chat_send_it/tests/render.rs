@@ -233,7 +233,7 @@ fn the_brief_the_model_sees_has_no_escape_character() {
 
 fn run_file_approved() -> RunFile {
     RunFile {
-        approved: Some(plan_hash(&plan())),
+        approved: Some(signed(&plan())),
         ..file()
     }
 }

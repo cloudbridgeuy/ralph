@@ -30,7 +30,7 @@ fn send_it_keywords_count_only_as_the_whole_argument() {
     );
 }
 
-fn run_file(approved: Option<String>) -> RunFile {
+fn run_file(approved: Option<Approval>) -> RunFile {
     RunFile {
         plan: plan(),
         approved,
@@ -40,7 +40,7 @@ fn run_file(approved: Option<String>) -> RunFile {
 
 #[test]
 fn a_run_file_round_trips_through_toml_with_its_approval() {
-    for approved in [None, Some(plan_hash(&plan()))] {
+    for approved in [None, Some(signed(&plan()))] {
         let file = run_file(approved);
         let text = write_run(&file).unwrap();
         assert_eq!(read_run(&text, limits()), Ok(file), "{text}");
@@ -112,22 +112,22 @@ fn go_approves_only_the_shown_plan_typed_at_the_prompt() {
     let file = run_file(None);
     let hash = plan_hash(&file.plan);
     assert!(!file.is_approved());
-    assert!(approve(&file, Some(&hash), false)
+    assert!(signed_go(&file, Some(&hash), false)
         .unwrap_err()
         .contains("type it at the prompt"));
     for shown in [None, Some("0123456789ab")] {
-        assert!(approve(&file, shown, true)
+        assert!(signed_go(&file, shown, true)
             .unwrap_err()
             .contains("/send-it status"));
     }
-    let approved = approve(&file, Some(&hash), true).unwrap();
-    assert_eq!(approved.approved, Some(hash));
+    let approved = signed_go(&file, Some(&hash), true).unwrap();
+    assert_eq!(approved.approved, Some(signed(&file.plan)));
     assert!(approved.is_approved());
 }
 
 #[test]
 fn an_edited_plan_loses_its_approval() {
-    let mut file = approve(&run_file(None), Some(&plan_hash(&plan())), true).unwrap();
+    let mut file = signed_go(&run_file(None), Some(&plan_hash(&plan())), true).unwrap();
     assert!(file.is_approved());
     file.plan.steps.pop();
     assert!(!file.is_approved());
@@ -140,7 +140,7 @@ fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
     let status = render_status(&file, WIDE);
     assert!(status.starts_with(&render_run(&file.plan)), "{status}");
     assert!(status.ends_with(&format!("\n{hash} · not approved · /send-it go to approve")));
-    let approved = approve(&file, Some(&hash), true).unwrap();
+    let approved = signed_go(&file, Some(&hash), true).unwrap();
     assert!(render_status(&approved, WIDE).ends_with(&format!("\n{hash} · approved")));
     let stopped = RunFile {
         stopped: Some(Stopped {
@@ -160,7 +160,7 @@ fn only_an_approved_run_blocks_a_new_proposal() {
     assert_eq!(propose_refusal(None), None);
     assert_eq!(propose_refusal(Some(&draft)), None);
     let hash = plan_hash(&draft.plan);
-    let approved = approve(&draft, Some(&hash), true).unwrap();
+    let approved = signed_go(&draft, Some(&hash), true).unwrap();
     assert_eq!(
         propose_refusal(Some(&approved)),
         Some(format!(

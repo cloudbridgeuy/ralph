@@ -185,7 +185,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         }
     };
     let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
-    let send_it = SendIt::new(store_dir, send_it_limits, options.events);
+    let send_it = SendIt::new(store_dir, send_it_limits, options.events)?;
     let close = monitor.watches.close_guard();
     monitor.watches.restore();
     serve(&monitor, wiring.socket, &send_it, roster);

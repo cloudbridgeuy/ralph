@@ -4,18 +4,20 @@ use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{
     describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT, OUTPUT_HEADER,
 };
-use crate::worker::{HarnessId, Report};
+use crate::worker::{hex_encode, HarnessId, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
+mod approval;
 mod drive;
 mod end_block;
 mod render;
 pub mod template;
 
+pub use approval::{Approval, Signing};
 pub use drive::*;
 pub use end_block::*;
 pub use render::*;
@@ -405,7 +407,7 @@ pub fn parse_send_it_args(args: &str) -> SendItCommand {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunFile {
     pub plan: RunPlan,
-    pub approved: Option<String>,
+    pub approved: Option<Approval>,
     pub stopped: Option<Stopped>,
 }
 
@@ -419,18 +421,20 @@ const APPROVED_KEY: &str = "approved";
 const STOPPED_KEY: &str = "stopped";
 const HASH_BYTES: usize = 6;
 
-pub fn plan_hash(plan: &RunPlan) -> String {
+fn full_hash(plan: &RunPlan) -> String {
     let canonical = serde_json::to_string(&RawPlan::from(plan)).unwrap_or_default();
-    Sha256::digest(canonical.as_bytes())
-        .iter()
-        .take(HASH_BYTES)
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex_encode(&Sha256::digest(canonical.as_bytes()))
+}
+
+pub fn plan_hash(plan: &RunPlan) -> String {
+    full_hash(plan).chars().take(HASH_BYTES * 2).collect()
 }
 
 impl RunFile {
     pub fn is_approved(&self) -> bool {
-        self.approved.as_deref() == Some(plan_hash(&self.plan).as_str())
+        self.approved
+            .as_ref()
+            .is_some_and(|approval| approval.subject_hash == full_hash(&self.plan))
     }
 }
 
@@ -442,8 +446,7 @@ pub fn read_run(text: &str, defaults: Limits) -> Result<RunFile, String> {
         plan: parse_run(&value, defaults)?,
         approved: value
             .get(APPROVED_KEY)
-            .and_then(Value::as_str)
-            .map(str::to_string),
+            .and_then(|record| Approval::deserialize(record).ok()),
         stopped: value
             .get(STOPPED_KEY)
             .and_then(|stopped| Stopped::deserialize(stopped).ok()),
@@ -454,8 +457,8 @@ pub fn write_run(file: &RunFile) -> Result<String, String> {
     let unwritable = |error: String| format!("Could not write run.toml: {error}");
     let mut value =
         serde_json::to_value(RawPlan::from(&file.plan)).map_err(|e| unwritable(e.to_string()))?;
-    if let (Some(fields), Some(hash)) = (value.as_object_mut(), &file.approved) {
-        fields.insert(APPROVED_KEY.to_string(), Value::String(hash.clone()));
+    if let (Some(fields), Some(approval)) = (value.as_object_mut(), &file.approved) {
+        fields.insert(APPROVED_KEY.to_string(), json!(approval));
     }
     if let (Some(fields), Some(stopped)) = (value.as_object_mut(), &file.stopped) {
         fields.insert(STOPPED_KEY.to_string(), json!(stopped));
@@ -467,6 +470,7 @@ pub fn approve(
     file: &RunFile,
     shown: Option<&str>,
     typed_at_prompt: bool,
+    signing: &Signing,
 ) -> Result<RunFile, String> {
     let hash = plan_hash(&file.plan);
     if !typed_at_prompt {
@@ -478,13 +482,13 @@ pub fn approve(
         ));
     }
     Ok(RunFile {
-        approved: Some(hash),
+        approved: Some(Approval::sign(signing, &file.plan)?),
         ..file.clone()
     })
 }
 
 pub fn stop_file(file: &RunFile, hash: &str, stopped_at: Option<usize>) -> Option<RunFile> {
-    (file.approved.as_deref() == Some(hash)).then(|| RunFile {
+    (file.approved.is_some() && plan_hash(&file.plan) == hash).then(|| RunFile {
         plan: file.plan.clone(),
         approved: None,
         stopped: stopped_at.map(|step| Stopped {

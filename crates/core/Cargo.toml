@@ -19,6 +19,7 @@ base64 = { workspace = true }
 chrono = { workspace = true }
 flate2 = { workspace = true }
 gif = { workspace = true }
+hmac = { workspace = true }
 image-webp = { workspace = true }
 md5 = { workspace = true }
 regex = { workspace = true }

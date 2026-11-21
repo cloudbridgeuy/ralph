@@ -3,6 +3,7 @@ use crate::chat::memory::Store;
 use crate::chat::session::{Emit, Event};
 use crate::warn::warn_if_err;
 use crate::watches::{locked, OutcomeSlot};
+use crate::wire::store::current_uid;
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_send_it::template::{
@@ -11,8 +12,9 @@ use ralph_core::chat_send_it::template::{
 use ralph_core::chat_send_it::{
     approve, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
     render_status_styled, start_run, stop_file, tick, with_reply, write_run, Action, Driving,
-    Ended, Limits, RunFile, Seen, StepResult, Ticked,
+    Ended, Limits, RunFile, Seen, Signing, StepResult, Ticked,
 };
+use ralph_core::worker::hex_encode;
 use serde_json::Value;
 use std::fmt;
 use std::fs;
@@ -21,9 +23,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub const NO_RUN: &str = "No send-it run. Start one with /send-it <instructions>.";
+const KEY_BYTES: usize = 32;
+const NONCE_BYTES: usize = 16;
 const RUN_DIR: &str = "send-it";
 const RUN_FILE: &str = "run.toml";
 const TEMPLATE_DIR: &str = "templates";
+
+fn random_bytes<const N: usize>() -> Result<[u8; N], getrandom::Error> {
+    let mut bytes = [0u8; N];
+    getrandom::fill(&mut bytes)?;
+    Ok(bytes)
+}
 
 fn unreadable(path: &Path, error: io::Error) -> String {
     format!("Could not read {}: {error}", path.display())
@@ -35,6 +45,8 @@ pub struct SendIt {
     path: PathBuf,
     templates: PathBuf,
     limits: Limits,
+    key: Arc<[u8; KEY_BYTES]>,
+    live: Arc<Mutex<Option<String>>>,
     refused: Arc<Mutex<Option<String>>>,
     judged: Arc<Mutex<Option<StepResult>>>,
     answered: Arc<Mutex<Vec<String>>>,
@@ -51,8 +63,10 @@ impl fmt::Debug for Out {
 }
 
 impl SendIt {
-    pub fn new(store_dir: &Path, limits: Limits, emit: Emit) -> Self {
-        Self {
+    pub fn new(store_dir: &Path, limits: Limits, emit: Emit) -> Result<Self, getrandom::Error> {
+        Ok(Self {
+            key: Arc::new(random_bytes()?),
+            live: Arc::default(),
             log: store_dir.to_path_buf(),
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
             templates: store_dir.join(RUN_DIR).join(TEMPLATE_DIR),
@@ -61,7 +75,7 @@ impl SendIt {
             judged: Arc::default(),
             answered: Arc::default(),
             out: Out(emit),
-        }
+        })
     }
 
     pub fn show(&self, line: impl fmt::Display) {
@@ -243,8 +257,7 @@ impl SendIt {
             Err(text) => return (text, None),
         };
         locked(&self.answered).clear();
-        let approved = approve(&file, shown, typed_at_prompt)
-            .and_then(|approved| self.save(&approved).map(|()| approved));
+        let approved = self.signed_approval(&file, shown, typed_at_prompt);
         match approved {
             Ok(approved) => (
                 format!("Plan {} approved. Running it.", plan_hash(&approved.plan)),
@@ -252,6 +265,26 @@ impl SendIt {
             ),
             Err(text) => (text, None),
         }
+    }
+
+    fn signed_approval(
+        &self,
+        file: &RunFile,
+        shown: Option<&str>,
+        typed_at_prompt: bool,
+    ) -> Result<RunFile, String> {
+        let nonce = hex_encode(&random_bytes::<NONCE_BYTES>().map_err(|error| error.to_string())?);
+        let at = chrono::Utc::now().to_rfc3339();
+        let signing = Signing {
+            key: self.key.as_slice(),
+            at: &at,
+            peer_uid: current_uid(),
+            nonce: &nonce,
+        };
+        let approved = approve(file, shown, typed_at_prompt, &signing)?;
+        self.save(&approved)?;
+        *locked(&self.live) = Some(nonce);
+        Ok(approved)
     }
 
     pub fn tick(&self, driving: &Driving, watched: Option<&OutcomeSlot>, ended: Ended) -> Ticked {
@@ -387,14 +420,14 @@ mod tests {
     }
 
     fn quiet(dir: &Path) -> SendIt {
-        SendIt::new(dir, LIMITS, Arc::new(|_| {}))
+        SendIt::new(dir, LIMITS, Arc::new(|_| {})).unwrap()
     }
 
     fn recording(dir: &Path) -> (SendIt, Arc<Mutex<Vec<Event>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&events);
         let emit: Emit = Arc::new(move |event| locked(&sink).push(event));
-        (SendIt::new(dir, LIMITS, emit), events)
+        (SendIt::new(dir, LIMITS, emit).unwrap(), events)
     }
 
     #[test]
@@ -469,21 +502,17 @@ mod tests {
     fn propose_refuses_while_an_approved_plan_exists() {
         let dir = tempfile::tempdir().unwrap();
         let send_it = quiet(dir.path());
-        let plan = parse_run(&plan_args(), LIMITS).unwrap();
-        let hash = plan_hash(&plan);
-        let draft = RunFile {
-            plan,
-            approved: None,
-            stopped: None,
-        };
-        send_it.save(&draft).unwrap();
+        let hash = plan_hash(&parse_run(&plan_args(), LIMITS).unwrap());
+        send_it.propose(&plan_args()).unwrap();
         assert!(send_it.propose(&plan_args()).is_ok());
-        send_it
-            .save(&RunFile {
-                approved: Some(hash.clone()),
-                ..draft
-            })
-            .unwrap();
+        send_it.go(
+            Some(&hash),
+            true,
+            &Seen {
+                last: &HashMap::new(),
+                running: &[],
+            },
+        );
         assert_eq!(
             send_it.propose(&plan_args()),
             Err(format!(

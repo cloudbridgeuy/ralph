@@ -52,6 +52,18 @@ fn proposed(dir: &Path) -> (SendIt, String) {
 }
 
 #[test]
+fn go_stores_a_signed_record_for_the_shown_plan() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, hash) = proposed(dir.path());
+    go(&send_it, Some(&hash), true);
+    let approval = send_it.load().unwrap().unwrap().approved.unwrap();
+    assert_eq!(approval.mac.len(), 64);
+    assert!(approval.subject_hash.starts_with(&hash));
+    assert_eq!(approval.peer_uid, ralph_server::wire::store::current_uid());
+    assert_eq!(approval.nonce.len(), 32);
+}
+
+#[test]
 fn an_approved_run_blocks_a_new_proposal_until_off() {
     let dir = tempfile::tempdir().unwrap();
     let (send_it, hash) = proposed(dir.path());
@@ -809,7 +821,7 @@ impl Printed {
 
 fn printing(dir: &Path) -> (SendIt, Active, Printed) {
     let printed = Printed::default();
-    let send_it = SendIt::new(dir, LIMITS, printed.sink());
+    let send_it = SendIt::new(dir, LIMITS, printed.sink()).unwrap();
     let (send_it, active) = judging_on(send_it);
     (send_it, active, printed)
 }
@@ -869,5 +881,5 @@ fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
 }
 
 fn quiet(dir: &Path) -> SendIt {
-    SendIt::new(dir, LIMITS, Printed::default().sink())
+    SendIt::new(dir, LIMITS, Printed::default().sink()).unwrap()
 }

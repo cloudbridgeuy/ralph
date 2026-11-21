@@ -23,7 +23,7 @@ fn stopped_at_first_step(mode: VerifyMode) -> RunFile {
     let plan = verifying_plan(mode);
     let hash = plan_hash(&plan);
     let stopped = stop_file(&approved(plan), &hash, Some(1)).unwrap();
-    approve(&stopped, None, true).unwrap()
+    signed_go(&stopped, None, true).unwrap()
 }
 
 #[test]
