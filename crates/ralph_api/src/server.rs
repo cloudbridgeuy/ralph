@@ -57,10 +57,10 @@ pub fn serve(
 }
 
 fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Arc<AtomicUsize>) {
-    active.fetch_add(1, Ordering::SeqCst);
-    let (shared, active) = (Arc::clone(shared), Arc::clone(active));
+    let slot = Slot::acquire(active);
+    let shared = Arc::clone(shared);
     run_off_loop(request, move |request| {
-        let _slot = Slot(active);
+        let _slot = slot;
         let (config, token) = &*shared;
         let response = route(&to_api_request(&request), config, token);
         respond(request, response);
@@ -89,6 +89,13 @@ fn run_off_loop(request: Request, job: impl FnOnce(Request) + Send + 'static) {
 }
 
 struct Slot(Arc<AtomicUsize>);
+
+impl Slot {
+    fn acquire(active: &Arc<AtomicUsize>) -> Slot {
+        active.fetch_add(1, Ordering::SeqCst);
+        Slot(Arc::clone(active))
+    }
+}
 
 impl Drop for Slot {
     fn drop(&mut self) {
@@ -166,5 +173,17 @@ mod tests {
     #[test]
     fn split_url_keeps_later_question_marks_in_the_query() {
         assert_eq!(split_url("/p?a=1?b"), ("/p", "a=1?b"));
+    }
+
+    #[test]
+    fn slot_counts_while_held_and_frees_on_drop() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let first = Slot::acquire(&active);
+        let second = Slot::acquire(&active);
+        assert_eq!(active.load(Ordering::SeqCst), 2);
+        drop(first);
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        drop(second);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 }
