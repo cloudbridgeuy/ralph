@@ -1,6 +1,6 @@
 [workspace]
 members = ["xtask/", "crates/*"]
-exclude = ["vendor/reedline"]
+exclude = ["vendor/reedline", "vendor/tiny_http"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -149,3 +149,4 @@ toml = "1.1.8"
 
 [patch.crates-io]
 reedline = { path = "vendor/reedline" }
+tiny_http = { path = "vendor/tiny_http" }
