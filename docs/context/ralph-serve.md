@@ -13,6 +13,8 @@
 | Supervisor | `crates/core/src/serve_supervisor.rs` | pure state machine: `Supervisor::start()`, `step()`, `Input`, `Effect` |
 | Socket path | `crates/core/src/chat_socket.rs` | `serve_socket_path()` |
 | Socket | `crates/ralph_server/src/chat/serve_socket.rs` | `ServeSocket::bind()`, `accept()` with the peer uid check |
+| CLI arg | `crates/ralph/src/cli/mod.rs` | hidden `ralph chat --connect <SOCK>` |
+| Client | `crates/ralph/src/chat/remote.rs` | `RemoteSession` (`SessionPort` over the socket), `run()`, `thread_request()`, `status_summary()` |
 | Frames | `crates/ralph_server/src/chat/serve_proto.rs` | `Envelope`, `ClientMsg`, `ThreadCmd`, `ServerMsg`, `hello_reply()` |
 
 ## Store
@@ -83,3 +85,25 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 - Serve sessions have no nap or host loop, no keepalive, no headless watchers and no attachments dir.
 - `NOTICE_SINK` and worker ownership (`own_instance`) are process-wide. All sessions share them. Per-session ownership is a follow-up ticket.
 - There is no live end-to-end test. Unit tests cover the supervisor, the frames and the routing.
+
+## Client (`ralph chat --connect <SOCK>`, hidden)
+
+Served:
+
+- Plain text: a `send` to the attached session.
+- `/thread switch|main|open [--model]|pull|park|revive|drop|merge [--view]`: one `thread` frame. The reply text is printed. The attached thread changes only after a `done` reply.
+- Ctrl-C: `cancel` for the attached key, sent on a second connection.
+- Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
+- Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
+
+Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.
+
+Errors:
+
+- An `error` frame (`main is busy`, `ralph serve is shutting down`) is printed. The prompt returns.
+- A closed connection or I/O error ends the client.
+
+Limits:
+
+- No re-bind of a running turn. A re-attach during a turn gets `<key> is busy`. That turn's events are lost.
+- A re-attach always goes to main.

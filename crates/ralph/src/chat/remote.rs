@@ -9,13 +9,17 @@ use ralph_core::cancel::CancelToken;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::SendItCommand;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route, Status};
-use ralph_core::program_status::Phase;
+use ralph_core::chat_switch::SwitchTarget;
+use ralph_core::chat_thread_cmd::ThreadOp;
+use ralph_core::program_status::{Phase, State};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
 use ralph_core::worker::Report;
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
-use ralph_server::chat::serve_proto::{decode_frame, encode_frame, ClientMsg, ServerMsg, VERSION};
+use ralph_server::chat::serve_proto::{
+    decode_frame, encode_frame, ClientMsg, ServerMsg, ThreadCmd, VERSION,
+};
 use ralph_server::chat::session::{At, Proposal, Reply};
 use ralph_server::chat::turn::TurnOutcome;
 use ralph_server::warn::warn_if_err;
@@ -23,6 +27,7 @@ use reedline::{DefaultPrompt, Reedline, Signal};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::error::Error;
+use std::fmt;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -50,6 +55,95 @@ fn on_frame(msg: ServerMsg) -> Step {
     }
 }
 
+#[derive(Debug)]
+struct Refused(String);
+
+impl fmt::Display for Refused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Error for Refused {}
+
+fn keeps_chat_open(err: &(dyn Error + 'static)) -> bool {
+    err.is::<Refused>()
+}
+
+fn state_label(state: State) -> &'static str {
+    match state {
+        State::Idle => "idle",
+        State::Working => "working",
+        State::Done => "done",
+        State::Blocked(_) => "blocked",
+        State::Clear => "clear",
+    }
+}
+
+fn status_summary(
+    attached: Option<&str>,
+    state: State,
+    unread: usize,
+    blocked: &[String],
+) -> String {
+    let mut line = format!(
+        "{}: {}, {unread} unread",
+        attached.unwrap_or("main"),
+        state_label(state)
+    );
+    if !blocked.is_empty() {
+        line.push_str(&format!(", blocked: {}", blocked.join(", ")));
+    }
+    line
+}
+
+fn thread_request(route: &Route) -> Option<Result<ThreadCmd, String>> {
+    let cmd = |cmd| Some(Ok(cmd));
+    match route {
+        Route::Switch { parsed, .. } => match parsed {
+            Ok(SwitchTarget::Main) => cmd(ThreadCmd::Main),
+            Ok(SwitchTarget::Thread(name)) => cmd(ThreadCmd::Switch {
+                name: name.to_string(),
+            }),
+            Err(usage) => Some(Err(usage.clone())),
+        },
+        Route::ThreadOp { op, .. } => match op {
+            Ok(ThreadOp::Ls) => Some(Err("/thread ls is not served over --connect".into())),
+            Ok(ThreadOp::Open(opts)) => cmd(ThreadCmd::Open {
+                name: opts.name.to_string(),
+                model: opts.model.clone(),
+                auto: opts.auto,
+            }),
+            Ok(ThreadOp::Pull(name)) => cmd(ThreadCmd::Pull {
+                name: name.to_string(),
+            }),
+            Ok(ThreadOp::Park(name)) => cmd(ThreadCmd::Park {
+                name: name.to_string(),
+            }),
+            Ok(ThreadOp::Revive(name)) => cmd(ThreadCmd::Revive {
+                name: name.to_string(),
+            }),
+            Ok(ThreadOp::Drop(name)) => cmd(ThreadCmd::Drop {
+                name: name.to_string(),
+            }),
+            Ok(ThreadOp::Merge { name, view }) => cmd(ThreadCmd::Merge {
+                name: name.to_string(),
+                view: *view,
+            }),
+            Err(usage) => Some(Err(usage.clone())),
+        },
+        _ => None,
+    }
+}
+
+fn attached_after(current: Option<String>, cmd: &ThreadCmd) -> Option<String> {
+    match cmd {
+        ThreadCmd::Switch { name } => Some(name.clone()),
+        ThreadCmd::Main => None,
+        _ => current,
+    }
+}
+
 fn cancel_due(cancelled: bool, sent: bool) -> bool {
     cancelled && !sent
 }
@@ -59,6 +153,7 @@ struct RemoteSession {
     stream: RefCell<BufReader<UnixStream>>,
     next_id: Cell<u64>,
     turns: Cell<u64>,
+    attached: RefCell<Option<String>>,
     sink: Box<dyn TurnSink>,
 }
 
@@ -71,6 +166,7 @@ impl RemoteSession {
             stream: RefCell::new(BufReader::new(stream)),
             next_id: Cell::new(1),
             turns: Cell::new(0),
+            attached: RefCell::new(None),
             sink,
         };
         session.write(&ClientMsg::Hello { proto: VERSION })?;
@@ -78,6 +174,47 @@ impl RemoteSession {
             ServerMsg::Hello { .. } => Ok(session),
             ServerMsg::Error { message } => Err(message.into()),
             _ => Err("ralph serve did not answer the hello".into()),
+        }
+    }
+
+    fn ask(&self, msg: &ClientMsg) -> Result<ServerMsg, Box<dyn Error>> {
+        self.write(msg)?;
+        self.read_frame(&mut String::new(), None)
+    }
+
+    fn status_line(&self) -> Result<String, Box<dyn Error>> {
+        let attached = self.attached.borrow().clone();
+        match self.ask(&ClientMsg::Status {
+            thread: attached.clone(),
+        })? {
+            ServerMsg::Status {
+                report,
+                unread,
+                blocked,
+                turns,
+            } => {
+                self.turns.set(turns);
+                Ok(status_summary(
+                    attached.as_deref(),
+                    report.state,
+                    unread,
+                    &blocked,
+                ))
+            }
+            ServerMsg::Error { message } => Err(Refused(message).into()),
+            _ => Err("ralph serve did not answer the status request".into()),
+        }
+    }
+
+    fn thread(&self, cmd: ThreadCmd) -> Result<String, Box<dyn Error>> {
+        match self.ask(&ClientMsg::Thread(cmd.clone()))? {
+            ServerMsg::Done { message } => {
+                let current = self.attached.take();
+                *self.attached.borrow_mut() = attached_after(current, &cmd);
+                Ok(message)
+            }
+            ServerMsg::Error { message } => Err(Refused(message).into()),
+            _ => Err("ralph serve did not answer the thread request".into()),
         }
     }
 
@@ -127,7 +264,9 @@ impl RemoteSession {
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         for (id, msg) in [
             ClientMsg::Hello { proto: VERSION },
-            ClientMsg::Cancel { thread: None },
+            ClientMsg::Cancel {
+                thread: self.attached.borrow().clone(),
+            },
         ]
         .iter()
         .enumerate()
@@ -160,7 +299,7 @@ impl SessionPort for RemoteSession {
                     self.turns.set(self.turns.get() + 1);
                     return Ok(TurnOutcome::Replied);
                 }
-                Step::Failed(message) => return Err(message.into()),
+                Step::Failed(message) => return Err(Refused(message).into()),
                 Step::Ignored => {}
             }
         }
@@ -176,7 +315,9 @@ impl SessionPort for RemoteSession {
 
     fn set_phase(&self, _phase: Phase) {}
 
-    fn refresh(&self) {}
+    fn refresh(&self) {
+        warn_if_err(self.status_line(), "Failed to read the serve status");
+    }
 
     fn status(&self) -> Status {
         Status::default()
@@ -217,23 +358,42 @@ fn send(remote: &RemoteSession, text: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn settle(result: Result<(), Box<dyn Error>>) -> Result<(), Box<dyn Error>> {
+    match result {
+        Err(err) if keeps_chat_open(&*err) => {
+            println!("{err}");
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+fn handle(remote: &RemoteSession, line: &str) -> Result<(), Box<dyn Error>> {
+    let route = route_input(line, 0, &EmptySubmit::default(), &BTreeSet::new());
+    if let Route::Send(text) = &route {
+        return send(remote, text);
+    }
+    match thread_request(&route) {
+        Some(Ok(cmd)) => println!("{}", remote.thread(cmd)?),
+        Some(Err(message)) => println!("{message}"),
+        None if matches!(route, Route::Ignore) || line.trim().is_empty() => {}
+        None => println!("{} is not served over --connect", line.trim()),
+    }
+    Ok(())
+}
+
 pub(super) fn run(socket: &Path) -> Result<ChatExit, Box<dyn Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     let theme = ThemeConfig::from_config_and_env();
     let sink = TerminalSink::new(None, &theme, screen_columns)?;
     let remote = RemoteSession::connect(socket, Box::new(sink))?;
+    settle(remote.status_line().map(|line| println!("{line}")))?;
     let mut editor = Reedline::create();
     let prompt = DefaultPrompt::default();
     loop {
         match retry_interrupted(|| editor.read_line(&prompt))? {
             Signal::Success(line) => {
-                let route = route_input(&line, 0, &EmptySubmit::default(), &BTreeSet::new());
-                match route {
-                    Route::Send(text) => send(&remote, &text)?,
-                    Route::Ignore => {}
-                    _ if line.trim().is_empty() => {}
-                    _ => println!("{} is not served over --connect", line.trim()),
-                }
+                settle(handle(&remote, &line))?;
             }
             Signal::CtrlD => break,
             _ => {}
