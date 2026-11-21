@@ -67,6 +67,7 @@ fn main() -> ExitCode {
         store: None,
         name: None,
         thread: None,
+        connect: None,
         model: None,
         recent_history_tokens: None,
         wrap_width: None,

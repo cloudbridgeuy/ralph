@@ -520,6 +520,15 @@ pub struct ChatArgs {
 
     #[arg(
         long,
+        hide = true,
+        value_name = "SOCK",
+        conflicts_with_all = ["thread", "store"],
+        help = "Attach to a running ralph serve on the Unix socket SOCK"
+    )]
+    pub connect: Option<PathBuf>,
+
+    #[arg(
+        long,
         value_name = "NAME",
         help = "Session name for the status bar and terminal title; a label only, it does not separate stores"
     )]

@@ -178,7 +178,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Threads Guide](docs/context/threads.md) - Task-first how-to: open, pull, merge, park, revive and drop threads, and the refusals
 - [send-it Guide](docs/context/send-it.md) - Task-first how-to: propose, review and approve a run plan, exit criteria, caps, allowed actions, stops and templates
 - [ralph wire Command](docs/context/ralph-wire.md) - Recording proxy, storage layout, live rows, `ls`/`sessions`, chat usage
-- [ralph serve Command](docs/context/ralph-serve.md) - Hidden experimental serve: store gate, CHAT lease, private socket, Hello and Shutdown frames, stop
+- [ralph serve Command](docs/context/ralph-serve.md) - Hidden experimental serve: store gate, CHAT lease, private socket, sessions, turns and thread ops over frames, stop
 - [ralph web Command](docs/context/ralph-web.md) - Local HTTP API: per-run token, loopback-only bind policy, Host check, routes, store, shutdown
 - [Release Process](docs/context/release-process.md) - `cargo xtask release`, release workflow, asset contract, `ralph upgrade`, version scheme
 - [Mutation Testing](docs/context/mutation-testing.md) - cargo-mutants setup, pure scope, local runs, survivor ledger, CI status

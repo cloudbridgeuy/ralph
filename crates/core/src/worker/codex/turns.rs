@@ -97,6 +97,7 @@ pub struct Turns {
     previous_turn: Option<String>,
     interrupts: Vec<String>,
     interrupt_sent: bool,
+    in_grace: bool,
     close_requested: bool,
     gone: bool,
     reported: bool,
@@ -117,6 +118,12 @@ impl Turns {
         }
         let steps = self.queue.accept(Inbound::Interrupt(text, entry.clone()));
         if cancels_turn(&steps) {
+            if self.in_grace {
+                return vec![Action::InterruptResult {
+                    entry,
+                    outcome: InterruptOutcome::Dropped,
+                }];
+            }
             self.interrupts.push(entry);
             return self.send_interrupt();
         }
@@ -135,6 +142,12 @@ impl Turns {
     pub fn interrupt_dropped(&mut self) -> Vec<Action> {
         self.interrupt_sent = false;
         self.resolve_interrupts(InterruptOutcome::Dropped)
+    }
+
+    pub fn enter_grace(&mut self) {
+        if self.running.is_some() {
+            self.in_grace = true;
+        }
     }
 
     pub fn process_gone(&mut self) -> Vec<Action> {
@@ -222,6 +235,7 @@ impl Turns {
         self.running = Some(text.clone());
         self.previous_turn = self.turn_id.take();
         self.interrupt_sent = false;
+        self.in_grace = false;
         vec![Action::Emit(WorkerEvent::TurnStarted), Action::Start(text)]
     }
 
@@ -240,6 +254,7 @@ impl Turns {
         let Some(text) = self.running.take() else {
             return Vec::new();
         };
+        self.in_grace = false;
         self.queue.finish();
         let cancelled = end == TurnEnd::Interrupted;
         let outcome = turn_outcome(
@@ -719,5 +734,84 @@ mod tests {
             turns.notification(TURN_STARTED, &started, false),
             [Action::Interrupt("u1".into())]
         );
+    }
+
+    #[test]
+    fn a_second_interrupt_during_result_grace_is_dropped_and_runs_next() {
+        let mut turns = running("task", "u1");
+        assert_eq!(
+            turns.interrupt("first".into(), "e1".into()),
+            [Action::Interrupt("u1".into())]
+        );
+        turns.enter_grace();
+        let second = turns.interrupt("second".into(), "e2".into());
+        assert_eq!(results(&second), [("e2", InterruptOutcome::Dropped)]);
+        assert!(!second.iter().any(|a| matches!(a, Action::Interrupt(_))));
+        let ended = turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
+        assert_eq!(results(&ended), [("e1", InterruptOutcome::Sent)]);
+        assert_eq!(starts(&ended), ["second"]);
+        turns.bind_turn(Some("u2".into()));
+        assert_eq!(
+            turns.interrupt("third".into(), "e3".into()),
+            [Action::Interrupt("u2".into())]
+        );
+    }
+
+    #[test]
+    fn an_interrupt_during_result_grace_without_prior_interrupt_is_dropped() {
+        let mut turns = running("task", "u1");
+        turns.enter_grace();
+        let actions = turns.interrupt("now".into(), "e1".into());
+        assert_eq!(results(&actions), [("e1", InterruptOutcome::Dropped)]);
+        assert!(!actions.iter().any(|a| matches!(a, Action::Interrupt(_))));
+        assert!(!turns.interrupt_sent());
+        let ended = turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
+        assert!(results(&ended).is_empty());
+        assert_eq!(starts(&ended), ["now"]);
+    }
+
+    #[test]
+    fn enter_grace_while_idle_is_ignored() {
+        let mut turns = Turns::default();
+        turns.enter_grace();
+        let idle = turns.interrupt("now".into(), "e1".into());
+        assert_eq!(results(&idle), [("e1", InterruptOutcome::Sent)]);
+        assert_eq!(starts(&idle), ["now"]);
+        turns.bind_turn(Some("u1".into()));
+        assert_eq!(
+            turns.interrupt("next".into(), "e2".into()),
+            [Action::Interrupt("u1".into())]
+        );
+    }
+
+    #[test]
+    fn interrupt_dropped_does_not_clear_result_grace() {
+        let mut turns = running("task", "u1");
+        assert_eq!(
+            turns.interrupt("first".into(), "e1".into()),
+            [Action::Interrupt("u1".into())]
+        );
+        turns.enter_grace();
+        assert_eq!(
+            results(&turns.interrupt_dropped()),
+            [("e1", InterruptOutcome::Dropped)]
+        );
+        assert!(!turns.interrupt_sent());
+        let second = turns.interrupt("second".into(), "e2".into());
+        assert_eq!(results(&second), [("e2", InterruptOutcome::Dropped)]);
+        assert!(!second.iter().any(|a| matches!(a, Action::Interrupt(_))));
+        let ended = turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
+        assert!(results(&ended).is_empty());
+        assert_eq!(starts(&ended), ["second"]);
+    }
+
+    #[test]
+    fn a_gone_process_during_result_grace_still_reports_gone() {
+        let mut turns = running("task", "u1");
+        turns.enter_grace();
+        assert!(turns.process_gone().is_empty());
+        let actions = turns.interrupt("now".into(), "e1".into());
+        assert_eq!(results(&actions), [("e1", InterruptOutcome::Gone)]);
+        assert!(starts(&actions).is_empty());
     }
 }

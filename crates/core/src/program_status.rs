@@ -1,12 +1,13 @@
 use crate::chat_status::Status;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use serde::{Deserialize, Serialize};
 
 pub const APP: &str = "ralph";
 const MAX_SEQUENCE_BYTES: usize = 4096;
 const MAX_MSG_BYTES: usize = 2048;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {
     Question,
 }
@@ -19,7 +20,7 @@ impl Kind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum State {
     Idle,
     Working,
@@ -47,7 +48,7 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
     pub state: State,
     pub msg: Option<String>,
