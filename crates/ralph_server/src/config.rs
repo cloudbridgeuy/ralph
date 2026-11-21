@@ -49,7 +49,7 @@ pub use permissions::{
     CHAT_DEFAULT_PERMISSION_MODE,
 };
 pub use usage::{configured_ledger, ledger_path, UsageSection};
-pub use web::WebSection;
+pub use web::{parse_ansi_table, WebSection};
 pub use wire::WireSection;
 pub use workers::{PrProvider, WorkersSection};
 

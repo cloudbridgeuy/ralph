@@ -7,21 +7,6 @@ pub struct Rgb {
     pub b: u8,
 }
 
-impl Rgb {
-    pub fn from_hex(text: &str) -> Option<Rgb> {
-        let digits = text.strip_prefix('#')?;
-        if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return None;
-        }
-        let channel = |range: std::ops::Range<usize>| u8::from_str_radix(&digits[range], 16).ok();
-        Some(Rgb {
-            r: channel(0..2)?,
-            g: channel(2..4)?,
-            b: channel(4..6)?,
-        })
-    }
-}
-
 impl fmt::Display for Rgb {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
@@ -138,37 +123,13 @@ mod tests {
     }
 
     #[test]
-    fn from_hex_accepts_lower_and_upper() {
-        assert_eq!(
-            Rgb::from_hex("#0c0c0c"),
-            Some(Rgb {
-                r: 12,
-                g: 12,
-                b: 12
-            })
-        );
-        assert_eq!(
-            Rgb::from_hex("#AABBCC"),
-            Some(Rgb {
-                r: 0xaa,
-                g: 0xbb,
-                b: 0xcc
-            })
-        );
-    }
-
-    #[test]
-    fn from_hex_rejects_bad_input() {
-        for text in ["0c0c0c", "#fff", "#12345g", "#1234567", ""] {
-            assert_eq!(Rgb::from_hex(text), None, "{text}");
-        }
-    }
-
-    #[test]
-    fn display_round_trips_lowercase() {
-        let rgb = Rgb::from_hex("#AABB0C").unwrap();
+    fn display_prints_lowercase_hex() {
+        let rgb = Rgb {
+            r: 0xaa,
+            g: 0xbb,
+            b: 0x0c,
+        };
         assert_eq!(rgb.to_string(), "#aabb0c");
-        assert_eq!(Rgb::from_hex(&rgb.to_string()), Some(rgb));
     }
 
     #[test]

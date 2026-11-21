@@ -3,11 +3,10 @@ use crate::markdown::{Palette, RolePalette, ThemeRole};
 use crate::theme_slots::{resolve_slots, SlotTable};
 use crate::{diff_theme, input_theme, status_theme, tool_theme, ui_theme};
 use ralph_api::{tokens_css, ColorSpec, Rgb, Slot, TokensInput};
-use ralph_server::config::{AppConfig, ThemeSection};
+use ralph_server::config::{parse_ansi_table, AppConfig, ThemeSection};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
-const ANSI_ENTRIES: usize = 16;
 const FIRST_EXTENDED: u8 = 16;
 
 pub(crate) fn color_spec(color: Color) -> Option<ColorSpec> {
@@ -133,24 +132,13 @@ pub(crate) fn theme_slots(theme: &ThemeSection) -> Vec<Slot> {
     slots
 }
 
-pub(crate) fn ansi_table(entries: &[String]) -> Result<[Rgb; 16], String> {
-    let parsed = entries
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            Rgb::from_hex(entry).ok_or_else(|| format!("entry {index} \"{entry}\" is not #rrggbb"))
-        })
-        .collect::<Result<Vec<Rgb>, String>>()?;
-    let count = parsed.len();
-    <[Rgb; 16]>::try_from(parsed)
-        .map_err(|_| format!("expected {ANSI_ENTRIES} entries, got {count}"))
+pub(crate) fn ansi_table(name: &str, entries: &[String]) -> Result<[Rgb; 16], String> {
+    parse_ansi_table(name, entries).map(|table| table.map(|[r, g, b]| Rgb { r, g, b }))
 }
 
 pub(crate) fn render_tokens(config: &AppConfig) -> Result<String, String> {
-    let ansi_dark =
-        ansi_table(&config.web.ansi_dark).map_err(|e| format!("[web] ansi_dark: {e}"))?;
-    let ansi_light =
-        ansi_table(&config.web.ansi_light).map_err(|e| format!("[web] ansi_light: {e}"))?;
+    let ansi_dark = ansi_table("ansi_dark", &config.web.ansi_dark)?;
+    let ansi_light = ansi_table("ansi_light", &config.web.ansi_light)?;
     let slots = theme_slots(&config.theme);
     Ok(tokens_css(&TokensInput {
         font: &config.web.font,
@@ -321,7 +309,7 @@ mod tests {
 
     #[test]
     fn campbell_default_parses() {
-        let table = ansi_table(&WebSection::default().ansi_dark).unwrap();
+        let table = ansi_table("ansi_dark", &WebSection::default().ansi_dark).unwrap();
         assert_eq!(table[0].to_string(), "#0c0c0c");
         assert_eq!(table[15].to_string(), "#f2f2f2");
     }
@@ -329,14 +317,14 @@ mod tests {
     #[test]
     fn wrong_length_is_an_error() {
         let entries = vec!["#000000".to_string(); 15];
-        assert!(ansi_table(&entries).is_err());
+        assert!(ansi_table("ansi_dark", &entries).is_err());
     }
 
     #[test]
     fn bad_entry_names_its_index() {
         let mut entries = vec!["#000000".to_string(); 16];
         entries[3] = "red".to_string();
-        let error = ansi_table(&entries).unwrap_err();
+        let error = ansi_table("ansi_dark", &entries).unwrap_err();
         assert!(error.contains('3'), "{error}");
         assert!(error.contains("red"), "{error}");
     }

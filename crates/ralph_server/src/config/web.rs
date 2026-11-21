@@ -42,23 +42,33 @@ impl Default for WebSection {
     }
 }
 
-fn is_hex_color(entry: &str) -> bool {
-    entry.len() == 7 && entry.starts_with('#') && entry[1..].chars().all(|c| c.is_ascii_hexdigit())
+fn parse_hex(entry: &str) -> Option<[u8; 3]> {
+    let digits = entry.strip_prefix('#')?;
+    if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |at: usize| u8::from_str_radix(&digits[at..at + 2], 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?])
 }
 
-fn validate_table(name: &str, table: &[String]) -> Result<(), String> {
+pub fn parse_ansi_table(name: &str, table: &[String]) -> Result<[[u8; 3]; ANSI_SLOTS], String> {
     if table.len() != ANSI_SLOTS {
         return Err(format!(
             "[web] {name} must have {ANSI_SLOTS} entries, got {}",
             table.len()
         ));
     }
-    match table.iter().enumerate().find(|(_, e)| !is_hex_color(e)) {
-        Some((index, entry)) => Err(format!(
-            "[web] {name}[{index}] = \"{entry}\" is not #rrggbb"
-        )),
-        None => Ok(()),
-    }
+    let parsed = table
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            parse_hex(entry)
+                .ok_or_else(|| format!("[web] {name}[{index}] = \"{entry}\" is not #rrggbb"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let count = parsed.len();
+    <[[u8; 3]; ANSI_SLOTS]>::try_from(parsed)
+        .map_err(|_| format!("[web] {name} must have {ANSI_SLOTS} entries, got {count}"))
 }
 
 fn font_is_plain(font: &str) -> bool {
@@ -86,8 +96,9 @@ impl WebSection {
                 self.font
             ));
         }
-        validate_table("ansi_dark", &self.ansi_dark)?;
-        validate_table("ansi_light", &self.ansi_light)
+        parse_ansi_table("ansi_dark", &self.ansi_dark)?;
+        parse_ansi_table("ansi_light", &self.ansi_light)?;
+        Ok(())
     }
 }
 
@@ -184,6 +195,15 @@ mod tests {
                 Err(format!("[web] ansi_dark[3] = \"{bad}\" is not #rrggbb"))
             );
         }
+    }
+
+    #[test]
+    fn parse_ansi_table_returns_the_channels() {
+        let mut table = default_ansi_dark();
+        table[2] = "#AABB0c".to_string();
+        let parsed = parse_ansi_table("ansi_dark", &table).unwrap();
+        assert_eq!(parsed[0], [0x0c, 0x0c, 0x0c]);
+        assert_eq!(parsed[2], [0xaa, 0xbb, 0x0c]);
     }
 
     #[test]
