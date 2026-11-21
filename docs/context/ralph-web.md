@@ -1,6 +1,6 @@
 # ralph web Command
 
-`ralph web [--store <DIR>] [--port <N>]` serves a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. Today it has one route, `GET /api/health`.
+`ralph web [--store <DIR>] [--port <N>]` serves a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. It has two routes: `GET /api/health` and `GET /tokens.css`.
 
 ## Code Locations
 
@@ -8,6 +8,8 @@
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | `Web(WebArgs)`: `--store`, `--port` |
 | Shell | `crates/ralph/src/web.rs` | `run()`: store, token, bind, print URL, serve |
+| Tokens CSS | `crates/ralph_api/src/tokens.rs` | pure `tokens_css()`: the CSS text |
+| Tokens input | `crates/ralph/src/web_tokens.rs` | `render_tokens()`: theme slots and `[web]` to CSS |
 | Token | `crates/ralph_api/src/token.rs` | `Token::generate()`, `Token::matches()`, `extract_tokens()` |
 | Routes | `crates/ralph_api/src/route.rs` | pure `route()`: Host check, token check, paths |
 | Bind rule | `crates/ralph_api/src/addr.rs` | `BindPolicy`, `check_bind()`, `allowed_hosts()` |
@@ -54,16 +56,32 @@
 | no token or wrong token | 401 `{"error":"unauthorized"}` |
 | `GET /api/health` | 200 `{"status":"ok","version":"<version>"}` |
 | other method on `/api/health` | 405 with `Allow: GET` |
+| `GET /tokens.css` | 200 `text/css; charset=utf-8` with `Cache-Control: no-store` |
+| other method on `/tokens.css` | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
 | more than 8 requests in progress | 503 `{"error":"busy"}` |
 
-Every answer is JSON with `Cache-Control: no-store`. The health answer does not show the store path.
+Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`. `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
 
 ## Limits
 
 - The server handles each request on its own thread. It runs at most 8 at the same time. The next one gets 503 at once.
 - A client can send a long `Content-Length` and never send the body. That request keeps its slot until the client closes the socket. Read timeouts come with GUZ-1755.
 - A stalled request never blocks the stop check.
+
+## tokens.css
+
+`ralph web` loads the store `config.toml` over the global file. It builds the CSS once at start-up from the `[theme]` slots and `[web]`. See [configuration](../configuration.md#web---ralph-web-fonts-and-ansi-colours). The file does not change while `ralph web` runs. A bad `[web]` table stops `ralph web` at start-up with the config error.
+
+- Slots come from the assistant Palette and the status, diff, input, tools and ui groups. They come in this order.
+- Each slot is a variable `--r-<slot>`. Palette slots have no prefix, for example `--r-link`. Other groups have a prefix: `--r-status-mode-idle-fg`, `--r-diff-add-fg`, `--r-input-suggestion`, `--r-tools-name`, `--r-ui-spinner`.
+- `--r-font` holds the `font` value.
+- `--r-ansi-0` to `--r-ansi-15` hold the ANSI table.
+- A named colour or an index 0-15 becomes `var(--r-ansi-N)`.
+- An index 16-255 becomes `#rrggbb` through the xterm cube and greys.
+- A `#rrggbb` value passes through.
+- A slot set to the terminal default (Reset) is omitted. A slot that is unset is omitted too.
+- The dark table is in the default `:root` block. The light block overrides only the 16 ANSI variables inside `@media (prefers-color-scheme: light)`.
 
 ## Store
 
@@ -81,6 +99,7 @@ Every answer is JSON with `Cache-Control: no-store`. The health answer does not 
 - The client is a raw `TcpStream` in `crates/ralph_api/tests/common/mod.rs`. It can set any `Host` header, send two `Cookie` headers, or send no `Host`.
 - The test config uses the fixed version `0.0.0-test`. The version never changes a golden.
 - Each case compares the answer to `crates/ralph_api/tests/golden/<case>.txt`. A golden holds the status, the stable headers (`Content-Type`, `Cache-Control`, `Allow`) and the body.
+- `crates/ralph_api/tests/tokens_contract.rs` does the same for `/tokens.css`. Its goldens are `crates/ralph_api/tests/golden/tokens_*.txt`.
 - Every new route ships with golden cases. Change a golden only as a compatibility decision, and say so in the commit.
 - A missing or different golden fails the test with a line diff.
 - To write or refresh goldens, run `UPDATE_GOLDEN=1 cargo test -p ralph_api --test health_contract`. Read every changed file before you commit.

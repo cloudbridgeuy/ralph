@@ -543,6 +543,35 @@ output = 0.5
 
 Unknown keys are an error. Speed and geography factors from the recorded usage still apply on top.
 
+### `[web]` - `ralph web` fonts and ANSI colours
+
+`ralph web` builds `/tokens.css` from `[theme]` and `[web]`. See [ralph web](context/ralph-web.md#tokenscss).
+
+```toml
+[web]
+font = "JetBrains Mono, ui-monospace, monospace"
+ansi_dark = [
+  "#0c0c0c", "#c50f1f", "#13a10e", "#c19c00", "#0037da", "#881798", "#3a96dd", "#cccccc",
+  "#767676", "#e74856", "#16c60c", "#f9f1a5", "#3b78ff", "#b4009e", "#61d6d6", "#f2f2f2",
+]
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `font` | `ui-monospace, Menlo, monospace` | CSS `font-family` list |
+| `ansi_dark` | Windows Terminal Campbell | 16 `#rrggbb` entries in ANSI order 0-15, used with a dark colour scheme |
+| `ansi_light` | Campbell with slots 0 and 7 swapped, and 8 and 15 swapped | 16 `#rrggbb` entries in ANSI order 0-15, used with a light colour scheme |
+
+Set both tables to match your terminal. Then named colours look the same in the terminal and on the web.
+
+Rules:
+
+- `font` must not be empty.
+- Each table must have 16 entries.
+- Each entry must be `#rrggbb`.
+
+`ralph config check` reports a bad value. `ralph config show` prints each key with its source. A whole array is one row.
+
 ## Chat Store
 
 `ralph ask` stores only a usage row, not the prompt or reply. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
