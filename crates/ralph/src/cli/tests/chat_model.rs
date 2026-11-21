@@ -20,3 +20,20 @@ fn test_cli_chat_model_needs_a_thread_and_a_valid_value() {
     let err = Cli::try_parse_from(["ralph", "chat", "--model", "haiku"]).unwrap_err();
     assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
 }
+
+#[test]
+fn test_cli_chat_connect_excludes_thread_and_store() {
+    let ok = Cli::try_parse_from(["ralph", "chat", "--connect", "/tmp/s.sock"]);
+    assert!(ok.is_ok());
+    for flag in [["--thread", "auth"], ["--store", "/tmp/x"]] {
+        let args = [
+            "ralph",
+            "chat",
+            "--connect",
+            "/tmp/s.sock",
+            flag[0],
+            flag[1],
+        ];
+        assert!(Cli::try_parse_from(args).is_err(), "{flag:?}");
+    }
+}
