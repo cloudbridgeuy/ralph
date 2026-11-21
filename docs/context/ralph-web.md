@@ -33,6 +33,7 @@
 - `bind()` checks the requested address. It binds. Then it checks the address that the OS bound.
 - Any other address is refused with an error that names the address.
 - A busy port gives `could not bind 127.0.0.1:<N>: <os error>`.
+- On macOS, the bind to `127.0.0.1:<N>` can succeed while another process holds `0.0.0.0:<N>` with `SO_REUSEADDR`. `ralph web` does not detect this. Use `--port 0` to avoid it.
 
 ## Host check
 
