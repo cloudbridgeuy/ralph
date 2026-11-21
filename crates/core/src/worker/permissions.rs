@@ -10,13 +10,13 @@ pub struct PermissionOption {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockedContent {
     pub request_id: String,
     pub tool: String,
     pub summary: String,
     pub options: Vec<PermissionOption>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending: Vec<String>,
 }
 

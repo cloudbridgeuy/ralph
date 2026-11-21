@@ -1,5 +1,6 @@
 use super::sink::SocketSink;
 use crate::chat::assemble::{assemble, load_settings, AssembleOptions, Assembled, TurnOutput};
+use crate::chat::client_monitor::watch_headless;
 use crate::chat::session::load_custom_prompt;
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat::ReplyImages;
@@ -16,12 +17,14 @@ use ralph_server::chat::turn::TurnOutcome;
 use ralph_server::subprocess::OutputGate;
 use ralph_server::warn::warn;
 use ralph_server::watches::CloseGuard;
+use ralph_server::workers::headless::HeadlessShutdown;
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub(super) struct OpenSession {
     session: Session,
+    store: PathBuf,
     pub(super) sink: Arc<SocketSink>,
     cancel: Mutex<CancelToken>,
     turning: Mutex<()>,
@@ -29,6 +32,7 @@ pub(super) struct OpenSession {
     _guard: SocketGuard,
     _plugin: Option<tempfile::TempDir>,
     _close: CloseGuard,
+    _headless: HeadlessShutdown,
 }
 
 impl OpenSession {
@@ -119,6 +123,7 @@ pub(super) fn open_session(
     })?;
     Ok(OpenSession {
         session,
+        store: store_dir.to_path_buf(),
         sink,
         cancel: Mutex::new(CancelToken::default()),
         turning: Mutex::new(()),
@@ -126,6 +131,7 @@ pub(super) fn open_session(
         _guard: guard,
         _plugin: plugin,
         _close: close,
+        _headless: watch_headless(store_dir.to_path_buf()),
     })
 }
 
@@ -148,6 +154,13 @@ impl Sessions {
             .iter()
             .find(|(open, _)| open == key)
             .map(|(_, session)| Arc::clone(session))
+    }
+
+    pub(super) fn stores(&self) -> Vec<(SessionKey, PathBuf)> {
+        self.lock()
+            .iter()
+            .map(|(key, session)| (key.clone(), session.store.clone()))
+            .collect()
     }
 
     pub(super) fn remove(&self, key: &SessionKey) -> Option<Arc<OpenSession>> {

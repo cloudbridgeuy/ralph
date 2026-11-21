@@ -1,3 +1,4 @@
+use super::clients::{write_frame, Writer};
 use super::{drive, step, Host, POISONED};
 use crate::chat::thread::open::prepare_open;
 use crate::chat::thread::running_ids;
@@ -9,13 +10,14 @@ use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
 use ralph_core::serve_supervisor::{Effect, Input};
 use ralph_server::chat::serve_proto::{
-    decode_frame, encode_frame, hello_reply, ClientMsg, ServerMsg, ThreadRequest,
+    decode_frame, hello_reply, ClientMsg, ServerMsg, ThreadRequest,
 };
 use ralph_server::warn::warn;
 use std::cell::RefCell;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -34,8 +36,22 @@ enum Action {
 
 pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut writer = stream;
+    let reader = BufReader::new(stream.try_clone()?);
+    let writer: Writer = Arc::new(Mutex::new(stream));
+    let mut client = None;
+    let result = converse(reader, &writer, host, &mut client);
+    if let Some(client) = client {
+        host.clients.detach(client);
+    }
+    result
+}
+
+fn converse(
+    mut reader: BufReader<UnixStream>,
+    writer: &Writer,
+    host: &Host,
+    client: &mut Option<u64>,
+) -> std::io::Result<()> {
     let mut greeted = false;
     let mut attached = SessionKey::Main;
     while let Some(line) = read_frame(&mut reader)? {
@@ -55,7 +71,7 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 Err(message) => ServerMsg::Error { message },
             },
             Action::Send { key, text } => {
-                let (reply, effects) = send(host, &key, &text, id, &writer);
+                let (reply, effects) = send(host, &key, &text, id, writer);
                 after = effects;
                 reply
             }
@@ -69,7 +85,10 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 }
             }
         };
-        writer.write_all(encode_frame(id, &reply).as_bytes())?;
+        write_frame(writer, id, &reply)?;
+        if matches!(reply, ServerMsg::Hello { .. }) && client.is_none() {
+            *client = Some(host.clients.attach(writer));
+        }
         if let Err(e) = drive(host, after) {
             warn(format!("ralph serve: close after a turn failed: {e}"));
         }
@@ -78,7 +97,7 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
         }
         let was = std::mem::replace(&mut greeted, true);
         if let Some(timeout) = timeout_change(was, greeted) {
-            writer.set_read_timeout(timeout)?;
+            reader.get_ref().set_read_timeout(timeout)?;
         }
     }
     Ok(())
@@ -168,7 +187,7 @@ fn send(
     key: &SessionKey,
     text: &str,
     id: u64,
-    writer: &UnixStream,
+    writer: &Writer,
 ) -> (ServerMsg, Vec<Effect>) {
     let mut after = Vec::new();
     let run = step(&host.supervisor, Input::Send(key.clone())).and_then(|effects| permit(&effects));
@@ -189,14 +208,13 @@ fn run_turn(
     key: &SessionKey,
     text: &str,
     id: u64,
-    writer: &UnixStream,
+    writer: &Writer,
 ) -> Result<(), String> {
     let open = host
         .sessions
         .get(key)
         .ok_or_else(|| format!("{key} is not open"))?;
-    let bound = writer.try_clone().map_err(|e| e.to_string())?;
-    open.sink.bind(id, bound);
+    open.sink.bind(id, Arc::clone(writer));
     let outcome = open.turn(text);
     open.sink.unbind();
     outcome.map(|_| ()).map_err(|e| e.to_string())

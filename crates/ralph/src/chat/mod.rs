@@ -1,7 +1,7 @@
 pub(crate) mod assemble;
 mod bounded;
 pub(crate) mod cell;
-mod client_monitor;
+pub(crate) mod client_monitor;
 mod config;
 #[cfg(test)]
 mod corrupt_tests;
