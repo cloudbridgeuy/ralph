@@ -74,6 +74,14 @@ harness; ralph never sets it."
     Wire(WireArgs),
 
     #[command(
+        about = "Serve the local web API on 127.0.0.1 behind a per-run token.",
+        long_about = "Starts a local HTTP server on 127.0.0.1 and prints a URL with a random \
+per-run token. Every request needs that token and a Host header that names the bound address. \
+The command runs in the foreground until Ctrl-C."
+    )]
+    Web(WebArgs),
+
+    #[command(
         about = "Manage chat threads: ls, drop, merge, park, revive, pull.",
         long_about = "A thread is a named side chat forked from the main chat: `ralph chat --thread <NAME>` \
 creates or opens it under <store>/threads/<NAME>; add `--model <MODEL>` to run its chat on a different model. These subcommands work without starting a chat."
@@ -792,6 +800,19 @@ pub struct ChatNapArgs {
 pub struct ServeArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WebArgs {
+    #[arg(long, value_name = "DIR")]
+    pub store: Option<std::path::PathBuf>,
+
+    #[arg(
+        long,
+        default_value_t = 0,
+        help = "Port on 127.0.0.1 (0 picks a free port)"
+    )]
+    pub port: u16,
 }
 
 #[derive(clap::Args, Debug)]

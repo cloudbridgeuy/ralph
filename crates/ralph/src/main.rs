@@ -37,6 +37,7 @@ mod usage_cmd;
 pub mod stream_processor;
 mod version;
 pub mod warn;
+mod web;
 mod wire;
 
 use ask::InvocationConfig;
@@ -81,6 +82,7 @@ fn main() -> ExitCode {
         Commands::Ask(args) => execute_ask(args),
         Commands::Chat(args) => execute_chat(args),
         Commands::Wire(args) => wire::run(args),
+        Commands::Web(args) => web::run(args),
         Commands::Thread(args) => chat::thread::run(args),
         Commands::Inbox(args) => inbox_post::run(args),
         Commands::Config(args) => execute_config(args),

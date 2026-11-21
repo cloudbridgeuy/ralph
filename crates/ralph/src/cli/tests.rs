@@ -742,3 +742,31 @@ fn verify_yolo_requires_live() {
     assert!(Cli::try_parse_from(["ralph", "worker", "verify", "agy", "--yolo"]).is_err());
     assert!(Cli::try_parse_from(["ralph", "worker", "verify", "agy", "--live", "--yolo"]).is_ok());
 }
+
+#[test]
+fn test_cli_web_defaults() {
+    let Some(Commands::Web(web)) = Cli::try_parse_from(["ralph", "web"]).unwrap().command else {
+        panic!("expected web");
+    };
+    assert_eq!(web.port, 0);
+    assert!(web.store.is_none());
+}
+
+#[test]
+fn test_cli_web_takes_store_and_port() {
+    let Some(Commands::Web(web)) =
+        Cli::try_parse_from(["ralph", "web", "--store", "/s", "--port", "4000"])
+            .unwrap()
+            .command
+    else {
+        panic!("expected web");
+    };
+    assert_eq!(web.port, 4000);
+    assert_eq!(web.store, Some(std::path::PathBuf::from("/s")));
+}
+
+#[test]
+fn test_cli_web_rejects_bad_port() {
+    assert!(Cli::try_parse_from(["ralph", "web", "--port", "70000"]).is_err());
+    assert!(Cli::try_parse_from(["ralph", "web", "--port", "x"]).is_err());
+}
