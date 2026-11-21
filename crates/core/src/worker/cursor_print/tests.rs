@@ -1,7 +1,8 @@
 use super::*;
 use crate::wire::usage::{CacheTier, CacheWrite};
+use crate::worker::Verdict;
 use crate::worker::{Action, Turns, REPORT_REMINDER};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::path::Path;
 
 const SUCCESS: &str = include_str!("fixtures/success.jsonl");
@@ -311,8 +312,10 @@ fn a_result_usage_becomes_a_cursor_worker_ledger_row() {
         json!({"inputTokens":8680,"outputTokens":36,"cacheReadTokens":6016,"cacheWriteTokens":0});
     let mapped = map_print_usage(&usage, VARIANT).unwrap();
     let row = print_usage_record(
-        "w1",
-        Some(4),
+        CallSite::Worker {
+            worker_id: "w1".to_string(),
+            turn_id: Some(4),
+        },
         "2026-01-01T00:00:00Z".to_string(),
         Some(SESSION.to_string()),
         &mapped,
@@ -469,4 +472,51 @@ fn the_end_note_names_the_exit_outcome_the_end_and_the_report_marker() {
 fn the_spawn_note_names_the_call_and_the_chat() {
     assert_eq!(print_spawn_note(2, Some("c1")), "spawn call=2 chat=c1");
     assert_eq!(print_spawn_note(0, None), "spawn call=0 chat=-");
+}
+
+fn result_line(body: Value) -> String {
+    let mut line = json!({"type":"result","subtype":"success","is_error":false,"result":"ok"});
+    line.as_object_mut()
+        .unwrap()
+        .extend(body.as_object().unwrap().clone());
+    line.to_string()
+}
+
+fn counters() -> Value {
+    json!({"usage":{"inputTokens":8680,"outputTokens":36,"cacheReadTokens":6016,"cacheWriteTokens":0}})
+}
+
+#[test]
+fn a_successful_result_with_usage_passes_the_print_prompt_and_yields_usage() {
+    let lines = [
+        json!({"type":"assistant"}).to_string(),
+        result_line(counters()),
+    ];
+    let verified = print_verify(&lines, VARIANT);
+    assert_eq!(verified.prompt.name, "print prompt");
+    assert_eq!(verified.prompt.verdict, Verdict::Pass);
+    assert_eq!(
+        verified.usage,
+        map_print_usage(&counters()["usage"], VARIANT)
+    );
+    assert!(verified.usage.is_some());
+}
+
+#[test]
+fn a_successful_result_without_usage_passes_the_prompt_and_yields_none() {
+    let verified = print_verify(&[result_line(json!({}))], VARIANT);
+    assert_eq!(verified.prompt.verdict, Verdict::Pass);
+    assert_eq!(verified.usage, None);
+}
+
+#[test]
+fn an_error_result_fails_the_print_prompt() {
+    let line = result_line(json!({"is_error":true,"result":"boom"}));
+    assert_eq!(print_verify(&[line], VARIANT).prompt.verdict, Verdict::Fail);
+}
+
+#[test]
+fn a_stream_without_a_result_fails_the_print_prompt() {
+    let lines = [json!({"type":"assistant"}).to_string()];
+    assert_eq!(print_verify(&lines, VARIANT).prompt.verdict, Verdict::Fail);
 }

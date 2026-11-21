@@ -1,4 +1,4 @@
-use crate::cursor_leftovers::{cursor_slug, socket_project_dir};
+use crate::cursor_leftovers::{cursor_slug, project_dirs};
 use crate::worker::BlockedContent;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -118,6 +118,16 @@ pub const AGY_REQUIRED_CHECKS: &[&str] = &[
     "session/close reload",
 ];
 pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
+const CURSOR_LIVE_REQUIRED_CHECKS: &[&str] =
+    &["initialize", "session/new", "print prompt", "print usage"];
+
+pub fn cursor_required_checks(live: bool) -> &'static [&'static str] {
+    if live {
+        CURSOR_LIVE_REQUIRED_CHECKS
+    } else {
+        CURSOR_REQUIRED_CHECKS
+    }
+}
 pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
 
 pub const FREE_VERIFY_LIMIT: Duration = Duration::from_secs(90);
@@ -192,13 +202,39 @@ pub fn render_check(result: &CheckResult) -> String {
 }
 
 pub fn render_summary(agent: &str, version: &str, live: bool, passed: bool) -> String {
-    let scope = if live {
-        "free and live checks"
-    } else {
-        "free checks only; --live adds prompt, permission and cancel checks"
+    let scope = match (live, agent) {
+        (true, _) => "free and live checks",
+        (false, "cursor") => "free checks only; --live adds print prompt and print usage checks",
+        (false, _) => "free checks only; --live adds prompt, permission and cancel checks",
     };
     let outcome = if passed { "PASS" } else { "FAIL" };
     format!("{outcome}: {agent} {version} ({scope})")
+}
+
+pub const STDERR_TAIL_CAP: usize = 2048;
+
+pub fn stderr_tail(bytes: &[u8], cap: usize) -> String {
+    let tail = &bytes[bytes.len().saturating_sub(cap)..];
+    let start = tail
+        .iter()
+        .position(|byte| byte & 0xC0 != 0x80)
+        .unwrap_or(tail.len());
+    String::from_utf8_lossy(&tail[start..]).trim().to_string()
+}
+
+pub fn trim_to_last(buffer: &mut Vec<u8>, keep: usize) {
+    let excess = buffer.len().saturating_sub(keep);
+    buffer.drain(..excess);
+}
+
+pub fn with_stderr_tail(result: CheckResult, tail: &str) -> CheckResult {
+    if result.verdict != Verdict::Fail || tail.is_empty() {
+        return result;
+    }
+    CheckResult {
+        detail: format!("{}; agent stderr: {tail}", result.detail),
+        ..result
+    }
 }
 
 pub fn verified_entry(agent: &str, version: &str, live: bool, today: &str) -> VerifiedAgent {
@@ -244,10 +280,19 @@ pub fn cursor_verify_project(home: &Path, workspace: &Path) -> PathBuf {
         .join(cursor_slug(&workspace.to_string_lossy()))
 }
 
-pub fn cursor_verify_leftover(home: &Path, real: &Path, project: &Path) -> Option<PathBuf> {
-    real.to_str()
-        .and_then(|real| socket_project_dir(&home.join(".cursor/projects"), real))
-        .filter(|leftover| leftover != project)
+pub fn cursor_verify_leftovers(home: &Path, workspace: &Path, real: &Path) -> Vec<PathBuf> {
+    let projects = home.join(".cursor/projects");
+    let project = cursor_verify_project(home, workspace);
+    let mut leftovers: Vec<PathBuf> = Vec::new();
+    for path in [workspace, real] {
+        let Some(path) = path.to_str() else { continue };
+        for dir in project_dirs(&projects, path) {
+            if dir != project && !leftovers.contains(&dir) {
+                leftovers.push(dir);
+            }
+        }
+    }
+    leftovers
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,16 +302,6 @@ pub struct PermissionSetup {
 }
 
 impl PermissionSetup {
-    pub fn cursor(hooks: &Path) -> Self {
-        Self {
-            label: format!("{} asks before every shell command", hooks.display()),
-            no_request: format!(
-                "Cursor sent no permission request although {} asks before every shell command; Cursor may have changed its project slug or how it loads hooks",
-                hooks.display()
-            ),
-        }
-    }
-
     pub fn claude() -> Self {
         let label =
             "setting-sources project,local with permission-mode default and prompt-tool stdio";
@@ -436,6 +471,50 @@ mod tests {
     }
 
     #[test]
+    fn the_cursor_free_summary_names_the_print_checks() {
+        let summary = render_summary("cursor", "2026.10.22", false, true);
+        assert_eq!(
+            summary,
+            "PASS: cursor 2026.10.22 (free checks only; --live adds print prompt and print usage checks)"
+        );
+        assert!(!summary.contains("permission") && !summary.contains("cancel"));
+    }
+
+    #[test]
+    fn the_stderr_tail_keeps_the_last_bytes_and_trims() {
+        assert_eq!(stderr_tail(b"abcdef\n", 4), "def");
+        assert_eq!(stderr_tail(b"  short \n", 100), "short");
+        assert_eq!(stderr_tail(b"", 4), "");
+    }
+
+    #[test]
+    fn trimming_keeps_only_the_last_bytes() {
+        let mut buffer = b"abcdef".to_vec();
+        trim_to_last(&mut buffer, 4);
+        assert_eq!(buffer, b"cdef");
+        trim_to_last(&mut buffer, 10);
+        assert_eq!(buffer, b"cdef");
+    }
+
+    #[test]
+    fn the_stderr_tail_never_splits_a_char() {
+        assert_eq!(stderr_tail("a\u{e9}b".as_bytes(), 2), "b");
+        assert_eq!(stderr_tail("a\u{e9}b".as_bytes(), 3), "\u{e9}b");
+    }
+
+    #[test]
+    fn a_failed_row_gains_the_stderr_tail_and_other_rows_do_not() {
+        let failed = CheckResult::fail("initialize", "no answer");
+        assert_eq!(
+            with_stderr_tail(failed.clone(), "boom").detail,
+            "no answer; agent stderr: boom"
+        );
+        assert_eq!(with_stderr_tail(failed.clone(), ""), failed);
+        let passed = CheckResult::pass("initialize", "ok");
+        assert_eq!(with_stderr_tail(passed.clone(), "boom"), passed);
+    }
+
+    #[test]
     fn an_expired_deadline_fails_the_named_check() {
         assert_eq!(
             limit_failure("events", Duration::ZERO, FREE_VERIFY_LIMIT),
@@ -459,6 +538,14 @@ mod tests {
         let failure = limit_failure("session/read", Duration::ZERO, verify_limit(true)).unwrap();
         assert!(failure.detail.contains("540s"), "{}", failure.detail);
         assert_eq!(verify_limit(false), Duration::from_secs(90));
+    }
+
+    #[test]
+    fn a_live_cursor_verify_requires_the_print_prompt_and_usage() {
+        let live = cursor_required_checks(true);
+        assert!(live.contains(&"print prompt"));
+        assert!(live.contains(&"print usage"));
+        assert!(!cursor_required_checks(false).contains(&"print prompt"));
     }
 
     #[test]
@@ -583,29 +670,40 @@ mod tests {
         let dir = Path::new("/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2");
         let real = Path::new("/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2");
         assert_eq!(
-            cursor_verify_leftover(home, real, &cursor_verify_project(home, dir)),
-            Some(PathBuf::from(
-                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-bc092f5"
-            ))
+            cursor_verify_leftovers(home, dir, real),
+            vec![
+                PathBuf::from("/Users/guzmanmonne/.cursor/projects/var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-60693f2"),
+                PathBuf::from("/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-tmpX4HBM2"),
+                PathBuf::from("/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-bc092f5"),
+            ]
         );
         let short = Path::new("/tmp/x");
         assert_eq!(
-            cursor_verify_leftover(home, short, &cursor_verify_project(home, short)),
-            None
+            cursor_verify_leftovers(home, short, short),
+            Vec::<PathBuf>::new()
         );
     }
 
     #[test]
-    fn the_cursor_setup_names_the_hook_file_and_the_likely_cause() {
-        let setup = PermissionSetup::cursor(Path::new("/p/.cursor/hooks.json"));
+    fn cursor_verify_removes_every_folder_the_print_turn_makes() {
+        let home = Path::new("/Users/guzmanmonne");
+        let dir = Path::new("/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpdLJVd5");
+        let real = Path::new("/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpdLJVd5");
+        let projects = "/Users/guzmanmonne/.cursor/projects";
         assert_eq!(
-            setup.label,
-            "/p/.cursor/hooks.json asks before every shell command"
+            cursor_verify_leftovers(home, dir, real),
+            vec![
+                PathBuf::from(format!(
+                    "{projects}/var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-0323e50"
+                )),
+                PathBuf::from(format!(
+                    "{projects}/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0000gp-T-tmpdLJVd5"
+                )),
+                PathBuf::from(format!(
+                    "{projects}/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-6d07eb7"
+                )),
+            ]
         );
-        assert!(setup.no_request.contains("/p/.cursor/hooks.json"));
-        assert!(setup
-            .no_request
-            .contains("project slug or how it loads hooks"));
     }
 
     #[test]

@@ -1,106 +1,21 @@
 use super::*;
+use crate::cursor_sweep::sweep_worker_server;
+use crate::cursor_usage::{record_cursor_verify, CursorTurn};
 use crate::worker_verify::{step, Checks};
 use agent_client_protocol::ByteStreams;
 use ralph_core::worker::{
-    cancel_check, cursor_verify_leftover, cursor_verify_project, permission_check, probed_version,
-    prompt_check, BlockedContent, CheckResult, PermissionSetup, TurnSummary, VersionProbe,
-    ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
+    cursor_verify_leftovers, cursor_verify_project, decode_print_line, print_args, print_model,
+    print_verify, probed_version, stderr_tail, trim_to_last, with_stderr_tail, CheckResult,
+    PrintArgs, PrintEvent, VersionProbe, ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE,
+    CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS, STDERR_TAIL_CAP,
 };
-use std::sync::atomic::AtomicUsize;
+use std::io::{BufRead, BufReader, Read, Write};
 
 const FREE_DEADLINE: Duration = Duration::from_secs(90);
-const LIVE_DEADLINE: Duration = Duration::from_secs(420);
+const PRINT_DEADLINE: Duration = Duration::from_secs(120);
+const STDERR_SETTLE: Duration = Duration::from_secs(2);
 const KILL_GRACE: Duration = Duration::from_millis(200);
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
-const PERMISSION_PROMPT: &str = "Run the shell command `date +%Y` and reply with its output.";
-const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
-const ENDED: &str = "end_turn";
-const CANCELLED: &str = "cancelled";
-
-struct Probe {
-    allowing: Arc<AtomicBool>,
-    permissions: Arc<Mutex<Vec<BlockedContent>>>,
-    replies: Arc<AtomicUsize>,
-    updates: queue::UnboundedReceiver<()>,
-}
-
-struct Session<'a> {
-    connection: &'a ConnectionTo<Agent>,
-    id: SessionId,
-    probe: Probe,
-}
-
-enum Plan {
-    Plain,
-    Allow,
-    Cancel,
-}
-
-fn permission_reply(
-    request: &RequestPermissionRequest,
-    allowing: bool,
-    seen: &Mutex<Vec<BlockedContent>>,
-) -> RequestPermissionResponse {
-    let content = permission_content(&serde_json::to_value(request).unwrap_or_default());
-    let allow = content
-        .options
-        .iter()
-        .find(|option| option.kind == "allow_once")
-        .filter(|_| allowing)
-        .map(|option| option.option_id.clone());
-    locked(seen).push(content);
-    RequestPermissionResponse::new(match allow {
-        Some(option_id) => {
-            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id))
-        }
-        None => RequestPermissionOutcome::Cancelled,
-    })
-}
-
-impl Session<'_> {
-    async fn turn(&mut self, text: &str, plan: Plan) -> TurnSummary {
-        while self.probe.updates.try_recv().is_ok() {}
-        self.probe
-            .allowing
-            .store(matches!(plan, Plan::Allow), Ordering::SeqCst);
-        let replies_before = self.probe.replies.load(Ordering::SeqCst);
-        let permissions_before = locked(&self.probe.permissions).len();
-        let mut sent = Box::pin(
-            self.connection
-                .send_request(PromptRequest::new(self.id.clone(), vec![text.into()]))
-                .block_task(),
-        )
-        .fuse();
-        let mut cancel_sent = false;
-        let result = loop {
-            select! {
-                result = sent => break result,
-                _ = self.probe.updates.select_next_some() => {
-                    if matches!(plan, Plan::Cancel) && !cancel_sent {
-                        cancel_sent = true;
-                        self.connection
-                            .send_notification(CancelNotification::new(self.id.clone()))
-                            .ok();
-                    }
-                }
-            }
-        };
-        self.probe.allowing.store(false, Ordering::SeqCst);
-        TurnSummary {
-            stop: result
-                .map(|done| {
-                    serde_json::to_value(done.stop_reason)
-                        .ok()
-                        .and_then(|value| value.as_str().map(str::to_string))
-                        .unwrap_or_default()
-                })
-                .map_err(|error| error.message),
-            replies: self.probe.replies.load(Ordering::SeqCst) - replies_before,
-            permissions: locked(&self.probe.permissions).split_off(permissions_before),
-            cancel_sent,
-        }
-    }
-}
 
 async fn open(
     connection: &ConnectionTo<Agent>,
@@ -153,27 +68,12 @@ fn check_load_capability(init: &InitializeResponse) -> Result<String, String> {
     }
 }
 
-async fn reload_session(
-    connection: &ConnectionTo<Agent>,
-    session: &SessionId,
-    dir: &Path,
-) -> Result<String, String> {
-    connection
-        .send_request(LoadSessionRequest::new(session.clone(), dir.to_path_buf()))
-        .block_task()
-        .await
-        .map(|_| "the prompted session loaded again".to_string())
-        .map_err(|error| error.message)
-}
-
 async fn run_checks(
     connection: ConnectionTo<Agent>,
     dir: PathBuf,
-    live: Option<PermissionSetup>,
     checks: Checks,
-    probe: Probe,
 ) -> Result<(), agent_client_protocol::Error> {
-    let Some((init, id)) = open(&connection, &dir, &checks).await else {
+    let Some((init, _)) = open(&connection, &dir, &checks).await else {
         return Ok(());
     };
     step(
@@ -182,28 +82,6 @@ async fn run_checks(
         check_load_capability(&init),
         Clone::clone,
     );
-    if let Some(setup) = live {
-        let mut session = Session {
-            connection: &connection,
-            id,
-            probe,
-        };
-        checks.add(prompt_check(
-            &session.turn(REPLY_PROMPT, Plan::Plain).await,
-            ENDED,
-        ));
-        let reloaded = reload_session(&connection, &session.id, &dir).await;
-        step(&checks, "session/reload", reloaded, Clone::clone);
-        checks.add(permission_check(
-            &session.turn(PERMISSION_PROMPT, Plan::Allow).await,
-            ENDED,
-            &setup,
-        ));
-        checks.add(cancel_check(
-            &session.turn(CANCEL_PROMPT, Plan::Cancel).await,
-            CANCELLED,
-        ));
-    }
     Ok(())
 }
 
@@ -221,7 +99,7 @@ fn watchdog(group: u32, deadline: Duration) -> mpsc::Sender<()> {
     done
 }
 
-pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> {
+pub(crate) fn verify(live: Option<&Path>, dir: &Path, checks: &Checks) -> Option<String> {
     let agent = CURSOR_AGENT;
     let probe = agent_version_probe(&agent);
     let version = Some(step(
@@ -248,10 +126,13 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
         ));
         return version;
     }
-    let leftover = fs::canonicalize(dir)
+    let leftovers: Vec<PathBuf> = fs::canonicalize(dir)
         .ok()
-        .and_then(|real| cursor_verify_leftover(&home, &real, &project))
-        .filter(|leftover| !leftover.exists());
+        .map(|real| cursor_verify_leftovers(&home, dir, &real))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|leftover| !leftover.exists())
+        .collect();
     let hooks = project.join(CURSOR_HOOKS_FILE);
     let written = hooks
         .parent()
@@ -263,15 +144,18 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     })
     .is_some()
     {
-        exercise(live.then(|| PermissionSetup::cursor(&hooks)), dir, checks);
+        exercise(dir, checks);
+        if let Some(ledger) = live {
+            print_turn(ledger, dir, checks);
+        }
     }
     let removed = fs::remove_dir_all(&project)
         .map_err(|error| format!("could not remove {}: {error}", project.display()));
     step(checks, "hooks cleanup", removed, |()| {
         format!("removed {}", project.display())
     });
-    if let Some(leftover) = leftover.filter(|leftover| leftover.exists()) {
-        let removed = fs::remove_dir_all(&leftover)
+    for leftover in leftovers.iter().filter(|leftover| leftover.exists()) {
+        let removed = fs::remove_dir_all(leftover)
             .map_err(|error| format!("could not remove {}: {error}", leftover.display()));
         step(checks, "cursor cleanup", removed, |()| {
             format!("removed {}", leftover.display())
@@ -280,7 +164,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     version
 }
 
-fn exercise(live: Option<PermissionSetup>, dir: &Path, checks: &Checks) {
+fn exercise(dir: &Path, checks: &Checks) {
     let agent = CURSOR_AGENT;
     let mut command = Command::new(agent.command);
     command.arg("acp").current_dir(dir);
@@ -291,66 +175,121 @@ fn exercise(live: Option<PermissionSetup>, dir: &Path, checks: &Checks) {
     }) else {
         return;
     };
-    drain_stderr(stderr, CappedLog::new(None, "verify"));
-    let deadline = if live.is_some() {
-        LIVE_DEADLINE
-    } else {
-        FREE_DEADLINE
-    };
-    let done = watchdog(child.id(), deadline);
-    let (update_tx, updates) = queue::unbounded();
-    let probe = Probe {
-        allowing: Arc::new(AtomicBool::new(false)),
-        permissions: Arc::default(),
-        replies: Arc::default(),
-        updates,
-    };
-    let (allowing, seen, replies) = (
-        Arc::clone(&probe.allowing),
-        Arc::clone(&probe.permissions),
-        Arc::clone(&probe.replies),
-    );
-    let outcome = block_on(
-        Client
-            .builder()
-            .on_receive_request(
-                async move |request: RequestPermissionRequest, responder, _cx| {
-                    let reply = permission_reply(&request, allowing.load(Ordering::SeqCst), &seen);
-                    responder.respond(reply).ok();
-                    Ok(())
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            .on_receive_notification(
-                async move |notification: SessionNotification, _cx| {
-                    let update = serde_json::to_value(&notification.update).unwrap_or_default();
-                    if update["sessionUpdate"] == "agent_message_chunk" {
-                        replies.fetch_add(1, Ordering::SeqCst);
-                    }
-                    update_tx.unbounded_send(()).ok();
-                    Ok(())
-                },
-                agent_client_protocol::on_receive_notification!(),
-            )
-            .connect_with(
-                ByteStreams::new(
-                    blocking::Unblock::new(stdin),
-                    blocking::Unblock::new(stdout),
-                ),
-                {
-                    let (dir, checks) = (dir.to_path_buf(), checks.clone());
-                    async move |connection: ConnectionTo<Agent>| {
-                        run_checks(connection, dir, live, checks, probe).await
-                    }
-                },
-            ),
-    );
+    let held = Checks::held();
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let (finished, eof) = mpsc::channel();
+    {
+        let captured = Arc::clone(&captured);
+        thread::spawn(move || {
+            let mut stderr = stderr;
+            let mut chunk = [0u8; 4096];
+            while let Ok(read) = stderr.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                let mut buffer = locked(&captured);
+                buffer.extend_from_slice(&chunk[..read]);
+                trim_to_last(&mut buffer, 2 * STDERR_TAIL_CAP);
+            }
+            finished.send(()).ok();
+        });
+    }
+    let done = watchdog(child.id(), FREE_DEADLINE);
+    let outcome = block_on(Client.builder().connect_with(
+        ByteStreams::new(
+            blocking::Unblock::new(stdin),
+            blocking::Unblock::new(stdout),
+        ),
+        {
+            let (dir, checks) = (dir.to_path_buf(), held.clone());
+            async move |connection: ConnectionTo<Agent>| run_checks(connection, dir, checks).await
+        },
+    ));
     done.send(()).ok();
     stop_child(&mut child);
     if let Err(error) = outcome {
-        checks.add(CheckResult::fail(
+        held.add(CheckResult::fail(
             "connection",
             format!("{} agent connection failed: {error}", agent.name),
         ));
     }
+    eof.recv_timeout(STDERR_SETTLE).ok();
+    let tail = stderr_tail(&locked(&captured), STDERR_TAIL_CAP);
+    for row in held.results() {
+        checks.add(with_stderr_tail(row, &tail));
+    }
+}
+
+fn print_lines(dir: &Path, model: &str) -> Result<Vec<String>, String> {
+    let args = print_args(&PrintArgs {
+        workspace: dir,
+        model,
+        resume: None,
+    });
+    let mut command = Command::new(CURSOR_AGENT.command);
+    command.args(args).current_dir(dir);
+    let (mut child, mut stdin, stdout, stderr) = spawn_piped(command)
+        .map_err(|error| format!("could not start `{} -p`: {error}", CURSOR_AGENT.command))?;
+    drain_stderr(stderr, CappedLog::new(None, "verify"));
+    if let Err(error) = stdin.write_all(REPLY_PROMPT.as_bytes()) {
+        stop_child(&mut child);
+        return Err(format!("could not write the prompt: {error}"));
+    }
+    drop(stdin);
+    let (sender, incoming) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = Instant::now() + PRINT_DEADLINE;
+    let mut lines = Vec::new();
+    while let Ok(line) = incoming.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        let ended = matches!(decode_print_line(&line, model), PrintEvent::Result { .. });
+        lines.push(line);
+        if ended {
+            break;
+        }
+    }
+    stop_child(&mut child);
+    Ok(lines)
+}
+
+fn print_turn(ledger: &Path, dir: &Path, checks: &Checks) {
+    let model = print_model(None);
+    let lines = match print_lines(dir, model) {
+        Ok(lines) => lines,
+        Err(message) => {
+            checks.add(CheckResult::fail("print prompt", message));
+            return;
+        }
+    };
+    if let Some(home) = dirs::home_dir() {
+        let real = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        sweep_worker_server(&home.join(".cursor/projects"), &real);
+    }
+    let verified = print_verify(&lines, model);
+    checks.add(verified.prompt);
+    let recorded = match verified.usage {
+        Some(usage) => {
+            let turn = CursorTurn {
+                worker: "verify",
+                chat: None,
+                store: None,
+                turn_id: None,
+            };
+            record_cursor_verify(&turn, &usage, ledger)
+                .map(|()| {
+                    format!(
+                        "recorded {} output tokens in the ledger",
+                        usage.usage.output
+                    )
+                })
+                .map_err(|error| format!("could not record the usage: {error}"))
+        }
+        None => Err("cursor reported no usage".to_string()),
+    };
+    step(checks, "print usage", recorded, Clone::clone);
 }
