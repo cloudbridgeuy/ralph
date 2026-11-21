@@ -1,5 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
+const LOCALHOST_NAME: &str = "localhost";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindPolicy {
     pub allowed: Vec<IpAddr>,
@@ -12,6 +14,10 @@ pub enum BindError {
 }
 
 impl BindPolicy {
+    pub fn primary(&self) -> Option<IpAddr> {
+        self.allowed.first().copied()
+    }
+
     pub fn loopback() -> BindPolicy {
         BindPolicy {
             allowed: vec![
@@ -19,6 +25,17 @@ impl BindPolicy {
                 IpAddr::V6(Ipv6Addr::LOCALHOST),
             ],
         }
+    }
+}
+
+pub fn bind_hosts(ip: IpAddr) -> Vec<String> {
+    vec![ip.to_string(), LOCALHOST_NAME.to_string()]
+}
+
+fn host_with_port(name: &str, port: u16) -> String {
+    match name.parse::<Ipv6Addr>() {
+        Ok(_) => format!("[{name}]:{port}"),
+        Err(_) => format!("{name}:{port}"),
     }
 }
 
@@ -30,8 +47,11 @@ pub fn check_bind(addr: SocketAddr, policy: &BindPolicy) -> Result<(), BindError
     }
 }
 
-pub fn allowed_hosts(names: &[&str], port: u16) -> Vec<String> {
-    names.iter().map(|name| format!("{name}:{port}")).collect()
+pub fn allowed_hosts<S: AsRef<str>>(names: &[S], port: u16) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| host_with_port(name.as_ref(), port))
+        .collect()
 }
 
 #[cfg(test)]
@@ -93,6 +113,35 @@ mod tests {
             allowed_hosts(&["127.0.0.1", "localhost"], 4000),
             vec!["127.0.0.1:4000".to_string(), "localhost:4000".to_string()]
         );
-        assert!(allowed_hosts(&[], 4000).is_empty());
+        assert!(allowed_hosts::<&str>(&[], 4000).is_empty());
+    }
+
+    #[test]
+    fn primary_is_the_first_allowed_ip() {
+        assert_eq!(
+            BindPolicy::loopback().primary(),
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        assert_eq!(BindPolicy { allowed: vec![] }.primary(), None);
+    }
+
+    #[test]
+    fn bind_hosts_names_the_ip_and_localhost() {
+        assert_eq!(
+            bind_hosts(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            vec!["127.0.0.1".to_string(), "localhost".to_string()]
+        );
+        assert_eq!(
+            bind_hosts(IpAddr::V6(Ipv6Addr::LOCALHOST)),
+            vec!["::1".to_string(), "localhost".to_string()]
+        );
+    }
+
+    #[test]
+    fn allowed_hosts_brackets_ipv6() {
+        assert_eq!(
+            allowed_hosts(&["::1", "localhost"], 4000),
+            vec!["[::1]:4000".to_string(), "localhost:4000".to_string()]
+        );
     }
 }

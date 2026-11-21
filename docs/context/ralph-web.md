@@ -29,7 +29,7 @@
 
 ## Loopback rule
 
-- `ralph web` binds only to an address in the `BindPolicy`. `BindPolicy::loopback()` allows `127.0.0.1` and `::1`. It is the only place that holds these values.
+- `ralph web` binds only to an address in the `BindPolicy`. `BindPolicy::loopback()` allows `127.0.0.1` and `::1`. It is the only place that holds these values. The shell reads the bind address from `BindPolicy::primary()` and the host names from `bind_hosts()`. An IPv6 host is written as `[::1]:<port>`.
 - `bind()` checks the requested address. It binds. Then it checks the address that the OS bound.
 - Any other address is refused with an error that names the address.
 - A busy port gives `could not bind 127.0.0.1:<N>: <os error>`.
