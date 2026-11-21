@@ -352,6 +352,28 @@ mod tests {
     }
 
     #[test]
+    fn default_config_matches_the_golden() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/golden/tokens_default.css");
+        let actual = render_tokens(&AppConfig::default()).unwrap();
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &actual).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "golden {} is missing ({error}); run with UPDATE_GOLDEN=1 to create it",
+                path.display()
+            )
+        });
+        assert!(
+            expected == actual,
+            "golden {} differs; run with UPDATE_GOLDEN=1 after review.\nactual:\n{actual}",
+            path.display()
+        );
+    }
+
+    #[test]
     fn bad_web_table_is_an_error() {
         let mut config = AppConfig::default();
         config.web.ansi_dark.pop();
