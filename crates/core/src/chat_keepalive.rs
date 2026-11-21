@@ -1,4 +1,3 @@
-use crate::chat_process::CACHE_TTL_SECS;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 
@@ -69,9 +68,13 @@ pub struct KeepaliveInput {
     pub session_live: bool,
     pub turn_running: bool,
     pub keeps: u32,
+    pub cache_ttl_secs: Option<i64>,
 }
 
 pub fn keepalive_action(input: &KeepaliveInput) -> Keepalive {
+    let Some(cache_ttl_secs) = input.cache_ttl_secs else {
+        return Keepalive::Skip;
+    };
     let idle = u64::try_from(input.idle_secs).unwrap_or(0);
     let since_activity = u64::try_from(input.since_activity_secs).unwrap_or(0);
     let retry_pending = input
@@ -82,7 +85,7 @@ pub fn keepalive_action(input: &KeepaliveInput) -> Keepalive {
         || !input.session_live
         || retry_pending
         || input.keeps >= KEEPALIVE_MAX_KEEPS
-        || input.since_activity_secs >= CACHE_TTL_SECS
+        || input.since_activity_secs >= cache_ttl_secs
     {
         Keepalive::Skip
     } else if since_activity >= KEEPALIVE_PING_SECS {
@@ -95,6 +98,7 @@ pub fn keepalive_action(input: &KeepaliveInput) -> Keepalive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat_process::CACHE_TTL_SECS;
 
     fn input() -> KeepaliveInput {
         KeepaliveInput {
@@ -105,7 +109,17 @@ mod tests {
             session_live: true,
             turn_running: false,
             keeps: 0,
+            cache_ttl_secs: Some(CACHE_TTL_SECS),
         }
+    }
+
+    #[test]
+    fn a_missing_cache_ttl_never_pings() {
+        let unknown = KeepaliveInput {
+            cache_ttl_secs: None,
+            ..input()
+        };
+        assert_eq!(keepalive_action(&unknown), Keepalive::Skip);
     }
 
     #[test]

@@ -5,6 +5,7 @@ use crate::subprocess::{recorded, StreamingSubprocessResult};
 use crate::warn::warn_if_err;
 use crate::watches::locked;
 use chrono::{DateTime, Utc};
+use ralph_core::chat_backend::{cache_ttl_secs, Caps};
 use ralph_core::chat_keepalive::{
     keepalive_action, keeps_after, keeps_for_turn, ping_follow_up, Keepalive, KeepaliveInput,
     PingFollowUp, KEEPALIVE_PING_PROMPT,
@@ -38,6 +39,7 @@ pub struct KeepaliveWatch {
     pub identity: Arc<Mutex<IterationMetadata>>,
     pub run: String,
     pub store: String,
+    pub caps: Caps,
 }
 
 impl KeepaliveWatch {
@@ -69,6 +71,7 @@ impl KeepaliveWatch {
             session_live: slot.as_mut().is_some_and(|session| session.is_alive()),
             turn_running: !self.idle.load(Ordering::SeqCst),
             keeps,
+            cache_ttl_secs: cache_ttl_secs(&self.caps),
         };
         if keepalive_action(&input) != Keepalive::Ping {
             return None;
