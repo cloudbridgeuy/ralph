@@ -21,5 +21,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tiny_http = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [lints]
 workspace = true

@@ -1,0 +1,5 @@
+status: 200
+Content-Type: application/json
+Cache-Control: no-store
+
+{"status":"ok","version":"0.0.0-test"}

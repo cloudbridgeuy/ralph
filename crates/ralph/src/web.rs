@@ -25,6 +25,7 @@ pub fn run(args: WebArgs) -> Result<(), Box<dyn Error>> {
     let config = ApiConfig {
         store,
         allowed_hosts: allowed_hosts(&HOST_NAMES, port),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     };
     println!(
         "ralph web listening on http://127.0.0.1:{port}/?token={}",

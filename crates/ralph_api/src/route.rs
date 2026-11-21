@@ -27,6 +27,7 @@ pub struct ApiResponse {
 pub struct ApiConfig {
     pub store: PathBuf,
     pub allowed_hosts: Vec<String>,
+    pub version: String,
 }
 
 pub fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResponse {
@@ -37,7 +38,7 @@ pub fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResp
         return error(401, "unauthorized");
     }
     match (request.path.as_str(), request.method.as_str()) {
-        (HEALTH_PATH, "GET") => health(),
+        (HEALTH_PATH, "GET") => health(&config.version),
         (HEALTH_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         _ => error(404, "not found"),
     }
@@ -56,11 +57,8 @@ fn authorized(request: &ApiRequest, token: &Token) -> bool {
     .is_some_and(|candidate| token.matches(&candidate))
 }
 
-fn health() -> ApiResponse {
-    json_response(
-        200,
-        serde_json::json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}),
-    )
+fn health(version: &str) -> ApiResponse {
+    json_response(200, serde_json::json!({"status": "ok", "version": version}))
 }
 
 fn error(status: u16, message: &str) -> ApiResponse {
@@ -96,6 +94,7 @@ mod tests {
         ApiConfig {
             store: PathBuf::from("/secret/store"),
             allowed_hosts: vec!["h.test:1".to_string(), "alias.test:1".to_string()],
+            version: "9.9.9".to_string(),
         }
     }
 
@@ -122,10 +121,7 @@ mod tests {
     fn health_with_token_is_200_json_ok() {
         let response = route(&authed("GET", "/api/health"), &config(), &token());
         assert_eq!(response.status, 200);
-        assert_eq!(
-            body(&response),
-            json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")})
-        );
+        assert_eq!(body(&response), json!({"status": "ok", "version": "9.9.9"}));
         assert!(!response.body.contains("/secret/store"));
     }
 

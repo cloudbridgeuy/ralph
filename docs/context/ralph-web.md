@@ -65,3 +65,14 @@ Every answer is JSON with `Cache-Control: no-store`. The health answer does not 
 
 - SIGINT, SIGTERM and SIGHUP stop the server. The server checks for a stop every 100 ms.
 - A stop exits with code 0.
+
+## Contract tests
+
+- `crates/ralph_api/tests/health_contract.rs` starts the real server in a thread on 127.0.0.1 port 0. Each test has its own server and its own temp store, so tests run in parallel.
+- The client is a raw `TcpStream` in `crates/ralph_api/tests/common/mod.rs`. It can set any `Host` header, send two `Cookie` headers, or send no `Host`.
+- The test config uses the fixed version `0.0.0-test`. The version never changes a golden.
+- Each case compares the answer to `crates/ralph_api/tests/golden/<case>.txt`. A golden holds the status, the stable headers (`Content-Type`, `Cache-Control`, `Allow`) and the body.
+- Every new route ships with golden cases. Change a golden only as a compatibility decision, and say so in the commit.
+- A missing or different golden fails the test with a line diff.
+- To write or refresh goldens, run `UPDATE_GOLDEN=1 cargo test -p ralph_api --test health_contract`. Read every changed file before you commit.
+- `cargo xtask lint` runs these tests, because it runs `cargo test --all-targets`.
