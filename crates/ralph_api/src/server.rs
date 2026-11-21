@@ -89,6 +89,15 @@ pub fn split_url(url: &str) -> (&str, &str) {
     url.split_once('?').unwrap_or((url, ""))
 }
 
+fn header_values(request: &Request, name: &'static str) -> Vec<String> {
+    request
+        .headers()
+        .iter()
+        .filter(|header| header.field.equiv(name))
+        .map(|header| header.value.to_string())
+        .collect()
+}
+
 fn header_value(request: &Request, name: &'static str) -> Option<String> {
     request
         .headers()
@@ -105,7 +114,7 @@ fn to_api_request(request: &Request) -> ApiRequest {
         query: query.to_string(),
         host: header_value(request, "Host"),
         authorization: header_value(request, "Authorization"),
-        cookie: header_value(request, "Cookie"),
+        cookies: header_values(request, "Cookie"),
     }
 }
 

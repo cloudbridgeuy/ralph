@@ -1,4 +1,4 @@
-use crate::token::{extract_token, Token};
+use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
 const HEALTH_PATH: &str = "/api/health";
@@ -12,7 +12,7 @@ pub struct ApiRequest {
     pub query: String,
     pub host: Option<String>,
     pub authorization: Option<String>,
-    pub cookie: Option<String>,
+    pub cookies: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,12 +53,10 @@ fn host_allowed(host: Option<&str>, allowed: &[String]) -> bool {
 }
 
 fn authorized(request: &ApiRequest, token: &Token) -> bool {
-    extract_token(
-        request.authorization.as_deref(),
-        &request.query,
-        request.cookie.as_deref(),
-    )
-    .is_some_and(|candidate| token.matches(&candidate))
+    let cookies: Vec<&str> = request.cookies.iter().map(String::as_str).collect();
+    extract_tokens(request.authorization.as_deref(), &request.query, &cookies)
+        .iter()
+        .any(|candidate| token.matches(candidate))
 }
 
 fn health(version: &str) -> ApiResponse {
@@ -109,7 +107,7 @@ mod tests {
             query: query.to_string(),
             host: Some("h.test:1".to_string()),
             authorization: None,
-            cookie: None,
+            cookies: vec![],
         }
     }
 

@@ -41,15 +41,11 @@ impl Token {
     }
 }
 
-pub fn extract_token(
-    authorization: Option<&str>,
-    query: &str,
-    cookie: Option<&str>,
-) -> Option<String> {
+pub fn extract_tokens(authorization: Option<&str>, query: &str, cookies: &[&str]) -> Vec<String> {
     from_bearer(authorization)
         .or_else(|| from_query(query))
-        .or_else(|| from_cookie(cookie))
-        .map(str::to_string)
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_else(|| from_cookies(cookies))
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -72,12 +68,23 @@ fn from_query(query: &str) -> Option<&str> {
         .and_then(|(_, value)| non_empty(value))
 }
 
-fn from_cookie(cookie: Option<&str>) -> Option<&str> {
-    cookie?
-        .split(';')
+fn from_cookies(cookies: &[&str]) -> Vec<String> {
+    cookies
+        .iter()
+        .flat_map(|header| header.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == COOKIE_NAME)
-        .and_then(|(_, value)| non_empty(value))
+        .filter(|(name, _)| *name == COOKIE_NAME)
+        .map(|(_, value)| unquote(value.trim()))
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn unquote(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .unwrap_or(value)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -87,6 +94,13 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn extract(authorization: Option<&str>, query: &str, cookie: Option<&str>) -> Option<String> {
+        let cookies: Vec<&str> = cookie.into_iter().collect();
+        extract_tokens(authorization, query, &cookies)
+            .into_iter()
+            .next()
+    }
 
     fn token(value: &str) -> Token {
         Token(value.to_string())
@@ -132,7 +146,7 @@ mod tests {
     #[test]
     fn extract_bearer() {
         assert_eq!(
-            extract_token(Some("Bearer t0k"), "", None),
+            extract(Some("Bearer t0k"), "", None),
             Some("t0k".to_string())
         );
     }
@@ -140,7 +154,7 @@ mod tests {
     #[test]
     fn extract_query() {
         assert_eq!(
-            extract_token(None, "a=1&token=t0k&b=2", None),
+            extract(None, "a=1&token=t0k&b=2", None),
             Some("t0k".to_string())
         );
     }
@@ -148,7 +162,7 @@ mod tests {
     #[test]
     fn extract_cookie() {
         assert_eq!(
-            extract_token(None, "", Some("ralph_token=t0k")),
+            extract(None, "", Some("ralph_token=t0k")),
             Some("t0k".to_string())
         );
     }
@@ -156,50 +170,47 @@ mod tests {
     #[test]
     fn extract_prefers_header_over_query() {
         assert_eq!(
-            extract_token(Some("Bearer h"), "token=q", Some("ralph_token=c")),
+            extract(Some("Bearer h"), "token=q", Some("ralph_token=c")),
             Some("h".to_string())
         );
         assert_eq!(
-            extract_token(None, "token=q", Some("ralph_token=c")),
+            extract(None, "token=q", Some("ralph_token=c")),
             Some("q".to_string())
         );
     }
 
     #[test]
     fn extract_none_when_absent() {
-        assert_eq!(extract_token(None, "", None), None);
-        assert_eq!(extract_token(Some("Basic abc"), "x=1", None), None);
+        assert_eq!(extract(None, "", None), None);
+        assert_eq!(extract(Some("Basic abc"), "x=1", None), None);
     }
 
     #[test]
     fn extract_ignores_other_cookies() {
         assert_eq!(
-            extract_token(None, "", Some("a=1; ralph_token=t0k; b=2")),
+            extract(None, "", Some("a=1; ralph_token=t0k; b=2")),
             Some("t0k".to_string())
         );
-        assert_eq!(extract_token(None, "", Some("other_ralph_token=x")), None);
+        assert_eq!(extract(None, "", Some("other_ralph_token=x")), None);
     }
 
     #[test]
     fn extract_odd_query_values() {
-        assert_eq!(extract_token(None, "token=", None), None);
-        assert_eq!(extract_token(None, "token", None), None);
-        assert_eq!(
-            extract_token(None, "token=a=b", None),
-            Some("a=b".to_string())
-        );
-        assert_eq!(extract_token(None, "xtoken=a", None), None);
-        assert_eq!(extract_token(Some("Bearer "), "", None), None);
+        assert_eq!(extract(None, "token=", None), None);
+        assert_eq!(extract(None, "token", None), None);
+        assert_eq!(extract(None, "token=a=b", None), Some("a=b".to_string()));
+        assert_eq!(extract(None, "xtoken=a", None), None);
+        assert_eq!(extract(Some("Bearer "), "", None), None);
     }
 
     #[test]
     fn extract_bearer_scheme_is_case_insensitive() {
         assert_eq!(
-            extract_token(Some("bearer t0k"), "", None),
+            extract(Some("bearer t0k"), "", None),
             Some("t0k".to_string())
         );
         assert_eq!(
-            extract_token(Some("BEARER t0k"), "", None),
+            extract(Some("BEARER t0k"), "", None),
             Some("t0k".to_string())
         );
     }
@@ -207,16 +218,53 @@ mod tests {
     #[test]
     fn extract_bearer_value_is_trimmed() {
         assert_eq!(
-            extract_token(Some("Bearer   t0k  "), "", None),
+            extract(Some("Bearer   t0k  "), "", None),
             Some("t0k".to_string())
         );
-        assert_eq!(extract_token(Some("Bearer    "), "", None), None);
+        assert_eq!(extract(Some("Bearer    "), "", None), None);
     }
 
     #[test]
     fn extract_query_is_not_url_decoded() {
-        let extracted = extract_token(None, "token=a%62c", None).unwrap();
+        let extracted = extract(None, "token=a%62c", None).unwrap();
         assert_eq!(extracted, "a%62c");
         assert!(!token("abc").matches(&extracted));
+    }
+
+    #[test]
+    fn extract_tokens_collects_every_ralph_token_cookie() {
+        assert_eq!(
+            extract_tokens(None, "", &["a=1; ralph_token=w", "ralph_token=t0k"]),
+            vec!["w".to_string(), "t0k".to_string()]
+        );
+        assert_eq!(
+            extract_tokens(None, "", &["ralph_token=w; ralph_token=t0k"]),
+            vec!["w".to_string(), "t0k".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_tokens_strips_cookie_quotes() {
+        assert_eq!(
+            extract_tokens(None, "", &["ralph_token=\"t0k\""]),
+            vec!["t0k".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_tokens_header_and_query_stay_single_and_ahead_of_cookies() {
+        assert_eq!(
+            extract_tokens(Some("Bearer h"), "token=q", &["ralph_token=c"]),
+            vec!["h".to_string()]
+        );
+        assert_eq!(
+            extract_tokens(None, "token=q", &["ralph_token=c"]),
+            vec!["q".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_tokens_skips_empty_cookie_values() {
+        assert!(extract_tokens(None, "", &["ralph_token=", "ralph_token=\"\""]).is_empty());
     }
 }

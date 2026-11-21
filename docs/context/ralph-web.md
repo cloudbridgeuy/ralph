@@ -23,7 +23,7 @@
 - A request can carry the token in one of three places. The first one found is used:
   1. `Authorization: Bearer <token>`
   2. the `token=` query parameter
-  3. the `ralph_token` cookie
+  3. the `ralph_token` cookie. A request can have many `Cookie` headers and many `ralph_token` cookies. One matching value is enough. Quotes around a value are removed.
 - The compare takes the same time for every wrong value of the same length.
 - Every request needs the token, also a request for an unknown path.
 

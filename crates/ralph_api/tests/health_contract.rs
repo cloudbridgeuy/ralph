@@ -53,6 +53,44 @@ fn bearer_scheme_is_case_insensitive() {
 }
 
 #[test]
+fn cookie_in_second_header() {
+    health_with(
+        "cookie_second_header_right",
+        "GET",
+        |_| "/api/health".into(),
+        Host::Own,
+        |t| {
+            vec![
+                ("Cookie".to_string(), "ralph_token=wrong".to_string()),
+                ("Cookie".to_string(), format!("ralph_token={t}")),
+            ]
+        },
+    );
+}
+
+#[test]
+fn duplicate_cookie_second_right() {
+    health_with(
+        "cookie_duplicate_second_right",
+        "GET",
+        |_| "/api/health".into(),
+        Host::Own,
+        |t| header("Cookie", format!("ralph_token=wrong; ralph_token={t}")),
+    );
+}
+
+#[test]
+fn quoted_cookie_value() {
+    health_with(
+        "cookie_quoted_value",
+        "GET",
+        |_| "/api/health".into(),
+        Host::Own,
+        |t| header("Cookie", format!("ralph_token=\"{t}\"")),
+    );
+}
+
+#[test]
 fn query_token() {
     health_with(
         "query_token",
