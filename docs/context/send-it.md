@@ -38,7 +38,7 @@ usd = 5.0
 judge_rounds = 2
 ```
 
-After you approve, the file also has an `approved` line with the hash. Do not write it yourself. Use `/send-it go`.
+After you approve, the file also has an `[approved]` table. It holds a signed record of your `/send-it go`: `kind`, `subject_hash` (the full hash of the plan), `at`, `peer_uid`, `nonce` and `mac`. ralph signs it with a key that lives only in the chat process memory. Do not write it yourself. A record that is missing, edited, copied from another run or written by hand is not an approval, and an old `approved = "<hash>"` line is ignored. ralph checks the record each time it reads the plan: before a turn, at each run step and in the status line. A bad record stops a run, as a plan change does.
 
 ## Review and approve
 
@@ -130,7 +130,7 @@ For the exact notices, see [ralph chat: /send-it](ralph-chat.md#send-it).
 
 The run lives only in the chat process. If you quit the chat, the run ends. The next `/send-it go` starts at the step of the last stop of this plan, or at step 1 if it did not stop.
 
-The plan stays approved after a quit. ralph refuses new plans until you run `/send-it off`.
+The signing key does not survive a quit. After you start the chat again, the plan is not approved, even if `run.toml` still has the record. Type `/send-it go` to approve it again. A record is also valid only until the plan is written again or `/send-it off` runs, so a copy of an old record does not approve the plan.
 
 ## Templates
 
