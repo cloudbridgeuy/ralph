@@ -24,6 +24,8 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 enum Action {
     Hello(u32),
     Send { key: SessionKey, text: String },
+    Cancel(SessionKey),
+    Status(SessionKey),
     Thread(ThreadOp),
     Attach(SessionKey),
     Shutdown,
@@ -57,6 +59,8 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 after = effects;
                 reply
             }
+            Action::Cancel(key) => cancel(host, &key),
+            Action::Status(key) => status(host, &key),
             Action::Thread(op) => thread(host, op),
             Action::Attach(key) => {
                 attached = key;
@@ -78,6 +82,27 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn cancel(host: &Host, key: &SessionKey) -> ServerMsg {
+    let result = step(&host.supervisor, Input::Cancel(key.clone()))
+        .and_then(|effects| permit_open(&effects).map(|()| effects))
+        .and_then(|effects| drive(host, effects).map_err(|e| e.to_string()));
+    match result {
+        Ok(()) => ServerMsg::Done {
+            message: format!("cancelled {key}"),
+        },
+        Err(message) => ServerMsg::Error { message },
+    }
+}
+
+fn status(host: &Host, key: &SessionKey) -> ServerMsg {
+    host.sessions
+        .get(key)
+        .map(|open| open.status())
+        .unwrap_or_else(|| ServerMsg::Error {
+            message: format!("{key} is not open"),
+        })
 }
 
 fn thread(host: &Host, op: ThreadOp) -> ServerMsg {
@@ -180,7 +205,11 @@ fn run_turn(
 fn closes_on_error(action: &Action) -> bool {
     !matches!(
         action,
-        Action::Send { .. } | Action::Thread(_) | Action::Attach(_)
+        Action::Send { .. }
+            | Action::Cancel(_)
+            | Action::Status(_)
+            | Action::Thread(_)
+            | Action::Attach(_)
     )
 }
 
@@ -210,6 +239,14 @@ fn classify(greeted: bool, attached: &SessionKey, frame: Result<ClientMsg, Strin
         Ok(_) if !greeted => Action::Refuse("unexpected message before hello".to_string()),
         Ok(ClientMsg::Send { thread, text }) => match session_key(thread.as_deref(), attached) {
             Ok(key) => Action::Send { key, text },
+            Err(message) => Action::Refuse(message),
+        },
+        Ok(ClientMsg::Cancel { thread }) => match session_key(thread.as_deref(), attached) {
+            Ok(key) => Action::Cancel(key),
+            Err(message) => Action::Refuse(message),
+        },
+        Ok(ClientMsg::Status { thread }) => match session_key(thread.as_deref(), attached) {
+            Ok(key) => Action::Status(key),
             Err(message) => Action::Refuse(message),
         },
         Ok(ClientMsg::Thread(cmd)) => match cmd.parse() {
@@ -335,6 +372,29 @@ mod tests {
             ),
             Action::Refuse("unexpected message before hello".into())
         );
+    }
+
+    #[test]
+    fn classify_routes_cancel_and_status_to_a_session_key() {
+        let side = SessionKey::Thread(ThreadName::parse("side").unwrap());
+        let cancel = |thread: Option<&str>| {
+            classify(
+                true,
+                &side,
+                Ok(ClientMsg::Cancel {
+                    thread: thread.map(str::to_string),
+                }),
+            )
+        };
+        assert_eq!(cancel(None), Action::Cancel(side.clone()));
+        assert_eq!(
+            cancel(Some("main")),
+            Action::Refuse(ThreadName::parse("main").unwrap_err())
+        );
+        let status = classify(true, &side, Ok(ClientMsg::Status { thread: None }));
+        assert_eq!(status, Action::Status(side));
+        assert!(!closes_on_error(&Action::Cancel(SessionKey::Main)));
+        assert!(!closes_on_error(&Action::Status(SessionKey::Main)));
     }
 
     #[test]

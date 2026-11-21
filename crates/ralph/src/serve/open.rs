@@ -9,6 +9,7 @@ use ralph_core::turn_event::TurnSink;
 use ralph_server::chat::claim::ChatClaim;
 use ralph_server::chat::fork::open_fork;
 use ralph_server::chat::port::{SessionPort, TurnCall};
+use ralph_server::chat::serve_proto::{status_frame, ServerMsg};
 use ralph_server::chat::session::Session;
 use ralph_server::chat::socket::serve::SocketGuard;
 use ralph_server::chat::turn::TurnOutcome;
@@ -22,7 +23,7 @@ use std::sync::{Arc, Mutex};
 pub(super) struct OpenSession {
     session: Session,
     pub(super) sink: Arc<SocketSink>,
-    cancel: CancelToken,
+    cancel: Mutex<CancelToken>,
     turning: Mutex<()>,
     _claim: Option<ChatClaim>,
     _guard: SocketGuard,
@@ -42,9 +43,11 @@ impl OpenSession {
             .turning
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cancel = CancelToken::default();
+        *self.current_cancel() = cancel.clone();
         let mut ran = None;
         self.session
-            .around(&mut || ran = Some(self.session.turn(&call, &self.cancel)));
+            .around(&mut || ran = Some(self.session.turn(&call, &cancel)));
         ran.ok_or("snapshots did not run the turn")?
     }
 
@@ -53,12 +56,22 @@ impl OpenSession {
         self
     }
 
+    fn current_cancel(&self) -> std::sync::MutexGuard<'_, CancelToken> {
+        self.cancel
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub(super) fn cancel(&self) {
-        self.cancel.cancel();
+        self.current_cancel().cancel();
+    }
+
+    pub(super) fn status(&self) -> ServerMsg {
+        status_frame(&self.session.status(), self.session.turns())
     }
 
     pub(super) fn end(&self) {
-        self.cancel.cancel();
+        self.cancel();
         let _turning = self
             .turning
             .lock()
@@ -107,7 +120,7 @@ pub(super) fn open_session(
     Ok(OpenSession {
         session,
         sink,
-        cancel: CancelToken::default(),
+        cancel: Mutex::new(CancelToken::default()),
         turning: Mutex::new(()),
         _claim: None,
         _guard: guard,

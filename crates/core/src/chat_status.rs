@@ -40,6 +40,10 @@ pub struct WorkerState {
 }
 
 impl WorkerState {
+    pub fn is_blocked(&self) -> bool {
+        self.state == PERMISSION_STATE
+    }
+
     pub fn is_running(&self) -> bool {
         [DEFAULT_STATE, BUSY_STATE, PERMISSION_STATE].contains(&self.state.as_str())
     }

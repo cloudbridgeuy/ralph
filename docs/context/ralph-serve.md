@@ -41,9 +41,11 @@ One JSON frame per line: `{"v":1,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYT
 | `{"type":"thread","op":"merge","name":"n","view":false}` | `done` |
 | `{"type":"thread","op":"open","name":"n","model":null\|"m","auto":null\|"merge"\|"drop"}` | `done` |
 | `{"type":"thread","op":"switch","name":"n"}` and `{"type":"thread","op":"main"}` | `done` with `attached to <key>` |
+| `{"type":"cancel","thread":null\|"name"}` | `{"type":"done","message":"cancelled <key>"}` |
+| `{"type":"status","thread":null\|"name"}` | `{"type":"status","report":{"state":"Idle","msg":null},"unread":0,"blocked":["id"],"turns":0}` |
 | `{"type":"shutdown"}` after hello | none; `serve` stops |
 
-`send` with `"thread":null` goes to the connection's attached session. It is main until `switch` or `main`. The attached key belongs to the connection only.
+`send`, `cancel` and `status` with `"thread":null` go to the connection's attached session. It is main until `switch` or `main`. The attached key belongs to the connection only.
 
 Every reply carries the request `id`. A failure replies `{"type":"error","message":"..."}`.
 
@@ -52,11 +54,14 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 | Error | Connection |
 |---|---|
 | frame before `hello`, bad frame, wrong `v`, `hello` with another `proto` | closed |
-| session busy, session not open, draining, invalid thread name, a failed thread op | stays open |
+| session busy, session not open, session not running a turn (`cancel`), draining, invalid thread name, a failed thread op | stays open |
 
 ## Turns
 
 - A session runs one turn at a time. A `send` to a busy session gets `error` `<key> is busy`. A `send` to a session that is not open gets `<key> is not open`.
+- `cancel` stops the turn of a session key. Send it on another connection: the sender is blocked while its own turn runs. A `cancel` to an idle session gets `<key> is not running a turn`.
+- Each turn gets a fresh cancel token. A `cancel` ends one turn only.
+- `status` is computed on request. Nothing is pushed. `report` is the prompt-phase program status. `blocked` is the sorted ids of workers waiting on a permission.
 - A turn streams on the connection that sent it. Other connections do not see its events.
 - `SendIt` events are dropped. `/send-it` is not served.
 
