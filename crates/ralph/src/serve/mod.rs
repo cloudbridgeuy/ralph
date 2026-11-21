@@ -24,8 +24,9 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+const DRAIN_BOUND: Duration = Duration::from_secs(5);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
 const POISONED: &str = "ralph serve: internal state unavailable";
 
@@ -35,6 +36,7 @@ struct Host {
     store_dir: PathBuf,
     claim: Mutex<Option<ChatClaim>>,
     stop: AtomicBool,
+    exited: AtomicBool,
 }
 
 pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -51,16 +53,24 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         store_dir: store_dir.clone(),
         claim: Mutex::new(None),
         stop: AtomicBool::new(false),
+        exited: AtomicBool::new(false),
     });
     drive(&host, effects)?;
     let root = runtime_root(current_uid());
     let path = serve_socket_path(&root, &StoreKey::of(&store_dir));
     let socket = ServeSocket::bind(&root, &path)?;
     eprintln!("ralph serve: listening on {}", path.display());
+    let mut draining_since = None;
     loop {
         if signal::is_terminated() || host.stop.load(Ordering::SeqCst) {
+            let since = draining_since.get_or_insert_with(Instant::now);
             let effects = step(&host.supervisor, Input::Stop)?;
-            if drive(&host, effects)? {
+            drive(&host, effects)?;
+            if host.exited.load(Ordering::SeqCst) {
+                break;
+            }
+            if since.elapsed() > DRAIN_BOUND {
+                warn("ralph serve: a turn did not end in time; exiting".to_string());
                 break;
             }
         }
@@ -83,7 +93,7 @@ fn step(supervisor: &Mutex<Supervisor>, input: Input) -> Result<Vec<Effect>, Str
         .map_err(|_| POISONED.to_string())
 }
 
-fn drive(host: &Host, effects: Vec<Effect>) -> Result<bool, Box<dyn std::error::Error>> {
+fn drive(host: &Host, effects: Vec<Effect>) -> Result<(), Box<dyn std::error::Error>> {
     let mut queue = VecDeque::from(effects);
     while let Some(effect) = queue.pop_front() {
         match effect {
@@ -112,11 +122,16 @@ fn drive(host: &Host, effects: Vec<Effect>) -> Result<bool, Box<dyn std::error::
                 }
                 queue.extend(step(&host.supervisor, Input::Closed(key))?);
             }
-            Effect::Exit => return Ok(true),
+            Effect::Cancel(key) => {
+                if let Some(open) = host.sessions.get(&key) {
+                    open.cancel();
+                }
+            }
+            Effect::Exit => host.exited.store(true, Ordering::SeqCst),
             _ => {}
         }
     }
-    Ok(false)
+    Ok(())
 }
 
 fn open_thread_session(host: &Host, name: &ThreadName) -> Result<(), Box<dyn std::error::Error>> {

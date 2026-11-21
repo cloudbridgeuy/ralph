@@ -71,7 +71,7 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 
 ## Stop
 
-SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It moves to Draining. A turn in flight is cancelled, then every open session is closed (main last releases the `CHAT` lease), then it exits. While it drains, `hello`, `send` and thread operations get `error` `ralph serve is shutting down`. A second stop does nothing.
+SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It moves to Draining. An idle session closes at once. A session in a turn gets its turn cancelled (`Cancel`), and it closes only after the turn ends and its `turn_done` or `error` frame is written (`TurnDone` then `Close`). `serve` exits when every session is closed (main releases the `CHAT` lease and the runtime dir goes). If a turn does not end within 5 s (`DRAIN_BOUND` in `crates/ralph/src/serve/mod.rs`), `serve` warns and exits anyway, so a stuck turn cannot hang shutdown. While it drains, `hello`, `send` and thread operations get `error` `ralph serve is shutting down`. A second stop does nothing.
 
 ## Limits
 

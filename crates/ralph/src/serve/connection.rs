@@ -11,6 +11,7 @@ use ralph_core::serve_supervisor::{Effect, Input};
 use ralph_server::chat::serve_proto::{
     decode_frame, encode_frame, hello_reply, ClientMsg, ServerMsg, ThreadRequest,
 };
+use ralph_server::warn::warn;
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -40,6 +41,7 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
         let id = frame.as_ref().map_or(0, |envelope| envelope.id);
         let action = classify(greeted, &attached, frame.map(|envelope| envelope.body));
         let closes = closes_on_error(&action);
+        let mut after = Vec::new();
         let reply = match action {
             Action::Shutdown => {
                 host.stop.store(true, Ordering::SeqCst);
@@ -50,7 +52,11 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 Ok(effects) => answer(&effects),
                 Err(message) => ServerMsg::Error { message },
             },
-            Action::Send { key, text } => send(host, &key, &text, id, &writer),
+            Action::Send { key, text } => {
+                let (reply, effects) = send(host, &key, &text, id, &writer);
+                after = effects;
+                reply
+            }
             Action::Thread(op) => thread(host, op),
             Action::Attach(key) => {
                 attached = key;
@@ -60,6 +66,9 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
             }
         };
         writer.write_all(encode_frame(id, &reply).as_bytes())?;
+        if let Err(e) = drive(host, after) {
+            warn(format!("ralph serve: close after a turn failed: {e}"));
+        }
         if closes && matches!(reply, ServerMsg::Error { .. }) {
             return Ok(());
         }
@@ -127,17 +136,25 @@ fn run_thread_op(host: &Host, op: &ThreadOp) -> Result<String, String> {
     Ok(lines.join("\n"))
 }
 
-fn send(host: &Host, key: &SessionKey, text: &str, id: u64, writer: &UnixStream) -> ServerMsg {
+fn send(
+    host: &Host,
+    key: &SessionKey,
+    text: &str,
+    id: u64,
+    writer: &UnixStream,
+) -> (ServerMsg, Vec<Effect>) {
+    let mut after = Vec::new();
     let run = step(&host.supervisor, Input::Send(key.clone())).and_then(|effects| permit(&effects));
     let result = run.and_then(|key| {
         let outcome = run_turn(host, &key, text, id, writer);
-        step(&host.supervisor, Input::TurnDone(key))?;
+        after = step(&host.supervisor, Input::TurnDone(key))?;
         outcome
     });
-    match result {
+    let reply = match result {
         Ok(()) => ServerMsg::TurnDone,
         Err(message) => ServerMsg::Error { message },
-    }
+    };
+    (reply, after)
 }
 
 fn run_turn(

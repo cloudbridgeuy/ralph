@@ -26,6 +26,7 @@ pub enum Effect {
     Refuse(String),
     Run(SessionKey),
     RunThread(ThreadOp),
+    Cancel(SessionKey),
     Close(SessionKey),
     Exit,
 }
@@ -96,12 +97,22 @@ impl Supervisor {
             }
             (Phase::Running, Input::Stop) => {
                 self.phase = Phase::Draining;
-                self.open.iter().cloned().map(Effect::Close).collect()
+                self.open
+                    .iter()
+                    .cloned()
+                    .map(|key| match self.busy.contains(&key) {
+                        true => Effect::Cancel(key),
+                        false => Effect::Close(key),
+                    })
+                    .collect()
             }
             (_, Input::Stop) => Vec::new(),
-            (_, Input::TurnDone(key)) => {
+            (phase, Input::TurnDone(key)) => {
                 self.busy.retain(|busy| *busy != key);
-                Vec::new()
+                match phase == Phase::Draining && self.open.contains(&key) {
+                    true => vec![Effect::Close(key)],
+                    false => Vec::new(),
+                }
             }
             (phase, Input::Closed(key)) => {
                 let before = self.open.len();
@@ -220,18 +231,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn stop_while_busy_closes_after() {
-        let (mut sup, _) = Supervisor::start();
-        sup.step(Input::Send(SessionKey::Main));
-        assert_eq!(sup.step(Input::Stop), vec![Effect::Close(SessionKey::Main)]);
-        assert_eq!(sup.step(Input::TurnDone(SessionKey::Main)), Vec::new());
-        assert_eq!(
-            sup.step(Input::Closed(SessionKey::Main)),
-            vec![Effect::Exit]
-        );
-    }
-
     fn side() -> ThreadName {
         ThreadName::parse("side").unwrap()
     }
@@ -314,6 +313,31 @@ mod tests {
             sup.step(Input::Thread(open(None))),
             vec![Effect::RunThread(open(None))]
         );
+    }
+
+    #[test]
+    fn stop_cancels_a_busy_turn_and_closes_after_it_ends() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Send(SessionKey::Main));
+        assert_eq!(
+            sup.step(Input::Stop),
+            vec![Effect::Cancel(SessionKey::Main)]
+        );
+        assert_eq!(
+            sup.step(Input::TurnDone(SessionKey::Main)),
+            vec![Effect::Close(SessionKey::Main)]
+        );
+        assert_eq!(
+            sup.step(Input::Closed(SessionKey::Main)),
+            vec![Effect::Exit]
+        );
+    }
+
+    #[test]
+    fn a_turn_ending_while_running_closes_nothing() {
+        let (mut sup, _) = Supervisor::start();
+        sup.step(Input::Send(SessionKey::Main));
+        assert_eq!(sup.step(Input::TurnDone(SessionKey::Main)), Vec::new());
     }
 
     #[test]

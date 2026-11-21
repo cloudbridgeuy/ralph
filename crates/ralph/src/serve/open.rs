@@ -53,6 +53,10 @@ impl OpenSession {
         self
     }
 
+    pub(super) fn cancel(&self) {
+        self.cancel.cancel();
+    }
+
     pub(super) fn end(&self) {
         self.cancel.cancel();
         let _turning = self
