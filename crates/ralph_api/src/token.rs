@@ -41,7 +41,11 @@ impl Token {
     }
 }
 
-pub fn extract_tokens(authorization: Option<&str>, query: &str, cookies: &[&str]) -> Vec<String> {
+pub(crate) fn extract_tokens(
+    authorization: Option<&str>,
+    query: &str,
+    cookies: &[&str],
+) -> Vec<String> {
     from_bearer(authorization)
         .or_else(|| from_query(query))
         .map(|value| vec![value.to_string()])

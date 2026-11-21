@@ -39,7 +39,7 @@ fn host_with_port(name: &str, port: u16) -> String {
     }
 }
 
-pub fn check_bind(addr: SocketAddr, policy: &BindPolicy) -> Result<(), BindError> {
+pub(crate) fn check_bind(addr: SocketAddr, policy: &BindPolicy) -> Result<(), BindError> {
     if policy.allowed.contains(&addr.ip()) {
         Ok(())
     } else {

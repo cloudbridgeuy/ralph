@@ -6,7 +6,7 @@ const JSON: &str = "application/json";
 const NO_STORE: (&str, &str) = ("Cache-Control", "no-store");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApiRequest {
+pub(crate) struct ApiRequest {
     pub method: String,
     pub path: String,
     pub query: String,
@@ -16,7 +16,7 @@ pub struct ApiRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApiResponse {
+pub(crate) struct ApiResponse {
     pub status: u16,
     pub content_type: &'static str,
     pub headers: Vec<(&'static str, &'static str)>,
@@ -30,7 +30,7 @@ pub struct ApiConfig {
     pub version: String,
 }
 
-pub fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResponse {
+pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResponse {
     if !host_allowed(request.host.as_deref(), &config.allowed_hosts) {
         return error(403, "forbidden host");
     }
@@ -44,7 +44,7 @@ pub fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResp
     }
 }
 
-pub fn overloaded() -> ApiResponse {
+pub(crate) fn overloaded() -> ApiResponse {
     error(503, "busy")
 }
 
