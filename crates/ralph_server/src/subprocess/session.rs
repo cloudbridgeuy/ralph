@@ -324,6 +324,7 @@ pub fn next_running(previous: Option<f64>, reported: Option<f64>) -> Option<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::chat_backend::CLAUDE;
     use ralph_core::chat_memory::{usage_record, CallSite, Trigger};
     use ralph_core::chat_process::{normalize_costs, UsageLine};
     use ralph_core::stream::{IterationMetadata, Usage};
@@ -345,10 +346,16 @@ mod tests {
             if !writes_usage_row(costs) {
                 continue;
             }
-            let row = usage_record(site.clone(), "t".into(), costs, &IterationMetadata::new())
-                .unwrap()
-                .with_turn_cost(before.logged)
-                .with_process_turn(index as u64 + 1);
+            let row = usage_record(
+                site.clone(),
+                "t".into(),
+                costs,
+                &IterationMetadata::new(),
+                &CLAUDE,
+            )
+            .unwrap()
+            .with_turn_cost(before.logged)
+            .with_process_turn(index as u64 + 1);
             rows.push(serde_json::from_value(serde_json::to_value(row).unwrap()).unwrap());
         }
         rows

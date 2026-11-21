@@ -1,3 +1,4 @@
+use super::clients::{write_frame, Writer};
 use super::{drive, step, Host, POISONED};
 use crate::chat::thread::open::prepare_open;
 use crate::chat::thread::running_ids;
@@ -8,17 +9,29 @@ use ralph_core::chat_thread::config_root;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
 use ralph_core::serve_supervisor::{Effect, Input};
+use ralph_core::worker::HANDOFF_TIMEOUT;
 use ralph_server::chat::serve_proto::{
-    decode_frame, encode_frame, hello_reply, ClientMsg, ServerMsg, ThreadRequest,
+    decode_frame, hello_reply, ClientMsg, ServerMsg, ThreadRequest,
 };
 use ralph_server::warn::warn;
+use ralph_server::workers::answer_permission as answer_worker_permission;
 use std::cell::RefCell;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Debug, PartialEq, Eq)]
+struct Answer {
+    key: SessionKey,
+    worker: String,
+    request: String,
+    option: String,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
@@ -27,6 +40,7 @@ enum Action {
     Cancel(SessionKey),
     Status(SessionKey),
     Thread(ThreadOp),
+    Answer(Answer),
     Attach(SessionKey),
     Shutdown,
     Refuse(String),
@@ -34,8 +48,23 @@ enum Action {
 
 pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut writer = stream;
+    stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+    let reader = BufReader::new(stream.try_clone()?);
+    let writer: Writer = Arc::new(Mutex::new(stream));
+    let mut client = None;
+    let result = converse(reader, &writer, host, &mut client);
+    if let Some(client) = client {
+        host.clients.detach(client);
+    }
+    result
+}
+
+fn converse(
+    mut reader: BufReader<UnixStream>,
+    writer: &Writer,
+    host: &Host,
+    client: &mut Option<u64>,
+) -> std::io::Result<()> {
     let mut greeted = false;
     let mut attached = SessionKey::Main;
     while let Some(line) = read_frame(&mut reader)? {
@@ -55,13 +84,14 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 Err(message) => ServerMsg::Error { message },
             },
             Action::Send { key, text } => {
-                let (reply, effects) = send(host, &key, &text, id, &writer);
+                let (reply, effects) = send(host, &key, &text, id, writer);
                 after = effects;
                 reply
             }
             Action::Cancel(key) => cancel(host, &key),
             Action::Status(key) => status(host, &key),
             Action::Thread(op) => thread(host, op),
+            Action::Answer(answer) => answer_permission(host, &answer),
             Action::Attach(key) => {
                 attached = key;
                 ServerMsg::Done {
@@ -69,7 +99,10 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
                 }
             }
         };
-        writer.write_all(encode_frame(id, &reply).as_bytes())?;
+        write_frame(writer, id, &reply)?;
+        if matches!(reply, ServerMsg::Hello { .. }) && client.is_none() {
+            *client = Some(host.clients.attach(writer));
+        }
         if let Err(e) = drive(host, after) {
             warn(format!("ralph serve: close after a turn failed: {e}"));
         }
@@ -78,7 +111,7 @@ pub(super) fn handle(stream: UnixStream, host: &Host) -> std::io::Result<()> {
         }
         let was = std::mem::replace(&mut greeted, true);
         if let Some(timeout) = timeout_change(was, greeted) {
-            writer.set_read_timeout(timeout)?;
+            reader.get_ref().set_read_timeout(timeout)?;
         }
     }
     Ok(())
@@ -103,6 +136,26 @@ fn status(host: &Host, key: &SessionKey) -> ServerMsg {
         .unwrap_or_else(|| ServerMsg::Error {
             message: format!("{key} is not open"),
         })
+}
+
+fn answer_permission(host: &Host, answer: &Answer) -> ServerMsg {
+    let Some(store) = host.sessions.store(&answer.key) else {
+        return ServerMsg::Error {
+            message: format!("{} is not open", answer.key),
+        };
+    };
+    match answer_worker_permission(
+        &store,
+        HANDOFF_TIMEOUT,
+        &answer.worker,
+        &answer.request,
+        &answer.option,
+    ) {
+        Ok(message) => ServerMsg::Done { message },
+        Err(e) => ServerMsg::Error {
+            message: e.to_string(),
+        },
+    }
 }
 
 fn thread(host: &Host, op: ThreadOp) -> ServerMsg {
@@ -168,7 +221,7 @@ fn send(
     key: &SessionKey,
     text: &str,
     id: u64,
-    writer: &UnixStream,
+    writer: &Writer,
 ) -> (ServerMsg, Vec<Effect>) {
     let mut after = Vec::new();
     let run = step(&host.supervisor, Input::Send(key.clone())).and_then(|effects| permit(&effects));
@@ -189,14 +242,13 @@ fn run_turn(
     key: &SessionKey,
     text: &str,
     id: u64,
-    writer: &UnixStream,
+    writer: &Writer,
 ) -> Result<(), String> {
     let open = host
         .sessions
         .get(key)
         .ok_or_else(|| format!("{key} is not open"))?;
-    let bound = writer.try_clone().map_err(|e| e.to_string())?;
-    open.sink.bind(id, bound);
+    open.sink.bind(id, Arc::clone(writer));
     let outcome = open.turn(text);
     open.sink.unbind();
     outcome.map(|_| ()).map_err(|e| e.to_string())
@@ -209,6 +261,7 @@ fn closes_on_error(action: &Action) -> bool {
             | Action::Cancel(_)
             | Action::Status(_)
             | Action::Thread(_)
+            | Action::Answer(_)
             | Action::Attach(_)
     )
 }
@@ -252,6 +305,20 @@ fn classify(greeted: bool, attached: &SessionKey, frame: Result<ClientMsg, Strin
         Ok(ClientMsg::Thread(cmd)) => match cmd.parse() {
             Ok(ThreadRequest::Op(op)) => Action::Thread(op),
             Ok(ThreadRequest::Attach(key)) => Action::Attach(key),
+            Err(message) => Action::Refuse(message),
+        },
+        Ok(ClientMsg::Answer {
+            thread,
+            worker,
+            request,
+            option,
+        }) => match session_key(thread.as_deref(), attached) {
+            Ok(key) => Action::Answer(Answer {
+                key,
+                worker,
+                request,
+                option,
+            }),
             Err(message) => Action::Refuse(message),
         },
         Ok(ClientMsg::Shutdown) => Action::Shutdown,
@@ -395,6 +462,37 @@ mod tests {
         assert_eq!(status, Action::Status(side));
         assert!(!closes_on_error(&Action::Cancel(SessionKey::Main)));
         assert!(!closes_on_error(&Action::Status(SessionKey::Main)));
+    }
+
+    #[test]
+    fn classify_routes_an_answer_to_a_session_key() {
+        let answer = |thread: Option<&str>| {
+            classify(
+                true,
+                &SessionKey::Main,
+                Ok(ClientMsg::Answer {
+                    thread: thread.map(str::to_string),
+                    worker: "w1".into(),
+                    request: "per_1".into(),
+                    option: "once".into(),
+                }),
+            )
+        };
+        let expected = |key| {
+            Action::Answer(Answer {
+                key,
+                worker: "w1".into(),
+                request: "per_1".into(),
+                option: "once".into(),
+            })
+        };
+        assert_eq!(answer(None), expected(SessionKey::Main));
+        assert_eq!(
+            answer(Some("side")),
+            expected(SessionKey::Thread(ThreadName::parse("side").unwrap()))
+        );
+        assert!(matches!(answer(Some("main")), Action::Refuse(_)));
+        assert!(!closes_on_error(&expected(SessionKey::Main)));
     }
 
     #[test]

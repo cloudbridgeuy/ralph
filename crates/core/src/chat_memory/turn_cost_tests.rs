@@ -1,4 +1,5 @@
 use super::*;
+use crate::chat_backend::CLAUDE;
 use serde_json::Value;
 
 fn row(kind: CallSite, total: f64) -> LedgerRow {
@@ -14,6 +15,7 @@ fn row(kind: CallSite, total: f64) -> LedgerRow {
             model_usage: Default::default(),
         },
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap()
 }

@@ -1,9 +1,11 @@
+use crate::chat::backend::ChatSession;
 use crate::chat::memory::usage_path;
 use crate::ledger;
-use crate::subprocess::{recorded, Session, StreamingSubprocessResult};
+use crate::subprocess::{recorded, StreamingSubprocessResult};
 use crate::warn::warn_if_err;
 use crate::watches::locked;
 use chrono::{DateTime, Utc};
+use ralph_core::chat_backend::{cache_ttl_secs, Caps};
 use ralph_core::chat_keepalive::{
     keepalive_action, keeps_after, keeps_for_turn, ping_follow_up, Keepalive, KeepaliveInput,
     PingFollowUp, KEEPALIVE_PING_PROMPT,
@@ -28,7 +30,7 @@ pub struct Keeps {
 pub struct KeepaliveWatch {
     pub limit_hours: u64,
     pub idle: Arc<AtomicBool>,
-    pub session: Arc<Mutex<Option<Session>>>,
+    pub session: Arc<Mutex<Option<Box<dyn ChatSession>>>>,
     pub live: Arc<AtomicBool>,
     pub last_turn_end: Stamp,
     pub last_ping: Stamp,
@@ -37,6 +39,7 @@ pub struct KeepaliveWatch {
     pub identity: Arc<Mutex<IterationMetadata>>,
     pub run: String,
     pub store: String,
+    pub caps: Caps,
 }
 
 impl KeepaliveWatch {
@@ -65,9 +68,10 @@ impl KeepaliveWatch {
             idle_secs: (now - turn_end).num_seconds(),
             since_activity_secs: last_activity.map_or(0, |at| (now - at).num_seconds()),
             since_attempt_secs: (*locked(&self.last_attempt)).map(|at| (now - at).num_seconds()),
-            session_live: slot.as_mut().is_some_and(Session::is_alive),
+            session_live: slot.as_mut().is_some_and(|session| session.is_alive()),
             turn_running: !self.idle.load(Ordering::SeqCst),
             keeps,
+            cache_ttl_secs: cache_ttl_secs(&self.caps),
         };
         if keepalive_action(&input) != Keepalive::Ping {
             return None;
@@ -100,7 +104,7 @@ impl KeepaliveWatch {
     fn record(&self, result: &StreamingSubprocessResult) {
         let identity = locked(&self.identity).clone();
         let at = Utc::now().to_rfc3339();
-        let Some(record) = ping_row(at.clone(), result, &identity) else {
+        let Some(record) = ping_row(at.clone(), result, &identity, &self.caps) else {
             return;
         };
         let record = record
@@ -110,7 +114,7 @@ impl KeepaliveWatch {
             ledger::record(&usage_path(), &record),
             "Failed to record keepalive ping usage",
         );
-        let subagents = subagent_records(&at, &result.stream_result.costs, &identity)
+        let subagents = subagent_records(&at, &result.stream_result.costs, &identity, &self.caps)
             .into_iter()
             .map(|row| {
                 row.with_run(Some(self.run.clone()))
@@ -127,8 +131,16 @@ fn ping_row(
     at: String,
     result: &StreamingSubprocessResult,
     identity: &IterationMetadata,
+    caps: &Caps,
 ) -> Option<LedgerRow> {
-    usage_record(CallSite::Ping, at, &result.stream_result.costs, identity).map(|record| {
+    usage_record(
+        CallSite::Ping,
+        at,
+        &result.stream_result.costs,
+        identity,
+        caps,
+    )
+    .map(|record| {
         record
             .with_turn_cost(result.logged_before)
             .with_request_at(result.request_at.map(|at| at.to_rfc3339()))

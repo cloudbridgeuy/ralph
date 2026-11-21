@@ -173,7 +173,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - core StreamCollector, BlockRenderer, output blocks, block-buffered prose, table enhancement
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
-- [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
+- [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, backends and capabilities, and storage
 - [Chat Decay Check](docs/context/chat-decay.md) - `ralph chat history decay`: anchors, token survival by summary depth, search and recall reach, pointers, approximate era split
 - [Threads Guide](docs/context/threads.md) - Task-first how-to: open, pull, merge, park, revive and drop threads, and the refusals
 - [send-it Guide](docs/context/send-it.md) - Task-first how-to: propose, review and approve a run plan, exit criteria, caps, allowed actions, stops and templates

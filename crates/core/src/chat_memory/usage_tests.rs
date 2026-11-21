@@ -1,4 +1,6 @@
 use super::*;
+use crate::chat_backend::{Caps, CLAUDE};
+use crate::worker::Support;
 use serde_json::Value;
 
 fn costs(cache: Option<u64>) -> IterationCosts {
@@ -99,6 +101,7 @@ fn long_prompt_false_is_written_and_none_is_omitted() {
             "t".into(),
             &costs(Some(1)),
             &IterationMetadata::new(),
+            &CLAUDE,
         )
         .unwrap(),
     )
@@ -148,6 +151,7 @@ fn usage_record_keeps_the_cache_tiers_and_thinking_of_a_result_line() {
         "t".into(),
         &result.extract_costs(),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
@@ -165,6 +169,7 @@ fn usage_record_maps_all_fields() {
         "t".into(),
         &costs(Some(7)),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     assert_eq!(
@@ -187,7 +192,8 @@ fn usage_record_zero_fills_missing_cache_fields() {
         },
         "t".into(),
         &IterationCosts::new(),
-        &IterationMetadata::new()
+        &IterationMetadata::new(),
+        &CLAUDE
     )
     .is_none());
     let record = usage_record(
@@ -197,6 +203,7 @@ fn usage_record_zero_fills_missing_cache_fields() {
         "t".into(),
         &costs(None),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     assert_eq!(
@@ -213,11 +220,27 @@ fn context_tokens_serialized_only_when_present() {
     let kind = CallSite::Nap;
     let mut with = costs(None);
     with.context_tokens = Some(42);
-    let value =
-        line(usage_record(kind.clone(), "t".into(), &with, &IterationMetadata::new()).unwrap());
+    let value = line(
+        usage_record(
+            kind.clone(),
+            "t".into(),
+            &with,
+            &IterationMetadata::new(),
+            &CLAUDE,
+        )
+        .unwrap(),
+    );
     assert_eq!(value["context_tokens"], 42);
-    let value =
-        line(usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new()).unwrap());
+    let value = line(
+        usage_record(
+            kind,
+            "t".into(),
+            &costs(None),
+            &IterationMetadata::new(),
+            &CLAUDE,
+        )
+        .unwrap(),
+    );
     assert!(value.get("context_tokens").is_none());
 }
 
@@ -230,6 +253,7 @@ fn encode_usage_is_one_json_line() {
         "t".into(),
         &costs(None),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     let line = encode_usage(&record).unwrap();
@@ -246,6 +270,7 @@ fn encode_usage_includes_store_only_when_set() {
         "t".into(),
         &costs(None),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     let bare: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
@@ -260,7 +285,14 @@ fn worker_turn_record_has_trigger() {
     let kind = CallSite::Turn {
         trigger: Trigger::Worker,
     };
-    let record = usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new()).unwrap();
+    let record = usage_record(
+        kind,
+        "t".into(),
+        &costs(None),
+        &IterationMetadata::new(),
+        &CLAUDE,
+    )
+    .unwrap();
     let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
     assert_eq!(
         (&value["kind"], &value["trigger"]),
@@ -275,6 +307,7 @@ fn nap_record_has_no_trigger() {
         "t".into(),
         &costs(None),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
@@ -290,6 +323,7 @@ fn ping_record_carries_model_session_and_harness() {
             "t".into(),
             &costs(None),
             &seen(Some("m"), Some("s")),
+            &CLAUDE,
         )
         .unwrap(),
     );
@@ -317,6 +351,7 @@ fn ping_record_has_the_ping_kind_run_and_request_time() {
         "t".into(),
         &costs(None),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     let record = record
@@ -339,9 +374,15 @@ fn turn_record_carries_view_stats_and_nap_does_not() {
     let kind = CallSite::Turn {
         trigger: Trigger::User,
     };
-    let record = usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new())
-        .unwrap()
-        .with_view(stats.clone());
+    let record = usage_record(
+        kind,
+        "t".into(),
+        &costs(None),
+        &IterationMetadata::new(),
+        &CLAUDE,
+    )
+    .unwrap()
+    .with_view(stats.clone());
     let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
     assert_eq!(value["view_bytes"], 11);
     assert_eq!(value["view_lines"], 2);
@@ -352,6 +393,7 @@ fn turn_record_carries_view_stats_and_nap_does_not() {
         "t".into(),
         &costs(None),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     let value: Value = serde_json::from_str(&encode_usage(&nap).unwrap()).unwrap();
@@ -367,6 +409,7 @@ fn thread_fields_are_serialized_only_when_present() {
         "t".into(),
         &costs(None),
         &IterationMetadata::new(),
+        &CLAUDE,
     )
     .unwrap();
     let value = line(
@@ -375,6 +418,7 @@ fn thread_fields_are_serialized_only_when_present() {
             "t".into(),
             &costs(None),
             &IterationMetadata::new(),
+            &CLAUDE,
         )
         .unwrap(),
     );
@@ -403,8 +447,16 @@ fn seen(model: Option<&str>, session: Option<&str>) -> IterationMetadata {
 
 #[test]
 fn identity_fields_serialize_only_when_present() {
-    let bare =
-        line(usage_record(CallSite::Nap, "t".into(), &costs(None), &seen(None, None)).unwrap());
+    let bare = line(
+        usage_record(
+            CallSite::Nap,
+            "t".into(),
+            &costs(None),
+            &seen(None, None),
+            &CLAUDE,
+        )
+        .unwrap(),
+    );
     assert_eq!(bare["harness"], "claude");
     assert_eq!(bare["cost_source"], "harness");
     assert!(bare.get("model").is_none() && bare.get("session_id").is_none());
@@ -414,6 +466,7 @@ fn identity_fields_serialize_only_when_present() {
             "t".into(),
             &costs(None),
             &seen(Some("m"), Some("s")),
+            &CLAUDE,
         )
         .unwrap(),
     );
@@ -427,7 +480,16 @@ fn identity_fields_serialize_only_when_present() {
 fn cost_source_is_absent_without_cost() {
     let mut no_cost = costs(None);
     no_cost.cost_usd = None;
-    let value = line(usage_record(CallSite::Nap, "t".into(), &no_cost, &seen(None, None)).unwrap());
+    let value = line(
+        usage_record(
+            CallSite::Nap,
+            "t".into(),
+            &no_cost,
+            &seen(None, None),
+            &CLAUDE,
+        )
+        .unwrap(),
+    );
     assert!(value.get("cost_source").is_none());
     assert!(value["cost_usd"].is_null());
 }
@@ -479,7 +541,8 @@ fn every_call_site_serializes_its_role() {
         (CallSite::Ask, "ask", "ask"),
     ];
     for (site, kind, role) in cases {
-        let value = line(usage_record(site, "t".into(), &costs(None), &seen(None, None)).unwrap());
+        let value =
+            line(usage_record(site, "t".into(), &costs(None), &seen(None, None), &CLAUDE).unwrap());
         assert_eq!(
             (&value["kind"], &value["role"]),
             (&kind.into(), &role.into())
@@ -495,6 +558,7 @@ fn ask_rows_carry_the_harness_fields_but_no_store_or_run() {
             "t".into(),
             &costs(Some(7)),
             &seen(Some("m"), Some("s")),
+            &CLAUDE,
         )
         .unwrap(),
     );
@@ -520,7 +584,7 @@ fn probe() -> (IterationCosts, IterationMetadata) {
 #[test]
 fn a_task_subagent_gets_its_own_row_and_the_main_loop_none() {
     let (costs, metadata) = probe();
-    let rows: Vec<Value> = subagent_records("t", &costs, &metadata)
+    let rows: Vec<Value> = subagent_records("t", &costs, &metadata, &CLAUDE)
         .into_iter()
         .map(line)
         .collect();
@@ -558,7 +622,7 @@ fn main_model_usage_beyond_the_main_loop_is_a_subagent_row() {
     haiku.output_tokens += 10;
     haiku.cache_write_5m += 7;
     haiku.cache_creation_input_tokens += 7;
-    let rows: Vec<Value> = subagent_records("t", &costs, &metadata)
+    let rows: Vec<Value> = subagent_records("t", &costs, &metadata, &CLAUDE)
         .into_iter()
         .map(line)
         .collect();
@@ -632,7 +696,47 @@ fn a_usage_row_exists_exactly_when_writes_usage_row_holds() {
             "t".into(),
             &costs,
             &IterationMetadata::new(),
+            &CLAUDE,
         );
         assert_eq!(row.is_some(), writes_usage_row(&costs));
+    }
+}
+
+#[test]
+fn usage_record_takes_its_harness_from_the_caps() {
+    let caps = Caps {
+        harness: "other",
+        ..CLAUDE
+    };
+    let row = usage_record(
+        CallSite::Nap,
+        "t".into(),
+        &costs(None),
+        &IterationMetadata::new(),
+        &caps,
+    )
+    .unwrap();
+    assert_eq!(row.harness.as_deref(), Some("other"));
+}
+
+#[test]
+fn usage_record_drops_the_cost_when_the_harness_reports_none() {
+    let caps = Caps {
+        cost: Support::None,
+        ..CLAUDE
+    };
+    for reported in [Some(0.0), Some(0.5)] {
+        let row = usage_record(
+            CallSite::Nap,
+            "t".into(),
+            &IterationCosts {
+                cost_usd: reported,
+                ..costs(None)
+            },
+            &IterationMetadata::new(),
+            &caps,
+        )
+        .unwrap();
+        assert_eq!((row.cost_usd, row.cost_source), (None, None));
     }
 }

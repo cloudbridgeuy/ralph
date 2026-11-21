@@ -1,7 +1,8 @@
+use crate::chat_backend::Caps;
 use crate::chat_process::{turn_cost, ResetReason, OWN_COST_LEDGER};
 use crate::stream::{IterationCosts, IterationMetadata, ModelTotals};
 use crate::wire::usage::{FIVE_MIN, ONE_HOUR};
-use crate::worker::ModelUsage;
+use crate::worker::{ModelUsage, Support};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -245,11 +246,13 @@ pub fn usage_record(
     at: String,
     costs: &IterationCosts,
     metadata: &IterationMetadata,
+    caps: &Caps,
 ) -> Option<LedgerRow> {
     if !writes_usage_row(costs) {
         return None;
     }
     let usage = costs.usage.as_ref()?;
+    let cost_usd = costs.cost_usd.filter(|_| caps.cost != Support::None);
     Some(LedgerRow {
         at,
         role: kind.role(),
@@ -258,7 +261,7 @@ pub fn usage_record(
         cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
         cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
         output_tokens: usage.output_tokens,
-        cost_usd: costs.cost_usd,
+        cost_usd,
         duration_ms: costs.duration_ms,
         context_tokens: costs.context_tokens,
         process_turn: None,
@@ -267,10 +270,10 @@ pub fn usage_record(
         run: None,
         store: None,
         ticket: None,
-        harness: Some(MAIN_HARNESS.to_string()),
+        harness: Some(caps.harness.to_string()),
         model: metadata.model.clone(),
         session_id: metadata.session_id.clone(),
-        cost_source: costs.cost_usd.map(|_| CostSource::Harness),
+        cost_source: cost_usd.map(|_| CostSource::Harness),
         reasoning_tokens: usage
             .output_tokens_details
             .as_ref()
@@ -377,6 +380,7 @@ pub fn subagent_records(
     at: &str,
     costs: &IterationCosts,
     metadata: &IterationMetadata,
+    caps: &Caps,
 ) -> Vec<LedgerRow> {
     let main_loop = costs
         .usage
@@ -405,7 +409,7 @@ pub fn subagent_records(
                     CallSite::Subagent,
                     at.to_string(),
                     metadata.session_id.clone(),
-                    MAIN_HARNESS,
+                    caps.harness,
                     &row,
                 )
             }

@@ -2,7 +2,7 @@
 //! without a model turn.
 
 use crate::chat::OLDER_VIEW_STEP;
-use crate::chat_process::{process_variants, ProcessCell, ResetReason, CACHE_TTL_SECS};
+use crate::chat_process::{process_variants, Cache, Ctx, ProcessCell, ResetReason, CACHE_TTL_SECS};
 use crate::status_mode::Mode;
 use crate::status_segments::Kind;
 use serde_json::{json, Value};
@@ -24,6 +24,7 @@ pub enum Command {
     Config,
     View,
     Rerender,
+    Answer,
     Read,
     Zoom,
     Recall,
@@ -32,7 +33,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 18] = [
+    pub const ALL: [Command; 19] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -46,6 +47,7 @@ impl Command {
         Command::Config,
         Command::View,
         Command::Rerender,
+        Command::Answer,
         Command::Read,
         Command::Zoom,
         Command::Recall,
@@ -68,6 +70,7 @@ impl Command {
             Command::Config => "/config",
             Command::View => "/view",
             Command::Rerender => "/rerender",
+            Command::Answer => "/answer",
             Command::Read => "/read",
             Command::Zoom => "/zoom",
             Command::Recall => "/recall",
@@ -269,6 +272,10 @@ impl Command {
             Command::Rerender => &[(
                 "/rerender [N]",
                 "print the Nth-last assistant reply again from its stored markdown, with the chat renderer at the current terminal width and [chat] wrap_width; N is 1 or more and defaults to 1, the last reply; counts only assistant replies; directive tags and their text are left out; replies saved by older ralph versions reprint code, diff and mermaid blocks as plain text, and replies saved by this version redraw them as in /view; relative image paths resolve from the directory the chat was started in; works in main and in threads; starts no turn, calls no model and adds nothing to the log; refuses a chat with no reply and an N past the first reply",
+            )],
+            Command::Answer => &[(
+                "/answer <worker> <request> <option>",
+                "answer a blocked worker permission request with one of the options in its blocked notice; all three words are required; served only over --connect; starts no turn",
             )],
             Command::Read => &[(
                 "/read <id> [raw|summary] [--cursor <c>]",
@@ -506,9 +513,11 @@ fn reset_help(reason: ResetReason) -> &'static str {
 const EXAMPLE_PROCESS: ProcessCell = ProcessCell {
     turn: 12,
     max_turns: 30,
-    ctx_percent: Some(62),
-    cache_minutes: Some(41),
-    write_heavy: true,
+    ctx: Ctx::Percent(62),
+    cache: Cache::Left {
+        minutes: 41,
+        write_heavy: true,
+    },
     reset: None,
     shift: Some(9),
     cost: None,

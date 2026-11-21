@@ -34,6 +34,7 @@ pub mod headless;
 #[cfg(test)]
 mod interrupt_token_test;
 mod reply;
+pub use reply::answer_permission;
 mod spawn;
 mod verify;
 pub use spawn::SpawnArgs;
@@ -220,28 +221,7 @@ impl Workers {
     }
 
     fn headless_files(&self, id: &str) -> Option<(HarnessId, HandoffFiles)> {
-        let agy = HandoffFiles::agy(&self.store_dir, id);
-        if agy.owner.exists() || self.saved_agy(&agy) {
-            return Some((HarnessId::Agy, agy));
-        }
-        let cursor = HandoffFiles::cursor(&self.store_dir, id);
-        if cursor.owner.exists() {
-            return Some((HarnessId::Cursor, cursor));
-        }
-        let codex = HandoffFiles::codex(&self.store_dir, id);
-        if codex.owner.exists() {
-            return Some((HarnessId::Codex, codex));
-        }
-        if self.claude_running(id) {
-            let files = HandoffFiles::claude(&self.store_dir, id);
-            return Some((HarnessId::Claude, files));
-        }
-        self.opencode_http(id).then(|| {
-            (
-                HarnessId::Opencode,
-                HandoffFiles::opencode(&self.store_dir, id),
-            )
-        })
+        headless_files(&self.store_dir, id)
     }
 
     fn deliver_headless(
@@ -576,6 +556,28 @@ fn now_nanos() -> u64 {
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
         })
+}
+
+fn headless_files(store_dir: &Path, id: &str) -> Option<(HarnessId, HandoffFiles)> {
+    let agy = HandoffFiles::agy(store_dir, id);
+    if agy.owner.exists() || agy::saved_agy(store_dir, &agy) {
+        return Some((HarnessId::Agy, agy));
+    }
+    let cursor = HandoffFiles::cursor(store_dir, id);
+    if cursor.owner.exists() {
+        return Some((HarnessId::Cursor, cursor));
+    }
+    let codex = HandoffFiles::codex(store_dir, id);
+    if codex.owner.exists() {
+        return Some((HarnessId::Codex, codex));
+    }
+    let claude = HandoffFiles::claude(store_dir, id);
+    if claude.owner.exists() {
+        return Some((HarnessId::Claude, claude));
+    }
+    let opencode = HandoffFiles::opencode(store_dir, id);
+    (opencode.owner.exists() || opencode.session.exists())
+        .then_some((HarnessId::Opencode, opencode))
 }
 
 fn clear_marker(marker: &Path) -> io::Result<()> {

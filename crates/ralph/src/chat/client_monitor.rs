@@ -6,11 +6,11 @@ use ralph_core::chat_keepalive::lock_wait_continues;
 use ralph_core::chat_send_it::{blocked_alert, blocked_report};
 use ralph_core::inbox_alert::{inbox_alert, AlertConfig};
 use ralph_core::worker::{Report, HANDOFF_POLL};
+use ralph_server::chat::backend::ChatSession;
 use ralph_server::chat::host::HostEvent;
 use ralph_server::chat::keepalive::PING_TIMEOUT;
 use ralph_server::chat::monitor::{Monitor as Core, POLL};
 use ralph_server::chat::session::{Emit, Event};
-use ralph_server::subprocess::Session;
 use ralph_server::warn::warn_if_err;
 use ralph_server::workers::headless::{ExitCleanup, HeadlessShutdown};
 use std::io::{self, IsTerminal, Write};
@@ -64,7 +64,7 @@ pub(super) fn client_events(alert: AlertConfig, term: Arc<TermStatus>) -> Emit {
     })
 }
 
-pub(super) fn watch_headless(store_dir: PathBuf) -> HeadlessShutdown {
+pub(crate) fn watch_headless(store_dir: PathBuf) -> HeadlessShutdown {
     let headless = HeadlessShutdown::new(store_dir);
     for host in headless.hosts() {
         let resumed = Arc::clone(host);
@@ -96,7 +96,7 @@ pub(super) fn stdin_hung_up() -> bool {
     unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
 }
 
-fn drop_session(session: &Mutex<Option<Session>>) {
+fn drop_session(session: &Mutex<Option<Box<dyn ChatSession>>>) {
     let started = Instant::now();
     loop {
         match session.try_lock() {
@@ -120,7 +120,7 @@ fn drop_session(session: &Mutex<Option<Session>>) {
 
 pub(super) fn watch_input(
     at_prompt: Arc<AtomicBool>,
-    session: Arc<Mutex<Option<Session>>>,
+    session: Arc<Mutex<Option<Box<dyn ChatSession>>>>,
     plugin_dir: Option<PathBuf>,
     exit: ExitCleanup,
     term: Arc<TermStatus>,

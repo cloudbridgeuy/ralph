@@ -383,7 +383,7 @@ The model schedules a shell command or a worker with the `schedule` tool (see [M
 
 `/help` is local: it never starts a turn or calls the model. Only the bare command (after trimming) counts: `/help x`, `/help me fix the build` and `/helpfoo` are normal messages. It prints `Store: <dir>`, a blank line, then the pure `chat_help::help_text(width)` (through `help_with_store`), word-wrapped to the prompt width (the terminal width, capped by `--wrap-width`); a section whose text column would be under 30 columns puts each text under its label:
 
-- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/send-it`, `/thread`, `/config`, `/view`, `/rerender`, `/read`, `/zoom`, `/recall`, `/search` and `/rules`, from `Command::ALL`, plus the `@<id> <text>` row right after the `/nudge` rows (it is not a `/` command, so it has no `Command` variant). `route_input` matches the same table, so a command cannot route without a help row.
+- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/send-it`, `/thread`, `/config`, `/view`, `/rerender`, `/answer`, `/read`, `/zoom`, `/recall`, `/search` and `/rules`, from `Command::ALL`, plus the `@<id> <text>` row right after the `/nudge` rows (it is not a `/` command, so it has no `Command` variant). `route_input` matches the same table, so a command cannot route without a help row.
 - Cells: the `!` and `!!` shorthands and `!<runtime>` fences.
 - Keys: at the prompt, in vi mode, during a turn, and in the queue editor (`PROMPT_KEYS`, `VI_KEYS`, `TURN_KEYS`, `QUEUE_KEYS`).
 - Status bar: one row per segment `Kind`, the five modes (`HOLD`, `NAP`, `INBOX`, `WORK`, `IDLE`; first match wins), each part of the process cell (`T12/30`, `ctx 62%`, `cache 41m`, `!`, `shift ~9 msg`) and the `↻ tokens`, `↻ turns` and `↻ restart` marks.
@@ -951,6 +951,19 @@ A codex worker appends the same kind of rows with `harness` `codex` and `session
   - Limit: a ping that timed out before GUZ-1663 left no row, so it is not in these counts or in the cost. Later timed-out pings with usage have a row.
 - Result of GUZ-1549 (is keepalive profitable): `ralph usage cache` on the ledger from 2026-10-28 to 2026-11-17 (read 2026-11-17, ledger still growing) showed 126 pings in 48 idle periods, $3.04 ping cost, next turn warm in 44, cold in 2, no next turn in 2. Cache misses were 125 in 2398 turns: reset 124, ttl expiry 1, unexplained 0, new run 0. The saving estimate (est.) was $18.11 net of the $3.04 ping cost, over 27 periods by the rule above (write $8.00/MTok at the 1h tier, read $0.20/MTok, claude-opus-5-5). This is an estimate, not a measurement. On this ledger the estimated saving is larger than the ping cost.
 - Not covered: the legacy per-store ledger. Keepalive `ping` rows are counted under `main`.
+
+## Backends and capabilities
+
+Chat runs a turn through the `ChatBackend` trait (`ralph_server/src/chat/backend.rs`). Each backend reports its `Caps` (`ralph_core::chat_backend`). `Caps` names the harness and gives a `Support` for each capability: `cost`, `cache_tokens`, `cache_ttl`, `context_tokens`, `cancel`, `mcp_tools`, `system_prompt` and `tool_blocks`. `Support` is the same type the worker spec uses (`worker/headless.rs`): `Full`, `Partial(note)` or `None`. `None` means Missing.
+
+`ClaudeBackend` returns `CLAUDE`, which is `Full` for every capability. Claude chat does not change.
+
+A feature that assumes Claude reads `Caps` through a pure function in `ralph_core`. When a capability is Missing, the feature hides or neutralises its output. It never errors.
+
+- Status bar (`process_cell`, `process_variants`): Missing `context_tokens` hides the `ctx` part. Missing `cache_ttl` hides the cache part. Missing `cache_tokens` never marks the cache `!` (write heavy). `cache_ttl_secs(&Caps)` gives the cache window, or `None`.
+- Keepalive (`keepalive_action`): the input carries `cache_ttl_secs`. `None` gives `Skip`. `Some(t)` is the cold-cache limit in place of one hour.
+- Usage rows (`usage_record`, `subagent_records`): `harness` comes from `Caps.harness`. Missing `cost` leaves `cost_usd` and `cost_source` empty, also when the harness reported a cost. Readers of stored rows (worker costs, cache saving) still compare `harness` with `claude`.
+- Limit: only Claude has a backend today. The other capabilities (`cancel`, `mcp_tools`, `system_prompt`, `tool_blocks`) are in `Caps` but no feature reads them yet.
 
 ## Out of scope (v1)
 

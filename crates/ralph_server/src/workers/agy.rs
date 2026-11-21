@@ -1,27 +1,27 @@
 use super::*;
 
-impl Workers {
-    pub(super) fn saved_agy(&self, files: &HandoffFiles) -> bool {
-        let Some(record) = fs::read_to_string(&files.session)
-            .ok()
-            .and_then(|text| ralph_core::worker::SessionRecord::parse(&text))
-        else {
-            return false;
-        };
-        let id = files
-            .session
-            .file_name()
-            .and_then(|id| id.to_str())
-            .unwrap_or_default();
-        crate::acp_worker::recovery::resume(
-            &ralph_core::worker::AGY_AGENT,
-            id,
-            &record,
-            &self.store_dir,
-            true,
-        ) == ralph_core::worker::Resume::Go
-    }
+pub(super) fn saved_agy(store_dir: &Path, files: &HandoffFiles) -> bool {
+    let Some(record) = fs::read_to_string(&files.session)
+        .ok()
+        .and_then(|text| ralph_core::worker::SessionRecord::parse(&text))
+    else {
+        return false;
+    };
+    let id = files
+        .session
+        .file_name()
+        .and_then(|id| id.to_str())
+        .unwrap_or_default();
+    crate::acp_worker::recovery::resume(
+        &ralph_core::worker::AGY_AGENT,
+        id,
+        &record,
+        store_dir,
+        true,
+    ) == ralph_core::worker::Resume::Go
+}
 
+impl Workers {
     pub(super) fn check_agy(&self, id: &str, closing: bool) -> io::Result<()> {
         let files = HandoffFiles::agy(&self.store_dir, id);
         let present = |path: &Path| {
@@ -59,7 +59,7 @@ impl Workers {
                 || match identity {
                     Some(crate::cursor_owner::ProcessIdentity::Matches) => !caller_owns(files),
                     Some(crate::cursor_owner::ProcessIdentity::GoneOrReused) => {
-                        !self.saved_agy(files)
+                        !saved_agy(&self.store_dir, files)
                     }
                     _ => true,
                 }
@@ -69,7 +69,7 @@ impl Workers {
                 )));
             }
         }
-        if present(&files.session) && (!closing || !self.saved_agy(files)) {
+        if present(&files.session) && (!closing || !saved_agy(&self.store_dir, files)) {
             return Err(io::Error::other(format!(
                 "worker {id} has a saved or unreadable agy session"
             )));

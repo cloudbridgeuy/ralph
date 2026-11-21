@@ -26,6 +26,7 @@ use ralph_core::chat::{
     resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
     select_servers, ResetLimits,
 };
+use ralph_core::chat_backend::Caps;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_process::UsageTail;
@@ -149,6 +150,7 @@ pub struct CoreParts<'a> {
     pub live: Arc<AtomicBool>,
     pub last_ping: Stamp,
     pub run: String,
+    pub caps: Caps,
 }
 
 pub fn open_core(parts: CoreParts) -> Monitor {
@@ -186,6 +188,7 @@ pub fn open_core(parts: CoreParts) -> Monitor {
         last_ping: parts.last_ping,
         run: parts.run,
         reset_limits: parts.tuning.reset_limits,
+        caps: parts.caps,
         process: Mutex::new(ProcessMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
         phase: Mutex::new(Phase::Prompt),

@@ -33,7 +33,7 @@
 
 ## Protocol
 
-One JSON frame per line: `{"v":1,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYTES`. A frame with another `v` is an error. Before `hello` a connection has a 30 s read timeout. After `hello` it has none.
+One JSON frame per line: `{"v":1,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYTES`. A frame with another `v` is an error. Before `hello` a connection has a 30 s read timeout. After `hello` it has none. Every connection has a 2 s write timeout (`WRITE_TIMEOUT`): a client that stops reading gets an error on the write and is dropped, so a push cannot block the serve loop.
 
 | Client body | Reply |
 |---|---|
@@ -44,6 +44,7 @@ One JSON frame per line: `{"v":1,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYT
 | `{"type":"thread","op":"open","name":"n","model":null\|"m","auto":null\|"merge"\|"drop"}` | `done` |
 | `{"type":"thread","op":"switch","name":"n"}` and `{"type":"thread","op":"main"}` | `done` with `attached to <key>` |
 | `{"type":"cancel","thread":null\|"name"}` | `{"type":"done","message":"cancelled <key>"}` |
+| `{"type":"answer","thread":null\|"name","worker":"id","request":"per_1","option":"once"}` | `{"type":"done","message":"Answered the permission request of worker <id>."}` or `error` with the host refusal |
 | `{"type":"status","thread":null\|"name"}` | `{"type":"status","report":{"state":"Idle","msg":null},"unread":0,"blocked":["id"],"turns":0}` |
 | `{"type":"shutdown"}` after hello | none; `serve` stops |
 
@@ -56,15 +57,16 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 | Error | Connection |
 |---|---|
 | frame before `hello`, bad frame, wrong `v`, `hello` with another `proto` | closed |
-| session busy, session not open, session not running a turn (`cancel`), draining, invalid thread name, a failed thread op | stays open |
+| session busy, session not open, session not running a turn (`cancel`), draining, invalid thread name, a failed thread op, a refused answer | stays open |
 
 ## Turns
 
 - A session runs one turn at a time. A `send` to a busy session gets `error` `<key> is busy`. A `send` to a session that is not open gets `<key> is not open`.
 - `cancel` stops the turn of a session key. Send it on another connection: the sender is blocked while its own turn runs. A `cancel` to an idle session gets `<key> is not running a turn`.
 - Each turn gets a fresh cancel token. A `cancel` ends one turn only.
-- `status` is computed on request. Nothing is pushed. `report` is the prompt-phase program status. `blocked` is the sorted ids of workers waiting on a permission.
+- `status` is computed on request. `report` is the prompt-phase program status. `blocked` is the sorted ids of workers waiting on a permission.
 - A turn streams on the connection that sent it. Other connections do not see its events.
+- Each open session runs the headless worker hosts for its own store (main, and each open thread). About once per second `serve` reads the `blocked/` markers of the open stores and pushes a `blocked` frame to every client that sent `hello`, with envelope id `0`: `{thread, worker, content}`. `content` is the front permission request (`request_id`, `tool`, `summary`, `options`) when it is new or changed, and `null` when the request settled. Empty or unparsable markers are skipped. Replies, turn events and pushes share one write lock per connection, so lines never interleave. A client with no read loop sees pushes at its next request. `ralph chat --connect` prints each push as one line.
 - `SendIt` events are dropped. `/send-it` is not served.
 
 ## Threads
@@ -82,7 +84,7 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 
 ## Limits
 
-- Serve sessions have no nap or host loop, no keepalive, no headless watchers and no attachments dir.
+- Serve sessions have no nap or host loop, no keepalive and no attachments dir.
 - `NOTICE_SINK` and worker ownership (`own_instance`) are process-wide. All sessions share them. Per-session ownership is a follow-up ticket.
 - There is no live end-to-end test. Unit tests cover the supervisor, the frames and the routing.
 
@@ -91,6 +93,7 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 Served:
 
 - Plain text: a `send` to the attached session.
+- `/answer <worker> <request> <option>`: one `answer` frame for the attached key. All three words are required, else the usage line prints. The frame takes the same answer-file path as the `reply` tool, so a stale or unknown request is refused by the host. The connection thread waits up to the 30 s handoff timeout. An `error` leaves the chat open. The terminal chat prints `/answer is only served over --connect`.
 - `/thread switch|main|open [--model]|pull|park|revive|drop|merge [--view]`: one `thread` frame. The reply text is printed. The attached thread changes only after a `done` reply.
 - Ctrl-C: `cancel` for the attached key, sent on a second connection.
 - Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.

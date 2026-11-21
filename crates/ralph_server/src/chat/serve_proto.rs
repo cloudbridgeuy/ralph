@@ -5,9 +5,11 @@ use ralph_core::chat_thread::{AutoMode, ThreadName};
 use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
 use ralph_core::program_status::{report_for, Phase, Report};
 use ralph_core::turn_event::TurnEvent;
+use ralph_core::worker::BlockedContent;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub const VERSION: u32 = 1;
 
@@ -96,6 +98,12 @@ pub enum ClientMsg {
         thread: Option<String>,
     },
     Thread(ThreadCmd),
+    Answer {
+        thread: Option<String>,
+        worker: String,
+        request: String,
+        option: String,
+    },
     Shutdown,
 }
 
@@ -121,6 +129,32 @@ pub enum ServerMsg {
         blocked: Vec<String>,
         turns: u64,
     },
+    Blocked {
+        thread: Option<String>,
+        worker: String,
+        content: Option<BlockedContent>,
+    },
+}
+
+pub type BlockedKey = (Option<String>, String);
+pub type BlockedMap = BTreeMap<BlockedKey, BlockedContent>;
+
+pub fn blocked_pushes(prev: &BlockedMap, now: &BlockedMap) -> Vec<ServerMsg> {
+    let push =
+        |(thread, worker): &BlockedKey, content: Option<&BlockedContent>| ServerMsg::Blocked {
+            thread: thread.clone(),
+            worker: worker.clone(),
+            content: content.cloned(),
+        };
+    let raised = now
+        .iter()
+        .filter(|(key, content)| prev.get(*key) != Some(content))
+        .map(|(key, content)| push(key, Some(content)));
+    let settled = prev
+        .keys()
+        .filter(|key| !now.contains_key(*key))
+        .map(|key| push(key, None));
+    raised.chain(settled).collect()
 }
 
 pub fn status_frame(status: &Status, turns: u64) -> ServerMsg {
@@ -203,7 +237,70 @@ mod tests {
                 blocked: vec!["w1".into()],
                 turns: 4,
             },
+            ServerMsg::Blocked {
+                thread: Some("side".into()),
+                worker: "w1".into(),
+                content: Some(content("r1", "Bash")),
+            },
+            ServerMsg::Blocked {
+                thread: None,
+                worker: "w1".into(),
+                content: None,
+            },
         ]
+    }
+
+    fn content(request_id: &str, tool: &str) -> BlockedContent {
+        BlockedContent {
+            request_id: request_id.into(),
+            tool: tool.into(),
+            summary: "ls".into(),
+            options: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    fn key(thread: Option<&str>, worker: &str) -> BlockedKey {
+        (thread.map(str::to_string), worker.to_string())
+    }
+
+    fn pushes(prev: &BlockedMap, now: &BlockedMap) -> Vec<serde_json::Value> {
+        blocked_pushes(prev, now)
+            .iter()
+            .map(|msg| serde_json::to_value(msg).unwrap())
+            .collect()
+    }
+
+    fn blocked(thread: Option<&str>, worker: &str, content: Option<BlockedContent>) -> Value {
+        serde_json::to_value(ServerMsg::Blocked {
+            thread: thread.map(str::to_string),
+            worker: worker.into(),
+            content,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn blocked_pushes_report_new_changed_and_settled_requests() {
+        let first = content("r1", "Bash");
+        let second = content("r2", "Bash");
+        let none = BlockedMap::new();
+        let one = BlockedMap::from([(key(None, "w1"), first.clone())]);
+        assert_eq!(
+            pushes(&none, &one),
+            vec![blocked(None, "w1", Some(first.clone()))]
+        );
+        assert!(pushes(&one, &one).is_empty());
+        let changed = BlockedMap::from([(key(None, "w1"), second.clone())]);
+        assert_eq!(
+            pushes(&one, &changed),
+            vec![blocked(None, "w1", Some(second))]
+        );
+        let side = BlockedMap::from([(key(Some("side"), "w1"), first)]);
+        assert_eq!(
+            pushes(&side, &none),
+            vec![blocked(Some("side"), "w1", None)]
+        );
     }
 
     fn client_messages() -> Vec<ClientMsg> {
