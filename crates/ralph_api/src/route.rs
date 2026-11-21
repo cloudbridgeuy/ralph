@@ -44,6 +44,10 @@ pub fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResp
     }
 }
 
+pub fn overloaded() -> ApiResponse {
+    error(503, "busy")
+}
+
 fn host_allowed(host: Option<&str>, allowed: &[String]) -> bool {
     host.is_some_and(|host| allowed.iter().any(|name| name.eq_ignore_ascii_case(host)))
 }
@@ -189,6 +193,14 @@ mod tests {
             route(&authed("GET", "/api/health"), &empty, &token()).status,
             403
         );
+    }
+
+    #[test]
+    fn overloaded_is_503_json_no_store() {
+        let response = overloaded();
+        assert_eq!(response.status, 503);
+        assert_eq!(body(&response), json!({"error": "busy"}));
+        assert!(response.headers.contains(&("Cache-Control", "no-store")));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const VERSION: &str = "0.0.0-test";
 const STABLE_HEADERS: [&str; 3] = ["Content-Type", "Cache-Control", "Allow"];
@@ -57,6 +57,15 @@ impl TestServer {
             thread: Some(thread),
             _store: store,
         }
+    }
+
+    pub fn stop_and_time(mut self) -> Duration {
+        let started = Instant::now();
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            thread.join().ok();
+        }
+        started.elapsed()
     }
 
     pub fn token(&self) -> &str {

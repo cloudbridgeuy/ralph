@@ -1,8 +1,12 @@
 use crate::addr::{check_bind, BindError, BindPolicy};
-use crate::route::{route, ApiConfig, ApiRequest, ApiResponse};
+use crate::admit::{admit, Admission, MAX_HANDLERS};
+use crate::route::{overloaded, route, ApiConfig, ApiRequest, ApiResponse};
 use crate::token::Token;
+use ralph_server::warn::{warn, warn_if_err};
 use std::io::Cursor;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tiny_http::{Header, Request, Response, Server};
 
@@ -37,19 +41,48 @@ pub fn serve(
     token: &Token,
     stop: &dyn Fn() -> bool,
 ) -> Result<(), ApiError> {
+    let shared = Arc::new((config.clone(), token.clone()));
+    let active = Arc::new(AtomicUsize::new(0));
     while !stop() {
         let received = server
             .recv_timeout(POLL)
             .map_err(|error| ApiError::Recv(error.to_string()))?;
-        if let Some(request) = received {
-            let response = route(&to_api_request(&request), config, token);
-            ralph_server::warn::warn_if_err(
-                request.respond(to_http_response(response)),
-                "ralph web: could not write a response",
-            );
+        let Some(request) = received else { continue };
+        match admit(active.load(Ordering::SeqCst), MAX_HANDLERS) {
+            Admission::Accept => spawn_handler(request, &shared, &active),
+            Admission::Reject => respond(request, overloaded()),
         }
     }
     Ok(())
+}
+
+fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Arc<AtomicUsize>) {
+    active.fetch_add(1, Ordering::SeqCst);
+    let (shared, active) = (Arc::clone(shared), Arc::clone(active));
+    let spawned = std::thread::Builder::new().spawn(move || {
+        let _slot = Slot(active);
+        let (config, token) = &*shared;
+        let response = route(&to_api_request(&request), config, token);
+        respond(request, response);
+    });
+    if let Err(error) = spawned {
+        warn(format!("ralph web: could not start a handler: {error}"));
+    }
+}
+
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn respond(request: Request, response: ApiResponse) {
+    warn_if_err(
+        request.respond(to_http_response(response)),
+        "ralph web: could not write a response",
+    );
 }
 
 pub fn split_url(url: &str) -> (&str, &str) {
