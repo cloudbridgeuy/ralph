@@ -10,6 +10,7 @@ mod mermaid_style;
 mod theme_tests;
 mod view;
 pub use command::{run_check, run_show};
+pub(crate) use mermaid_style::terminal_rgb;
 pub use mermaid_style::MermaidStyleExt;
 pub use view::{
     config_view, effective_now, env_settings, load_for_chat, ChatLoad, ConfigSnapshot, FileState,

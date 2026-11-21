@@ -159,7 +159,7 @@ fn theme_colors(theme: &Theme) -> PictureColors {
     }
 }
 
-fn terminal_rgb(color: TermColor) -> Rgba {
+pub(crate) fn terminal_rgb(color: TermColor) -> Rgba {
     let index = match color {
         TermColor::Rgb { r, g, b } => return [r, g, b, 255],
         TermColor::AnsiValue(n @ 16..=231) => {

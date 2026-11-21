@@ -1,0 +1,8 @@
+status: 200
+Content-Type: text/css; charset=utf-8
+Cache-Control: no-store
+
+:root {
+  --r-font: x;
+}
+

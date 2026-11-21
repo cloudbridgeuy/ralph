@@ -2,7 +2,9 @@ use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
 const HEALTH_PATH: &str = "/api/health";
+const TOKENS_PATH: &str = "/tokens.css";
 const JSON: &str = "application/json";
+const CSS: &str = "text/css; charset=utf-8";
 const NO_STORE: (&str, &str) = ("Cache-Control", "no-store");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +30,7 @@ pub struct ApiConfig {
     pub store: PathBuf,
     pub allowed_hosts: Vec<String>,
     pub version: String,
+    pub tokens_css: String,
 }
 
 pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResponse {
@@ -40,6 +43,8 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
     match (request.path.as_str(), request.method.as_str()) {
         (HEALTH_PATH, "GET") => health(&config.version),
         (HEALTH_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
+        (TOKENS_PATH, "GET") => css_response(&config.tokens_css),
+        (TOKENS_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         _ => error(404, "not found"),
     }
 }
@@ -61,6 +66,15 @@ fn authorized(request: &ApiRequest, token: &Token) -> bool {
 
 fn health(version: &str) -> ApiResponse {
     json_response(200, serde_json::json!({"status": "ok", "version": version}))
+}
+
+fn css_response(body: &str) -> ApiResponse {
+    ApiResponse {
+        status: 200,
+        content_type: CSS,
+        headers: vec![NO_STORE],
+        body: body.to_string(),
+    }
 }
 
 fn error(status: u16, message: &str) -> ApiResponse {
@@ -97,6 +111,7 @@ mod tests {
             store: PathBuf::from("/secret/store"),
             allowed_hosts: vec!["h.test:1".to_string(), "alias.test:1".to_string()],
             version: "9.9.9".to_string(),
+            tokens_css: ":root {\n  --r-font: x;\n}\n".to_string(),
         }
     }
 
@@ -191,6 +206,42 @@ mod tests {
             route(&authed("GET", "/api/health"), &empty, &token()).status,
             403
         );
+    }
+
+    #[test]
+    fn tokens_with_token_is_200_css_no_store() {
+        let response = route(&authed("GET", "/tokens.css"), &config(), &token());
+        assert_eq!(response.status, 200);
+        assert_eq!(response.content_type, "text/css; charset=utf-8");
+        assert!(response.headers.contains(&("Cache-Control", "no-store")));
+    }
+
+    #[test]
+    fn tokens_body_is_the_configured_css() {
+        let response = route(&authed("GET", "/tokens.css"), &config(), &token());
+        assert_eq!(response.body, config().tokens_css);
+    }
+
+    #[test]
+    fn tokens_without_token_is_401() {
+        let response = route(&request("GET", "/tokens.css", ""), &config(), &token());
+        assert_eq!(response.status, 401);
+        assert_eq!(body(&response), json!({"error": "unauthorized"}));
+    }
+
+    #[test]
+    fn tokens_bad_host_is_403() {
+        let mut bad = authed("GET", "/tokens.css");
+        bad.host = Some("evil.example".to_string());
+        assert_eq!(route(&bad, &config(), &token()).status, 403);
+    }
+
+    #[test]
+    fn post_tokens_is_405_and_allow_get() {
+        let response = route(&authed("POST", "/tokens.css"), &config(), &token());
+        assert_eq!(response.status, 405);
+        assert!(response.headers.contains(&("Allow", "GET")));
+        assert_eq!(response.content_type, "application/json");
     }
 
     #[test]

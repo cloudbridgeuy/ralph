@@ -9,6 +9,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub const VERSION: &str = "0.0.0-test";
+pub const TOKENS_CSS: &str = ":root {\n  --r-font: x;\n}\n";
 const STABLE_HEADERS: [&str; 3] = ["Content-Type", "Cache-Control", "Allow"];
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -42,6 +43,7 @@ impl TestServer {
             store: PathBuf::from(store.path()),
             allowed_hosts: allowed_hosts(&["127.0.0.1", "localhost"], port),
             version: VERSION.to_string(),
+            tokens_css: TOKENS_CSS.to_string(),
         };
         let token = Token::generate().unwrap();
         let secret = token.as_str().to_string();
