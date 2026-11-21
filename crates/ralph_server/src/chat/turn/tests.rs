@@ -1,5 +1,6 @@
 use super::*;
 use crate::disk_files::DiskFiles;
+use ralph_core::chat_backend::CLAUDE;
 use ralph_core::chunk::{ChunkType, ParsedChunk};
 use ralph_core::stream::blocks::{StreamCollector, StreamProcessorResult};
 use std::os::unix::fs::PermissionsExt;
@@ -78,6 +79,7 @@ fn turn_row_names_the_model_from_the_claude_init_line() {
         "t".into(),
         costs,
         &identity,
+        &CLAUDE,
     )
     .unwrap();
     let row = serde_json::to_value(row).unwrap();

@@ -46,6 +46,7 @@ use cli::{
     VerifyAgent, WorkerArgs, WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
 use ralph_core::cancel::CancelToken;
+use ralph_core::chat_backend::CLAUDE;
 use ralph_core::worker::HarnessId;
 use ralph_server::backoff;
 use ralph_server::invoke;
@@ -250,6 +251,7 @@ fn record_ask(result: &subprocess::StreamingSubprocessResult) {
         at.clone(),
         costs,
         &result.stream_result.metadata,
+        &CLAUDE,
     ) {
         warn_if_err(
             ralph_server::ledger::record(
@@ -262,7 +264,12 @@ fn record_ask(result: &subprocess::StreamingSubprocessResult) {
     warn_if_err(
         ralph_server::ledger::record_all(
             &ralph_server::chat::memory::usage_path(),
-            ralph_core::chat_memory::subagent_records(&at, costs, &result.stream_result.metadata),
+            ralph_core::chat_memory::subagent_records(
+                &at,
+                costs,
+                &result.stream_result.metadata,
+                &CLAUDE,
+            ),
         ),
         "Failed to record ask subagent usage",
     );
@@ -503,16 +510,22 @@ fn curator_rows(
 ) -> Vec<ralph_core::chat_memory::LedgerRow> {
     let costs = &done.stream_result.costs;
     let metadata = &done.stream_result.metadata;
-    ralph_core::chat_memory::usage_record(rows.kind.clone(), rows.at.clone(), costs, metadata)
-        .into_iter()
-        .chain(ralph_core::chat_memory::subagent_records(
-            &rows.at, costs, metadata,
-        ))
-        .map(|row| {
-            row.with_run(rows.run.clone())
-                .with_store(Some(rows.store.clone()))
-        })
-        .collect()
+    ralph_core::chat_memory::usage_record(
+        rows.kind.clone(),
+        rows.at.clone(),
+        costs,
+        metadata,
+        &CLAUDE,
+    )
+    .into_iter()
+    .chain(ralph_core::chat_memory::subagent_records(
+        &rows.at, costs, metadata, &CLAUDE,
+    ))
+    .map(|row| {
+        row.with_run(rows.run.clone())
+            .with_store(Some(rows.store.clone()))
+    })
+    .collect()
 }
 
 pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {

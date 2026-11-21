@@ -380,12 +380,14 @@ impl Turn {
             );
         }
         let at = chrono::Utc::now().to_rfc3339();
+        let caps = self.backend.capabilities();
         if let Some((turn, mut record)) = recorded(&result).and_then(|turn| {
             usage_record(
                 CallSite::Turn { trigger },
                 at.clone(),
                 &turn.stream_result.costs,
                 &identity,
+                &caps,
             )
             .map(|record| (turn, record))
         }) {
@@ -411,7 +413,7 @@ impl Turn {
                 ledger::record(&usage_path(), &record),
                 "Failed to record chat usage",
             );
-            let subagents = subagent_records(&at, &turn.stream_result.costs, &identity)
+            let subagents = subagent_records(&at, &turn.stream_result.costs, &identity, &caps)
                 .into_iter()
                 .map(|row| {
                     row.with_run(Some(self.run.to_string()))

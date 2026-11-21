@@ -104,7 +104,7 @@ impl KeepaliveWatch {
     fn record(&self, result: &StreamingSubprocessResult) {
         let identity = locked(&self.identity).clone();
         let at = Utc::now().to_rfc3339();
-        let Some(record) = ping_row(at.clone(), result, &identity) else {
+        let Some(record) = ping_row(at.clone(), result, &identity, &self.caps) else {
             return;
         };
         let record = record
@@ -114,7 +114,7 @@ impl KeepaliveWatch {
             ledger::record(&usage_path(), &record),
             "Failed to record keepalive ping usage",
         );
-        let subagents = subagent_records(&at, &result.stream_result.costs, &identity)
+        let subagents = subagent_records(&at, &result.stream_result.costs, &identity, &self.caps)
             .into_iter()
             .map(|row| {
                 row.with_run(Some(self.run.clone()))
@@ -131,8 +131,16 @@ fn ping_row(
     at: String,
     result: &StreamingSubprocessResult,
     identity: &IterationMetadata,
+    caps: &Caps,
 ) -> Option<LedgerRow> {
-    usage_record(CallSite::Ping, at, &result.stream_result.costs, identity).map(|record| {
+    usage_record(
+        CallSite::Ping,
+        at,
+        &result.stream_result.costs,
+        identity,
+        caps,
+    )
+    .map(|record| {
         record
             .with_turn_cost(result.logged_before)
             .with_request_at(result.request_at.map(|at| at.to_rfc3339()))
