@@ -81,7 +81,7 @@ fn run_off_loop(request: Request, job: impl FnOnce(Request) + Send + 'static) {
         if let Some(request) = cell.lock().ok().and_then(|mut guard| guard.take()) {
             #[allow(
                 clippy::mem_forget,
-                reason = "dropping a request drains its body and would block the loop"
+                reason = "dropping a request drains its body and would block the loop; forgetting it also leaves this connection's tiny_http thread and socket stuck until the process exits, which is acceptable only when the OS cannot start a thread"
             )]
             std::mem::forget(request);
         }
