@@ -407,6 +407,21 @@ fn find_web_violations(path: &str, text: &str) -> Vec<WebViolation> {
         .collect()
 }
 
+const BINARY_EXTENSIONS: &[&str] = &["woff", "woff2", "png", "jpg", "jpeg", "gif", "ico", "webp"];
+
+fn is_binary(path: &str) -> bool {
+    path.rsplit_once('.')
+        .is_some_and(|(_, ext)| BINARY_EXTENSIONS.contains(&ext))
+}
+
+fn scan_bytes(path: &str, bytes: &[u8]) -> Result<Vec<WebViolation>, String> {
+    if is_binary(path) {
+        return Ok(Vec::new());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|err| format!("not valid UTF-8: {err}"))?;
+    Ok(find_web_violations(path, text))
+}
+
 pub async fn run_web_colour_check(global: &crate::Global) -> super::error::Result<bool> {
     if !global.is_silent() {
         aprintln!(
@@ -429,10 +444,17 @@ pub async fn run_web_colour_check(global: &crate::Global) -> super::error::Resul
     let files = String::from_utf8_lossy(&output.stdout);
     let mut total = 0;
     for path in files.lines().filter(|l| !l.is_empty()) {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        for violation in find_web_violations(path, &text) {
+        let scanned = std::fs::read(path)
+            .map_err(|err| format!("cannot read: {err}"))
+            .and_then(|bytes| scan_bytes(path, &bytes));
+        let violations = scanned.unwrap_or_else(|reason| {
+            vec![WebViolation {
+                line: 0,
+                snippet: String::new(),
+                reason,
+            }]
+        });
+        for violation in violations {
             if total == 0 {
                 aprintln!("{} Web asset violations found:", p_r("❌"));
             }
@@ -501,6 +523,32 @@ mod tests {
             let path = format!("crates/ralph_api/assets/x.{ext}");
             assert_eq!(lines(&path, "a { color: #fff; }\n"), vec![1], "{ext}");
         }
+    }
+
+    #[test]
+    fn a_known_binary_asset_is_skipped() {
+        let font = [0x77, 0x4f, 0x46, 0x32, 0xff, 0xfe];
+        assert!(scan_bytes("crates/ralph_api/assets/fonts/x.woff2", &font)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_non_utf8_file_is_an_error_not_a_skip() {
+        let bytes = [0xff, 0xfe, 0x00];
+        for path in [
+            "crates/ralph_api/assets/a.css",
+            "crates/ralph_api/assets/a.bin",
+        ] {
+            let err = scan_bytes(path, &bytes).unwrap_err();
+            assert!(err.contains("UTF-8"), "{err}");
+        }
+    }
+
+    #[test]
+    fn text_bytes_are_scanned() {
+        let found = scan_bytes(CSS, b"a { color: #fff; }\n").unwrap();
+        assert_eq!(found.len(), 1);
     }
 
     #[test]
