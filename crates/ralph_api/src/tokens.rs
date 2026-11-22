@@ -82,9 +82,10 @@ fn ansi_lines(table: &[Rgb; 16], indent: &str) -> String {
         .collect()
 }
 
-fn theme_block(theme: &str, table: &[Rgb; 16]) -> String {
+fn theme_block(theme: &str, table: &[Rgb; 16], slots: &[Slot]) -> String {
+    let slot_lines: String = slots.iter().filter_map(slot_line).collect();
     format!(
-        "[data-theme=\"{theme}\"] {{\n{}}}\n",
+        "[data-theme=\"{theme}\"] {{\n{}{slot_lines}}}\n",
         ansi_lines(table, "  ")
     )
 }
@@ -97,8 +98,8 @@ pub fn tokens_css(input: &TokensInput) -> String {
     css.push_str("}\n@media (prefers-color-scheme: light) {\n  :root {\n");
     css.push_str(&ansi_lines(input.ansi_light, "    "));
     css.push_str("  }\n}\n");
-    css.push_str(&theme_block("dark", input.ansi_dark));
-    css.push_str(&theme_block("light", input.ansi_light));
+    css.push_str(&theme_block("dark", input.ansi_dark, input.slots));
+    css.push_str(&theme_block("light", input.ansi_light, input.slots));
     css
 }
 
@@ -172,14 +173,16 @@ mod tests {
         for i in 0..16 {
             expected.push_str(&format!("  --r-ansi-{i}: #010203;\n"));
         }
+        expected.push_str("  --r-bg: #000000;\n  --r-accent: var(--r-ansi-3);\n");
         expected.push_str("}\n[data-theme=\"light\"] {\n");
         for i in 0..16 {
             expected.push_str(&format!("  --r-ansi-{i}: #fffefd;\n"));
         }
+        expected.push_str("  --r-bg: #000000;\n  --r-accent: var(--r-ansi-3);\n");
         expected.push_str("}\n");
         assert_eq!(css, expected);
         assert!(css.starts_with(":root {\n  --r-font: monospace;\n  --r-ansi-0: #010203;\n"));
-        assert!(css.ends_with("  --r-ansi-15: #fffefd;\n}\n"));
+        assert!(css.ends_with("  --r-bg: #000000;\n  --r-accent: var(--r-ansi-3);\n}\n"));
     }
 
     #[test]
@@ -303,18 +306,19 @@ mod tests {
     }
 
     #[test]
-    fn theme_blocks_hold_only_their_ansi_table() {
+    fn theme_blocks_hold_their_ansi_table_and_every_slot() {
         let css = render("x", &[slot("fg", ColorSpec::Ansi(3))]);
         let dark = theme_block(&css, "dark");
         let light = theme_block(&css, "light");
-        assert_eq!(dark.matches("--r-").count(), 16);
-        assert_eq!(light.matches("--r-").count(), 16);
+        assert_eq!(dark.matches("--r-").count(), 18);
+        assert_eq!(light.matches("--r-").count(), 18);
+        assert!(dark.contains("  --r-fg: var(--r-ansi-3);\n"));
+        assert!(light.contains("  --r-fg: var(--r-ansi-3);\n"));
         assert!(dark.contains("--r-ansi-0: #000000;"));
         assert!(dark.contains("--r-ansi-15: #0f0f0f;"));
         assert!(light.contains("--r-ansi-0: #646464;"));
         assert!(light.contains("--r-ansi-15: #737373;"));
         assert!(!dark.contains("--r-font") && !light.contains("--r-font"));
-        assert!(!dark.contains("--r-fg") && !light.contains("--r-fg"));
     }
 
     #[test]
@@ -325,5 +329,24 @@ mod tests {
             css.find("[data-theme=\"dark\"]").unwrap()
                 < css.find("[data-theme=\"light\"]").unwrap()
         );
+    }
+
+    #[test]
+    fn a_derived_slot_resolves_against_each_themes_own_table() {
+        let css = render(
+            "x",
+            &[
+                slot("border", ColorSpec::Ansi(4)),
+                slot("code-bg", ColorSpec::Rgb(Rgb { r: 9, g: 8, b: 7 })),
+            ],
+        );
+        let dark = theme_block(&css, "dark");
+        let light = theme_block(&css, "light");
+        for (block, ansi_4) in [(dark, "#040404"), (light, "#686868")] {
+            let table = block.find(&format!("--r-ansi-4: {ansi_4};")).unwrap();
+            let border = block.find("--r-border: var(--r-ansi-4);").unwrap();
+            assert!(table < border);
+            assert!(block.contains("--r-code-bg: #090807;"));
+        }
     }
 }
