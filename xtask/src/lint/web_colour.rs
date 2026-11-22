@@ -365,7 +365,17 @@ fn line_reasons(path: &str, line: &str) -> Vec<String> {
     reasons
 }
 
+fn is_checked(path: &str) -> bool {
+    ["css", "html", "svg", "js"].iter().any(|ext| {
+        path.rsplit_once('.')
+            .is_some_and(|(_, found)| found == *ext)
+    })
+}
+
 fn find_web_violations(path: &str, text: &str) -> Vec<WebViolation> {
+    if !is_checked(path) {
+        return Vec::new();
+    }
     let mut in_comment = false;
     text.lines()
         .enumerate()
@@ -573,5 +583,20 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].snippet, "a { color: #fff; }");
         assert!(found[0].reason.contains("hex"), "{}", found[0].reason);
+    }
+
+    #[test]
+    fn notices_and_binary_assets_are_not_scanned() {
+        let text = "Copyright (c) <the-holder> color: #fff red\n";
+        assert!(reasons("crates/ralph_api/assets/fonts/OFL.txt", text).is_empty());
+        assert!(reasons("crates/ralph_api/assets/fonts/NOTICE", text).is_empty());
+    }
+
+    #[test]
+    fn the_bundled_shell_and_stylesheet_pass() {
+        let html = include_str!("../../../crates/ralph_api/assets/index.html");
+        let css = include_str!("../../../crates/ralph_api/assets/app.css");
+        assert!(reasons(HTML, html).is_empty(), "{:?}", reasons(HTML, html));
+        assert!(reasons(CSS, css).is_empty(), "{:?}", reasons(CSS, css));
     }
 }

@@ -4,10 +4,10 @@ use std::io::Read;
 const TOKEN_BYTES: usize = 16;
 const BEARER_SCHEME: &str = "Bearer";
 const QUERY_KEY: &str = "token";
-const COOKIE_NAME: &str = "ralph_token";
+const COOKIE_PREFIX: &str = "ralph_token_";
 
 pub fn cookie_name(port: u16) -> String {
-    format!("{COOKIE_NAME}_{port}")
+    format!("{COOKIE_PREFIX}{port}")
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -49,12 +49,12 @@ pub(crate) fn extract_tokens(
     authorization: Option<&str>,
     query: &str,
     cookies: &[&str],
-    _cookie_name: &str,
+    cookie_name: &str,
 ) -> Vec<String> {
     from_bearer(authorization)
         .or_else(|| from_query(query))
         .map(|value| vec![value.to_string()])
-        .unwrap_or_else(|| from_cookies(cookies))
+        .unwrap_or_else(|| from_cookies(cookies, cookie_name))
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -77,12 +77,12 @@ fn from_query(query: &str) -> Option<&str> {
         .and_then(|(_, value)| non_empty(value))
 }
 
-fn from_cookies(cookies: &[&str]) -> Vec<String> {
+fn from_cookies(cookies: &[&str], cookie_name: &str) -> Vec<String> {
     cookies
         .iter()
         .flat_map(|header| header.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .filter(|(name, _)| *name == COOKIE_NAME)
+        .filter(|(name, _)| *name == cookie_name)
         .map(|(_, value)| unquote(value.trim()))
         .filter(|value| !value.is_empty())
         .map(str::to_string)
@@ -294,7 +294,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the cookie name is read from the config"]
     fn extract_tokens_reads_only_the_named_cookie() {
         assert_eq!(
             extract_tokens(None, "", &["ralph_token_8080=t0k"], "ralph_token_8080"),

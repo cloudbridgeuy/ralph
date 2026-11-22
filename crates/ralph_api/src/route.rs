@@ -1,3 +1,4 @@
+use crate::assets::{self, Asset, SHELL_PATH};
 use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
@@ -5,7 +6,14 @@ const HEALTH_PATH: &str = "/api/health";
 const TOKENS_PATH: &str = "/tokens.css";
 const JSON: &str = "application/json";
 const CSS: &str = "text/css; charset=utf-8";
+const PLAIN: &str = "text/plain; charset=utf-8";
 const NO_STORE: (&str, &str) = ("Cache-Control", "no-store");
+const NO_REFERRER: (&str, &str) = ("Referrer-Policy", "no-referrer");
+const NO_SNIFF: (&str, &str) = ("X-Content-Type-Options", "nosniff");
+const SHELL_POLICY: (&str, &str) = (
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApiRequest {
@@ -47,8 +55,55 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (HEALTH_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (TOKENS_PATH, "GET") => css_response(&config.tokens_css),
         (TOKENS_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
-        _ => error(404, "not found"),
+        _ => match assets::find(&request.path) {
+            Some(asset) => asset_response(asset, request, config, token),
+            None => error(404, "not found"),
+        },
     }
+}
+
+fn asset_response(
+    asset: &Asset,
+    request: &ApiRequest,
+    config: &ApiConfig,
+    token: &Token,
+) -> ApiResponse {
+    if request.method != "GET" {
+        return with_header(error(405, "method not allowed"), ("Allow", "GET"));
+    }
+    if asset.path == SHELL_PATH && query_authorized(request, token, &config.cookie_name) {
+        return hand_off(token, &config.cookie_name);
+    }
+    let mut headers = vec![NO_STORE, NO_REFERRER, NO_SNIFF];
+    if asset.path == SHELL_PATH {
+        headers.push(SHELL_POLICY);
+    }
+    ApiResponse {
+        status: 200,
+        content_type: asset.content_type,
+        headers,
+        body: asset.bytes.to_vec(),
+        set_cookie: None,
+    }
+}
+
+fn hand_off(token: &Token, cookie_name: &str) -> ApiResponse {
+    ApiResponse {
+        status: 302,
+        content_type: PLAIN,
+        headers: vec![NO_STORE, NO_REFERRER, ("Location", SHELL_PATH)],
+        body: Vec::new(),
+        set_cookie: Some(format!(
+            "{cookie_name}={}; Path=/; HttpOnly; SameSite=Strict",
+            token.as_str()
+        )),
+    }
+}
+
+fn query_authorized(request: &ApiRequest, token: &Token, cookie_name: &str) -> bool {
+    extract_tokens(None, &request.query, &[], cookie_name)
+        .iter()
+        .any(|candidate| token.matches(candidate))
 }
 
 pub(crate) fn overloaded() -> ApiResponse {
@@ -281,7 +336,6 @@ mod tests {
 
     const CSP: &str = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'";
     const COOKIE: &str = "ralph_token_1=t0k3n; Path=/; HttpOnly; SameSite=Strict";
-    const RED: &str = "red until the shell routes land";
 
     fn with_cookie(path: &str, cookie: &str) -> ApiRequest {
         let mut req = request("GET", path, "");
@@ -300,10 +354,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the shell routes land"]
     fn shell_with_query_token_redirects_and_sets_the_cookie() {
         let response = route(&authed("GET", "/"), &config(), &token());
-        assert_eq!(response.status, 302, "{RED}");
+        assert_eq!(response.status, 302);
         assert!(response.headers.contains(&("Location", "/")));
         assert!(response.headers.contains(&("Cache-Control", "no-store")));
         assert_eq!(response.set_cookie.as_deref(), Some(COOKIE));
@@ -311,14 +364,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the shell routes land"]
     fn shell_with_the_cookie_is_html_with_a_policy() {
         let response = route(
             &with_cookie("/", "ralph_token_1=t0k3n"),
             &config(),
             &token(),
         );
-        assert_eq!(response.status, 200, "{RED}");
+        assert_eq!(response.status, 200);
         assert_eq!(response.content_type, "text/html; charset=utf-8");
         for header in [
             ("Cache-Control", "no-store"),
@@ -333,14 +385,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the shell routes land"]
     fn a_cookie_for_another_port_is_not_accepted() {
         let own = route(
             &with_cookie("/", "ralph_token_1=t0k3n"),
             &config(),
             &token(),
         );
-        assert_eq!(own.status, 200, "{RED}");
+        assert_eq!(own.status, 200);
         for name in ["ralph_token_2", "ralph_token", "ralph_token_11"] {
             let other = route(
                 &with_cookie("/", &format!("{name}=t0k3n")),
@@ -352,7 +403,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the shell routes land"]
     fn assets_are_served_with_their_types() {
         for (path, kind) in [
             ("/assets/app.css", "text/css; charset=utf-8"),
@@ -363,7 +413,7 @@ mod tests {
                 &config(),
                 &token(),
             );
-            assert_eq!(response.status, 200, "{path}: {RED}");
+            assert_eq!(response.status, 200, "{path}");
             assert_eq!(response.content_type, kind);
             assert!(response.headers.contains(&("Cache-Control", "no-store")));
             assert!(response
@@ -380,11 +430,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the shell routes land"]
     fn post_to_the_shell_or_an_asset_is_405_and_allow_get() {
         for path in ["/", "/assets/app.css", "/assets/geist-mono.woff2"] {
             let response = route(&authed("POST", path), &config(), &token());
-            assert_eq!(response.status, 405, "{path}: {RED}");
+            assert_eq!(response.status, 405, "{path}");
             assert!(response.headers.contains(&("Allow", "GET")));
         }
     }

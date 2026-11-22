@@ -1,0 +1,18 @@
+Geist Mono, variable font, full character set (not subset).
+
+Repo file:     geist-mono.woff2
+Upstream file: geist-font/GeistMono/webfonts/GeistMono[wght].woff2 (copied unchanged)
+Source:        https://github.com/vercel/geist-font
+Release tag:   v1.9.2
+Release asset: geist-font-v1.9.2.zip
+Size:          71212 bytes
+
+SHA-256 of geist-font-v1.9.2.zip:
+  15f066d58dcb99fb10014a49913009fdaf41e464cfb8851a44b44e593c95d3d8
+SHA-256 of geist-mono.woff2:
+  5d93ee62680bbec1abc5405c2658311f9396f6f9a821ef8551ec463887e600d4
+SHA-256 of OFL.txt (geist-font/OFL.txt from the same zip, unchanged):
+  021caa749f89fecd7c2e40a50499de29e84d2bc19251659b47d499c2fbfffc17
+
+Licence: SIL Open Font License, Version 1.1. The full text and the copyright
+line are in OFL.txt next to this file.

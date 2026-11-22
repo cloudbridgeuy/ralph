@@ -1,0 +1,5 @@
+status: 401
+Content-Type: application/json
+Cache-Control: no-store
+
+{"error":"unauthorized"}

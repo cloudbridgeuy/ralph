@@ -154,17 +154,24 @@ pub fn read_reply(stream: &mut TcpStream) -> Reply {
 fn parse_reply(raw: &[u8]) -> Reply {
     let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
     let head = String::from_utf8(raw[..split].to_vec()).unwrap();
-    let body_bytes = raw[split + 4..].to_vec();
     let mut lines = head.lines();
     let status = lines
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse().ok())
         .unwrap();
-    let headers = lines
+    let headers: Vec<(String, String)> = lines
         .filter_map(|line| line.split_once(": "))
         .map(|(name, value)| (name.to_string(), value.to_string()))
         .collect();
+    let chunked = headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("Transfer-Encoding") && value.eq_ignore_ascii_case("chunked")
+    });
+    let body_bytes = if chunked {
+        dechunk(&raw[split + 4..])
+    } else {
+        raw[split + 4..].to_vec()
+    };
     Reply {
         status,
         headers,
@@ -173,12 +180,30 @@ fn parse_reply(raw: &[u8]) -> Reply {
     }
 }
 
-impl Reply {
-    pub fn redacting(mut self, secret: &str) -> Reply {
-        for (_, value) in &mut self.headers {
-            *value = value.replace(secret, "<token>");
+fn dechunk(mut rest: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let line_end = rest.windows(2).position(|w| w == b"\r\n").unwrap();
+        let size =
+            usize::from_str_radix(std::str::from_utf8(&rest[..line_end]).unwrap().trim(), 16)
+                .unwrap();
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            return out;
         }
-        self.body = self.body.replace(secret, "<token>");
+        out.extend_from_slice(&rest[..size]);
+        rest = &rest[size + 2..];
+    }
+}
+
+impl Reply {
+    pub fn redacting(mut self, swaps: &[(&str, &str)]) -> Reply {
+        for (from, to) in swaps {
+            for (_, value) in &mut self.headers {
+                *value = value.replace(from, to);
+            }
+            self.body = self.body.replace(from, to);
+        }
         self
     }
 
