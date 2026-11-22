@@ -16,7 +16,6 @@ pub(super) fn write_frame(writer: &Writer, id: u64, msg: &ServerMsg) -> std::io:
 struct Client {
     id: u64,
     writer: Writer,
-    inbox_push: bool,
 }
 
 #[derive(Default)]
@@ -37,7 +36,6 @@ impl Clients {
         writer: &Writer,
         id: u64,
         hello: &ServerMsg,
-        inbox_push: bool,
     ) -> std::io::Result<u64> {
         let mut stream = writer
             .lock()
@@ -46,7 +44,6 @@ impl Clients {
         self.attached().push(Client {
             id: client,
             writer: Arc::clone(writer),
-            inbox_push,
         });
         if let Err(error) = stream.write_all(encode_frame(id, hello).as_bytes()) {
             self.detach(client);
@@ -60,13 +57,7 @@ impl Clients {
     }
 
     pub(super) fn push(&self, msg: &ServerMsg) {
-        let inbox = matches!(msg, ServerMsg::Inbox { .. });
-        let recipients: Vec<_> = self
-            .attached()
-            .iter()
-            .filter(|peer| !inbox || peer.inbox_push)
-            .cloned()
-            .collect();
+        let recipients = self.attached().clone();
         let frame = encode_frame(0, msg);
         for peer in recipients {
             let mut stream = peer
@@ -88,14 +79,12 @@ mod tests {
     use ralph_server::chat::serve_proto::{decode_frame, hello_reply, inbox_frame, VERSION};
 
     #[test]
-    fn inbox_push_goes_to_every_opted_in_client_after_hello() {
+    fn every_greeted_client_receives_inbox_reports() {
         let clients = Clients::default();
-        let buffers = [false, true, true].map(|opted_in| {
+        let buffers = [(); 2].map(|()| {
             let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
             let writer: Writer = buffer.clone();
-            clients
-                .greet(&writer, 1, &hello_reply(VERSION), opted_in)
-                .unwrap();
+            clients.greet(&writer, 1, &hello_reply(VERSION)).unwrap();
             buffer
         });
         let report = Report {
@@ -105,27 +94,25 @@ mod tests {
             at: "now".into(),
         };
         clients.push(&inbox_frame(&SessionKey::Main, report, 1));
-        for (buffer, expected) in buffers.iter().zip([1, 2, 2]) {
+        for buffer in buffers {
             let bytes = buffer.lock().unwrap();
             let frames: Vec<_> = std::str::from_utf8(&bytes)
                 .unwrap()
                 .lines()
                 .map(|line| decode_frame::<ServerMsg>(line).unwrap())
                 .collect();
-            assert_eq!(frames.len(), expected);
+            assert_eq!(frames.len(), 2);
             assert_eq!(frames[0].id, 1);
             assert!(matches!(frames[0].body, ServerMsg::Hello { .. }));
-            if expected == 2 {
-                assert_eq!(frames[1].id, 0);
-                assert!(matches!(
-                    frames[1].body,
-                    ServerMsg::Inbox {
-                        thread: None,
-                        unread: 1,
-                        ..
-                    }
-                ));
-            }
+            assert_eq!(frames[1].id, 0);
+            assert!(matches!(
+                frames[1].body,
+                ServerMsg::Inbox {
+                    thread: None,
+                    unread: 1,
+                    ..
+                }
+            ));
         }
     }
 }

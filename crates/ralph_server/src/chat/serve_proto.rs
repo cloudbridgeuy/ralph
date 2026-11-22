@@ -86,8 +86,6 @@ impl ThreadCmd {
 pub enum ClientMsg {
     Hello {
         proto: u32,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        inbox_push: bool,
     },
     Send {
         thread: Option<String>,
@@ -345,10 +343,7 @@ mod tests {
 
     fn client_messages() -> Vec<ClientMsg> {
         vec![
-            ClientMsg::Hello {
-                proto: VERSION,
-                inbox_push: true,
-            },
+            ClientMsg::Hello { proto: VERSION },
             ClientMsg::Send {
                 thread: None,
                 text: "hi".into(),

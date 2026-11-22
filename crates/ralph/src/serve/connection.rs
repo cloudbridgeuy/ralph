@@ -35,7 +35,7 @@ struct Answer {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
-    Hello { proto: u32, inbox_push: bool },
+    Hello(u32),
     Send { key: SessionKey, text: String },
     Cancel(SessionKey),
     Status(SessionKey),
@@ -72,13 +72,6 @@ fn converse(
         let id = frame.as_ref().map_or(0, |envelope| envelope.id);
         let action = classify(greeted, &attached, frame.map(|envelope| envelope.body));
         let closes = closes_on_error(&action);
-        let inbox_push = matches!(
-            action,
-            Action::Hello {
-                inbox_push: true,
-                ..
-            }
-        );
         let mut after = Vec::new();
         let reply = match action {
             Action::Shutdown => {
@@ -86,7 +79,7 @@ fn converse(
                 return Ok(());
             }
             Action::Refuse(message) => ServerMsg::Error { message },
-            Action::Hello { proto, .. } => match step(&host.supervisor, Input::Hello { proto }) {
+            Action::Hello(proto) => match step(&host.supervisor, Input::Hello { proto }) {
                 Ok(effects) => answer(&effects),
                 Err(message) => ServerMsg::Error { message },
             },
@@ -107,7 +100,7 @@ fn converse(
             }
         };
         if matches!(reply, ServerMsg::Hello { .. }) && client.is_none() {
-            *client = Some(host.clients.greet(writer, id, &reply, inbox_push)?);
+            *client = Some(host.clients.greet(writer, id, &reply)?);
         } else {
             write_frame(writer, id, &reply)?;
         }
@@ -296,7 +289,7 @@ fn session_key(thread: Option<&str>, attached: &SessionKey) -> Result<SessionKey
 fn classify(greeted: bool, attached: &SessionKey, frame: Result<ClientMsg, String>) -> Action {
     match frame {
         Err(message) => Action::Refuse(message),
-        Ok(ClientMsg::Hello { proto, inbox_push }) => Action::Hello { proto, inbox_push },
+        Ok(ClientMsg::Hello { proto }) => Action::Hello(proto),
         Ok(_) if !greeted => Action::Refuse("unexpected message before hello".to_string()),
         Ok(ClientMsg::Send { thread, text }) => match session_key(thread.as_deref(), attached) {
             Ok(key) => Action::Send { key, text },
@@ -384,20 +377,6 @@ fn answer(effects: &[Effect]) -> ServerMsg {
 mod tests {
     use super::*;
     use ralph_server::chat::serve_proto::ThreadCmd;
-
-    #[test]
-    fn inbox_push_opt_in_survives_hello_classification() {
-        let hello = |extra: &str| {
-            let frame = format!(r#"{{"v":1,"id":1,"body":{{"type":"hello","proto":1{extra}}}}}"#);
-            classify(
-                false,
-                &SessionKey::Main,
-                decode_frame::<ClientMsg>(&frame).map(|frame| frame.body),
-            )
-        };
-        assert_eq!(hello(""), hello(r#","inbox_push":false"#));
-        assert_ne!(hello(""), hello(r#","inbox_push":true"#));
-    }
 
     #[test]
     fn answer_maps_hello_and_refusals() {
@@ -555,10 +534,7 @@ mod tests {
         };
         assert!(!closes_on_error(&send));
         assert!(!closes_on_error(&Action::Thread(ThreadOp::Ls)));
-        assert!(closes_on_error(&Action::Hello {
-            proto: 1,
-            inbox_push: false
-        }));
+        assert!(closes_on_error(&Action::Hello(1)));
         assert!(closes_on_error(&Action::Refuse("bad".into())));
     }
 
@@ -577,18 +553,8 @@ mod tests {
     #[test]
     fn classify_gates_on_hello() {
         assert_eq!(
-            classify(
-                false,
-                &SessionKey::Main,
-                Ok(ClientMsg::Hello {
-                    proto: 1,
-                    inbox_push: false
-                })
-            ),
-            Action::Hello {
-                proto: 1,
-                inbox_push: false
-            }
+            classify(false, &SessionKey::Main, Ok(ClientMsg::Hello { proto: 1 })),
+            Action::Hello(1)
         );
         assert_eq!(
             classify(false, &SessionKey::Main, Ok(ClientMsg::Shutdown)),

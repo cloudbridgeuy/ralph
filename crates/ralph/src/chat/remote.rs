@@ -264,10 +264,7 @@ impl RemoteSession {
             attached: RefCell::new(None),
             sink,
         };
-        session.write(&ClientMsg::Hello {
-            proto: VERSION,
-            inbox_push: true,
-        })?;
+        session.write(&ClientMsg::Hello { proto: VERSION })?;
         let Some(reply) = session.read_reply()? else {
             session.end_session();
             return Ok(None);
@@ -423,10 +420,7 @@ impl RemoteSession {
         let mut stream = UnixStream::connect(&self.socket)?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         for (id, msg) in [
-            ClientMsg::Hello {
-                proto: VERSION,
-                inbox_push: false,
-            },
+            ClientMsg::Hello { proto: VERSION },
             ClientMsg::Cancel {
                 thread: self.attached.borrow().clone(),
             },
