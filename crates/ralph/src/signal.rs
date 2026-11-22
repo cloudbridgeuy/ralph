@@ -11,19 +11,36 @@ use std::sync::{Arc, LazyLock, Once};
 static TERMINATED: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 static SIGINT_SINK: Once = Once::new();
 
-pub struct Armed(SigId);
+pub struct Armed([Option<SigId>; 2]);
 
 impl Drop for Armed {
     fn drop(&mut self) {
-        unregister(self.0);
+        for id in self.0.into_iter().flatten() {
+            unregister(id);
+        }
     }
 }
 
 pub fn arm(token: &CancelToken) -> Option<Armed> {
     register(SIGINT, token.flag())
-        .map(Armed)
+        .map(|id| Armed([Some(id), None]))
         .inspect_err(|e| warn(format!("Failed to arm the Ctrl-C handler: {e}")))
         .ok()
+}
+
+pub fn arm_terminate(flag: &Arc<AtomicBool>) -> Option<Armed> {
+    let term = register(SIGTERM, Arc::clone(flag))
+        .inspect_err(|e| warn(format!("Failed to arm the SIGTERM handler: {e}")))
+        .ok()?;
+    let mut armed = Armed([Some(term), None]);
+    let hup = register(SIGHUP, Arc::clone(flag))
+        .inspect_err(|e| warn(format!("Failed to arm the SIGHUP handler: {e}")))
+        .ok()?;
+    armed.0[1] = Some(hup);
+    if is_terminated() {
+        flag.store(true, Ordering::SeqCst);
+    }
+    Some(armed)
 }
 
 pub fn init() -> io::Result<()> {

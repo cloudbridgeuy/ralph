@@ -85,11 +85,141 @@ fn a_blocked_push_becomes_a_notice() {
 }
 
 #[test]
-fn cancel_is_due_once_per_turn() {
-    assert!(cancel_due(true, false));
-    assert!(!cancel_due(true, true));
-    assert!(!cancel_due(false, false));
-    assert!(!cancel_due(false, true));
+fn wait_step_cancels_once_and_exits_when_terminated() {
+    assert_eq!(wait_step(false, true, false), WaitStep::SendCancel);
+    assert_eq!(wait_step(false, true, true), WaitStep::Continue);
+    assert_eq!(wait_step(false, false, false), WaitStep::Continue);
+    assert_eq!(wait_step(false, false, true), WaitStep::Continue);
+    assert_eq!(wait_step(true, false, false), WaitStep::Exit);
+    assert_eq!(wait_step(true, true, false), WaitStep::Exit);
+    assert_eq!(wait_step(true, true, true), WaitStep::Exit);
+}
+
+#[test]
+fn prompt_step_exits_on_ctrl_d_or_termination() {
+    assert_eq!(
+        prompt_step(Signal::Success("hi".into()), false),
+        PromptStep::Send("hi".into())
+    );
+    assert_eq!(prompt_step(Signal::CtrlD, false), PromptStep::Exit);
+    assert_eq!(prompt_step(Signal::CtrlC, false), PromptStep::Continue);
+    assert_eq!(
+        prompt_step(Signal::ExternalBreak(String::new()), false),
+        PromptStep::Continue
+    );
+    assert_eq!(
+        prompt_step(Signal::ExternalBreak("draft".into()), true),
+        PromptStep::Exit
+    );
+    assert_eq!(prompt_step(Signal::CtrlC, true), PromptStep::Exit);
+    assert_eq!(prompt_step(Signal::CtrlD, true), PromptStep::Exit);
+    assert_eq!(
+        prompt_step(Signal::Success("hi".into()), true),
+        PromptStep::Exit
+    );
+}
+
+#[test]
+fn read_prompt_until_stops_on_interrupted_when_terminated() {
+    let mut calls = 0;
+    let flag = std::cell::Cell::new(false);
+    let stopped = read_prompt_until(
+        || {
+            calls += 1;
+            if calls == 1 {
+                flag.set(true);
+                Err(io::Error::from(io::ErrorKind::Interrupted))
+            } else {
+                Ok("unreachable")
+            }
+        },
+        || flag.get(),
+    )
+    .unwrap();
+    assert_eq!(stopped, None);
+    assert_eq!(calls, 1);
+
+    let mut retries = 0;
+    let resumed = read_prompt_until(
+        || {
+            retries += 1;
+            if retries < 3 {
+                Err(io::Error::from(io::ErrorKind::Interrupted))
+            } else {
+                Ok("ok")
+            }
+        },
+        || false,
+    )
+    .unwrap();
+    assert_eq!(resumed, Some("ok"));
+    assert_eq!(retries, 3);
+
+    let mut skipped_calls = 0;
+    let skipped = read_prompt_until(
+        || {
+            skipped_calls += 1;
+            Ok("unreachable")
+        },
+        || true,
+    )
+    .unwrap();
+    assert_eq!(skipped, None);
+    assert_eq!(skipped_calls, 0);
+}
+
+struct NoopSink;
+
+impl TurnSink for NoopSink {
+    fn emit(&self, _event: TurnEvent) {}
+}
+
+fn pair_session(timeout: Duration) -> (RemoteSession, UnixStream) {
+    let (client, server) = UnixStream::pair().unwrap();
+    client.set_read_timeout(Some(timeout)).unwrap();
+    let session = RemoteSession {
+        socket: PathBuf::from("/nonexistent/serve.sock"),
+        stream: RefCell::new(BufReader::new(client)),
+        next_id: Cell::new(1),
+        turns: Cell::new(0),
+        attached: RefCell::new(None),
+        sink: Box::new(NoopSink),
+    };
+    (session, server)
+}
+
+#[test]
+fn read_frame_with_returns_none_when_terminated_without_reading() {
+    let (session, mut server) = pair_session(Duration::from_millis(20));
+    server
+        .write_all(encode_frame(1, &ServerMsg::TurnDone).as_bytes())
+        .unwrap();
+    let cancel = CancelToken::default();
+    cancel.cancel();
+    let mut sent = false;
+    let frame = session
+        .read_frame_with(&mut String::new(), Some((&cancel, &mut sent)), || true)
+        .unwrap();
+    assert!(frame.is_none());
+    assert!(!sent);
+}
+
+#[test]
+fn read_frame_with_exits_after_poll_timeout_when_terminated_flips() {
+    let (session, _server) = pair_session(Duration::from_millis(5));
+    let checks = Cell::new(0u8);
+    let cancel = CancelToken::default();
+    let mut sent = false;
+    let frame = session
+        .read_frame_with(&mut String::new(), Some((&cancel, &mut sent)), || {
+            let n = checks.get() + 1;
+            checks.set(n);
+            n >= 2
+        })
+        .unwrap();
+    assert!(frame.is_none());
+    assert!(!sent);
+    assert_eq!(checks.get(), 2);
 }
 
 fn route(line: &str) -> Route {
