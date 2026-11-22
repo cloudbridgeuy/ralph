@@ -67,7 +67,10 @@ fn stall_clients(server: &TestServer, count: usize) -> Vec<TcpStream> {
     (0..count)
         .map(|index| {
             let (client, reply) = stall_client(server);
-            assert_eq!(reply.status, 405, "stalled client {index} held no slot");
+            assert_eq!(
+                reply.status, 405,
+                "stalled client {index} was not admitted (expected 405)"
+            );
             client
         })
         .collect()
