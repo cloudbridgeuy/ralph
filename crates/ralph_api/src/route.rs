@@ -1,9 +1,13 @@
 use crate::assets::{self, Asset, SHELL_PATH};
+use crate::catalogue;
 use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
 const HEALTH_PATH: &str = "/api/health";
 const TOKENS_PATH: &str = "/tokens.css";
+const CATALOGUE_PATH: &str = "/catalogue";
+const CATALOGUE_FIXTURE: &str = include_str!("../fixtures/catalogue.json");
+const HTML: &str = "text/html; charset=utf-8";
 const JSON: &str = "application/json";
 const CSS: &str = "text/css; charset=utf-8";
 const PLAIN: &str = "text/plain; charset=utf-8";
@@ -55,10 +59,22 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (HEALTH_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (TOKENS_PATH, "GET") => css_response(&config.tokens_css),
         (TOKENS_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
+        (CATALOGUE_PATH, "GET") => catalogue_response(),
+        (CATALOGUE_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         _ => match assets::find(&request.path) {
             Some(asset) => asset_response(asset, request, config, token),
             None => error(404, "not found"),
         },
+    }
+}
+
+fn catalogue_response() -> ApiResponse {
+    ApiResponse {
+        status: 200,
+        content_type: HTML,
+        headers: vec![NO_STORE, NO_REFERRER, NO_SNIFF, SHELL_POLICY],
+        body: catalogue::page(CATALOGUE_FIXTURE).into_bytes(),
+        set_cookie: None,
     }
 }
 
@@ -455,5 +471,46 @@ mod tests {
         let mut bad = authed("GET", "/assets/app.css");
         bad.host = Some("evil.example".to_string());
         assert_eq!(route(&bad, &config(), &token()).status, 403);
+    }
+
+    #[test]
+    fn catalogue_with_the_cookie_is_html_with_the_shell_policy() {
+        let response = route(
+            &with_cookie("/catalogue", "ralph_token_1=t0k3n"),
+            &config(),
+            &token(),
+        );
+        assert_eq!(response.status, 200);
+        assert_eq!(response.content_type, "text/html; charset=utf-8");
+        for header in [
+            ("Cache-Control", "no-store"),
+            ("Content-Security-Policy", CSP),
+            ("Referrer-Policy", "no-referrer"),
+            ("X-Content-Type-Options", "nosniff"),
+        ] {
+            assert!(response.headers.contains(&header), "{header:?}");
+        }
+        assert!(bytes(&response).starts_with(b"<!doctype html>"));
+        assert_eq!(response.set_cookie, None);
+    }
+
+    #[test]
+    fn catalogue_without_token_is_401() {
+        let response = route(&request("GET", "/catalogue", ""), &config(), &token());
+        assert_eq!(response.status, 401);
+    }
+
+    #[test]
+    fn catalogue_bad_host_is_403() {
+        let mut bad = authed("GET", "/catalogue");
+        bad.host = Some("evil.example".to_string());
+        assert_eq!(route(&bad, &config(), &token()).status, 403);
+    }
+
+    #[test]
+    fn post_catalogue_is_405_and_allow_get() {
+        let response = route(&authed("POST", "/catalogue"), &config(), &token());
+        assert_eq!(response.status, 405);
+        assert!(response.headers.contains(&("Allow", "GET")));
     }
 }

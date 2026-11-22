@@ -27,6 +27,7 @@ X-Content-Type-Options: nosniff
 <a href="#/schedules">schedules</a>
 <a href="#/watches">watches</a>
 <a href="#/threads">threads</a>
+<a href="/catalogue">catalogue</a>
 </nav>
 <main id="main">
 <p class="empty">No screens yet.</p>

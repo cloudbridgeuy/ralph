@@ -1,6 +1,7 @@
 mod addr;
 mod admit;
 mod assets;
+mod catalogue;
 pub mod render;
 mod route;
 mod server;
