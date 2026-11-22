@@ -50,7 +50,7 @@ When formatting tool output, use `BlockRenderer::render_context()` instead of ma
 
 ### ToolResultVariant Pattern
 
-The `ToolResultVariant` enum has 14 variants. Each holds the data that its screen text needs:
+The `ToolResultVariant` enum has 15 variants. Each holds the data that its screen text needs:
 
 | Variant | Tool | Purpose |
 |---------|------|---------|
@@ -67,7 +67,10 @@ The `ToolResultVariant` enum has 14 variants. Each holds the data that its scree
 | `TodoWrite` | TodoWrite | Task list confirmation |
 | `NotebookEdit` | NotebookEdit | Jupyter cell diff, or no changes |
 | `ToolError` | Read, Grep, Glob | Verbose tool error |
+| `Script` | `mcp__mcptools__execute` | `logs`, `result`, `error` and `traceId` from the JSON result; other content stays `Default` |
 | `Default` | Other | Generic content display |
+
+The `mcp__mcptools__execute` call has its own `ToolInvocationVariant::Script`: the header shows `[writes]`, `[spend]` and `[timeout Ns]` only when set, then the `code` prints as JavaScript, one output line per code line, never wrapped or cut (raw on plain output).
 
 ### Adding a New Tool
 
