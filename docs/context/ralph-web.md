@@ -13,6 +13,7 @@
 | Token | `crates/ralph_api/src/token.rs` | `Token::generate()`, `Token::matches()`, `extract_tokens()` |
 | Routes | `crates/ralph_api/src/route.rs` | pure `route()`: Host check, token check, paths |
 | Bind rule | `crates/ralph_api/src/addr.rs` | `BindPolicy`, `check_bind()`, `allowed_hosts()` |
+| Admit | `crates/ralph_api/src/admit.rs` | pure `admit()` and `MAX_HANDLERS`: the cap rule |
 | Server | `crates/ralph_api/src/server.rs` | `bind()`, `serve()` on tiny_http |
 
 ## Start
@@ -59,7 +60,9 @@
 | `GET /tokens.css` | 200 `text/css; charset=utf-8` with `Cache-Control: no-store` |
 | other method on `/tokens.css` | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
-| more than 8 requests in progress | 503 `{"error":"busy"}` |
+| more than 8 requests in progress | 503 `{"error":"busy"}`, sent before the Host and token checks |
+
+The 503 is the only answer that does not pass the Host and token checks. The server sends it before `route()` runs, so a request without a token also gets it. The other rows apply in the order shown.
 
 Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`. `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
 
@@ -67,6 +70,7 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 
 - The server handles each request on its own thread. It runs at most 8 at the same time. The next one gets 503 at once.
 - A client can send a long `Content-Length` and never send the body. That request keeps its slot until the client closes the socket. Read timeouts come with GUZ-1755.
+- tiny_http runs one thread for each open connection. It starts a new pool thread when no thread is free (`tiny_http-0.12.0/src/lib.rs:323`, `util/task_pool.rs:69-76`). Each stalled connection costs that thread. Past 8 requests in progress, it also costs a thread that sends the 503. Both threads end when the client closes the socket. Only GUZ-1755 timeouts bound them.
 - A stalled request never blocks the stop check.
 
 ## tokens.css
