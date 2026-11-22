@@ -121,6 +121,130 @@ fn plain_variant(
             content: text.to_string(),
         },
         "TodoWrite" if verbose_tool => ToolResultVariant::TodoWrite { message: content },
+        "mcp__mcptools__execute" => {
+            script_result(text).unwrap_or(ToolResultVariant::Default { content })
+        }
         _ => ToolResultVariant::Default { content },
+    }
+}
+
+fn script_result(text: &str) -> Option<ToolResultVariant> {
+    let serde_json::Value::Object(fields) = serde_json::from_str(text).ok()? else {
+        return None;
+    };
+    let shown = |value: &serde_json::Value| match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let optional = |key: &str| fields.get(key).filter(|v| !v.is_null()).map(shown);
+    let logs = match fields.get("logs") {
+        Some(serde_json::Value::Array(items)) => items.iter().map(shown).collect(),
+        Some(serde_json::Value::Null) | None => Vec::new(),
+        Some(other) => vec![shown(other)],
+    };
+    let variant = ToolResultVariant::Script {
+        logs,
+        result: optional("result"),
+        error: optional("error"),
+        trace_id: optional("traceId"),
+    };
+    let has_fields = ["logs", "result", "error", "traceId"]
+        .iter()
+        .any(|key| fields.contains_key(*key));
+    has_fields.then_some(variant)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_helpers::create_test_invocation;
+    use super::super::ImageFile;
+    use super::*;
+    use crate::stream::ToolResult;
+    use serde_json::json;
+
+    struct NoFiles;
+
+    impl Files for NoFiles {
+        fn read_text(&self, _path: &Path) -> Option<String> {
+            None
+        }
+
+        fn exists(&self, _path: &Path) -> bool {
+            false
+        }
+
+        fn image(&self, path: &str) -> ImageFile {
+            ImageFile {
+                path: path.to_string(),
+                shown: path.into(),
+                bytes: None,
+            }
+        }
+    }
+
+    fn execute_result(content: &str, is_error: bool) -> ToolResultVariant {
+        let invocation = create_test_invocation("mcp__mcptools__execute", json!({}));
+        let result = ToolResult {
+            result_type: None,
+            tool_use_id: Some("test-id".to_string()),
+            content: Some(content.to_string()),
+            is_error,
+        };
+        match build_result_block(
+            &VerboseToolsConfig::default(),
+            &result,
+            Some(&invocation),
+            None,
+            &NoFiles,
+        ) {
+            OutputBlock::ToolResult(block) => block.variant,
+            _ => panic!("Expected ToolResult"),
+        }
+    }
+
+    #[test]
+    fn execute_result_splits_the_json_fields() {
+        let content = json!({
+            "logs": ["a", "b"],
+            "result": {"n": 1},
+            "error": null,
+            "traceId": "t-1"
+        })
+        .to_string();
+        assert_eq!(
+            execute_result(&content, false),
+            ToolResultVariant::Script {
+                logs: vec!["a".to_string(), "b".to_string()],
+                result: Some("{\"n\":1}".to_string()),
+                error: None,
+                trace_id: Some("t-1".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn execute_result_keeps_string_values_unquoted() {
+        let content = json!({"logs": [1, "x"], "result": "done", "error": "boom"}).to_string();
+        assert_eq!(
+            execute_result(&content, true),
+            ToolResultVariant::Script {
+                logs: vec!["1".to_string(), "x".to_string()],
+                result: Some("done".to_string()),
+                error: Some("boom".to_string()),
+                trace_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn execute_result_that_is_not_the_json_object_stays_default() {
+        for content in ["plain text", "[1,2]", "{}", "{\"other\":1}"] {
+            assert_eq!(
+                execute_result(content, false),
+                ToolResultVariant::Default {
+                    content: Some(content.to_string())
+                }
+            );
+        }
     }
 }

@@ -174,6 +174,41 @@ fn todo_and_other_tools_render_the_same_from_their_blocks() {
 }
 
 #[test]
+fn execute_calls_and_results_render_the_same_from_their_blocks() {
+    let done = json!({"logs":["a","b"],"result":{"n":1},"traceId":"t-1"}).to_string();
+    let failed = json!({"error":"boom\nline two","traceId":"t-2"}).to_string();
+    assert_parity_everywhere(&[
+        call(
+            "x1",
+            "mcp__mcptools__execute",
+            json!({"code":"const a = 1;\nreturn a;\n","allowWrites":true,"timeoutSecs":30}),
+        ),
+        reply("x1", Some(&done), false),
+        call("x2", "mcp__mcptools__execute", json!({"code":"throw 1"})),
+        reply("x2", Some(&failed), true),
+        call("x3", "mcp__mcptools__execute", json!({})),
+        reply("x3", Some("not json"), true),
+        call("x4", "mcp__mcptools__execute", json!({"code":"1"})),
+        reply("x4", None, false),
+    ]);
+}
+
+#[test]
+fn execute_code_shows_as_one_plain_line_per_code_line() {
+    let mut processor =
+        StreamProcessor::with_options_and_verbose(false, true, VerboseToolsConfig::new());
+    let Step::Line(line) = call(
+        "x1",
+        "mcp__mcptools__execute",
+        json!({"code":"const a = 1;\nreturn a;","allowSpend":true}),
+    ) else {
+        unreachable!()
+    };
+    let shown = processor.process_line(&line).unwrap_or_default();
+    assert!(shown.contains("> mcptools execute [spend]\nconst a = 1;\nreturn a;\n"));
+}
+
+#[test]
 fn edit_results_render_the_same_from_their_blocks() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("a.rs");

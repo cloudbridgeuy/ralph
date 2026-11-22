@@ -111,6 +111,13 @@ pub enum ToolInvocationVariant {
         todos: Vec<TodoItem>,
     },
 
+    Script {
+        code: String,
+        allow_writes: bool,
+        allow_spend: bool,
+        timeout_secs: Option<u64>,
+    },
+
     /// Default invocation for other tools.
     Default {
         /// The key argument to display (e.g., file_path, pattern).
@@ -261,6 +268,13 @@ pub enum ToolResultVariant {
 
     ToolError {
         content: Option<String>,
+    },
+
+    Script {
+        logs: Vec<String>,
+        result: Option<String>,
+        error: Option<String>,
+        trace_id: Option<String>,
     },
 
     /// Default result for other tools.
@@ -430,6 +444,22 @@ mod tests {
             content: "Hello, world!".to_string(),
         });
         assert_toml_roundtrip(&block);
+    }
+
+    #[test]
+    fn script_invocation_round_trips_through_json() {
+        let block = OutputBlock::tool_invocation(
+            "mcp__mcptools__execute",
+            ToolInvocationVariant::Script {
+                code: "return 1;\nreturn 2;".to_string(),
+                allow_writes: true,
+                allow_spend: false,
+                timeout_secs: Some(30),
+            },
+        );
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(json.contains("\"invocation_type\":\"script\""));
+        assert_eq!(serde_json::from_str::<OutputBlock>(&json).unwrap(), block);
     }
 
     #[test]
