@@ -7,7 +7,9 @@ mod golden;
 mod kv;
 mod pill;
 mod rule;
+mod spinner;
 mod status;
+mod table;
 
 pub use empty::empty;
 pub use error::error;
@@ -16,7 +18,9 @@ pub use frame::frame;
 pub use kv::kv;
 pub use pill::{pill, Icon, PillShape};
 pub use rule::rule;
+pub use spinner::spinner;
 pub use status::status;
+pub use table::table;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
