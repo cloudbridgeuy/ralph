@@ -17,7 +17,7 @@ pub fn bundled_syntax_notices() -> String {
 
 fn bundled_font_notices() -> String {
     font_notices(&[
-        ("Geist Mono (v1.9.2)", ralph_api::FONT_NOTICE),
+        ("Geist Mono", ralph_api::FONT_NOTICE),
         ("Geist Mono licence", ralph_api::FONT_LICENCE),
     ])
 }
@@ -55,6 +55,7 @@ mod tests {
         assert!(syntaxes < font);
         assert!(out.contains("SIL OPEN FONT LICENSE Version 1.1"));
         assert!(out.contains("Copyright 2026 The Geist Project Authors"));
-        assert!(out.contains("v1.9.2"));
+        assert!(out.contains("\nGeist Mono\n\n"));
+        assert!(out.contains(ralph_api::FONT_NOTICE.trim_end()));
     }
 }
