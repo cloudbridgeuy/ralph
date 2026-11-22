@@ -97,6 +97,7 @@ Served:
 - `/thread switch|main|open [--model]|pull|park|revive|drop|merge [--view]`: one `thread` frame. The reply text is printed. The attached thread changes only after a `done` reply.
 - Ctrl-C: `cancel` for the attached key, sent on a second connection.
 - Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
+- SIGTERM / SIGHUP: detach and exit 0 at the prompt or mid-request; neither `cancel` nor `shutdown` is sent.
 - Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
 
 Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.
