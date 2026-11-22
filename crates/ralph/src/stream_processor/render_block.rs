@@ -6,6 +6,9 @@ use super::tool_results::{
 };
 use crate::markdown::MarkdownTheme;
 use crate::render::image::lookup_in;
+use crate::render::tool_renderers::{
+    render_script_invocation, render_script_result, ScriptResultParams,
+};
 use crate::render::{
     render_bash_invocation, render_bash_result, render_default_invocation, render_default_result,
     render_glob_invocation, render_glob_result, render_grep_invocation, render_grep_result,
@@ -82,6 +85,12 @@ fn render_invocation(ctx: &RenderContext, block: &ToolInvocationBlock) -> String
                 .collect();
             render_todowrite_invocation(ctx, &items)
         }
+        ToolInvocationVariant::Script {
+            code,
+            allow_writes,
+            allow_spend,
+            timeout_secs,
+        } => render_script_invocation(ctx, code, *allow_writes, *allow_spend, *timeout_secs),
         ToolInvocationVariant::Default {
             key_argument,
             is_path,
@@ -175,6 +184,21 @@ fn render_result(ctx: &RenderContext, block: &ToolResultBlock) -> String {
         ToolResultVariant::ToolError { content } => {
             format_tool_error(ctx, &block.tool_name, content.as_deref())
         }
+        ToolResultVariant::Script {
+            logs,
+            result,
+            error,
+            trace_id,
+        } => render_script_result(
+            ctx,
+            &ScriptResultParams {
+                is_error,
+                logs,
+                result: result.as_deref(),
+                error: error.as_deref(),
+                trace_id: trace_id.as_deref(),
+            },
+        ),
         ToolResultVariant::Default { content } => {
             let shown = content
                 .as_deref()

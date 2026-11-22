@@ -95,7 +95,7 @@ pub(super) fn owned(owner: &Path) -> bool {
         .ok()
         .and_then(|text| ralph_core::worker::OwnerRecord::parse(&text))
         .is_some_and(|record| {
-            crate::cursor_owner::mine(&record)
+            crate::cursor_owner::mine(owner, &record)
                 && crate::cursor_owner::process_start(record.chat_pid).as_deref()
                     == Some(&record.chat_start)
         })

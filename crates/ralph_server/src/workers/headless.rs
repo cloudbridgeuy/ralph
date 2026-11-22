@@ -2,13 +2,15 @@ use crate::acp_worker::CursorHost;
 use crate::chat::socket::SocketFiles;
 use crate::claude_worker::ClaudeHost;
 use crate::codex_worker::CodexHost;
-use crate::cursor_owner::{now_secs, queued_entries, write_file, write_interrupt_result};
+use crate::cursor_owner::{
+    now_secs, queued_entries, write_file, write_interrupt_result, SessionOwner,
+};
 use crate::opencode_worker::OpencodeHost;
 use crate::warn::warn;
 use crate::watches::Watches;
 use ralph_core::worker::{
     lost_marker_name, queued_disposition, render_gone, ActivityMark, ActivityState,
-    InterruptOutcome, OwnerRecord, Queued, QueuedFacts, QueuedOwner, Scope,
+    InterruptOutcome, Queued, QueuedFacts, QueuedOwner, Scope,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -90,13 +92,7 @@ impl Heartbeat {
 }
 
 pub(crate) fn queued_owner(owner: &Path) -> QueuedOwner {
-    match fs::read_to_string(owner) {
-        Err(_) => QueuedOwner::Missing,
-        Ok(text) => match OwnerRecord::parse(&text) {
-            Some(record) if crate::cursor_owner::mine(&record) => QueuedOwner::Mine,
-            _ => QueuedOwner::Foreign,
-        },
-    }
+    fs::read_to_string(owner).map_or(QueuedOwner::Missing, |_| QueuedOwner::Present)
 }
 
 pub(crate) fn mark_prompt_lost(entry: &Path) {
@@ -157,14 +153,16 @@ pub(crate) fn drain_queued(
     }
 }
 
-/// Owns host lifetimes for a chat, including early returns from the chat loop.
 pub struct HeadlessShutdown {
     hosts: Vec<Arc<dyn HeadlessHost>>,
+    _session: SessionOwner,
 }
 
 impl HeadlessShutdown {
     pub fn new(store_dir: PathBuf) -> Self {
+        let session = SessionOwner::open(&store_dir);
         Self {
+            _session: session,
             hosts: vec![
                 CursorHost::new(store_dir.clone()),
                 CursorHost::agy(store_dir.clone()),
@@ -244,8 +242,10 @@ mod tests {
     fn hosts_are_polled_through_the_trait_and_shutdown_only_by_the_exit_guard() {
         let cursor = Arc::new(FakeHost::default());
         let opencode = Arc::new(FakeHost::default());
+        let unopened = tempfile::tempdir().unwrap().path().join("gone");
         let guard = HeadlessShutdown {
             hosts: vec![cursor.clone(), opencode.clone()],
+            _session: SessionOwner::open(&unopened),
         };
         for host in guard.hosts() {
             host.resume();
@@ -272,7 +272,7 @@ mod tests {
         let alive = || QueuedFacts {
             worker: ralph_core::worker::QueuedWorker::Alive,
             starting: false,
-            owner: QueuedOwner::Mine,
+            owner: QueuedOwner::Present,
         };
         drain_queued(
             dir.path(),
@@ -288,7 +288,7 @@ mod tests {
         QueuedFacts {
             worker: ralph_core::worker::QueuedWorker::Alive,
             starting: false,
-            owner: QueuedOwner::Mine,
+            owner: QueuedOwner::Present,
         }
     }
 

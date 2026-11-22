@@ -4,16 +4,16 @@ use crate::warn::warn;
 use ralph_core::chat_memory::instance_id;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
-    owned_by, sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep,
-    AGY_OWNER_DIR, CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR,
-    CURSOR_OWNER_DIR, CURSOR_SESSION_DIR, OPENCODE_SESSION_DIR,
+    owned_by, sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord,
+    SessionRegistry, Sweep, AGY_OWNER_DIR, CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR,
+    CODEX_SESSION_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR, OPENCODE_SESSION_DIR,
 };
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const TERM_GRACE: Duration = Duration::from_secs(3);
@@ -50,8 +50,56 @@ pub fn own_instance() -> Option<&'static str> {
     .as_deref()
 }
 
-pub(crate) fn mine(record: &OwnerRecord) -> bool {
-    owned_by(record, process::id(), own_instance())
+static SESSIONS: LazyLock<Mutex<SessionRegistry>> = LazyLock::new(Mutex::default);
+
+fn sessions() -> MutexGuard<'static, SessionRegistry> {
+    SESSIONS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(crate) struct SessionOwner(Option<(PathBuf, String)>);
+
+impl SessionOwner {
+    pub(crate) fn open(store_dir: &Path) -> Self {
+        Self(
+            store_dir
+                .canonicalize()
+                .ok()
+                .zip(own_instance())
+                .map(|(store, process)| {
+                    let instance = sessions().register(process, store.clone());
+                    (store, instance)
+                }),
+        )
+    }
+}
+
+impl Drop for SessionOwner {
+    fn drop(&mut self) {
+        if let Some((store, instance)) = &self.0 {
+            sessions().unregister(store, instance);
+        }
+    }
+}
+
+fn owner_instance(owner: &Path) -> Option<String> {
+    let store = owner
+        .parent()
+        .and_then(Path::parent)
+        .and_then(|store| store.canonicalize().ok());
+    match store {
+        Some(store) => sessions()
+            .owner_instance(&store, own_instance())
+            .map(str::to_string),
+        None => own_instance().map(str::to_string),
+    }
+}
+
+pub(crate) fn mine(owner: &Path, record: &OwnerRecord) -> bool {
+    owned_by(record, process::id(), owner_instance(owner).as_deref())
+}
+
+fn holder_alive(record: &OwnerRecord) -> bool {
+    alive_since(record.chat_pid, &record.chat_start) && !sessions().closed_holder(record)
 }
 
 fn alive_since(pid: u32, start: &str) -> bool {
@@ -144,15 +192,13 @@ pub fn resumable_ids(store_dir: &Path) -> Vec<String> {
 fn owner_facts(owner: &Path) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
     let text = fs::read_to_string(owner).ok()?;
     let record = OwnerRecord::parse(&text);
-    let chat_alive = record
-        .as_ref()
-        .is_some_and(|r| alive_since(r.chat_pid, &r.chat_start));
+    let chat_alive = record.as_ref().is_some_and(holder_alive);
     let facts = OwnerFacts {
         chat_alive,
         group_alive: record
             .as_ref()
             .is_some_and(|record| group_alive(record, owner)),
-        mine: chat_alive && record.as_ref().is_some_and(mine),
+        mine: chat_alive && record.as_ref().is_some_and(|record| mine(owner, record)),
     };
     Some((record, facts))
 }
@@ -232,7 +278,9 @@ pub(crate) fn reclaim_agy(owner: &Path) -> bool {
             .symlink_metadata()
             .is_err_and(|error| error.kind() == io::ErrorKind::NotFound);
     };
-    if agy_identity(record.chat_pid, &record.chat_start) != ProcessIdentity::GoneOrReused {
+    if agy_identity(record.chat_pid, &record.chat_start) != ProcessIdentity::GoneOrReused
+        && !sessions().closed_holder(&record)
+    {
         return false;
     }
     match agy_identity(record.group, &record.group_start) {
@@ -259,7 +307,7 @@ pub fn write_owner_record(owner: &Path, group: u32, agent: &str) -> Result<(), S
     let chat_start = process_start(chat).ok_or("could not read the chat start time")?;
     let record = OwnerRecord {
         chat_pid: chat,
-        instance: Some(instance_id(chat, &chat_start)),
+        instance: Some(owner_instance(owner).unwrap_or_else(|| instance_id(chat, &chat_start))),
         chat_start,
         group,
         group_start: process_start(group)
@@ -277,7 +325,7 @@ pub fn claim_owner(owner: &Path) -> io::Result<()> {
         chat_pid: chat,
         chat_start: start.clone(),
         group: chat,
-        instance: Some(instance_id(chat, &start)),
+        instance: Some(owner_instance(owner).unwrap_or_else(|| instance_id(chat, &start))),
         group_start: start,
     };
     let name = owner.file_name().unwrap_or_default().to_string_lossy();

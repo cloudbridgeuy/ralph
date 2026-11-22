@@ -85,7 +85,8 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 ## Limits
 
 - Serve sessions have no nap or host loop, no keepalive and no attachments dir.
-- `NOTICE_SINK` and worker ownership (`own_instance`) are process-wide. All sessions share them. Per-session ownership is a follow-up ticket.
+- `NOTICE_SINK` is process-wide. All sessions share it.
+- Worker ownership is per open session. Each open gets the instance `pid@start#n` for its store, and the owner records of its workers carry it. When a thread or main closes and opens again in the same process, the new session reclaims the owner records the closed session left: it stops their agent groups and drops their queued prompts. Records of other processes follow the pid rules as before.
 - There is no live end-to-end test. Unit tests cover the supervisor, the frames and the routing.
 
 ## Client (`ralph chat --connect <SOCK>`, hidden)
@@ -97,6 +98,7 @@ Served:
 - `/thread switch|main|open [--model]|pull|park|revive|drop|merge [--view]`: one `thread` frame. The reply text is printed. The attached thread changes only after a `done` reply.
 - Ctrl-C: `cancel` for the attached key, sent on a second connection.
 - Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
+- SIGTERM / SIGHUP: detach and exit 0 at the prompt or mid-request; neither `cancel` nor `shutdown` is sent.
 - Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
 
 Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.
