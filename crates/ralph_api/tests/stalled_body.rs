@@ -10,6 +10,8 @@ use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 const BUDGET: Duration = Duration::from_secs(1);
+const PROBE_EVERY: Duration = Duration::from_millis(20);
+const BUSY_DEADLINE: Duration = Duration::from_secs(5);
 
 #[test]
 fn stalled_body_does_not_block_other_requests_or_stop() {
@@ -64,14 +66,26 @@ fn stall_clients(server: &TestServer, count: usize) -> Vec<TcpStream> {
             client
         })
         .collect();
-    std::thread::sleep(Duration::from_millis(400));
     clients
+}
+
+fn wait_until_busy(server: &TestServer) {
+    let target = format!("/api/health?token={}", server.token());
+    let deadline = Instant::now() + BUSY_DEADLINE;
+    while server.exchange("GET", &target, Host::Own, &[]).status != 503 {
+        assert!(
+            Instant::now() < deadline,
+            "no 503 within {BUSY_DEADLINE:?}: the stalled clients never filled the slots"
+        );
+        std::thread::sleep(PROBE_EVERY);
+    }
 }
 
 #[test]
 fn stop_returns_when_every_slot_and_one_more_client_stall() {
     let mut server = TestServer::start();
     let _stalled = stall_clients(&server, MAX_HANDLERS + 1);
+    wait_until_busy(&server);
     assert!(
         server.stop_within(BUDGET),
         "serve did not stop within {BUDGET:?}"
@@ -81,7 +95,8 @@ fn stop_returns_when_every_slot_and_one_more_client_stall() {
 #[test]
 fn over_cap_request_gets_503_busy_while_slots_are_stalled() {
     let server = TestServer::start();
-    let _stalled = stall_clients(&server, MAX_HANDLERS);
+    let _stalled = stall_clients(&server, MAX_HANDLERS + 1);
+    wait_until_busy(&server);
     let started = Instant::now();
     let target = format!("/api/health?token={}", server.token());
     let reply = server.exchange("GET", &target, Host::Own, &[]);
