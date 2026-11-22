@@ -299,33 +299,35 @@ fn named_colour_declaration(line: &str) -> bool {
         .any(|(prop, value)| is_colour_property(prop) && value_has_named_colour(value))
 }
 
+fn paint_attribute_values(line: &str) -> Vec<&str> {
+    PAINT_ATTRIBUTES
+        .iter()
+        .flat_map(|attr| {
+            let marker = format!("{attr}=\"");
+            line.match_indices(&marker)
+                .filter(|(at, _)| {
+                    line[..*at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|c| !is_ident_char(c))
+                })
+                .map(|(at, found)| {
+                    let value = &line[at + found.len()..];
+                    value.split('"').next().unwrap_or("")
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn named_paint_attribute(line: &str) -> bool {
-    PAINT_ATTRIBUTES.iter().any(|attr| {
-        line.match_indices(&format!("{attr}=\""))
-            .any(|(at, found)| {
-                let before_ok = line[..at]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|c| !is_ident_char(c));
-                let value = &line[at + found.len()..];
-                let value = value.split('"').next().unwrap_or("");
-                before_ok && value_has_named_colour(value)
-            })
-    })
+    paint_attribute_values(line)
+        .into_iter()
+        .any(value_has_named_colour)
 }
 
 fn paint_attribute_hex(line: &str) -> bool {
-    PAINT_ATTRIBUTES.iter().any(|attr| {
-        line.match_indices(&format!("{attr}=\""))
-            .any(|(at, found)| {
-                let before_ok = line[..at]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|c| !is_ident_char(c));
-                let value = &line[at + found.len()..];
-                before_ok && hex_colour(value.split('"').next().unwrap_or(""))
-            })
-    })
+    paint_attribute_values(line).into_iter().any(hex_colour)
 }
 
 fn element_names(line: &str) -> Vec<String> {
