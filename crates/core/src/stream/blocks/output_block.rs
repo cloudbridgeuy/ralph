@@ -270,6 +270,13 @@ pub enum ToolResultVariant {
         content: Option<String>,
     },
 
+    Script {
+        logs: Vec<String>,
+        result: Option<String>,
+        error: Option<String>,
+        trace_id: Option<String>,
+    },
+
     /// Default result for other tools.
     Default {
         /// The result content (potentially truncated).

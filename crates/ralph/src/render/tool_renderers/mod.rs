@@ -32,7 +32,7 @@ mod tests;
 pub use context::{ansi, RenderContext, Viewport};
 
 // Re-export types
-pub use types::{GrepInvocationParams, NotebookEditParams, TodoDisplayItem};
+pub use types::{GrepInvocationParams, NotebookEditParams, ScriptResultParams, TodoDisplayItem};
 
 // Re-export invocation renderers
 pub use invocations::{
@@ -44,5 +44,5 @@ pub use invocations::{
 // Re-export result renderers
 pub use results::{
     render_bash_result, render_default_result, render_glob_result, render_grep_result,
-    render_read_result, render_todowrite_result,
+    render_read_result, render_script_result, render_todowrite_result,
 };
