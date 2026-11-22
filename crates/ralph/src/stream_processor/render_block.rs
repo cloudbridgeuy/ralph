@@ -82,6 +82,9 @@ fn render_invocation(ctx: &RenderContext, block: &ToolInvocationBlock) -> String
                 .collect();
             render_todowrite_invocation(ctx, &items)
         }
+        ToolInvocationVariant::Script { .. } => {
+            render_default_invocation(ctx, &block.tool_name, None)
+        }
         ToolInvocationVariant::Default {
             key_argument,
             is_path,

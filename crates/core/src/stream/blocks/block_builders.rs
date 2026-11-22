@@ -9,6 +9,14 @@ pub fn input_str<'a>(invocation: Option<&'a ToolInvocation>, key: &str) -> Optio
     invocation?.input.get(key)?.as_str()
 }
 
+fn input_flag(invocation: &ToolInvocation, key: &str) -> bool {
+    invocation
+        .input
+        .get(key)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 pub fn build_tool_invocation_block(
     invocation: &ToolInvocation,
     verbose: &VerboseToolsConfig,
@@ -19,6 +27,12 @@ pub fn build_tool_invocation_block(
         "Bash" => ToolInvocationVariant::Bash {
             command: input_str(input, "command").unwrap_or("").to_string(),
             description: input_str(input, "description").map(String::from),
+        },
+        "mcp__mcptools__execute" => ToolInvocationVariant::Script {
+            code: input_str(input, "code").unwrap_or("").to_string(),
+            allow_writes: input_flag(invocation, "allowWrites"),
+            allow_spend: input_flag(invocation, "allowSpend"),
+            timeout_secs: invocation.input.get("timeoutSecs").and_then(|v| v.as_u64()),
         },
         "Grep" | "Read" | "Glob" | "TodoWrite" if !verbose.is_verbose(name) => {
             default_invocation(invocation)
@@ -303,5 +317,60 @@ mod tests {
                 after_content: "new".to_string(),
             },
         );
+    }
+
+    #[test]
+    fn test_build_script_invocation_block() {
+        let invocation = create_test_invocation(
+            "mcp__mcptools__execute",
+            json!({"code": "return 1;", "allowWrites": true, "timeoutSecs": 30}),
+        );
+
+        let inv = expect_tool_invocation(build_tool_invocation_block(
+            &invocation,
+            &VerboseToolsConfig::all(),
+        ));
+
+        assert_eq!(
+            inv.variant,
+            ToolInvocationVariant::Script {
+                code: "return 1;".to_string(),
+                allow_writes: true,
+                allow_spend: false,
+                timeout_secs: Some(30),
+            }
+        );
+    }
+
+    #[test]
+    fn script_invocation_without_code_has_empty_code() {
+        let invocation = create_test_invocation("mcp__mcptools__execute", json!({}));
+
+        let inv = expect_tool_invocation(build_tool_invocation_block(
+            &invocation,
+            &VerboseToolsConfig::all(),
+        ));
+
+        assert_eq!(
+            inv.variant,
+            ToolInvocationVariant::Script {
+                code: String::new(),
+                allow_writes: false,
+                allow_spend: false,
+                timeout_secs: None,
+            }
+        );
+    }
+
+    #[test]
+    fn other_mcptools_tools_stay_default() {
+        let invocation = create_test_invocation("mcp__mcptools__call_tool", json!({"code": "x"}));
+
+        let inv = expect_tool_invocation(build_tool_invocation_block(
+            &invocation,
+            &VerboseToolsConfig::all(),
+        ));
+
+        assert!(matches!(inv.variant, ToolInvocationVariant::Default { .. }));
     }
 }
