@@ -89,7 +89,6 @@ pub(crate) struct Assembled {
     pub guard: SocketGuard,
     pub plugin: Option<tempfile::TempDir>,
     pub skill_dirs: Vec<PathBuf>,
-    pub last_ping: Stamp,
     pub send_it_warnings: Vec<String>,
     pub close: CloseGuard,
 }
@@ -168,7 +167,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
             options.worktree_dir,
         ),
         live,
-        last_ping: Arc::clone(&last_ping),
+        last_ping,
         run,
         caps,
     }));
@@ -201,7 +200,6 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         guard: wiring.guard,
         plugin: wiring.plugin,
         skill_dirs: wiring.skill_dirs,
-        last_ping,
         send_it_warnings,
         close,
     })
