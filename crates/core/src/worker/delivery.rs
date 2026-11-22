@@ -61,8 +61,7 @@ pub enum QueuedWorker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueuedOwner {
     Missing,
-    Mine,
-    Foreign,
+    Present,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,7 +196,7 @@ mod tests {
 
     #[test]
     fn a_live_worker_gets_its_queued_entry() {
-        let found = facts(QueuedWorker::Alive, false, QueuedOwner::Mine);
+        let found = facts(QueuedWorker::Alive, false, QueuedOwner::Present);
         assert_eq!(found, Queued::Deliver);
     }
 
@@ -208,20 +207,14 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_waits_while_this_chat_owns_an_unadopted_worker() {
-        let found = facts(QueuedWorker::Absent, false, QueuedOwner::Mine);
-        assert_eq!(found, Queued::Hold);
-    }
-
-    #[test]
-    fn an_entry_another_chat_owns_is_left_alone() {
-        let found = facts(QueuedWorker::Absent, false, QueuedOwner::Foreign);
+    fn an_entry_with_an_owner_but_no_adopted_worker_waits() {
+        let found = facts(QueuedWorker::Absent, false, QueuedOwner::Present);
         assert_eq!(found, Queued::Hold);
     }
 
     #[test]
     fn an_entry_for_an_exited_worker_is_lost() {
-        let found = facts(QueuedWorker::Exited, false, QueuedOwner::Mine);
+        let found = facts(QueuedWorker::Exited, false, QueuedOwner::Present);
         assert_eq!(found, Queued::Lost);
     }
 
