@@ -79,7 +79,7 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 ## Embedded assets
 
 - The files in `crates/ralph_api/assets/` are in the binary through `include_bytes!`. There is no build step.
-- The CSP is `default-src 'self'; img-src 'self' data:; frame-ancestors 'none'`. Assets also send `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
+- The CSP is `default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Assets also send `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
 - The shell has no script. Its nav links use `#/name`.
 - The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
 - `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.

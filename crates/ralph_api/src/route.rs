@@ -12,7 +12,7 @@ const NO_REFERRER: (&str, &str) = ("Referrer-Policy", "no-referrer");
 const NO_SNIFF: (&str, &str) = ("X-Content-Type-Options", "nosniff");
 const SHELL_POLICY: (&str, &str) = (
     "Content-Security-Policy",
-    "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+    "default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,7 +334,7 @@ mod tests {
         }
     }
 
-    const CSP: &str = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'";
+    const CSP: &str = "default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
     const COOKIE: &str = "ralph_token_1=t0k3n; Path=/; HttpOnly; SameSite=Strict";
 
     fn with_cookie(path: &str, cookie: &str) -> ApiRequest {
