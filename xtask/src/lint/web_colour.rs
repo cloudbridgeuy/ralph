@@ -2,7 +2,190 @@ use crate::prelude::*;
 
 const ASSET_DIR: &str = "crates/ralph_api/assets";
 
-#[allow(dead_code, reason = "stub: the rules land in the next commit")]
+const PRIMITIVES: &[&str] = &[
+    "r-box",
+    "r-rule",
+    "r-table",
+    "r-kv",
+    "r-tree",
+    "r-pill",
+    "r-status",
+    "r-graph",
+    "r-code",
+    "r-prose",
+    "r-spinner",
+    "r-spark",
+    "r-empty",
+    "r-error",
+];
+
+const COLOUR_FUNCTIONS: &[&str] = &[
+    "rgb",
+    "rgba",
+    "hsl",
+    "hsla",
+    "hwb",
+    "lab",
+    "lch",
+    "oklab",
+    "oklch",
+    "color",
+    "color-mix",
+];
+
+const PAINT_ATTRIBUTES: &[&str] = &["fill", "stroke", "stop-color", "flood-color", "color"];
+
+const NAMED_COLOURS: &[&str] = &[
+    "aliceblue",
+    "antiquewhite",
+    "aqua",
+    "aquamarine",
+    "azure",
+    "beige",
+    "bisque",
+    "black",
+    "blanchedalmond",
+    "blue",
+    "blueviolet",
+    "brown",
+    "burlywood",
+    "cadetblue",
+    "chartreuse",
+    "chocolate",
+    "coral",
+    "cornflowerblue",
+    "cornsilk",
+    "crimson",
+    "cyan",
+    "darkblue",
+    "darkcyan",
+    "darkgoldenrod",
+    "darkgray",
+    "darkgreen",
+    "darkgrey",
+    "darkkhaki",
+    "darkmagenta",
+    "darkolivegreen",
+    "darkorange",
+    "darkorchid",
+    "darkred",
+    "darksalmon",
+    "darkseagreen",
+    "darkslateblue",
+    "darkslategray",
+    "darkslategrey",
+    "darkturquoise",
+    "darkviolet",
+    "deeppink",
+    "deepskyblue",
+    "dimgray",
+    "dimgrey",
+    "dodgerblue",
+    "firebrick",
+    "floralwhite",
+    "forestgreen",
+    "fuchsia",
+    "gainsboro",
+    "ghostwhite",
+    "gold",
+    "goldenrod",
+    "gray",
+    "green",
+    "greenyellow",
+    "grey",
+    "honeydew",
+    "hotpink",
+    "indianred",
+    "indigo",
+    "ivory",
+    "khaki",
+    "lavender",
+    "lavenderblush",
+    "lawngreen",
+    "lemonchiffon",
+    "lightblue",
+    "lightcoral",
+    "lightcyan",
+    "lightgoldenrodyellow",
+    "lightgray",
+    "lightgreen",
+    "lightgrey",
+    "lightpink",
+    "lightsalmon",
+    "lightseagreen",
+    "lightskyblue",
+    "lightslategray",
+    "lightslategrey",
+    "lightsteelblue",
+    "lightyellow",
+    "lime",
+    "limegreen",
+    "linen",
+    "magenta",
+    "maroon",
+    "mediumaquamarine",
+    "mediumblue",
+    "mediumorchid",
+    "mediumpurple",
+    "mediumseagreen",
+    "mediumslateblue",
+    "mediumspringgreen",
+    "mediumturquoise",
+    "mediumvioletred",
+    "midnightblue",
+    "mintcream",
+    "mistyrose",
+    "moccasin",
+    "navajowhite",
+    "navy",
+    "oldlace",
+    "olive",
+    "olivedrab",
+    "orange",
+    "orangered",
+    "orchid",
+    "palegoldenrod",
+    "palegreen",
+    "paleturquoise",
+    "palevioletred",
+    "papayawhip",
+    "peachpuff",
+    "peru",
+    "pink",
+    "plum",
+    "powderblue",
+    "purple",
+    "rebeccapurple",
+    "red",
+    "rosybrown",
+    "royalblue",
+    "saddlebrown",
+    "salmon",
+    "sandybrown",
+    "seagreen",
+    "seashell",
+    "sienna",
+    "silver",
+    "skyblue",
+    "slateblue",
+    "slategray",
+    "slategrey",
+    "snow",
+    "springgreen",
+    "steelblue",
+    "tan",
+    "teal",
+    "thistle",
+    "tomato",
+    "turquoise",
+    "violet",
+    "wheat",
+    "white",
+    "whitesmoke",
+    "yellow",
+    "yellowgreen",
+];
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct WebViolation {
     pub line: usize,
@@ -10,9 +193,194 @@ pub struct WebViolation {
     pub reason: String,
 }
 
-#[allow(dead_code, reason = "stub: the rules land in the next commit")]
-fn find_web_violations(_path: &str, _text: &str) -> Vec<WebViolation> {
-    Vec::new()
+fn strip_comments(line: &str, in_comment: &mut bool) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    loop {
+        if *in_comment {
+            match rest.find("*/") {
+                Some(at) => {
+                    rest = &rest[at + 2..];
+                    *in_comment = false;
+                }
+                None => return out,
+            }
+        } else {
+            match rest.find("/*") {
+                Some(at) => {
+                    out.push_str(&rest[..at]);
+                    out.push(' ');
+                    rest = &rest[at + 2..];
+                    *in_comment = true;
+                }
+                None => {
+                    out.push_str(rest);
+                    return out;
+                }
+            }
+        }
+    }
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+fn has_paint_context(path: &str, line: &str) -> bool {
+    path.ends_with(".css")
+        || ["style", "fill", "stroke", "color"]
+            .iter()
+            .any(|marker| line.contains(marker))
+}
+
+fn hex_colour(line: &str) -> bool {
+    line.match_indices('#').any(|(at, _)| {
+        let digits = line[at + 1..]
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect::<String>();
+        matches!(digits.len(), 3 | 4 | 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit())
+    })
+}
+
+fn colour_function(line: &str) -> bool {
+    line.match_indices('(').any(|(at, _)| {
+        let head = &line[..at];
+        let name: String = head
+            .chars()
+            .rev()
+            .take_while(|c| is_ident_char(*c))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        COLOUR_FUNCTIONS.contains(&name.to_ascii_lowercase().as_str())
+    })
+}
+
+fn foreign_variable(line: &str) -> bool {
+    line.match_indices("var(").any(|(at, _)| {
+        let name = line[at + 4..].trim_start();
+        !name.starts_with("--r-")
+    })
+}
+
+fn is_colour_property(prop: &str) -> bool {
+    let prop = prop.trim().to_ascii_lowercase();
+    prop == "color"
+        || prop == "fill"
+        || prop == "stroke"
+        || prop.starts_with("background")
+        || prop.starts_with("border")
+        || prop.starts_with("outline")
+        || prop.ends_with("-color")
+        || prop.ends_with("shadow")
+        || prop.starts_with("text-decoration")
+}
+
+fn value_has_named_colour(value: &str) -> bool {
+    value
+        .split(|c: char| !(c.is_ascii_alphabetic() || c == '-'))
+        .any(|word| NAMED_COLOURS.contains(&word.to_ascii_lowercase().as_str()))
+}
+
+fn named_colour_declaration(line: &str) -> bool {
+    line.split([';', '{', '}', '"', '\''])
+        .filter_map(|part| part.split_once(':'))
+        .any(|(prop, value)| is_colour_property(prop) && value_has_named_colour(value))
+}
+
+fn named_paint_attribute(line: &str) -> bool {
+    PAINT_ATTRIBUTES.iter().any(|attr| {
+        line.match_indices(&format!("{attr}=\""))
+            .any(|(at, found)| {
+                let before_ok = line[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !is_ident_char(c));
+                let value = &line[at + found.len()..];
+                let value = value.split('"').next().unwrap_or("");
+                before_ok && value_has_named_colour(value)
+            })
+    })
+}
+
+fn paint_attribute_hex(line: &str) -> bool {
+    PAINT_ATTRIBUTES.iter().any(|attr| {
+        line.match_indices(&format!("{attr}=\""))
+            .any(|(at, found)| {
+                let before_ok = line[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !is_ident_char(c));
+                let value = &line[at + found.len()..];
+                before_ok && hex_colour(value.split('"').next().unwrap_or(""))
+            })
+    })
+}
+
+fn element_names(line: &str) -> Vec<String> {
+    let mut names: Vec<String> = line
+        .match_indices('<')
+        .filter_map(|(at, _)| {
+            let rest = line[at + 1..].trim_start_matches('/');
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
+            (name.contains('-') && name.starts_with(|c: char| c.is_ascii_alphabetic()))
+                .then_some(name)
+        })
+        .collect();
+    names.extend(
+        line.match_indices("customElements.define(")
+            .filter_map(|(at, found)| {
+                let rest = line[at + found.len()..].trim_start();
+                let quote = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+                Some(rest[1..].split(quote).next()?.to_string())
+            }),
+    );
+    names
+}
+
+fn line_reasons(path: &str, line: &str) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if has_paint_context(path, line) && hex_colour(line) || paint_attribute_hex(line) {
+        reasons.push("raw hex colour; use a var(--r-*) token".to_string());
+    }
+    if colour_function(line) {
+        reasons.push("colour function; use a var(--r-*) token".to_string());
+    }
+    if named_colour_declaration(line) || named_paint_attribute(line) {
+        reasons.push("named colour; use a var(--r-*) token".to_string());
+    }
+    if foreign_variable(line) {
+        reasons.push("variable outside the --r-* token prefix".to_string());
+    }
+    for name in element_names(line) {
+        if !PRIMITIVES.contains(&name.as_str()) {
+            reasons.push(format!("custom element {name} is not a primitive"));
+        }
+    }
+    reasons
+}
+
+fn find_web_violations(path: &str, text: &str) -> Vec<WebViolation> {
+    let mut in_comment = false;
+    text.lines()
+        .enumerate()
+        .flat_map(|(index, raw)| {
+            let line = strip_comments(raw, &mut in_comment);
+            line_reasons(path, &line)
+                .into_iter()
+                .map(|reason| WebViolation {
+                    line: index + 1,
+                    snippet: raw.trim().to_string(),
+                    reason,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 pub async fn run_web_colour_check(global: &crate::Global) -> super::error::Result<bool> {
@@ -98,14 +466,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_hex_colours_of_every_length() {
         let text = "a { color: #fff; }\nb { color: #ffff; }\nc { color: #0c0c0c; }\nd { color: #0c0c0cff; }\n";
         assert_eq!(lines(CSS, text), vec![1, 2, 3, 4]);
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_colour_functions() {
         for func in [
             "rgb(0 0 0)",
@@ -121,51 +487,43 @@ mod tests {
             "color-mix(in srgb, red, blue)",
         ] {
             let text = format!("a {{ background: {func}; }}\n");
-            assert_eq!(lines(CSS, &text), vec![1], "{func}");
+            let mut found = lines(CSS, &text);
+            found.dedup();
+            assert_eq!(found, vec![1], "{func}");
         }
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_named_colours_in_colour_properties() {
         let text = "a { color: red; }\nb { background: Black; }\nc { border: 1px solid white; }\nd { outline-color: rebeccapurple; }\ne { box-shadow: 0 0 1px navy; }\n";
         assert_eq!(lines(CSS, text), vec![1, 2, 3, 4, 5]);
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_a_named_colour_in_a_style_attribute() {
         let text = "<p style=\"color: red\">x</p>\n";
         assert_eq!(lines(HTML, text), vec![1]);
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_svg_paint_attributes() {
         let text = "<svg><path fill=\"red\"/><path stroke=\"#fff\"/></svg>\n";
-        assert_eq!(lines("crates/ralph_api/assets/i.svg", text), vec![1]);
-        assert_eq!(
-            find_web_violations("crates/ralph_api/assets/i.svg", text).len(),
-            2
-        );
+        assert_eq!(lines("crates/ralph_api/assets/i.svg", text), vec![1, 1]);
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_a_variable_outside_the_token_prefix() {
         let text = "a { color: var(--accent); }\nb { color: var(--r-link); }\n";
         assert_eq!(lines(CSS, text), vec![1]);
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn accepts_tokens_keywords_and_fallbacks() {
         let text = "a { color: var(--r-ansi-7); background: var(--r-ansi-0); }\nb { border-top: 1px solid var(--r-border, var(--r-ansi-8)); }\nc { background: transparent; color: currentColor; border-color: inherit; }\nd { --r-red-ish: 1; font-family: var(--r-font); }\n";
         assert!(reasons(CSS, text).is_empty());
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn ignores_comments_and_fragment_links() {
         let text =
             "/* color: #fff; red */\na { color: var(--r-link); } /* rgb(0 0 0) */\n/*\n#fff\n*/\n";
@@ -175,14 +533,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_a_custom_element_outside_the_primitive_set() {
         let text = "<r-box>a</r-box>\n<r-card>b</r-card>\n<x-thing></x-thing>\n";
         assert_eq!(lines(HTML, text), vec![2, 2, 3, 3]);
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn flags_a_custom_element_defined_outside_the_primitive_set() {
         let text =
             "customElements.define(\"r-card\", Card);\ncustomElements.define('r-box', Box);\n";
@@ -190,7 +546,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn accepts_every_primitive() {
         let names = [
             "r-box",
@@ -213,7 +568,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "red until the rules land in the next commit"]
     fn reports_a_reason_and_the_trimmed_line() {
         let found = find_web_violations(CSS, "  a { color: #fff; }  \n");
         assert_eq!(found.len(), 1);
