@@ -169,23 +169,23 @@ fn the_exit_sits_on_its_own_line_after_the_brief() {
 
 #[test]
 fn the_styled_status_has_ansi_and_the_plain_status_has_none() {
-    let styled = render_status_styled(&file(), WIDE);
+    let styled = render_status_styled(&file(), WIDE, TRUST);
     assert!(styled.contains('\x1b'), "{styled:?}");
-    assert!(!render_status(&file(), WIDE).contains('\x1b'));
+    assert!(!render_status(&file(), WIDE, TRUST).contains('\x1b'));
     assert!(!render_run(&plan()).contains('\x1b'));
 }
 
 #[test]
 fn stripping_the_styled_status_gives_the_plain_status() {
     for width in [WIDE, NARROW] {
-        let styled = render_status_styled(&file(), width);
-        assert_eq!(strip(&styled), render_status(&file(), width));
+        let styled = render_status_styled(&file(), width, TRUST);
+        assert_eq!(strip(&styled), render_status(&file(), width, TRUST));
     }
 }
 
 #[test]
 fn the_exit_command_is_in_code_style_and_the_label_is_dim() {
-    let styled = render_status_styled(&file(), WIDE);
+    let styled = render_status_styled(&file(), WIDE, TRUST);
     assert!(
         styled.contains("\x1b[2mexit:\x1b[0m \x1b[36m`cargo xtask lint`\x1b[0m exits 0"),
         "{styled:?}"
@@ -203,7 +203,7 @@ fn a_command_wrapped_over_two_lines_is_styled_on_both() {
         approved: None,
         stopped: None,
     };
-    let styled = render_status_styled(&file, NARROW);
+    let styled = render_status_styled(&file, NARROW, TRUST);
     let lines: Vec<&str> = styled
         .lines()
         .skip_while(|line| !line.contains("exit:"))
@@ -233,7 +233,7 @@ fn the_brief_the_model_sees_has_no_escape_character() {
 
 fn run_file_approved() -> RunFile {
     RunFile {
-        approved: Some(plan_hash(&plan())),
+        approved: Some(signed(&plan())),
         ..file()
     }
 }

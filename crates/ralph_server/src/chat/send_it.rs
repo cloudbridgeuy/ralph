@@ -3,16 +3,20 @@ use crate::chat::memory::Store;
 use crate::chat::session::{Emit, Event};
 use crate::warn::warn_if_err;
 use crate::watches::{locked, OutcomeSlot};
+use crate::wire::store::current_uid;
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
 use ralph_core::chat_send_it::{
-    approve, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
-    render_status_styled, start_run, stop_file, tick, with_reply, write_run, Action, Driving,
-    Ended, Limits, RunFile, Seen, StepResult, Ticked,
+    approval_refusal, approve, parse_run, plan_hash, plan_warnings, propose_refusal, read_run,
+    refusal_line, render_status, render_status_styled, settle_check, start_run, stop_file, tick,
+    with_reply, write_run, Action, Driving, Ended, Limits, RunFile, Seen, Signing, StepResult,
+    Ticked, Trust,
 };
+use ralph_core::watch::WatchOutcome;
+use ralph_core::worker::{hex_encode, Report};
 use serde_json::Value;
 use std::fmt;
 use std::fs;
@@ -21,9 +25,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub const NO_RUN: &str = "No send-it run. Start one with /send-it <instructions>.";
+const KEY_BYTES: usize = 32;
+const NONCE_BYTES: usize = 16;
 const RUN_DIR: &str = "send-it";
 const RUN_FILE: &str = "run.toml";
 const TEMPLATE_DIR: &str = "templates";
+
+fn random_bytes<const N: usize>() -> Result<[u8; N], getrandom::Error> {
+    let mut bytes = [0u8; N];
+    getrandom::fill(&mut bytes)?;
+    Ok(bytes)
+}
 
 fn unreadable(path: &Path, error: io::Error) -> String {
     format!("Could not read {}: {error}", path.display())
@@ -35,6 +47,8 @@ pub struct SendIt {
     path: PathBuf,
     templates: PathBuf,
     limits: Limits,
+    key: Arc<[u8; KEY_BYTES]>,
+    live: Arc<Mutex<Option<String>>>,
     refused: Arc<Mutex<Option<String>>>,
     judged: Arc<Mutex<Option<StepResult>>>,
     answered: Arc<Mutex<Vec<String>>>,
@@ -51,8 +65,10 @@ impl fmt::Debug for Out {
 }
 
 impl SendIt {
-    pub fn new(store_dir: &Path, limits: Limits, emit: Emit) -> Self {
-        Self {
+    pub fn new(store_dir: &Path, limits: Limits, emit: Emit) -> Result<Self, getrandom::Error> {
+        Ok(Self {
+            key: Arc::new(random_bytes()?),
+            live: Arc::default(),
             log: store_dir.to_path_buf(),
             path: store_dir.join(RUN_DIR).join(RUN_FILE),
             templates: store_dir.join(RUN_DIR).join(TEMPLATE_DIR),
@@ -61,7 +77,7 @@ impl SendIt {
             judged: Arc::default(),
             answered: Arc::default(),
             out: Out(emit),
-        }
+        })
     }
 
     pub fn show(&self, line: impl fmt::Display) {
@@ -82,6 +98,7 @@ impl SendIt {
 
     pub fn save(&self, file: &RunFile) -> Result<(), String> {
         let text = write_run(file)?;
+        *locked(&self.live) = None;
         self.path
             .parent()
             .map_or(Ok(()), fs::create_dir_all)
@@ -89,12 +106,18 @@ impl SendIt {
             .map_err(|error| format!("Could not write {}: {error}", self.path.display()))
     }
 
+    fn gate<T>(&self, check: impl FnOnce(Trust) -> T) -> T {
+        let live = locked(&self.live).clone();
+        check(Trust {
+            key: self.key.as_slice(),
+            live: live.as_deref(),
+        })
+    }
+
     pub fn allowed(&self) -> Option<Vec<Action>> {
-        self.load()
-            .ok()
-            .flatten()
-            .filter(RunFile::is_approved)
-            .map(|file| file.plan.allowed)
+        let file = self.load().ok().flatten()?;
+        self.gate(|trust| file.is_approved(trust))
+            .then_some(file.plan.allowed)
     }
 
     pub fn refuse(&self, tool: String) {
@@ -110,7 +133,8 @@ impl SendIt {
     }
 
     pub fn refusal(&self) -> Option<String> {
-        propose_refusal(self.load().ok().flatten().as_ref())
+        let existing = self.load().ok().flatten();
+        self.gate(|trust| propose_refusal(existing.as_ref(), trust))
     }
 
     pub fn current_hash(&self) -> Option<String> {
@@ -139,6 +163,7 @@ impl SendIt {
     }
 
     pub fn off(&self) -> String {
+        *locked(&self.live) = None;
         match fs::remove_file(&self.path) {
             Ok(()) => "send-it off: the run plan is deleted.".to_string(),
             Err(error) if error.kind() == io::ErrorKind::NotFound => NO_RUN.to_string(),
@@ -208,11 +233,11 @@ impl SendIt {
 
     pub fn status(&self, width: usize) -> Screen {
         match self.load() {
-            Ok(Some(file)) => Screen {
-                text: render_status(&file, width),
-                styled: render_status_styled(&file, width),
+            Ok(Some(file)) => self.gate(|trust| Screen {
+                text: render_status(&file, width, trust),
+                styled: render_status_styled(&file, width, trust),
                 shown: Some(plan_hash(&file.plan)),
-            },
+            }),
             Ok(None) => Screen::text(NO_RUN),
             Err(text) => Screen::text(text),
         }
@@ -243,15 +268,46 @@ impl SendIt {
             Err(text) => return (text, None),
         };
         locked(&self.answered).clear();
-        let approved = approve(&file, shown, typed_at_prompt)
-            .and_then(|approved| self.save(&approved).map(|()| approved));
-        match approved {
+        let refused = self
+            .gate(|trust| approval_refusal(&file, trust))
+            .map_or_else(String::new, |refusal| {
+                format!("{}\n", refusal_line(refusal))
+            });
+        match self.signed_approval(&file, shown, typed_at_prompt) {
             Ok(approved) => (
-                format!("Plan {} approved. Running it.", plan_hash(&approved.plan)),
-                start_run(&approved, seen),
+                format!(
+                    "{refused}Plan {} approved. Running it.",
+                    plan_hash(&approved.plan)
+                ),
+                self.gate(|trust| start_run(&approved, seen, trust)),
             ),
-            Err(text) => (text, None),
+            Err(text) => (format!("{refused}{text}"), None),
         }
+    }
+
+    fn signed_approval(
+        &self,
+        file: &RunFile,
+        shown: Option<&str>,
+        typed_at_prompt: bool,
+    ) -> Result<RunFile, String> {
+        let nonce = hex_encode(&random_bytes::<NONCE_BYTES>().map_err(|error| error.to_string())?);
+        let at = chrono::Utc::now().to_rfc3339();
+        let signing = Signing {
+            key: self.key.as_slice(),
+            at: &at,
+            peer_uid: current_uid(),
+            nonce: &nonce,
+        };
+        let approved = approve(file, shown, typed_at_prompt, &signing)?;
+        self.save(&approved)?;
+        *locked(&self.live) = Some(nonce);
+        Ok(approved)
+    }
+
+    pub fn settle(&self, driving: &Driving, outcome: &WatchOutcome, reports: &[Report]) -> Ticked {
+        let file = self.load().ok().flatten();
+        self.gate(|trust| settle_check(driving, file.as_ref(), outcome, reports, trust))
     }
 
     pub fn tick(&self, driving: &Driving, watched: Option<&OutcomeSlot>, ended: Ended) -> Ticked {
@@ -261,17 +317,20 @@ impl SendIt {
         let judged = locked(&self.judged).take();
         let answered = std::mem::take(&mut *locked(&self.answered));
         let reply = ended.replied.then(|| self.last_reply()).flatten();
-        let ticked = tick(
-            driving,
-            &Ended {
-                file: file.as_ref(),
-                watched: watched.as_ref(),
-                refused: refused.as_deref(),
-                answered: &answered,
-                step_result: judged.as_ref(),
-                ..ended
-            },
-        );
+        let ticked = self.gate(|trust| {
+            tick(
+                driving,
+                &Ended {
+                    file: file.as_ref(),
+                    trust,
+                    watched: watched.as_ref(),
+                    refused: refused.as_deref(),
+                    answered: &answered,
+                    step_result: judged.as_ref(),
+                    ..ended
+                },
+            )
+        });
         match reply {
             Some(reply) => with_reply(ticked, &reply),
             None => ticked,
@@ -387,14 +446,14 @@ mod tests {
     }
 
     fn quiet(dir: &Path) -> SendIt {
-        SendIt::new(dir, LIMITS, Arc::new(|_| {}))
+        SendIt::new(dir, LIMITS, Arc::new(|_| {})).unwrap()
     }
 
     fn recording(dir: &Path) -> (SendIt, Arc<Mutex<Vec<Event>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&events);
         let emit: Emit = Arc::new(move |event| locked(&sink).push(event));
-        (SendIt::new(dir, LIMITS, emit), events)
+        (SendIt::new(dir, LIMITS, emit).unwrap(), events)
     }
 
     #[test]
@@ -469,27 +528,43 @@ mod tests {
     fn propose_refuses_while_an_approved_plan_exists() {
         let dir = tempfile::tempdir().unwrap();
         let send_it = quiet(dir.path());
-        let plan = parse_run(&plan_args(), LIMITS).unwrap();
-        let hash = plan_hash(&plan);
-        let draft = RunFile {
-            plan,
-            approved: None,
-            stopped: None,
-        };
-        send_it.save(&draft).unwrap();
+        let hash = plan_hash(&parse_run(&plan_args(), LIMITS).unwrap());
+        send_it.propose(&plan_args()).unwrap();
         assert!(send_it.propose(&plan_args()).is_ok());
-        send_it
-            .save(&RunFile {
-                approved: Some(hash.clone()),
-                ..draft
-            })
-            .unwrap();
+        send_it.go(
+            Some(&hash),
+            true,
+            &Seen {
+                last: &HashMap::new(),
+                running: &[],
+            },
+        );
         assert_eq!(
             send_it.propose(&plan_args()),
             Err(format!(
                 "Plan {hash} is approved and active. Stop it with /send-it off first."
             ))
         );
+    }
+
+    #[test]
+    fn go_says_why_a_hand_written_approval_was_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = quiet(dir.path());
+        send_it.propose(&plan_args()).unwrap();
+        let hash = send_it.status(80).shown.unwrap();
+        let text = fs::read_to_string(&send_it.path).unwrap();
+        fs::write(&send_it.path, format!("approved = \"{hash}\"\n{text}")).unwrap();
+        let line =
+            "Approval in run.toml refused: not signed by this chat. Type /send-it go to approve.";
+        assert!(send_it.status(200).text.lines().any(|row| row == line));
+        let seen = Seen {
+            last: &HashMap::new(),
+            running: &[],
+        };
+        let (shown, _) = send_it.go(Some(&hash), true, &seen);
+        assert!(shown.starts_with(line), "{shown}");
+        assert!(shown.contains("approved. Running it."), "{shown}");
     }
 
     struct Editor(Option<&'static str>);

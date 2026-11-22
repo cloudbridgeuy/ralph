@@ -148,7 +148,7 @@ fn done_off_and_take_over_prefill_nothing() {
 #[test]
 fn a_changed_plan_prefills_send_it_status() {
     assert_eq!(
-        run_end_prefill(&Next::Stop(StopReason::PlanChanged)).as_deref(),
+        run_end_prefill(&Next::Stop(StopReason::PlanChanged(None))).as_deref(),
         Some("/send-it status")
     );
 }

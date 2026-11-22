@@ -56,6 +56,9 @@ jobs:
       - name: Test vendored reedline
         run: cargo test --locked --manifest-path vendor/reedline/Cargo.toml --features external_printer --target-dir target/vendor-reedline
 
+      - name: Test vendored tiny_http
+        run: cargo test --locked --no-fail-fast --manifest-path vendor/tiny_http/Cargo.toml --target-dir target/vendor-tiny_http
+
   build:
     name: Build Check
     runs-on: ${{ matrix.os }}

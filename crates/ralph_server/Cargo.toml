@@ -19,6 +19,7 @@ blocking = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
+getrandom = { workspace = true }
 libc = { workspace = true }
 ralph_core = { workspace = true }
 serde = { workspace = true }

@@ -64,9 +64,9 @@ fn the_styled_status_dims_the_plan_hash() {
         stopped: None,
     };
     let hash = plan_hash(&file.plan);
-    let styled = render_status_styled(&file, WIDE);
+    let styled = render_status_styled(&file, WIDE, TRUST);
     let last = styled.lines().last().unwrap();
     assert!(last.contains(&format!("\x1b[2m{hash}\x1b[0m")), "{last:?}");
-    assert_eq!(strip(&styled), render_status(&file, WIDE));
-    assert!(!render_status(&file, WIDE).contains('\x1b'));
+    assert_eq!(strip(&styled), render_status(&file, WIDE, TRUST));
+    assert!(!render_status(&file, WIDE, TRUST).contains('\x1b'));
 }

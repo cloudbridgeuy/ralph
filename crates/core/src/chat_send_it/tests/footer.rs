@@ -41,7 +41,7 @@ fn stopped_file() -> RunFile {
 }
 
 fn approved_file() -> RunFile {
-    approve(&plain_file(), Some(&plan_hash(&plan())), true).unwrap()
+    signed_go(&plain_file(), Some(&plan_hash(&plan())), true).unwrap()
 }
 
 #[test]
@@ -110,10 +110,10 @@ fn the_footer_is_one_status_line_and_always_last() {
             format!("{hash} · stopped at step 2/4 · /send-it go to resume from step 2"),
         ),
     ] {
-        let status = render_status(&file, WIDE);
+        let status = render_status(&file, WIDE, TRUST);
         assert_eq!(status.lines().last(), Some(last.as_str()), "{status}");
         assert_eq!(status.matches(&hash).count(), 1, "{status}");
-        let styled = render_status_styled(&file, WIDE);
+        let styled = render_status_styled(&file, WIDE, TRUST);
         assert_eq!(strip(&styled).lines().last(), Some(last.as_str()));
     }
 }
@@ -122,7 +122,7 @@ fn the_footer_is_one_status_line_and_always_last() {
 fn the_footer_is_last_after_the_warning_and_the_grants() {
     let mut file = file_with(serde_json::json!([]));
     file.plan.grants = vec![Grant::TurnCap { turns: 30 }];
-    let status = render_status(&file, WIDE);
+    let status = render_status(&file, WIDE, TRUST);
     let lines: Vec<&str> = status.lines().collect();
     assert!(lines[lines.len() - 2].starts_with("  - raise"), "{status}");
     assert!(
@@ -142,7 +142,7 @@ fn the_brief_has_no_status_footer() {
 fn the_styled_footer_dims_the_hash_and_colours_the_status() {
     let hash = plan_hash(&plan());
     let last = |file: &RunFile| {
-        render_status_styled(file, WIDE)
+        render_status_styled(file, WIDE, TRUST)
             .lines()
             .last()
             .unwrap()
@@ -155,8 +155,8 @@ fn the_styled_footer_dims_the_hash_and_colours_the_status() {
 
 #[test]
 fn a_wrapped_footer_stays_the_last_lines_and_strips_to_the_plain_text() {
-    let styled = render_status_styled(&stopped_file(), NARROW);
-    let plain = render_status(&stopped_file(), NARROW);
+    let styled = render_status_styled(&stopped_file(), NARROW, TRUST);
+    let plain = render_status(&stopped_file(), NARROW, TRUST);
     assert_eq!(strip(&styled), plain);
     assert!(plain.lines().count() > 1);
     assert!(
@@ -168,7 +168,7 @@ fn a_wrapped_footer_stays_the_last_lines_and_strips_to_the_plain_text() {
 
 #[test]
 fn the_styled_warning_is_coloured() {
-    let styled = render_status_styled(&file_with(serde_json::json!([])), WIDE);
+    let styled = render_status_styled(&file_with(serde_json::json!([])), WIDE, TRUST);
     let warning = styled
         .lines()
         .find(|line| line.contains("Warning:"))

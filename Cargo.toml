@@ -1,6 +1,6 @@
 [workspace]
 members = ["xtask/", "crates/*"]
-exclude = ["vendor/reedline"]
+exclude = ["vendor/reedline", "vendor/tiny_http"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -75,6 +75,8 @@ env_logger = "0.11"
 log = "0.4"
 
 # Unix process control
+getrandom = "0.4"
+hmac = "0.13"
 libc = "0.2"
 prettytable = "0.10"
 ralph_core = { path = "crates/core" }
@@ -149,3 +151,4 @@ toml = "1.1.8"
 
 [patch.crates-io]
 reedline = { path = "vendor/reedline" }
+tiny_http = { path = "vendor/tiny_http" }

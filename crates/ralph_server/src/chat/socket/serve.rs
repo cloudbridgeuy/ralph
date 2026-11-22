@@ -396,7 +396,8 @@ mod tests {
                     verify: VerifyMode::Off,
                 },
                 Arc::new(|_| {}),
-            ),
+            )
+            .unwrap(),
             watches: Watches::new(Arc::clone(&inbox), dir, Duration::from_secs(60)),
             inbox,
         }
