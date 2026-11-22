@@ -30,8 +30,3 @@ fn font_notices_keeps_font_order_and_names_the_web() {
     assert_eq!(out, format!("{FONT_HEADER}B\n\nb\n\nA\n\na\n\n"));
     assert!(FONT_HEADER.contains("ralph web"));
 }
-
-#[test]
-fn font_notices_with_no_fonts_is_empty() {
-    assert_eq!(font_notices(&[]), "");
-}

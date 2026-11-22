@@ -6,9 +6,6 @@ const FONT_HEADER: &str = "The ralph web shell bundles fonts under their own lic
 Their notices follow.\n\n";
 
 pub fn font_notices(fonts: &[(&str, &str)]) -> String {
-    if fonts.is_empty() {
-        return String::new();
-    }
     fonts
         .iter()
         .fold(FONT_HEADER.to_string(), |mut out, (name, text)| {
