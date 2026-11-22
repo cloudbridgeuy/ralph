@@ -5,6 +5,7 @@ use ralph_core::chat::{CustomPrompt, ReplyImages};
 use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
+use ralph_core::worker::ATTACHMENTS_DIR;
 use ralph_server::chat::backend::{ChatBackend, ClaudeBackend};
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::keepalive::Stamp;
@@ -89,13 +90,13 @@ pub(crate) struct Assembled {
     pub guard: SocketGuard,
     pub plugin: Option<tempfile::TempDir>,
     pub skill_dirs: Vec<PathBuf>,
-    pub last_ping: Stamp,
     pub send_it_warnings: Vec<String>,
     pub close: CloseGuard,
 }
 
 pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn std::error::Error>> {
     let (store_dir, settings) = (options.store_dir, options.settings);
+    std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let config = &settings.loaded.config;
     let chat_config = &config.chat;
     let mut wiring = Wiring::open(&WiringConfig {
@@ -168,7 +169,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
             options.worktree_dir,
         ),
         live,
-        last_ping: Arc::clone(&last_ping),
+        last_ping,
         run,
         caps,
     }));
@@ -201,7 +202,6 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         guard: wiring.guard,
         plugin: wiring.plugin,
         skill_dirs: wiring.skill_dirs,
-        last_ping,
         send_it_warnings,
         close,
     })

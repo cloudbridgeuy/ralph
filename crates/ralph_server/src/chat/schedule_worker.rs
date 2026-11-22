@@ -38,7 +38,8 @@ pub fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
         .collect()
 }
 
-pub fn tick_workers(monitor: &Monitor) {
+pub fn tick_workers(monitor: &Monitor, starts: &mut Vec<std::thread::JoinHandle<()>>) {
+    starts.retain(|start| !start.is_finished());
     let tasks = monitor.schedule.load_all();
     if !tasks.iter().any(is_worker_task) || monitor.watches.is_closing() {
         return;
@@ -61,7 +62,9 @@ pub fn tick_workers(monitor: &Monitor) {
         end_task(monitor, task, end, now);
     }
     for fire in plan.fire {
-        start_task(monitor, fire, now);
+        if let Some(start) = start_task(monitor, fire, now) {
+            starts.push(start);
+        }
     }
 }
 
@@ -108,9 +111,13 @@ fn settle_done(workers: &Workers, worker: &str) {
     }
 }
 
-fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono::Utc>) {
+fn start_task(
+    monitor: &Monitor,
+    fire: WorkerFire,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<std::thread::JoinHandle<()>> {
     if crate::schedule_rearm::refuse_open_branch(monitor, fire.task, now) {
-        return;
+        return None;
     }
     let task = Task {
         status: TaskStatus::Running,
@@ -119,21 +126,19 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
         ..fire.task.clone()
     };
     let offset = *chrono::Local::now().offset();
-    let Some(brief) = worker_brief(&task, now, offset) else {
-        return;
-    };
+    let brief = worker_brief(&task, now, offset)?;
     if let Err(error) = monitor.schedule.save(&task) {
         crate::warn::warn(format!(
             "marking scheduled task {} running: {error}",
             task.id
         ));
-        return;
+        return None;
     }
     let workers = monitor.workers.clone();
     let store = monitor.schedule.clone();
     let inbox = Arc::clone(&monitor.inbox);
     let starting = Starting::enter(monitor, &task.id);
-    std::thread::spawn(move || {
+    Some(std::thread::spawn(move || {
         let _starting = starting;
         let worker = worker_id(&task.id);
         if !is_still_running(&store.load_all(), &task.id) {
@@ -166,7 +171,7 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
                 store.remove(&task.id);
             }
         }
-    });
+    }))
 }
 
 #[cfg(test)]

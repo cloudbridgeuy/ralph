@@ -39,7 +39,7 @@ const POISONED: &str = "ralph serve: internal state unavailable";
 struct Host {
     supervisor: Mutex<Supervisor>,
     sessions: Sessions,
-    clients: Clients,
+    clients: Arc<Clients>,
     store_dir: PathBuf,
     claim: Mutex<Option<ChatClaim>>,
     stop: AtomicBool,
@@ -57,7 +57,7 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let host = Arc::new(Host {
         supervisor: Mutex::new(supervisor),
         sessions: Sessions::default(),
-        clients: Clients::default(),
+        clients: Arc::default(),
         store_dir: store_dir.clone(),
         claim: Mutex::new(None),
         stop: AtomicBool::new(false),
@@ -83,12 +83,25 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         if signal::is_terminated() || host.stop.load(Ordering::SeqCst) {
             let since = draining_since.get_or_insert_with(Instant::now);
             let effects = step(&host.supervisor, Input::Stop)?;
-            drive(&host, effects)?;
+            for effect in effects {
+                if matches!(effect, Effect::Close(_)) {
+                    let host = Arc::clone(&host);
+                    std::thread::Builder::new()
+                        .name("serve-close".into())
+                        .spawn(move || {
+                            if let Err(error) = drive(&host, vec![effect]) {
+                                warn(format!("ralph serve: close failed: {error}"));
+                            }
+                        })?;
+                } else {
+                    drive(&host, vec![effect])?;
+                }
+            }
             if host.exited.load(Ordering::SeqCst) {
                 break;
             }
             if since.elapsed() > DRAIN_BOUND {
-                warn("ralph serve: a turn did not end in time; exiting".to_string());
+                warn("ralph serve: a session did not close in time; exiting".to_string());
                 break;
             }
         }
@@ -124,8 +137,10 @@ fn drive(host: &Host, effects: Vec<Effect>) -> Result<(), Box<dyn std::error::Er
                     .claim
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(held);
-                host.sessions
-                    .insert(SessionKey::Main, open_session(store.dir(), Vec::new())?);
+                let key = SessionKey::Main;
+                let session =
+                    open_session(&key, store.dir(), Vec::new(), Arc::clone(&host.clients))?;
+                host.sessions.insert(key, session);
             }
             Effect::Open(SessionKey::Thread(name)) => open_thread_session(host, &name)?,
             Effect::Close(key) => {
@@ -156,9 +171,9 @@ fn open_thread_session(host: &Host, name: &ThreadName) -> Result<(), Box<dyn std
     let dir = thread_dir(&config_root(&host.store_dir), name);
     let model_args = model_args(&host.store_dir, Some(name), None)?;
     let claim = claim_closed(&dir, name)?;
-    let session = open_session(&dir, model_args)?.holding(claim);
-    host.sessions
-        .insert(SessionKey::Thread(name.clone()), session);
+    let key = SessionKey::Thread(name.clone());
+    let session = open_session(&key, &dir, model_args, Arc::clone(&host.clients))?.holding(claim);
+    host.sessions.insert(key, session);
     Ok(())
 }
 

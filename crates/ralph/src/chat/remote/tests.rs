@@ -18,6 +18,23 @@ fn turn_done_finishes_the_turn() {
 }
 
 #[test]
+fn inbox_push_displays_the_session_report_as_a_notice() {
+    for (thread, label) in [(None, "main"), (Some("side"), "side")] {
+        let frame = serde_json::json!({"v": VERSION, "id": 0, "body": {
+            "type": "inbox", "thread": thread, "unread": 3,
+            "report": {"worker": "w1", "status": "done", "at": "now", "text": "tests\npassed"}
+        }});
+        let step = decode_frame::<ServerMsg>(&frame.to_string()).map(|frame| on_frame(frame.body));
+        assert_eq!(
+            step,
+            Ok(Step::Notice(format!(
+                "{label}/w1 done (3 unread): tests passed"
+            )))
+        );
+    }
+}
+
+#[test]
 fn an_error_frame_fails_the_turn() {
     let step = on_frame(ServerMsg::Error {
         message: "busy".into(),
