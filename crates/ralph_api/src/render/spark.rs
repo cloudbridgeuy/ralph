@@ -60,10 +60,6 @@ fn polyline(values: &[f64], width: f64, height: f64) -> String {
         .join(" ")
 }
 
-pub fn spark_points(values: &[f64], width: f64, height: f64) -> String {
-    polyline(&finite(values), dimension(width), dimension(height))
-}
-
 fn number(value: f64) -> String {
     let value = value + 0.0;
     if value == 0.0 {
@@ -99,7 +95,11 @@ pub fn spark_svg(values: &[f64], width: f64, height: f64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{number, spark_points, spark_svg};
+    use super::{dimension, finite, number, polyline, spark_svg};
+
+    fn spark_points(values: &[f64], width: f64, height: f64) -> String {
+        polyline(&finite(values), dimension(width), dimension(height))
+    }
     use crate::render::golden::assert_golden;
 
     fn svg(values: &[f64]) -> String {

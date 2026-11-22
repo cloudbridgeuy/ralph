@@ -19,7 +19,7 @@ pub use frame::frame;
 pub use kv::kv;
 pub use pill::{pill, Icon, PillShape};
 pub use rule::rule;
-pub use spark::{spark_points, spark_svg};
+pub use spark::spark_svg;
 pub use spinner::spinner;
 pub use status::status;
 pub use table::table;

@@ -2,7 +2,7 @@ mod addr;
 mod admit;
 mod assets;
 mod catalogue;
-pub mod render;
+pub(crate) mod render;
 mod route;
 mod server;
 mod token;
