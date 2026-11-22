@@ -1,6 +1,22 @@
+mod empty;
+mod error;
 mod escape;
+mod frame;
+#[cfg(test)]
+mod golden;
+mod kv;
+mod pill;
+mod rule;
+mod status;
 
+pub use empty::empty;
+pub use error::error;
 pub use escape::escape;
+pub use frame::frame;
+pub use kv::kv;
+pub use pill::{pill, Icon, PillShape};
+pub use rule::rule;
+pub use status::status;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
@@ -19,6 +35,16 @@ impl Tone {
             Tone::Warn => "warn",
             Tone::Info => "info",
             Tone::Accent => "accent",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tone::Ok => "OK",
+            Tone::Bad => "Error",
+            Tone::Warn => "Warning",
+            Tone::Info => "Info",
+            Tone::Accent => "Note",
         }
     }
 }
@@ -51,6 +77,15 @@ mod tests {
             .map(Tone::as_str)
             .collect();
         assert_eq!(names, ["ok", "bad", "warn", "info", "accent"]);
+    }
+
+    #[test]
+    fn tone_labels_are_words() {
+        let labels: Vec<&str> = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent]
+            .into_iter()
+            .map(Tone::label)
+            .collect();
+        assert_eq!(labels, ["OK", "Error", "Warning", "Info", "Note"]);
     }
 
     #[test]
