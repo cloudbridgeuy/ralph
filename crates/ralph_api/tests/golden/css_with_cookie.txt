@@ -65,7 +65,248 @@ main {
   padding: 0.5rem 1ch;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(36ch, 1fr));
+  gap: 1ch;
+}
+
+[data-theme] {
+  min-width: 0;
+  padding: 0.25rem 1ch;
+  background: var(--r-ansi-0);
+  color: var(--r-ansi-7);
+}
+
+.group,
+.state {
+  margin: 0.5rem 0;
+}
+
+.group h3,
+.state h4 {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 400;
+  color: var(--r-ansi-8);
+}
+
+r-box {
+  display: block;
+  margin: 0.25rem 0;
+  padding: 0.25rem 1ch;
+  border: 1px solid var(--r-border, var(--r-ansi-8));
+  overflow-wrap: anywhere;
+}
+
+r-box[shape="square"] {
+  border-radius: 0;
+}
+
+r-box[shape="round"] {
+  border-radius: 0.75rem;
+}
+
+r-box[shape="heavy"] {
+  border-width: 3px;
+  border-radius: 0;
+}
+
+r-box .title {
+  font-weight: 700;
+}
+
+r-rule {
+  display: block;
+  margin: 0.5rem 0;
+  border-top: 1px solid var(--r-border, var(--r-ansi-8));
+}
+
+r-table {
+  display: block;
+  overflow-x: auto;
+}
+
+r-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+r-table th,
+r-table td {
+  padding: 0 1ch;
+  text-align: left;
+  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+  overflow-wrap: anywhere;
+}
+
+r-table th {
+  font-weight: 700;
+}
+
+r-kv {
+  display: block;
+}
+
+r-kv dl {
+  margin: 0;
+}
+
+r-kv div {
+  display: flex;
+  gap: 2ch;
+}
+
+r-kv dt {
+  min-width: 12ch;
+  color: var(--r-ansi-8);
+  overflow-wrap: anywhere;
+}
+
+r-kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+r-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5ch;
+  max-width: 100%;
+  padding: 0 1ch;
+  border: 1px solid currentColor;
+  overflow-wrap: anywhere;
+}
+
+r-pill[shape="square"] {
+  border-radius: 0;
+}
+
+r-pill[shape="round"] {
+  border-radius: 999px;
+}
+
+r-pill .icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+r-status {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+r-status .mark {
+  font-weight: 700;
+}
+
+r-pill[tone="ok"],
+r-status[tone="ok"] {
+  color: var(--r-ansi-2);
+}
+
+r-pill[tone="bad"],
+r-status[tone="bad"] {
+  color: var(--r-ansi-1);
+}
+
+r-pill[tone="warn"],
+r-status[tone="warn"] {
+  color: var(--r-ansi-3);
+}
+
+r-pill[tone="info"],
+r-status[tone="info"] {
+  color: var(--r-ansi-4);
+}
+
+r-pill[tone="accent"],
+r-status[tone="accent"] {
+  color: var(--r-ansi-5);
+}
+
+r-empty {
+  display: block;
+  color: var(--r-ansi-8);
+  overflow-wrap: anywhere;
+}
+
+r-error {
+  display: block;
+  padding-left: 1ch;
+  border-left: 2px solid currentColor;
+  color: var(--r-ansi-1);
+  overflow-wrap: anywhere;
+}
+
+r-spinner {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+r-spinner::before {
+  content: "";
+  display: block;
+  width: 1em;
+  height: 1em;
+  border: 1px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation:
+    r-show 1ms linear 200ms both,
+    r-spin 800ms linear infinite;
+}
+
+r-spark {
+  display: inline-block;
+  max-width: 100%;
+}
+
+r-spark .spark {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+r-spark .line {
+  vector-effect: non-scaling-stroke;
+}
+
+@keyframes r-show {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes r-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  r-spinner::before {
+    animation: none;
+  }
+
   * {
     animation: none !important;
     transition: none !important;

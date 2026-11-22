@@ -82,6 +82,13 @@ fn ansi_lines(table: &[Rgb; 16], indent: &str) -> String {
         .collect()
 }
 
+fn theme_block(theme: &str, table: &[Rgb; 16]) -> String {
+    format!(
+        "[data-theme=\"{theme}\"] {{\n{}}}\n",
+        ansi_lines(table, "  ")
+    )
+}
+
 pub fn tokens_css(input: &TokensInput) -> String {
     let mut css = String::from(":root {\n");
     css.push_str(&format!("  --r-font: {};\n", sanitize_font(input.font)));
@@ -90,6 +97,8 @@ pub fn tokens_css(input: &TokensInput) -> String {
     css.push_str("}\n@media (prefers-color-scheme: light) {\n  :root {\n");
     css.push_str(&ansi_lines(input.ansi_light, "    "));
     css.push_str("  }\n}\n");
+    css.push_str(&theme_block("dark", input.ansi_dark));
+    css.push_str(&theme_block("light", input.ansi_light));
     css
 }
 
@@ -159,10 +168,18 @@ mod tests {
         for i in 0..16 {
             expected.push_str(&format!("    --r-ansi-{i}: #fffefd;\n"));
         }
-        expected.push_str("  }\n}\n");
+        expected.push_str("  }\n}\n[data-theme=\"dark\"] {\n");
+        for i in 0..16 {
+            expected.push_str(&format!("  --r-ansi-{i}: #010203;\n"));
+        }
+        expected.push_str("}\n[data-theme=\"light\"] {\n");
+        for i in 0..16 {
+            expected.push_str(&format!("  --r-ansi-{i}: #fffefd;\n"));
+        }
+        expected.push_str("}\n");
         assert_eq!(css, expected);
         assert!(css.starts_with(":root {\n  --r-font: monospace;\n  --r-ansi-0: #010203;\n"));
-        assert!(css.ends_with("    --r-ansi-15: #fffefd;\n  }\n}\n"));
+        assert!(css.ends_with("  --r-ansi-15: #fffefd;\n}\n"));
     }
 
     #[test]
@@ -204,7 +221,13 @@ mod tests {
     #[test]
     fn light_block_has_only_light_ansi_vars() {
         let css = render("x", &[slot("fg", ColorSpec::Ansi(3))]);
-        let light = css.split("@media").nth(1).unwrap();
+        let light = css
+            .split("@media")
+            .nth(1)
+            .unwrap()
+            .split("[data-theme")
+            .next()
+            .unwrap();
         assert!(!light.contains("--r-font"));
         assert!(!light.contains("--r-fg"));
         assert_eq!(light.matches("--r-").count(), 16);
@@ -224,8 +247,8 @@ mod tests {
         let line = css.lines().find(|l| l.contains("--r-font")).unwrap();
         assert_eq!(line, "  --r-font: a  body  x: y;");
         assert_eq!(line.matches(';').count(), 1);
-        assert_eq!(css.matches('{').count(), 3);
-        assert_eq!(css.matches('}').count(), 3);
+        assert_eq!(css.matches('{').count(), 5);
+        assert_eq!(css.matches('}').count(), 5);
     }
 
     #[test]
@@ -270,6 +293,37 @@ mod tests {
         assert_eq!(
             font_line("\"Fira Code\", 'Menlo', monospace"),
             "  --r-font: \"Fira Code\", 'Menlo', monospace;"
+        );
+    }
+
+    fn theme_block<'a>(css: &'a str, theme: &str) -> &'a str {
+        let start = css.find(&format!("[data-theme=\"{theme}\"] {{\n")).unwrap();
+        let rest = &css[start..];
+        &rest[..rest.find("}\n").unwrap()]
+    }
+
+    #[test]
+    fn theme_blocks_hold_only_their_ansi_table() {
+        let css = render("x", &[slot("fg", ColorSpec::Ansi(3))]);
+        let dark = theme_block(&css, "dark");
+        let light = theme_block(&css, "light");
+        assert_eq!(dark.matches("--r-").count(), 16);
+        assert_eq!(light.matches("--r-").count(), 16);
+        assert!(dark.contains("--r-ansi-0: #000000;"));
+        assert!(dark.contains("--r-ansi-15: #0f0f0f;"));
+        assert!(light.contains("--r-ansi-0: #646464;"));
+        assert!(light.contains("--r-ansi-15: #737373;"));
+        assert!(!dark.contains("--r-font") && !light.contains("--r-font"));
+        assert!(!dark.contains("--r-fg") && !light.contains("--r-fg"));
+    }
+
+    #[test]
+    fn theme_blocks_come_after_the_media_query() {
+        let css = render("x", &[]);
+        assert!(css.find("@media").unwrap() < css.find("[data-theme=\"dark\"]").unwrap());
+        assert!(
+            css.find("[data-theme=\"dark\"]").unwrap()
+                < css.find("[data-theme=\"light\"]").unwrap()
         );
     }
 }

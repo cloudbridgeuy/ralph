@@ -84,4 +84,89 @@ mod tests {
                 .all(|other| other.path != asset.path));
         }
     }
+
+    fn css() -> String {
+        String::from_utf8(bytes_of("/assets/app.css").to_vec()).unwrap()
+    }
+
+    #[test]
+    fn the_stylesheet_styles_every_primitive() {
+        let css = css();
+        for tag in [
+            "r-box",
+            "r-rule",
+            "r-table",
+            "r-kv",
+            "r-pill",
+            "r-status",
+            "r-empty",
+            "r-error",
+            "r-spinner",
+            "r-spark",
+        ] {
+            assert!(css.contains(&format!("\n{tag}")), "{tag}");
+        }
+    }
+
+    #[test]
+    fn the_stylesheet_has_the_three_box_shapes_and_two_pill_shapes() {
+        let css = css();
+        for selector in [
+            "r-box[shape=\"square\"]",
+            "r-box[shape=\"round\"]",
+            "r-box[shape=\"heavy\"]",
+            "r-pill[shape=\"square\"]",
+            "r-pill[shape=\"round\"]",
+        ] {
+            assert!(css.contains(selector), "{selector}");
+        }
+    }
+
+    #[test]
+    fn the_stylesheet_has_a_rule_for_every_tone() {
+        let css = css();
+        for tone in ["ok", "bad", "warn", "info", "accent"] {
+            assert!(css.contains(&format!("r-pill[tone=\"{tone}\"]")), "{tone}");
+            assert!(
+                css.contains(&format!("r-status[tone=\"{tone}\"]")),
+                "{tone}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_spinner_shows_after_200ms_from_zero_opacity() {
+        let css = css();
+        assert!(css.contains("r-spinner::before"));
+        assert!(css.contains("200ms both"));
+        assert!(css.contains("@keyframes r-show"));
+        assert!(css.contains("opacity: 0;"));
+    }
+
+    #[test]
+    fn reduced_motion_turns_the_spinner_animation_off() {
+        let css = css();
+        let media = css
+            .split("@media (prefers-reduced-motion: reduce)")
+            .nth(1)
+            .unwrap();
+        assert!(media.contains("r-spinner::before"));
+        assert!(media.contains("animation: none"));
+    }
+
+    #[test]
+    fn the_stylesheet_has_the_two_theme_columns_and_a_hidden_text_class() {
+        let css = css();
+        assert!(css.contains(".columns"));
+        assert!(css.contains("[data-theme]"));
+        assert!(css.contains(".sr-only"));
+    }
+
+    #[test]
+    fn the_stylesheet_paints_only_with_tokens() {
+        let css = css();
+        assert!(!css.contains("style="));
+        assert!(!css.contains(" #"));
+        assert!(!css.contains("rgb"));
+    }
 }
