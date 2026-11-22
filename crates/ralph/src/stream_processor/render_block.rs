@@ -6,6 +6,7 @@ use super::tool_results::{
 };
 use crate::markdown::MarkdownTheme;
 use crate::render::image::lookup_in;
+use crate::render::tool_renderers::render_script_invocation;
 use crate::render::{
     render_bash_invocation, render_bash_result, render_default_invocation, render_default_result,
     render_glob_invocation, render_glob_result, render_grep_invocation, render_grep_result,
@@ -82,9 +83,12 @@ fn render_invocation(ctx: &RenderContext, block: &ToolInvocationBlock) -> String
                 .collect();
             render_todowrite_invocation(ctx, &items)
         }
-        ToolInvocationVariant::Script { .. } => {
-            render_default_invocation(ctx, &block.tool_name, None)
-        }
+        ToolInvocationVariant::Script {
+            code,
+            allow_writes,
+            allow_spend,
+            timeout_secs,
+        } => render_script_invocation(ctx, code, *allow_writes, *allow_spend, *timeout_secs),
         ToolInvocationVariant::Default {
             key_argument,
             is_path,

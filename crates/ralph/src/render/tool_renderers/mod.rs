@@ -37,7 +37,8 @@ pub use types::{GrepInvocationParams, NotebookEditParams, TodoDisplayItem};
 // Re-export invocation renderers
 pub use invocations::{
     render_bash_invocation, render_default_invocation, render_glob_invocation,
-    render_grep_invocation, render_read_invocation, render_todowrite_invocation,
+    render_grep_invocation, render_read_invocation, render_script_invocation,
+    render_todowrite_invocation,
 };
 
 // Re-export result renderers
