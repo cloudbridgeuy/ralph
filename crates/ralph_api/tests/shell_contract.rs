@@ -1,0 +1,98 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
+#[allow(dead_code, reason = "each test crate uses a subset of the helpers")]
+mod common;
+
+use common::{assert_golden, Host, TestServer};
+
+fn golden_case(name: &str, method: &str, target: &str, headers: &[(&str, String)]) {
+    let server = TestServer::start();
+    let token = server.token().to_string();
+    let target = target.replace("{t}", &token);
+    let owned: Vec<(&str, String)> = headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                *name,
+                value
+                    .replace("{t}", &token)
+                    .replace("{c}", &server.cookie_name()),
+            )
+        })
+        .collect();
+    let borrowed: Vec<(&str, &str)> = owned.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    let reply = server.exchange(method, &target, Host::Own, &borrowed);
+    assert_golden(name, &reply.redacting(&token));
+}
+
+fn cookie() -> Vec<(&'static str, String)> {
+    vec![("Cookie", "{c}={t}".to_string())]
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn shell_token_redirect() {
+    golden_case("shell_token_redirect", "GET", "/?token={t}", &[]);
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn shell_with_cookie() {
+    golden_case("shell_with_cookie", "GET", "/", &cookie());
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn shell_without_token() {
+    golden_case("shell_without_token", "GET", "/", &[]);
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn shell_post() {
+    golden_case("shell_post", "POST", "/?token={t}", &[]);
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn shell_wrong_port_cookie() {
+    let headers = vec![("Cookie", "ralph_token_1={t}".to_string())];
+    golden_case("shell_wrong_port_cookie", "GET", "/", &headers);
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn css_with_cookie() {
+    golden_case("css_with_cookie", "GET", "/assets/app.css", &cookie());
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn asset_unknown() {
+    golden_case("asset_unknown", "GET", "/assets/nope.css", &cookie());
+}
+
+#[test]
+#[ignore = "red until the shell routes land"]
+fn font_with_cookie() {
+    let server = TestServer::start();
+    let cookie = format!("{}={}", server.cookie_name(), server.token());
+    let reply = server.exchange(
+        "GET",
+        "/assets/geist-mono.woff2",
+        Host::Own,
+        &[("Cookie", &cookie)],
+    );
+    assert_eq!(reply.status, 200);
+    let header = |name: &str| {
+        reply
+            .headers
+            .iter()
+            .find(|(found, _)| found.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    };
+    assert_eq!(header("Content-Type"), Some("font/woff2"));
+    assert_eq!(header("Cache-Control"), Some("no-store"));
+    assert_eq!(header("X-Content-Type-Options"), Some("nosniff"));
+    assert_eq!(reply.body_bytes.len(), 71_212);
+    assert!(reply.body_bytes.starts_with(b"wOF2"));
+}

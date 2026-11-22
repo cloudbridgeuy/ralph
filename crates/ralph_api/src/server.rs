@@ -144,8 +144,13 @@ fn to_api_request(request: &Request) -> ApiRequest {
 }
 
 fn to_http_response(response: ApiResponse) -> Response<Cursor<Vec<u8>>> {
+    let cookie = response
+        .set_cookie
+        .as_deref()
+        .map(|value| ("Set-Cookie", value));
     let headers = std::iter::once(("Content-Type", response.content_type))
         .chain(response.headers)
+        .chain(cookie)
         .filter_map(|(name, value)| Header::from_bytes(name, value).ok());
     headers.fold(
         Response::from_string(response.body).with_status_code(response.status),

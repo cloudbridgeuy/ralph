@@ -1,7 +1,9 @@
 use crate::chat::session::store_dir;
 use crate::cli::WebArgs;
 use crate::web_tokens::render_tokens;
-use ralph_api::{allowed_hosts, bind, bind_hosts, serve, ApiConfig, BindPolicy, Token};
+use ralph_api::{
+    allowed_hosts, bind, bind_hosts, cookie_name, serve, ApiConfig, BindPolicy, Token,
+};
 use ralph_server::config::{config_path, AppConfig};
 use ralph_server::workers::canonical_store;
 use std::error::Error;
@@ -43,6 +45,7 @@ fn api_config(store: PathBuf, bound: SocketAddr, version: &str, tokens_css: Stri
         allowed_hosts: allowed_hosts(&bind_hosts(bound.ip()), bound.port()),
         version: version.to_string(),
         tokens_css,
+        cookie_name: cookie_name(bound.port()),
     }
 }
 
@@ -69,6 +72,7 @@ mod tests {
         assert_eq!(config.version, "1.2.3-dev+abc");
         assert_eq!(config.store, PathBuf::from("/s"));
         assert_eq!(config.tokens_css, "css");
+        assert_eq!(config.cookie_name, "ralph_token_4000");
         assert_eq!(
             config.allowed_hosts,
             vec!["127.0.0.1:4000".to_string(), "localhost:4000".to_string()]
