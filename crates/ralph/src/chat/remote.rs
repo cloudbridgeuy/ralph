@@ -13,6 +13,8 @@ use ralph_core::chat_status::{route_input, EmptySubmit, Route, Status};
 use ralph_core::chat_switch::SwitchTarget;
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::program_status::{Phase, State};
+use ralph_core::sanitize::strip_controls;
+use ralph_core::stream::blocks::truncate_string;
 use ralph_core::turn_event::{TurnEvent, TurnSink};
 use ralph_core::worker::{BlockedContent, Report};
 use ralph_server::chat::ask::Ask;
@@ -53,14 +55,31 @@ fn on_frame(msg: ServerMsg) -> Step {
         ServerMsg::Turn { event } => Step::Render(event),
         ServerMsg::TurnDone => Step::Finished,
         ServerMsg::Error { message } => Step::Failed(message),
+        _ => push_notice(&msg).map_or(Step::Ignored, Step::Notice),
+    }
+}
+
+fn push_notice(msg: &ServerMsg) -> Option<String> {
+    match msg {
         ServerMsg::Blocked {
             thread,
             worker,
             content,
-        } => Step::Notice(blocked_notice(thread.as_deref(), &worker, content.as_ref())),
-        ServerMsg::Hello { .. } | ServerMsg::Done { .. } | ServerMsg::Status { .. } => {
-            Step::Ignored
+        } => Some(blocked_notice(thread.as_deref(), worker, content.as_ref())),
+        ServerMsg::Inbox {
+            thread,
+            report,
+            unread,
+        } => {
+            let label = thread.as_deref().unwrap_or("main");
+            let line = format!(
+                "{label}/{} {} ({unread} unread): {}",
+                report.worker, report.status, report.text
+            );
+            let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+            Some(truncate_string(&strip_controls(&line), 240))
         }
+        _ => None,
     }
 }
 
@@ -267,11 +286,10 @@ impl RemoteSession {
             let Some(msg) = self.read_frame(&mut String::new(), None)? else {
                 return Ok(None);
             };
-            if !matches!(msg, ServerMsg::Blocked { .. }) {
-                return Ok(Some(msg));
-            }
-            if let Step::Notice(text) = on_frame(msg) {
+            if let Some(text) = push_notice(&msg) {
                 notice(text);
+            } else {
+                return Ok(Some(msg));
             }
         }
     }

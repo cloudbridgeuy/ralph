@@ -1,4 +1,5 @@
-use super::sink::SocketSink;
+use super::clients::Clients;
+use super::sink::{inbox_sink, SocketSink};
 use crate::chat::assemble::{assemble, load_settings, AssembleOptions, Assembled, TurnOutput};
 use crate::chat::client_monitor::watch_headless;
 use crate::chat::session::load_custom_prompt;
@@ -9,6 +10,7 @@ use ralph_core::chat_process::SessionKey;
 use ralph_core::turn_event::TurnSink;
 use ralph_server::chat::claim::ChatClaim;
 use ralph_server::chat::fork::open_fork;
+use ralph_server::chat::host::{spawn_session_host, HostGuard};
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::serve_proto::{status_frame, ServerMsg};
 use ralph_server::chat::session::Session;
@@ -20,14 +22,16 @@ use ralph_server::watches::CloseGuard;
 use ralph_server::workers::headless::HeadlessShutdown;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub(super) struct OpenSession {
+    maintenance: Mutex<Option<HostGuard>>,
+    idle: Arc<AtomicBool>,
     session: Session,
     store: PathBuf,
     pub(super) sink: Arc<SocketSink>,
     cancel: Mutex<CancelToken>,
-    turning: Mutex<()>,
     _claim: Option<ChatClaim>,
     _guard: SocketGuard,
     _plugin: Option<tempfile::TempDir>,
@@ -43,15 +47,20 @@ impl OpenSession {
             logged: &logged,
             sent: text,
         };
-        let _turning = self
-            .turning
+        let maintenance = self
+            .maintenance
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if maintenance.is_none() {
+            return Err("session is closed".into());
+        }
+        self.idle.store(false, Ordering::SeqCst);
         let cancel = CancelToken::default();
         *self.current_cancel() = cancel.clone();
         let mut ran = None;
         self.session
             .around(&mut || ran = Some(self.session.turn(&call, &cancel)));
+        self.idle.store(true, Ordering::SeqCst);
         ran.ok_or("snapshots did not run the turn")?
     }
 
@@ -76,17 +85,29 @@ impl OpenSession {
 
     pub(super) fn end(&self) {
         self.cancel();
-        let _turning = self
-            .turning
+        let mut maintenance = self
+            .maintenance
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.idle.store(false, Ordering::SeqCst);
+        drop(maintenance.take());
         self.session.end_session();
     }
 }
 
+fn start_hosts<H, M>(
+    key: &SessionKey,
+    headless: impl FnOnce() -> H,
+    maintenance: impl FnOnce(bool) -> M,
+) -> (H, M) {
+    (headless(), maintenance(*key == SessionKey::Main))
+}
+
 pub(super) fn open_session(
+    key: &SessionKey,
     store_dir: &Path,
     model_args: Vec<String>,
+    clients: Arc<Clients>,
 ) -> Result<OpenSession, Box<dyn Error>> {
     let settings = load_settings(store_dir, None, None)?;
     let files = settings
@@ -121,17 +142,33 @@ pub(super) fn open_session(
         },
         events: Arc::new(|_| {}),
     })?;
+    let idle = Arc::new(AtomicBool::new(true));
+    let (headless, maintenance) = start_hosts(
+        key,
+        || watch_headless(store_dir.to_path_buf()),
+        |daily_drift| {
+            session.refresh();
+            spawn_session_host(
+                &session,
+                settings.tuning.keepalive_hours,
+                Arc::clone(&idle),
+                daily_drift,
+                inbox_sink(key.clone(), move |msg| clients.push(&msg)),
+            )
+        },
+    );
     Ok(OpenSession {
+        maintenance: Mutex::new(Some(maintenance)),
+        idle,
         session,
         store: store_dir.to_path_buf(),
         sink,
         cancel: Mutex::new(CancelToken::default()),
-        turning: Mutex::new(()),
         _claim: None,
         _guard: guard,
         _plugin: plugin,
         _close: close,
-        _headless: watch_headless(store_dir.to_path_buf()),
+        _headless: headless,
     })
 }
 
@@ -171,5 +208,34 @@ impl Sessions {
         let mut sessions = self.lock();
         let at = sessions.iter().position(|(open, _)| open == key)?;
         Some(sessions.remove(at).1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ralph_core::chat_thread::ThreadName;
+    use std::cell::RefCell;
+
+    #[test]
+    fn main_and_thread_start_maintenance_after_headless_ownership() {
+        for (key, daily) in [
+            (SessionKey::Main, true),
+            (
+                SessionKey::Thread(ThreadName::parse("side").unwrap()),
+                false,
+            ),
+        ] {
+            let starts = RefCell::new(Vec::new());
+            start_hosts(
+                &key,
+                || starts.borrow_mut().push("headless"),
+                |daily_drift| {
+                    assert_eq!(daily_drift, daily);
+                    starts.borrow_mut().push("maintenance");
+                },
+            );
+            assert_eq!(starts.into_inner(), ["headless", "maintenance"], "{key}");
+        }
     }
 }

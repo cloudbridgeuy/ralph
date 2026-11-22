@@ -13,6 +13,7 @@ use ralph_core::chat_keepalive::{
 use ralph_core::chat_memory::{subagent_records, usage_record, CallSite, LedgerRow};
 use ralph_core::stream::IterationMetadata;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -43,9 +44,8 @@ pub struct KeepaliveWatch {
 }
 
 impl KeepaliveWatch {
-    pub fn run(self) -> ! {
-        loop {
-            std::thread::sleep(CHECK_EVERY);
+    pub fn run(self, stop: &Receiver<()>) {
+        while crate::chat::host::wait_for_tick(stop, CHECK_EVERY) {
             self.tick();
         }
     }

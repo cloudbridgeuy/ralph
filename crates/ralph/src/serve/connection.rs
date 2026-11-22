@@ -99,9 +99,10 @@ fn converse(
                 }
             }
         };
-        write_frame(writer, id, &reply)?;
         if matches!(reply, ServerMsg::Hello { .. }) && client.is_none() {
-            *client = Some(host.clients.attach(writer));
+            *client = Some(host.clients.greet(writer, id, &reply)?);
+        } else {
+            write_frame(writer, id, &reply)?;
         }
         if let Err(e) = drive(host, after) {
             warn(format!("ralph serve: close after a turn failed: {e}"));
