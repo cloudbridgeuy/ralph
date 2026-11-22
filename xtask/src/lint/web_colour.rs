@@ -380,7 +380,7 @@ fn line_reasons(path: &str, line: &str) -> Vec<String> {
 }
 
 fn is_checked(path: &str) -> bool {
-    ["css", "html", "htm", "svg", "svgz", "js", "mjs"]
+    ["css", "html", "htm", "svg", "js", "mjs"]
         .iter()
         .any(|ext| {
             path.rsplit_once('.')
@@ -417,6 +417,9 @@ fn is_binary(path: &str) -> bool {
 }
 
 fn scan_bytes(path: &str, bytes: &[u8]) -> Result<Vec<WebViolation>, String> {
+    if path.ends_with(".svgz") {
+        return Err("gzipped SVG can't be scanned; use plain .svg".to_string());
+    }
     if is_binary(path) {
         return Ok(Vec::new());
     }
@@ -521,7 +524,7 @@ mod tests {
 
     #[test]
     fn checks_every_web_source_extension() {
-        for ext in ["css", "html", "htm", "svg", "svgz", "js", "mjs"] {
+        for ext in ["css", "html", "htm", "svg", "js", "mjs"] {
             let path = format!("crates/ralph_api/assets/x.{ext}");
             assert_eq!(lines(&path, "a { color: #fff; }\n"), vec![1], "{ext}");
         }
@@ -533,6 +536,14 @@ mod tests {
         assert!(scan_bytes("crates/ralph_api/assets/fonts/x.woff2", &font)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn a_gzipped_svg_is_refused() {
+        for bytes in [&[0x1f, 0x8b, 0x08, 0x00][..], b"<svg/>"] {
+            let err = scan_bytes("crates/ralph_api/assets/i.svgz", bytes).unwrap_err();
+            assert_eq!(err, "gzipped SVG can't be scanned; use plain .svg");
+        }
     }
 
     #[test]
