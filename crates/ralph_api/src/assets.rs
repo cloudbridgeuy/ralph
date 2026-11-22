@@ -185,4 +185,60 @@ mod tests {
         assert!(!css.contains(" #"));
         assert!(!css.contains("rgb(") && !css.contains("rgba("));
     }
+
+    const DEFAULT_TOKENS: &str = include_str!("../../ralph/src/golden/tokens_default.css");
+
+    fn theme_hex(theme: &str, name: &str) -> [f64; 3] {
+        let block = DEFAULT_TOKENS
+            .split(&format!("[data-theme=\"{theme}\"] {{"))
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap();
+        let line = block
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("{name}:")))
+            .unwrap();
+        let hex = line.split('#').nth(1).unwrap();
+        let channel = |at: usize| f64::from(u8::from_str_radix(&hex[at..at + 2], 16).unwrap());
+        [channel(0), channel(2), channel(4)]
+    }
+
+    fn luminance(rgb: [f64; 3]) -> f64 {
+        let linear = |value: f64| {
+            let unit = value / 255.0;
+            if unit <= 0.04045 {
+                unit / 12.92
+            } else {
+                ((unit + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(rgb[0]) + 0.7152 * linear(rgb[1]) + 0.0722 * linear(rgb[2])
+    }
+
+    fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    fn muted_weight() -> f64 {
+        let css = css();
+        let rest = css
+            .split("color-mix(in srgb, var(--r-ansi-7) ")
+            .nth(1)
+            .unwrap();
+        let percent = rest.split('%').next().unwrap();
+        percent.parse::<f64>().unwrap() / 100.0
+    }
+
+    #[test]
+    fn muted_text_has_aa_contrast_in_both_themes() {
+        let weight = muted_weight();
+        for theme in ["dark", "light"] {
+            let fg = theme_hex(theme, "--r-ansi-7");
+            let bg = theme_hex(theme, "--r-ansi-0");
+            let mixed = [0, 1, 2].map(|i| (weight * fg[i] + (1.0 - weight) * bg[i]).round());
+            let ratio = contrast(mixed, bg);
+            assert!(ratio >= 4.5, "{theme}: {ratio:.2}");
+        }
+    }
 }
