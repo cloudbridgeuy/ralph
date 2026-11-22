@@ -1,12 +1,12 @@
 pub const MAX_HANDLERS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Admission {
+pub(crate) enum Admission {
     Accept,
     Reject,
 }
 
-pub fn admit(active: usize, cap: usize) -> Admission {
+pub(crate) fn admit(active: usize, cap: usize) -> Admission {
     if active < cap {
         Admission::Accept
     } else {

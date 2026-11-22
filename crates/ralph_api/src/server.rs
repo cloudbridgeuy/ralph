@@ -110,7 +110,7 @@ fn respond(request: Request, response: ApiResponse) {
     );
 }
 
-pub fn split_url(url: &str) -> (&str, &str) {
+pub(crate) fn split_url(url: &str) -> (&str, &str) {
     url.split_once('?').unwrap_or((url, ""))
 }
 

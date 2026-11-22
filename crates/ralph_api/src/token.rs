@@ -33,7 +33,7 @@ impl Token {
         &self.0
     }
 
-    pub fn matches(&self, candidate: &str) -> bool {
+    pub(crate) fn matches(&self, candidate: &str) -> bool {
         let (own, other) = (self.0.as_bytes(), candidate.as_bytes());
         !own.is_empty()
             && own.len() == other.len()
