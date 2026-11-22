@@ -38,7 +38,7 @@ body {
 
 .note,
 .empty {
-  color: var(--r-ansi-8);
+  color: color-mix(in srgb, var(--r-ansi-7) 60%, var(--r-ansi-0));
 }
 
 a {
@@ -94,7 +94,7 @@ main {
   margin: 0;
   font-size: 1em;
   font-weight: 400;
-  color: var(--r-ansi-8);
+  color: color-mix(in srgb, var(--r-ansi-7) 60%, var(--r-ansi-0));
 }
 
 r-box {
@@ -165,7 +165,7 @@ r-kv div {
 
 r-kv dt {
   min-width: 12ch;
-  color: var(--r-ansi-8);
+  color: color-mix(in srgb, var(--r-ansi-7) 60%, var(--r-ansi-0));
   overflow-wrap: anywhere;
 }
 
@@ -235,7 +235,7 @@ r-status[tone="accent"] {
 
 r-empty {
   display: block;
-  color: var(--r-ansi-8);
+  color: color-mix(in srgb, var(--r-ansi-7) 60%, var(--r-ansi-0));
   overflow-wrap: anywhere;
 }
 

@@ -183,6 +183,6 @@ mod tests {
         let css = css();
         assert!(!css.contains("style="));
         assert!(!css.contains(" #"));
-        assert!(!css.contains("rgb"));
+        assert!(!css.contains("rgb(") && !css.contains("rgba("));
     }
 }

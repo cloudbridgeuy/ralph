@@ -354,7 +354,115 @@ fn element_names(line: &str) -> Vec<String> {
     names
 }
 
-fn line_reasons(path: &str, line: &str) -> Vec<String> {
+fn top_level_arguments(inner: &str) -> Vec<&str> {
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut parts = Vec::new();
+    for (at, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(inner[start..at].trim());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(inner[start..].trim());
+    parts
+}
+
+fn is_percentage(word: &str) -> bool {
+    word.strip_suffix('%').is_some_and(|number| {
+        !number.is_empty()
+            && number.chars().all(|c| c.is_ascii_digit() || c == '.')
+            && number.chars().filter(|c| *c == '.').count() <= 1
+    })
+}
+
+fn is_token_reference(text: &str) -> bool {
+    text.strip_prefix("var(--r-")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .is_some_and(|name| !name.is_empty() && name.chars().all(is_ident_char))
+}
+
+fn is_colour_space(argument: &str) -> bool {
+    argument.strip_prefix("in ").is_some_and(|words| {
+        words
+            .split_whitespace()
+            .all(|word| word.chars().all(is_ident_char))
+    })
+}
+
+fn is_token_colour_argument(argument: &str) -> bool {
+    let words: Vec<&str> = argument.split_whitespace().collect();
+    match words.as_slice() {
+        [token] => is_token_reference(token),
+        [percent, token] if is_percentage(percent) => is_token_reference(token),
+        [token, percent] if is_percentage(percent) => is_token_reference(token),
+        _ => false,
+    }
+}
+
+fn is_token_only_mix(inner: &str) -> bool {
+    let arguments = top_level_arguments(inner);
+    let Some((first, rest)) = arguments.split_first() else {
+        return false;
+    };
+    let colours = if is_colour_space(first) {
+        rest
+    } else {
+        &arguments[..]
+    };
+    !colours.is_empty() && colours.iter().all(|a| is_token_colour_argument(a))
+}
+
+fn matching_close(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, c) in text[open..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn without_token_mixes(line: &str) -> String {
+    const NAME: &str = "color-mix(";
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(at) = rest.find(NAME) {
+        let boundary = rest[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c));
+        let open = at + NAME.len() - 1;
+        match matching_close(rest, open) {
+            Some(close) if boundary && is_token_only_mix(&rest[open + 1..close]) => {
+                out.push_str(&rest[..at]);
+                rest = &rest[close + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..at + NAME.len()]);
+                rest = &rest[at + NAME.len()..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn line_reasons(path: &str, raw_line: &str) -> Vec<String> {
+    let line = without_token_mixes(raw_line);
+    let line = line.as_str();
     let mut reasons = Vec::new();
     if has_paint_context(path, line) && hex_colour(line) || paint_attribute_hex(line) {
         reasons.push("raw hex colour; use a var(--r-*) token".to_string());
@@ -562,6 +670,42 @@ mod tests {
     fn text_bytes_are_scanned() {
         let found = scan_bytes(CSS, b"a { color: #fff; }\n").unwrap();
         assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn allows_a_colour_mix_of_tokens_only() {
+        for mix in [
+            "color-mix(in srgb, var(--r-fg) 60%, var(--r-bg))",
+            "color-mix(in oklab, var(--r-ansi-1), var(--r-ansi-2) 30%)",
+            "color-mix(in srgb, 40% var(--r-bg), var(--r-fg))",
+        ] {
+            let text = format!("a {{ color: {mix}; }}\n");
+            assert!(lines(CSS, &text).is_empty(), "{mix}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_colour_mix_with_a_raw_colour() {
+        for mix in [
+            "color-mix(in srgb, var(--r-fg) 60%, red)",
+            "color-mix(in srgb, var(--r-fg), #fff)",
+            "color-mix(in srgb, rgb(0 0 0), var(--r-bg))",
+            "color-mix(in srgb, var(--r-fg), hsl(0 0% 0%))",
+            "color-mix(in srgb, var(--r-fg, red), var(--r-bg))",
+        ] {
+            let text = format!("a {{ color: {mix}; }}\n");
+            let mut found = lines(CSS, &text);
+            found.dedup();
+            assert_eq!(found, vec![1], "{mix}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_colour_mix_with_a_foreign_variable() {
+        let text = "a { color: color-mix(in srgb, var(--brand) 60%, var(--r-bg)); }\n";
+        let mut found = lines(CSS, text);
+        found.dedup();
+        assert_eq!(found, vec![1]);
     }
 
     #[test]
