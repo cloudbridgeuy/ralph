@@ -20,7 +20,7 @@ pub struct TurnMark {
 }
 
 pub fn turn_path(store: &Path) -> PathBuf {
-    store.join("TURN")
+    store.join("TURN_ID")
 }
 
 pub fn read_turn(store: &Path) -> Option<String> {
@@ -160,9 +160,12 @@ pub fn record_refusal(store: &Path, tool: HistoryTool, message: &str, source: Ca
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::memory::Store;
     use ralph_core::chat_memory::{
-        history_path, parse_tool_call, CallMetrics, CallSource, HistoryTool, MemoryCall,
+        history_path, parse_tool_call, CallMetrics, CallSource, HistoryTool, MemoryCall, Trigger,
+        LOG_INDEX_FILE, TAGS_FILE, TREE_INDEX_FILE,
     };
+    use ralph_core::worker::PENDING_TURN_FILE;
     use serde_json::{json, Value};
     use std::fs;
     use std::time::Duration;
@@ -310,6 +313,40 @@ mod tests {
         assert_eq!(begin_turn(dir.path(), "r1").id, "r1#2");
         assert_eq!(begin_turn(dir.path(), "r2").id, "r2#1");
         assert_eq!(read_turn(dir.path()).as_deref(), Some("r2#1"));
+    }
+
+    #[test]
+    fn a_turn_marker_set_and_cleared_between_turns_keeps_the_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        assert_eq!(begin_turn(dir.path(), "r1").id, "r1#1");
+        store.set_pending_turn(Trigger::User).unwrap();
+        store.clear_pending_turn();
+        assert_eq!(begin_turn(dir.path(), "r1").id, "r1#2");
+    }
+
+    #[test]
+    fn the_fixed_store_file_names_differ_even_when_case_is_ignored() {
+        let turn_file = turn_path(Path::new(""));
+        let names = [
+            turn_file.file_name().unwrap().to_str().unwrap(),
+            PENDING_TURN_FILE,
+            LOG_INDEX_FILE,
+            TREE_INDEX_FILE,
+            TAGS_FILE,
+            "CHAT",
+            "LOCK",
+            "NAP",
+            "TAG",
+            "log.jsonl",
+            "tree.jsonl",
+            "history.txt",
+            "editor.md",
+            "suggestions.jsonl",
+        ];
+        let lowered: std::collections::BTreeSet<String> =
+            names.iter().map(|name| name.to_ascii_lowercase()).collect();
+        assert_eq!(lowered.len(), names.len());
     }
 
     #[test]
