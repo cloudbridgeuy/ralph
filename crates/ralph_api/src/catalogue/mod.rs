@@ -281,7 +281,28 @@ mod tests {
         page(COMMITTED)
     }
 
+    fn markup_only(html: &str) -> String {
+        let mut out = String::new();
+        let mut in_tag = false;
+        for c in html.chars() {
+            match (in_tag, c) {
+                (false, '<') => {
+                    in_tag = true;
+                    out.push(c);
+                }
+                (true, '>') => {
+                    in_tag = false;
+                    out.push(c);
+                }
+                (true, _) => out.push(c),
+                (false, _) => {}
+            }
+        }
+        out
+    }
+
     fn colour_hits(html: &str) -> Vec<String> {
+        let html = &markup_only(html);
         let mut hits = Vec::new();
         for (index, _) in html.match_indices('#') {
             let run = html[index + 1..]
@@ -307,6 +328,25 @@ mod tests {
             }
         }
         hits
+    }
+
+    #[test]
+    fn text_that_looks_like_a_colour_is_not_a_colour() {
+        assert!(colour_hits("<p>Fix PR #1234</p>").is_empty());
+        assert!(colour_hits("<p>#abc and rgb(1,2,3)</p>").is_empty());
+        assert!(colour_hits("<p>a fill=\"red\" b</p>").is_empty());
+    }
+
+    #[test]
+    fn a_title_like_a_colour_does_not_fail_the_page() {
+        let fixture = COMMITTED.replacen(
+            "\"titles\": [",
+            "\"titles\": [\"Fix PR #1234\", \"#abc\", ",
+            1,
+        );
+        assert_ne!(fixture, COMMITTED);
+        assert!(page(&fixture).contains("Fix PR #1234"));
+        assert_eq!(colour_hits(&page(&fixture)), Vec::<String>::new());
     }
 
     #[test]
@@ -354,8 +394,8 @@ mod tests {
 
     #[test]
     fn the_colour_scan_catches_what_it_should() {
-        assert!(!colour_hits("<p>#fff</p>").is_empty());
-        assert!(!colour_hits("<p>rgb(1,2,3)</p>").is_empty());
+        assert!(!colour_hits("<p title=\"#fff\">x</p>").is_empty());
+        assert!(!colour_hits("<p class=\"rgb(1,2,3)\">x</p>").is_empty());
         assert!(!colour_hits("<path fill=\"red\"/>").is_empty());
         assert!(colour_hits("<path fill=\"none\" stroke=\"currentColor\"/>").is_empty());
         assert!(colour_hits("a &#39; b").is_empty());
