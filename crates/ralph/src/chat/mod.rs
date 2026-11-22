@@ -69,7 +69,6 @@ use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::status_enabled;
-use ralph_core::worker::ATTACHMENTS_DIR;
 use ralph_server::chat::host::spawn_session_host;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::ready_ids;
@@ -110,7 +109,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     signal::ignore_sigttou();
     let flags = config::flag_settings(&args);
     let store_dir = chat_dir(args.store, args.thread.as_ref())?;
-    std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
+    std::fs::create_dir_all(&store_dir)?;
     let store_root = canonical_store(store_dir.clone());
     ralph_server::config::set_store_layer(&store_dir);
     let store = Store::new(store_dir.clone());

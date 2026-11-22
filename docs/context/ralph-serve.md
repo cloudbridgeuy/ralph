@@ -80,11 +80,15 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 
 ## Stop
 
-SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It moves to Draining. An idle session closes at once. A session in a turn gets its turn cancelled (`Cancel`), and it closes only after the turn ends and its `turn_done` or `error` frame is written (`TurnDone` then `Close`). `serve` exits when every session is closed (main releases the `CHAT` lease and the runtime dir goes). If a turn does not end within 5 s (`DRAIN_BOUND` in `crates/ralph/src/serve/mod.rs`), `serve` warns and exits anyway, so a stuck turn cannot hang shutdown. While it drains, `hello`, `send` and thread operations get `error` `ralph serve is shutting down`. A second stop does nothing.
+SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It moves to Draining. An idle session starts closing at once. Closing stops its maintenance host and waits for any tick, keepalive ping, or scheduled worker start already in progress. A session in a turn gets its turn cancelled (`Cancel`), and it closes only after the turn ends and its `turn_done` or `error` frame is written (`TurnDone` then `Close`). `serve` exits when every session is closed (main releases the `CHAT` lease and the runtime dir goes). If a session does not close within 5 s (`DRAIN_BOUND` in `crates/ralph/src/serve/mod.rs`), `serve` warns and exits anyway, so a stuck turn or maintenance task cannot hang shutdown. While it drains, `hello`, `send` and thread operations get `error` `ralph serve is shutting down`. A second stop does nothing.
+
+## Maintenance
+
+- Main and each open thread have their own attachments directory and maintenance host. The host runs queued watches, armed schedules, inbox checks, and configured idle keepalive. Main runs the daily drift check. A successful reply starts the usual memory nap.
+- Fresh inbox reports stay unread. Serve logs the session name and the new and unread counts. Clients can request the unread count with `status`.
 
 ## Limits
 
-- Serve sessions have no nap or host loop, no keepalive and no attachments dir.
 - `NOTICE_SINK` is process-wide. All sessions share it.
 - Worker ownership is per open session. Each open gets the instance `pid@start#n` for its store, and the owner records of its workers carry it. When a thread or main closes and opens again in the same process, the new session reclaims the owner records the closed session left: it stops their agent groups and drops their queued prompts. Records of other processes follow the pid rules as before.
 - There is no live end-to-end test. Unit tests cover the supervisor, the frames and the routing.
