@@ -7,6 +7,7 @@ mod deps;
 pub mod error;
 mod hooks;
 mod install;
+mod web_colour;
 
 /// Code quality checks and git hooks management
 #[derive(Debug, clap::Parser)]
@@ -24,6 +25,7 @@ Rust checks:
 6. File length check - Ensures no .rs file exceeds 1000 lines
 7. Raw colour check - Ensures no colour SGR escapes outside the ansi module
 8. Server deps check - Ensures ralph_server pulls no terminal crates
+9. Web colour check - Ensures web assets use only var(--r-*) colours and primitive elements
 
 When used with --install-hooks, this command also manages git pre-commit hooks that
 run these same checks automatically before each commit.
@@ -135,6 +137,10 @@ async fn run_lint_checks(command: &LintCommand, global: &crate::Global) -> Resul
     }
 
     if !colour::run_raw_colour_check(global).await? {
+        all_passed = false;
+    }
+
+    if !web_colour::run_web_colour_check(global).await? {
         all_passed = false;
     }
 
