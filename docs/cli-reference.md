@@ -164,7 +164,7 @@ ralph web [--store DIR] [--port N]
 | `--store` | `RALPH_CHAT_STORE`, then `~/.ralph/chat` | Store directory; it must exist |
 | `--port` | `0` | Port on 127.0.0.1; `0` picks a free port |
 
-The command prints `ralph web listening on http://127.0.0.1:<port>/api/health?token=<token>`. Every request needs the token. The routes are `GET /api/health` and `GET /tokens.css`.
+The command prints `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. Open the URL in a browser. Every request needs the token. The command serves the embedded shell and its assets, `GET /api/health` and `GET /tokens.css`. See [ralph web](context/ralph-web.md) for the routes, the token and the cookie.
 
 ---
 

@@ -31,7 +31,8 @@
   2. the `token=` query parameter
   3. the `ralph_token_<port>` cookie. A request can have many `Cookie` headers and many cookies with this name. One matching value is enough. Quotes around a value are removed.
 - The cookie name holds the bound port. A browser does not scope cookies by port. With one name, a second `ralph web` run on 127.0.0.1 would overwrite the cookie of the first run. A cookie of another port is not accepted.
-- The cookie is `HttpOnly; SameSite=Strict; Path=/`.
+- The cookie is `HttpOnly; SameSite=Strict; Path=/`. It has no `Max-Age`, so it lasts until the browser session ends.
+- A browser sends every `ralph_token_<port>` cookie to every port on 127.0.0.1. Cookies are not scoped by port. Any other local HTTP service on 127.0.0.1 can read the token of a running `ralph web`. The token ends when `ralph web` stops.
 - The compare takes the same time for every wrong value of the same length.
 - The `token=` value is not URL-decoded. The token is hex, so it needs no decoding. A percent-encoded value does not match.
 - Every request needs the token, also a request for an unknown path.
@@ -74,7 +75,7 @@
 
 The 503 is the only answer that does not pass the Host and token checks. The server sends it before `route()` runs, so a request without a token also gets it. The other rows apply in the order shown, after the 503 row.
 
-Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css` and the embedded assets. `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
+Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`, the embedded assets and the 302 hand-off (it has no body). `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
 
 ## Embedded assets
 
@@ -123,7 +124,7 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 - `crates/ralph_api/tests/health_contract.rs` starts the real server in a thread on 127.0.0.1 port 0. Each test has its own server and its own temp store, so tests run in parallel.
 - The client is a raw `TcpStream` in `crates/ralph_api/tests/common/mod.rs`. It can set any `Host` header, send two `Cookie` headers, or send no `Host`.
 - The test config uses the fixed version `0.0.0-test`. The version never changes a golden.
-- Each case compares the answer to `crates/ralph_api/tests/golden/<case>.txt`. A golden holds the status, the stable headers (`Content-Type`, `Cache-Control`, `Allow`) and the body.
+- Each case compares the answer to `crates/ralph_api/tests/golden/<case>.txt`. A golden holds the status, the stable headers (`Content-Type`, `Cache-Control`, `Allow`, `Location`, `Set-Cookie`, `Content-Security-Policy`, `Referrer-Policy`, `X-Content-Type-Options`) and the body.
 - `crates/ralph_api/tests/shell_contract.rs` does the same for the shell, `/assets/*` and the cookie hand-off. The font test checks bytes, with no golden. Cookie names in goldens show as `ralph_token_<port>`.
 - `crates/ralph_api/tests/tokens_contract.rs` does the same for `/tokens.css`. Its goldens are `crates/ralph_api/tests/golden/tokens_*.txt`.
 - Every new route ships with golden cases. Change a golden only as a compatibility decision, and say so in the commit.
