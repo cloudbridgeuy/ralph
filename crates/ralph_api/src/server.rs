@@ -144,11 +144,16 @@ fn to_api_request(request: &Request) -> ApiRequest {
 }
 
 fn to_http_response(response: ApiResponse) -> Response<Cursor<Vec<u8>>> {
+    let cookie = response
+        .set_cookie
+        .as_deref()
+        .map(|value| ("Set-Cookie", value));
     let headers = std::iter::once(("Content-Type", response.content_type))
         .chain(response.headers)
+        .chain(cookie)
         .filter_map(|(name, value)| Header::from_bytes(name, value).ok());
     headers.fold(
-        Response::from_string(response.body).with_status_code(response.status),
+        Response::from_data(response.body).with_status_code(response.status),
         |built, header| built.with_header(header),
     )
 }
@@ -156,6 +161,7 @@ fn to_http_response(response: ApiResponse) -> Response<Cursor<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     #[test]
     fn split_url_separates_path_and_query() {
@@ -185,5 +191,36 @@ mod tests {
         assert_eq!(active.load(Ordering::SeqCst), 1);
         drop(second);
         assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_binary_body_is_written_byte_for_byte() {
+        let response = ApiResponse {
+            status: 200,
+            content_type: "font/woff2",
+            headers: vec![],
+            body: vec![0x77, 0x4f, 0x46, 0x32, 0xff, 0x00, 0xfe],
+            set_cookie: None,
+        };
+        let mut written = Vec::new();
+        to_http_response(response)
+            .into_reader()
+            .read_to_end(&mut written)
+            .unwrap();
+        assert_eq!(written, vec![0x77, 0x4f, 0x46, 0x32, 0xff, 0x00, 0xfe]);
+    }
+
+    #[test]
+    fn a_cookie_is_written_as_a_set_cookie_header() {
+        let response = ApiResponse {
+            status: 302,
+            content_type: "text/plain; charset=utf-8",
+            headers: vec![("Location", "/")],
+            body: Vec::new(),
+            set_cookie: Some("n=v; Path=/".to_string()),
+        };
+        let built = to_http_response(response);
+        let cookie = built.headers().iter().find(|h| h.field.equiv("Set-Cookie"));
+        assert_eq!(cookie.map(|h| h.value.as_str()), Some("n=v; Path=/"));
     }
 }

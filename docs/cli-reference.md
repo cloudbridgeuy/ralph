@@ -71,7 +71,7 @@ Displays all built-in themes that can be used with the `--theme` flag. Custom `.
 
 ## ralph licenses
 
-Print the licence notices of the bundled syntax grammars.
+Print the licence notices of the bundled syntax grammars and fonts.
 
 ### Usage
 
@@ -81,7 +81,7 @@ ralph licenses
 
 ### Description
 
-ralph bundles syntax grammars curated by the [bat](https://github.com/sharkdp/bat) project through the [two-face](https://github.com/CosmicHorrorDev/two-face) crate. Many of their licences (MIT, BSD, Apache-2.0) require the notice to ship with the binary. The command prints a short header, then one block per grammar: its licence path (for example `syntaxes/02_Extra/TypeScript/LICENSE`), a blank line and the licence text. The text comes from two-face at run time, so it always matches the grammars in the binary. Output is plain text with no colour and no pager.
+ralph bundles syntax grammars curated by the [bat](https://github.com/sharkdp/bat) project through the [two-face](https://github.com/CosmicHorrorDev/two-face) crate. Many of their licences (MIT, BSD, Apache-2.0) require the notice to ship with the binary. The command prints a short header, then one block per grammar: its licence path (for example `syntaxes/02_Extra/TypeScript/LICENSE`), a blank line and the licence text. The text comes from two-face at run time, so it always matches the grammars in the binary. After the grammars, the command prints the notice and the SIL Open Font License of the bundled Geist Mono font. Output is plain text with no colour and no pager.
 
 ---
 
@@ -164,7 +164,7 @@ ralph web [--store DIR] [--port N]
 | `--store` | `RALPH_CHAT_STORE`, then `~/.ralph/chat` | Store directory; it must exist |
 | `--port` | `0` | Port on 127.0.0.1; `0` picks a free port |
 
-The command prints `ralph web listening on http://127.0.0.1:<port>/api/health?token=<token>`. Every request needs the token. The routes are `GET /api/health` and `GET /tokens.css`.
+The command prints `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. Open the URL in a browser. Every request needs the token. The command serves the embedded shell and its assets, `GET /api/health` and `GET /tokens.css`. See [ralph web](context/ralph-web.md) for the routes, the token and the cookie.
 
 ---
 

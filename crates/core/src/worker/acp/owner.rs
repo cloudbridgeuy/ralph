@@ -2,6 +2,7 @@ use super::AcpAgent;
 use crate::worker::PermissionMode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +130,40 @@ pub fn turn_token(record: &OwnerRecord, generation: u64) -> String {
 
 pub fn caller_owns_worker(owner_chat_pid: u32, caller_ancestry: &[u32]) -> bool {
     caller_ancestry.contains(&owner_chat_pid)
+}
+
+#[derive(Debug, Default)]
+pub struct SessionRegistry {
+    opened: u64,
+    open: HashMap<PathBuf, String>,
+    closed: HashSet<String>,
+}
+
+impl SessionRegistry {
+    pub fn register(&mut self, process: &str, store: PathBuf) -> String {
+        let instance = format!("{process}#{}", self.opened);
+        self.opened += 1;
+        self.open.insert(store, instance.clone());
+        instance
+    }
+
+    pub fn unregister(&mut self, store: &Path, instance: &str) {
+        if self.open.get(store).is_some_and(|open| open == instance) {
+            self.open.remove(store);
+        }
+        self.closed.insert(instance.to_string());
+    }
+
+    pub fn owner_instance<'a>(&'a self, store: &Path, process: Option<&'a str>) -> Option<&'a str> {
+        self.open.get(store).map(String::as_str).or(process)
+    }
+
+    pub fn closed_holder(&self, record: &OwnerRecord) -> bool {
+        record
+            .instance
+            .as_ref()
+            .is_some_and(|instance| self.closed.contains(instance))
+    }
 }
 
 #[cfg(test)]
@@ -330,5 +365,79 @@ mod tests {
         assert!(caller_owns_worker(7078, &[71512, 71385, 7078, 1]));
         assert!(!caller_owns_worker(7078, &[71512, 71385, 9999, 1]));
         assert!(!caller_owns_worker(7078, &[]));
+    }
+
+    fn held_by(instance: Option<&str>) -> OwnerRecord {
+        OwnerRecord {
+            chat_pid: 7,
+            chat_start: "s".to_string(),
+            group: 8,
+            group_start: "g".to_string(),
+            instance: instance.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn each_opened_session_gets_the_next_number() {
+        let mut sessions = SessionRegistry::default();
+        assert_eq!(sessions.register("7@s", PathBuf::from("/a")), "7@s#0");
+        assert_eq!(sessions.register("7@s", PathBuf::from("/b")), "7@s#1");
+    }
+
+    #[test]
+    fn an_open_store_owns_as_its_session_and_other_stores_as_the_process() {
+        let mut sessions = SessionRegistry::default();
+        sessions.register("7@s", PathBuf::from("/a"));
+        assert_eq!(
+            sessions.owner_instance(Path::new("/a"), Some("7@s")),
+            Some("7@s#0")
+        );
+        assert_eq!(
+            sessions.owner_instance(Path::new("/b"), Some("7@s")),
+            Some("7@s")
+        );
+    }
+
+    #[test]
+    fn a_reopened_store_reclaims_the_record_of_its_closed_session() {
+        let mut sessions = SessionRegistry::default();
+        let store = Path::new("/a");
+        let first = sessions.register("7@s", store.to_path_buf());
+        let record = held_by(Some(&first));
+        sessions.unregister(store, &first);
+        sessions.register("7@s", store.to_path_buf());
+        let mine = owned_by(&record, 7, sessions.owner_instance(store, Some("7@s")));
+        let facts = OwnerFacts {
+            chat_alive: !sessions.closed_holder(&record),
+            group_alive: true,
+            mine,
+        };
+        assert!(!mine);
+        assert_eq!(sweep_decision(facts), Sweep::Reclaim { kill_group: true });
+    }
+
+    #[test]
+    fn a_late_close_of_the_old_session_keeps_its_successor_open() {
+        let mut sessions = SessionRegistry::default();
+        let store = Path::new("/a");
+        let first = sessions.register("7@s", store.to_path_buf());
+        let second = sessions.register("7@s", store.to_path_buf());
+        sessions.unregister(store, &first);
+        assert_eq!(
+            sessions.owner_instance(store, Some("7@s")),
+            Some(second.as_str())
+        );
+        assert!(!sessions.closed_holder(&held_by(Some(&second))));
+        assert!(sessions.closed_holder(&held_by(Some(&first))));
+    }
+
+    #[test]
+    fn records_of_no_closed_session_keep_process_liveness() {
+        let mut sessions = SessionRegistry::default();
+        let first = sessions.register("7@s", PathBuf::from("/a"));
+        sessions.unregister(Path::new("/a"), &first);
+        assert!(!sessions.closed_holder(&held_by(Some("7@s"))));
+        assert!(!sessions.closed_holder(&held_by(Some("9@t#0"))));
+        assert!(!sessions.closed_holder(&held_by(None)));
     }
 }

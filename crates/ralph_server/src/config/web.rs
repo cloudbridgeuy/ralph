@@ -18,7 +18,7 @@ pub struct WebSection {
 }
 
 fn default_font() -> String {
-    "ui-monospace, Menlo, monospace".to_string()
+    "\"Geist Mono\", ui-monospace, Menlo, monospace".to_string()
 }
 
 fn default_ansi_dark() -> Vec<String> {
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(web.validate(), Ok(()));
         assert_eq!(web.ansi_dark.len(), 16);
         assert_eq!(web.ansi_light.len(), 16);
-        assert_eq!(web.font, "ui-monospace, Menlo, monospace");
+        assert_eq!(web.font, "\"Geist Mono\", ui-monospace, Menlo, monospace");
     }
 
     #[test]

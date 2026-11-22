@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, reason = "test code")]
-use ralph_api::{allowed_hosts, bind, serve, ApiConfig, BindPolicy, Token};
+use ralph_api::{allowed_hosts, bind, cookie_name, serve, ApiConfig, BindPolicy, Token};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
@@ -10,7 +10,16 @@ use std::time::{Duration, Instant};
 
 pub const VERSION: &str = "0.0.0-test";
 pub const TOKENS_CSS: &str = ":root {\n  --r-font: x;\n}\n";
-const STABLE_HEADERS: [&str; 3] = ["Content-Type", "Cache-Control", "Allow"];
+const STABLE_HEADERS: [&str; 8] = [
+    "Content-Type",
+    "Cache-Control",
+    "Allow",
+    "Location",
+    "Set-Cookie",
+    "Content-Security-Policy",
+    "Referrer-Policy",
+    "X-Content-Type-Options",
+];
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub enum Host<'a> {
@@ -23,6 +32,7 @@ pub struct Reply {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: String,
+    pub body_bytes: Vec<u8>,
 }
 
 pub struct TestServer {
@@ -44,6 +54,7 @@ impl TestServer {
             allowed_hosts: allowed_hosts(&["127.0.0.1", "localhost"], port),
             version: VERSION.to_string(),
             tokens_css: TOKENS_CSS.to_string(),
+            cookie_name: cookie_name(port),
         };
         let token = Token::generate().unwrap();
         let secret = token.as_str().to_string();
@@ -82,6 +93,10 @@ impl TestServer {
 
     pub fn token(&self) -> &str {
         &self.token
+    }
+
+    pub fn cookie_name(&self) -> String {
+        cookie_name(self.port)
     }
 
     pub fn own_host(&self) -> String {
@@ -133,29 +148,65 @@ impl Drop for TestServer {
 pub fn read_reply(stream: &mut TcpStream) -> Reply {
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).unwrap();
-    parse_reply(&String::from_utf8(raw).unwrap())
+    parse_reply(&raw)
 }
 
-fn parse_reply(text: &str) -> Reply {
-    let (head, body) = text.split_once("\r\n\r\n").unwrap();
+fn parse_reply(raw: &[u8]) -> Reply {
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let head = String::from_utf8(raw[..split].to_vec()).unwrap();
     let mut lines = head.lines();
     let status = lines
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|code| code.parse().ok())
         .unwrap();
-    let headers = lines
+    let headers: Vec<(String, String)> = lines
         .filter_map(|line| line.split_once(": "))
         .map(|(name, value)| (name.to_string(), value.to_string()))
         .collect();
+    let chunked = headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("Transfer-Encoding") && value.eq_ignore_ascii_case("chunked")
+    });
+    let body_bytes = if chunked {
+        dechunk(&raw[split + 4..])
+    } else {
+        raw[split + 4..].to_vec()
+    };
     Reply {
         status,
         headers,
-        body: body.to_string(),
+        body: String::from_utf8_lossy(&body_bytes).into_owned(),
+        body_bytes,
+    }
+}
+
+fn dechunk(mut rest: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let line_end = rest.windows(2).position(|w| w == b"\r\n").unwrap();
+        let size =
+            usize::from_str_radix(std::str::from_utf8(&rest[..line_end]).unwrap().trim(), 16)
+                .unwrap();
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            return out;
+        }
+        out.extend_from_slice(&rest[..size]);
+        rest = &rest[size + 2..];
     }
 }
 
 impl Reply {
+    pub fn redacting(mut self, swaps: &[(&str, &str)]) -> Reply {
+        for (from, to) in swaps {
+            for (_, value) in &mut self.headers {
+                *value = value.replace(from, to);
+            }
+            self.body = self.body.replace(from, to);
+        }
+        self
+    }
+
     pub fn golden_text(&self) -> String {
         let mut out = format!("status: {}\n", self.status);
         for name in STABLE_HEADERS {

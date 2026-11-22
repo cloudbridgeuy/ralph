@@ -1,0 +1,75 @@
+status: 200
+Content-Type: text/css; charset=utf-8
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/assets/geist-mono.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--r-ansi-0);
+  color: var(--r-ansi-7);
+  font-family: var(--r-font, ui-monospace, Menlo, monospace);
+  font-size: 14px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar,
+.nav {
+  display: flex;
+  gap: 2ch;
+  padding: 0.25rem 1ch;
+  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+}
+
+.brand {
+  font-weight: 700;
+}
+
+.note,
+.empty {
+  color: var(--r-ansi-8);
+}
+
+a {
+  color: var(--r-link, var(--r-ansi-12));
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+a:focus-visible {
+  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline-offset: 2px;
+}
+
+main {
+  padding: 0.5rem 1ch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+

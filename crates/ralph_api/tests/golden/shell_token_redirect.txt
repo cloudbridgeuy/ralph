@@ -1,0 +1,8 @@
+status: 302
+Content-Type: text/plain; charset=utf-8
+Cache-Control: no-store
+Location: /
+Set-Cookie: ralph_token_<port>=<token>; Path=/; HttpOnly; SameSite=Strict
+Referrer-Policy: no-referrer
+
+

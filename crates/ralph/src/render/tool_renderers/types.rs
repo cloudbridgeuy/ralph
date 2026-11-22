@@ -25,3 +25,11 @@ pub struct NotebookEditParams<'a> {
     pub edit_mode: &'a str,
     pub diff_content: Option<&'a str>,
 }
+
+pub struct ScriptResultParams<'a> {
+    pub is_error: bool,
+    pub logs: &'a [String],
+    pub result: Option<&'a str>,
+    pub error: Option<&'a str>,
+    pub trace_id: Option<&'a str>,
+}

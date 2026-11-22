@@ -1,4 +1,4 @@
-use ralph_core::licenses::syntax_notices;
+use ralph_core::licenses::{font_notices, syntax_notices};
 use std::io::{ErrorKind, Write};
 
 pub fn bundled_syntax_notices() -> String {
@@ -15,10 +15,21 @@ pub fn bundled_syntax_notices() -> String {
     syntax_notices(&pairs)
 }
 
+fn bundled_font_notices() -> String {
+    font_notices(&[
+        ("Geist Mono", ralph_api::FONT_NOTICE),
+        ("Geist Mono licence", ralph_api::FONT_LICENCE),
+    ])
+}
+
+pub fn bundled_notices() -> String {
+    format!("{}{}", bundled_syntax_notices(), bundled_font_notices())
+}
+
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     match std::io::stdout()
         .lock()
-        .write_all(bundled_syntax_notices().as_bytes())
+        .write_all(bundled_notices().as_bytes())
     {
         Err(err) if err.kind() != ErrorKind::BrokenPipe => Err(err.into()),
         _ => Ok(()),
@@ -34,5 +45,17 @@ mod tests {
         let out = bundled_syntax_notices();
         assert!(out.contains("\nsyntaxes/02_Extra/TypeScript/LICENSE\n"));
         assert!(out.contains("Apache License"));
+    }
+
+    #[test]
+    fn bundled_notices_list_syntaxes_then_the_geist_mono_licence() {
+        let out = bundled_notices();
+        let syntaxes = out.find("syntaxes/02_Extra/TypeScript/LICENSE").unwrap();
+        let font = out.find("Geist Mono").unwrap();
+        assert!(syntaxes < font);
+        assert!(out.contains("SIL OPEN FONT LICENSE Version 1.1"));
+        assert!(out.contains("Copyright 2026 The Geist Project Authors"));
+        assert!(out.contains("\nGeist Mono\n\n"));
+        assert!(out.contains(ralph_api::FONT_NOTICE.trim_end()));
     }
 }

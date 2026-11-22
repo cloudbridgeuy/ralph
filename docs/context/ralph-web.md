@@ -1,6 +1,6 @@
 # ralph web Command
 
-`ralph web [--store <DIR>] [--port <N>]` serves a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. It has two routes: `GET /api/health` and `GET /tokens.css`.
+`ralph web [--store <DIR>] [--port <N>]` serves a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health` and `GET /tokens.css`.
 
 ## Code Locations
 
@@ -15,10 +15,13 @@
 | Bind rule | `crates/ralph_api/src/addr.rs` | `BindPolicy`, `check_bind()`, `allowed_hosts()` |
 | Admit | `crates/ralph_api/src/admit.rs` | pure `admit()` and `MAX_HANDLERS`: the cap rule |
 | Server | `crates/ralph_api/src/server.rs` | `bind()`, `serve()` on tiny_http |
+| Assets | `crates/ralph_api/src/assets.rs` | embedded table: `find()` |
+| Asset files | `crates/ralph_api/assets/` | `index.html`, `app.css`, `fonts/` |
+| Colour lint | `xtask/src/lint/web_colour.rs` | checks the files in `assets/` |
 
 ## Start
 
-`ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/api/health?token=<token>`. The `/` route does not exist yet. It also prints the store path.
+`ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. It also prints the store path. Open the URL. The server answers 302, sets the cookie and sends the browser to `/`.
 
 ## Token
 
@@ -26,7 +29,10 @@
 - A request can carry the token in one of three places. The first one found is used:
   1. `Authorization: Bearer <token>`
   2. the `token=` query parameter
-  3. the `ralph_token` cookie. A request can have many `Cookie` headers and many `ralph_token` cookies. One matching value is enough. Quotes around a value are removed.
+  3. the `ralph_token_<port>` cookie. A request can have many `Cookie` headers and many cookies with this name. One matching value is enough. Quotes around a value are removed.
+- The cookie name holds the bound port. A browser does not scope cookies by port. With one name, a second `ralph web` run on 127.0.0.1 would overwrite the cookie of the first run. A cookie of another port is not accepted.
+- The cookie is `HttpOnly; SameSite=Strict; Path=/`. It has no `Max-Age`, so it lasts until the browser session ends.
+- A browser sends every `ralph_token_<port>` cookie to every port on 127.0.0.1. Cookies are not scoped by port. Any other local HTTP service on 127.0.0.1 can read the token of a running `ralph web`. The token ends when `ralph web` stops.
 - The compare takes the same time for every wrong value of the same length.
 - The `token=` value is not URL-decoded. The token is hex, so it needs no decoding. A percent-encoded value does not match.
 - Every request needs the token, also a request for an unknown path.
@@ -58,13 +64,29 @@
 | no token or wrong token | 401 `{"error":"unauthorized"}` |
 | `GET /api/health` | 200 `{"status":"ok","version":"<version>"}` |
 | other method on `/api/health` | 405 with `Allow: GET` |
+| `GET /` with a valid `?token=` | 302 to `/` with `Set-Cookie` |
+| `GET /` with the cookie or Bearer token | 200 `text/html` shell, with a `Content-Security-Policy` |
+| `GET /assets/app.css` | 200 `text/css` |
+| `GET /assets/geist-mono.woff2` | 200 `font/woff2` |
+| other method on `/` or `/assets/*` | 405 with `Allow: GET` |
 | `GET /tokens.css` | 200 `text/css; charset=utf-8` with `Cache-Control: no-store` |
 | other method on `/tokens.css` | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
 
 The 503 is the only answer that does not pass the Host and token checks. The server sends it before `route()` runs, so a request without a token also gets it. The other rows apply in the order shown, after the 503 row.
 
-Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`. `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
+Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`, the embedded assets and the 302 hand-off (it has no body). `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
+
+## Embedded assets
+
+- The files in `crates/ralph_api/assets/` are in the binary through `include_bytes!`. There is no build step.
+- The CSP is `default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Assets also send `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
+- The shell has no script. Its nav links use `#/name`.
+- The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
+- `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.
+- The `[web]` font default starts with `"Geist Mono"`.
+- `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 primitives. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint.
+- A body of 32 KB or more goes out with chunked transfer encoding. The test client decodes it.
 
 ## Limits
 
@@ -102,7 +124,8 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 - `crates/ralph_api/tests/health_contract.rs` starts the real server in a thread on 127.0.0.1 port 0. Each test has its own server and its own temp store, so tests run in parallel.
 - The client is a raw `TcpStream` in `crates/ralph_api/tests/common/mod.rs`. It can set any `Host` header, send two `Cookie` headers, or send no `Host`.
 - The test config uses the fixed version `0.0.0-test`. The version never changes a golden.
-- Each case compares the answer to `crates/ralph_api/tests/golden/<case>.txt`. A golden holds the status, the stable headers (`Content-Type`, `Cache-Control`, `Allow`) and the body.
+- Each case compares the answer to `crates/ralph_api/tests/golden/<case>.txt`. A golden holds the status, the stable headers (`Content-Type`, `Cache-Control`, `Allow`, `Location`, `Set-Cookie`, `Content-Security-Policy`, `Referrer-Policy`, `X-Content-Type-Options`) and the body.
+- `crates/ralph_api/tests/shell_contract.rs` does the same for the shell, `/assets/*` and the cookie hand-off. The font test checks bytes, with no golden. Cookie names in goldens show as `ralph_token_<port>`.
 - `crates/ralph_api/tests/tokens_contract.rs` does the same for `/tokens.css`. Its goldens are `crates/ralph_api/tests/golden/tokens_*.txt`.
 - Every new route ships with golden cases. Change a golden only as a compatibility decision, and say so in the commit.
 - A missing or different golden fails the test with a line diff.

@@ -13,7 +13,11 @@ fn tokens_with(
 ) {
     let server = TestServer::start();
     let token = server.token().to_string();
-    let owned = headers(&token);
+    let cookie = server.cookie_name();
+    let owned: Vec<(String, String)> = headers(&token)
+        .into_iter()
+        .map(|(name, value)| (name, value.replace("@cookie@", &cookie)))
+        .collect();
     let borrowed: Vec<(&str, &str)> = owned
         .iter()
         .map(|(name, value)| (name.as_str(), value.as_str()))
@@ -55,7 +59,7 @@ fn tokens_cookie() {
         "GET",
         |_| "/tokens.css".into(),
         Host::Own,
-        |t| vec![("Cookie".to_string(), format!("ralph_token={t}"))],
+        |t| vec![("Cookie".to_string(), format!("@cookie@={t}"))],
     );
 }
 

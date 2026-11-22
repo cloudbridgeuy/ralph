@@ -1,3 +1,4 @@
+use crate::assets::{self, Asset, SHELL_PATH};
 use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
@@ -5,7 +6,14 @@ const HEALTH_PATH: &str = "/api/health";
 const TOKENS_PATH: &str = "/tokens.css";
 const JSON: &str = "application/json";
 const CSS: &str = "text/css; charset=utf-8";
+const PLAIN: &str = "text/plain; charset=utf-8";
 const NO_STORE: (&str, &str) = ("Cache-Control", "no-store");
+const NO_REFERRER: (&str, &str) = ("Referrer-Policy", "no-referrer");
+const NO_SNIFF: (&str, &str) = ("X-Content-Type-Options", "nosniff");
+const SHELL_POLICY: (&str, &str) = (
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ApiRequest {
@@ -22,7 +30,8 @@ pub(crate) struct ApiResponse {
     pub status: u16,
     pub content_type: &'static str,
     pub headers: Vec<(&'static str, &'static str)>,
-    pub body: String,
+    pub body: Vec<u8>,
+    pub set_cookie: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,13 +40,14 @@ pub struct ApiConfig {
     pub allowed_hosts: Vec<String>,
     pub version: String,
     pub tokens_css: String,
+    pub cookie_name: String,
 }
 
 pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResponse {
     if !host_allowed(request.host.as_deref(), &config.allowed_hosts) {
         return error(403, "forbidden host");
     }
-    if !authorized(request, token) {
+    if !authorized(request, token, &config.cookie_name) {
         return error(401, "unauthorized");
     }
     match (request.path.as_str(), request.method.as_str()) {
@@ -45,8 +55,55 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (HEALTH_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (TOKENS_PATH, "GET") => css_response(&config.tokens_css),
         (TOKENS_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
-        _ => error(404, "not found"),
+        _ => match assets::find(&request.path) {
+            Some(asset) => asset_response(asset, request, config, token),
+            None => error(404, "not found"),
+        },
     }
+}
+
+fn asset_response(
+    asset: &Asset,
+    request: &ApiRequest,
+    config: &ApiConfig,
+    token: &Token,
+) -> ApiResponse {
+    if request.method != "GET" {
+        return with_header(error(405, "method not allowed"), ("Allow", "GET"));
+    }
+    if asset.path == SHELL_PATH && query_authorized(request, token, &config.cookie_name) {
+        return hand_off(token, &config.cookie_name);
+    }
+    let mut headers = vec![NO_STORE, NO_REFERRER, NO_SNIFF];
+    if asset.path == SHELL_PATH {
+        headers.push(SHELL_POLICY);
+    }
+    ApiResponse {
+        status: 200,
+        content_type: asset.content_type,
+        headers,
+        body: asset.bytes.to_vec(),
+        set_cookie: None,
+    }
+}
+
+fn hand_off(token: &Token, cookie_name: &str) -> ApiResponse {
+    ApiResponse {
+        status: 302,
+        content_type: PLAIN,
+        headers: vec![NO_STORE, NO_REFERRER, ("Location", SHELL_PATH)],
+        body: Vec::new(),
+        set_cookie: Some(format!(
+            "{cookie_name}={}; Path=/; HttpOnly; SameSite=Strict",
+            token.as_str()
+        )),
+    }
+}
+
+fn query_authorized(request: &ApiRequest, token: &Token, cookie_name: &str) -> bool {
+    extract_tokens(None, &request.query, &[], cookie_name)
+        .iter()
+        .any(|candidate| token.matches(candidate))
 }
 
 pub(crate) fn overloaded() -> ApiResponse {
@@ -57,11 +114,16 @@ fn host_allowed(host: Option<&str>, allowed: &[String]) -> bool {
     host.is_some_and(|host| allowed.iter().any(|name| name.eq_ignore_ascii_case(host)))
 }
 
-fn authorized(request: &ApiRequest, token: &Token) -> bool {
+fn authorized(request: &ApiRequest, token: &Token, cookie_name: &str) -> bool {
     let cookies: Vec<&str> = request.cookies.iter().map(String::as_str).collect();
-    extract_tokens(request.authorization.as_deref(), &request.query, &cookies)
-        .iter()
-        .any(|candidate| token.matches(candidate))
+    extract_tokens(
+        request.authorization.as_deref(),
+        &request.query,
+        &cookies,
+        cookie_name,
+    )
+    .iter()
+    .any(|candidate| token.matches(candidate))
 }
 
 fn health(version: &str) -> ApiResponse {
@@ -73,7 +135,8 @@ fn css_response(body: &str) -> ApiResponse {
         status: 200,
         content_type: CSS,
         headers: vec![NO_STORE],
-        body: body.to_string(),
+        body: body.to_string().into_bytes(),
+        set_cookie: None,
     }
 }
 
@@ -86,7 +149,8 @@ fn json_response(status: u16, body: serde_json::Value) -> ApiResponse {
         status,
         content_type: JSON,
         headers: vec![NO_STORE],
-        body: body.to_string(),
+        body: body.to_string().into_bytes(),
+        set_cookie: None,
     }
 }
 
@@ -112,6 +176,7 @@ mod tests {
             allowed_hosts: vec!["h.test:1".to_string(), "alias.test:1".to_string()],
             version: "9.9.9".to_string(),
             tokens_css: ":root {\n  --r-font: x;\n}\n".to_string(),
+            cookie_name: "ralph_token_1".to_string(),
         }
     }
 
@@ -131,7 +196,7 @@ mod tests {
     }
 
     fn body(response: &ApiResponse) -> Value {
-        serde_json::from_str(&response.body).unwrap()
+        serde_json::from_slice(&response.body).unwrap()
     }
 
     #[test]
@@ -139,7 +204,7 @@ mod tests {
         let response = route(&authed("GET", "/api/health"), &config(), &token());
         assert_eq!(response.status, 200);
         assert_eq!(body(&response), json!({"status": "ok", "version": "9.9.9"}));
-        assert!(!response.body.contains("/secret/store"));
+        assert!(!String::from_utf8_lossy(&response.body).contains("/secret/store"));
     }
 
     #[test]
@@ -219,7 +284,7 @@ mod tests {
     #[test]
     fn tokens_body_is_the_configured_css() {
         let response = route(&authed("GET", "/tokens.css"), &config(), &token());
-        assert_eq!(response.body, config().tokens_css);
+        assert_eq!(response.body, config().tokens_css.as_bytes());
     }
 
     #[test]
@@ -267,5 +332,128 @@ mod tests {
             assert_eq!(response.content_type, "application/json");
             assert!(response.headers.contains(&("Cache-Control", "no-store")));
         }
+    }
+
+    const CSP: &str = "default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+    const COOKIE: &str = "ralph_token_1=t0k3n; Path=/; HttpOnly; SameSite=Strict";
+
+    fn with_cookie(path: &str, cookie: &str) -> ApiRequest {
+        let mut req = request("GET", path, "");
+        req.cookies = vec![cookie.to_string()];
+        req
+    }
+
+    fn bytes(response: &ApiResponse) -> &[u8] {
+        response.body.as_ref()
+    }
+
+    #[test]
+    fn shell_without_token_is_401() {
+        let response = route(&request("GET", "/", ""), &config(), &token());
+        assert_eq!(response.status, 401);
+    }
+
+    #[test]
+    fn shell_with_query_token_redirects_and_sets_the_cookie() {
+        let response = route(&authed("GET", "/"), &config(), &token());
+        assert_eq!(response.status, 302);
+        assert!(response.headers.contains(&("Location", "/")));
+        assert!(response.headers.contains(&("Cache-Control", "no-store")));
+        assert_eq!(response.set_cookie.as_deref(), Some(COOKIE));
+        assert!(response.body.is_empty());
+    }
+
+    #[test]
+    fn shell_with_the_cookie_is_html_with_a_policy() {
+        let response = route(
+            &with_cookie("/", "ralph_token_1=t0k3n"),
+            &config(),
+            &token(),
+        );
+        assert_eq!(response.status, 200);
+        assert_eq!(response.content_type, "text/html; charset=utf-8");
+        for header in [
+            ("Cache-Control", "no-store"),
+            ("Content-Security-Policy", CSP),
+            ("Referrer-Policy", "no-referrer"),
+            ("X-Content-Type-Options", "nosniff"),
+        ] {
+            assert!(response.headers.contains(&header), "{header:?}");
+        }
+        assert!(bytes(&response).starts_with(b"<!doctype html>"));
+        assert_eq!(response.set_cookie, None);
+    }
+
+    #[test]
+    fn a_cookie_for_another_port_is_not_accepted() {
+        let own = route(
+            &with_cookie("/", "ralph_token_1=t0k3n"),
+            &config(),
+            &token(),
+        );
+        assert_eq!(own.status, 200);
+        for name in ["ralph_token_2", "ralph_token", "ralph_token_11"] {
+            let other = route(
+                &with_cookie("/", &format!("{name}=t0k3n")),
+                &config(),
+                &token(),
+            );
+            assert_eq!(other.status, 401, "{name}");
+        }
+    }
+
+    #[test]
+    fn assets_are_served_with_their_types() {
+        for (path, kind) in [
+            ("/assets/app.css", "text/css; charset=utf-8"),
+            ("/assets/geist-mono.woff2", "font/woff2"),
+        ] {
+            let response = route(
+                &with_cookie(path, "ralph_token_1=t0k3n"),
+                &config(),
+                &token(),
+            );
+            assert_eq!(response.status, 200, "{path}");
+            assert_eq!(response.content_type, kind);
+            assert!(response.headers.contains(&("Cache-Control", "no-store")));
+            assert!(response
+                .headers
+                .contains(&("X-Content-Type-Options", "nosniff")));
+            assert!(!bytes(&response).is_empty());
+        }
+        let font = route(
+            &authed("GET", "/assets/geist-mono.woff2"),
+            &config(),
+            &token(),
+        );
+        assert!(bytes(&font).starts_with(b"wOF2"));
+    }
+
+    #[test]
+    fn post_to_the_shell_or_an_asset_is_405_and_allow_get() {
+        for path in ["/", "/assets/app.css", "/assets/geist-mono.woff2"] {
+            let response = route(&authed("POST", path), &config(), &token());
+            assert_eq!(response.status, 405, "{path}");
+            assert!(response.headers.contains(&("Allow", "GET")));
+        }
+    }
+
+    #[test]
+    fn unknown_assets_are_404_and_bad_hosts_are_403() {
+        for path in [
+            "/assets/nope.css",
+            "/assets/",
+            "/assets/../tokens.css",
+            "/index.html",
+        ] {
+            assert_eq!(
+                route(&authed("GET", path), &config(), &token()).status,
+                404,
+                "{path}"
+            );
+        }
+        let mut bad = authed("GET", "/assets/app.css");
+        bad.host = Some("evil.example".to_string());
+        assert_eq!(route(&bad, &config(), &token()).status, 403);
     }
 }

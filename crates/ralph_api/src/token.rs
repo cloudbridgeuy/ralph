@@ -4,7 +4,11 @@ use std::io::Read;
 const TOKEN_BYTES: usize = 16;
 const BEARER_SCHEME: &str = "Bearer";
 const QUERY_KEY: &str = "token";
-const COOKIE_NAME: &str = "ralph_token";
+const COOKIE_PREFIX: &str = "ralph_token_";
+
+pub fn cookie_name(port: u16) -> String {
+    format!("{COOKIE_PREFIX}{port}")
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Token(String);
@@ -45,11 +49,12 @@ pub(crate) fn extract_tokens(
     authorization: Option<&str>,
     query: &str,
     cookies: &[&str],
+    cookie_name: &str,
 ) -> Vec<String> {
     from_bearer(authorization)
         .or_else(|| from_query(query))
         .map(|value| vec![value.to_string()])
-        .unwrap_or_else(|| from_cookies(cookies))
+        .unwrap_or_else(|| from_cookies(cookies, cookie_name))
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -72,12 +77,12 @@ fn from_query(query: &str) -> Option<&str> {
         .and_then(|(_, value)| non_empty(value))
 }
 
-fn from_cookies(cookies: &[&str]) -> Vec<String> {
+fn from_cookies(cookies: &[&str], cookie_name: &str) -> Vec<String> {
     cookies
         .iter()
         .flat_map(|header| header.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .filter(|(name, _)| *name == COOKIE_NAME)
+        .filter(|(name, _)| *name == cookie_name)
         .map(|(_, value)| unquote(value.trim()))
         .filter(|value| !value.is_empty())
         .map(str::to_string)
@@ -101,7 +106,7 @@ mod tests {
 
     fn extract(authorization: Option<&str>, query: &str, cookie: Option<&str>) -> Option<String> {
         let cookies: Vec<&str> = cookie.into_iter().collect();
-        extract_tokens(authorization, query, &cookies)
+        extract_tokens(authorization, query, &cookies, "ralph_token")
             .into_iter()
             .next()
     }
@@ -238,11 +243,16 @@ mod tests {
     #[test]
     fn extract_tokens_collects_every_ralph_token_cookie() {
         assert_eq!(
-            extract_tokens(None, "", &["a=1; ralph_token=w", "ralph_token=t0k"]),
+            extract_tokens(
+                None,
+                "",
+                &["a=1; ralph_token=w", "ralph_token=t0k"],
+                "ralph_token"
+            ),
             vec!["w".to_string(), "t0k".to_string()]
         );
         assert_eq!(
-            extract_tokens(None, "", &["ralph_token=w; ralph_token=t0k"]),
+            extract_tokens(None, "", &["ralph_token=w; ralph_token=t0k"], "ralph_token"),
             vec!["w".to_string(), "t0k".to_string()]
         );
     }
@@ -250,7 +260,7 @@ mod tests {
     #[test]
     fn extract_tokens_strips_cookie_quotes() {
         assert_eq!(
-            extract_tokens(None, "", &["ralph_token=\"t0k\""]),
+            extract_tokens(None, "", &["ralph_token=\"t0k\""], "ralph_token"),
             vec!["t0k".to_string()]
         );
     }
@@ -258,17 +268,47 @@ mod tests {
     #[test]
     fn extract_tokens_header_and_query_stay_single_and_ahead_of_cookies() {
         assert_eq!(
-            extract_tokens(Some("Bearer h"), "token=q", &["ralph_token=c"]),
+            extract_tokens(
+                Some("Bearer h"),
+                "token=q",
+                &["ralph_token=c"],
+                "ralph_token"
+            ),
             vec!["h".to_string()]
         );
         assert_eq!(
-            extract_tokens(None, "token=q", &["ralph_token=c"]),
+            extract_tokens(None, "token=q", &["ralph_token=c"], "ralph_token"),
             vec!["q".to_string()]
         );
     }
 
     #[test]
     fn extract_tokens_skips_empty_cookie_values() {
-        assert!(extract_tokens(None, "", &["ralph_token=", "ralph_token=\"\""]).is_empty());
+        assert!(extract_tokens(
+            None,
+            "",
+            &["ralph_token=", "ralph_token=\"\""],
+            "ralph_token"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn extract_tokens_reads_only_the_named_cookie() {
+        assert_eq!(
+            extract_tokens(None, "", &["ralph_token_8080=t0k"], "ralph_token_8080"),
+            vec!["t0k".to_string()]
+        );
+        assert!(extract_tokens(None, "", &["ralph_token_8081=t0k"], "ralph_token_8080").is_empty());
+        assert!(extract_tokens(None, "", &["ralph_token=t0k"], "ralph_token_8080").is_empty());
+        assert!(
+            extract_tokens(None, "", &["ralph_token_80800=t0k"], "ralph_token_8080").is_empty()
+        );
+    }
+
+    #[test]
+    fn cookie_name_carries_the_port() {
+        assert_eq!(cookie_name(8080), "ralph_token_8080");
+        assert_ne!(cookie_name(8080), cookie_name(8081));
     }
 }
