@@ -50,7 +50,7 @@ fn api_config(store: PathBuf, bound: SocketAddr, version: &str, tokens_css: Stri
 }
 
 fn listen_url(bound: SocketAddr, token: &str) -> String {
-    format!("http://{bound}/api/health?token={token}")
+    format!("http://{bound}/?token={token}")
 }
 
 #[cfg(test)]
@@ -89,10 +89,10 @@ mod tests {
     }
 
     #[test]
-    fn listen_url_points_at_health_with_the_token() {
+    fn listen_url_points_at_the_shell_with_the_token() {
         assert_eq!(
             listen_url(addr("127.0.0.1:4000"), "abc"),
-            "http://127.0.0.1:4000/api/health?token=abc"
+            "http://127.0.0.1:4000/?token=abc"
         );
     }
 
@@ -100,7 +100,7 @@ mod tests {
     fn listen_url_brackets_ipv6() {
         assert_eq!(
             listen_url(addr("[::1]:4000"), "abc"),
-            "http://[::1]:4000/api/health?token=abc"
+            "http://[::1]:4000/?token=abc"
         );
     }
 }

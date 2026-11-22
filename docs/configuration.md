@@ -558,7 +558,7 @@ ansi_dark = [
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `font` | `ui-monospace, Menlo, monospace` | CSS `font-family` list |
+| `font` | `"Geist Mono", ui-monospace, Menlo, monospace` | CSS `font-family` list |
 | `ansi_dark` | Windows Terminal Campbell | 16 `#rrggbb` entries in ANSI order 0-15, used with a dark colour scheme |
 | `ansi_light` | Campbell with slots 0 and 7 swapped, and 8 and 15 swapped | 16 `#rrggbb` entries in ANSI order 0-15, used with a light colour scheme |
 

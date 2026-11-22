@@ -333,7 +333,7 @@ mod tests {
     fn default_config_renders_tokens() {
         let css = render_tokens(&AppConfig::default()).unwrap();
         assert!(css.starts_with(
-            ":root {\n  --r-font: ui-monospace, Menlo, monospace;\n  --r-ansi-0: #0c0c0c;"
+            ":root {\n  --r-font: \"Geist Mono\", ui-monospace, Menlo, monospace;\n  --r-ansi-0: #0c0c0c;"
         ));
         assert!(css.contains("@media (prefers-color-scheme: light)"));
         assert!(css.contains("--r-link: var(--r-ansi-12);"));

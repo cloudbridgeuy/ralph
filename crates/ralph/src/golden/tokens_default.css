@@ -1,5 +1,5 @@
 :root {
-  --r-font: ui-monospace, Menlo, monospace;
+  --r-font: "Geist Mono", ui-monospace, Menlo, monospace;
   --r-ansi-0: #0c0c0c;
   --r-ansi-1: #c50f1f;
   --r-ansi-2: #13a10e;
