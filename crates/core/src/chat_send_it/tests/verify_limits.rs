@@ -23,7 +23,7 @@ fn stopped_at_first_step(mode: VerifyMode) -> RunFile {
     let plan = verifying_plan(mode);
     let hash = plan_hash(&plan);
     let stopped = stop_file(&approved(plan), &hash, Some(1)).unwrap();
-    approve(&stopped, None, true).unwrap()
+    signed_go(&stopped, None, true).unwrap()
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn a_stray_verify_key_in_the_run_file_loads_and_the_current_limits_win() {
     for mode in [VerifyMode::Off, VerifyMode::Observe] {
         let file = read_run(&stray, limits_with(mode)).unwrap();
         assert_eq!(file.plan.limits.verify, mode);
-        assert!(file.is_approved());
+        assert!(file.is_approved(TRUST));
     }
 }
 

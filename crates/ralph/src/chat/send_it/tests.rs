@@ -1,7 +1,9 @@
 use super::*;
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
-use ralph_core::chat_send_it::{plan_hash, Action, Awaiting, Limits, Seen, StepResult, VerifyMode};
+use ralph_core::chat_send_it::{
+    plan_hash, write_run, Action, Awaiting, Limits, Refusal, Seen, StepResult, Trust, VerifyMode,
+};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
 use ralph_server::chat::memory::Store;
@@ -49,6 +51,130 @@ fn proposed(dir: &Path) -> (SendIt, String) {
     send_it.propose(&plan_args()).unwrap();
     let hash = send_it.status(80).shown.unwrap();
     (send_it, hash)
+}
+
+#[test]
+fn go_stores_a_signed_record_for_the_shown_plan() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, hash) = proposed(dir.path());
+    go(&send_it, Some(&hash), true);
+    let approval = send_it.load().unwrap().unwrap().approved.unwrap();
+    assert_eq!(approval.mac.len(), 64);
+    assert!(approval.subject_hash.starts_with(&hash));
+    assert_eq!(approval.peer_uid, ralph_server::wire::store::current_uid());
+    assert_eq!(approval.nonce.len(), 32);
+}
+
+fn run_path(dir: &Path) -> PathBuf {
+    dir.join("send-it/run.toml")
+}
+
+fn tampered(text: &str) -> String {
+    let at = text.find("mac = \"").unwrap() + 7;
+    let flipped = if text.as_bytes()[at] == b'0' {
+        "1"
+    } else {
+        "0"
+    };
+    format!("{}{flipped}{}", &text[..at], &text[at + 1..])
+}
+
+#[test]
+fn a_hand_written_approved_hash_is_not_an_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, hash) = proposed(dir.path());
+    let text = fs::read_to_string(run_path(dir.path())).unwrap();
+    fs::write(
+        run_path(dir.path()),
+        format!("approved = \"{hash}\"\n{text}"),
+    )
+    .unwrap();
+    assert_eq!(send_it.allowed(), None);
+    assert_eq!(send_it.refusal(), None);
+    assert!(send_it.load().unwrap().unwrap().approved.is_some());
+}
+
+#[test]
+fn a_record_copied_back_after_off_is_not_an_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, hash) = proposed(dir.path());
+    go(&send_it, Some(&hash), true);
+    let saved = fs::read_to_string(run_path(dir.path())).unwrap();
+    assert!(send_it.allowed().is_some());
+    send_it.off();
+    send_it.propose(&plan_args()).unwrap();
+    fs::write(run_path(dir.path()), &saved).unwrap();
+    assert_eq!(send_it.allowed(), None);
+}
+
+#[test]
+fn a_record_copied_into_a_fresh_start_is_not_an_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, hash) = proposed(dir.path());
+    go(&send_it, Some(&hash), true);
+    let saved = fs::read_to_string(run_path(dir.path())).unwrap();
+    let restarted = quiet(dir.path());
+    fs::write(run_path(dir.path()), saved).unwrap();
+    assert_eq!(restarted.allowed(), None);
+}
+
+#[test]
+fn propose_run_arguments_cannot_carry_an_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, hash) = proposed(dir.path());
+    go(&send_it, Some(&hash), true);
+    let record = send_it.load().unwrap().unwrap().approved.unwrap();
+    send_it.off();
+    let mut args = plan_args();
+    args["approved"] = json!({
+        "kind": record.kind, "subject_hash": record.subject_hash, "at": record.at,
+        "peer_uid": record.peer_uid, "nonce": record.nonce, "mac": record.mac,
+    });
+    send_it.propose(&args).unwrap();
+    assert!(send_it.load().unwrap().unwrap().approved.is_none());
+    assert_eq!(send_it.allowed(), None);
+    args["approved"] = json!(hash);
+    send_it.propose(&args).unwrap();
+    assert_eq!(send_it.allowed(), None);
+}
+
+#[test]
+fn go_not_typed_at_the_prompt_stores_no_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, hash) = proposed(dir.path());
+    let (text, ticked) = go(&send_it, Some(&hash), false);
+    assert!(text.contains("type it at the prompt"), "{text}");
+    assert!(ticked.is_none());
+    assert!(send_it.load().unwrap().unwrap().approved.is_none());
+    assert_eq!(send_it.allowed(), None);
+}
+
+#[test]
+fn a_tampered_record_mid_run_stops_the_run_and_closes_the_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = started(dir.path());
+    assert!(send_it.allowed().is_some());
+    let text = fs::read_to_string(run_path(dir.path())).unwrap();
+    fs::write(run_path(dir.path()), tampered(&text)).unwrap();
+    assert_eq!(send_it.allowed(), None);
+    assert_eq!(
+        tick(&send_it, &active, ended()).next,
+        Next::Stop(StopReason::PlanChanged(Some(Refusal::Tampered)))
+    );
+}
+
+#[test]
+fn a_swapped_plan_under_the_old_record_mid_run_stops_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let (send_it, active) = started(dir.path());
+    let mut swapped = send_it.load().unwrap().unwrap();
+    swapped.plan.goal = "something else".to_string();
+    fs::write(run_path(dir.path()), write_run(&swapped).unwrap()).unwrap();
+    assert_eq!(send_it.allowed(), None);
+    assert_eq!(
+        tick(&send_it, &active, ended()).next,
+        Next::Stop(StopReason::PlanChanged(Some(Refusal::WrongPlan)))
+    );
 }
 
 #[test]
@@ -205,6 +331,7 @@ fn started(dir: &Path) -> (SendIt, Active) {
 fn ended() -> Ended<'static> {
     Ended {
         file: None,
+        trust: Trust::NONE,
         replied: true,
         asked: false,
         typed: false,
@@ -366,7 +493,7 @@ fn a_refusal_from_the_socket_stops_the_next_tick_once_and_keeps_the_approval() {
         tick(&send_it, &active, ended()).next,
         Next::Check("cargo xtask lint".to_string())
     );
-    assert!(send_it.load().unwrap().unwrap().is_approved());
+    assert!(send_it.allowed().is_some());
 }
 
 #[test]
@@ -481,7 +608,7 @@ fn release_drops_the_run_s_approval_and_keeps_the_plan_for_save_and_reuse() {
     let (send_it, active) = started(dir.path());
     let hash = active.driving.hash.clone();
     assert_eq!(send_it.release("000000000000", Some(1)), Ok(None));
-    assert!(send_it.load().unwrap().unwrap().is_approved());
+    assert!(send_it.allowed().is_some());
     send_it.release(&hash, None).unwrap();
     let file = send_it.load().unwrap().unwrap();
     assert_eq!(file.approved, None);
@@ -574,7 +701,7 @@ fn every_tick_reads_the_plan_file_again() {
     send_it.release(&active.driving.hash, None).unwrap();
     assert_eq!(
         tick(&send_it, &active, ended()).next,
-        Next::Stop(StopReason::PlanChanged)
+        Next::Stop(StopReason::PlanChanged(None))
     );
     send_it.off();
     assert_eq!(
@@ -809,7 +936,7 @@ impl Printed {
 
 fn printing(dir: &Path) -> (SendIt, Active, Printed) {
     let printed = Printed::default();
-    let send_it = SendIt::new(dir, LIMITS, printed.sink());
+    let send_it = SendIt::new(dir, LIMITS, printed.sink()).unwrap();
     let (send_it, active) = judging_on(send_it);
     (send_it, active, printed)
 }
@@ -869,5 +996,5 @@ fn a_done_tick_with_a_plan_prints_and_logs_only_the_done_notice() {
 }
 
 fn quiet(dir: &Path) -> SendIt {
-    SendIt::new(dir, LIMITS, Printed::default().sink())
+    SendIt::new(dir, LIMITS, Printed::default().sink()).unwrap()
 }

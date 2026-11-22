@@ -300,6 +300,7 @@ fn a_passing_check_settles_into_the_next_step_with_a_met_line_and_no_turn() {
         Some(&file),
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert_eq!(settled.next, Next::Send(STEP_4.to_string()));
     assert_eq!(settled.driving.progress, at(3));
@@ -321,6 +322,7 @@ fn a_passing_last_check_finishes_the_run() {
         Some(&file),
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert_eq!(settled.next, Next::Done);
     assert_eq!(
@@ -337,6 +339,7 @@ fn a_passing_watch_chains_into_a_following_check_without_a_turn() {
         Some(&file),
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert_eq!(settled.next, Next::Check("cargo xtask lint".to_string()));
     assert_eq!(
@@ -356,7 +359,13 @@ fn any_other_outcome_stops_the_run_with_check_failed_and_no_turn() {
         WatchOutcome::Stopped,
         WatchOutcome::WaitFailed("gone".to_string()),
     ] {
-        let settled = settle_check(&checking(&file, 2, run.clone()), Some(&file), &outcome, &[]);
+        let settled = settle_check(
+            &checking(&file, 2, run.clone()),
+            Some(&file),
+            &outcome,
+            &[],
+            TRUST,
+        );
         let detail = Some(check_detail(&outcome, None));
         assert_eq!(
             settled.next,
@@ -372,7 +381,13 @@ fn any_other_outcome_stops_the_run_with_check_failed_and_no_turn() {
 fn a_failed_resume_probe_stops_with_check_failed() {
     let file = stopped_on(3);
     let started = start(&file, &[], &[]).unwrap();
-    let settled = settle_check(&started.driving, Some(&file), &WatchOutcome::Exited(1), &[]);
+    let settled = settle_check(
+        &started.driving,
+        Some(&file),
+        &WatchOutcome::Exited(1),
+        &[],
+        TRUST,
+    );
     let detail = Some("exited with code 1".to_string());
     assert_eq!(
         settled.next,
@@ -395,8 +410,9 @@ fn a_changed_unapproved_or_deleted_plan_stops_a_settling_check() {
             current,
             &WatchOutcome::Exited(0),
             &[],
+            TRUST,
         );
-        assert_eq!(settled.next, Next::Stop(StopReason::PlanChanged));
+        assert_eq!(settled.next, Next::Stop(StopReason::PlanChanged(None)));
         assert_eq!(settled.driving.progress, at(2));
     }
     let off = settle_check(
@@ -404,6 +420,7 @@ fn a_changed_unapproved_or_deleted_plan_stops_a_settling_check() {
         None,
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert_eq!(off.next, Next::Stop(StopReason::Off));
 }
@@ -416,6 +433,7 @@ fn a_settled_check_at_the_turn_cap_stops_before_sending_the_next_step() {
         Some(&file),
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert_eq!(settled.next, Next::Stop(StopReason::TurnCap));
 }
@@ -535,6 +553,7 @@ fn a_settled_check_failure_carries_the_exit_code_and_output_from_its_report() {
         Some(&file),
         &WatchOutcome::Exited(1),
         &reports,
+        TRUST,
     );
     assert_eq!(
         settled.next,
@@ -548,6 +567,7 @@ fn a_settled_check_failure_carries_the_exit_code_and_output_from_its_report() {
         Some(&file),
         &WatchOutcome::Exited(1),
         &[],
+        TRUST,
     );
     assert_eq!(
         without.next,
@@ -581,6 +601,7 @@ fn a_run_that_starts_with_a_check_briefs_the_first_step_it_sends() {
         Some(&file),
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert!(
         is_brief_for(
@@ -598,7 +619,13 @@ fn a_resume_on_a_check_step_briefs_the_first_step_it_sends() {
     let file = stopped_on(3);
     let started = start(&file, &[], &[]).unwrap();
     assert!(!started.driving.briefed);
-    let settled = settle_check(&started.driving, Some(&file), &WatchOutcome::Exited(0), &[]);
+    let settled = settle_check(
+        &started.driving,
+        Some(&file),
+        &WatchOutcome::Exited(0),
+        &[],
+        TRUST,
+    );
     assert!(is_brief_for(&settled.next, STEP_4), "{:?}", settled.next);
     assert!(settled.driving.briefed);
 }
@@ -655,6 +682,7 @@ fn a_run_already_briefed_sends_later_steps_bare() {
         Some(&file),
         &WatchOutcome::Exited(0),
         &[],
+        TRUST,
     );
     assert_eq!(settled.next, Next::Send(STEP_4.to_string()));
 }

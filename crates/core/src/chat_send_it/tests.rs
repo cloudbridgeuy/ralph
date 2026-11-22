@@ -2,6 +2,7 @@ use super::*;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
+use signing::*;
 
 mod block;
 mod drive;
@@ -10,8 +11,10 @@ mod footer;
 mod header_wrap;
 mod noise;
 mod plan;
+mod refusal;
 mod render;
 mod resume;
+mod signing;
 mod steer;
 mod template;
 mod verify;
@@ -43,7 +46,7 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
             evidence: "tests fail".to_string(),
         },
         StopReason::check_failed(2),
-        StopReason::PlanChanged,
+        StopReason::PlanChanged(None),
         StopReason::NoReply,
         StopReason::NeedsYou,
         StopReason::TookOver,
@@ -278,6 +281,7 @@ fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Tic
             last: &last,
             running: &running,
         },
+        TRUST,
     )
 }
 
@@ -477,7 +481,7 @@ fn new_stop_notices_name_the_step() {
     );
     for (reason, why) in [
         (StopReason::check_failed(3), "step 3 check did not exit 0"),
-        (StopReason::PlanChanged, "the run plan changed"),
+        (StopReason::PlanChanged(None), "the run plan changed"),
         (StopReason::NoReply, "a turn ended without a reply"),
         (StopReason::NeedsYou, "a schedule waits for your approval"),
         (StopReason::TookOver, "you took over"),
@@ -487,14 +491,6 @@ fn new_stop_notices_name_the_step() {
             notice.starts_with(&format!("send-it stopped: {why}")),
             "{notice}"
         );
-    }
-}
-
-fn approved(plan: RunPlan) -> RunFile {
-    RunFile {
-        approved: Some(plan_hash(&plan)),
-        plan,
-        stopped: None,
     }
 }
 
@@ -512,6 +508,7 @@ fn driving(step: usize, awaiting: Awaiting, run: Run) -> Driving {
 fn ended(file: &RunFile) -> Ended<'_> {
     Ended {
         file: Some(file),
+        trust: TRUST,
         replied: true,
         asked: false,
         typed: false,
@@ -592,8 +589,8 @@ fn a_missing_unapproved_or_changed_plan_stops_the_run_first() {
     let flagged = [worker_report("E1", "question")];
     for (file, reason) in [
         (None, StopReason::Off),
-        (Some(&unapproved), StopReason::PlanChanged),
-        (Some(&edited), StopReason::PlanChanged),
+        (Some(&unapproved), StopReason::PlanChanged(None)),
+        (Some(&edited), StopReason::PlanChanged(None)),
     ] {
         let ended = Ended {
             file,
@@ -898,7 +895,7 @@ fn a_stop_keeps_the_stopped_step_and_a_finished_run_clears_it() {
             stopped: stopped_at(2),
         }
     );
-    let resumed = approve(&stopped, Some(&hash), true).unwrap();
+    let resumed = signed_go(&stopped, Some(&hash), true).unwrap();
     assert_eq!(resumed.stopped, stopped_at(2));
     assert_eq!(stop_file(&resumed, &hash, None).unwrap().stopped, None);
 }

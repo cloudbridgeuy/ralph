@@ -351,8 +351,8 @@ fn stop_view(
                 rerun,
             )
         },
-        StopReason::PlanChanged => view(
-            "the plan changed or lost its approval".to_string(),
+        StopReason::PlanChanged(refusal) => view(
+            format!("the plan changed or lost its approval{}", because(*refusal)),
             "…",
             unfinished(),
             vec!["review the plan".to_string()],
@@ -462,7 +462,7 @@ pub fn run_end_prefill(next: &Next) -> Option<String> {
         | Next::Done => None,
         Next::Stop(reason) => match reason {
             StopReason::Off | StopReason::TookOver => None,
-            StopReason::PlanChanged => Some(STATUS_LINE.to_string()),
+            StopReason::PlanChanged(_) => Some(STATUS_LINE.to_string()),
             StopReason::TurnCap
             | StopReason::CostCap
             | StopReason::Unmet { .. }

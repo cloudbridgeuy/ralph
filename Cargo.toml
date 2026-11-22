@@ -75,6 +75,8 @@ env_logger = "0.11"
 log = "0.4"
 
 # Unix process control
+getrandom = "0.4"
+hmac = "0.13"
 libc = "0.2"
 prettytable = "0.10"
 ralph_core = { path = "crates/core" }

@@ -19,7 +19,7 @@ fn wrapped_file() -> RunFile {
 #[test]
 fn a_wrapped_header_line_with_a_dot_separator_is_bold_and_strips_to_the_plain_text() {
     let file = wrapped_file();
-    let styled = render_status_styled(&file, NARROW);
+    let styled = render_status_styled(&file, NARROW, TRUST);
     let continuation: Vec<&str> = styled
         .lines()
         .skip_while(|line| !line.contains("1. "))
@@ -28,5 +28,5 @@ fn a_wrapped_header_line_with_a_dot_separator_is_bold_and_strips_to_the_plain_te
         .filter(|line| line.contains(" · "))
         .collect();
     assert!(!continuation.is_empty(), "{styled:?}");
-    assert_eq!(strip(&styled), render_status(&file, NARROW));
+    assert_eq!(strip(&styled), render_status(&file, NARROW, TRUST));
 }

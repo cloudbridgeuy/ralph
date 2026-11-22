@@ -30,7 +30,7 @@ fn send_it_keywords_count_only_as_the_whole_argument() {
     );
 }
 
-fn run_file(approved: Option<String>) -> RunFile {
+fn run_file(approved: Option<Approval>) -> RunFile {
     RunFile {
         plan: plan(),
         approved,
@@ -40,7 +40,7 @@ fn run_file(approved: Option<String>) -> RunFile {
 
 #[test]
 fn a_run_file_round_trips_through_toml_with_its_approval() {
-    for approved in [None, Some(plan_hash(&plan()))] {
+    for approved in [None, Some(signed(&plan()))] {
         let file = run_file(approved);
         let text = write_run(&file).unwrap();
         assert_eq!(read_run(&text, limits()), Ok(file), "{text}");
@@ -111,37 +111,37 @@ fn the_plan_hash_ignores_layout_and_follows_content() {
 fn go_approves_only_the_shown_plan_typed_at_the_prompt() {
     let file = run_file(None);
     let hash = plan_hash(&file.plan);
-    assert!(!file.is_approved());
-    assert!(approve(&file, Some(&hash), false)
+    assert!(!file.is_approved(TRUST));
+    assert!(signed_go(&file, Some(&hash), false)
         .unwrap_err()
         .contains("type it at the prompt"));
     for shown in [None, Some("0123456789ab")] {
-        assert!(approve(&file, shown, true)
+        assert!(signed_go(&file, shown, true)
             .unwrap_err()
             .contains("/send-it status"));
     }
-    let approved = approve(&file, Some(&hash), true).unwrap();
-    assert_eq!(approved.approved, Some(hash));
-    assert!(approved.is_approved());
+    let approved = signed_go(&file, Some(&hash), true).unwrap();
+    assert_eq!(approved.approved, Some(signed(&file.plan)));
+    assert!(approved.is_approved(TRUST));
 }
 
 #[test]
 fn an_edited_plan_loses_its_approval() {
-    let mut file = approve(&run_file(None), Some(&plan_hash(&plan())), true).unwrap();
-    assert!(file.is_approved());
+    let mut file = signed_go(&run_file(None), Some(&plan_hash(&plan())), true).unwrap();
+    assert!(file.is_approved(TRUST));
     file.plan.steps.pop();
-    assert!(!file.is_approved());
+    assert!(!file.is_approved(TRUST));
 }
 
 #[test]
 fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
     let file = run_file(None);
     let hash = plan_hash(&file.plan);
-    let status = render_status(&file, WIDE);
+    let status = render_status(&file, WIDE, TRUST);
     assert!(status.starts_with(&render_run(&file.plan)), "{status}");
     assert!(status.ends_with(&format!("\n{hash} · not approved · /send-it go to approve")));
-    let approved = approve(&file, Some(&hash), true).unwrap();
-    assert!(render_status(&approved, WIDE).ends_with(&format!("\n{hash} · approved")));
+    let approved = signed_go(&file, Some(&hash), true).unwrap();
+    assert!(render_status(&approved, WIDE, TRUST).ends_with(&format!("\n{hash} · approved")));
     let stopped = RunFile {
         stopped: Some(Stopped {
             step: 2,
@@ -149,7 +149,7 @@ fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
         }),
         ..file
     };
-    assert!(render_status(&stopped, WIDE).ends_with(&format!(
+    assert!(render_status(&stopped, WIDE, TRUST).ends_with(&format!(
         "\n{hash} · stopped at step 2/4 · /send-it go to resume from step 2"
     )));
 }
@@ -157,12 +157,12 @@ fn status_shows_the_plan_its_hash_and_whether_it_is_approved() {
 #[test]
 fn only_an_approved_run_blocks_a_new_proposal() {
     let draft = run_file(None);
-    assert_eq!(propose_refusal(None), None);
-    assert_eq!(propose_refusal(Some(&draft)), None);
+    assert_eq!(propose_refusal(None, TRUST), None);
+    assert_eq!(propose_refusal(Some(&draft), TRUST), None);
     let hash = plan_hash(&draft.plan);
-    let approved = approve(&draft, Some(&hash), true).unwrap();
+    let approved = signed_go(&draft, Some(&hash), true).unwrap();
     assert_eq!(
-        propose_refusal(Some(&approved)),
+        propose_refusal(Some(&approved), TRUST),
         Some(format!(
             "Plan {hash} is approved and active. Stop it with /send-it off first."
         ))
@@ -227,7 +227,7 @@ fn continuations<'a>(status: &'a str, first: &str, indent: usize) -> Vec<&'a str
 #[test]
 fn status_wraps_long_steps_at_word_boundaries() {
     let file = long_file();
-    let status = render_status(&file, NARROW);
+    let status = render_status(&file, NARROW, TRUST);
     assert!(
         status.lines().all(|line| line.chars().count() <= NARROW),
         "{status}"
@@ -237,13 +237,13 @@ fn status_wraps_long_steps_at_word_boundaries() {
             .map(str::to_string)
             .collect::<Vec<_>>()
     };
-    let wide = render_status(&file, WIDE);
+    let wide = render_status(&file, WIDE, TRUST);
     assert_eq!(words(&status), words(&wide), "{status}");
 }
 
 #[test]
 fn a_wrapped_step_continues_under_its_text() {
-    let status = render_status(&long_file(), NARROW);
+    let status = render_status(&long_file(), NARROW, TRUST);
     let rest = continuations(&status, "  1. ", 5);
     assert!(!rest.is_empty(), "{status}");
     for line in rest {
@@ -253,7 +253,7 @@ fn a_wrapped_step_continues_under_its_text() {
 
 #[test]
 fn a_wrapped_exit_continues_under_its_criterion() {
-    let status = render_status(&long_file(), NARROW);
+    let status = render_status(&long_file(), NARROW, TRUST);
     let rest = continuations(&status, "     exit: ", 11);
     assert!(!rest.is_empty(), "{status}");
     for line in rest {
@@ -266,7 +266,7 @@ fn a_wide_screen_shows_the_plan_unchanged() {
     let file = long_file();
     let hash = plan_hash(&file.plan);
     assert_eq!(
-        render_status(&file, WIDE),
+        render_status(&file, WIDE, TRUST),
         format!(
             "{}\n{hash} · not approved · /send-it go to approve",
             render_run(&file.plan)
