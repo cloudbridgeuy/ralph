@@ -378,10 +378,12 @@ fn line_reasons(path: &str, line: &str) -> Vec<String> {
 }
 
 fn is_checked(path: &str) -> bool {
-    ["css", "html", "svg", "js"].iter().any(|ext| {
-        path.rsplit_once('.')
-            .is_some_and(|(_, found)| found == *ext)
-    })
+    ["css", "html", "htm", "svg", "svgz", "js", "mjs"]
+        .iter()
+        .any(|ext| {
+            path.rsplit_once('.')
+                .is_some_and(|(_, found)| found == *ext)
+        })
 }
 
 fn find_web_violations(path: &str, text: &str) -> Vec<WebViolation> {
@@ -491,6 +493,14 @@ mod tests {
     fn flags_hex_colours_of_every_length() {
         let text = "a { color: #fff; }\nb { color: #ffff; }\nc { color: #0c0c0c; }\nd { color: #0c0c0cff; }\n";
         assert_eq!(lines(CSS, text), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn checks_every_web_source_extension() {
+        for ext in ["css", "html", "htm", "svg", "svgz", "js", "mjs"] {
+            let path = format!("crates/ralph_api/assets/x.{ext}");
+            assert_eq!(lines(&path, "a { color: #fff; }\n"), vec![1], "{ext}");
+        }
     }
 
     #[test]
