@@ -265,9 +265,19 @@ fn foreign_variable(line: &str) -> bool {
     })
 }
 
+fn declarations(line: &str) -> impl Iterator<Item = (&str, &str)> {
+    line.split([';', '{', '}', '"', '\''])
+        .filter_map(|part| part.split_once(':'))
+}
+
+fn token_definition(line: &str) -> bool {
+    declarations(line).any(|(prop, _)| prop.trim().starts_with("--r-"))
+}
+
 fn is_colour_property(prop: &str) -> bool {
     let prop = prop.trim().to_ascii_lowercase();
-    prop == "color"
+    prop.starts_with("--")
+        || prop == "color"
         || prop == "fill"
         || prop == "stroke"
         || prop.starts_with("background")
@@ -285,8 +295,7 @@ fn value_has_named_colour(value: &str) -> bool {
 }
 
 fn named_colour_declaration(line: &str) -> bool {
-    line.split([';', '{', '}', '"', '\''])
-        .filter_map(|part| part.split_once(':'))
+    declarations(line)
         .any(|(prop, value)| is_colour_property(prop) && value_has_named_colour(value))
 }
 
@@ -356,6 +365,9 @@ fn line_reasons(path: &str, line: &str) -> Vec<String> {
     }
     if foreign_variable(line) {
         reasons.push("variable outside the --r-* token prefix".to_string());
+    }
+    if token_definition(line) {
+        reasons.push("token definition; --r-* tokens come only from /tokens.css".to_string());
     }
     for name in element_names(line) {
         if !PRIMITIVES.contains(&name.as_str()) {
@@ -528,8 +540,17 @@ mod tests {
     }
 
     #[test]
+    fn flags_a_token_definition_and_a_named_colour_in_a_custom_property() {
+        let text = ":root { --r-accent: tomato; }\na { --r-link: var(--r-ansi-4); }\nb { --accent: tomato; }\nc { --accent: var(--r-ansi-4); }\n";
+        assert_eq!(lines(CSS, text), vec![1, 1, 2, 3]);
+        let found = reasons(CSS, text);
+        assert!(found[0].1.contains("named colour"), "{}", found[0].1);
+        assert!(found[1].1.contains("token"), "{}", found[1].1);
+    }
+
+    #[test]
     fn accepts_tokens_keywords_and_fallbacks() {
-        let text = "a { color: var(--r-ansi-7); background: var(--r-ansi-0); }\nb { border-top: 1px solid var(--r-border, var(--r-ansi-8)); }\nc { background: transparent; color: currentColor; border-color: inherit; }\nd { --r-red-ish: 1; font-family: var(--r-font); }\n";
+        let text = "a { color: var(--r-ansi-7); background: var(--r-ansi-0); }\nb { border-top: 1px solid var(--r-border, var(--r-ansi-8)); }\nc { background: transparent; color: currentColor; border-color: inherit; }\nd { font-family: var(--r-font); --gap: 1px; }\n";
         assert!(reasons(CSS, text).is_empty());
     }
 
