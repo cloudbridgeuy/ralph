@@ -194,6 +194,9 @@ pub fn leaks(text: &str) -> Vec<&'static str> {
 }
 
 pub fn render(catalogue: &Catalogue) -> Result<String, String> {
+    if catalogue.very_long_title_derived.is_none() {
+        return Err("the store has no safe title to build the fixture from".into());
+    }
     let value = json!({
         "schema": 1,
         "titles": catalogue.titles,
@@ -379,7 +382,7 @@ mod tests {
 
     #[test]
     fn worst_case_fixture_fits_the_size_cap() {
-        let mut c = derive("", "", &[]);
+        let mut c = derive("", "", &[STATUS]);
         c.titles = (0..MAX_TITLES)
             .map(|i| format!("{i:02}{}", "w".repeat(MAX_TITLE_CHARS - 2)))
             .collect();
@@ -395,7 +398,7 @@ mod tests {
 
     #[test]
     fn render_refuses_an_oversized_fixture() {
-        let mut c = derive("", "", &[]);
+        let mut c = derive("", "", &[STATUS]);
         c.titles = vec!["y".repeat(MAX_TITLE_CHARS); 200];
         assert!(render(&c).unwrap_err().contains("cap"));
     }
@@ -419,6 +422,23 @@ mod tests {
     #[test]
     fn no_title_gives_no_very_long_title() {
         assert_eq!(derive("", "", &[]).very_long_title_derived, None);
+    }
+
+    #[test]
+    fn render_refuses_a_catalogue_with_no_title() {
+        let error = render(&derive("", "", &[])).unwrap_err();
+        assert!(error.contains("title"), "{error}");
+    }
+
+    #[test]
+    fn generator_output_matches_the_sample_the_api_parser_reads() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/ralph_api/fixtures/generator_sample.json");
+        let text = render(&derive(LOG, USAGE, &[STATUS])).unwrap();
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &text).unwrap();
+        }
+        assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     }
 
     #[test]

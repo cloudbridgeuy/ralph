@@ -78,6 +78,18 @@ mod tests {
     }
 
     #[test]
+    fn the_generator_sample_parses() {
+        let fixture = parse(include_str!("../../fixtures/generator_sample.json")).unwrap();
+        assert_eq!(fixture.titles.len(), 2);
+        assert!(fixture.very_long_title.chars().count() >= 300);
+        assert_eq!(fixture.costs.len(), 2);
+        assert!(fixture
+            .counts
+            .iter()
+            .any(|(name, n)| name == "turns" && *n == 3));
+    }
+
+    #[test]
     fn a_small_fixture_keeps_its_order() {
         let text = r#"{"titles":["a","b"],"longest_title":"b","very_long_title_derived":"b b","counts":{"turns":2,"naps":1},"durations_ms":{"turn_max":9},"cost_series_usd":[{"day":"2026-01-01","turns":1,"cost":5}]}"#;
         let fixture = parse(text).unwrap();
