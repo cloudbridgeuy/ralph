@@ -22,7 +22,7 @@ pub(crate) struct ApiResponse {
     pub status: u16,
     pub content_type: &'static str,
     pub headers: Vec<(&'static str, &'static str)>,
-    pub body: String,
+    pub body: Vec<u8>,
     pub set_cookie: Option<String>,
 }
 
@@ -80,7 +80,7 @@ fn css_response(body: &str) -> ApiResponse {
         status: 200,
         content_type: CSS,
         headers: vec![NO_STORE],
-        body: body.to_string(),
+        body: body.to_string().into_bytes(),
         set_cookie: None,
     }
 }
@@ -94,7 +94,7 @@ fn json_response(status: u16, body: serde_json::Value) -> ApiResponse {
         status,
         content_type: JSON,
         headers: vec![NO_STORE],
-        body: body.to_string(),
+        body: body.to_string().into_bytes(),
         set_cookie: None,
     }
 }
@@ -141,7 +141,7 @@ mod tests {
     }
 
     fn body(response: &ApiResponse) -> Value {
-        serde_json::from_str(&response.body).unwrap()
+        serde_json::from_slice(&response.body).unwrap()
     }
 
     #[test]
@@ -149,7 +149,7 @@ mod tests {
         let response = route(&authed("GET", "/api/health"), &config(), &token());
         assert_eq!(response.status, 200);
         assert_eq!(body(&response), json!({"status": "ok", "version": "9.9.9"}));
-        assert!(!response.body.contains("/secret/store"));
+        assert!(!String::from_utf8_lossy(&response.body).contains("/secret/store"));
     }
 
     #[test]
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn tokens_body_is_the_configured_css() {
         let response = route(&authed("GET", "/tokens.css"), &config(), &token());
-        assert_eq!(response.body, config().tokens_css);
+        assert_eq!(response.body, config().tokens_css.as_bytes());
     }
 
     #[test]
