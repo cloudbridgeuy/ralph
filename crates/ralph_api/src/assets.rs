@@ -155,6 +155,22 @@ mod tests {
     }
 
     #[test]
+    fn reduced_motion_keeps_the_spinner_show_delay_and_drops_the_spin() {
+        let css = css();
+        let media = css
+            .split("@media (prefers-reduced-motion: reduce)")
+            .nth(1)
+            .unwrap();
+        let rule = media
+            .split("r-spinner::before")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap();
+        assert!(rule.contains("r-show 1ms linear 200ms both"), "{rule}");
+        assert!(!rule.contains("r-spin"), "{rule}");
+    }
+
+    #[test]
     fn the_stylesheet_has_the_two_theme_columns_and_a_hidden_text_class() {
         let css = css();
         assert!(css.contains(".columns"));

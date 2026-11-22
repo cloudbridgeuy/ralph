@@ -298,7 +298,7 @@ r-spark .line {
 
 @media (prefers-reduced-motion: reduce) {
   r-spinner::before {
-    animation: none;
+    animation: r-show 1ms linear 200ms both;
   }
 
   * {
