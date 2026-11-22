@@ -18,6 +18,10 @@
 | Assets | `crates/ralph_api/src/assets.rs` | embedded table: `find()` |
 | Asset files | `crates/ralph_api/assets/` | `index.html`, `app.css`, `fonts/` |
 | Colour lint | `xtask/src/lint/web_colour.rs` | checks the files in `assets/` |
+| Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
+| Catalogue page | `crates/ralph_api/src/catalogue/` | `page()` builds `/catalogue`; `fixture.rs` parses the fixture |
+| Fixture | `crates/ralph_api/fixtures/catalogue.json` | sanitised sample data for the catalogue |
+| Fixture generator | `xtask/src/catalogue/` | `core.rs` is pure; `mod.rs` reads and writes files |
 
 ## Start
 
@@ -69,13 +73,15 @@
 | `GET /assets/app.css` | 200 `text/css` |
 | `GET /assets/geist-mono.woff2` | 200 `font/woff2` |
 | other method on `/` or `/assets/*` | 405 with `Allow: GET` |
+| `GET /catalogue` | 200 `text/html` page with the same headers and CSP as the shell |
+| other method on `/catalogue` | 405 with `Allow: GET` |
 | `GET /tokens.css` | 200 `text/css; charset=utf-8` with `Cache-Control: no-store` |
 | other method on `/tokens.css` | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
 
 The 503 is the only answer that does not pass the Host and token checks. The server sends it before `route()` runs, so a request without a token also gets it. The other rows apply in the order shown, after the 503 row.
 
-Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`, the embedded assets and the 302 hand-off (it has no body). `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
+Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`, `/catalogue`, the embedded assets and the 302 hand-off (it has no body). `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
 
 ## Embedded assets
 
@@ -87,6 +93,49 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 - The `[web]` font default starts with `"Geist Mono"`.
 - `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 primitives. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint.
 - A body of 32 KB or more goes out with chunked transfer encoding. The test client decodes it.
+
+## Primitives
+
+The UI has no JavaScript. Each primitive is a hyphenated tag that the server renders as plain HTML. A browser treats an unknown hyphenated tag as an inline element, and `app.css` styles it. The colour lint allows only these tags.
+
+| Tag | Builder | Notes |
+|-----|---------|-------|
+| `r-box` | `frame(shape, title, inner_html)` | shape `square`, `round` or `heavy`; optional title |
+| `r-rule` | `rule()` | `role="separator"` |
+| `r-table` | `table(headers, rows)` | `th scope="col"`; a short row is padded to the header count |
+| `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
+| `r-pill` | `pill(tone, shape, icon, text)` | shape `square` or `round`; optional inline SVG icon with `aria-hidden` |
+| `r-status` | `status(tone, text)` | `role="status"`, `aria-live="polite"`; a word (OK, Error, Warning, Info, Note) shows the tone, so colour is never the only signal |
+| `r-empty` | `empty(text)` | the empty state |
+| `r-error` | `error(text)` | `role="alert"` |
+| `r-spinner` | `spinner()` | `role="status"` with visually hidden "Loading" text |
+| `r-spark` | `spark_svg(values, w, h)` | returns `None` for an empty series; the caller renders `r-empty` |
+
+- Every builder is a pure function that returns a `String`. One `escape()` handles text and attribute values (`& < > " '`).
+- Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent; `Shape`; `PillShape`; `Icon`), never from free text. `inner_html` of `frame()` must be built from these builders.
+- No builder writes a `style` attribute, because the CSP forbids inline style. No builder writes a raw colour. SVG uses `stroke="currentColor"` and classes.
+- `spark_points()` drops NaN and infinite values. A flat series and a single point draw a mid line. Huge values do not overflow.
+- Goldens are in `crates/ralph_api/tests/golden/render/<primitive>_<state>.html`. Unit tests in `render/` compare them. The states are empty, sparse, dense, error and very-long where they apply, plus hostile text for escaping.
+- `app.css` holds the primitive styles. They use `var(--r-*)` colours only. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
+
+## Catalogue
+
+`GET /catalogue` shows every primitive in the states empty, sparse, dense, error and very-long. The page has two columns, `<section data-theme="dark">` and `<section data-theme="light">`. The shell nav links to `/catalogue`. It is not `#/catalogue`: the shell has no script, so a hash link cannot reach a server page. The page has a link back to `/`.
+
+- The route passes the same Host and token checks as the shell. It sends `no-store` and the shell CSP, unchanged.
+- `include_str!` embeds the fixture. `catalogue::page()` renders it. A fixture that does not parse gives an `r-error` in both columns.
+- `tokens.css` ends with `[data-theme="dark"]` and `[data-theme="light"]` blocks. They hold the two ANSI tables, so a column shows its own theme whatever the browser theme is.
+- `crates/ralph_api/tests/catalogue_contract.rs` has the contract cases and goldens `catalogue_*.txt`. Unit tests in `catalogue/` scan the page for `style=` and for raw colours.
+
+## Catalogue fixture
+
+`cargo xtask catalogue --store <DIR> --out crates/ralph_api/fixtures/catalogue.json` derives the fixture. Run it on a copy of a store, not on the live store. The command only reads the store.
+
+- It reads `usage.jsonl` for the cost series, durations, and turn and nap counts. It reads `log.jsonl` for role counts only. It reads the files in `status/` for titles.
+- It keeps counts, durations, whole-dollar costs for each day (the last 60 days) and short titles. It drops paths, prompts, tool arguments and message bodies.
+- A title with `/`, `\`, `@`, `sk-` or `token`, or with more than 200 characters, is dropped.
+- `very_long_title_derived` is the longest real title, repeated to at least 300 characters.
+- The command refuses to write a file that holds `sk-`, `/Users/`, `@` or `token`, or that is over 20 KB. A unit test checks the committed fixture for the same.
 
 ## Limits
 
