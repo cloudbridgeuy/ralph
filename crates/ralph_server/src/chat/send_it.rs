@@ -10,9 +10,10 @@ use ralph_core::chat_send_it::template::{
     fill_template, match_template, render_templates, save_notice, template_name, template_text,
 };
 use ralph_core::chat_send_it::{
-    approve, parse_run, plan_hash, plan_warnings, propose_refusal, read_run, render_status,
-    render_status_styled, settle_check, start_run, stop_file, tick, with_reply, write_run, Action,
-    Driving, Ended, Limits, RunFile, Seen, Signing, StepResult, Ticked, Trust,
+    approval_refusal, approve, parse_run, plan_hash, plan_warnings, propose_refusal, read_run,
+    refusal_line, render_status, render_status_styled, settle_check, start_run, stop_file, tick,
+    with_reply, write_run, Action, Driving, Ended, Limits, RunFile, Seen, Signing, StepResult,
+    Ticked, Trust,
 };
 use ralph_core::watch::WatchOutcome;
 use ralph_core::worker::{hex_encode, Report};
@@ -267,13 +268,20 @@ impl SendIt {
             Err(text) => return (text, None),
         };
         locked(&self.answered).clear();
-        let approved = self.signed_approval(&file, shown, typed_at_prompt);
-        match approved {
+        let refused = self
+            .gate(|trust| approval_refusal(&file, trust))
+            .map_or_else(String::new, |refusal| {
+                format!("{}\n", refusal_line(refusal))
+            });
+        match self.signed_approval(&file, shown, typed_at_prompt) {
             Ok(approved) => (
-                format!("Plan {} approved. Running it.", plan_hash(&approved.plan)),
+                format!(
+                    "{refused}Plan {} approved. Running it.",
+                    plan_hash(&approved.plan)
+                ),
                 self.gate(|trust| start_run(&approved, seen, trust)),
             ),
-            Err(text) => (text, None),
+            Err(text) => (format!("{refused}{text}"), None),
         }
     }
 
@@ -537,6 +545,26 @@ mod tests {
                 "Plan {hash} is approved and active. Stop it with /send-it off first."
             ))
         );
+    }
+
+    #[test]
+    fn go_says_why_a_hand_written_approval_was_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let send_it = quiet(dir.path());
+        send_it.propose(&plan_args()).unwrap();
+        let hash = send_it.status(80).shown.unwrap();
+        let text = fs::read_to_string(&send_it.path).unwrap();
+        fs::write(&send_it.path, format!("approved = \"{hash}\"\n{text}")).unwrap();
+        let line =
+            "Approval in run.toml refused: not signed by this chat. Type /send-it go to approve.";
+        assert!(send_it.status(200).text.lines().any(|row| row == line));
+        let seen = Seen {
+            last: &HashMap::new(),
+            running: &[],
+        };
+        let (shown, _) = send_it.go(Some(&hash), true, &seen);
+        assert!(shown.starts_with(line), "{shown}");
+        assert!(shown.contains("approved. Running it."), "{shown}");
     }
 
     struct Editor(Option<&'static str>);

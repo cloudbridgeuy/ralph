@@ -159,7 +159,7 @@ fn route(send_it: &SendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
                 send_it.show(echo);
                 Driven::keep(driving, Route::Send(prompt), None)
             }
-            None => stopped(send_it, StopReason::PlanChanged, &driving),
+            None => stopped(send_it, StopReason::PlanChanged(None), &driving),
         },
         Next::Hold(worker) => Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None),
         Next::Watch(command) | Next::Check(command) => {

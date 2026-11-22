@@ -11,6 +11,7 @@ mod footer;
 mod header_wrap;
 mod noise;
 mod plan;
+mod refusal;
 mod render;
 mod resume;
 mod signing;
@@ -45,7 +46,7 @@ fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
             evidence: "tests fail".to_string(),
         },
         StopReason::check_failed(2),
-        StopReason::PlanChanged,
+        StopReason::PlanChanged(None),
         StopReason::NoReply,
         StopReason::NeedsYou,
         StopReason::TookOver,
@@ -480,7 +481,7 @@ fn new_stop_notices_name_the_step() {
     );
     for (reason, why) in [
         (StopReason::check_failed(3), "step 3 check did not exit 0"),
-        (StopReason::PlanChanged, "the run plan changed"),
+        (StopReason::PlanChanged(None), "the run plan changed"),
         (StopReason::NoReply, "a turn ended without a reply"),
         (StopReason::NeedsYou, "a schedule waits for your approval"),
         (StopReason::TookOver, "you took over"),
@@ -588,8 +589,8 @@ fn a_missing_unapproved_or_changed_plan_stops_the_run_first() {
     let flagged = [worker_report("E1", "question")];
     for (file, reason) in [
         (None, StopReason::Off),
-        (Some(&unapproved), StopReason::PlanChanged),
-        (Some(&edited), StopReason::PlanChanged),
+        (Some(&unapproved), StopReason::PlanChanged(None)),
+        (Some(&edited), StopReason::PlanChanged(None)),
     ] {
         let ended = Ended {
             file,

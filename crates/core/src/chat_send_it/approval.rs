@@ -1,12 +1,13 @@
-use super::{full_hash, RunPlan};
+use super::{full_hash, RunFile, RunPlan};
 use crate::worker::hex_encode;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::fmt;
 
 pub const KIND: &str = "send-it-go";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Approval {
     pub kind: String,
     pub subject_hash: String,
@@ -36,6 +37,29 @@ pub enum Refusal {
     WrongKind,
     WrongPlan,
     Replayed,
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Refusal::Unsigned => "not signed by this chat",
+            Refusal::Tampered => {
+                "the signature does not match this chat (edited, or from before a restart)"
+            }
+            Refusal::WrongKind => "the record is not a /send-it go approval",
+            Refusal::WrongPlan => "the plan changed after it was approved",
+            Refusal::Replayed => "the approval is no longer current",
+        })
+    }
+}
+
+pub fn approval_refusal(file: &RunFile, trust: Trust) -> Option<Refusal> {
+    let record = file.approved.as_ref()?;
+    match verify(Some(record), &file.plan, trust) {
+        Err(Refusal::Replayed) if trust.live.is_none() => None,
+        Err(refusal) => Some(refusal),
+        Ok(()) => None,
+    }
 }
 
 pub struct Signing<'a> {
@@ -73,6 +97,9 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 
 pub fn verify(approval: Option<&Approval>, plan: &RunPlan, trust: Trust) -> Result<(), Refusal> {
     let approval = approval.ok_or(Refusal::Unsigned)?;
+    if approval.is_unsigned() {
+        return Err(Refusal::Unsigned);
+    }
     let given = unhex(&approval.mac).ok_or(Refusal::Tampered)?;
     mac_over(trust.key, approval)
         .map_err(|_| Refusal::Tampered)?
@@ -91,6 +118,10 @@ pub fn verify(approval: Option<&Approval>, plan: &RunPlan, trust: Trust) -> Resu
 }
 
 impl Approval {
+    pub fn is_unsigned(&self) -> bool {
+        self.mac.is_empty()
+    }
+
     pub fn seal(self, key: &[u8]) -> Result<Self, String> {
         let mac = mac_over(key, &self)
             .map_err(|error| format!("Could not sign the approval: {error}"))?;

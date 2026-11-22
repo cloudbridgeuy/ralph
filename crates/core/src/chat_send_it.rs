@@ -17,7 +17,7 @@ mod end_block;
 mod render;
 pub mod template;
 
-pub use approval::{Approval, Signing, Trust};
+pub use approval::{approval_refusal, Approval, Refusal, Signing, Trust};
 pub use drive::*;
 pub use end_block::*;
 pub use render::*;
@@ -444,7 +444,7 @@ pub fn read_run(text: &str, defaults: Limits) -> Result<RunFile, String> {
         plan: parse_run(&value, defaults)?,
         approved: value
             .get(APPROVED_KEY)
-            .and_then(|record| Approval::deserialize(record).ok()),
+            .map(|record| Approval::deserialize(record).unwrap_or_default()),
         stopped: value
             .get(STOPPED_KEY)
             .and_then(|stopped| Stopped::deserialize(stopped).ok()),
@@ -455,7 +455,11 @@ pub fn write_run(file: &RunFile) -> Result<String, String> {
     let unwritable = |error: String| format!("Could not write run.toml: {error}");
     let mut value =
         serde_json::to_value(RawPlan::from(&file.plan)).map_err(|e| unwritable(e.to_string()))?;
-    if let (Some(fields), Some(approval)) = (value.as_object_mut(), &file.approved) {
+    let signed = file
+        .approved
+        .as_ref()
+        .filter(|approval| !approval.is_unsigned());
+    if let (Some(fields), Some(approval)) = (value.as_object_mut(), signed) {
         fields.insert(APPROVED_KEY.to_string(), json!(approval));
     }
     if let (Some(fields), Some(stopped)) = (value.as_object_mut(), &file.stopped) {
@@ -687,7 +691,7 @@ pub enum StopReason {
     CheckFailed { step: usize, detail: Option<String> },
     CheckNotStarted { step: usize, error: String },
     Off,
-    PlanChanged,
+    PlanChanged(Option<Refusal>),
     NoReply,
     NeedsYou,
     TookOver,
@@ -728,6 +732,10 @@ pub fn check_detail(outcome: &WatchOutcome, report: Option<&Report>) -> String {
     }
 }
 
+fn because(refusal: Option<Refusal>) -> String {
+    refusal.map_or_else(String::new, |refusal| format!(": {refusal}"))
+}
+
 impl StopReason {
     pub fn check_failed(step: usize) -> Self {
         StopReason::CheckFailed { step, detail: None }
@@ -756,7 +764,10 @@ impl StopReason {
                 "step {step} check could not start: {}",
                 error.trim_end_matches('.')
             ),
-            StopReason::PlanChanged => "the run plan changed or lost its approval".to_string(),
+            StopReason::PlanChanged(refusal) => format!(
+                "the run plan changed or lost its approval{}",
+                because(*refusal)
+            ),
             StopReason::NoReply => "a turn ended without a reply".to_string(),
             StopReason::NeedsYou => "a schedule waits for your approval".to_string(),
             StopReason::TookOver => "you took over".to_string(),

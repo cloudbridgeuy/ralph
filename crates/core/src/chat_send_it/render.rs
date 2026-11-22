@@ -1,6 +1,6 @@
 use super::{
-    hang_wrapped, plan_hash, plan_warnings, resume_step, Action, Criterion, RunFile, RunPlan, Step,
-    Trust, RUN_BY_RALPH_NOTE,
+    approval_refusal, hang_wrapped, plan_hash, plan_warnings, resume_step, Action, Criterion,
+    Refusal, RunFile, RunPlan, Step, Trust, RUN_BY_RALPH_NOTE,
 };
 use crate::ansi::{BOLD, CYAN as CODE, DIM, GREEN, RESET, YELLOW};
 use crate::chat_help::wrap;
@@ -171,8 +171,15 @@ fn state_row(file: &RunFile, trust: Trust) -> Row {
     }
 }
 
+pub fn refusal_line(refusal: Refusal) -> String {
+    format!("Approval in run.toml refused: {refusal}. Type /send-it go to approve.")
+}
+
 fn status_rows(file: &RunFile, width: usize, trust: Trust) -> Vec<Row> {
     let mut rows = plan_rows(&file.plan, width);
+    rows.extend(
+        approval_refusal(file, trust).map(|refusal| Row::new(Role::Warning, refusal_line(refusal))),
+    );
     rows.push(state_row(file, trust));
     rows
 }

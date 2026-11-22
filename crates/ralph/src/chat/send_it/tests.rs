@@ -2,7 +2,7 @@ use super::*;
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
 use ralph_core::chat_send_it::{
-    plan_hash, write_run, Action, Awaiting, Limits, Seen, StepResult, StopReason, Trust, VerifyMode,
+    plan_hash, write_run, Action, Awaiting, Limits, Refusal, Seen, StepResult, Trust, VerifyMode,
 };
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
@@ -91,7 +91,7 @@ fn a_hand_written_approved_hash_is_not_an_approval() {
     .unwrap();
     assert_eq!(send_it.allowed(), None);
     assert_eq!(send_it.refusal(), None);
-    assert!(send_it.load().unwrap().unwrap().approved.is_none());
+    assert!(send_it.load().unwrap().unwrap().approved.is_some());
 }
 
 #[test]
@@ -159,7 +159,7 @@ fn a_tampered_record_mid_run_stops_the_run_and_closes_the_gate() {
     assert_eq!(send_it.allowed(), None);
     assert_eq!(
         tick(&send_it, &active, ended()).next,
-        Next::Stop(StopReason::PlanChanged)
+        Next::Stop(StopReason::PlanChanged(Some(Refusal::Tampered)))
     );
 }
 
@@ -173,7 +173,7 @@ fn a_swapped_plan_under_the_old_record_mid_run_stops_the_run() {
     assert_eq!(send_it.allowed(), None);
     assert_eq!(
         tick(&send_it, &active, ended()).next,
-        Next::Stop(StopReason::PlanChanged)
+        Next::Stop(StopReason::PlanChanged(Some(Refusal::WrongPlan)))
     );
 }
 
@@ -701,7 +701,7 @@ fn every_tick_reads_the_plan_file_again() {
     send_it.release(&active.driving.hash, None).unwrap();
     assert_eq!(
         tick(&send_it, &active, ended()).next,
-        Next::Stop(StopReason::PlanChanged)
+        Next::Stop(StopReason::PlanChanged(None))
     );
     send_it.off();
     assert_eq!(

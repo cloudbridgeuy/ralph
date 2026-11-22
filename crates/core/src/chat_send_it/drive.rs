@@ -443,7 +443,7 @@ fn current_plan<'a>(
     if file.is_approved(trust) && plan_hash(&file.plan) == hash {
         Ok(file)
     } else {
-        Err(StopReason::PlanChanged)
+        Err(StopReason::PlanChanged(approval_refusal(file, trust)))
     }
 }
 

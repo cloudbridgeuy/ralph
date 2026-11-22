@@ -69,13 +69,16 @@ fn another_key_signs_a_different_mac() {
 }
 
 #[test]
-fn an_old_approved_string_reads_as_not_approved() {
+fn an_old_approved_string_reads_as_an_unsigned_record() {
     let text = format!(
-        "{}approved = \"{}\"\n",
-        write_run(&run()).unwrap(),
-        plan_hash(&plan())
+        "approved = \"{}\"\n{}",
+        plan_hash(&plan()),
+        write_run(&run()).unwrap()
     );
-    assert_eq!(read_run(&text, limits()).unwrap().approved, None);
+    let file = read_run(&text, limits()).unwrap();
+    assert_eq!(file.approved, Some(Approval::default()));
+    assert!(!file.is_approved(TRUST));
+    assert!(!write_run(&file).unwrap().contains("approved"));
 }
 
 fn run() -> RunFile {

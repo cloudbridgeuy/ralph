@@ -412,7 +412,7 @@ fn a_changed_unapproved_or_deleted_plan_stops_a_settling_check() {
             &[],
             TRUST,
         );
-        assert_eq!(settled.next, Next::Stop(StopReason::PlanChanged));
+        assert_eq!(settled.next, Next::Stop(StopReason::PlanChanged(None)));
         assert_eq!(settled.driving.progress, at(2));
     }
     let off = settle_check(
