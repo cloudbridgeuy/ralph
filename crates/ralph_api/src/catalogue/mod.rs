@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn hostile_fixture_text_is_escaped() {
-        let text = r#"{"titles":["<script>alert(1)</script>"],"longest_title":"x","very_long_title_derived":"<b onclick=\"x\">","counts":{},"durations_ms":{},"cost_series_usd":[]}"#;
+        let text = r#"{"schema":1,"titles":["<script>alert(1)</script>"],"very_long_title_derived":"<b onclick=\"x\">","counts":{},"durations_ms":{},"cost_series_usd":[]}"#;
         let html = page(text);
         assert!(!html.contains("<script"));
         assert!(!html.contains("<b onclick"));
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn an_empty_series_renders_the_empty_state_for_the_sparkline() {
-        let text = r#"{"titles":[],"longest_title":null,"very_long_title_derived":"v","counts":{},"durations_ms":{},"cost_series_usd":[]}"#;
+        let text = r#"{"schema":1,"titles":[],"very_long_title_derived":"v","counts":{},"durations_ms":{},"cost_series_usd":[]}"#;
         let html = page(text);
         assert!(!html.contains("<r-spark"));
         assert!(html.contains("<r-empty>"));

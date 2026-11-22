@@ -19,7 +19,6 @@ pub struct DayCost {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Catalogue {
     pub titles: Vec<String>,
-    pub longest_title: Option<String>,
     pub very_long_title_derived: Option<String>,
     pub log_entries: u64,
     pub user_entries: u64,
@@ -171,7 +170,6 @@ pub fn derive(log: &str, usage: &str, statuses: &[&str]) -> Catalogue {
     Catalogue {
         titles,
         very_long_title_derived: longest_title.as_deref().map(repeat_to_very_long),
-        longest_title,
         log_entries: entries.len() as u64,
         user_entries: role_count(&entries, "user"),
         assistant_entries: role_count(&entries, "assistant"),
@@ -200,7 +198,6 @@ pub fn render(catalogue: &Catalogue) -> Result<String, String> {
     let value = json!({
         "schema": 1,
         "titles": catalogue.titles,
-        "longest_title": catalogue.longest_title,
         "very_long_title_derived": catalogue.very_long_title_derived,
         "counts": {
             "log_entries": catalogue.log_entries,
@@ -336,10 +333,6 @@ mod tests {
                 "A longer title that is still safe to show"
             ]
         );
-        assert_eq!(
-            c.longest_title.as_deref(),
-            Some("A longer title that is still safe to show")
-        );
     }
 
     #[test]
@@ -353,7 +346,7 @@ mod tests {
     #[test]
     fn empty_input_gives_empty_catalogue() {
         let c = derive("", "", &[]);
-        assert_eq!(c.longest_title, None);
+        assert_eq!(c.very_long_title_derived, None);
         assert_eq!((c.turns, c.turn_median_ms, c.turn_max_ms), (0, 0, 0));
         assert!(c.cost_series.is_empty());
     }
@@ -365,6 +358,14 @@ mod tests {
             assert!(!text.to_lowercase().contains(needle), "{needle}");
         }
         assert!(text.contains("\"cost_series_usd\""));
+    }
+
+    #[test]
+    fn rendered_fixture_has_the_schema_and_no_longest_title() {
+        let text = render(&derive(LOG, USAGE, &[STATUS])).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["schema"], 1);
+        assert!(value.get("longest_title").is_none());
     }
 
     #[test]

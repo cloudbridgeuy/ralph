@@ -37,6 +37,9 @@ fn cost_row(row: &Value) -> Option<(String, u64, u64)> {
 
 pub(super) fn parse(text: &str) -> Result<Fixture, String> {
     let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    if field(&value, "schema")?.as_u64() != Some(1) {
+        return Err("the fixture schema is not 1".into());
+    }
     let titles = field(&value, "titles")?
         .as_array()
         .ok_or("titles is not a list")?
@@ -91,7 +94,7 @@ mod tests {
 
     #[test]
     fn a_small_fixture_keeps_its_order() {
-        let text = r#"{"titles":["a","b"],"longest_title":"b","very_long_title_derived":"b b","counts":{"turns":2,"naps":1},"durations_ms":{"turn_max":9},"cost_series_usd":[{"day":"2026-01-01","turns":1,"cost":5}]}"#;
+        let text = r#"{"schema":1,"titles":["a","b"],"very_long_title_derived":"b b","counts":{"turns":2,"naps":1},"durations_ms":{"turn_max":9},"cost_series_usd":[{"day":"2026-01-01","turns":1,"cost":5}]}"#;
         let fixture = parse(text).unwrap();
         assert_eq!(
             fixture,
@@ -106,13 +109,24 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_or_unknown_schema_is_an_error() {
+        let body = r#""titles":[],"very_long_title_derived":"v","counts":{},"durations_ms":{},"cost_series_usd":[]"#;
+        assert!(parse(&format!("{{{body}}}"))
+            .unwrap_err()
+            .contains("schema"));
+        let error = parse(&format!("{{\"schema\":2,{body}}}")).unwrap_err();
+        assert!(error.contains("schema"), "{error}");
+        assert!(parse(&format!("{{\"schema\":1,{body}}}")).is_ok());
+    }
+
+    #[test]
     fn bad_json_is_an_error() {
         assert!(parse("not json").is_err());
     }
 
     #[test]
     fn a_missing_field_is_an_error_that_names_it() {
-        let error = parse(r#"{"titles":[]}"#).unwrap_err();
+        let error = parse(r#"{"schema":1,"titles":[]}"#).unwrap_err();
         assert!(error.contains("very_long_title_derived"), "{error}");
     }
 }
