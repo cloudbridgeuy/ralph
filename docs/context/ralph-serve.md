@@ -37,7 +37,7 @@ One JSON frame per line: `{"v":1,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYT
 
 | Client body | Reply |
 |---|---|
-| `{"type":"hello","proto":1}` (must be first) | `{"type":"hello","proto":1}` |
+| `{"type":"hello","proto":1,"inbox_push":true}` (must be first, `inbox_push` defaults to false) | `{"type":"hello","proto":1}` |
 | `{"type":"send","thread":null\|"name","text":"..."}` | `turn` frames with `{"type":"turn","event":{...}}`, then `{"type":"turn_done"}` |
 | `{"type":"thread","op":"pull\|park\|revive\|drop","name":"n"}` | `{"type":"done","message":"..."}` |
 | `{"type":"thread","op":"merge","name":"n","view":false}` | `done` |
@@ -85,7 +85,8 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 ## Maintenance
 
 - Main and each open thread have their own attachments directory and maintenance host. The host runs queued watches, armed schedules, inbox checks, and configured idle keepalive. Main runs the daily drift check. A successful reply starts the usual memory nap.
-- Fresh inbox reports stay unread. Serve logs the session name and the new and unread counts. Clients can request the unread count with `status`.
+- Each fresh report stays unread. Serve sends one `inbox` frame with envelope id `0` to every client that opted in during its first hello, regardless of the client's attached session. The body carries `thread` (null for main), `report` (worker, status, timestamp `at`, and text), and the session's total `unread` count. Reports that fit the frame travel in full. If a frame would exceed 1 MiB, serve caps each report field at 32 KiB for transport. The inbox retains the original report.
+- `ralph chat --connect` opts in. At its next socket read it displays the session, worker, status, unread count, and report text on one line of up to 240 characters. A push can arrive between replies or during a turn.
 
 ## Limits
 

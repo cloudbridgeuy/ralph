@@ -39,7 +39,7 @@ const POISONED: &str = "ralph serve: internal state unavailable";
 struct Host {
     supervisor: Mutex<Supervisor>,
     sessions: Sessions,
-    clients: Clients,
+    clients: Arc<Clients>,
     store_dir: PathBuf,
     claim: Mutex<Option<ChatClaim>>,
     stop: AtomicBool,
@@ -57,7 +57,7 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let host = Arc::new(Host {
         supervisor: Mutex::new(supervisor),
         sessions: Sessions::default(),
-        clients: Clients::default(),
+        clients: Arc::default(),
         store_dir: store_dir.clone(),
         claim: Mutex::new(None),
         stop: AtomicBool::new(false),
@@ -138,7 +138,8 @@ fn drive(host: &Host, effects: Vec<Effect>) -> Result<(), Box<dyn std::error::Er
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(held);
                 let key = SessionKey::Main;
-                let session = open_session(&key, store.dir(), Vec::new())?;
+                let session =
+                    open_session(&key, store.dir(), Vec::new(), Arc::clone(&host.clients))?;
                 host.sessions.insert(key, session);
             }
             Effect::Open(SessionKey::Thread(name)) => open_thread_session(host, &name)?,
@@ -171,7 +172,7 @@ fn open_thread_session(host: &Host, name: &ThreadName) -> Result<(), Box<dyn std
     let model_args = model_args(&host.store_dir, Some(name), None)?;
     let claim = claim_closed(&dir, name)?;
     let key = SessionKey::Thread(name.clone());
-    let session = open_session(&key, &dir, model_args)?.holding(claim);
+    let session = open_session(&key, &dir, model_args, Arc::clone(&host.clients))?.holding(claim);
     host.sessions.insert(key, session);
     Ok(())
 }

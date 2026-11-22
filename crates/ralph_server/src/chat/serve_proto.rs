@@ -5,7 +5,7 @@ use ralph_core::chat_thread::{AutoMode, ThreadName};
 use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
 use ralph_core::program_status::{report_for, Phase, Report};
 use ralph_core::turn_event::TurnEvent;
-use ralph_core::worker::BlockedContent;
+use ralph_core::worker::{BlockedContent, Report as InboxReport};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -86,6 +86,8 @@ impl ThreadCmd {
 pub enum ClientMsg {
     Hello {
         proto: u32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        inbox_push: bool,
     },
     Send {
         thread: Option<String>,
@@ -134,6 +136,44 @@ pub enum ServerMsg {
         worker: String,
         content: Option<BlockedContent>,
     },
+    Inbox {
+        thread: Option<String>,
+        report: InboxReport,
+        unread: usize,
+    },
+}
+
+pub fn inbox_frame(key: &SessionKey, report: InboxReport, unread: usize) -> ServerMsg {
+    let bytes = report.worker.len() + report.status.len() + report.at.len() + report.text.len();
+    let thread = match key {
+        SessionKey::Main => None,
+        SessionKey::Thread(name) => Some(name.to_string()),
+    };
+    let mut frame = ServerMsg::Inbox {
+        thread,
+        report,
+        unread,
+    };
+    if bytes <= MAX_FRAME_BYTES / 8
+        || (bytes < MAX_FRAME_BYTES && encode_frame(0, &frame).len() <= MAX_FRAME_BYTES)
+    {
+        return frame;
+    }
+    if let ServerMsg::Inbox { report, .. } = &mut frame {
+        const MAX_FIELD_BYTES: usize = MAX_FRAME_BYTES / 32;
+        for field in [
+            &mut report.worker,
+            &mut report.at,
+            &mut report.status,
+            &mut report.text,
+        ] {
+            if field.len() > MAX_FIELD_BYTES {
+                field.truncate(field.floor_char_boundary(MAX_FIELD_BYTES - '…'.len_utf8()));
+                field.push('…');
+            }
+        }
+    }
+    frame
 }
 
 pub type BlockedKey = (Option<String>, String);
@@ -305,7 +345,10 @@ mod tests {
 
     fn client_messages() -> Vec<ClientMsg> {
         vec![
-            ClientMsg::Hello { proto: VERSION },
+            ClientMsg::Hello {
+                proto: VERSION,
+                inbox_push: true,
+            },
             ClientMsg::Send {
                 thread: None,
                 text: "hi".into(),
@@ -519,5 +562,32 @@ mod tests {
         let line = encode_frame(1, &ServerMsg::Error { message });
         assert_eq!(line.len(), MAX_FRAME_BYTES);
         assert!(decode_frame::<ServerMsg>(&line).is_ok());
+    }
+
+    #[test]
+    fn inbox_push_preserves_large_reports_that_fit_in_one_frame() {
+        let report = InboxReport {
+            worker: "w".into(),
+            at: "now".into(),
+            status: "done".into(),
+            text: "a".repeat(MAX_FRAME_BYTES / 2),
+        };
+        let frame = inbox_frame(&SessionKey::Main, report.clone(), 1);
+        assert!(matches!(frame, ServerMsg::Inbox { report: received, .. } if received == report));
+    }
+
+    #[test]
+    fn inbox_push_stays_within_the_frame_limit_for_escaped_and_multibyte_text() {
+        let field = "\u{0000}".repeat(MAX_FRAME_BYTES / 5);
+        let report = InboxReport {
+            worker: field.clone(),
+            at: field.clone(),
+            status: field,
+            text: "🦀".repeat(MAX_FRAME_BYTES / 4),
+        };
+        let line = encode_frame(0, &inbox_frame(&SessionKey::Main, report, 1));
+        assert!(line.len() <= MAX_FRAME_BYTES);
+        let body = decode_frame::<ServerMsg>(&line).unwrap().body;
+        assert!(matches!(body, ServerMsg::Inbox { report, .. } if report.text.ends_with('…')));
     }
 }

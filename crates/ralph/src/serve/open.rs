@@ -1,3 +1,4 @@
+use super::clients::Clients;
 use super::sink::{inbox_sink, SocketSink};
 use crate::chat::assemble::{assemble, load_settings, AssembleOptions, Assembled, TurnOutput};
 use crate::chat::client_monitor::watch_headless;
@@ -16,7 +17,7 @@ use ralph_server::chat::session::Session;
 use ralph_server::chat::socket::serve::SocketGuard;
 use ralph_server::chat::turn::TurnOutcome;
 use ralph_server::subprocess::OutputGate;
-use ralph_server::warn::{notice, warn};
+use ralph_server::warn::warn;
 use ralph_server::watches::CloseGuard;
 use ralph_server::workers::headless::HeadlessShutdown;
 use std::error::Error;
@@ -106,6 +107,7 @@ pub(super) fn open_session(
     key: &SessionKey,
     store_dir: &Path,
     model_args: Vec<String>,
+    clients: Arc<Clients>,
 ) -> Result<OpenSession, Box<dyn Error>> {
     let settings = load_settings(store_dir, None, None)?;
     let files = settings
@@ -151,12 +153,7 @@ pub(super) fn open_session(
                 settings.tuning.keepalive_hours,
                 Arc::clone(&idle),
                 daily_drift,
-                inbox_sink(key.clone(), |key, fresh, unread| {
-                    notice(format!(
-                        "ralph serve: {key}: {} new inbox reports, {unread} unread",
-                        fresh.len()
-                    ));
-                }),
+                inbox_sink(key.clone(), move |msg| clients.push(&msg)),
             )
         },
     );

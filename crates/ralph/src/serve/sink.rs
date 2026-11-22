@@ -1,18 +1,16 @@
 use super::clients::{write_frame, Writer};
 use ralph_core::chat_process::SessionKey;
 use ralph_core::turn_event::{TurnEvent, TurnSink};
-use ralph_core::worker::Report;
 use ralph_server::chat::host::HostEvent;
-use ralph_server::chat::serve_proto::ServerMsg;
+use ralph_server::chat::serve_proto::{inbox_frame, ServerMsg};
 use std::sync::Mutex;
 
-pub(super) fn inbox_sink(
-    key: SessionKey,
-    deliver: impl Fn(&SessionKey, Vec<Report>, usize),
-) -> impl Fn(HostEvent) {
+pub(super) fn inbox_sink(key: SessionKey, deliver: impl Fn(ServerMsg)) -> impl Fn(HostEvent) {
     move |event| {
         if let HostEvent::Fresh { fresh, unread } = event {
-            deliver(&key, fresh, unread);
+            for report in fresh {
+                deliver(inbox_frame(&key, report, unread));
+            }
         }
     }
 }
@@ -51,6 +49,7 @@ impl TurnSink for SocketSink {
 mod tests {
     use super::*;
     use ralph_core::chat_thread::ThreadName;
+    use ralph_core::worker::Report;
     use std::cell::RefCell;
 
     #[test]
@@ -63,14 +62,21 @@ mod tests {
             text: "finished".into(),
         };
         let delivered = RefCell::new(Vec::new());
-        let sink = inbox_sink(key.clone(), |key, fresh, unread| {
-            delivered.borrow_mut().push((key.clone(), fresh, unread));
+        let sink = inbox_sink(key, |msg| {
+            delivered
+                .borrow_mut()
+                .push(serde_json::to_value(msg).unwrap())
         });
         sink(HostEvent::Repaint);
         sink(HostEvent::Fresh {
             fresh: vec![report.clone()],
             unread: 3,
         });
-        assert_eq!(*delivered.borrow(), [(key, vec![report], 3)]);
+        assert_eq!(
+            *delivered.borrow(),
+            [serde_json::json!({
+                "type": "inbox", "thread": "side", "report": report, "unread": 3
+            })]
+        );
     }
 }
