@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "titles": [
+    "Reading route.rs and assets to finish the read-only plan.",
+    "Dispatching implementer for commits 1-4 and the fixture generator."
+  ],
+  "longest_title": "Dispatching implementer for commits 1-4 and the fixture generator.",
+  "very_long_title_derived": "Dispatching implementer for commits 1-4 and the fixture generator. Dispatching implementer for commits 1-4 and the fixture generator. Dispatching implementer for commits 1-4 and the fixture generator. Dispatching implementer for commits 1-4 and the fixture generator. Dispatching implementer for commits 1-4 and the fixture generator.",
+  "counts": {
+    "log_entries": 6029,
+    "user_entries": 1804,
+    "assistant_entries": 2999,
+    "turns": 1245,
+    "naps": 6747,
+    "workers": 1
+  },
+  "durations_ms": {
+    "turn_total": 39660869,
+    "turn_median": 20547,
+    "turn_max": 779921
+  },
+  "cost_series_usd": [
+    {
+      "day": "2026-10-14",
+      "turns": 25,
+      "cost": 4
+    },
+    {
+      "day": "2026-10-15",
+      "turns": 128,
+      "cost": 25
+    },
+    {
+      "day": "2026-10-16",
+      "turns": 117,
+      "cost": 26
+    },
+    {
+      "day": "2026-10-17",
+      "turns": 46,
+      "cost": 9
+    },
+    {
+      "day": "2026-10-18",
+      "turns": 38,
+      "cost": 7
+    },
+    {
+      "day": "2026-10-19",
+      "turns": 165,
+      "cost": 33
+    },
+    {
+      "day": "2026-10-20",
+      "turns": 127,
+      "cost": 32
+    },
+    {
+      "day": "2026-10-21",
+      "turns": 113,
+      "cost": 125
+    },
+    {
+      "day": "2026-10-22",
+      "turns": 119,
+      "cost": 128
+    },
+    {
+      "day": "2026-10-23",
+      "turns": 84,
+      "cost": 155
+    },
+    {
+      "day": "2026-10-24",
+      "turns": 13,
+      "cost": 28
+    },
+    {
+      "day": "2026-10-25",
+      "turns": 58,
+      "cost": 110
+    },
+    {
+      "day": "2026-10-26",
+      "turns": 66,
+      "cost": 158
+    },
+    {
+      "day": "2026-10-27",
+      "turns": 60,
+      "cost": 167
+    },
+    {
+      "day": "2026-10-28",
+      "turns": 63,
+      "cost": 204
+    },
+    {
+      "day": "2026-10-29",
+      "turns": 23,
+      "cost": 65
+    }
+  ]
+}

@@ -9,6 +9,7 @@
 use clap::Parser;
 
 mod bench;
+mod catalogue;
 mod lint;
 mod prelude;
 mod release;
@@ -51,6 +52,9 @@ enum Commands {
     /// Benchmark chat-memory reads with and without the archive indexes
     BenchMemory(bench::BenchMemoryCommand),
 
+    /// Derive the web catalogue fixture from a copy of a chat store
+    Catalogue(catalogue::CatalogueCommand),
+
     /// Code quality checks and git hooks management
     Lint(lint::LintCommand),
 
@@ -65,6 +69,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::BenchMemory(bench_cmd) => {
             bench::run(bench_cmd)?;
+        }
+        Commands::Catalogue(catalogue_cmd) => {
+            catalogue::run(catalogue_cmd)?;
         }
         Commands::Lint(lint_cmd) => {
             lint::run(lint_cmd, cli.global).await?;
