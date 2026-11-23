@@ -18,6 +18,11 @@ const ASSETS: &[Asset] = &[
         bytes: include_bytes!("../assets/app.css"),
     },
     Asset {
+        path: "/app.js",
+        content_type: "text/javascript; charset=utf-8",
+        bytes: include_bytes!("../assets/app.js"),
+    },
+    Asset {
         path: "/assets/geist-mono.woff2",
         content_type: "font/woff2",
         bytes: include_bytes!("../assets/fonts/geist-mono.woff2"),

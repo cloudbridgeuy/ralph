@@ -108,7 +108,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 
 - The files in `crates/ralph_api/assets/` are in the binary through `include_bytes!`. There is no build step.
 - The CSP is `default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Assets also send `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
-- The shell has no script. Its nav links use `#/name`.
+- The shell loads one script, `/app.js` (`<script src="/app.js" defer>`, same origin, so the CSP is unchanged: no `'unsafe-inline'`). It has no inline script and no `style=`. Its nav links use `#/name`.
 - The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
 - `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.
 - The `[web]` font default starts with `"Geist Mono"`.
@@ -205,12 +205,25 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - To write or refresh goldens, run `UPDATE_GOLDEN=1 cargo test -p ralph_api --test health_contract`. Read every changed file before you commit.
 - `cargo xtask lint` runs these tests, because it runs `cargo test --all-targets`.
 
+## Memory screen
+
+- Route `#/memory`. Other routes keep the placeholder text. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `olderAfter`, `newerAfter`, `navTarget`) sit apart from the DOM code.
+- State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, 0) are left out. `hashchange` draws the screen again, so back and forward work. Zooming a node updates `node` with `replaceState`.
+- The screen shows a thread select (`main` and the names from `/api/memory/threads`), thread and entry counts, the root nodes as an `r-tree`, and a `recent entries` table (20 rows) with `older` and `newer` links that change `after`.
+- Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, one-line preview). A node with no summary shows `summary pending`.
+- An entry row opens its full text. Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
+- Requests use the cookie (`credentials: same-origin`). The script never reads the token.
+- States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node.
+- Keyboard: Tab reaches the select, the links and one tree item (roving tabindex). Up and Down move between visible items. Right expands or goes to the first child. Left collapses or goes to the parent. Home and End go to the first and last item. Enter and Space zoom. Focus returns to the same item after a redraw.
+- Not shown: `tags.jsonl`, analytics, `history.jsonl`, paths.
+- Contract tests: `tests/memory_screen_contract.rs` (script served like the other assets, one `innerHTML`, no `eval(`, `style.`, `<img`, only primitive tags).
+
 ## r-tree markup
 
 - `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty>…</r-empty></r-tree>`.
 - A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">label</button>[<span class="meta">]<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
 - Only native tags go inside `r-tree`. The depth comes from the nested `ul`, one indent and one guide line per level; `aria-level` starts at 1.
 - `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML. The marker is a CSS `+` or `-`.
-- The button has no default chrome and a `:focus-visible` outline. The page has no script, so a click does nothing yet.
+- The button has no default chrome and a `:focus-visible` outline. `/app.js` makes the button toggle the branch.
 - Every label and meta text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
 - The catalogue shows empty, sparse, dense (4 levels), error, very-long, collapsed, expanded, hostile and focus; the code is in `catalogue/tree.rs`.
