@@ -10,12 +10,13 @@ function parseHash(hash) {
   const cut = body.indexOf("?");
   const route = cut < 0 ? body : body.slice(0, cut);
   const query = new URLSearchParams(cut < 0 ? "" : body.slice(cut + 1));
-  const after = Number(query.get("after"));
+  const raw = query.get("after");
+  const after = raw === null || raw === "" ? NaN : Number(raw);
   return {
     route,
     thread: query.get("thread") || "main",
     node: query.get("node") || "",
-    after: Number.isInteger(after) && after > 0 ? after : 0,
+    after: Number.isInteger(after) && after >= 0 ? after : null,
   };
 }
 
@@ -23,9 +24,13 @@ function buildHash(state) {
   const query = new URLSearchParams();
   if (state.thread && state.thread !== "main") query.set("thread", state.thread);
   if (state.node) query.set("node", state.node);
-  if (state.after > 0) query.set("after", String(state.after));
+  if (Number.isInteger(state.after)) query.set("after", String(state.after));
   const text = query.toString();
   return "#" + ROUTE + (text ? "?" + text : "");
+}
+
+function defaultAfter(total, size) {
+  return Math.max(0, total - size);
 }
 
 function olderAfter(after, size) {
@@ -305,7 +310,7 @@ function threadSelect(threads, current) {
     option.selected = name === current;
   });
   select.addEventListener("change", () => {
-    location.hash = buildHash({ thread: select.value, node: "", after: 0 });
+    location.hash = buildHash({ thread: select.value, node: "", after: null });
   });
   return append(el("label"), el("span", "thread ", { class: "meta" }), select);
 }
@@ -339,15 +344,17 @@ function pager(page, state) {
 }
 
 async function loadMemory(state) {
-  const [threads, roots, page] = await Promise.all([
+  const [threads, roots] = await Promise.all([
     getJson("/api/memory/threads", {}),
     getJson("/api/memory", { thread: state.thread }),
-    getJson("/api/memory/entries", { thread: state.thread, after: state.after, limit: PAGE_SIZE }),
   ]);
-  return { threads: threads.threads, roots, page };
+  const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : state.after;
+  const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
+  return { threads: threads.threads, roots, page, after };
 }
 
-function drawMemory(main, state, data) {
+function drawMemory(main, hashState, data) {
+  const state = { ...hashState, after: data.after };
   const ctx = { thread: state.thread, after: state.after, node: state.node };
   const box = append(el("r-box", null, { shape: "square" }), el("span", "memory", { class: "title" }));
   main.replaceChildren(box);

@@ -126,3 +126,11 @@ fn every_r_tag_in_the_script_is_a_primitive() {
     }
     assert!(found > 0);
 }
+
+#[test]
+fn the_entries_table_opens_on_the_newest_page_unless_the_hash_sets_after() {
+    let body = script();
+    assert!(body.contains("function defaultAfter(total, size)"));
+    assert!(body.contains("state.after === null ? defaultAfter("));
+    assert!(body.contains("after: Number.isInteger(after) && after >= 0 ? after : null"));
+}

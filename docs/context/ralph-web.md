@@ -207,9 +207,9 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 ## Memory screen
 
-- Route `#/memory`. Other routes keep the placeholder text. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `olderAfter`, `newerAfter`, `navTarget`) sit apart from the DOM code.
-- State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, 0) are left out. `hashchange` draws the screen again, so back and forward work. Zooming a node updates `node` with `replaceState`.
-- The screen shows a thread select (`main` and the names from `/api/memory/threads`), thread and entry counts, the root nodes as an `r-tree`, and a `recent entries` table (20 rows) with `older` and `newer` links that change `after`.
+- Route `#/memory`. Other routes keep the placeholder text. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `olderAfter`, `newerAfter`, `navTarget`) sit apart from the DOM code.
+- State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, no `after`) are left out. `hashchange` draws the screen again, so back and forward work. Zooming a node updates `node` with `replaceState`.
+- The screen shows a thread select (`main` and the names from `/api/memory/threads`), thread and entry counts, the root nodes as an `r-tree`, and a `recent entries` table (20 rows) with `older` and `newer` links that change `after`. With no `after` in the hash, the table opens on the newest page (`max(0, entries - 20)`, from `defaultAfter`). An `after` in the hash, even `after=0`, overrides this.
 - Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, one-line preview). A node with no summary shows `summary pending`.
 - An entry row opens its full text. Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
