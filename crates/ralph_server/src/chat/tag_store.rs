@@ -6,7 +6,7 @@ use ralph_core::chat_memory::{
     after_call, batches, build_batch, context_exclusions, decode_rows, encode_row, encode_start,
     failure_kind, ids_with, isolated, next_size, parse_log, parse_reply, restrict_decision, retake,
     take_confirmed, untagged, CallReply, Entry, PassHealth, Role, RowKind, SearchRequest, TagRow,
-    TagState, Verdict, BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE, TAG_MODEL,
+    TagState, Verdict, BATCH_LADDER, MAX_PER_PASS, PROMPT_VERSION, TAGS_FILE,
 };
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -133,19 +133,18 @@ impl TagStore {
         Ok(())
     }
 
-    /// One pass: write the start row on first use, then tag the untagged entries
-    /// (at most `MAX_PER_PASS`), re-reading the log between rounds. A call that
-    /// never finished, or a run of failed calls with no good one (see
-    /// `after_call`), ends the pass; only an entry that fails alone is marked,
-    /// and only once a call of the pass exited 0. An entry that lands after the last read but
-    /// before `TAG` is released is covered by one more look after the release.
-    pub fn run_pass(&self, now: &dyn Fn() -> String, ask: &mut Ask) -> io::Result<Pass> {
+    pub fn run_pass(
+        &self,
+        model: &str,
+        now: &dyn Fn() -> String,
+        ask: &mut Ask,
+    ) -> io::Result<Pass> {
         let mut progress = Progress::default();
-        let Some(mut seen) = self.locked_pass(now, ask, &mut progress)? else {
+        let Some(mut seen) = self.locked_pass(model, now, ask, &mut progress)? else {
             return Ok(Pass::Busy);
         };
         while !progress.stopped && retake(self.read_entries()?.len(), seen) {
-            match self.locked_pass(now, ask, &mut progress)? {
+            match self.locked_pass(model, now, ask, &mut progress)? {
                 Some(len) => seen = len,
                 None => break,
             }
@@ -153,10 +152,9 @@ impl TagStore {
         Ok(Pass::Done(progress.report))
     }
 
-    /// Holds `TAG` for the rounds. Returns the log length of the last read, or
-    /// `None` when another pass holds the lock.
     fn locked_pass(
         &self,
+        model: &str,
         now: &dyn Fn() -> String,
         ask: &mut Ask,
         progress: &mut Progress,
@@ -187,6 +185,7 @@ impl TagStore {
             progress.attempted.extend(&todo);
             let round = Round {
                 store: self,
+                model,
                 entries: &entries,
                 state: &state,
                 now,
@@ -201,6 +200,7 @@ impl TagStore {
 
 struct Round<'a> {
     store: &'a TagStore,
+    model: &'a str,
     entries: &'a [Entry],
     state: &'a TagState,
     now: &'a dyn Fn() -> String,
@@ -211,7 +211,7 @@ impl Round<'_> {
         TagRow {
             n,
             kind,
-            model: TAG_MODEL.to_string(),
+            model: self.model.to_string(),
             prompt: PROMPT_VERSION.to_string(),
             at: (self.now)(),
         }

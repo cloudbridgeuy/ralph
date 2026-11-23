@@ -143,6 +143,9 @@ pub enum ConfigError {
 
     #[error("Invalid config at {path}: {message}")]
     InvalidWeb { path: String, message: String },
+
+    #[error("Invalid config at {path}: {message}")]
+    InvalidMemory { path: String, message: String },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -191,6 +194,56 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub web: WebSection,
+
+    #[serde(default)]
+    pub nap: NapSection,
+
+    #[serde(default)]
+    pub tag: TagSection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NapSection {
+    #[serde(default = "default_memory_harness")]
+    pub harness: String,
+    #[serde(default = "default_nap_model")]
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagSection {
+    #[serde(default = "default_memory_harness")]
+    pub harness: String,
+    #[serde(default = "default_tag_model")]
+    pub model: String,
+}
+
+fn default_memory_harness() -> String {
+    "claude".to_string()
+}
+fn default_nap_model() -> String {
+    "haiku".to_string()
+}
+fn default_tag_model() -> String {
+    ralph_core::chat_memory::TAG_MODEL.to_string()
+}
+
+impl Default for NapSection {
+    fn default() -> Self {
+        Self {
+            harness: default_memory_harness(),
+            model: default_nap_model(),
+        }
+    }
+}
+
+impl Default for TagSection {
+    fn default() -> Self {
+        Self {
+            harness: default_memory_harness(),
+            model: default_tag_model(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -588,6 +641,29 @@ impl AppConfig {
     }
 
     fn check_values(&self, path: &str) -> Result<(), ConfigError> {
+        for (name, harness, model) in [
+            ("nap", &self.nap.harness, &self.nap.model),
+            ("tag", &self.tag.harness, &self.tag.model),
+        ] {
+            let message = if harness != "claude" {
+                Some(format!("{name}.harness must be claude"))
+            } else if model.trim().is_empty()
+                || model.trim_start().starts_with('-')
+                || model.chars().any(char::is_control)
+            {
+                Some(format!(
+                    "{name}.model must be nonempty and must not start with an option"
+                ))
+            } else {
+                None
+            };
+            if let Some(message) = message {
+                return Err(ConfigError::InvalidMemory {
+                    path: path.to_string(),
+                    message,
+                });
+            }
+        }
         ralph_core::wire::price::validate_price_overrides(&self.wire.prices).map_err(
             |message| ConfigError::InvalidWirePrice {
                 path: path.to_string(),

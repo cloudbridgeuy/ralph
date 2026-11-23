@@ -422,17 +422,16 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
     ralph_server::config::set_store_layer(&args.store);
+    let curator = Curator {
+        kind: ralph_core::chat_memory::CallSite::Nap,
+        store: &args.store,
+        run: args.run.clone(),
+        timeout: args.timeout,
+    };
+    let command = curator_command(&curator)?;
     let store = ralph_server::chat::memory::Store::new(args.store.clone());
     store.nap(args.run.as_deref(), |prompt| {
-        run_curator_detailed(
-            prompt,
-            &Curator {
-                kind: ralph_core::chat_memory::CallSite::Nap,
-                store: &args.store,
-                run: args.run.clone(),
-                timeout: args.timeout,
-            },
-        )
+        run_curator_with_command(prompt, &curator, &command)
     })?;
     Ok(())
 }
@@ -445,7 +444,10 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
     let store_failed = notices
         .iter()
         .any(ralph_server::config::Notice::is_store_fallback);
-    match ralph_core::chat_memory::tag_plan(loaded.map(|c| c.chat.tag_entries), store_failed) {
+    match ralph_core::chat_memory::tag_plan(
+        loaded.as_ref().map(|c| c.chat.tag_entries),
+        store_failed,
+    ) {
         ralph_core::chat_memory::TagPlan::Run => {}
         ralph_core::chat_memory::TagPlan::SkipAhead => {
             store.skip_ahead(&now)?;
@@ -453,14 +455,20 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
         }
         ralph_core::chat_memory::TagPlan::Skip => return Ok(()),
     }
+    let config = loaded.map_err(|e| e.to_string())?;
     let curator = Curator {
         kind: ralph_core::chat_memory::CallSite::Tag,
         store: &args.store,
         run: args.run.clone(),
         timeout: args.timeout,
     };
-    let command = tag_command();
-    let pass = store.run_pass(&now, &mut |batch| {
+    let command = invoke::build_tag_command(
+        &config.tag.model,
+        ralph_core::chat_memory::TAG_PROMPT,
+        dirs::home_dir().as_deref(),
+        config.claude.config_dir.as_deref(),
+    );
+    let pass = store.run_pass(&config.tag.model, &now, &mut |batch| {
         let run = run_memory_command(&command, batch, &curator).map_err(|e| e.message)?;
         ralph_core::chat_memory::tag_reply(
             run.failure,
@@ -478,19 +486,6 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
         }
     }
     Ok(())
-}
-
-fn tag_command() -> String {
-    let config_dir = ralph_server::config::AppConfig::load()
-        .unwrap_or_default()
-        .claude
-        .config_dir;
-    invoke::build_tag_command(
-        ralph_core::chat_memory::TAG_MODEL,
-        ralph_core::chat_memory::TAG_PROMPT,
-        dirs::home_dir().as_deref(),
-        config_dir.as_deref(),
-    )
 }
 
 pub(crate) struct Curator<'a> {
@@ -532,24 +527,40 @@ fn curator_rows(
 }
 
 pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {
-    run_curator_detailed(prompt, curator).map_err(|e| e.message)
+    let command = curator_command(curator).map_err(|e| e.to_string())?;
+    run_curator_with_command(prompt, curator, &command).map_err(|e| e.message)
 }
 
-fn run_curator_detailed(
+fn curator_command(curator: &Curator) -> Result<String, ralph_server::config::ConfigError> {
+    let config_file = ralph_core::chat_thread::config_root(curator.store).join("config.toml");
+    let config = ralph_server::config::AppConfig::load_layers(
+        &ralph_server::config::config_path(),
+        Some(&config_file),
+    )?;
+    let home = dirs::home_dir();
+    Ok(
+        if matches!(curator.kind, ralph_core::chat_memory::CallSite::Nap) {
+            invoke::build_nap_command(
+                &config.nap.model,
+                home.as_deref(),
+                config.claude.config_dir.as_deref(),
+            )
+        } else {
+            invoke::build_memory_command(
+                &config.nap.model,
+                home.as_deref(),
+                config.claude.config_dir.as_deref(),
+            )
+        },
+    )
+}
+
+fn run_curator_with_command(
     prompt: &str,
     curator: &Curator,
+    command: &str,
 ) -> Result<String, ralph_core::chat_memory::CuratorError> {
-    let config_dir = ralph_server::config::AppConfig::load()
-        .unwrap_or_default()
-        .claude
-        .config_dir;
-    let home = dirs::home_dir();
-    let command = if matches!(curator.kind, ralph_core::chat_memory::CallSite::Nap) {
-        invoke::build_nap_command(home.as_deref(), config_dir.as_deref())
-    } else {
-        invoke::build_memory_command(home.as_deref(), config_dir.as_deref())
-    };
-    let run = run_memory_command(&command, prompt, curator)?;
+    let run = run_memory_command(command, prompt, curator)?;
     ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref()).map_err(|message| {
         ralph_core::chat_memory::CuratorError {
             message,

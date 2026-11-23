@@ -798,3 +798,51 @@ fn chat_pill_style_keys_default_off_and_can_be_enabled() {
     assert!(config.chat.emphasis_round);
     assert!(config.chat.emphasis_icons);
 }
+
+#[test]
+fn memory_defaults_and_validation() {
+    let config = AppConfig::new();
+    assert_eq!(
+        (&*config.nap.harness, &*config.nap.model),
+        ("claude", "haiku")
+    );
+    assert_eq!(
+        (&*config.tag.harness, &*config.tag.model),
+        ("claude", ralph_core::chat_memory::TAG_MODEL)
+    );
+    for text in [
+        "[nap]\nharness = 'codex'",
+        "[tag]\nharness = 'codex'",
+        "[nap]\nmodel = ''",
+        "[tag]\nmodel = ' --help'",
+    ] {
+        assert!(
+            AppConfig::parse_reporting_unknown(text, "test").is_err(),
+            "{text}"
+        );
+    }
+    let (config, unknown) = AppConfig::parse_reporting_unknown(
+        "[nap]\nmodel = 'opus'\n[tag]\nmodel = 'sonnet'",
+        "test",
+    )
+    .unwrap();
+    assert!(unknown.is_empty());
+    assert_eq!(config.nap.model, "opus");
+    assert_eq!(config.tag.model, "sonnet");
+    let serialized = toml::to_string(&config).unwrap();
+    assert!(serialized.contains("[nap]"));
+    assert!(serialized.contains("[tag]"));
+}
+
+#[test]
+fn memory_settings_merge_per_key() {
+    let global = "[nap]\nharness = 'claude'\nmodel = 'opus'\n[tag]\nmodel = 'sonnet'"
+        .parse::<toml::Table>()
+        .unwrap();
+    let store = "[nap]\nharness = 'claude'\n[tag]\nharness = 'claude'"
+        .parse::<toml::Table>()
+        .unwrap();
+    let config: AppConfig = layers::merge_tables(global, store).try_into().unwrap();
+    assert_eq!(config.nap.model, "opus");
+    assert_eq!(config.tag.model, "sonnet");
+}
