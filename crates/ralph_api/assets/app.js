@@ -229,8 +229,14 @@ function rowItem() {
 
 async function openEntry(item) {
   const group = item.querySelector(':scope > ul[role="group"]');
-  const row = append(group, rowItem());
+  const row = rowItem();
+  append(group, row);
   await fillRendered(row, item.dataset.entry);
+}
+
+function zoomRows(zoom) {
+  const children = zoom.children.map((child) => ({ row: child.kind === "block" ? "node" : "entry", child }));
+  return [{ row: "summary", markdown: zoom.node.summary }, ...children];
 }
 
 async function openNode(item, ctx) {
@@ -240,16 +246,20 @@ async function openNode(item, ctx) {
   try {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
     stop();
-    const summary = append(group, rowItem());
-    if (zoom.node.summary === null) summary.appendChild(el("r-empty", "summary pending"));
-    else fillRendered(summary, zoom.node.summary);
-    zoom.children.forEach((child) => {
-      append(group, child.kind === "block" ? nodeItem(level, child) : entryItem(level, child));
+    zoomRows(zoom).forEach((row) => {
+      if (row.row === "summary") {
+        const summary = rowItem();
+        append(group, summary);
+        if (row.markdown === null) summary.appendChild(el("r-empty", "summary pending"));
+        else fillRendered(summary, row.markdown);
+      } else append(group, row.row === "node" ? nodeItem(level, row.child) : entryItem(level, row.child));
     });
     return true;
   } catch (error) {
     stop();
-    append(group, rowItem()).appendChild(failure(error));
+    const row = rowItem();
+    append(group, row);
+    row.appendChild(failure(error));
     return false;
   }
 }
@@ -284,7 +294,8 @@ async function expandTo(tree, target, ctx) {
 
 function buildTree(roots, ctx) {
   const tree = el("r-tree");
-  const list = append(tree, el("ul", null, { role: "tree" }));
+  const list = el("ul", null, { role: "tree" });
+  append(tree, list);
   roots.forEach((node) => append(list, nodeItem(1, node)));
   list.addEventListener("click", (event) => {
     const button = event.target.closest('li[role="treeitem"] > button');
@@ -314,7 +325,8 @@ function threadSelect(threads, current) {
   names.forEach((name) => {
     const meta = threads.find((thread) => thread.name === name);
     const note = meta && meta.parked ? " (parked)" : meta && meta.merged ? " (merged)" : "";
-    const option = append(select, el("option", name + note, { value: name }));
+    const option = el("option", name + note, { value: name });
+    append(select, option);
     option.selected = name === current;
   });
   select.addEventListener("change", () => {

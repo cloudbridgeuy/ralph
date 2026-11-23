@@ -155,3 +155,17 @@ fn an_explicit_after_past_the_end_is_clamped_before_the_entries_fetch() {
     let fetch = body.find("/api/memory/entries").unwrap();
     assert!(clamp < fetch);
 }
+
+#[test]
+fn append_results_are_never_taken_as_the_new_child() {
+    let body = script();
+    for name in ["row", "summary", "list", "option"] {
+        let bound = format!("const {name} = append(");
+        assert!(
+            !body.contains(&bound),
+            "{bound} binds the parent, not the child"
+        );
+    }
+    assert!(!body.contains("append(group, rowItem()).appendChild("));
+    assert!(body.contains("function zoomRows(zoom)"));
+}
