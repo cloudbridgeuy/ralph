@@ -2,7 +2,7 @@ use super::clients::{write_frame, Writer};
 use ralph_core::chat_process::SessionKey;
 use ralph_core::turn_event::{TurnEvent, TurnSink};
 use ralph_server::chat::host::HostEvent;
-use ralph_server::chat::serve_proto::{inbox_frame, ServerMsg};
+use ralph_server::chat::serve_proto::{inbox_frame, turn_frame, ServerMsg};
 use std::sync::Mutex;
 
 pub(super) fn inbox_sink(key: SessionKey, deliver: impl Fn(ServerMsg)) -> impl Fn(HostEvent) {
@@ -40,7 +40,7 @@ impl TurnSink for SocketSink {
     fn emit(&self, event: TurnEvent) {
         let bound = self.lock().clone();
         if let Some((id, writer)) = bound {
-            let _ = write_frame(&writer, id, &ServerMsg::Turn { event });
+            let _ = write_frame(&writer, id, &turn_frame(event));
         }
     }
 }
