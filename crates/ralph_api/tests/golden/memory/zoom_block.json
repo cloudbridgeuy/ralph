@@ -1,0 +1,28 @@
+{
+  "thread": "plan-b",
+  "node": {
+    "id": "0-7",
+    "lo": 0,
+    "hi": 8,
+    "leaf": false,
+    "summary": "Debugged the nightly sync timeout; pool raised to 8."
+  },
+  "children": [
+    {
+      "id": "0-3",
+      "lo": 0,
+      "hi": 4,
+      "leaf": false,
+      "summary": "Sync timeout traced to a pool of 4.",
+      "kind": "block"
+    },
+    {
+      "id": "4-7",
+      "lo": 4,
+      "hi": 8,
+      "leaf": false,
+      "summary": null,
+      "kind": "block"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "thread": "main",
+  "entries": 11,
+  "items": [
+    {
+      "i": 5,
+      "role": "user",
+      "at": "2026-03-01T09:05:00Z",
+      "text": "He said \"stop\" and wrote C:\\temp\\new\\file \\u0041 \\n."
+    },
+    {
+      "i": 6,
+      "role": "user",
+      "at": "2026-03-01T09:06:00Z",
+      "text": "<script>alert(1)</script>"
+    },
+    {
+      "i": 7,
+      "role": "assistant",
+      "at": "2026-03-01T09:07:00Z",
+      "text": "</r-prose><r-error>"
+    },
+    {
+      "i": 8,
+      "role": "user",
+      "at": "2026-03-01T09:08:00Z",
+      "text": "nul:\u0000:end and line sep: :end and bell \u0007"
+    }
+  ],
+  "next_after": 9
+}

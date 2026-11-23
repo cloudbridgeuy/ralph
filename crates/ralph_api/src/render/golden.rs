@@ -9,9 +9,14 @@ pub fn hostile_text() -> &'static str {
 }
 
 pub fn assert_golden(name: &str, actual: &str) {
+    assert_golden_in("render", "html", name, actual);
+}
+
+pub fn assert_golden_in(dir: &str, extension: &str, name: &str, actual: &str) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden/render")
-        .join(format!("{name}.html"));
+        .join("tests/golden")
+        .join(dir)
+        .join(format!("{name}.{extension}"));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(&path, format!("{actual}\n"))
             .unwrap_or_else(|error| panic!("golden {} is unwritable ({error})", path.display()));

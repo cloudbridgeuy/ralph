@@ -4,7 +4,7 @@ mod error;
 mod escape;
 mod frame;
 #[cfg(test)]
-mod golden;
+pub(crate) mod golden;
 mod kv;
 mod md_event;
 mod md_link;

@@ -1,0 +1,19 @@
+{
+  "threads": [
+    {
+      "name": "plan-b",
+      "parked": false,
+      "merged": false
+    },
+    {
+      "name": "spike",
+      "parked": true,
+      "merged": false
+    },
+    {
+      "name": "old",
+      "parked": false,
+      "merged": true
+    }
+  ]
+}
