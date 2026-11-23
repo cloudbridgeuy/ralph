@@ -184,6 +184,32 @@ pub fn orphan_sidecar_fate(facts: SocketFacts) -> SocketFate {
     socket_fate(facts)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeFacts {
+    pub files_dir_exists: bool,
+    pub socket_exists: bool,
+    pub has_skills: bool,
+    pub skill_plugin_exists: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecoveryPlan {
+    pub create_files_dir: bool,
+    pub write_mcp_config: bool,
+    pub write_skill_plugin: bool,
+    pub rebind_socket: bool,
+}
+
+pub fn recovery_plan(facts: RuntimeFacts) -> RecoveryPlan {
+    RecoveryPlan {
+        create_files_dir: !facts.files_dir_exists,
+        write_mcp_config: true,
+        write_skill_plugin: facts.has_skills
+            && (!facts.files_dir_exists || !facts.skill_plugin_exists),
+        rebind_socket: !facts.socket_exists,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +428,72 @@ mod tests {
         assert_eq!(fate(7, None, None), SocketFate::Delete);
         assert_eq!(fate(7, None, Some("t1")), SocketFate::Delete);
         assert_eq!(fate(8, Some(&record), Some("t1")), SocketFate::Delete);
+    }
+
+    #[test]
+    fn recovery_plan_rewrites_mcp_every_turn_and_rebinds_socket_only_when_missing() {
+        let intact = recovery_plan(RuntimeFacts {
+            files_dir_exists: true,
+            socket_exists: true,
+            has_skills: false,
+            skill_plugin_exists: false,
+        });
+        assert_eq!(
+            intact,
+            RecoveryPlan {
+                create_files_dir: false,
+                write_mcp_config: true,
+                write_skill_plugin: false,
+                rebind_socket: false,
+            }
+        );
+
+        let dir_wiped_with_skills = recovery_plan(RuntimeFacts {
+            files_dir_exists: false,
+            socket_exists: true,
+            has_skills: true,
+            skill_plugin_exists: false,
+        });
+        assert_eq!(
+            dir_wiped_with_skills,
+            RecoveryPlan {
+                create_files_dir: true,
+                write_mcp_config: true,
+                write_skill_plugin: true,
+                rebind_socket: false,
+            }
+        );
+
+        let socket_missing = recovery_plan(RuntimeFacts {
+            files_dir_exists: true,
+            socket_exists: false,
+            has_skills: true,
+            skill_plugin_exists: true,
+        });
+        assert_eq!(
+            socket_missing,
+            RecoveryPlan {
+                create_files_dir: false,
+                write_mcp_config: true,
+                write_skill_plugin: false,
+                rebind_socket: true,
+            }
+        );
+
+        let both_missing = recovery_plan(RuntimeFacts {
+            files_dir_exists: false,
+            socket_exists: false,
+            has_skills: false,
+            skill_plugin_exists: false,
+        });
+        assert_eq!(
+            both_missing,
+            RecoveryPlan {
+                create_files_dir: true,
+                write_mcp_config: true,
+                write_skill_plugin: false,
+                rebind_socket: true,
+            }
+        );
     }
 }

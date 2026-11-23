@@ -30,9 +30,10 @@ use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -62,7 +63,95 @@ impl Drop for SocketGuard {
 
 pub struct ChatSocket {
     listener: UnixListener,
+    root: PathBuf,
     files: SocketFiles,
+    owner: SocketOwner,
+}
+
+#[derive(Clone)]
+pub struct SocketHandle {
+    inner: Arc<Mutex<ServedSocket>>,
+}
+
+struct ServedSocket {
+    root: PathBuf,
+    files: SocketFiles,
+    owner: SocketOwner,
+    shared: Arc<(Shared, Roster)>,
+    stop: Arc<AtomicBool>,
+}
+
+impl SocketHandle {
+    pub fn socket_path(&self) -> PathBuf {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .files
+            .socket
+            .clone()
+    }
+
+    pub fn rebind(&self) -> io::Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.files.socket.exists() {
+            return Ok(());
+        }
+        ensure_store_root(&state.root)?;
+        check_socket_path(&state.root, &state.files.socket).map_err(io::Error::other)?;
+        let listener = bind_listener(&state.files.socket)?;
+        write_sidecar(&state.files.sidecar, &state.owner)?;
+        state.stop.store(true, Ordering::SeqCst);
+        let next_stop = Arc::new(AtomicBool::new(false));
+        spawn_accept_loop(listener, Arc::clone(&state.shared), Arc::clone(&next_stop));
+        state.stop = next_stop;
+        Ok(())
+    }
+}
+
+fn bind_listener(path: &Path) -> io::Result<UnixListener> {
+    let listener = UnixListener::bind(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    Ok(listener)
+}
+
+fn write_sidecar(path: &Path, owner: &SocketOwner) -> io::Result<()> {
+    let mut sidecar = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    sidecar.write_all(owner.render().as_bytes())
+}
+
+fn spawn_accept_loop(listener: UnixListener, shared: Arc<(Shared, Roster)>, stop: Arc<AtomicBool>) {
+    thread::spawn(move || loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = stream.set_nonblocking(false);
+                let shared = Arc::clone(&shared);
+                thread::spawn(move || {
+                    if let Err(e) = handle_connection(&stream, &shared) {
+                        warn(format!("chat socket: connection failed: {e}"));
+                    }
+                });
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(ACCEPT_RETRY);
+            }
+            Err(e) => {
+                warn(format!("chat socket: accept failed: {e}"));
+                thread::sleep(ACCEPT_RETRY);
+            }
+        }
+    });
 }
 
 impl ChatSocket {
@@ -79,6 +168,7 @@ impl ChatSocket {
         check_socket_path(root, &files.socket).map_err(io::Error::other)?;
         let start = process_start(pid)
             .ok_or_else(|| io::Error::other("cannot read the start time of this process"))?;
+        let owner = SocketOwner { pid, start };
         DirBuilder::new()
             .mode(0o700)
             .create(&files.files_dir)
@@ -91,34 +181,23 @@ impl ChatSocket {
                     ),
                 )
             })?;
-        let bound = UnixListener::bind(&files.socket).map(|listener| Self {
-            listener,
-            files: files.clone(),
-        });
-        let socket = match bound {
-            Ok(socket) => socket,
+        let listener = match bind_listener(&files.socket) {
+            Ok(listener) => listener,
             Err(e) => {
                 files.remove();
                 return Err(e);
             }
         };
-        if let Err(e) = socket.publish(&SocketOwner { pid, start }) {
-            socket.files.remove();
+        if let Err(e) = write_sidecar(&files.sidecar, &owner) {
+            files.remove();
             return Err(e);
         }
-        Ok(socket)
-    }
-
-    fn publish(&self, owner: &SocketOwner) -> io::Result<()> {
-        fs::set_permissions(&self.files.socket, fs::Permissions::from_mode(0o600))?;
-        let mut sidecar = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&self.files.sidecar)?;
-        sidecar.write_all(owner.render().as_bytes())?;
-        Ok(())
+        Ok(Self {
+            listener,
+            root: root.to_path_buf(),
+            files,
+            owner,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -133,26 +212,23 @@ impl ChatSocket {
         &self.files
     }
 
-    pub fn serve(self, shared: Shared, roster: impl Fn() -> String + Send + Sync + 'static) {
+    pub fn serve(
+        self,
+        shared: Shared,
+        roster: impl Fn() -> String + Send + Sync + 'static,
+    ) -> SocketHandle {
         let shared = Arc::new((shared, Box::new(roster) as Roster));
-        thread::spawn(move || {
-            for connection in self.listener.incoming() {
-                match connection {
-                    Ok(stream) => {
-                        let shared = Arc::clone(&shared);
-                        thread::spawn(move || {
-                            if let Err(e) = handle_connection(&stream, &shared) {
-                                warn(format!("chat socket: connection failed: {e}"));
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        warn(format!("chat socket: accept failed: {e}"));
-                        thread::sleep(ACCEPT_RETRY);
-                    }
-                }
-            }
-        });
+        let stop = Arc::new(AtomicBool::new(false));
+        spawn_accept_loop(self.listener, Arc::clone(&shared), Arc::clone(&stop));
+        SocketHandle {
+            inner: Arc::new(Mutex::new(ServedSocket {
+                root: self.root,
+                files: self.files,
+                owner: self.owner,
+                shared,
+                stop,
+            })),
+        }
     }
 }
 
@@ -894,5 +970,25 @@ mod tests {
         let root = dirs.root.join("d".repeat(100));
         let error = ChatSocket::bind(&dirs.store, &root).err().unwrap();
         assert!(error.to_string().contains(&root.display().to_string()));
+    }
+
+    #[test]
+    fn rebind_restores_deleted_socket_and_serves_requests() {
+        let dirs = dirs();
+        let socket = ChatSocket::bind(&dirs.store, &dirs.root).unwrap();
+        let path = socket.path().to_path_buf();
+        let files = socket.files().clone();
+        let handle = socket.serve(shared(&dirs.store), || "live roster".to_string());
+        fs::remove_file(&path).unwrap();
+        assert!(forward(&path, &request("workers", json!({}))).is_err());
+        handle.rebind().unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let response = forward(&path, &request("workers", json!({}))).unwrap();
+        assert!(!response.is_error);
+        assert_eq!(response.text, "live roster");
+        files.remove();
     }
 }
