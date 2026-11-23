@@ -204,3 +204,30 @@ fn thread_exists_checks_thread_json() {
     assert!(thread_exists(dir.path(), &ThreadName::parse("x").unwrap()));
     assert!(!thread_exists(dir.path(), &ThreadName::parse("y").unwrap()));
 }
+
+#[test]
+fn thread_exists_requires_a_parseable_thread_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let threads = dir.path().join("threads");
+    let valid = r#"{"base":0,"created":"t"}"#;
+    let cases = [
+        ("corrupt", "{nope", false),
+        ("empty", "", false),
+        ("truncated", &valid[..valid.len() - 4], false),
+        ("valid", valid, true),
+    ];
+    for (name, json, _) in cases {
+        fs::create_dir_all(threads.join(name)).unwrap();
+        fs::write(threads.join(name).join("thread.json"), json).unwrap();
+    }
+    let listed: Vec<String> = list_threads(dir.path())
+        .unwrap()
+        .into_iter()
+        .map(|info| info.name)
+        .collect();
+    for (name, _, ok) in cases {
+        let found = thread_exists(dir.path(), &ThreadName::parse(name).unwrap());
+        assert_eq!(found, ok, "thread_exists {name}");
+        assert_eq!(listed.iter().any(|n| n == name), ok, "listed {name}");
+    }
+}

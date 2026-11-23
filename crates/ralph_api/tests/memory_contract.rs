@@ -561,3 +561,21 @@ fn threads_decode_query_keys_like_the_memory_routes() {
         "query is not valid percent-encoded UTF-8",
     );
 }
+
+#[test]
+fn thread_with_corrupt_metadata_is_404() {
+    let server = TestServer::start_with_store(|dir| {
+        fixture_with_thread(dir);
+        let broken = dir.join(THREADS_DIR).join("broken");
+        write_store(&broken, &["one"], &[]);
+        fs::write(broken.join(THREAD_FILE), "{nope").unwrap();
+    });
+    for target in [
+        "/api/memory?thread=broken",
+        "/api/memory/entries?thread=broken",
+    ] {
+        error_of(&get(&server, target), 404, "not found");
+    }
+    let listed = json_of(&get(&server, "/api/memory/threads"));
+    assert!(!listed.to_string().contains("broken"));
+}

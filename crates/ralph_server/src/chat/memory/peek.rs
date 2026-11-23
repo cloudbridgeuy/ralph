@@ -33,8 +33,13 @@ pub fn peek(dir: &Path) -> io::Result<Peek> {
     Ok(Peek { entries, tree })
 }
 
+fn read_thread_meta(dir: &Path) -> Option<ThreadMeta> {
+    let bytes = read_optional(&dir.join(THREAD_FILE)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 pub fn thread_exists(main: &Path, name: &ThreadName) -> bool {
-    thread_dir(main, name).join(THREAD_FILE).is_file()
+    read_thread_meta(&thread_dir(main, name)).is_some()
 }
 
 pub fn list_threads(main: &Path) -> io::Result<Vec<ThreadInfo>> {
@@ -52,10 +57,7 @@ pub fn list_threads(main: &Path) -> io::Result<Vec<ThreadInfo>> {
         if ThreadName::parse(&name).is_err() {
             continue;
         }
-        let Ok(bytes) = read_optional(&item.path().join(THREAD_FILE)) else {
-            continue;
-        };
-        let Ok(meta) = serde_json::from_slice::<ThreadMeta>(&bytes) else {
+        let Some(meta) = read_thread_meta(&item.path()) else {
             continue;
         };
         threads.push(ThreadInfo {
