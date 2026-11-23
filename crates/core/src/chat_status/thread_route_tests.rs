@@ -146,13 +146,13 @@ fn only_the_thread_command_is_a_cell_command() {
 }
 
 #[test]
-fn thread_open_routes_to_a_thread_op_and_waits_for_the_turn() {
+fn thread_open_routes_to_a_thread_op_and_runs_mid_turn() {
     let routed = route("/thread open auth");
     assert!(
         matches!(routed, Route::ThreadOp { op: Ok(_), .. }),
         "{routed:?}"
     );
-    assert!(!routed.runs_mid_turn());
+    assert!(routed.runs_mid_turn());
 }
 
 #[test]
