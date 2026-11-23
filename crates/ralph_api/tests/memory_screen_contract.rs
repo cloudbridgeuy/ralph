@@ -134,3 +134,14 @@ fn the_entries_table_opens_on_the_newest_page_unless_the_hash_sets_after() {
     assert!(body.contains("state.after === null ? defaultAfter("));
     assert!(body.contains("after: Number.isInteger(after) && after >= 0 ? after : null"));
 }
+
+#[test]
+fn the_memory_ctx_carries_the_hash_after_never_the_resolved_one() {
+    let body = script();
+    assert!(body.contains("function memoryCtx(hashState)"));
+    assert!(body.contains("const ctx = memoryCtx(hashState);"));
+    assert!(!body.contains("const ctx = { thread: state.thread, after: state.after"));
+    assert!(body.contains(
+        "return { thread: hashState.thread, after: hashState.after, node: hashState.node };"
+    ));
+}

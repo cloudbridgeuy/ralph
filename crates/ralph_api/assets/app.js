@@ -33,6 +33,10 @@ function defaultAfter(total, size) {
   return Math.max(0, total - size);
 }
 
+function memoryCtx(hashState) {
+  return { thread: hashState.thread, after: hashState.after, node: hashState.node };
+}
+
 function olderAfter(after, size) {
   return after > 0 ? Math.max(0, after - size) : null;
 }
@@ -355,7 +359,7 @@ async function loadMemory(state) {
 
 function drawMemory(main, hashState, data) {
   const state = { ...hashState, after: data.after };
-  const ctx = { thread: state.thread, after: state.after, node: state.node };
+  const ctx = memoryCtx(hashState);
   const box = append(el("r-box", null, { shape: "square" }), el("span", "memory", { class: "title" }));
   main.replaceChildren(box);
   append(box, el("div"), threadSelect(data.threads, state.thread));
