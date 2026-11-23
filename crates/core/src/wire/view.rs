@@ -626,13 +626,13 @@ mod tests {
         assert!((view.rows[0].usd.unwrap() - 0.01).abs() < 1e-9);
         assert!((view.rows[1].usd.unwrap() - 0.55).abs() < 1e-9);
         assert!((view.totals.usd.unwrap() - 0.56).abs() < 1e-9);
-        assert_eq!(view.prices_as_of.as_deref(), Some("2026-10-21"));
+        assert_eq!(view.prices_as_of.as_deref(), Some("2026-11-23"));
         let table = ls_table(&view);
         assert!(table.contains("eq=1 $=0.010000"), "{table}");
         assert!(table.ends_with("eq=2 $=0.560000"), "{table}");
         let json = serde_json::to_value(&view).unwrap();
         assert!((json["rows"][0]["usd"].as_f64().unwrap() - 0.01).abs() < 1e-9);
-        assert_eq!(json["prices_as_of"], "2026-10-21");
+        assert_eq!(json["prices_as_of"], "2026-11-23");
     }
 
     #[test]

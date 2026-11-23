@@ -161,7 +161,7 @@ fn event_usage(events: &[SseEvent]) -> ResponseUsage {
 fn cache_read_multiplier(model: &str) -> f64 {
     let model = normalize_model(model);
     let is = |name: &str| matches_prefix(model, name);
-    if is("claude-fable-5-1") || is("claude-mythos-5-1") {
+    if is("claude-fable-5-2") || is("claude-fable-5-1") || is("claude-mythos-5-1") {
         0.025
     } else if is("claude-opus-5-5") || is("claude-sonnet-5-5") {
         0.05
@@ -170,8 +170,13 @@ fn cache_read_multiplier(model: &str) -> f64 {
     }
 }
 
-const PRICE_AS_OF: &str = "2026-10-21";
-const FAST_MODELS: [&str; 3] = ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"];
+const PRICE_AS_OF: &str = "2026-11-23";
+const FAST_MODELS: [&str; 4] = [
+    "claude-fable-5-2",
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+];
 const NO_GEO_MODELS: [&str; 2] = ["claude-opus-4-5", "claude-haiku-4-5"];
 
 struct Row {
@@ -203,6 +208,7 @@ const HAIKU_LONG_PROMPT: u64 = 100_000;
 
 fn price_rows() -> Vec<Row> {
     vec![
+        row("claude-fable-5-2", [8.0, 10.0, 16.0, 0.2, 40.0]),
         row("claude-fable-5-1", [10.0, 12.5, 20.0, 0.25, 50.0]),
         row("claude-fable-5", [10.0, 12.5, 20.0, 1.0, 50.0]),
         row("claude-opus-5-5", [4.0, 5.0, 8.0, 0.2, 20.0]),

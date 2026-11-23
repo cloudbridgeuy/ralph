@@ -427,6 +427,7 @@ fn request_facts_from_fixture() {
 #[test]
 fn cache_read_rates() {
     let cases = [
+        ("claude-fable-5-2", 0.025),
         ("claude-fable-5-1", 0.025),
         ("claude-mythos-5-1", 0.025),
         ("claude-opus-5-5", 0.05),
@@ -495,6 +496,10 @@ fn price_factor_covers_speed_and_geo() {
         Some(1.0)
     );
     assert_eq!(
+        factor(json!({"speed": "fast"}), "claude-fable-5-2"),
+        Some(2.0)
+    );
+    assert_eq!(
         factor(json!({"speed": "fast"}), "claude-opus-5-5"),
         Some(2.0)
     );
@@ -540,6 +545,30 @@ fn batch_paths_are_not_inference() {
 fn zero_token_cache_write_is_omitted() {
     let zero = json!({"input_tokens": 1, "cache_creation_input_tokens": 0});
     assert!(cache_writes(&zero).is_empty());
+}
+
+#[test]
+fn fable_5_2_price_table_entry() {
+    let table = Anthropic.prices();
+    assert_eq!(
+        table.lookup("claude-fable-5-2", 0),
+        Some(&ModelPrice {
+            input: 8.0,
+            cache_read: 0.2,
+            cache_writes: vec![
+                TierPrice {
+                    tier: FIVE_MIN,
+                    usd_per_mtok: 10.0,
+                },
+                TierPrice {
+                    tier: ONE_HOUR,
+                    usd_per_mtok: 16.0,
+                },
+            ],
+            output: 40.0,
+        })
+    );
+    assert_eq!(table.as_of, "2026-11-23");
 }
 
 #[test]
