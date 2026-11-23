@@ -212,18 +212,27 @@ pub fn build_mcp_args(config_path: &Path, config: &Value) -> Vec<String> {
     ];
     if config["mcpServers"]
         .as_object()
-        .is_some_and(|servers| servers.contains_key("mcptools"))
+        .is_some_and(|servers| servers.contains_key(MCPTOOLS_SERVER))
     {
         args.extend(["--permission-prompt-tool".to_string(), "stdio".to_string()]);
     }
     args
 }
 
-pub fn mcp_wildcards<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
-    names
-        .into_iter()
-        .map(|name| format!("mcp__{name}__*"))
-        .collect()
+pub const MCPTOOLS_SERVER: &str = "mcptools";
+
+pub const MCPTOOLS_ASK_RULES: [&str; 2] = ["mcp__mcptools__execute", "mcp__mcptools__call_tool"];
+
+pub fn server_allow_rule(name: &str) -> String {
+    if name == MCPTOOLS_SERVER {
+        "mcp__mcptools__find_tools".to_string()
+    } else {
+        format!("mcp__{name}__*")
+    }
+}
+
+pub fn mcptools_ask_settings() -> Value {
+    json!({ "permissions": { "ask": MCPTOOLS_ASK_RULES } })
 }
 
 fn allowed_tools(config: &Value) -> String {
@@ -231,13 +240,7 @@ fn allowed_tools(config: &Value) -> String {
         .as_object()
         .into_iter()
         .flat_map(Map::keys)
-        .map(|name| {
-            if name == "mcptools" {
-                "mcp__mcptools__find_tools".to_string()
-            } else {
-                format!("mcp__{name}__*")
-            }
-        })
+        .map(|name| server_allow_rule(name))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -742,10 +745,13 @@ mod tests {
     }
 
     #[test]
-    fn wildcards_name_every_server_once() {
-        let names = ["a".to_string(), "b".to_string()];
-        assert_eq!(mcp_wildcards(&names), ["mcp__a__*", "mcp__b__*"]);
-        assert!(mcp_wildcards(&[]).is_empty());
+    fn server_rules_are_one_wildcard_each_and_discovery_only_for_mcptools() {
+        assert_eq!(server_allow_rule("a"), "mcp__a__*");
+        assert_eq!(server_allow_rule("mcptools"), "mcp__mcptools__find_tools");
+        assert_eq!(
+            mcptools_ask_settings(),
+            json!({"permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]}})
+        );
     }
 
     #[test]

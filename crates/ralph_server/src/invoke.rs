@@ -90,9 +90,7 @@ fn isolation_args(
     if mcptools {
         settings.insert(
             "permissions".to_string(),
-            serde_json::json!({
-                "ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]
-            }),
+            serde_json::json!({ "ask": ralph_core::chat::MCPTOOLS_ASK_RULES }),
         );
     }
     settings.insert("totalTokensReminder".to_string(), "off".into());
