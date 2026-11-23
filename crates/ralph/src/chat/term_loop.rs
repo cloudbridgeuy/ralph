@@ -334,6 +334,7 @@ impl TerminalLoop<'_> {
             let env = thread_cmd::ThreadEnv {
                 store_dir: self.store_dir,
                 in_thread: self.in_thread,
+                mid_turn: false,
                 width: screen_columns(),
                 display: Some(self.display),
                 notice: &|text| println!("{text}"),

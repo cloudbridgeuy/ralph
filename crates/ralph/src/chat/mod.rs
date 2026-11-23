@@ -363,6 +363,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         prices: &config.wire.prices,
         tickets: &config.tickets,
         store: &store_dir,
+        thread: args.thread.as_ref(),
         monitor: &monitor,
         remote: &remote,
         config: &config_snapshot,
