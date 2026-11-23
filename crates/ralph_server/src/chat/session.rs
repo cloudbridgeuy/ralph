@@ -9,10 +9,10 @@ use crate::chat::schedule_worker::alive_worker_ids;
 use crate::chat::send_it::{Screen, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
-    write_skill_plugin,
+    write_skill_plugin, RuntimeFiles,
 };
 use crate::chat::snapshots::TurnSnapshots;
-use crate::chat::socket::serve::{ChatSocket, Shared, SocketGuard};
+use crate::chat::socket::serve::{ChatSocket, Shared, SocketGuard, SocketHandle};
 use crate::chat::turn::{Turn, TurnOutcome};
 use crate::config::{AppConfig, ChatSection};
 use crate::opencode_worker::sweep_stale_server_records;
@@ -95,6 +95,7 @@ pub struct Wiring {
     pub socket: ChatSocket,
     pub guard: SocketGuard,
     pub mcp_args: Vec<String>,
+    pub runtime_files: RuntimeFiles,
     pub system_prompt_file: PathBuf,
     pub skill_dirs: Vec<PathBuf>,
     pub skills: Vec<ChatSkill>,
@@ -111,7 +112,7 @@ impl Wiring {
             &read_claude_config(wiring.config.claude.config_dir.as_deref()),
             &chat.mcp_servers,
         );
-        let mcp_args = write_mcp_config(
+        let mcp = write_mcp_config(
             wiring.store_dir,
             socket.files_dir(),
             socket.path(),
@@ -133,7 +134,8 @@ impl Wiring {
         Ok(Self {
             socket,
             guard,
-            mcp_args,
+            mcp_args: mcp.args,
+            runtime_files: mcp.files,
             system_prompt_file,
             skill_dirs,
             skills,
@@ -202,8 +204,8 @@ pub fn serve(
     socket: ChatSocket,
     send_it: &SendIt,
     roster: impl Fn() -> String + Send + Sync + 'static,
-) {
-    socket.serve(
+) -> SocketHandle {
+    let handle = socket.serve(
         Shared {
             store: Store::new(core.store.dir().to_path_buf()),
             workers: core.workers.clone(),
@@ -214,6 +216,7 @@ pub fn serve(
         roster,
     );
     restore_schedule(&core.schedule, &alive_worker_ids(&core.store_dir));
+    handle
 }
 
 pub fn trigger_for(sending: bool) -> Trigger {
