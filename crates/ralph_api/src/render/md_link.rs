@@ -8,15 +8,23 @@ pub fn link_dest(link_type: LinkType, dest: &str) -> String {
 }
 
 pub fn safe_href(dest: &str) -> Option<String> {
-    let cleaned: String = dest
+    let href: String = dest
+        .trim_matches(|c: char| c.is_control() || c.is_whitespace())
         .chars()
-        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .filter(|c| !c.is_control())
+        .map(|c| {
+            if c.is_whitespace() {
+                "%20".to_string()
+            } else {
+                c.to_string()
+            }
+        })
         .collect();
-    let lower = cleaned.to_ascii_lowercase();
+    let lower = href.to_ascii_lowercase();
     let allowed = ["http://", "https://", "mailto:", "#"]
         .iter()
         .any(|prefix| lower.starts_with(prefix));
-    allowed.then_some(cleaned)
+    allowed.then_some(href)
 }
 
 #[cfg(test)]
@@ -62,6 +70,28 @@ mod tests {
         assert_eq!(safe_href("\u{1}javascript:x"), None);
         assert_eq!(safe_href(" http://a.b").as_deref(), Some("http://a.b"));
         assert_eq!(safe_href("ht\ntp://a.b").as_deref(), Some("http://a.b"));
+    }
+
+    #[test]
+    fn inner_spaces_are_encoded_not_deleted() {
+        assert_eq!(
+            safe_href("https://ex.com/a b").as_deref(),
+            Some("https://ex.com/a%20b")
+        );
+        assert_eq!(
+            safe_href(" https://ex.com/a  b ").as_deref(),
+            Some("https://ex.com/a%20%20b")
+        );
+        assert_eq!(
+            safe_href("https://ex.com/a\u{a0}b").as_deref(),
+            Some("https://ex.com/a%20b")
+        );
+    }
+
+    #[test]
+    fn a_space_inside_the_scheme_is_dropped() {
+        assert_eq!(safe_href("java script:x"), None);
+        assert_eq!(safe_href("ht tp://a.b"), None);
     }
 
     #[test]

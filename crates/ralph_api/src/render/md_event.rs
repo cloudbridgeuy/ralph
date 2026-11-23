@@ -279,6 +279,14 @@ mod tests {
     }
 
     #[test]
+    fn spaces_in_a_link_destination_are_encoded() {
+        assert_eq!(
+            html("[t](<https://ex.com/a b>)"),
+            "<p><a href=\"https://ex.com/a%20b\" rel=\"noreferrer noopener\">t</a></p>"
+        );
+    }
+
+    #[test]
     fn email_autolink_gets_a_mailto_href() {
         assert_eq!(
             html("<a@b.c>"),
