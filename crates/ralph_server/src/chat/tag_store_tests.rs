@@ -1,5 +1,5 @@
 use super::*;
-use ralph_core::chat_memory::{decode_rows, CallReply, Role};
+use ralph_core::chat_memory::{decode_rows, CallReply, Role, TAG_MODEL};
 use std::cell::RefCell;
 
 fn store_with(entries: usize) -> (tempfile::TempDir, TagStore) {
@@ -78,7 +78,7 @@ fn now() -> String {
 /// `TAG` lock until it execs, so a pass may report `Busy` for a moment.
 fn pass(store: &TagStore, ask: &mut Ask) -> io::Result<Report> {
     for _ in 0..500 {
-        if let Pass::Done(report) = store.run_pass(&now, ask)? {
+        if let Pass::Done(report) = store.run_pass(TAG_MODEL, &now, ask)? {
             return Ok(report);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -216,7 +216,10 @@ fn a_held_tag_lock_makes_the_pass_exit_busy_without_a_call() {
         .unwrap();
     lock.lock().unwrap();
     let mut never = |_: &str| -> Result<CallReply, String> { panic!("no call expected") };
-    assert!(matches!(store.run_pass(&now, &mut never), Ok(Pass::Busy)));
+    assert!(matches!(
+        store.run_pass(TAG_MODEL, &now, &mut never),
+        Ok(Pass::Busy)
+    ));
     assert!(!dir.path().join(TAGS_FILE).exists());
 }
 
@@ -497,4 +500,18 @@ fn a_decision_the_model_gives_an_assistant_entry_is_stored_false_and_a_user_entr
     let decision = |n: usize| s.tags.get(&n).map(|f| f.decision);
     assert_eq!(decision(2), Some(false));
     assert_eq!(decision(3), Some(true));
+}
+
+#[test]
+fn configured_model_is_stamped_on_rows() {
+    let store = TagStore::new(PathBuf::new());
+    let state = TagState::default();
+    let round = Round {
+        store: &store,
+        model: "custom-model",
+        entries: &[],
+        state: &state,
+        now: &|| "now".to_string(),
+    };
+    assert_eq!(round.row(0, RowKind::Failed).model, "custom-model");
 }

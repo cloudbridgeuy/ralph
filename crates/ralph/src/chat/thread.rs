@@ -58,6 +58,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             record_cli_merge(&main, &name, &merge_line(&name, true), &output);
         }
         ThreadCommand::Merge { name, view: false } => {
+            ralph_server::config::set_store_layer(&main);
             let dir = thread_dir(&main, &name);
             let curator = Curator {
                 kind: CallSite::Merge,
