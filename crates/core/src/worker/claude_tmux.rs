@@ -282,7 +282,7 @@ mod tests {
         let at = args.iter().position(|arg| arg == "--allowedTools").unwrap();
         assert_eq!(
             args[at + 1],
-            "mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__*,mcp__docs__*"
+            "mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__find_tools,mcp__docs__*"
         );
         assert_eq!(args[at + 2], "--settings");
         assert!(args[at + 2].starts_with("--"));

@@ -1,4 +1,4 @@
-use crate::worker::{Report, ReportStatus};
+use crate::worker::{ClaudePermission, Report, ReportStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -18,6 +18,38 @@ pub struct BlockedContent {
     pub options: Vec<PermissionOption>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum McptoolsDecision {
+    Read,
+    Elevated,
+    Deny,
+    Other,
+}
+
+pub fn mcptools_decision(ask: &ClaudePermission) -> McptoolsDecision {
+    if !matches!(
+        ask.content.tool.as_str(),
+        "mcp__mcptools__execute" | "mcp__mcptools__call_tool"
+    ) {
+        return McptoolsDecision::Other;
+    }
+    let flags = [ask.input.get("allowWrites"), ask.input.get("allowSpend")];
+    if flags
+        .iter()
+        .any(|flag| !matches!(flag, None | Some(serde_json::Value::Bool(_))))
+    {
+        return McptoolsDecision::Deny;
+    }
+    if flags
+        .iter()
+        .any(|flag| matches!(flag, Some(serde_json::Value::Bool(true))))
+    {
+        McptoolsDecision::Elevated
+    } else {
+        McptoolsDecision::Read
+    }
 }
 
 pub fn blocked_notice(
@@ -157,6 +189,56 @@ pub fn permission_alert_report(id: &str, at: &str, content: &BlockedContent) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ask(tool: &str, input: serde_json::Value) -> ClaudePermission {
+        ClaudePermission {
+            input,
+            content: BlockedContent {
+                request_id: "r".into(),
+                tool: tool.into(),
+                summary: String::new(),
+                options: Vec::new(),
+                pending: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn mcptools_decisions_fail_closed() {
+        use McptoolsDecision::*;
+        for (tool, input, want) in [
+            ("mcp__mcptools__execute", json!({"code": "read"}), Read),
+            (
+                "mcp__mcptools__call_tool",
+                json!({"allowWrites": false, "allowSpend": false}),
+                Read,
+            ),
+            (
+                "mcp__mcptools__execute",
+                json!({"allowWrites": true}),
+                Elevated,
+            ),
+            (
+                "mcp__mcptools__call_tool",
+                json!({"allowSpend": true}),
+                Elevated,
+            ),
+            ("mcp__mcptools__execute", json!({"allowSpend": null}), Deny),
+            (
+                "mcp__mcptools__call_tool",
+                json!({"allowWrites": "false"}),
+                Deny,
+            ),
+            ("mcp__mcptools__find_tools", json!({}), Other),
+            ("Bash", json!({}), Other),
+        ] {
+            assert_eq!(
+                mcptools_decision(&ask(tool, input.clone())),
+                want,
+                "{tool} {input}"
+            );
+        }
+    }
 
     fn options() -> Vec<PermissionOption> {
         vec![

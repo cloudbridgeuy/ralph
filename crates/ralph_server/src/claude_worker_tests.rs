@@ -119,6 +119,37 @@ fn yolo_never_queues_or_publishes() {
     assert!(run.reports().is_empty());
 }
 
+fn mcptools_ask(id: &str, input: &str) -> String {
+    format!(
+        r#"{{"type":"control_request","request_id":"{id}","request":{{"subtype":"can_use_tool","tool_name":"mcp__mcptools__execute","input":{input},"tool_use_id":"t1"}}}}"#
+    )
+}
+
+#[test]
+fn an_elevated_mcptools_call_waits_for_the_person_in_both_modes() {
+    for mode in [PermissionMode::Yolo, PermissionMode::Ask] {
+        let run = run(mode, &[&mcptools_ask("w1", r#"{"allowWrites":true}"#)]);
+        assert!(matches!(
+            run.permission_events().as_slice(),
+            [WorkerEvent::PermissionAsked(content)] if content.tool == "mcp__mcptools__execute"
+        ));
+        assert_eq!(run.written(), "");
+    }
+}
+
+#[test]
+fn a_read_mcptools_call_is_allowed_without_asking_in_both_modes() {
+    for mode in [PermissionMode::Yolo, PermissionMode::Ask] {
+        let run = run(mode, &[&mcptools_ask("r1", r#"{"code":"return 1;"}"#)]);
+        assert!(run.permission_events().is_empty());
+        assert!(
+            run.written().contains(r#""behavior":"allow""#),
+            "{}",
+            run.written()
+        );
+    }
+}
+
 #[test]
 fn a_cancel_settles_by_the_raw_id_after_the_queue_published_the_prefixed_id() {
     let cancel = r#"{"type":"control_cancel_request","request_id":"r1"}"#;

@@ -1,8 +1,10 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    allowed_tools, Action, ActivityMark, BlockedContent, PermissionMode, PermissionOption, Report,
-    ReportStatus, ThreadSignal, TurnEnd, Turns, VersionGate, SERVER_NAME,
+    allowed_tools, mcptools_decision, Action, ActivityMark, BlockedContent, McptoolsDecision,
+    PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal, TurnEnd, Turns,
+    VersionGate, SERVER_NAME,
 };
+use crate::chat::{mcptools_ask_settings, MCPTOOLS_SERVER};
 use crate::stream::{interrupt_line, result_is_error};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -137,13 +139,12 @@ pub fn interrupt_lines(pending: &[String], turn_id: &str) -> Vec<String> {
 }
 
 pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<String> {
-    match mode {
-        PermissionMode::Yolo => Some(permission_response(
-            &ask.content.request_id,
-            ALLOW_ONCE,
-            &ask.input,
-        )),
-        PermissionMode::Ask => None,
+    let id = &ask.content.request_id;
+    let allow = || Some(permission_response(id, ALLOW_ONCE, &ask.input));
+    match (mcptools_decision(ask), mode) {
+        (McptoolsDecision::Read, _) | (McptoolsDecision::Other, PermissionMode::Yolo) => allow(),
+        (McptoolsDecision::Deny, _) => Some(deny_line(id)),
+        (McptoolsDecision::Elevated, _) | (McptoolsDecision::Other, PermissionMode::Ask) => None,
     }
 }
 
@@ -251,6 +252,12 @@ pub fn claude_args(options: &ClaudeArgs) -> Vec<String> {
     .map(String::from)
     .into();
     args.push(allowed_tools(copied));
+    if copied.iter().any(|name| name == MCPTOOLS_SERVER) {
+        args.extend([
+            "--settings".to_string(),
+            mcptools_ask_settings().to_string(),
+        ]);
+    }
     args.push("--add-dir".to_string());
     args.push(attachments.display().to_string());
     if let Some(model) = model {
@@ -715,8 +722,87 @@ mod tests {
             copied: &copied,
         });
         assert!(args.join(" ").contains(
-            "--mcp-config /s/workers/A.json --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__*,mcp__docs__* --add-dir /a"
+            r#"--mcp-config /s/workers/A.json --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__find_tools,mcp__docs__* --settings {"permissions":{"ask":["mcp__mcptools__execute","mcp__mcptools__call_tool"]}} --add-dir /a"#
         ));
+    }
+
+    #[test]
+    fn args_without_mcptools_carry_no_settings() {
+        let copied = ["docs".to_string()];
+        let args = claude_args(&ClaudeArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Yolo,
+            session: ClaudeSession::New("sid"),
+            copied: &copied,
+        });
+        assert!(!args.contains(&"--settings".into()));
+        assert!(args.join(" ").contains("mcp__docs__* --add-dir /a"));
+    }
+
+    fn mcptools_ask(tool: &str, input: Value) -> ClaudePermission {
+        let line = json!({"type": "control_request", "request_id": "r1", "request": {
+            "subtype": "can_use_tool", "tool_name": tool, "input": input}})
+        .to_string();
+        let ClaudeLine::Permission(ask) = decode_line(&line) else {
+            panic!("not a permission request");
+        };
+        ask
+    }
+
+    fn behavior(line: Option<String>) -> Option<String> {
+        let answer: Value = serde_json::from_str(&line?).unwrap();
+        answer["response"]["response"]["behavior"]
+            .as_str()
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn yolo_leaves_elevated_mcptools_calls_for_the_person() {
+        for tool in ["mcp__mcptools__execute", "mcp__mcptools__call_tool"] {
+            for flag in ["allowWrites", "allowSpend"] {
+                let ask = mcptools_ask(tool, json!({flag: true}));
+                assert_eq!(
+                    auto_answer(PermissionMode::Yolo, &ask),
+                    None,
+                    "{tool} {flag}"
+                );
+                assert_eq!(
+                    auto_answer(PermissionMode::Ask, &ask),
+                    None,
+                    "{tool} {flag}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn read_mcptools_calls_are_allowed_in_both_modes() {
+        for mode in [PermissionMode::Yolo, PermissionMode::Ask] {
+            for input in [json!({"code": "return 1;"}), json!({"allowWrites": false})] {
+                let ask = mcptools_ask("mcp__mcptools__execute", input);
+                assert_eq!(behavior(auto_answer(mode, &ask)).as_deref(), Some("allow"));
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_mcptools_flags_are_denied_in_both_modes() {
+        for mode in [PermissionMode::Yolo, PermissionMode::Ask] {
+            let ask = mcptools_ask("mcp__mcptools__call_tool", json!({"allowWrites": "false"}));
+            assert_eq!(behavior(auto_answer(mode, &ask)).as_deref(), Some("deny"));
+        }
+    }
+
+    #[test]
+    fn other_tools_keep_the_mode_behavior() {
+        let ask = mcptools_ask("Bash", json!({"command": "ls"}));
+        assert_eq!(
+            behavior(auto_answer(PermissionMode::Yolo, &ask)).as_deref(),
+            Some("allow")
+        );
+        assert_eq!(auto_answer(PermissionMode::Ask, &ask), None);
     }
 
     #[test]

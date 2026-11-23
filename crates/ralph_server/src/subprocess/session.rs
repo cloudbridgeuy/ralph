@@ -8,7 +8,7 @@ use ralph_core::cancel::CancelToken;
 use ralph_core::chat_memory::{model_usage_since, writes_usage_row};
 use ralph_core::stream::{interrupt_line, result_is_error, user_line, IterationCosts, ModelTotals};
 use ralph_core::worker::{
-    deny_line, permission_response, ClaudeLine, ClaudePermission, ALLOW_ONCE,
+    deny_line, mcptools_decision, permission_response, ClaudeLine, McptoolsDecision, ALLOW_ONCE,
 };
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -31,37 +31,6 @@ impl Drop for ClearPermission {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum PermissionDecision {
-    Read,
-    Elevated,
-    Deny,
-}
-
-fn permission_decision(ask: &ClaudePermission) -> PermissionDecision {
-    if !matches!(
-        ask.content.tool.as_str(),
-        "mcp__mcptools__execute" | "mcp__mcptools__call_tool"
-    ) {
-        return PermissionDecision::Deny;
-    }
-    let flags = [ask.input.get("allowWrites"), ask.input.get("allowSpend")];
-    if flags
-        .iter()
-        .any(|flag| !matches!(flag, None | Some(serde_json::Value::Bool(_))))
-    {
-        return PermissionDecision::Deny;
-    }
-    if flags
-        .iter()
-        .any(|flag| matches!(flag, Some(serde_json::Value::Bool(true))))
-    {
-        PermissionDecision::Elevated
-    } else {
-        PermissionDecision::Read
-    }
-}
-
 pub(super) fn control_reply(
     control: ClaudeLine,
     line: &str,
@@ -74,18 +43,19 @@ pub(super) fn control_reply(
                 return Ok(Some(deny_line(&ask.content.request_id)));
             }
             if !interrupted
-                && permission_decision(&ask) == PermissionDecision::Elevated
+                && mcptools_decision(&ask) == McptoolsDecision::Elevated
                 && gate.is_some_and(|gate| gate.request_permission(ask.clone()))
             {
                 return Ok(None);
             }
-            Ok(Some(match permission_decision(&ask) {
-                PermissionDecision::Read if !interrupted => {
+            Ok(Some(match mcptools_decision(&ask) {
+                McptoolsDecision::Read if !interrupted => {
                     permission_response(&ask.content.request_id, ALLOW_ONCE, &ask.input)
                 }
-                PermissionDecision::Read
-                | PermissionDecision::Elevated
-                | PermissionDecision::Deny => deny_line(&ask.content.request_id),
+                McptoolsDecision::Read
+                | McptoolsDecision::Elevated
+                | McptoolsDecision::Deny
+                | McptoolsDecision::Other => deny_line(&ask.content.request_id),
             }))
         }
         ClaudeLine::Malformed => {
