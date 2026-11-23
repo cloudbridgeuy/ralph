@@ -14,7 +14,7 @@ use ralph_core::chat_switch::SwitchTarget;
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::program_status::{Phase, State};
 use ralph_core::sanitize::strip_controls;
-use ralph_core::stream::blocks::truncate_string;
+use ralph_core::stream::blocks::{truncate_string, OutputBlock};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
 use ralph_core::worker::{BlockedContent, Report};
 use ralph_server::chat::ask::Ask;
@@ -31,7 +31,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, IsTerminal, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -56,6 +56,26 @@ fn on_frame(msg: ServerMsg) -> Step {
         ServerMsg::TurnDone => Step::Finished,
         ServerMsg::Error { message } => Step::Failed(message),
         _ => push_notice(&msg).map_or(Step::Ignored, Step::Notice),
+    }
+}
+
+fn remote_blocks(blocks: Vec<OutputBlock>, stdout_is_tty: bool) -> Vec<OutputBlock> {
+    blocks
+        .into_iter()
+        .filter(|block| {
+            stdout_is_tty
+                || !matches!(
+                    block,
+                    OutputBlock::ToolInvocation(_) | OutputBlock::ToolResult(_)
+                )
+        })
+        .collect()
+}
+
+fn remote_event(event: TurnEvent, stdout_is_tty: bool) -> TurnEvent {
+    match event {
+        TurnEvent::Blocks(blocks) => TurnEvent::Blocks(remote_blocks(blocks, stdout_is_tty)),
+        other => other,
     }
 }
 
@@ -250,6 +270,7 @@ struct RemoteSession {
     turns: Cell<u64>,
     attached: RefCell<Option<String>>,
     sink: Box<dyn TurnSink>,
+    stdout_is_tty: bool,
 }
 
 impl RemoteSession {
@@ -263,6 +284,7 @@ impl RemoteSession {
             turns: Cell::new(0),
             attached: RefCell::new(None),
             sink,
+            stdout_is_tty: io::stdout().is_terminal(),
         };
         session.write(&ClientMsg::Hello { proto: VERSION })?;
         let Some(reply) = session.read_reply()? else {
@@ -454,7 +476,7 @@ impl SessionPort for RemoteSession {
                 return Ok(TurnOutcome::Exit);
             };
             match on_frame(msg) {
-                Step::Render(event) => self.sink.emit(event),
+                Step::Render(event) => self.sink.emit(remote_event(event, self.stdout_is_tty)),
                 Step::Finished => {
                     self.turns.set(self.turns.get() + 1);
                     return Ok(TurnOutcome::Replied);

@@ -4,6 +4,7 @@ use ralph_core::chat_status::Status;
 use ralph_core::chat_thread::{AutoMode, ThreadName};
 use ralph_core::chat_thread_cmd::{OpenOpts, ThreadOp};
 use ralph_core::program_status::{report_for, Phase, Report};
+use ralph_core::stream::blocks::{OutputBlock, ToolResultVariant};
 use ralph_core::turn_event::TurnEvent;
 use ralph_core::worker::{BlockedContent, Report as InboxReport};
 use serde::de::DeserializeOwned;
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope<B> {
@@ -174,6 +175,114 @@ pub fn inbox_frame(key: &SessionKey, report: InboxReport, unread: usize) -> Serv
     frame
 }
 
+pub fn turn_frame(event: TurnEvent) -> ServerMsg {
+    let mut frame = ServerMsg::Turn { event };
+    if encode_frame(0, &frame).len() <= MAX_FRAME_BYTES {
+        return frame;
+    }
+    let mut cap = turn_blocks(&mut frame).map_or(0, |blocks| largest_result_text(blocks));
+    while cap > 0 && encode_frame(0, &frame).len() > MAX_FRAME_BYTES {
+        cap /= 2;
+        if let Some(blocks) = turn_blocks(&mut frame) {
+            blocks.iter_mut().for_each(|block| cut_result(block, cap));
+        }
+    }
+    frame
+}
+
+fn turn_blocks(frame: &mut ServerMsg) -> Option<&mut Vec<OutputBlock>> {
+    match frame {
+        ServerMsg::Turn {
+            event: TurnEvent::Blocks(blocks),
+        } => Some(blocks),
+        _ => None,
+    }
+}
+
+fn largest_result_text(blocks: &mut [OutputBlock]) -> usize {
+    blocks
+        .iter_mut()
+        .filter_map(result_variant)
+        .flat_map(|variant| result_text(variant).0)
+        .map(|text| text.len())
+        .max()
+        .unwrap_or(0)
+}
+
+fn result_variant(block: &mut OutputBlock) -> Option<&mut ToolResultVariant> {
+    match block {
+        OutputBlock::ToolResult(result) => Some(&mut result.variant),
+        _ => None,
+    }
+}
+
+fn cut_result(block: &mut OutputBlock, cap: usize) {
+    let Some(variant) = result_variant(block) else {
+        return;
+    };
+    let (texts, flag) = result_text(variant);
+    let mut cut = false;
+    for text in texts {
+        if text.len() > cap {
+            text.truncate(text.floor_char_boundary(cap.saturating_sub('…'.len_utf8())));
+            text.push('…');
+            cut = true;
+        }
+    }
+    if let (true, Some(flag)) = (cut, flag) {
+        *flag = true;
+    }
+}
+
+fn result_text(variant: &mut ToolResultVariant) -> (Vec<&mut String>, Option<&mut bool>) {
+    match variant {
+        ToolResultVariant::Bash { content, truncated } => {
+            (content.iter_mut().collect(), Some(truncated))
+        }
+        ToolResultVariant::EditBeforeAfter {
+            old_content,
+            new_content,
+            ..
+        } => (vec![old_content, new_content], None),
+        ToolResultVariant::EditDiff { diff_content, .. } => (vec![diff_content], None),
+        ToolResultVariant::WriteNewFile { content, .. }
+        | ToolResultVariant::Grep { content, .. } => (vec![content], None),
+        ToolResultVariant::WriteOverwrite {
+            before_content,
+            after_content,
+            ..
+        } => (vec![before_content, after_content], None),
+        ToolResultVariant::Read {
+            content, truncated, ..
+        }
+        | ToolResultVariant::Glob {
+            content, truncated, ..
+        } => (vec![content], Some(truncated)),
+        ToolResultVariant::TodoWrite { message } => (message.iter_mut().collect(), None),
+        ToolResultVariant::NotebookEdit { diff_content, .. } => {
+            (diff_content.iter_mut().collect(), None)
+        }
+        ToolResultVariant::ToolError { content } | ToolResultVariant::Default { content } => {
+            (content.iter_mut().collect(), None)
+        }
+        ToolResultVariant::Script {
+            logs,
+            result,
+            error,
+            ..
+        } => (
+            logs.iter_mut()
+                .chain(result.iter_mut())
+                .chain(error.iter_mut())
+                .collect(),
+            None,
+        ),
+        ToolResultVariant::EditNoChanges { .. } | ToolResultVariant::WriteNoChanges { .. } => {
+            (Vec::new(), None)
+        }
+    }
+}
+
 pub type BlockedKey = (Option<String>, String);
 pub type BlockedMap = BTreeMap<BlockedKey, BlockedContent>;
 
@@ -249,6 +358,54 @@ mod tests {
     use ralph_core::chat_status::WorkerState;
     use ralph_core::program_status::{Kind, State};
     use ralph_core::turn_event::Wait;
+
+    fn bash_result(content: String) -> OutputBlock {
+        OutputBlock::tool_result(
+            "Bash",
+            false,
+            ToolResultVariant::Bash {
+                content: Some(content),
+                truncated: false,
+            },
+        )
+    }
+
+    fn bash_truncated(frame: &ServerMsg) -> Vec<bool> {
+        let ServerMsg::Turn {
+            event: TurnEvent::Blocks(blocks),
+        } = frame
+        else {
+            return Vec::new();
+        };
+        blocks
+            .iter()
+            .filter_map(|block| match block {
+                OutputBlock::ToolResult(result) => match &result.variant {
+                    ToolResultVariant::Bash { truncated, .. } => Some(*truncated),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_blocks_event_over_the_limit_is_cut_to_fit_and_flags_each_cut_result() {
+        let each = "x".repeat(MAX_FRAME_BYTES * 3 / 5);
+        let blocks = vec![bash_result(each.clone()), bash_result(each)];
+        let frame = turn_frame(TurnEvent::Blocks(blocks));
+        assert!(encode_frame(0, &frame).len() <= MAX_FRAME_BYTES);
+        assert_eq!(bash_truncated(&frame), [true, true]);
+    }
+
+    #[test]
+    fn a_blocks_event_under_the_limit_is_unchanged() {
+        let event = TurnEvent::Blocks(vec![bash_result("é".repeat(1000))]);
+        let plain = ServerMsg::Turn {
+            event: event.clone(),
+        };
+        assert_eq!(encode_frame(0, &turn_frame(event)), encode_frame(0, &plain));
+    }
 
     fn server_messages() -> Vec<ServerMsg> {
         vec![
@@ -413,7 +570,7 @@ mod tests {
         let line = encode_frame(5, &status_frame(&status, 3));
         assert_eq!(
             line.trim_end(),
-            r#"{"v":1,"id":5,"body":{"type":"status","report":{"state":{"Blocked":"Question"},"msg":"2 worker reports"},"unread":2,"blocked":["a","b"],"turns":3}}"#
+            r#"{"v":2,"id":5,"body":{"type":"status","report":{"state":{"Blocked":"Question"},"msg":"2 worker reports"},"unread":2,"blocked":["a","b"],"turns":3}}"#
         );
     }
 
@@ -427,7 +584,7 @@ mod tests {
         );
         assert_eq!(
             line.trim_end(),
-            r#"{"v":1,"id":4,"body":{"type":"cancel","thread":"side"}}"#
+            r#"{"v":2,"id":4,"body":{"type":"cancel","thread":"side"}}"#
         );
     }
 
@@ -441,7 +598,7 @@ mod tests {
         );
         assert_eq!(
             line.trim_end(),
-            r#"{"v":1,"id":3,"body":{"type":"turn","event":{"Busy":"Tool"}}}"#
+            r#"{"v":2,"id":3,"body":{"type":"turn","event":{"Busy":"Tool"}}}"#
         );
     }
 
@@ -455,7 +612,7 @@ mod tests {
         );
         assert_eq!(
             line.trim_end(),
-            r#"{"v":1,"id":2,"body":{"type":"thread","op":"pull","name":"auth"}}"#
+            r#"{"v":2,"id":2,"body":{"type":"thread","op":"pull","name":"auth"}}"#
         );
     }
 
@@ -531,9 +688,9 @@ mod tests {
 
     #[test]
     fn another_version_is_refused_even_with_an_unknown_body() {
-        let line = r#"{"v":2,"id":1,"body":{"type":"from_the_future"}}"#;
+        let line = r#"{"v":3,"id":1,"body":{"type":"from_the_future"}}"#;
         let error = decode_frame::<ClientMsg>(line).unwrap_err();
-        assert!(error.contains('2'), "{error}");
+        assert!(error.contains('3'), "{error}");
     }
 
     #[test]

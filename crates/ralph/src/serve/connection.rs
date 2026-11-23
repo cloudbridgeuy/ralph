@@ -381,11 +381,11 @@ mod tests {
     #[test]
     fn answer_maps_hello_and_refusals() {
         assert!(matches!(
-            answer(&[Effect::Answer { proto: 1 }]),
-            ServerMsg::Hello { proto: 1 }
+            answer(&[Effect::Answer { proto: 2 }]),
+            ServerMsg::Hello { proto: 2 }
         ));
         assert!(matches!(
-            answer(&[Effect::Answer { proto: 2 }]),
+            answer(&[Effect::Answer { proto: 1 }]),
             ServerMsg::Error { .. }
         ));
         let ServerMsg::Error { message } = answer(&[Effect::Refuse("down".into())]) else {

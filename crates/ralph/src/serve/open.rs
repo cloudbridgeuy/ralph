@@ -134,12 +134,7 @@ pub(super) fn open_session(
         skills: &[],
         worktree_dir: None,
         custom_prompt,
-        output: TurnOutput {
-            gate: Arc::new(OutputGate::new()),
-            sink: turn_sink,
-            reply_images: ReplyImages::Text,
-            show_tools: false,
-        },
+        output: serve_output(turn_sink),
         events: Arc::new(|_| {}),
     })?;
     let idle = Arc::new(AtomicBool::new(true));
@@ -211,11 +206,25 @@ impl Sessions {
     }
 }
 
+fn serve_output(sink: Arc<dyn TurnSink>) -> TurnOutput {
+    TurnOutput {
+        gate: Arc::new(OutputGate::new()),
+        sink,
+        reply_images: ReplyImages::Text,
+        show_tools: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ralph_core::chat_thread::ThreadName;
     use std::cell::RefCell;
+
+    #[test]
+    fn serve_output_keeps_tool_blocks_for_remote_clients() {
+        assert!(serve_output(Arc::new(SocketSink::default())).show_tools);
+    }
 
     #[test]
     fn main_and_thread_start_maintenance_after_headless_ownership() {
