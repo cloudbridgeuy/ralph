@@ -1,9 +1,10 @@
 use crate::addr::{check_bind, BindError, BindPolicy};
 use crate::admit::{admit, Admission, MAX_HANDLERS};
+use crate::render_api::{exceeds_cap, plan_body, BodyPlan};
 use crate::route::{overloaded, route, ApiConfig, ApiRequest, ApiResponse};
 use crate::token::Token;
 use ralph_server::warn::{warn, warn_if_err};
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -62,7 +63,8 @@ fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Ar
     run_off_loop(request, move |request| {
         let _slot = slot;
         let (config, token) = &*shared;
-        let response = route(&to_api_request(&request), config, token);
+        let mut request = request;
+        let response = route(&to_api_request(&mut request), config, token);
         respond(request, response);
     });
 }
@@ -131,7 +133,28 @@ fn header_value(request: &Request, name: &'static str) -> Option<String> {
         .map(|header| header.value.to_string())
 }
 
-fn to_api_request(request: &Request) -> ApiRequest {
+fn read_body(request: &mut Request) -> (Vec<u8>, bool) {
+    let limit = match plan_body(request.body_length()) {
+        BodyPlan::Skip => return (Vec::new(), false),
+        BodyPlan::TooLarge => return (Vec::new(), true),
+        BodyPlan::Read(limit) => limit,
+    };
+    let mut body = Vec::new();
+    let read = request
+        .as_reader()
+        .take(limit as u64)
+        .read_to_end(&mut body);
+    match read {
+        Ok(_) => {
+            let too_large = exceeds_cap(body.len());
+            (body, too_large)
+        }
+        Err(_) => (Vec::new(), false),
+    }
+}
+
+fn to_api_request(request: &mut Request) -> ApiRequest {
+    let (body, body_too_large) = read_body(request);
     let (path, query) = split_url(request.url());
     ApiRequest {
         method: request.method().as_str().to_string(),
@@ -140,6 +163,9 @@ fn to_api_request(request: &Request) -> ApiRequest {
         host: header_value(request, "Host"),
         authorization: header_value(request, "Authorization"),
         cookies: header_values(request, "Cookie"),
+        body,
+        content_type: header_value(request, "Content-Type"),
+        body_too_large,
     }
 }
 

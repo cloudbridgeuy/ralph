@@ -1,5 +1,6 @@
 use crate::assets::{self, Asset, SHELL_PATH};
 use crate::catalogue;
+use crate::render_api::reject_oversize;
 use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
@@ -27,6 +28,9 @@ pub(crate) struct ApiRequest {
     pub host: Option<String>,
     pub authorization: Option<String>,
     pub cookies: Vec<String>,
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+    pub body_too_large: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +57,9 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
     }
     if !authorized(request, token, &config.cookie_name) {
         return error(401, "unauthorized");
+    }
+    if let Some(rejected) = reject_oversize(request) {
+        return rejected;
     }
     match (request.path.as_str(), request.method.as_str()) {
         (HEALTH_PATH, "GET") => health(&config.version),
@@ -156,7 +163,7 @@ fn css_response(body: &str) -> ApiResponse {
     }
 }
 
-fn error(status: u16, message: &str) -> ApiResponse {
+pub(crate) fn error(status: u16, message: &str) -> ApiResponse {
     json_response(status, serde_json::json!({ "error": message }))
 }
 
@@ -204,6 +211,9 @@ mod tests {
             host: Some("h.test:1".to_string()),
             authorization: None,
             cookies: vec![],
+            body: vec![],
+            content_type: None,
+            body_too_large: false,
         }
     }
 
@@ -221,6 +231,30 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(body(&response), json!({"status": "ok", "version": "9.9.9"}));
         assert!(!String::from_utf8_lossy(&response.body).contains("/secret/store"));
+    }
+
+    #[test]
+    fn oversize_declared_body_is_413_after_auth() {
+        let mut req = authed("POST", "/api/health");
+        req.body_too_large = true;
+        let response = route(&req, &config(), &token());
+        assert_eq!(response.status, 413);
+        assert_eq!(body(&response), json!({"error": "too large"}));
+    }
+
+    #[test]
+    fn oversize_body_without_token_is_401_not_413() {
+        let mut req = request("POST", "/api/health", "");
+        req.body_too_large = true;
+        assert_eq!(route(&req, &config(), &token()).status, 401);
+    }
+
+    #[test]
+    fn oversize_body_on_bad_host_is_403_not_413() {
+        let mut req = authed("POST", "/api/health");
+        req.host = Some("evil.test".to_string());
+        req.body_too_large = true;
+        assert_eq!(route(&req, &config(), &token()).status, 403);
     }
 
     #[test]

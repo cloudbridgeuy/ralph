@@ -21,7 +21,7 @@ fn stalled_body_does_not_block_other_requests_or_stop() {
         server.own_host()
     );
     stalled.write_all(head.as_bytes()).unwrap();
-    assert_eq!(read_status(&mut stalled), 405);
+    assert_eq!(read_status(&mut stalled), 413);
 
     let started = Instant::now();
     let target = format!("/api/health?token={}", server.token());
@@ -47,7 +47,7 @@ fn stalled_body_gets_a_rejection_without_waiting_for_the_body() {
     stalled.write_all(head.as_bytes()).unwrap();
     let started = Instant::now();
     let reply = read_reply(&mut stalled);
-    assert_eq!(reply.status, 405);
+    assert_eq!(reply.status, 413);
     assert!(started.elapsed() < BUDGET);
 }
 
@@ -84,7 +84,7 @@ fn stop_returns_when_every_slot_and_one_more_client_stall() {
     let mut server = TestServer::start();
     let (_stalled, mut statuses) = stall_clients(&server, MAX_HANDLERS + 1);
     statuses.sort_unstable();
-    let mut expected = vec![405; MAX_HANDLERS];
+    let mut expected = vec![413; MAX_HANDLERS];
     expected.push(503);
     assert_eq!(statuses, expected);
     assert!(
@@ -97,7 +97,7 @@ fn stop_returns_when_every_slot_and_one_more_client_stall() {
 fn over_cap_request_gets_503_busy_while_slots_are_stalled() {
     let server = TestServer::start();
     let (_stalled, statuses) = stall_clients(&server, MAX_HANDLERS);
-    assert_eq!(statuses, vec![405; MAX_HANDLERS]);
+    assert_eq!(statuses, vec![413; MAX_HANDLERS]);
     let started = Instant::now();
     let target = format!("/api/health?token={}", server.token());
     let reply = server.exchange("GET", &target, Host::Own, &[]);

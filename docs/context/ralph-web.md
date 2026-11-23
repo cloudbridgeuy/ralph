@@ -142,6 +142,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - The server handles each request on its own thread. It runs at most 8 at the same time. The next one gets 503 at once.
 - A client can send a long `Content-Length` and never send the body. That request keeps its slot until the client closes the socket. Read timeouts come with GUZ-1755.
 - tiny_http 0.12.0 runs one thread for each open connection: the accept loop in `Server::from_listener` hands each connection to `TaskPool::spawn`, which starts a new thread when none is free (`lib.rs:323`, `util/task_pool.rs:69-76`). An admitted stalled request costs two threads: the tiny_http connection thread and the handler thread that holds the slot. Past 8 requests in progress, a stalled request costs the connection thread and a thread that sends the 503. All of these threads end when the client closes the socket. Only GUZ-1755 timeouts bound them.
+- The server reads a request body up to 256 KiB. A `Content-Length` over the cap gets 413 `{"error":"too large"}` at once, without a body read. The bytes read are checked again against the cap. The 413 comes after the 503, 403 and 401 checks. A request with a body under the cap that stalls keeps its slot until the client closes the socket.
 - A stalled request never blocks the stop check.
 
 ## tokens.css

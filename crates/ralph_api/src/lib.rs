@@ -3,6 +3,7 @@ mod admit;
 mod assets;
 mod catalogue;
 pub(crate) mod render;
+mod render_api;
 mod route;
 mod server;
 mod token;
