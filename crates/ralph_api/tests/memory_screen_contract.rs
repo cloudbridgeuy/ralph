@@ -145,3 +145,13 @@ fn the_memory_ctx_carries_the_hash_after_never_the_resolved_one() {
         "return { thread: hashState.thread, after: hashState.after, node: hashState.node };"
     ));
 }
+
+#[test]
+fn an_explicit_after_past_the_end_is_clamped_before_the_entries_fetch() {
+    let body = script();
+    assert!(body.contains("function clampAfter(after, total, size)"));
+    assert!(body.contains("clampAfter(state.after, roots.entries, PAGE_SIZE)"));
+    let clamp = body.find("clampAfter(state.after").unwrap();
+    let fetch = body.find("/api/memory/entries").unwrap();
+    assert!(clamp < fetch);
+}

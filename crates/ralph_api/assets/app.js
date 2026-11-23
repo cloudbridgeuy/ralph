@@ -33,6 +33,10 @@ function defaultAfter(total, size) {
   return Math.max(0, total - size);
 }
 
+function clampAfter(after, total, size) {
+  return after >= total ? defaultAfter(total, size) : after;
+}
+
 function memoryCtx(hashState) {
   return { thread: hashState.thread, after: hashState.after, node: hashState.node };
 }
@@ -352,7 +356,7 @@ async function loadMemory(state) {
     getJson("/api/memory/threads", {}),
     getJson("/api/memory", { thread: state.thread }),
   ]);
-  const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : state.after;
+  const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : clampAfter(state.after, roots.entries, PAGE_SIZE);
   const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
   return { threads: threads.threads, roots, page, after };
 }
