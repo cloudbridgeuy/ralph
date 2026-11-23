@@ -3,7 +3,7 @@ use ralph_core::program_status::{Report, State};
 use ralph_core::stream::blocks::{
     OutputBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
-use ralph_core::worker::PermissionOption;
+use ralph_core::worker::{BlockedContent, PermissionOption};
 
 fn event() -> TurnEvent {
     TurnEvent::Warning("hi".into())

@@ -20,6 +20,31 @@ pub struct BlockedContent {
     pub pending: Vec<String>,
 }
 
+pub fn blocked_notice(
+    thread: Option<&str>,
+    worker: &str,
+    content: Option<&BlockedContent>,
+) -> String {
+    let label = thread.map_or_else(|| worker.to_string(), |name| format!("{name}/{worker}"));
+    match content {
+        Some(content) => {
+            let options: Vec<&str> = content
+                .options
+                .iter()
+                .map(|option| option.option_id.as_str())
+                .collect();
+            format!(
+                "{label} blocked: {} {} request {} options {}",
+                content.tool,
+                content.summary,
+                content.request_id,
+                options.join("|")
+            )
+        }
+        None => format!("{label} permission settled"),
+    }
+}
+
 #[derive(Deserialize)]
 struct PublishedRequest {
     #[serde(default)]

@@ -354,6 +354,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let remote = RemoteStatus::default();
     let display = inbox_display(color);
     let local_route = LocalRoute {
+        gate: &turn.gate,
         inbox: &monitor.inbox,
         watches: &monitor.watches,
         schedule: &monitor.schedule,

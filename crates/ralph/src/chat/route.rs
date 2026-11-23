@@ -14,7 +14,7 @@ use ralph_core::chat_memory::{history_tool_of, CallSource, MemoryCall};
 use ralph_core::chat_status::Route;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
-use ralph_core::worker::TicketKeys;
+use ralph_core::worker::{TicketKeys, HANDOFF_TIMEOUT};
 use ralph_server::chat::memory::Answer;
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::chat::schedule;
@@ -30,6 +30,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 pub struct LocalRoute<'a> {
+    pub gate: &'a ralph_server::subprocess::OutputGate,
     pub inbox: &'a Inbox,
     pub watches: &'a Watches,
     pub schedule: &'a ScheduleStore,
@@ -98,7 +99,22 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::WorkerCosts(args) => {
             workers::costs(ctx.display, ctx.prices, ctx.tickets, ctx.store, args)
         }
-        Route::Answer(_) => writeln!(out, "/answer is only served over --connect")?,
+        Route::Answer(answer) => {
+            let message = answer.and_then(|answer| {
+                if answer.worker == "@chat" {
+                    return Ok(ctx.gate.answer_permission(&answer.request, &answer.option));
+                }
+                ralph_server::workers::answer_permission(
+                    ctx.store,
+                    HANDOFF_TIMEOUT,
+                    &answer.worker,
+                    &answer.request,
+                    &answer.option,
+                )
+                .map_err(|error| error.to_string())
+            });
+            writeln!(out, "{}", message.unwrap_or_else(|error| error))?;
+        }
         Route::Help => write!(out, "{}", help_with_store((ctx.columns)(), ctx.store))?,
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
@@ -135,6 +151,150 @@ mod tests {
     use ralph_core::chat_memory::{history_path, parse_tool_call};
     use ralph_core::chat_thread::ThreadName;
     use serde_json::{json, Value};
+
+    #[test]
+    fn local_answer_routes_to_the_worker_handoff() {
+        use crate::config::FileState;
+        use crate::highlight::Highlighter;
+        use crate::markdown::MarkdownTheme;
+        use crate::render::RenderContext;
+        use crate::ui_theme::UiColors;
+        use ralph_core::chat_status::{route_input, EmptySubmit};
+        use ralph_server::chat::keepalive::Stamp;
+        use ralph_server::chat::session::{open_core, tuning, CoreParts};
+        use ralph_server::config::AppConfig;
+        use ralph_server::workers::Workers;
+        use std::sync::{atomic::AtomicBool, Arc};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = AppConfig::default();
+        let tuning = tuning(&config.chat, None).unwrap();
+        let monitor = open_core(CoreParts {
+            store_dir: dir.path(),
+            store_root: dir.path().to_path_buf(),
+            chat: &config.chat,
+            tuning: &tuning,
+            workers: Workers::new(
+                dir.path().to_path_buf(),
+                "ralph".into(),
+                String::new(),
+                None,
+            ),
+            live: Arc::new(AtomicBool::new(false)),
+            last_ping: Stamp::default(),
+            run: String::new(),
+            caps: ralph_core::chat_backend::CLAUDE,
+        });
+        let highlighter = Highlighter::new();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::new(&highlighter, false),
+            theme: &theme,
+            color: false,
+            ui: UiColors::default(),
+        };
+        let file = FileState::of(dir.path().to_path_buf());
+        let snapshot = ConfigSnapshot {
+            warnings: vec![],
+            global: file.clone(),
+            store_file: file.clone(),
+            store_dir: dir.path().to_path_buf(),
+            usage: file,
+            claude_dir: None,
+            prompt_file: None,
+            append_prompts: vec![],
+            skills: vec![],
+            env: vec![],
+            flags: vec![],
+            rows: vec![],
+            effective: None,
+        };
+        let remote = RemoteStatus::default();
+        let gate = ralph_server::subprocess::OutputGate::new();
+        let ctx = LocalRoute {
+            gate: &gate,
+            inbox: &monitor.inbox,
+            watches: &monitor.watches,
+            schedule: &monitor.schedule,
+            display: &display,
+            changes: &config.changes,
+            prices: &config.wire.prices,
+            tickets: &config.tickets,
+            store: dir.path(),
+            monitor: &monitor,
+            remote: &remote,
+            config: &snapshot,
+            columns: || 80,
+        };
+        let mut out = Vec::new();
+        let route = route_input(
+            "/answer missing req once",
+            0,
+            &EmptySubmit::Inbox,
+            &Default::default(),
+        );
+        run_local(route, &ctx, &mut out, || {}).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "worker missing is not a running Cursor, Codex, claude or opencode worker\n"
+        );
+        let mut out = Vec::new();
+        let route = route_input(
+            "/answer missing req",
+            0,
+            &EmptySubmit::Inbox,
+            &Default::default(),
+        );
+        run_local(route, &ctx, &mut out, || {}).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "Usage: /answer <worker> <request> <option>\n"
+        );
+
+        let mut out = Vec::new();
+        let route = route_input(
+            "/answer @chat stale once",
+            0,
+            &EmptySubmit::Inbox,
+            &Default::default(),
+        );
+        run_local(route, &ctx, &mut out, || {}).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "No matching main chat permission request.\n"
+        );
+
+        let files = ralph_core::worker::HandoffFiles::opencode(dir.path(), "A");
+        ralph_server::cursor_owner::write_file(&files.owner, "").unwrap();
+        let host = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if let Ok(body) = std::fs::read_to_string(&files.answer) {
+                    std::fs::remove_file(&files.answer).unwrap();
+                    return body;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        });
+        let mut out = Vec::new();
+        let route = route_input(
+            "/answer A req once",
+            0,
+            &EmptySubmit::Inbox,
+            &Default::default(),
+        );
+        run_local(route, &ctx, &mut out, || {}).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "Answered the permission request of worker A.\n"
+        );
+        let answer = ralph_core::worker::PermissionAnswer::decode(&host.join().unwrap()).unwrap();
+        assert_eq!(
+            (answer.request_id.as_str(), answer.option_id.as_str()),
+            ("req", "once")
+        );
+    }
 
     fn recall() -> MemoryCall {
         parse_tool_call("recall", &json!({"pattern": "x"})).unwrap()

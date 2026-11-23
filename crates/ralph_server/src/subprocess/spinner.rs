@@ -119,6 +119,7 @@ pub(super) enum Step {
     Pending,
     Result { is_error: bool },
     Closed,
+    Control(Box<ralph_core::worker::ClaudeLine>, String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +213,13 @@ impl Pump {
         }
         match readers.line_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok(line)) => {
+                if let control @ (ralph_core::worker::ClaudeLine::Permission(_)
+                | ralph_core::worker::ClaudeLine::Malformed
+                | ralph_core::worker::ClaudeLine::Cancel(_)) =
+                    ralph_core::worker::decode_line(&line)
+                {
+                    return Ok(Step::Control(Box::new(control), line));
+                }
                 if is_main_assistant_line(&line) {
                     self.request_at = Some(chrono::Utc::now());
                 }
@@ -427,6 +435,35 @@ mod tests {
                 _stderr: stderr_tx,
             },
         )
+    }
+
+    #[test]
+    fn a_permission_request_reaches_the_session() {
+        let sink = Arc::new(Recording::default());
+        let (readers, _feed) = feed(
+            &[
+                r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"mcp__mcptools__execute","input":{"code":"read"}}}"#,
+            ],
+            &[],
+        );
+        let mut pump = Pump::start(&config(&sink), Display::Silent);
+        let Step::Control(control, line) = pump.step(&readers, false).unwrap() else {
+            panic!("permission frame was not forwarded");
+        };
+        assert!(matches!(
+            *control,
+            ralph_core::worker::ClaudeLine::Permission(_)
+        ));
+        let reply = super::super::session::control_reply(*control, &line, false, None)
+            .unwrap()
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(response["response"]["request_id"], "r1");
+        assert_eq!(response["response"]["response"]["behavior"], "allow");
+        assert_eq!(
+            response["response"]["response"]["updatedInput"],
+            serde_json::json!({"code":"read"})
+        );
     }
 
     #[test]

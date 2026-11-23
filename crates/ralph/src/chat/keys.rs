@@ -49,6 +49,14 @@ struct TurnWatch {
 
 struct Finished<'a>(&'a TurnWatch);
 
+struct Listening<'a>(&'a OutputGate);
+
+impl Drop for Listening<'_> {
+    fn drop(&mut self) {
+        self.0.listen(false);
+    }
+}
+
 impl Drop for Finished<'_> {
     fn drop(&mut self) {
         self.0.done.store(true, Ordering::SeqCst);
@@ -145,7 +153,15 @@ impl Keys<'_> {
         };
         let (result, mut queue) = thread::scope(|scope| {
             let finished = Finished(&watch);
-            let listener = scope.spawn(|| self.listen(&watch));
+            let (ready, started) = std::sync::mpsc::sync_channel(0);
+            let turn_watch = &watch;
+            let listener = scope.spawn(move || {
+                self.gate.listen(std::io::stdout().is_terminal());
+                let _listening = Listening(self.gate);
+                let _ = ready.send(());
+                self.listen(turn_watch)
+            });
+            let _ = started.recv();
             let result = run(&watch.cancel);
             drop(finished);
             (result, listener.join().unwrap_or_default())
@@ -165,12 +181,16 @@ impl Keys<'_> {
             }
             let bytes = read_whole_input();
             if bytes.is_empty() {
-                thread::sleep(Duration::from_millis(POLL_MS as u64));
+                break;
             } else if let Typed::Open(seed) = typed(&bytes) {
                 if watch.done.load(Ordering::SeqCst) {
                     queue.typed.push_str(&seed);
                 } else {
-                    queue = self.edit(queue, &seed, watch);
+                    let (next, closed) = self.edit(queue, &seed, watch);
+                    queue = next;
+                    if closed {
+                        break;
+                    }
                 }
             }
         }
@@ -188,7 +208,7 @@ impl Keys<'_> {
         .filter(Route::runs_mid_turn)
     }
 
-    fn edit(&self, queue: Queue, seed: &str, watch: &TurnWatch) -> Queue {
+    fn edit(&self, queue: Queue, seed: &str, watch: &TurnWatch) -> (Queue, bool) {
         self.gate.pause();
         wait_settled(self.gate);
         let mut editor = build_queue_editor(self.edit_mode);
@@ -206,6 +226,10 @@ impl Keys<'_> {
         };
         let exit = self.read_exit(&mut editor, &prompt);
         locked(&watch.repaint).take();
+        let closed = matches!(exit, EditorExit::Closed);
+        if closed {
+            self.gate.listen(false);
+        }
         let exit = match exit {
             EditorExit::Submitted(text) => match self.instant_route(&text) {
                 Some(route) => {
@@ -226,7 +250,7 @@ impl Keys<'_> {
         if action == Action::Cancel {
             watch.cancel.cancel();
         }
-        queue
+        (queue, closed)
     }
 }
 
