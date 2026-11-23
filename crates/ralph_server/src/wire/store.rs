@@ -1,10 +1,15 @@
+use ralph_core::chat_socket::runtime_root;
 use ralph_core::wire::live::live_row;
 use ralph_core::wire::read::{parse_calls, parse_session, Calls, ReadError};
 use ralph_core::wire::record::{CallRecord, SessionRecord};
+use std::ffi::{CStr, OsStr};
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
+use std::mem::MaybeUninit;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::ptr;
 use std::sync::mpsc::Receiver;
 
 pub enum ToStore {
@@ -74,6 +79,53 @@ fn create_root(root: &Path) -> io::Result<()> {
 
 pub fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
+}
+
+pub fn user_home_dir() -> io::Result<PathBuf> {
+    let uid = current_uid();
+    let mut pwd = MaybeUninit::<libc::passwd>::uninit();
+    let mut buf = vec![0u8; 4096];
+    let mut result: *mut libc::passwd = ptr::null_mut();
+    loop {
+        let rc = unsafe {
+            libc::getpwuid_r(
+                uid,
+                pwd.as_mut_ptr(),
+                buf.as_mut_ptr().cast::<libc::c_char>(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 {
+            return Err(io::Error::from_raw_os_error(rc));
+        }
+        if result.is_null() {
+            return Err(io::Error::other(format!(
+                "cannot find home directory for uid {uid}"
+            )));
+        }
+        let pw_dir = unsafe { (*result).pw_dir };
+        if pw_dir.is_null() {
+            return Err(io::Error::other(format!(
+                "empty home directory for uid {uid}"
+            )));
+        }
+        let bytes = unsafe { CStr::from_ptr(pw_dir).to_bytes() };
+        if bytes.is_empty() {
+            return Err(io::Error::other(format!(
+                "empty home directory for uid {uid}"
+            )));
+        }
+        return Ok(PathBuf::from(OsStr::from_bytes(bytes)));
+    }
+}
+
+pub fn default_runtime_root() -> io::Result<PathBuf> {
+    Ok(runtime_root(&user_home_dir()?))
 }
 
 fn refuse_root(root: &Path, meta: &fs::Metadata) -> io::Result<()> {
@@ -317,5 +369,15 @@ mod tests {
             message.contains("mkdir -m 700 /tmp/ralph-wire"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn default_runtime_root_uses_passwd_home_not_tmp() {
+        let home = user_home_dir().unwrap();
+        assert!(home.is_absolute());
+        assert!(home.is_dir());
+        let root = default_runtime_root().unwrap();
+        assert_eq!(root, home.join(".ralph/run"));
+        assert!(!root.starts_with("/tmp"));
     }
 }

@@ -18,7 +18,7 @@ use crate::config::{AppConfig, ChatSection};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::schedule_store::ScheduleStore;
 use crate::watches::{locked, Watches};
-use crate::wire::store::current_uid;
+use crate::wire::store::default_runtime_root;
 use crate::worker_mcp::Inbox;
 use crate::workers::{running_workers, Workers};
 use ralph_core::cancel::CancelToken;
@@ -32,7 +32,7 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_process::UsageTail;
 use ralph_core::chat_send_it::{propose_prompt, usage, Limits, Seen, SendItCommand, Ticked};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, ChatSkill, SkillSources};
-use ralph_core::chat_socket::{runtime_root, system_prompt_path};
+use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{latest_states, Status};
 use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
@@ -106,14 +106,20 @@ impl Wiring {
     pub fn open(wiring: &WiringConfig) -> io::Result<Self> {
         sweep_stale_server_records();
         let chat = &wiring.config.chat;
-        let socket = ChatSocket::bind(wiring.store_dir, &runtime_root(current_uid()))?;
+        let socket = ChatSocket::bind(wiring.store_dir, &default_runtime_root()?)?;
         let guard = SocketGuard(socket.files().clone());
         let imported = select_servers(
             &read_claude_config(wiring.config.claude.config_dir.as_deref()),
             &chat.mcp_servers,
         );
-        let mcp_args = write_mcp_config(wiring.store_dir, socket.path(), wiring.exe, &imported)?;
-        let system_prompt_file = system_prompt_path(socket.path());
+        let mcp_args = write_mcp_config(
+            wiring.store_dir,
+            socket.files_dir(),
+            socket.path(),
+            wiring.exe,
+            &imported,
+        )?;
+        let system_prompt_file = system_prompt_path(socket.files_dir());
         let skill_dirs = resolve_skills(
             &SkillSources {
                 cli: wiring.cli_skills,
