@@ -1,5 +1,5 @@
 use super::*;
-use crate::chat_socket::{check_socket_path, runtime_dir_pid, runtime_root};
+use crate::chat_socket::{check_socket_path, runtime_root, socket_file_pid};
 use crate::worker::CURSOR_VERIFY_HOOKS;
 use serde_json::{json, Value};
 
@@ -309,12 +309,12 @@ fn a_hook_ask_is_a_shell_permission_request() {
 fn the_hook_socket_fits_the_unix_limit_for_a_long_store() {
     let store = PathBuf::from(format!("/{}", "deep/".repeat(60)));
     let key = StoreKey::of(&store);
-    let root = runtime_root(u32::MAX);
+    let root = runtime_root(Path::new("/Users/guzmanmonne"));
     let name = hook_socket_name(&key, u32::MAX, u64::MAX);
     let path = root.join(&name);
     assert!(path.as_os_str().len() < 104, "{}", path.display());
     assert_eq!(check_socket_path(&root, &path), Ok(()));
     assert!(name.ends_with(".sock"), "{name}");
     assert_ne!(hook_socket_name(&key, 7, 1), hook_socket_name(&key, 7, 2));
-    assert_eq!(runtime_dir_pid(&key, &name), None);
+    assert_eq!(socket_file_pid(&key, &name), None);
 }

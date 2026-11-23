@@ -1,5 +1,7 @@
 use ralph_core::chat_cell::{bang, Bang};
-use ralph_core::chat_thread_cmd::is_cell_command;
+use ralph_core::chat_status::Route;
+use ralph_core::chat_switch::SwitchTarget;
+use ralph_core::chat_thread_cmd::{is_cell_command, QUEUED_SWITCH_NOTICE};
 use ralph_server::chat::turn::TurnOutcome;
 
 const JOIN: &str = "\n\n";
@@ -9,6 +11,50 @@ pub(super) struct Queue {
     pub(super) entries: Vec<String>,
     pub(super) held: bool,
     pub(super) typed: String,
+    pub(super) notes: Vec<String>,
+}
+
+pub(super) enum MidTurn {
+    Run(Box<Route>),
+    Check(SwitchTarget),
+    Queue,
+}
+
+pub(super) fn at_once(route: Route) -> MidTurn {
+    match route {
+        Route::Switch {
+            parsed: Ok(target), ..
+        } => MidTurn::Check(target),
+        route if route.runs_mid_turn() => MidTurn::Run(Box::new(route)),
+        _ => MidTurn::Queue,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Verdict {
+    Refused(String),
+    Queued,
+}
+
+pub(super) fn switch_verdict(checked: Result<(), String>) -> Verdict {
+    checked.map_or_else(Verdict::Refused, |()| Verdict::Queued)
+}
+
+impl Verdict {
+    pub(super) fn keeps_line(&self) -> bool {
+        matches!(self, Verdict::Queued)
+    }
+
+    pub(super) fn notice(&self) -> &str {
+        match self {
+            Verdict::Refused(refusal) => refusal,
+            Verdict::Queued => QUEUED_SWITCH_NOTICE,
+        }
+    }
+}
+
+pub(super) fn take_notes(mut queue: Queue) -> (Vec<String>, Queue) {
+    (std::mem::take(&mut queue.notes), queue)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +203,8 @@ pub(super) fn decide(outcome: TurnOutcome, queue: Queue) -> Decision {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::chat_status::{route_input, EmptySubmit};
+    use std::collections::BTreeSet;
 
     fn entries(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
@@ -167,6 +215,7 @@ mod tests {
             entries: entries(items),
             held: false,
             typed: String::new(),
+            notes: Vec::new(),
         }
     }
 
@@ -326,6 +375,7 @@ mod tests {
             entries: entries(&["a", " "]),
             held: false,
             typed: "xyz".into(),
+            notes: Vec::new(),
         };
         assert_eq!(unsent(&queue), entries(&["a", "xyz"]));
         assert_eq!(exit_notice(0, true), None);
@@ -491,5 +541,70 @@ mod tests {
             entries(&["c", "draft in the editor"])
         );
         assert_eq!(unsent_texts(&[], "  \n"), Vec::<String>::new());
+    }
+
+    fn routed(line: &str) -> Route {
+        route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new())
+    }
+
+    #[test]
+    fn mid_turn_thread_ops_and_usage_errors_run_at_once() {
+        for line in [
+            "/thread ls",
+            "/thread pull auth",
+            "/thread drop auth",
+            "/thread open",
+        ] {
+            assert!(matches!(at_once(routed(line)), MidTurn::Run(_)), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_mid_turn_switch_is_checked_then_queued() {
+        for line in ["/thread switch side", "/thread main"] {
+            assert!(matches!(at_once(routed(line)), MidTurn::Check(_)), "{line}");
+        }
+    }
+
+    #[test]
+    fn merge_and_plain_text_wait_in_the_queue() {
+        for line in ["/thread merge auth", "fix the test"] {
+            assert!(matches!(at_once(routed(line)), MidTurn::Queue), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_refused_switch_is_swallowed_and_an_allowed_one_stays_queued() {
+        let refused = switch_verdict(Err("main is in use".to_string()));
+        assert_eq!(refused, Verdict::Refused("main is in use".to_string()));
+        assert!(!refused.keeps_line());
+        let queued = switch_verdict(Ok(()));
+        assert_eq!(queued, Verdict::Queued);
+        assert!(queued.keeps_line());
+        assert_eq!(queued.notice(), QUEUED_SWITCH_NOTICE);
+    }
+
+    #[test]
+    fn notes_leave_the_queue_whatever_the_turn_did() {
+        let mut noted = queue(&["a"]);
+        noted.notes = entries(&["/thread park x\n\nparked"]);
+        let (notes, rest) = take_notes(noted);
+        assert_eq!(notes, entries(&["/thread park x\n\nparked"]));
+        assert_eq!(rest, queue(&["a"]));
+        for outcome in [
+            TurnOutcome::Replied,
+            TurnOutcome::Unanswered,
+            TurnOutcome::Exit,
+        ] {
+            let mut noted = queue(&[]);
+            noted.notes = entries(&["row"]);
+            let (notes, rest) = take_notes(noted);
+            assert_eq!(notes, entries(&["row"]), "{outcome:?}");
+            assert_eq!(
+                decide(outcome, rest),
+                Decision::Keep(Vec::new()),
+                "{outcome:?}"
+            );
+        }
     }
 }

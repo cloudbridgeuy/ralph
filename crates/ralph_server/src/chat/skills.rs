@@ -1,28 +1,83 @@
+use crate::chat::socket::serve::SocketHandle;
 use crate::private_file::write_private;
 use crate::warn::warn;
 use ralph_core::chat::{build_mcp_args, mcp_config, ImportedServers};
 use ralph_core::chat_skills::{plan_links, plugin_manifest, ChatSkill};
-use ralph_core::chat_socket::mcp_config_path;
+use ralph_core::chat_socket::{mcp_config_path, recovery_plan, skill_plugin_dir, RuntimeFacts};
 use ralph_core::claude_leftovers::claude_json;
-use std::io::{self};
+use std::fs::{self, DirBuilder};
+use std::io;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 
+#[derive(Debug, Clone)]
+pub struct RuntimeFiles {
+    pub files_dir: PathBuf,
+    pub mcp_config_file: PathBuf,
+    pub mcp_config_bytes: Vec<u8>,
+}
+
+pub struct McpConfig {
+    pub args: Vec<String>,
+    pub files: RuntimeFiles,
+}
+
 pub fn write_mcp_config(
     store_dir: &Path,
+    files_dir: &Path,
     socket: &Path,
     exe: &Path,
     imported: &ImportedServers,
-) -> io::Result<Vec<String>> {
+) -> io::Result<McpConfig> {
     for name in &imported.missing {
         warn(format!(
             "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
         ));
     }
     let config = mcp_config(exe, store_dir, socket, &imported.servers);
-    let path = write_private(mcp_config_path(socket), config.to_string().as_bytes())?;
-    Ok(build_mcp_args(&path, &config))
+    let bytes = config.to_string().into_bytes();
+    let path = write_private(mcp_config_path(files_dir), &bytes)?;
+    Ok(McpConfig {
+        args: build_mcp_args(&path, &config),
+        files: RuntimeFiles {
+            files_dir: files_dir.to_path_buf(),
+            mcp_config_file: path,
+            mcp_config_bytes: bytes,
+        },
+    })
+}
+
+pub fn ensure_runtime_files(
+    files: &RuntimeFiles,
+    skills: &[ChatSkill],
+    socket: Option<&SocketHandle>,
+) -> io::Result<()> {
+    let socket_exists = socket.is_none_or(|handle| handle.socket_path().exists());
+    let plan = recovery_plan(RuntimeFacts {
+        files_dir_exists: files.files_dir.is_dir(),
+        socket_exists,
+        has_skills: !skills.is_empty(),
+        skill_plugin_exists: skill_plugin_dir(&files.files_dir)
+            .join(".claude-plugin/plugin.json")
+            .is_file(),
+    });
+    if plan.create_files_dir {
+        ensure_private_dir(&files.files_dir)?;
+    }
+    if plan.write_mcp_config {
+        write_private(files.mcp_config_file.clone(), &files.mcp_config_bytes)?;
+    }
+    if plan.write_skill_plugin {
+        write_skill_plugin(&files.files_dir, skills)?;
+    }
+    if plan.rebind_socket {
+        if let Some(handle) = socket {
+            handle.rebind()?;
+        }
+    }
+    Ok(())
 }
 
 pub fn env_skills() -> Vec<PathBuf> {
@@ -79,21 +134,37 @@ pub fn link_skills(found: Vec<(PathBuf, String)>) -> Vec<ChatSkill> {
         .collect()
 }
 
-pub fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<tempfile::TempDir>> {
+pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
+    match DirBuilder::new().mode(0o700).recursive(true).create(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub fn write_skill_plugin(files_dir: &Path, skills: &[ChatSkill]) -> io::Result<Option<PathBuf>> {
     if skills.is_empty() {
         return Ok(None);
     }
-    let plugin = tempfile::tempdir()?;
-    let manifest_dir = plugin.path().join(".claude-plugin");
-    let skills_dir = plugin.path().join("skills");
-    std::fs::create_dir_all(&manifest_dir)?;
-    std::fs::create_dir_all(&skills_dir)?;
-    std::fs::write(
+    let plugin = skill_plugin_dir(files_dir);
+    let manifest_dir = plugin.join(".claude-plugin");
+    let skills_dir = plugin.join("skills");
+    ensure_private_dir(files_dir)?;
+    ensure_private_dir(&plugin)?;
+    ensure_private_dir(&manifest_dir)?;
+    ensure_private_dir(&skills_dir)?;
+    write_private(
         manifest_dir.join("plugin.json"),
-        plugin_manifest().to_string(),
+        plugin_manifest().to_string().as_bytes(),
     )?;
     for skill in skills {
-        std::os::unix::fs::symlink(&skill.dir, skills_dir.join(&skill.name))?;
+        let link = skills_dir.join(&skill.name);
+        if fs::symlink_metadata(&link).is_ok() {
+            fs::remove_file(&link)?;
+        }
+        std::os::unix::fs::symlink(&skill.dir, &link)?;
     }
     Ok(Some(plugin))
 }
@@ -112,5 +183,91 @@ pub fn read_claude_config(config_dir: Option<&Path>) -> serde_json::Value {
             warn(format!("Failed to read {}: {e}", path.display()));
             serde_json::json!({})
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn skill_plugin_lives_inside_store_files_dir_with_private_modes() {
+        let root = tempfile::tempdir().unwrap();
+        let files_dir = root.path().join("chat-42");
+        let skill_dir = root.path().join("demo-skill");
+        fs::create_dir(&skill_dir).unwrap();
+        let skills = vec![ChatSkill {
+            name: "demo".to_string(),
+            dir: skill_dir.clone(),
+            skill_md: "body".to_string(),
+        }];
+        let plugin = write_skill_plugin(&files_dir, &skills).unwrap().unwrap();
+        assert_eq!(plugin, files_dir.join("plugin"));
+        assert_eq!(
+            fs::metadata(&plugin).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let manifest = plugin.join(".claude-plugin/plugin.json");
+        assert_eq!(
+            fs::metadata(&manifest).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::read_link(plugin.join("skills/demo")).unwrap(),
+            skill_dir
+        );
+        // Rewriting over an existing plugin directory succeeds idempotently.
+        assert_eq!(
+            write_skill_plugin(&files_dir, &skills).unwrap(),
+            Some(plugin)
+        );
+    }
+
+    #[test]
+    fn ensure_runtime_files_recreates_deleted_dir_mcp_and_plugin() {
+        let root = tempfile::tempdir().unwrap();
+        let files_dir = root.path().join("chat-42");
+        let skill_dir = root.path().join("demo-skill");
+        fs::create_dir(&skill_dir).unwrap();
+        let skills = vec![ChatSkill {
+            name: "demo".to_string(),
+            dir: skill_dir,
+            skill_md: "body".to_string(),
+        }];
+        let files = RuntimeFiles {
+            files_dir: files_dir.clone(),
+            mcp_config_file: mcp_config_path(&files_dir),
+            mcp_config_bytes: br#"{"mcpServers":{}}"#.to_vec(),
+        };
+        ensure_runtime_files(&files, &skills, None).unwrap();
+        assert!(files_dir.is_dir());
+        assert_eq!(
+            fs::metadata(&files_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::read(&files.mcp_config_file).unwrap(),
+            br#"{"mcpServers":{}}"#
+        );
+        assert_eq!(
+            fs::metadata(&files.mcp_config_file)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert!(skill_plugin_dir(&files_dir)
+            .join(".claude-plugin/plugin.json")
+            .is_file());
+        // Corrupting mcp.json is overwritten on the next turn.
+        fs::write(&files.mcp_config_file, b"corrupt").unwrap();
+        ensure_runtime_files(&files, &skills, None).unwrap();
+        assert!(files_dir.is_dir());
+        assert_eq!(
+            fs::read(&files.mcp_config_file).unwrap(),
+            br#"{"mcpServers":{}}"#
+        );
     }
 }

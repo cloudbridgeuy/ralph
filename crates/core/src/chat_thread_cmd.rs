@@ -166,6 +166,21 @@ pub fn drop_answer(answer: Option<bool>) -> Result<bool, String> {
     answer.ok_or_else(|| "drop aborted; the command stays in the prompt.".to_string())
 }
 
+pub const QUEUED_SWITCH_NOTICE: &str = "queued: runs when the turn ends.";
+
+pub fn mid_turn_refusal(op: &ThreadOp) -> Option<String> {
+    match op {
+        ThreadOp::Drop(name) => Some(format!(
+            "drop asks y/n and cannot ask while a turn runs; run /thread drop {name} at the prompt once the turn ends."
+        )),
+        _ => None,
+    }
+}
+
+pub fn pull_mid_turn_message(message: &str) -> String {
+    format!("{message}\nthe new base comes before the main reply that is still in flight.")
+}
+
 pub fn is_cell_command(line: &str) -> bool {
     Command::Thread.args(line).is_some()
 }
@@ -191,6 +206,30 @@ fn main_only(sub: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_drop_is_refused_mid_turn() {
+        let refusal = mid_turn_refusal(&ThreadOp::Drop(auth())).unwrap();
+        assert!(refusal.contains("/thread drop auth"), "{refusal}");
+        for args in [
+            "ls",
+            "open a",
+            "pull a",
+            "park a",
+            "revive a",
+            "merge a",
+            "merge a --view",
+        ] {
+            assert_eq!(mid_turn_refusal(&op(args).unwrap()), None, "{args}");
+        }
+    }
+
+    #[test]
+    fn pull_mid_turn_message_keeps_the_message_and_flags_the_reply_in_flight() {
+        let message = pull_mid_turn_message("pulled auth");
+        assert!(message.starts_with("pulled auth"), "{message}");
+        assert!(message.contains("still in flight"), "{message}");
+    }
 
     fn auth() -> ThreadName {
         ThreadName::parse("auth").unwrap()

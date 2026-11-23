@@ -13,7 +13,7 @@ use blocked::read_blocked;
 use clients::Clients;
 use open::{open_session, Sessions};
 use ralph_core::chat_process::SessionKey;
-use ralph_core::chat_socket::{runtime_root, serve_socket_path, StoreKey};
+use ralph_core::chat_socket::{serve_socket_path, StoreKey};
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::serve::{serve_refusal, serve_store_gate};
 use ralph_core::serve_supervisor::{Effect, Input, Supervisor};
@@ -22,7 +22,7 @@ use ralph_server::chat::memory::Store;
 use ralph_server::chat::serve_proto::{blocked_pushes, BlockedMap};
 use ralph_server::chat::serve_socket::ServeSocket;
 use ralph_server::warn::warn;
-use ralph_server::wire::store::current_uid;
+use ralph_server::wire::store::default_runtime_root;
 use ralph_server::workers::canonical_store;
 use std::collections::VecDeque;
 use std::os::unix::net::UnixStream;
@@ -64,7 +64,7 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         exited: AtomicBool::new(false),
     });
     drive(&host, effects)?;
-    let root = runtime_root(current_uid());
+    let root = default_runtime_root()?;
     let path = serve_socket_path(&root, &StoreKey::of(&store_dir));
     let socket = ServeSocket::bind(&root, &path)?;
     eprintln!("ralph serve: listening on {}", path.display());

@@ -226,11 +226,11 @@ impl Command {
                 ),
                 (
                     "/thread open <name> [--auto-merge|--auto-drop] [--model <m>]",
-                    "open thread <name> in a new Rex block next to this chat, on this chat's store; from a thread's chat it forks a sibling from main; refused when the thread is merged, parked or already open (use /thread switch <name> to move this chat instead); outside Rex it prints the command to run instead; --auto-merge or --auto-drop (one at most) stores the choice on the thread; --model <m> (sonnet, opus, haiku or claude-*) sets the model its chat runs on, kept for later opens; when its chat is closed, main asks to merge or drop it; with no model call; while a turn runs it waits in the queue",
+                    "open thread <name> in a new Rex block next to this chat, on this chat's store; from a thread's chat it forks a sibling from main; refused when the thread is merged, parked or already open (use /thread switch <name> to move this chat instead); outside Rex it prints the command to run instead; --auto-merge or --auto-drop (one at most) stores the choice on the thread; --model <m> (sonnet, opus, haiku or claude-*) sets the model its chat runs on, kept for later opens; when its chat is closed, main asks to merge or drop it; with no model call; while a turn runs it runs at once",
                 ),
                 (
                     "/thread switch <name>",
-                    "switch this chat to thread <name> in the same terminal: the chat quits and ralph chat starts again on the thread; an unknown name creates the thread; refused when the thread is merged, parked or open elsewhere, or while workers or watches run; scheduled tasks stay saved and do not fire while you are away; while a turn runs it waits in the queue",
+                    "switch this chat to thread <name> in the same terminal: the chat quits and ralph chat starts again on the thread; an unknown name creates the thread; refused when the thread is merged, parked or open elsewhere, or while workers or watches run; scheduled tasks stay saved and do not fire while you are away; while a turn runs it is checked at once, then waits in the queue",
                 ),
                 (
                     "/thread main",
@@ -238,19 +238,19 @@ impl Command {
                 ),
                 (
                     "/thread pull <name>",
-                    "move thread <name>'s fork point to the end of main, like ralph thread pull; main's chat only, with no model call; refused when the thread's own chat is open, when the thread is merged or unknown, and inside a thread's chat (run /thread main first); works on a parked thread; the next ralph chat --thread <name> starts with the newer main messages; while a turn runs it waits in the queue",
+                    "move thread <name>'s fork point to the end of main, like ralph thread pull; main's chat only, with no model call; refused when the thread's own chat is open, when the thread is merged or unknown, and inside a thread's chat (run /thread main first); works on a parked thread; the next ralph chat --thread <name> starts with the newer main messages; while a turn runs it runs at once and the new base comes before the reply in flight",
                 ),
                 (
                     "/thread park <name>",
-                    "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /thread main first); the thread's saved watches and schedules wait; /thread revive <name> opens it again; while a turn runs it waits in the queue",
+                    "park thread <name> so it does not open, like ralph thread park; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged, parked or unknown, and inside a thread's chat (run /thread main first); the thread's saved watches and schedules wait; /thread revive <name> opens it again; while a turn runs it runs at once",
                 ),
                 (
                     "/thread revive <name>",
-                    "open parked thread <name> again, like ralph thread revive; main's chat only, with no model call; refused when the thread is not parked, merged or unknown, and inside a thread's chat (run /thread main first); while a turn runs it waits in the queue",
+                    "open parked thread <name> again, like ralph thread revive; main's chat only, with no model call; refused when the thread is not parked, merged or unknown, and inside a thread's chat (run /thread main first); while a turn runs it runs at once",
                 ),
                 (
                     "/thread drop <name>",
-                    "delete thread <name>'s folder, like ralph thread drop; asks y/n first because it cannot be undone, and Ctrl-C or a closed input aborts; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged or unknown, and inside a thread's chat (run /thread main first); saved watches and schedules of the thread go with it; while a turn runs it waits in the queue",
+                    "delete thread <name>'s folder, like ralph thread drop; asks y/n first because it cannot be undone, and Ctrl-C or a closed input aborts; main's chat only, with no model call; refused when the thread's own chat is open, when it has running workers, when it is merged or unknown, and inside a thread's chat (run /thread main first); saved watches and schedules of the thread go with it; while a turn runs it is refused; run it at the prompt",
                 ),
                 (
                     "/thread merge <name>",

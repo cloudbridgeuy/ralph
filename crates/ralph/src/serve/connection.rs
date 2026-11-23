@@ -201,6 +201,7 @@ fn run_thread_op(host: &Host, op: &ThreadOp) -> Result<String, String> {
     let env = ThreadEnv {
         store_dir: &host.store_dir,
         in_thread: false,
+        mid_turn: false,
         width: 80,
         display: None,
         notice: &|text| notices.borrow_mut().push(text.to_string()),

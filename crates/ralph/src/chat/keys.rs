@@ -2,16 +2,23 @@ use crate::chat::editor::{
     build_queue_editor, edit_queue_draft, BACK_OUT, OPEN_EDITOR, QUEUE_CTRL_C,
 };
 use crate::chat::prompt::{retry_interrupted, QueuePrompt};
-use crate::chat::queue::{on_exit, Action, EditorExit, Queue};
+use crate::chat::queue::{
+    at_once, on_exit, switch_verdict, take_notes, Action, EditorExit, MidTurn, Queue,
+};
 use crate::chat::route::{run_local, LocalRoute};
+use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
+use crate::chat::switch::{self, Leave};
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
+use crate::chat::thread_cmd::append_row;
 use crate::signal;
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_hold::hold_targets;
+use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
+use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::subprocess::OutputGate;
 use ralph_server::warn::warn_if_err;
@@ -34,6 +41,7 @@ pub(super) struct Keys<'a> {
     pub(super) monitor: &'a Monitor,
     pub(super) bar: &'a StatusBar,
     pub(super) edit_mode: EditModeConfig,
+    pub(super) sent_style: SentStyle,
     pub(super) local: &'a LocalRoute<'a>,
     pub(super) empty_submit: &'a EmptySubmit,
     pub(super) store: &'a Path,
@@ -168,6 +176,11 @@ impl Keys<'_> {
         });
         queue.typed.push_str(&drain_input());
         self.gate.resume();
+        let (notes, queue) = take_notes(queue);
+        let store = Store::new(self.store.to_path_buf());
+        for row in &notes {
+            append_row(&store, row);
+        }
         (result, queue)
     }
 
@@ -197,21 +210,20 @@ impl Keys<'_> {
         queue
     }
 
-    fn instant_route(&self, text: &str) -> Option<Route> {
+    fn routed(&self, text: &str) -> Route {
         let status = self.monitor.status();
-        Some(route_input(
+        route_input(
             text,
             status.unread,
             self.empty_submit,
             &hold_targets(&status),
-        ))
-        .filter(Route::runs_mid_turn)
+        )
     }
 
-    fn edit(&self, queue: Queue, seed: &str, watch: &TurnWatch) -> (Queue, bool) {
+    fn edit(&self, mut queue: Queue, seed: &str, watch: &TurnWatch) -> (Queue, bool) {
         self.gate.pause();
         wait_settled(self.gate);
-        let mut editor = build_queue_editor(self.edit_mode);
+        let mut editor = build_queue_editor(self.edit_mode, self.sent_style);
         let signal = editor.repaint_signal();
         *locked(&watch.repaint) = Some(Box::new(move || signal.request_repaint()));
         if !seed.is_empty() {
@@ -231,17 +243,35 @@ impl Keys<'_> {
             self.gate.listen(false);
         }
         let exit = match exit {
-            EditorExit::Submitted(text) => match self.instant_route(&text) {
-                Some(route) => {
-                    warn_if_err(
-                        run_local(route, self.local, &mut std::io::stdout(), || {
-                            self.monitor.refresh(true);
-                        }),
-                        "Failed to run the command",
+            EditorExit::Submitted(text) => match at_once(self.routed(&text)) {
+                MidTurn::Run(route) => {
+                    let record = mid_turn_record(&route, &text);
+                    let ran = run_local(*route, self.local, &mut std::io::stdout(), || {
+                        self.monitor.refresh(true);
+                    });
+                    let output = ran.as_ref().ok().cloned().flatten();
+                    queue.notes.extend(
+                        record
+                            .zip(output)
+                            .and_then(|(record, output)| record.row(&output)),
                     );
+                    warn_if_err(ran, "Failed to run the command");
                     EditorExit::Submitted(String::new())
                 }
-                None => EditorExit::Submitted(text),
+                MidTurn::Check(target) => {
+                    let leave = Leave {
+                        store_dir: self.store,
+                        current: self.local.thread,
+                        monitor: self.monitor,
+                    };
+                    let verdict = switch_verdict(switch::check(&leave, &target));
+                    println!("{}", verdict.notice());
+                    match verdict.keeps_line() {
+                        true => EditorExit::Submitted(text),
+                        false => EditorExit::Submitted(String::new()),
+                    }
+                }
+                MidTurn::Queue => EditorExit::Submitted(text),
             },
             other => other,
         };
@@ -252,6 +282,10 @@ impl Keys<'_> {
         }
         (queue, closed)
     }
+}
+
+fn mid_turn_record(route: &Route, line: &str) -> Option<CommandRecord> {
+    matches!(route, Route::ThreadOp { .. }).then(|| CommandRecord::for_route(route, line))
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use super::SERVER_NAME;
-use crate::chat::{mcp_wildcards, select_servers};
+use crate::chat::{select_servers, server_allow_rule};
 use crate::chat_memory::SERVER_NAME as CHAT_SERVER_NAME;
 use serde_json::{json, Map, Value};
 
@@ -51,7 +51,7 @@ pub fn join_start_warnings(warnings: &[String]) -> Option<String> {
 
 pub fn allowed_tools(copied: &[String]) -> String {
     std::iter::once(own_tool_names())
-        .chain(mcp_wildcards(copied))
+        .chain(copied.iter().map(|name| server_allow_rule(name)))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -71,7 +71,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allowed_tools_are_the_own_tools_plus_one_wildcard_per_copied_server() {
+    fn allowed_tools_are_the_own_tools_plus_one_rule_per_copied_server() {
         assert_eq!(
             allowed_tools(&["x".to_string()]),
             "mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__x__*"
@@ -79,6 +79,14 @@ mod tests {
         assert_eq!(
             allowed_tools(&[]),
             "mcp__ralph-worker__report,mcp__ralph-worker__set_status"
+        );
+    }
+
+    #[test]
+    fn mcptools_is_allowed_for_discovery_only() {
+        assert_eq!(
+            allowed_tools(&["mcptools".to_string(), "docs".to_string()]),
+            "mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__find_tools,mcp__docs__*"
         );
     }
 

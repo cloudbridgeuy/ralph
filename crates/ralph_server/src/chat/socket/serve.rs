@@ -13,9 +13,9 @@ use chrono::{Local, Utc};
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{parse_step_result, STEP_RESULT};
 use ralph_core::chat_socket::{
-    check_socket_path, decode_line, encode_line, orphan_sidecar_fate, runtime_dir_pid, sidecar_pid,
-    socket_fate, SocketFacts, SocketFate, SocketOwner, SocketRequest, SocketResponse, StoreKey,
-    MAX_FRAME_BYTES,
+    chat_files_dir_pid, check_socket_path, decode_line, encode_line, orphan_sidecar_fate,
+    sidecar_pid, socket_fate, socket_file_pid, SocketFacts, SocketFate, SocketOwner, SocketRequest,
+    SocketResponse, StoreKey, MAX_FRAME_BYTES,
 };
 use ralph_core::schedule_repeat::repeating_cap_refusal;
 use ralph_core::schedule_request::{
@@ -30,9 +30,10 @@ use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -62,7 +63,95 @@ impl Drop for SocketGuard {
 
 pub struct ChatSocket {
     listener: UnixListener,
+    root: PathBuf,
     files: SocketFiles,
+    owner: SocketOwner,
+}
+
+#[derive(Clone)]
+pub struct SocketHandle {
+    inner: Arc<Mutex<ServedSocket>>,
+}
+
+struct ServedSocket {
+    root: PathBuf,
+    files: SocketFiles,
+    owner: SocketOwner,
+    shared: Arc<(Shared, Roster)>,
+    stop: Arc<AtomicBool>,
+}
+
+impl SocketHandle {
+    pub fn socket_path(&self) -> PathBuf {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .files
+            .socket
+            .clone()
+    }
+
+    pub fn rebind(&self) -> io::Result<()> {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.files.socket.exists() {
+            return Ok(());
+        }
+        ensure_store_root(&state.root)?;
+        check_socket_path(&state.root, &state.files.socket).map_err(io::Error::other)?;
+        let listener = bind_listener(&state.files.socket)?;
+        write_sidecar(&state.files.sidecar, &state.owner)?;
+        state.stop.store(true, Ordering::SeqCst);
+        let next_stop = Arc::new(AtomicBool::new(false));
+        spawn_accept_loop(listener, Arc::clone(&state.shared), Arc::clone(&next_stop));
+        state.stop = next_stop;
+        Ok(())
+    }
+}
+
+fn bind_listener(path: &Path) -> io::Result<UnixListener> {
+    let listener = UnixListener::bind(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    listener.set_nonblocking(true)?;
+    Ok(listener)
+}
+
+fn write_sidecar(path: &Path, owner: &SocketOwner) -> io::Result<()> {
+    let mut sidecar = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    sidecar.write_all(owner.render().as_bytes())
+}
+
+fn spawn_accept_loop(listener: UnixListener, shared: Arc<(Shared, Roster)>, stop: Arc<AtomicBool>) {
+    thread::spawn(move || loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = stream.set_nonblocking(false);
+                let shared = Arc::clone(&shared);
+                thread::spawn(move || {
+                    if let Err(e) = handle_connection(&stream, &shared) {
+                        warn(format!("chat socket: connection failed: {e}"));
+                    }
+                });
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(ACCEPT_RETRY);
+            }
+            Err(e) => {
+                warn(format!("chat socket: accept failed: {e}"));
+                thread::sleep(ACCEPT_RETRY);
+            }
+        }
+    });
 }
 
 impl ChatSocket {
@@ -79,76 +168,67 @@ impl ChatSocket {
         check_socket_path(root, &files.socket).map_err(io::Error::other)?;
         let start = process_start(pid)
             .ok_or_else(|| io::Error::other("cannot read the start time of this process"))?;
+        let owner = SocketOwner { pid, start };
         DirBuilder::new()
             .mode(0o700)
-            .create(&files.dir)
+            .create(&files.files_dir)
             .map_err(|e| {
                 io::Error::new(
                     e.kind(),
                     format!(
-                        "cannot create the private chat socket directory {}: {e}",
-                        files.dir.display()
+                        "cannot create the private chat files directory {}: {e}",
+                        files.files_dir.display()
                     ),
                 )
             })?;
-        let bound = UnixListener::bind(&files.socket).map(|listener| Self {
-            listener,
-            files: files.clone(),
-        });
-        let socket = match bound {
-            Ok(socket) => socket,
+        let listener = match bind_listener(&files.socket) {
+            Ok(listener) => listener,
             Err(e) => {
                 files.remove();
                 return Err(e);
             }
         };
-        if let Err(e) = socket.publish(&SocketOwner { pid, start }) {
-            socket.files.remove();
+        if let Err(e) = write_sidecar(&files.sidecar, &owner) {
+            files.remove();
             return Err(e);
         }
-        Ok(socket)
-    }
-
-    fn publish(&self, owner: &SocketOwner) -> io::Result<()> {
-        fs::set_permissions(&self.files.socket, fs::Permissions::from_mode(0o600))?;
-        let mut sidecar = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&self.files.sidecar)?;
-        sidecar.write_all(owner.render().as_bytes())?;
-        Ok(())
+        Ok(Self {
+            listener,
+            root: root.to_path_buf(),
+            files,
+            owner,
+        })
     }
 
     pub fn path(&self) -> &Path {
         &self.files.socket
     }
 
+    pub fn files_dir(&self) -> &Path {
+        &self.files.files_dir
+    }
+
     pub fn files(&self) -> &SocketFiles {
         &self.files
     }
 
-    pub fn serve(self, shared: Shared, roster: impl Fn() -> String + Send + Sync + 'static) {
+    pub fn serve(
+        self,
+        shared: Shared,
+        roster: impl Fn() -> String + Send + Sync + 'static,
+    ) -> SocketHandle {
         let shared = Arc::new((shared, Box::new(roster) as Roster));
-        thread::spawn(move || {
-            for connection in self.listener.incoming() {
-                match connection {
-                    Ok(stream) => {
-                        let shared = Arc::clone(&shared);
-                        thread::spawn(move || {
-                            if let Err(e) = handle_connection(&stream, &shared) {
-                                warn(format!("chat socket: connection failed: {e}"));
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        warn(format!("chat socket: accept failed: {e}"));
-                        thread::sleep(ACCEPT_RETRY);
-                    }
-                }
-            }
-        });
+        let stop = Arc::new(AtomicBool::new(false));
+        spawn_accept_loop(self.listener, Arc::clone(&shared), Arc::clone(&stop));
+        SocketHandle {
+            inner: Arc::new(Mutex::new(ServedSocket {
+                root: self.root,
+                files: self.files,
+                owner: self.owner,
+                shared,
+                stop,
+            })),
+        }
     }
 }
 
@@ -164,17 +244,23 @@ fn entry_names(dir: &Path) -> Vec<String> {
 }
 
 fn sweep_stale(place: &SocketPlace) {
-    let dir_pids: BTreeSet<u32> = entry_names(place.root)
+    let store_entries = entry_names(place.store);
+    let mut active_pids: BTreeSet<u32> = entry_names(place.root)
         .iter()
-        .filter_map(|name| runtime_dir_pid(&place.key, name))
+        .filter_map(|name| socket_file_pid(&place.key, name))
         .collect();
-    let orphan_pids: BTreeSet<u32> = entry_names(place.store)
+    active_pids.extend(
+        store_entries
+            .iter()
+            .filter_map(|name| chat_files_dir_pid(name)),
+    );
+    let orphan_pids: BTreeSet<u32> = store_entries
         .iter()
         .filter_map(|name| sidecar_pid(name))
-        .filter(|pid| !dir_pids.contains(pid))
+        .filter(|pid| !active_pids.contains(pid))
         .collect();
     for (pids, decide) in [
-        (&dir_pids, socket_fate as fn(SocketFacts) -> SocketFate),
+        (&active_pids, socket_fate as fn(SocketFacts) -> SocketFate),
         (&orphan_pids, orphan_sidecar_fate),
     ] {
         for &pid in pids {
@@ -674,19 +760,24 @@ mod tests {
     }
 
     #[test]
-    fn bound_socket_lives_under_the_runtime_root_and_its_owner_record_in_the_store() {
+    fn bound_socket_lives_flat_in_runtime_root_and_chat_files_in_store() {
         let dirs = dirs();
         let socket = ChatSocket::bind(&dirs.store, &dirs.root).unwrap();
         let files = socket.files().clone();
         let root_mode = fs::metadata(&dirs.root).unwrap().permissions().mode() & 0o777;
         assert_eq!(root_mode, 0o700);
-        assert_eq!(files.dir.parent(), Some(dirs.root.as_path()));
+        assert_eq!(files.socket.parent(), Some(dirs.root.as_path()));
+        assert_eq!(
+            files.files_dir,
+            dirs.store.join(format!("chat-{}", process::id()))
+        );
         assert_eq!(files.sidecar, dirs.store.join(sidecar_name(process::id())));
+        assert!(files.files_dir.is_dir());
         assert!(files.sidecar.exists());
         assert!(fs::read_dir(&dirs.store)
             .unwrap()
             .flatten()
-            .all(|entry| entry.path() == files.sidecar));
+            .all(|entry| entry.path() == files.sidecar || entry.path() == files.files_dir));
         files.remove();
     }
 
@@ -710,19 +801,21 @@ mod tests {
     }
 
     #[test]
-    fn bind_sweeps_only_this_stores_runtime_dirs() {
+    fn bind_sweeps_only_this_stores_sockets() {
         let dirs = dirs();
         let other = dirs.store.join("threads/other");
         fs::create_dir_all(&other).unwrap();
         let mine = files_for(&dirs, 2_000_021);
         let foreign = SocketFiles::new(&place(&other, &dirs.root), 2_000_022);
         for files in [&mine, &foreign] {
-            fs::create_dir(&files.dir).unwrap();
+            fs::create_dir(&files.files_dir).unwrap();
             fs::write(&files.socket, "").unwrap();
         }
         sweep(&dirs);
-        assert!(!mine.dir.exists());
-        assert!(foreign.dir.exists());
+        assert!(!mine.socket.exists());
+        assert!(!mine.files_dir.exists());
+        assert!(foreign.socket.exists());
+        assert!(foreign.files_dir.exists());
     }
 
     #[test]
@@ -733,10 +826,9 @@ mod tests {
         let files = socket.files().clone();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-        let dir_mode = fs::metadata(&files.dir).unwrap().permissions().mode() & 0o777;
+        let dir_mode = fs::metadata(&files.files_dir).unwrap().permissions().mode() & 0o777;
         assert_eq!(dir_mode, 0o700);
-        assert_eq!(files.dir, files_for(&dirs, process::id()).dir);
-        assert_eq!(path, files.dir.join("chat.sock"));
+        assert_eq!(files.socket, files_for(&dirs, process::id()).socket);
         let sidecar_mode = fs::metadata(&files.sidecar).unwrap().permissions().mode() & 0o777;
         assert_eq!(sidecar_mode, 0o600);
         let store = Store::new(dirs.store.clone());
@@ -747,7 +839,7 @@ mod tests {
         assert_eq!(watch_requests::take_all(&dirs.store).len(), 1);
         files.remove();
         assert!(!path.exists());
-        assert!(!files.dir.exists());
+        assert!(!files.files_dir.exists());
         assert!(!files.sidecar.exists());
     }
 
@@ -787,7 +879,7 @@ mod tests {
         let junk_record = files_for(&dirs, 2_000_003);
         let mismatch = files_for(&dirs, own_pid);
         for files in [&dead_record, &missing_record, &junk_record, &mismatch] {
-            fs::create_dir(&files.dir).unwrap();
+            fs::create_dir(&files.files_dir).unwrap();
             fs::write(&files.socket, "").unwrap();
         }
         let write_owner = |files: &SocketFiles, pid, start: &str| {
@@ -802,7 +894,7 @@ mod tests {
         fs::write(&junk_record.sidecar, "junk").unwrap();
         sweep(&dirs);
         for gone in [&dead_record, &missing_record, &junk_record, &mismatch] {
-            assert!(!gone.dir.exists());
+            assert!(!gone.files_dir.exists());
             assert!(!gone.socket.exists());
             assert!(!gone.sidecar.exists());
         }
@@ -816,11 +908,12 @@ mod tests {
             return;
         };
         let files = files_for(&dirs, parent);
-        fs::create_dir(&files.dir).unwrap();
+        fs::create_dir(&files.files_dir).unwrap();
         fs::write(&files.socket, "").unwrap();
         fs::write(&files.sidecar, SocketOwner { pid: parent, start }.render()).unwrap();
         let socket = ChatSocket::bind(&dirs.store, &dirs.root).unwrap();
         assert!(files.socket.exists());
+        assert!(files.files_dir.exists());
         assert!(files.sidecar.exists());
         socket.files().remove();
     }
@@ -857,7 +950,7 @@ mod tests {
             return;
         };
         let files = files_for(&dirs, own_pid);
-        fs::create_dir(&files.dir).unwrap();
+        fs::create_dir(&files.files_dir).unwrap();
         fs::write(
             &files.sidecar,
             SocketOwner {
@@ -868,7 +961,7 @@ mod tests {
         )
         .unwrap();
         let error = ChatSocket::bind(&dirs.store, &dirs.root).err().unwrap();
-        assert!(error.to_string().contains("private chat socket directory"));
+        assert!(error.to_string().contains("private chat files directory"));
     }
 
     #[test]
@@ -877,5 +970,25 @@ mod tests {
         let root = dirs.root.join("d".repeat(100));
         let error = ChatSocket::bind(&dirs.store, &root).err().unwrap();
         assert!(error.to_string().contains(&root.display().to_string()));
+    }
+
+    #[test]
+    fn rebind_restores_deleted_socket_and_serves_requests() {
+        let dirs = dirs();
+        let socket = ChatSocket::bind(&dirs.store, &dirs.root).unwrap();
+        let path = socket.path().to_path_buf();
+        let files = socket.files().clone();
+        let handle = socket.serve(shared(&dirs.store), || "live roster".to_string());
+        fs::remove_file(&path).unwrap();
+        assert!(forward(&path, &request("workers", json!({}))).is_err());
+        handle.rebind().unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let response = forward(&path, &request("workers", json!({}))).unwrap();
+        assert!(!response.is_error);
+        assert_eq!(response.text, "live roster");
+        files.remove();
     }
 }

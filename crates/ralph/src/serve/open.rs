@@ -34,7 +34,6 @@ pub(super) struct OpenSession {
     cancel: Mutex<CancelToken>,
     _claim: Option<ChatClaim>,
     _guard: SocketGuard,
-    _plugin: Option<tempfile::TempDir>,
     _close: CloseGuard,
     _headless: HeadlessShutdown,
 }
@@ -122,7 +121,6 @@ pub(super) fn open_session(
     let Assembled {
         session,
         guard,
-        plugin,
         close,
         ..
     } = assemble(AssembleOptions {
@@ -161,7 +159,6 @@ pub(super) fn open_session(
         cancel: Mutex::new(CancelToken::default()),
         _claim: None,
         _guard: guard,
-        _plugin: plugin,
         _close: close,
         _headless: headless,
     })

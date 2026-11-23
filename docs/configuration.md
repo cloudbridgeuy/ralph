@@ -43,7 +43,7 @@ This means CLI flags always win, allowing you to override config file settings f
 
 The two files merge per key: a key in the store file replaces the same key in the global file, and every other global key stays. Tables merge recursively. Arrays replace, they never append. Either file may be missing.
 
-Only the chat commands (`ralph chat` and its helper processes) have a store, so only they read the store file. `ralph ask`, `ralph wire` and every other command read only the global file.
+Chat commands (`ralph chat` and its helper processes) and `ralph thread merge` read the invoking store file. `ralph ask`, `ralph wire` and other commands read only the global file.
 
 Relative entries in `[chat] skills`, `prompt_file` and `append_prompt_files` resolve from the directory of the file that lists them; `~` and absolute entries stay as written, and `--skill` and `RALPH_CHAT_SKILLS` keep their own rules. `worktree_dir` stays relative to the repo root in both files.
 
@@ -82,6 +82,10 @@ name = "Solarized (dark)"
 ```
 
 ## Configuration Sections
+
+### `[nap]` and `[tag]` - Memory models
+
+`[nap]` controls nap summaries and thread merge digests. `[tag]` controls entry tagging. Each accepts `harness` (default `"claude"`; only `"claude"` is supported) and `model` (default `"haiku"` for nap and `"claude-haiku-5-5"` for tag). Model names must be nonempty and cannot start with an option. Settings merge per key between global and invoking store config. Invalid config prevents model calls.
 
 ### `[theme]` - Syntax Highlighting
 
@@ -323,7 +327,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `reset_turns` | integer | `30` | Turns one `claude` process serves before chat drops it and respawns from the store; must be above 0, else a warning and `30` |
 | `reset_tokens` | integer | `140000` | Context tokens of the last assistant message at which chat drops the process and respawns from the store; must be above 0, else a warning and `140000` |
 | `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
-| `tag_entries` | bool | `true` | `false` turns off the background pass that tags new chat messages `rule`, `decision` or `approval` with Haiku after each reply; while it is off, messages written are never tagged later ([Tagging](context/ralph-chat.md#tagging)) |
+| `tag_entries` | bool | `true` | `false` turns off the background pass that tags new chat messages `rule`, `decision` or `approval` with `[tag].model` after each reply; while it is off, messages written are never tagged later ([Tagging](context/ralph-chat.md#tagging)) |
 | `wrap_width` | integer | unset | Column cap for chat replies and the prompt area; `0` or unset wraps at the terminal width |
 | `emphasis` | bool | `false` | Draw status words in live chat replies as coloured pills (`[[Done]]`, `[[Failed]]`, and the other words in [Pills and marks](context/stream-processor-architecture.md#pills-and-marks)). Off when `NO_COLOR` is set or output is not a terminal, and never used by `ralph ask`; the raw `[[Word]]` text then stays visible. Also adds a short pill rule to the system prompt ([ralph chat](context/ralph-chat.md#turn-loop)) |
 | `emphasis_round` | bool | `false` | Draw pills with rounded caps (U+E0B6 and U+E0B4, each one column wide). Needs `emphasis = true`, colour on, and a Nerd Font in the terminal. With `emphasis` off or `NO_COLOR` set, it is ignored and the raw `[[Word]]` shows; with `emphasis` on and both keys off, pills are square. No environment variable. |

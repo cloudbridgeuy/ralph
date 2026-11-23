@@ -13,7 +13,8 @@ use ralph_core::chat_memory::Role;
 use ralph_core::chat_thread::{ThreadName, THREADS_DIR, THREAD_FILE};
 use ralph_core::chat_thread_cmd::{
     drop_answer, drop_question, merge_answer, merge_posted_message, merge_question, merging_notice,
-    op_refusal, parked_message, revived_message, view_posted_message, ThreadOp, VIEW_FLAG,
+    mid_turn_refusal, op_refusal, parked_message, pull_mid_turn_message, revived_message,
+    view_posted_message, ThreadOp, VIEW_FLAG,
 };
 use ralph_server::chat::ask::yes_no;
 use ralph_server::chat::memory::Store;
@@ -23,6 +24,7 @@ use std::path::Path;
 pub(crate) struct ThreadEnv<'a> {
     pub store_dir: &'a Path,
     pub in_thread: bool,
+    pub mid_turn: bool,
     pub width: usize,
     pub display: Option<&'a Display<'a>>,
     pub notice: &'a dyn Fn(&str),
@@ -38,6 +40,9 @@ pub(crate) fn run(
     if let Some(refusal) = op_refusal(env.in_thread, op) {
         return Err(refusal);
     }
+    if let Some(refusal) = env.mid_turn.then(|| mid_turn_refusal(op)).flatten() {
+        return Err(refusal);
+    }
     let main = config_root(env.store_dir);
     match op {
         ThreadOp::Ls => {
@@ -47,7 +52,10 @@ pub(crate) fn run(
             Ok(listing(&listed, display, env.width, "no threads"))
         }
         ThreadOp::Open(opts) => open_thread(env.store_dir, opts),
-        ThreadOp::Pull(name) => pull_thread(&main, name),
+        ThreadOp::Pull(name) => pull_thread(&main, name).map(|message| match env.mid_turn {
+            true => pull_mid_turn_message(&message),
+            false => message,
+        }),
         ThreadOp::Park(name) => {
             park_thread(&main, name, &running_of(name)).map(|()| parked_message(name))
         }
@@ -261,6 +269,15 @@ mod tests {
     }
 
     fn with_env<R>(main: &Path, in_thread: bool, check: impl FnOnce(&ThreadEnv) -> R) -> R {
+        with_mode(main, in_thread, false, check)
+    }
+
+    fn with_mode<R>(
+        main: &Path,
+        in_thread: bool,
+        mid_turn: bool,
+        check: impl FnOnce(&ThreadEnv) -> R,
+    ) -> R {
         let highlighter = Highlighter::new();
         let theme = MarkdownTheme::default();
         let display = Display {
@@ -272,6 +289,7 @@ mod tests {
         check(&ThreadEnv {
             store_dir: main,
             in_thread,
+            mid_turn,
             width: 200,
             display: Some(&display),
             notice: &|_| {},
@@ -295,6 +313,7 @@ mod tests {
         let env = ThreadEnv {
             store_dir: &main,
             in_thread: false,
+            mid_turn: false,
             width: 200,
             display: Some(&display),
             notice: &|_| {},
@@ -362,6 +381,7 @@ mod tests {
         let env = ThreadEnv {
             store_dir: &main,
             in_thread: false,
+            mid_turn: false,
             width: 200,
             display: None,
             notice: &|text| noticed.borrow_mut().push(text.to_string()),
@@ -488,6 +508,65 @@ mod tests {
             in_thread.contains("Run /thread main, then /thread drop <name>."),
             "{in_thread}"
         );
+    }
+
+    #[test]
+    fn a_mid_turn_drop_is_refused_without_asking_and_keeps_the_thread() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
+        let refusal = with_mode(&main, false, true, |env| {
+            run(&drop_auth(), env, &mut confirm, &idle)
+        })
+        .unwrap_err();
+        assert_eq!(Some(refusal), mid_turn_refusal(&drop_auth()));
+        assert!(thread_dir(&main, &auth).exists());
+    }
+
+    #[test]
+    fn a_mid_turn_pull_flags_the_reply_in_flight_and_an_idle_pull_does_not() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let pull = ThreadOp::Pull(auth);
+        let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
+        let idle_pull = with_mode(&main, false, false, |env| {
+            run(&pull, env, &mut confirm, &idle)
+        })
+        .unwrap();
+        let mid_pull = with_mode(&main, false, true, |env| {
+            run(&pull, env, &mut confirm, &idle)
+        })
+        .unwrap();
+        assert_eq!(mid_pull, pull_mid_turn_message(&idle_pull));
+    }
+
+    #[test]
+    fn park_and_revive_give_the_same_result_mid_turn_as_at_the_prompt() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("chat");
+        let auth = ThreadName::parse("auth").unwrap();
+        ensure(&main, &auth).unwrap();
+        let mut confirm = |_: &str| -> Option<bool> { panic!("must not ask") };
+        let park = ThreadOp::Park(auth.clone());
+        let revive = ThreadOp::Revive(auth.clone());
+        for mid_turn in [false, true] {
+            let parked = with_mode(&main, false, mid_turn, |env| {
+                run(&park, env, &mut confirm, &idle)
+            });
+            assert_eq!(parked, Ok(parked_message(&auth)));
+            let revived = with_mode(&main, false, mid_turn, |env| {
+                run(&revive, env, &mut confirm, &idle)
+            });
+            assert_eq!(revived, Ok(revived_message(&auth)));
+        }
+        let ls = with_mode(&main, false, true, |env| {
+            run(&ThreadOp::Ls, env, &mut confirm, &idle)
+        });
+        assert!(ls.unwrap().contains("auth"));
     }
 
     #[test]

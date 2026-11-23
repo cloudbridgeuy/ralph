@@ -52,7 +52,7 @@ Type `/thread switch <name>` to move this chat to another thread in the same ter
 - An unknown name creates the thread, like `ralph chat --thread <name>`.
 - The switch is refused when you are already in the target, when the thread is merged or parked, or when the target chat is open elsewhere. Main counts as a target: after `/thread open`, `/thread main` from the thread is refused while main's chat is open.
 - The switch is refused while workers or watches run. The message names them. Stop them first.
-- Type the switch during a turn and it waits in the queue. It runs when the turn ends.
+- Type the switch during a turn and ralph checks it at once. A refusal prints and the line is dropped. Otherwise ralph prints `queued: runs when the turn ends.` and the switch waits in the queue.
 - A refused switch, or a failed save, puts the switch line, then the entries queued after it, then any text already in the prompt, back in the prompt. Nothing is lost and the order stays. A typed switch that is refused comes back to the prompt the same way.
 - A multi-line entry with extra words after the switch argument (`/thread switch auth\nfix` or `/thread main\nfix`) gets the usage refusal and is not sent; the refusal returns it to the prompt. A line break is whitespace, so `/thread switch\nauth` switches to `auth`.
 - ralph saves unsent text to the prompt history first: queued lines and the draft in the prompt. If the save fails, the switch is cancelled. With a signal pending, ralph exits instead.
@@ -66,7 +66,7 @@ Type `/thread switch <name>` to move this chat to another thread in the same ter
 ralph thread ls
 ```
 
-Inside a chat, type `/thread ls` for the same list. It works in main's chat and in a thread's chat, takes no other arguments and starts no turn. A turn in progress does not block it, but it waits in the queue. Every `/thread` line runs alone in the queue, never joined with other lines, in typed order.
+Inside a chat, type `/thread ls` for the same list. It works in main's chat and in a thread's chat, takes no other arguments and starts no turn. A turn in progress does not block it: `ls`, `open`, `pull`, `park` and `revive` run at once. A mid-turn `pull` puts the new base before the reply still in flight. `merge` waits for the turn. The log rows of these commands are written when the turn ends. Details are in [ralph-chat](ralph-chat.md#threads). Queued `/thread` lines (`switch`, `main`, `merge`) run alone in the queue, never joined with other lines, in typed order.
 
 The list is a table with one row per thread: `NAME`, `STATE` (`open`, `parked 7d ago` or `merged 3d ago`), `FORK` (`#<base>`), `CREATED`, `ACTIVE` (the age of the thread's `log.jsonl` file; `-` when the thread has no messages yet), `MSGS`, `WORKERS` and `UNREAD`. Open threads come first, then parked, then merged, each group by name. `WORKERS` and `UNREAD` show a dim `-` when they are zero. In a terminal the table uses the same borders and colours as `/workers`; piped or with `NO_COLOR` set, it prints as plain markdown pipes. With colour on and a narrow screen, the table drops `ACTIVE`, then `UNREAD`, then `WORKERS`, and below that prints one block per thread. Plain output always has all eight columns. A time that does not parse shows a dim `-`. When there are none, the command prints `no threads in <store>`, with the store path that it read. It is safe while a thread chat is open.
 
@@ -166,7 +166,7 @@ Drop deletes the thread folder. It cannot be undone. It also deletes the saved w
 
 Drop refuses an open chat and running workers. It refuses a merged thread, because a merged thread is read-only. It does not refuse saved watches or schedules.
 
-In main's chat, type `/thread drop <name>`. It checks the refusals first (unknown or merged thread, running workers, an open chat: `drop_precheck`) and prints them with no question. Then it asks `Drop thread <name>? This deletes its folder and cannot be undone. [y/n]`; `n` or `no` cancels with `drop cancelled.` and the queued lines go on. Ctrl-C or a closed input aborts: it prints `drop aborted; the command stays in the prompt.` and puts the command and the rest of the queue back in the prompt. After `y` it reads the running workers again, then deletes with the same `drop_thread` as the shell command and prints its text. It makes no model call and does not leave the chat. In a thread's chat it refuses with `Run /thread main, then /thread drop <name>.`
+In main's chat, type `/thread drop <name>`. During a turn it is refused, because no y/n can be asked then; run it at the prompt. It checks the refusals first (unknown or merged thread, running workers, an open chat: `drop_precheck`) and prints them with no question. Then it asks `Drop thread <name>? This deletes its folder and cannot be undone. [y/n]`; `n` or `no` cancels with `drop cancelled.` and the queued lines go on. Ctrl-C or a closed input aborts: it prints `drop aborted; the command stays in the prompt.` and puts the command and the rest of the queue back in the prompt. After `y` it reads the running workers again, then deletes with the same `drop_thread` as the shell command and prints its text. It makes no model call and does not leave the chat. In a thread's chat it refuses with `Run /thread main, then /thread drop <name>.`
 
 ## Thread log
 

@@ -212,7 +212,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let Assembled {
         session,
         guard,
-        plugin,
         skill_dirs,
         send_it_warnings,
         close: _close,
@@ -256,12 +255,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     watch_input(
         Arc::clone(&at_prompt),
         Arc::clone(&turn.session),
-        plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, guard.0.clone()),
         Arc::clone(&term),
     );
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
-        .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
+        .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion, sent_style));
     let printer = ExternalPrinter::new(PROMPT_ROWS);
     let prompt_sink = printer.sender();
     let mut editor = build_editor(&store_dir, edit_mode, highlighter, Arc::clone(&monitor))?
@@ -363,6 +361,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         prices: &config.wire.prices,
         tickets: &config.tickets,
         store: &store_dir,
+        thread: args.thread.as_ref(),
         monitor: &monitor,
         remote: &remote,
         config: &config_snapshot,
@@ -373,6 +372,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
         bar: &prompt.bar,
         edit_mode,
+        sent_style,
         local: &local_route,
         empty_submit: &prompt.empty_submit,
         store: &store_dir,
