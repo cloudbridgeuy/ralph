@@ -82,11 +82,27 @@
 | other method on `/catalogue` | 405 with `Allow: GET` |
 | `GET /tokens.css` | 200 `text/css; charset=utf-8` with `Cache-Control: no-store` |
 | other method on `/tokens.css` | 405 with `Allow: GET` |
+| `GET /api/memory` with `?thread=` and `?node=` | 200 root nodes of the memory tree (`{thread, entries, nodes}`), or with `node` one zoom step (`{thread, node, children}`); `after` and `limit` are ignored |
+| `GET /api/memory/entries` with `?thread=`, `?after=` and `?limit=` | 200 `{thread, entries, items, next_after}`; `limit` defaults to 50, is at most 200 and `0` is 400; `next_after` is `null` on the last page; `node` is 400 |
+| `GET /api/memory/threads` | 200 `{threads: [{name, parked, merged}]}` sorted by name; any key other than `token` is 400 |
+| bad `thread`, `node`, `after` or `limit`, an unknown or repeated key, or bad percent-encoding on a memory route | 400 `{"error":"<reason>"}` |
+| unknown thread, or `node` past the last entry | 404 `{"error":"not found"}` |
+| memory store missing or unreadable | 500 `{"error":"memory unavailable"}`, with no path and no system text |
+| other method on a memory route | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
 
 The 503 is the only answer that does not pass the Host and token checks. The server sends it before `route()` runs, so a request without a token also gets it. The other rows apply in the order shown, after the 503 row.
 
 Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/tokens.css`, `/catalogue`, the embedded assets and the 302 hand-off (it has no body). `/tokens.css` needs the token like every route, after the Host check. The health answer does not show the store path.
+
+## Memory routes
+
+The three memory routes read the chat store in `--store` (`thread=main`, the default) or a thread under `threads/<name>`. `thread` is `main` or a valid thread name. Each request reads the files once and never caches them. A thread list is read for each request.
+
+- Exposed: `log.jsonl` entries (role, time, full text), `tree.jsonl` summaries, thread names and their parked and merged flags.
+- Not exposed: `tags.jsonl`, analytics, `history.jsonl`, config, paths.
+- The read takes no lock and writes nothing: no `LOCK`, no index, no new directory. It uses `ralph_server::chat::memory::peek`, so a half-written last log line and a tree node past the log are not shown.
+- Code: `crates/ralph_api/src/memory_api.rs` (pure response builders and the thin read), `memory/query.rs` (query parser), `memory/json.rs` (JSON bodies).
 
 ## Embedded assets
 

@@ -3,6 +3,7 @@ mod admit;
 mod assets;
 mod catalogue;
 mod memory;
+mod memory_api;
 pub(crate) mod render;
 mod render_api;
 mod route;

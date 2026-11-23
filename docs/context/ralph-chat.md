@@ -679,6 +679,9 @@ Local shorthand: a message that starts with `!!` (after the same trim) runs ever
 - The turn view, the status bar and the nap read the whole log and tree (`Store::load`, `parse_log`); a corrupt line is a placeholder there too. `recall` loads every entry through the archive under the shared `LOCK`; `search` scans the log in chunks of 256 entries through `log.idx`, so it never holds the whole log as entries (see [search](#search)).
 - Benchmark: `cargo xtask bench-memory [--sizes 1000,10000,100000] [--runs 9]` builds a store per size in a temp dir and prints, per case, the median latency, bytes read and allocations of the whole-file path and the indexed path. It fails when the two answers differ. It calls the `ralph_core` functions with its own file reader, not `Store`.
 
+The web API reads the same memory with no lock and no write: `GET /api/memory`, `/api/memory/entries` and `/api/memory/threads`.
+See [ralph web](ralph-web.md#memory-routes).
+
 ## Nap
 
 `ralph chat-nap` takes the exclusive `NAP` lock for its whole run, snapshots the store under a shared `LOCK`, and for each node from `pending` (long leaves, then complete parent blocks by increasing size) asks a Haiku curator for a summary with no `LOCK` held. Each result is committed under a short exclusive `LOCK` (see [Nap consistency](#nap-consistency)).

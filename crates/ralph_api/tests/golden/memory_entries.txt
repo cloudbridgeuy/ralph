@@ -1,0 +1,7 @@
+status: 200
+Content-Type: application/json
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+
+{"thread":"main","entries":6,"items":[{"i":0,"role":"user","at":"2026-03-01T09:00:00Z","text":"He said \"stop\" and wrote C:\\temp\\new\\file \\u0041 \\n."},{"i":1,"role":"assistant","at":"2026-03-01T09:01:00Z","text":"</script><img src=x onerror=alert(1)>"},{"i":2,"role":"worker","at":"2026-03-01T09:02:00Z","text":"line one\nline two\r\n\ttabbed"},{"i":3,"role":"user","at":"2026-03-01T09:03:00Z","text":"emoji 😀 and   separator and \u0001 control"},{"i":4,"role":"assistant","at":"2026-03-01T09:04:00Z","text":"plain"},{"i":5,"role":"worker","at":"2026-03-01T09:05:00Z","text":"last"}],"next_after":null}
