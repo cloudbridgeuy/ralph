@@ -20,6 +20,7 @@ struct Emitter<'s> {
     overflow: usize,
     image_depth: usize,
     in_head: bool,
+    body_open: bool,
     link_close: &'static str,
 }
 
@@ -41,6 +42,7 @@ impl<'s> Emitter<'s> {
             overflow: 0,
             image_depth: 0,
             in_head: false,
+            body_open: false,
             link_close: "",
         }
     }
@@ -118,7 +120,7 @@ impl<'s> Emitter<'s> {
             } => self.open_link(&link_dest(link_type, &dest_url)),
             Tag::TableHead => {
                 self.in_head = true;
-                self.out.push_str("<table><thead><tr>");
+                self.out.push_str("<thead><tr>");
             }
             other => self.out.push_str(&open_tag(&other, self.in_head)),
         }
@@ -138,6 +140,14 @@ impl<'s> Emitter<'s> {
                 self.link_close = "</span>";
             }
         }
+    }
+
+    fn close_table(&mut self) {
+        if self.body_open {
+            self.out.push_str("</tbody>");
+            self.body_open = false;
+        }
+        self.out.push_str("</table>");
     }
 
     fn finish_code(&mut self) {
@@ -170,9 +180,10 @@ impl<'s> Emitter<'s> {
             TagEnd::Link => self.out.push_str(self.link_close),
             TagEnd::TableHead => {
                 self.in_head = false;
+                self.body_open = true;
                 self.out.push_str("</tr></thead><tbody>");
             }
-            TagEnd::Table => self.out.push_str("</tbody></table>"),
+            TagEnd::Table => self.close_table(),
             other => self.out.push_str(close_tag(&other, in_head)),
         }
     }
@@ -209,6 +220,7 @@ fn open_tag(tag: &Tag<'_>, in_head: bool) -> String {
         Tag::List(Some(start)) => format!("<ol start=\"{start}\">"),
         Tag::List(None) => "<ul>".into(),
         Tag::Item => "<li>".into(),
+        Tag::Table(_) => "<table>".into(),
         Tag::TableRow => "<tr>".into(),
         Tag::TableCell if in_head => "<th scope=\"col\">".into(),
         Tag::TableCell => "<td>".into(),
@@ -367,6 +379,34 @@ mod tests {
         assert_eq!(out.matches("<blockquote>").count(), MAX_DEPTH);
         assert_eq!(out.matches("</blockquote>").count(), MAX_DEPTH);
         assert!(out.contains("deep"));
+    }
+
+    fn nested_table(quotes: usize) -> String {
+        let prefix = "> ".repeat(quotes);
+        format!("{prefix}|a|\n{prefix}|-|\n{prefix}|1|\n")
+    }
+
+    fn assert_balanced(out: &str) {
+        for tag in ["table", "thead", "tbody", "tr"] {
+            let opened =
+                out.matches(&format!("<{tag}>")).count() + out.matches(&format!("<{tag} ")).count();
+            let closed = out.matches(&format!("</{tag}>")).count();
+            assert_eq!(opened, closed, "{tag} in {out}");
+        }
+    }
+
+    #[test]
+    fn a_table_exactly_at_the_cap_has_balanced_tags() {
+        let out = html(&nested_table(MAX_DEPTH - 1));
+        assert!(out.contains("<table>"), "{out}");
+        assert_balanced(&out);
+    }
+
+    #[test]
+    fn a_table_past_the_cap_has_balanced_tags() {
+        assert_balanced(&html(&nested_table(MAX_DEPTH)));
+        assert_balanced(&html(&nested_table(MAX_DEPTH - 2)));
+        assert_balanced(&html(&nested_table(MAX_DEPTH - 3)));
     }
 
     #[test]
