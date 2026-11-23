@@ -241,4 +241,47 @@ mod tests {
             assert!(ratio >= 4.5, "{theme}: {ratio:.2}");
         }
     }
+
+    const UNSTYLED_SCOPES: [&str; 2] = ["source", "meta"];
+
+    fn scope_heads(html: &str) -> Vec<String> {
+        html.split("<span class=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .filter_map(|classes| classes.split(' ').next())
+            .filter(|class| class.starts_with("t-"))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn scope_heads_are_the_first_class_of_each_span() {
+        let html = "<span class=\"t-a t-b\">x<span class=\"t-c\">y</span></span><span class=\"u\">";
+        assert_eq!(scope_heads(html), vec!["t-a", "t-c"]);
+    }
+
+    #[test]
+    fn the_stylesheet_maps_every_scope_in_the_rust_sample() {
+        let css = std::str::from_utf8(bytes_of("/assets/app.css")).unwrap();
+        let sample = include_str!("../tests/golden/render/code_rust.html");
+        let heads = scope_heads(sample);
+        assert!(!heads.is_empty());
+        for head in heads {
+            let name = head.trim_start_matches("t-");
+            let mapped = css.contains(&format!(".{head}"));
+            assert!(
+                mapped || UNSTYLED_SCOPES.contains(&name),
+                "{head} has no rule"
+            );
+        }
+    }
+
+    #[test]
+    fn the_stylesheet_styles_prose_and_code() {
+        let css = std::str::from_utf8(bytes_of("/assets/app.css")).unwrap();
+        for tag in ["r-prose", "r-code"] {
+            assert!(css.contains(tag), "{tag}");
+        }
+        assert!(css.contains("r-code pre:focus-visible"));
+    }
 }

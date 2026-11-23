@@ -1,6 +1,6 @@
 use crate::render::{
-    empty, error, escape, frame, kv, pill, rule, spark_svg, spinner, status, table, Icon,
-    PillShape, Shape, Tone,
+    empty, error, escape, frame, kv, pill, render_markdown, rule, spark_svg, spinner, status,
+    table, Icon, PillShape, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -8,6 +8,11 @@ mod fixture;
 
 const TONES: [Tone; 5] = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent];
 const ICONS: [Icon; 4] = [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info];
+
+const PROSE_SPARSE: &str = "A short **note** with a [link](https://example.com).";
+const PROSE_DENSE: &str = "# Heading\n\n## Second\n\nText with *emphasis*, ~~strike~~ and `inline code`.\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n\n- [x] done\n- [ ] open\n\n> A quote.\n\n| day | turns |\n|-----|-------|\n| mon | 3 |\n\n[site](https://example.com)\n";
+const CODE_SPARSE: &str = "```rust\nlet x = 1;\n```\n";
+const CODE_DENSE: &str = "```rust\n// sum the costs\nfn total(costs: &[f64]) -> f64 {\n    let mut sum = 0.0;\n    for cost in costs {\n        sum += cost;\n    }\n    sum\n}\n\nconst LABEL: &str = \"total\";\n```\n";
 
 fn state(name: &str, html: &str) -> String {
     format!("<div class=\"state\"><h4>{name}</h4>{html}</div>")
@@ -227,6 +232,33 @@ fn sparks(fixture: &Fixture) -> String {
     )
 }
 
+fn proses(fixture: &Fixture) -> String {
+    group(
+        "r-prose",
+        &[
+            ("empty", render_markdown("")),
+            ("sparse", render_markdown(PROSE_SPARSE)),
+            ("dense", render_markdown(PROSE_DENSE)),
+            ("error", error("could not render the text")),
+            ("very-long", render_markdown(&fixture.very_long_title)),
+        ],
+    )
+}
+
+fn codes(fixture: &Fixture) -> String {
+    let long = format!("```text\n{}\n```\n", fixture.very_long_title);
+    group(
+        "r-code",
+        &[
+            ("empty", render_markdown("```rust\n```\n")),
+            ("sparse", render_markdown(CODE_SPARSE)),
+            ("dense", render_markdown(CODE_DENSE)),
+            ("error", error("could not highlight the block")),
+            ("very-long", render_markdown(&long)),
+        ],
+    )
+}
+
 fn theme_body(fixture: &Fixture) -> String {
     [
         boxes(fixture),
@@ -239,6 +271,8 @@ fn theme_body(fixture: &Fixture) -> String {
         errors(fixture),
         spinners(),
         sparks(fixture),
+        proses(fixture),
+        codes(fixture),
     ]
     .concat()
 }
@@ -264,7 +298,7 @@ mod tests {
     use super::page;
 
     const COMMITTED: &str = include_str!("../../fixtures/catalogue.json");
-    const TAGS: [&str; 10] = [
+    const TAGS: [&str; 12] = [
         "r-box",
         "r-rule",
         "r-table",
@@ -275,6 +309,8 @@ mod tests {
         "r-error",
         "r-spinner",
         "r-spark",
+        "r-prose",
+        "r-code",
     ];
 
     fn html() -> String {
@@ -433,5 +469,48 @@ mod tests {
         let html = page(text);
         assert!(!html.contains("<r-spark"));
         assert!(html.contains("<r-empty>"));
+    }
+
+    fn group_html(html: &str, tag: &str) -> Vec<String> {
+        let marker = format!("<div class=\"group\"><h3>{tag}</h3>");
+        html.split(&marker)
+            .skip(1)
+            .map(|rest| {
+                rest.split("<div class=\"group\">")
+                    .next()
+                    .unwrap_or("")
+                    .split("</section>")
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prose_and_code_show_five_states_in_both_columns() {
+        let html = html();
+        for tag in ["r-prose", "r-code"] {
+            let groups = group_html(&html, tag);
+            assert_eq!(groups.len(), 2, "{tag}");
+            for group in groups {
+                let names: Vec<&str> = group
+                    .split("<h4>")
+                    .skip(1)
+                    .filter_map(|part| part.split("</h4>").next())
+                    .collect();
+                assert_eq!(
+                    names,
+                    ["empty", "sparse", "dense", "error", "very-long"],
+                    "{tag}"
+                );
+                assert!(group.contains(&format!("<{tag}")), "{tag}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_code_samples_are_highlighted() {
+        assert!(html().contains("class=\"t-"));
     }
 }

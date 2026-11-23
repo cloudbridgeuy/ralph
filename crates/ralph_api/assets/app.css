@@ -280,6 +280,204 @@ r-spark .line {
   vector-effect: non-scaling-stroke;
 }
 
+r-prose {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+r-prose h1,
+r-prose h2,
+r-prose h3,
+r-prose h4,
+r-prose h5,
+r-prose h6 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1em;
+  font-weight: 700;
+}
+
+r-prose h1 {
+  color: var(--r-heading1, var(--r-ansi-6));
+  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+  text-transform: uppercase;
+}
+
+r-prose h2 {
+  color: var(--r-heading2, var(--r-ansi-4));
+  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+}
+
+r-prose h3,
+r-prose h4,
+r-prose h5,
+r-prose h6 {
+  color: var(--r-heading3, var(--r-ansi-5));
+}
+
+r-prose p {
+  margin: 0.5rem 0;
+}
+
+r-prose strong {
+  font-weight: 700;
+}
+
+r-prose em {
+  font-style: italic;
+}
+
+r-prose del {
+  text-decoration: line-through;
+}
+
+r-prose ul,
+r-prose ol {
+  margin: 0.25rem 0;
+  padding-left: 3ch;
+}
+
+r-prose ul {
+  list-style: square;
+}
+
+r-prose li::marker {
+  color: var(--r-bullet, var(--r-ansi-8));
+}
+
+r-prose li input[type="checkbox"] {
+  margin: 0 1ch 0 0;
+}
+
+r-prose blockquote {
+  margin: 0.5rem 0;
+  padding-left: 1ch;
+  border-left: 1px solid var(--r-border, var(--r-ansi-8));
+  font-style: italic;
+}
+
+r-prose hr {
+  margin: 0.5rem 0;
+  border: 0;
+  border-top: 1px solid var(--r-border, var(--r-ansi-8));
+}
+
+r-prose table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+r-prose th,
+r-prose td {
+  padding: 0 1ch;
+  text-align: left;
+  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+}
+
+r-prose th {
+  font-weight: 700;
+}
+
+r-prose a {
+  color: var(--r-link, var(--r-ansi-12));
+  text-decoration: underline;
+}
+
+r-prose code {
+  padding: 0 0.5ch;
+  background: var(--r-inline-code-bg, transparent);
+  color: var(--r-inline-code, var(--r-ansi-3));
+  border: 1px solid var(--r-border, var(--r-ansi-8));
+}
+
+r-code {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+r-code pre {
+  margin: 0;
+  padding: 0.25rem 1ch;
+  overflow-x: auto;
+  border: 1px solid var(--r-border, var(--r-ansi-8));
+  background: var(--r-inline-code-bg, transparent);
+  color: var(--r-ansi-7);
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+r-code pre:focus-visible {
+  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline-offset: 2px;
+}
+
+r-code code {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: inherit;
+}
+
+r-code .t-comment {
+  color: var(--r-bullet, var(--r-ansi-8));
+  font-style: italic;
+}
+
+r-code .t-string {
+  color: var(--r-ansi-2);
+}
+
+r-code .t-keyword {
+  color: var(--r-ansi-5);
+  font-weight: 700;
+}
+
+r-code .t-constant {
+  color: var(--r-ansi-3);
+}
+
+r-code .t-entity {
+  color: var(--r-ansi-4);
+}
+
+r-code .t-storage {
+  color: var(--r-ansi-5);
+  font-weight: 700;
+}
+
+r-code .t-support {
+  color: var(--r-ansi-6);
+}
+
+r-code .t-variable {
+  color: var(--r-ansi-7);
+}
+
+r-code .t-punctuation {
+  color: var(--r-ansi-7);
+}
+
+r-code .t-markup {
+  color: var(--r-ansi-6);
+}
+
+r-code .t-markup.t-bold {
+  font-weight: 700;
+}
+
+r-code .t-markup.t-italic {
+  font-style: italic;
+}
+
+r-code .t-markup.t-underline {
+  text-decoration: underline;
+}
+
 @keyframes r-show {
   from {
     opacity: 0;
