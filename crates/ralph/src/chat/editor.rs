@@ -1,3 +1,4 @@
+use crate::chat::sent::SentStyle;
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::thread::{fork_of, open_names};
 use crate::clipboard::PASTE_IMAGE;
@@ -12,10 +13,11 @@ use ralph_core::chat_switch::switch_completions;
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::Monitor;
+use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::disk_files::resolve;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    default_vi_visual_keybindings, ColumnarMenu, Completer, CompletionResult, EditCommand,
+    default_vi_visual_keybindings, Color, ColumnarMenu, Completer, CompletionResult, EditCommand,
     EditMode, Emacs, FileBackedHistory, KeyCode, KeyModifiers, Keybindings, MenuBuilder,
     PromptEditMode, PromptViMode, Reedline, ReedlineEvent, ReedlineMenu, ReedlineRawEvent, Span,
     Suggestion, Vi,
@@ -320,9 +322,15 @@ pub(super) fn build_editor(
     })
 }
 
-pub(super) fn build_queue_editor(mode: EditModeConfig) -> Reedline {
+pub(super) fn build_queue_editor(mode: EditModeConfig, sent_style: SentStyle) -> Reedline {
     Reedline::create()
         .with_edit_mode(Box::new(edit_mode_with(mode, queue_bindings)))
+        .with_highlighter(Box::new(SuggestionHighlighter::new(
+            SuggestionCell::default(),
+            Color::Default,
+            sent_style,
+        )))
+        .with_submit_highlighter(Box::new(sent_style))
         .use_bracketed_paste(true)
 }
 

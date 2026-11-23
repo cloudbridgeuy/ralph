@@ -77,12 +77,31 @@ mod tests {
                 reedline::Color::Magenta.bold().paint("/hold")
             )
         );
-        for line in ["  next: /hold topic", "  you: text /hold", "  you: /tmp/x"] {
+        assert_eq!(
+            paint_recap_line("  you: @w1 status", style),
+            format!(
+                "  you: {} status",
+                reedline::Color::Magenta.bold().paint("@w1")
+            )
+        );
+        for line in [
+            "  next: /hold topic",
+            "  next: @w1 status",
+            "  you: text /hold",
+            "  you: text @w1",
+            "  you: @@w1 status",
+            "  you: me@example.com",
+            "  you: /tmp/x",
+        ] {
             assert_eq!(paint_recap_line(line, style), line);
         }
         assert_eq!(
             paint_recap_line("  you: /merge", SentStyle::new(None)),
             "  you: /merge"
+        );
+        assert_eq!(
+            paint_recap_line("  you: @w1 hi", SentStyle::new(None)),
+            "  you: @w1 hi"
         );
     }
 }

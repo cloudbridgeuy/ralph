@@ -296,6 +296,18 @@ mod tests {
     }
 
     #[test]
+    fn sent_worker_address_echo_styles_only_the_leading_id() {
+        let style = crate::chat::sent::SentStyle::new(Some(reedline::Color::Magenta));
+        assert_eq!(
+            sent_echo("bar\n", ">>> ", "::: ", " @w1 first\n@w2 second", style),
+            format!(
+                "bar\n>>>  {} first\n::: @w2 second\n",
+                reedline::Color::Magenta.bold().paint("@w1")
+            )
+        );
+    }
+
+    #[test]
     fn sent_command_echo_without_color_keeps_the_text() {
         assert_eq!(
             sent_echo(

@@ -259,7 +259,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         Arc::clone(&term),
     );
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
-        .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
+        .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion, sent_style));
     let printer = ExternalPrinter::new(PROMPT_ROWS);
     let prompt_sink = printer.sender();
     let mut editor = build_editor(&store_dir, edit_mode, highlighter, Arc::clone(&monitor))?
@@ -372,6 +372,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         monitor: &monitor,
         bar: &prompt.bar,
         edit_mode,
+        sent_style,
         local: &local_route,
         empty_submit: &prompt.empty_submit,
         store: &store_dir,
