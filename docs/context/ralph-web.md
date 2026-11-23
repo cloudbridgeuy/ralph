@@ -112,7 +112,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 - The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
 - `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.
 - The `[web]` font default starts with `"Geist Mono"`.
-- `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. Twelve are built: r-box, r-rule, r-table, r-kv, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code and r-prose. The other two (r-tree and r-graph) pass the lint but have no builder yet. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint.
+- `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. Thirteen are built: r-box, r-rule, r-table, r-kv, r-tree, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code and r-prose. The other two (r-tree and r-graph) pass the lint; r-tree is built, r-graph has no builder yet. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint.
 - A body of 32 KB or more goes out with chunked transfer encoding. The test client decodes it.
 
 ## Primitives
@@ -204,3 +204,13 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - A missing or different golden fails the test with a line diff.
 - To write or refresh goldens, run `UPDATE_GOLDEN=1 cargo test -p ralph_api --test health_contract`. Read every changed file before you commit.
 - `cargo xtask lint` runs these tests, because it runs `cargo test --all-targets`.
+
+## r-tree markup
+
+- `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty>…</r-empty></r-tree>`.
+- A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">label</button>[<span class="meta">]<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
+- Only native tags go inside `r-tree`. The depth comes from the nested `ul`, one indent and one guide line per level; `aria-level` starts at 1.
+- `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML. The marker is a CSS `+` or `-`.
+- The button has no default chrome and a `:focus-visible` outline. The page has no script, so a click does nothing yet.
+- Every label and meta text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
+- The catalogue shows empty, sparse, dense (4 levels), error, very-long, collapsed, expanded, hostile and focus; the code is in `catalogue/tree.rs`.

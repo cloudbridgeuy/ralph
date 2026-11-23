@@ -517,3 +517,72 @@ r-prose table:focus-visible {
   outline-offset: 2px;
 }
 
+r-tree {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+r-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+r-tree ul[role="group"] {
+  margin-inline-start: 1ch;
+  padding-inline-start: 1ch;
+  border-inline-start: 1px solid var(--r-border, var(--r-ansi-8));
+}
+
+r-tree li {
+  margin: 0;
+  padding: 0;
+}
+
+r-tree button {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+r-tree button::before {
+  content: "- ";
+}
+
+r-tree li[aria-expanded="false"] > button::before {
+  content: "+ ";
+}
+
+r-tree li[aria-expanded="false"] > ul {
+  display: none;
+}
+
+r-tree .label::before {
+  content: "  ";
+  white-space: pre;
+}
+
+r-tree .meta {
+  margin-inline-start: 1ch;
+  color: color-mix(in srgb, var(--r-ansi-7) 70%, var(--r-ansi-0));
+  font-variant-numeric: tabular-nums;
+}
+
+r-tree button:focus-visible {
+  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline-offset: 2px;
+}
+
+r-tree r-empty,
+r-tree r-error {
+  margin: 0;
+}
+

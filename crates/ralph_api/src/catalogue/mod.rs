@@ -5,6 +5,7 @@ use crate::render::{
 use fixture::{parse, Fixture};
 
 mod fixture;
+mod tree;
 
 const TONES: [Tone; 5] = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent];
 const ICONS: [Icon; 4] = [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info];
@@ -265,6 +266,7 @@ fn theme_body(fixture: &Fixture) -> String {
         rules(),
         tables(fixture),
         kvs(fixture),
+        tree::trees(&fixture.very_long_title),
         pills(fixture),
         statuses(fixture),
         empties(fixture),

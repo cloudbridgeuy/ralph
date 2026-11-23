@@ -15,6 +15,7 @@ mod spark;
 mod spinner;
 mod status;
 mod table;
+mod tree;
 
 pub use empty::empty;
 pub use error::error;
@@ -28,6 +29,7 @@ pub use spark::spark_svg;
 pub use spinner::spinner;
 pub use status::status;
 pub use table::table;
+pub use tree::{tree, TreeNode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
