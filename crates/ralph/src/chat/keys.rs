@@ -6,6 +6,7 @@ use crate::chat::queue::{
     at_once, on_exit, switch_verdict, take_notes, Action, EditorExit, MidTurn, Queue,
 };
 use crate::chat::route::{run_local, LocalRoute};
+use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::switch::{self, Leave};
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
@@ -40,6 +41,7 @@ pub(super) struct Keys<'a> {
     pub(super) monitor: &'a Monitor,
     pub(super) bar: &'a StatusBar,
     pub(super) edit_mode: EditModeConfig,
+    pub(super) sent_style: SentStyle,
     pub(super) local: &'a LocalRoute<'a>,
     pub(super) empty_submit: &'a EmptySubmit,
     pub(super) store: &'a Path,
@@ -221,7 +223,7 @@ impl Keys<'_> {
     fn edit(&self, mut queue: Queue, seed: &str, watch: &TurnWatch) -> (Queue, bool) {
         self.gate.pause();
         wait_settled(self.gate);
-        let mut editor = build_queue_editor(self.edit_mode);
+        let mut editor = build_queue_editor(self.edit_mode, self.sent_style);
         let signal = editor.repaint_signal();
         *locked(&watch.repaint) = Some(Box::new(move || signal.request_repaint()));
         if !seed.is_empty() {
