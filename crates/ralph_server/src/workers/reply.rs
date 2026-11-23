@@ -1,8 +1,8 @@
 use super::{clear_marker, headless_files, Workers};
 use crate::cursor_owner::write_file;
 use ralph_core::worker::{
-    capabilities, close_handoff, describe, Feature, Handoff, HandoffFiles, PermissionAnswer,
-    Support, HANDOFF_POLL,
+    capabilities, close_handoff, describe, is_dashed_token, Feature, Handoff, HandoffFiles,
+    PermissionAnswer, Support, HANDOFF_POLL,
 };
 use std::fs;
 use std::io;
@@ -17,6 +17,11 @@ pub fn answer_permission(
     request_id: &str,
     text: &str,
 ) -> io::Result<String> {
+    if id.is_empty() || !is_dashed_token(id) {
+        return Err(io::Error::other(format!(
+            "Worker id '{id}' may only use letters, digits and dashes."
+        )));
+    }
     let (kind, files) = headless_files(store_dir, id).ok_or_else(|| {
         io::Error::other(format!(
             "worker {id} is not a running Cursor, Codex, claude or opencode worker"
@@ -173,6 +178,20 @@ mod tests {
     use super::*;
     use crate::cursor_owner::take_answer;
     use ralph_core::worker::{blocked_path, HANDOFF_TIMEOUT};
+
+    #[test]
+    fn a_permission_answer_rejects_invalid_worker_ids_before_file_access() {
+        let dir = tempfile::tempdir().unwrap();
+        for id in ["", "../outside", "a/b"] {
+            let error =
+                answer_permission(dir.path(), Duration::ZERO, id, "request", "once").unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!("Worker id '{id}' may only use letters, digits and dashes.")
+            );
+        }
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn a_permission_answer_carries_its_request_id_to_the_host() {
