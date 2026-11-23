@@ -21,7 +21,7 @@ pub fn highlight(syntaxes: &SyntaxSet, block: &CodeBlock<'_>) -> String {
     let attr = lang
         .map(|lang| format!(" data-lang=\"{lang}\""))
         .unwrap_or_default();
-    format!("<r-code{attr}><pre><code>{body}</code></pre></r-code>")
+    format!("<r-code{attr}><pre tabindex=\"0\"><code>{body}</code></pre></r-code>")
 }
 
 fn valid_lang(raw: &str) -> Option<String> {
@@ -127,7 +127,7 @@ mod tests {
     fn no_language_has_no_data_lang() {
         assert_eq!(
             render("", "a\n"),
-            "<r-code><pre><code>a\n</code></pre></r-code>"
+            "<r-code><pre tabindex=\"0\"><code>a\n</code></pre></r-code>"
         );
     }
 

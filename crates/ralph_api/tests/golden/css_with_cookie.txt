@@ -512,3 +512,8 @@ r-code .t-markup.t-underline {
   }
 }
 
+r-prose table:focus-visible {
+  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline-offset: 2px;
+}
+

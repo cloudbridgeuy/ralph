@@ -220,7 +220,7 @@ fn open_tag(tag: &Tag<'_>, in_head: bool) -> String {
         Tag::List(Some(start)) => format!("<ol start=\"{start}\">"),
         Tag::List(None) => "<ul>".into(),
         Tag::Item => "<li>".into(),
-        Tag::Table(_) => "<table>".into(),
+        Tag::Table(_) => "<table tabindex=\"0\">".into(),
         Tag::TableRow => "<tr>".into(),
         Tag::TableCell if in_head => "<th scope=\"col\">".into(),
         Tag::TableCell => "<td>".into(),
@@ -325,7 +325,7 @@ mod tests {
     fn table_has_head_and_body() {
         assert_eq!(
             html("|a|b|\n|-|-|\n|1|2|\n"),
-            "<table><thead><tr><th scope=\"col\">a</th><th scope=\"col\">b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>"
+            "<table tabindex=\"0\"><thead><tr><th scope=\"col\">a</th><th scope=\"col\">b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>"
         );
     }
 
@@ -347,14 +347,14 @@ mod tests {
     fn fenced_code_is_escaped() {
         assert_eq!(
             html("```\n<a>\n```"),
-            "<r-code><pre><code>&lt;a&gt;\n</code></pre></r-code>"
+            "<r-code><pre tabindex=\"0\"><code>&lt;a&gt;\n</code></pre></r-code>"
         );
     }
 
     #[test]
     fn fenced_code_with_a_language_is_classed() {
         let out = html("```rust extra\nfn x() {}\n```");
-        assert!(out.starts_with("<r-code data-lang=\"rust\"><pre><code>"));
+        assert!(out.starts_with("<r-code data-lang=\"rust\"><pre tabindex=\"0\"><code>"));
         assert!(out.contains("class=\"t-"));
     }
 
@@ -362,7 +362,7 @@ mod tests {
     fn indented_code_has_no_language() {
         assert_eq!(
             html("    <a>\n"),
-            "<r-code><pre><code>&lt;a&gt;\n</code></pre></r-code>"
+            "<r-code><pre tabindex=\"0\"><code>&lt;a&gt;\n</code></pre></r-code>"
         );
     }
 
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn a_table_exactly_at_the_cap_has_balanced_tags() {
         let out = html(&nested_table(MAX_DEPTH - 1));
-        assert!(out.contains("<table>"), "{out}");
+        assert!(out.contains("<table tabindex=\"0\">"), "{out}");
         assert_balanced(&out);
     }
 
