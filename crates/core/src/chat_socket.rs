@@ -26,6 +26,7 @@ const SERVE_SOCKET_FILE: &str = "serve.sock";
 const SOCKET_SUFFIX: &str = ".sock";
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const SYSTEM_PROMPT_FILE: &str = "system-prompt.md";
+const SKILL_PLUGIN_DIR: &str = "plugin";
 const SIDECAR_SUFFIX: &str = ".owner";
 pub const MAX_SOCKET_PATH_BYTES: usize = 103;
 
@@ -113,6 +114,10 @@ pub fn system_prompt_path(files_dir: &Path) -> PathBuf {
     files_dir.join(SYSTEM_PROMPT_FILE)
 }
 
+pub fn skill_plugin_dir(files_dir: &Path) -> PathBuf {
+    files_dir.join(SKILL_PLUGIN_DIR)
+}
+
 pub fn sidecar_name(pid: u32) -> String {
     format!("{SOCKET_PREFIX}{pid}{SIDECAR_SUFFIX}")
 }
@@ -196,10 +201,12 @@ mod tests {
 
     #[test]
     fn system_prompt_lives_in_each_chats_store_files_dir() {
+        let dir = chat_files_dir(Path::new("/s"), 1);
         assert_eq!(
-            system_prompt_path(&chat_files_dir(Path::new("/s"), 1)),
+            system_prompt_path(&dir),
             PathBuf::from("/s/chat-1/system-prompt.md")
         );
+        assert_eq!(skill_plugin_dir(&dir), PathBuf::from("/s/chat-1/plugin"));
     }
 
     #[test]

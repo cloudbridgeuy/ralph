@@ -88,7 +88,6 @@ pub(crate) struct AssembleOptions<'a> {
 pub(crate) struct Assembled {
     pub session: Session,
     pub guard: SocketGuard,
-    pub plugin: Option<tempfile::TempDir>,
     pub skill_dirs: Vec<PathBuf>,
     pub send_it_warnings: Vec<String>,
     pub close: CloseGuard,
@@ -200,7 +199,6 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
     Ok(Assembled {
         session,
         guard: wiring.guard,
-        plugin: wiring.plugin,
         skill_dirs: wiring.skill_dirs,
         send_it_warnings,
         close,

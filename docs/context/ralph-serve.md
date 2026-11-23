@@ -25,7 +25,7 @@
 
 ## Socket
 
-- Path: `/tmp/ralph-<uid>/serve-<key12>/serve.sock`, where `<key12>` is the first 12 hex characters of the SHA-256 of the canonical store path (`StoreKey`).
+- Path: `<home>/.ralph/run/serve-<key12>/serve.sock` (`<home>` from `getpwuid_r(geteuid())`, no environment variables), where `<key12>` is the first 12 hex characters of the SHA-256 of the canonical store path (`StoreKey`).
 - The directory is 0700 and the socket is 0600. The runtime root is checked by `ensure_store_root()`.
 - `serve` holds the `CHAT` flock before it binds, so a socket file left at the path is stale and is removed.
 - A peer whose uid is not the uid of `serve` is dropped before any frame is read.

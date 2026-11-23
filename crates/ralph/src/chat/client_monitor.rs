@@ -121,7 +121,6 @@ fn drop_session(session: &Mutex<Option<Box<dyn ChatSession>>>) {
 pub(super) fn watch_input(
     at_prompt: Arc<AtomicBool>,
     session: Arc<Mutex<Option<Box<dyn ChatSession>>>>,
-    plugin_dir: Option<PathBuf>,
     exit: ExitCleanup,
     term: Arc<TermStatus>,
 ) {
@@ -135,9 +134,6 @@ pub(super) fn watch_input(
             at_prompt: at_prompt.load(Ordering::SeqCst),
         }) {
             drop_session(&session);
-            if let Some(dir) = &plugin_dir {
-                std::fs::remove_dir_all(dir).ok();
-            }
             term.clear();
             exit.run();
             std::process::exit(INPUT_LOST_EXIT);

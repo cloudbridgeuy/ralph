@@ -212,7 +212,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let Assembled {
         session,
         guard,
-        plugin,
         skill_dirs,
         send_it_warnings,
         close: _close,
@@ -256,7 +255,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     watch_input(
         Arc::clone(&at_prompt),
         Arc::clone(&turn.session),
-        plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, guard.0.clone()),
         Arc::clone(&term),
     );

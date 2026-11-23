@@ -98,7 +98,6 @@ pub struct Wiring {
     pub system_prompt_file: PathBuf,
     pub skill_dirs: Vec<PathBuf>,
     pub skills: Vec<ChatSkill>,
-    pub plugin: Option<tempfile::TempDir>,
     pub plugin_args: Vec<String>,
 }
 
@@ -129,11 +128,8 @@ impl Wiring {
             wiring.home,
         );
         let skills = link_skills(usable_skills(skill_dirs.clone()));
-        let plugin = write_skill_plugin(&skills)?;
-        let plugin_args = plugin
-            .as_ref()
-            .map(|plugin| build_plugin_args(plugin.path()))
-            .unwrap_or_default();
+        let plugin = write_skill_plugin(socket.files_dir(), &skills)?;
+        let plugin_args = plugin.as_deref().map(build_plugin_args).unwrap_or_default();
         Ok(Self {
             socket,
             guard,
@@ -141,7 +137,6 @@ impl Wiring {
             system_prompt_file,
             skill_dirs,
             skills,
-            plugin,
             plugin_args,
         })
     }
