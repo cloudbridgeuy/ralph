@@ -745,3 +745,26 @@ fn agy_mixed_day_chart_marks_partial_price() {
     );
     assert!(svg.contains("* = some rows have no price"), "{svg}");
 }
+
+#[test]
+fn claude_fable_5_2_row_is_priced_in_usage_report() {
+    let rows = [json!({
+        "kind": "subagent",
+        "at": "2026-11-10T21:09:10Z",
+        "harness": "claude",
+        "model": "claude-fable-5-2",
+        "cost_usd": null,
+        "input_tokens": 1_000_000,
+        "output_tokens": 100_000,
+        "cache_creation_input_tokens": 300_000,
+        "cache_read_input_tokens": 2_000_000,
+        "cache_write_5m": 200_000,
+        "cache_write_1h": 100_000,
+    })];
+    let report = grouped(Dim::Model, &rows, &[], &Filter::default());
+    assert_eq!(keys(&report), ["claude-fable-5-2"]);
+    let group = &report.groups[0];
+    assert_eq!(group.state(), None);
+    let cost = known(group.est).expect("estimated cost should be present");
+    assert!((cost - 16.0).abs() < 1e-9, "got {cost}");
+}

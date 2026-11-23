@@ -1,7 +1,9 @@
 use super::*;
 use ralph_core::program_status::{Report, State};
-use ralph_core::worker::BlockedContent;
-use ralph_core::worker::PermissionOption;
+use ralph_core::stream::blocks::{
+    OutputBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
+};
+use ralph_core::worker::{BlockedContent, PermissionOption};
 
 fn event() -> TurnEvent {
     TurnEvent::Warning("hi".into())
@@ -11,6 +13,44 @@ fn event() -> TurnEvent {
 fn a_turn_event_is_rendered() {
     let step = on_frame(ServerMsg::Turn { event: event() });
     assert_eq!(step, Step::Render(event()));
+}
+
+fn kept_block() -> OutputBlock {
+    OutputBlock::Separator
+}
+
+fn bash_blocks() -> Vec<OutputBlock> {
+    vec![
+        OutputBlock::ToolInvocation(ToolInvocationBlock {
+            tool_name: "Bash".into(),
+            variant: ToolInvocationVariant::Bash {
+                command: "ls".into(),
+                description: None,
+            },
+        }),
+        OutputBlock::ToolResult(ToolResultBlock {
+            tool_name: "Bash".into(),
+            is_error: false,
+            variant: ToolResultVariant::Bash {
+                content: Some("out".into()),
+                truncated: false,
+            },
+        }),
+    ]
+}
+
+#[test]
+fn without_a_terminal_tool_blocks_are_dropped_and_other_blocks_stay() {
+    let mut blocks = vec![kept_block()];
+    blocks.extend(bash_blocks());
+    assert_eq!(remote_blocks(blocks, false), vec![kept_block()]);
+}
+
+#[test]
+fn on_a_terminal_every_block_stays() {
+    let mut blocks = vec![kept_block()];
+    blocks.extend(bash_blocks());
+    assert_eq!(remote_blocks(blocks.clone(), true), blocks);
 }
 
 #[test]
@@ -202,6 +242,7 @@ fn pair_session(timeout: Duration) -> (RemoteSession, UnixStream) {
         turns: Cell::new(0),
         attached: RefCell::new(None),
         sink: Box::new(NoopSink),
+        stdout_is_tty: false,
     };
     (session, server)
 }

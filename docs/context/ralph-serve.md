@@ -15,7 +15,7 @@
 | Socket | `crates/ralph_server/src/chat/serve_socket.rs` | `ServeSocket::bind()`, `accept()` with the peer uid check |
 | CLI arg | `crates/ralph/src/cli/mod.rs` | hidden `ralph chat --connect <SOCK>` |
 | Client | `crates/ralph/src/chat/remote.rs` | `RemoteSession` (`SessionPort` over the socket), `run()`, `thread_request()`, `status_summary()` |
-| Frames | `crates/ralph_server/src/chat/serve_proto.rs` | `Envelope`, `ClientMsg`, `ThreadCmd`, `ServerMsg`, `hello_reply()` |
+| Frames | `crates/ralph_server/src/chat/serve_proto.rs` | `Envelope`, `ClientMsg`, `ThreadCmd`, `ServerMsg`, `hello_reply()`, `turn_frame()` |
 
 ## Store
 
@@ -33,11 +33,11 @@
 
 ## Protocol
 
-One JSON frame per line: `{"v":1,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYTES`. A frame with another `v` is an error. Before `hello` a connection has a 30 s read timeout. After `hello` it has none. Every connection has a 2 s write timeout (`WRITE_TIMEOUT`): a client that stops reading gets an error on the write and is dropped, so a push cannot block the serve loop.
+One JSON frame per line: `{"v":2,"id":<n>,"body":{...}}`, at most `MAX_FRAME_BYTES`. A frame with another `v` is an error. Before `hello` a connection has a 30 s read timeout. After `hello` it has none. Every connection has a 2 s write timeout (`WRITE_TIMEOUT`): a client that stops reading gets an error on the write and is dropped, so a push cannot block the serve loop.
 
 | Client body | Reply |
 |---|---|
-| `{"type":"hello","proto":1}` (must be first) | `{"type":"hello","proto":1}` |
+| `{"type":"hello","proto":2}` (must be first) | `{"type":"hello","proto":2}` |
 | `{"type":"send","thread":null\|"name","text":"..."}` | `turn` frames with `{"type":"turn","event":{...}}`, then `{"type":"turn_done"}` |
 | `{"type":"thread","op":"pull\|park\|revive\|drop","name":"n"}` | `{"type":"done","message":"..."}` |
 | `{"type":"thread","op":"merge","name":"n","view":false}` | `done` |
@@ -65,6 +65,7 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 - `cancel` stops the turn of a session key. Send it on another connection: the sender is blocked while its own turn runs. A `cancel` to an idle session gets `<key> is not running a turn`.
 - Each turn gets a fresh cancel token. A `cancel` ends one turn only.
 - `status` is computed on request. `report` is the prompt-phase program status. `blocked` is the sorted ids of workers waiting on a permission.
+- A `turn` frame over `MAX_FRAME_BYTES` is cut by `turn_frame()` before it is written: the text of every tool result is halved, largest first, until the whole encoded frame fits, and each cut ends in `…` and sets `truncated` when the result has that field. A frame that already fits is never cut. Protocol version 2 added this; a version 1 client is refused at `hello`.
 - A turn streams on the connection that sent it. Other connections do not see its events.
 - Each open session runs the headless worker hosts for its own store (main, and each open thread). About once per second `serve` reads the `blocked/` markers of the open stores and pushes a `blocked` frame to every client that sent `hello`, with envelope id `0`: `{thread, worker, content}`. `content` is the front permission request (`request_id`, `tool`, `summary`, `options`) when it is new or changed, and `null` when the request settled. Empty or unparsable markers are skipped. Replies, turn events and pushes share one write lock per connection, so lines never interleave. A client with no read loop sees pushes at its next request. `ralph chat --connect` prints each push as one line.
 - `SendIt` events are dropped. `/send-it` is not served.
@@ -104,6 +105,7 @@ Served:
 - Ctrl-C: `cancel` for the attached key, sent on a second connection.
 - Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
 - SIGTERM / SIGHUP: detach and exit 0 at the prompt or mid-request; neither `cancel` nor `shutdown` is sent.
+- Tool blocks: `serve` runs every turn with tool blocks on, so `turn` frames carry `ToolInvocation` and `ToolResult` blocks. The client prints them only when its stdout is a terminal, the same gate as the terminal chat. Piped, it drops them and prints the rest.
 - Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
 
 Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.
