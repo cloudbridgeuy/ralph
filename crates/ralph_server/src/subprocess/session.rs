@@ -2,6 +2,7 @@ use super::spinner::{spawn_piped, Display, Pump, Readers, SpinnerSubprocessConfi
 use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
+use super::OutputGate;
 use super::{exited_unreaped, signal_group};
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat_memory::{model_usage_since, writes_usage_row};
@@ -12,12 +13,23 @@ use ralph_core::worker::{
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 const INTERRUPT_REQUEST_ID: &str = "int-1";
+
+struct ClearPermission(Option<Arc<OutputGate>>);
+
+impl Drop for ClearPermission {
+    fn drop(&mut self) {
+        if let Some(gate) = &self.0 {
+            gate.cancel_permission(None);
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum PermissionDecision {
@@ -54,16 +66,28 @@ pub(super) fn control_reply(
     control: ClaudeLine,
     line: &str,
     interrupted: bool,
+    gate: Option<&OutputGate>,
 ) -> Result<Option<String>, ()> {
     match control {
-        ClaudeLine::Permission(ask) => Ok(Some(match permission_decision(&ask) {
-            PermissionDecision::Read if !interrupted => {
-                permission_response(&ask.content.request_id, ALLOW_ONCE, &ask.input)
+        ClaudeLine::Permission(ask) => {
+            if gate.is_some_and(|gate| gate.retire_duplicate(&ask.content.request_id)) {
+                return Ok(Some(deny_line(&ask.content.request_id)));
             }
-            PermissionDecision::Read | PermissionDecision::Elevated | PermissionDecision::Deny => {
-                deny_line(&ask.content.request_id)
+            if !interrupted
+                && permission_decision(&ask) == PermissionDecision::Elevated
+                && gate.is_some_and(|gate| gate.request_permission(ask.clone()))
+            {
+                return Ok(None);
             }
-        })),
+            Ok(Some(match permission_decision(&ask) {
+                PermissionDecision::Read if !interrupted => {
+                    permission_response(&ask.content.request_id, ALLOW_ONCE, &ask.input)
+                }
+                PermissionDecision::Read
+                | PermissionDecision::Elevated
+                | PermissionDecision::Deny => deny_line(&ask.content.request_id),
+            }))
+        }
         ClaudeLine::Malformed => {
             let value: serde_json::Value = serde_json::from_str(line).map_err(|_| ())?;
             let id = value
@@ -71,9 +95,17 @@ pub(super) fn control_reply(
                 .and_then(serde_json::Value::as_str)
                 .filter(|id| !id.is_empty())
                 .ok_or(())?;
+            if let Some(gate) = gate {
+                gate.retire_duplicate(id);
+            }
             Ok(Some(deny_line(id)))
         }
-        ClaudeLine::Cancel(_) => Ok(None),
+        ClaudeLine::Cancel(id) => {
+            if let Some(gate) = gate {
+                gate.cancel_permission(Some(&id));
+            }
+            Ok(None)
+        }
         _ => Ok(None),
     }
 }
@@ -269,6 +301,10 @@ impl Session {
         timeout: Option<Duration>,
         interrupts: Interrupts,
     ) -> Result<StreamingSubprocessResult, SubprocessError> {
+        let gate = (display == Display::Shown)
+            .then(|| self.config.gate.clone())
+            .flatten();
+        let _clear = ClearPermission(gate.clone());
         if leftover_is_stale(&self.readers.take_queued()) {
             return Err(SubprocessError::LeftoverResult);
         }
@@ -319,12 +355,9 @@ impl Session {
             match pump.step(&self.readers, pump.gate_paused())? {
                 Step::Pending => {}
                 Step::Control(control, line) => {
-                    match control_reply(
-                        *control,
-                        &line,
-                        interrupt.is_some()
-                            || interrupt_requested(interrupts, (self.config.terminated)()),
-                    ) {
+                    let interrupted = interrupt.is_some()
+                        || interrupt_requested(interrupts, (self.config.terminated)());
+                    match control_reply(*control, &line, interrupted, gate.as_deref()) {
                         Ok(Some(reply)) if self.send(&reply).is_err() => {
                             self.discard();
                             return Err(SubprocessError::Stale);
@@ -345,6 +378,17 @@ impl Session {
                     self.alive = false;
                     let exit_code = self.close();
                     break pump.finish(&self.readers, exit_code, true);
+                }
+            }
+            if let Some(reply) = gate.as_ref().and_then(|gate| {
+                gate.permission_reply(
+                    interrupt.is_some()
+                        || interrupt_requested(interrupts, (self.config.terminated)()),
+                )
+            }) {
+                if self.send(&reply).is_err() {
+                    self.discard();
+                    return Err(SubprocessError::Stale);
                 }
             }
         };
@@ -412,7 +456,7 @@ mod tests {
     use ralph_core::stream::{IterationMetadata, Usage};
 
     fn reply(line: &str) -> Result<Option<String>, ()> {
-        control_reply(ralph_core::worker::decode_line(line), line, false)
+        control_reply(ralph_core::worker::decode_line(line), line, false, None)
     }
 
     #[test]
@@ -461,7 +505,7 @@ mod tests {
         }
         let read = r#"{"type":"control_request","request_id":"r3","request":{"subtype":"can_use_tool","tool_name":"mcp__mcptools__execute","input":{}}}"#;
         assert_eq!(
-            control_reply(ralph_core::worker::decode_line(read), read, true).unwrap(),
+            control_reply(ralph_core::worker::decode_line(read), read, true, None).unwrap(),
             Some(deny_line("r3"))
         );
         let malformed = r#"{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","input":null}}"#;

@@ -1,5 +1,6 @@
 use super::*;
 use ralph_core::program_status::{Report, State};
+use ralph_core::worker::BlockedContent;
 use ralph_core::worker::PermissionOption;
 
 fn event() -> TurnEvent {

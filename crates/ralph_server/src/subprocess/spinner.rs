@@ -454,7 +454,7 @@ mod tests {
             *control,
             ralph_core::worker::ClaudeLine::Permission(_)
         ));
-        let reply = super::super::session::control_reply(*control, &line, false)
+        let reply = super::super::session::control_reply(*control, &line, false, None)
             .unwrap()
             .unwrap();
         let response: serde_json::Value = serde_json::from_str(&reply).unwrap();

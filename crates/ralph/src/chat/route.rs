@@ -30,6 +30,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 pub struct LocalRoute<'a> {
+    pub gate: &'a ralph_server::subprocess::OutputGate,
     pub inbox: &'a Inbox,
     pub watches: &'a Watches,
     pub schedule: &'a ScheduleStore,
@@ -100,6 +101,9 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         }
         Route::Answer(answer) => {
             let message = answer.and_then(|answer| {
+                if answer.worker == "@chat" {
+                    return Ok(ctx.gate.answer_permission(&answer.request, &answer.option));
+                }
                 ralph_server::workers::answer_permission(
                     ctx.store,
                     HANDOFF_TIMEOUT,
@@ -206,7 +210,9 @@ mod tests {
             effective: None,
         };
         let remote = RemoteStatus::default();
+        let gate = ralph_server::subprocess::OutputGate::new();
         let ctx = LocalRoute {
+            gate: &gate,
             inbox: &monitor.inbox,
             watches: &monitor.watches,
             schedule: &monitor.schedule,
@@ -243,6 +249,19 @@ mod tests {
         assert_eq!(
             String::from_utf8(out).unwrap(),
             "Usage: /answer <worker> <request> <option>\n"
+        );
+
+        let mut out = Vec::new();
+        let route = route_input(
+            "/answer @chat stale once",
+            0,
+            &EmptySubmit::Inbox,
+            &Default::default(),
+        );
+        run_local(route, &ctx, &mut out, || {}).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "No matching main chat permission request.\n"
         );
 
         let files = ralph_core::worker::HandoffFiles::opencode(dir.path(), "A");
