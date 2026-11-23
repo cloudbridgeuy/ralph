@@ -62,6 +62,9 @@ pub(crate) fn poll_input(timeout_ms: libc::c_int) -> Input {
         revents: 0,
     };
     let result = unsafe { libc::poll(&mut input, 1, timeout_ms) };
+    if result < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+        return Input::Closed;
+    }
     classify_poll(result, input.revents)
 }
 

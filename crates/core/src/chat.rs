@@ -203,13 +203,20 @@ pub fn mcp_config(exe: &Path, store: &Path, socket: &Path, imported: &Map<String
 }
 
 pub fn build_mcp_args(config_path: &Path, config: &Value) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "--mcp-config".to_string(),
         config_path.to_string_lossy().into_owned(),
         "--allowedTools".to_string(),
         allowed_tools(config),
         "--strict-mcp-config".to_string(),
-    ]
+    ];
+    if config["mcpServers"]
+        .as_object()
+        .is_some_and(|servers| servers.contains_key("mcptools"))
+    {
+        args.extend(["--permission-prompt-tool".to_string(), "stdio".to_string()]);
+    }
+    args
 }
 
 pub fn mcp_wildcards<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
@@ -220,13 +227,19 @@ pub fn mcp_wildcards<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<Str
 }
 
 fn allowed_tools(config: &Value) -> String {
-    mcp_wildcards(
-        config["mcpServers"]
-            .as_object()
-            .into_iter()
-            .flat_map(Map::keys),
-    )
-    .join(",")
+    config["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flat_map(Map::keys)
+        .map(|name| {
+            if name == "mcptools" {
+                "mcp__mcptools__find_tools".to_string()
+            } else {
+                format!("mcp__{name}__*")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 pub fn build_nap_args(store: &Path, run: &str) -> Vec<OsString> {
@@ -736,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn build_mcp_args_allows_every_imported_server() {
+    fn build_mcp_args_restricts_mcptools_and_allows_other_servers() {
         let mut imported = Map::new();
         imported.insert("mcptools".to_string(), json!({ "command": "mcptools" }));
         imported.insert("linear".to_string(), json!({ "command": "linear" }));
@@ -748,7 +761,7 @@ mod tests {
         );
         assert_eq!(
             build_mcp_args(Path::new("/s/mcp.json"), &config)[3],
-            "mcp__mcptools__*,mcp__linear__*,mcp__ralph-chat__*"
+            "mcp__mcptools__find_tools,mcp__linear__*,mcp__ralph-chat__*"
         );
     }
 

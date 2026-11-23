@@ -16,7 +16,7 @@ use ralph_core::program_status::{Phase, State};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{truncate_string, OutputBlock};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
-use ralph_core::worker::{BlockedContent, Report};
+use ralph_core::worker::{blocked_notice, Report};
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
@@ -100,27 +100,6 @@ fn push_notice(msg: &ServerMsg) -> Option<String> {
             Some(truncate_string(&strip_controls(&line), 240))
         }
         _ => None,
-    }
-}
-
-fn blocked_notice(thread: Option<&str>, worker: &str, content: Option<&BlockedContent>) -> String {
-    let label = thread.map_or_else(|| worker.to_string(), |name| format!("{name}/{worker}"));
-    match content {
-        Some(content) => {
-            let options: Vec<&str> = content
-                .options
-                .iter()
-                .map(|option| option.option_id.as_str())
-                .collect();
-            format!(
-                "{label} blocked: {} {} request {} options {}",
-                content.tool,
-                content.summary,
-                content.request_id,
-                options.join("|")
-            )
-        }
-        None => format!("{label} permission settled"),
     }
 }
 

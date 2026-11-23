@@ -1,3 +1,4 @@
+use ralph_core::worker::{blocked_notice, permission_response, ClaudePermission};
 use std::io::{self, Write};
 use std::sync::{Mutex, MutexGuard};
 
@@ -36,6 +37,15 @@ struct GateState {
     paused: bool,
     settled: bool,
     held: Held,
+    listening: bool,
+    permissions: Vec<PendingPermission>,
+}
+
+#[derive(Debug)]
+struct PendingPermission {
+    token: String,
+    ask: ClaudePermission,
+    answer: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -72,6 +82,118 @@ fn emit(chunk: &Chunk) {
 impl OutputGate {
     pub fn new() -> OutputGate {
         OutputGate::default()
+    }
+
+    pub fn listen(&self, active: bool) {
+        let mut state = self.lock();
+        state.listening = active;
+        if !active {
+            for pending in &mut state.permissions {
+                pending.answer = Some("deny".into());
+            }
+        }
+    }
+
+    pub(super) fn request_permission(&self, ask: ClaudePermission) -> bool {
+        let mut state = self.lock();
+        if !state.listening {
+            return false;
+        }
+        let mut bytes = [0u8; 16];
+        if getrandom::fill(&mut bytes).is_err() {
+            return false;
+        }
+        let token = bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let mut content = ask.content.clone();
+        content.request_id = token.clone();
+        content.tool = escaped_json(&content.tool);
+        content.summary = escaped_json(&content.summary);
+        let options = ask
+            .content
+            .options
+            .iter()
+            .map(|option| format!("/answer @chat {token} {}", option.option_id))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let notice = format!(
+            "\n{}\ninput: {}\n{options}\n",
+            blocked_notice(None, "@chat", Some(&content)),
+            escaped_json(&ask.input)
+        );
+        state.permissions.push(PendingPermission {
+            token,
+            ask,
+            answer: None,
+        });
+        if state.paused {
+            state.held.push(Stream::Stdout, &notice);
+        } else {
+            write_direct(Stream::Stdout, &notice);
+        }
+        true
+    }
+
+    pub fn answer_permission(&self, token: &str, option: &str) -> String {
+        let mut state = self.lock();
+        if !state.listening {
+            return "No matching main chat permission request.".into();
+        }
+        let Some(pending) = state
+            .permissions
+            .iter_mut()
+            .find(|p| p.token == token && p.answer.is_none())
+        else {
+            return "No matching main chat permission request.".into();
+        };
+        if !pending
+            .ask
+            .content
+            .options
+            .iter()
+            .any(|item| item.option_id == option)
+        {
+            return "Invalid option; use allow_once or deny.".into();
+        }
+        pending.answer = Some(option.to_string());
+        "Main chat permission answer recorded.".into()
+    }
+
+    pub(super) fn permission_reply(&self, deny: bool) -> Option<String> {
+        let mut state = self.lock();
+        let position = state
+            .permissions
+            .iter()
+            .position(|p| deny || p.answer.is_some())?;
+        let pending = state.permissions.remove(position);
+        let option = if deny || !state.listening {
+            "deny"
+        } else {
+            pending.answer.as_deref().unwrap_or("deny")
+        };
+        Some(permission_response(
+            &pending.ask.content.request_id,
+            option,
+            &pending.ask.input,
+        ))
+    }
+
+    pub(super) fn cancel_permission(&self, id: Option<&str>) {
+        let mut state = self.lock();
+        state
+            .permissions
+            .retain(|p| id.is_some_and(|id| p.ask.content.request_id != id));
+    }
+
+    pub(super) fn retire_duplicate(&self, id: &str) -> bool {
+        let mut state = self.lock();
+        let before = state.permissions.len();
+        state
+            .permissions
+            .retain(|pending| pending.ask.content.request_id != id);
+        state.permissions.len() != before
     }
 
     fn lock(&self) -> MutexGuard<'_, GateState> {
@@ -123,9 +245,99 @@ impl OutputGate {
     }
 }
 
+fn escaped_json(value: &impl serde::Serialize) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .chars()
+        .flat_map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+            .chars()
+            .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ask(id: &str, input: serde_json::Value) -> ClaudePermission {
+        let line = serde_json::json!({"type":"control_request","request_id":id,"request":{"subtype":"can_use_tool","tool_name":"mcp__mcptools__execute","input":input}}).to_string();
+        let ralph_core::worker::ClaudeLine::Permission(ask) =
+            ralph_core::worker::decode_line(&line)
+        else {
+            panic!()
+        };
+        ask
+    }
+
+    #[test]
+    fn permissions_bind_input_once_and_cancel_independently() {
+        let gate = OutputGate::new();
+        let input = serde_json::json!({"allowWrites":true,"code":"one\n\u{1b}[2J"});
+        assert!(!gate.request_permission(ask("same", input.clone())));
+        gate.listen(true);
+        gate.pause();
+        assert!(gate.request_permission(ask("same", input.clone())));
+        assert!(gate.request_permission(ask("other", serde_json::json!({"allowSpend":true}))));
+        let (first, second, notice) = {
+            let state = gate.lock();
+            (
+                state.permissions[0].token.clone(),
+                state.permissions[1].token.clone(),
+                state.held.chunks[0].text.clone(),
+            )
+        };
+        assert!(notice.contains("one\\n\\u001b[2J"));
+        assert!(notice.contains(&format!("/answer @chat {first} allow_once")));
+        gate.cancel_permission(Some("other"));
+        assert!(gate
+            .answer_permission(&second, "allow_once")
+            .contains("No matching"));
+        assert!(gate
+            .answer_permission(&first, "allow_once")
+            .contains("recorded"));
+        assert!(gate
+            .answer_permission(&first, "allow_once")
+            .contains("No matching"));
+        let reply: serde_json::Value =
+            serde_json::from_str(&gate.permission_reply(false).unwrap()).unwrap();
+        assert_eq!(reply["response"]["response"]["updatedInput"], input);
+        assert!(gate.request_permission(ask("same", serde_json::json!({"allowSpend":true}))));
+        let retry = gate.lock().permissions[0].token.clone();
+        assert_ne!(first, retry);
+        assert!(gate
+            .answer_permission(&first, "allow_once")
+            .contains("No matching"));
+        assert!(gate.retire_duplicate("same"));
+        assert!(gate
+            .answer_permission(&retry, "allow_once")
+            .contains("No matching"));
+        assert!(gate.request_permission(ask("same", serde_json::json!({"allowSpend":true}))));
+        let retry = gate.lock().permissions[0].token.clone();
+        gate.answer_permission(&retry, "allow_once");
+        gate.listen(false);
+        let reply: serde_json::Value =
+            serde_json::from_str(&gate.permission_reply(false).unwrap()).unwrap();
+        assert_eq!(reply["response"]["response"]["behavior"], "deny");
+    }
+
+    #[test]
+    fn cancellation_overrides_a_recorded_approval() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        gate.pause();
+        assert!(gate.request_permission(ask("r", serde_json::json!({"allowWrites":true}))));
+        let token = gate.lock().permissions[0].token.clone();
+        gate.answer_permission(&token, "allow_once");
+        let reply: serde_json::Value =
+            serde_json::from_str(&gate.permission_reply(true).unwrap()).unwrap();
+        assert_eq!(reply["response"]["response"]["behavior"], "deny");
+    }
 
     #[test]
     fn held_keeps_order_across_streams() {

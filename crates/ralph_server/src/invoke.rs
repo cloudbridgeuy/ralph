@@ -64,7 +64,12 @@ impl Isolation {
     }
 }
 
-fn isolation_args(home: Option<&Path>, auto_compact_off: bool, isolation: &Isolation) -> String {
+fn isolation_args(
+    home: Option<&Path>,
+    auto_compact_off: bool,
+    isolation: &Isolation,
+    mcptools: bool,
+) -> String {
     let mut settings = serde_json::Map::new();
     if auto_compact_off {
         settings.insert("autoCompactEnabled".to_string(), false.into());
@@ -81,6 +86,14 @@ fn isolation_args(home: Option<&Path>, auto_compact_off: bool, isolation: &Isola
         .collect();
     if !excludes.is_empty() {
         settings.insert("claudeMdExcludes".to_string(), excludes.into());
+    }
+    if mcptools {
+        settings.insert(
+            "permissions".to_string(),
+            serde_json::json!({
+                "ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]
+            }),
+        );
     }
     settings.insert("totalTokensReminder".to_string(), "off".into());
     let json = serde_json::Value::Object(settings).to_string();
@@ -131,7 +144,7 @@ fn memory_command(model: &str, system: &str, isolation: &Isolation, home: Option
     format!(
         "{}claude --verbose --model {model} {system}{} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
         config_dir_env(isolation.config_dir.as_deref(), home),
-        isolation_args(home, false, isolation),
+        isolation_args(home, false, isolation, false),
     )
 }
 
@@ -142,6 +155,9 @@ pub fn build_chat_command(
     home: Option<&Path>,
     isolation: &Isolation,
 ) -> String {
+    let mcptools = extra_args
+        .windows(2)
+        .any(|args| args[0] == "--permission-prompt-tool" && args[1] == "stdio");
     let extra = extra_args
         .iter()
         .map(|arg| format!(" {}", shell_quote(arg)))
@@ -151,7 +167,7 @@ pub fn build_chat_command(
         CHAT_DISABLE_BACKGROUND_TASKS_ENV,
         config_dir_env(isolation.config_dir.as_deref(), home),
         permission_mode,
-        isolation_args(home, true, isolation),
+        isolation_args(home, true, isolation, mcptools),
         shell_quote(&system_prompt_file.to_string_lossy()),
         extra
     )
@@ -279,9 +295,9 @@ mod tests {
     #[test]
     fn isolation_args_turns_auto_memory_off_only_when_asked() {
         let off = r#""autoMemoryEnabled":false"#;
-        let nap = isolation_args(None, false, &Isolation::for_nap(None));
+        let nap = isolation_args(None, false, &Isolation::for_nap(None), false);
         assert!(nap.contains(off), "{nap}");
-        let chat = isolation_args(None, true, &Isolation::default());
+        let chat = isolation_args(None, true, &Isolation::default(), false);
         assert!(!chat.contains("autoMemoryEnabled"), "{chat}");
     }
 
@@ -325,6 +341,77 @@ mod tests {
         assert!(cmd.contains("--input-format stream-json --output-format stream-json"));
         assert!(cmd.ends_with(" -p"));
         assert!(cmd.contains(r#"--settings '{"autoCompactEnabled":false,"#));
+    }
+
+    #[test]
+    fn chat_mcptools_uses_exact_ask_rules_and_stdio() {
+        let config =
+            serde_json::json!({"mcpServers": {"mcptools": {}, "ralph-chat": {}, "linear": {}}});
+        let args = ralph_core::chat::build_mcp_args(Path::new("/s/mcp.json"), &config);
+        for (mode, user_settings) in [("auto", false), ("dontAsk", false), ("auto", true)] {
+            let isolation = Isolation {
+                user_settings,
+                ..Isolation::default()
+            };
+            let cmd = build_chat_command(Path::new("/s/p.md"), &args, mode, None, &isolation);
+            assert!(cmd.contains("'--permission-prompt-tool' 'stdio'"), "{cmd}");
+            assert_eq!(cmd.matches("--settings ").count(), 1);
+            let settings = cmd
+                .split("--settings '")
+                .nth(1)
+                .unwrap()
+                .split('\'')
+                .next()
+                .unwrap();
+            let settings: serde_json::Value = serde_json::from_str(settings).unwrap();
+            assert_eq!(
+                settings,
+                serde_json::json!({
+                    "autoCompactEnabled": false,
+                    "permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]},
+                    "totalTokensReminder": "off"
+                })
+            );
+            assert!(cmd.contains(&format!("--permission-mode {mode} ")));
+            assert!(cmd.contains(if user_settings {
+                "--setting-sources user,project,local"
+            } else {
+                "--setting-sources project,local"
+            }));
+        }
+        let allowed: std::collections::BTreeSet<_> = args[3].split(',').collect();
+        assert_eq!(
+            allowed,
+            [
+                "mcp__linear__*",
+                "mcp__mcptools__find_tools",
+                "mcp__ralph-chat__*"
+            ]
+            .into()
+        );
+        let mut without_discovery = args.clone();
+        without_discovery[3] = "mcp__ralph-chat__*".into();
+        let cmd = build_chat_command(
+            Path::new("/s/p.md"),
+            &without_discovery,
+            "auto",
+            None,
+            &Isolation::default(),
+        );
+        assert!(cmd.contains("mcp__mcptools__execute"));
+        let no_mcptools = ralph_core::chat::build_mcp_args(
+            Path::new("/s/mcp.json"),
+            &serde_json::json!({"mcpServers": {"ralph-chat": {}}}),
+        );
+        let cmd = build_chat_command(
+            Path::new("/s/p.md"),
+            &no_mcptools,
+            "auto",
+            None,
+            &Isolation::default(),
+        );
+        assert!(!cmd.contains("--permission-prompt-tool"));
+        assert!(!cmd.contains("mcp__mcptools__"));
     }
 
     #[test]
@@ -423,6 +510,7 @@ mod tests {
             Some(Path::new("/home/u")),
             true,
             &Isolation::for_chat(&chat, Path::new("/work"), None),
+            false,
         )
     }
 
