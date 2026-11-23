@@ -10,7 +10,6 @@ pub(crate) fn syntaxes() -> &'static SyntaxSet {
     SYNTAXES.get_or_init(two_face::syntax::extra_newlines)
 }
 
-#[allow(dead_code, reason = "the render route calls this in the next commit")]
 pub fn render_markdown(markdown: &str) -> String {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;

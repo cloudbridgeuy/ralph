@@ -1,6 +1,6 @@
 # ralph web Command
 
-`ralph web [--store <DIR>] [--port <N>]` serves a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health` and `GET /tokens.css`.
+`ralph web [--store <DIR>] [--port <N>]` serves a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `POST /api/render` and `GET /tokens.css`.
 
 ## Code Locations
 
@@ -69,6 +69,10 @@
 | no token or wrong token | 401 `{"error":"unauthorized"}` |
 | `GET /api/health` | 200 `{"status":"ok","version":"<version>"}` |
 | other method on `/api/health` | 405 with `Allow: GET` |
+| `POST /api/render` with `application/json` and `{"markdown": "<text>"}` | 200 `{"html":"<r-prose>…</r-prose>"}` from `render_markdown()`, with `no-store`, `nosniff` and `no-referrer` |
+| `POST /api/render` with another content type | 415 `{"error":"unsupported media type"}`; `; charset=utf-8` and any case are accepted |
+| `POST /api/render` with invalid JSON, no `markdown`, a non-string `markdown` or a non-UTF-8 body | 400 `{"error":"bad request"}` |
+| other method on `/api/render` | 405 with `Allow: POST` |
 | `GET /` with a valid `?token=` | 302 to `/` with `Set-Cookie` |
 | `GET /` with the cookie or Bearer token | 200 `text/html` shell, with a `Content-Security-Policy` |
 | `GET /assets/app.css` | 200 `text/css` |
@@ -179,6 +183,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - Each case compares the answer to `crates/ralph_api/tests/golden/<case>.txt`. A golden holds the status, the stable headers (`Content-Type`, `Cache-Control`, `Allow`, `Location`, `Set-Cookie`, `Content-Security-Policy`, `Referrer-Policy`, `X-Content-Type-Options`) and the body.
 - `crates/ralph_api/tests/shell_contract.rs` does the same for the shell, `/assets/*` and the cookie hand-off. The font test checks bytes, with no golden. Cookie names in goldens show as `ralph_token_<port>`.
 - `crates/ralph_api/tests/tokens_contract.rs` does the same for `/tokens.css`. Its goldens are `crates/ralph_api/tests/golden/tokens_*.txt`.
+- `crates/ralph_api/tests/render_contract.rs` does the same for `POST /api/render`. Its goldens are `crates/ralph_api/tests/golden/render_*.txt`: ok, a hostile `<script>` input, 400, 401, 403, 405, 413 and 415. The pure parse and response logic is in `crates/ralph_api/src/render_api.rs`.
 - Every new route ships with golden cases. Change a golden only as a compatibility decision, and say so in the commit.
 - A missing or different golden fails the test with a line diff.
 - To write or refresh goldens, run `UPDATE_GOLDEN=1 cargo test -p ralph_api --test health_contract`. Read every changed file before you commit.

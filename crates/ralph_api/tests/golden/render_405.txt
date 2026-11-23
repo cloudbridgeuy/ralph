@@ -1,0 +1,6 @@
+status: 405
+Content-Type: application/json
+Cache-Control: no-store
+Allow: POST
+
+{"error":"method not allowed"}

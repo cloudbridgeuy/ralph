@@ -1,11 +1,12 @@
 use crate::assets::{self, Asset, SHELL_PATH};
 use crate::catalogue;
-use crate::render_api::reject_oversize;
+use crate::render_api::{reject_oversize, render};
 use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
 const HEALTH_PATH: &str = "/api/health";
 const TOKENS_PATH: &str = "/tokens.css";
+const RENDER_PATH: &str = "/api/render";
 const CATALOGUE_PATH: &str = "/catalogue";
 const CATALOGUE_FIXTURE: &str = include_str!("../fixtures/catalogue.json");
 const HTML: &str = "text/html; charset=utf-8";
@@ -66,6 +67,8 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (HEALTH_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (TOKENS_PATH, "GET") => css_response(&config.tokens_css),
         (TOKENS_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
+        (RENDER_PATH, "POST") => render(request),
+        (RENDER_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "POST")),
         (CATALOGUE_PATH, "GET") => catalogue_response(),
         (CATALOGUE_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         _ => match assets::find(&request.path) {
@@ -165,6 +168,16 @@ fn css_response(body: &str) -> ApiResponse {
 
 pub(crate) fn error(status: u16, message: &str) -> ApiResponse {
     json_response(status, serde_json::json!({ "error": message }))
+}
+
+pub(crate) fn json_ok(body: serde_json::Value) -> ApiResponse {
+    ApiResponse {
+        status: 200,
+        content_type: JSON,
+        headers: vec![NO_STORE, NO_REFERRER, NO_SNIFF],
+        body: body.to_string().into_bytes(),
+        set_cookie: None,
+    }
 }
 
 fn json_response(status: u16, body: serde_json::Value) -> ApiResponse {

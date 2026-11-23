@@ -1,0 +1,7 @@
+status: 200
+Content-Type: application/json
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+
+{"html":"<r-prose><p>&lt;script&gt;alert(1)&lt;/script&gt; [a](javascript:x)</p></r-prose>"}

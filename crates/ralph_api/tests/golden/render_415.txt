@@ -1,0 +1,5 @@
+status: 415
+Content-Type: application/json
+Cache-Control: no-store
+
+{"error":"unsupported media type"}
