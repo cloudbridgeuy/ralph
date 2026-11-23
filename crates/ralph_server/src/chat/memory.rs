@@ -25,8 +25,12 @@ mod call;
 #[cfg(test)]
 mod call_tests;
 mod nap;
+mod peek;
+#[cfg(test)]
+mod peek_tests;
 
 pub use call::Answer;
+pub use peek::{list_threads, peek, thread_exists, Peek, ThreadInfo};
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
 const SUGGESTIONS_FILE: &str = "suggestions.jsonl";
