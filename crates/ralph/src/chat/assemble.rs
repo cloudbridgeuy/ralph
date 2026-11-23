@@ -88,7 +88,6 @@ pub(crate) struct AssembleOptions<'a> {
 pub(crate) struct Assembled {
     pub session: Session,
     pub guard: SocketGuard,
-    pub plugin: Option<tempfile::TempDir>,
     pub skill_dirs: Vec<PathBuf>,
     pub send_it_warnings: Vec<String>,
     pub close: CloseGuard,
@@ -119,39 +118,6 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
     let last_ping: Stamp = Arc::default();
     let backend: Arc<dyn ChatBackend> = Arc::new(ClaudeBackend);
     let caps = backend.capabilities();
-    let turn = Turn {
-        store: Store::new(store_dir.to_path_buf()),
-        store_dir: store_dir.to_path_buf(),
-        fork: options.fork,
-        mcp_args: std::mem::take(&mut wiring.mcp_args),
-        system_prompt_file: wiring.system_prompt_file.clone(),
-        permission_mode: settings.permission_mode.clone(),
-        plugin_args: std::mem::take(&mut wiring.plugin_args),
-        model_args: options.model_args,
-        skills: std::mem::take(&mut wiring.skills),
-        custom_prompt: options.custom_prompt,
-        reply_images: options.output.reply_images,
-        isolation,
-        backend,
-        session: Arc::new(Mutex::new(None)),
-        process_turns: AtomicU64::new(0),
-        reset: Mutex::new(None),
-        live: Arc::clone(&live),
-        reset_limits: settings.tuning.reset_limits,
-        recent_history_tokens: settings.tuning.recent_history_tokens,
-        gate: options.output.gate,
-        run: run.clone(),
-        suggestions: SuggestionCell::default(),
-        last_turn_end: Arc::default(),
-        identity: Arc::default(),
-        last_cost_usd: Mutex::new(None),
-        timing: Mutex::default(),
-        seen_len: Mutex::new(None),
-        sink: options.output.sink,
-        show_tools: options.output.show_tools,
-        terminated: signal::is_terminated,
-        exe: Some(settings.exe.clone()),
-    };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
         store_dir,
@@ -168,9 +134,9 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
             settings.permission_mode.clone(),
             options.worktree_dir,
         ),
-        live,
+        live: Arc::clone(&live),
         last_ping,
-        run,
+        run: run.clone(),
         caps,
     }));
     let roster = {
@@ -189,7 +155,42 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
     let send_it = SendIt::new(store_dir, send_it_limits, options.events)?;
     let close = monitor.watches.close_guard();
     monitor.watches.restore();
-    serve(&monitor, wiring.socket, &send_it, roster);
+    let socket = serve(&monitor, wiring.socket, &send_it, roster);
+    let turn = Turn {
+        store: Store::new(store_dir.to_path_buf()),
+        store_dir: store_dir.to_path_buf(),
+        fork: options.fork,
+        mcp_args: std::mem::take(&mut wiring.mcp_args),
+        runtime_files: wiring.runtime_files,
+        socket,
+        system_prompt_file: wiring.system_prompt_file.clone(),
+        permission_mode: settings.permission_mode.clone(),
+        plugin_args: std::mem::take(&mut wiring.plugin_args),
+        model_args: options.model_args,
+        skills: std::mem::take(&mut wiring.skills),
+        custom_prompt: options.custom_prompt,
+        reply_images: options.output.reply_images,
+        isolation,
+        backend,
+        session: Arc::new(Mutex::new(None)),
+        process_turns: AtomicU64::new(0),
+        reset: Mutex::new(None),
+        live,
+        reset_limits: settings.tuning.reset_limits,
+        recent_history_tokens: settings.tuning.recent_history_tokens,
+        gate: options.output.gate,
+        run,
+        suggestions: SuggestionCell::default(),
+        last_turn_end: Arc::default(),
+        identity: Arc::default(),
+        last_cost_usd: Mutex::new(None),
+        timing: Mutex::default(),
+        seen_len: Mutex::new(None),
+        sink: options.output.sink,
+        show_tools: options.output.show_tools,
+        terminated: signal::is_terminated,
+        exe: Some(settings.exe.clone()),
+    };
     let session = Session {
         turn,
         core: monitor,
@@ -200,7 +201,6 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
     Ok(Assembled {
         session,
         guard: wiring.guard,
-        plugin: wiring.plugin,
         skill_dirs: wiring.skill_dirs,
         send_it_warnings,
         close,

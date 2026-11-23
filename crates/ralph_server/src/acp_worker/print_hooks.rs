@@ -1,10 +1,10 @@
 use crate::cursor_owner::write_file;
 use crate::hook_bridge::{deliver, HookQueue, HookSocket};
 use crate::permission_queue::{host_process_token, PermissionQueue};
-use crate::wire::store::{current_uid, ensure_store_root};
+use crate::wire::store::{default_runtime_root, ensure_store_root};
 use crate::worker_events::Events;
 use crate::worker_mcp::Inbox;
-use ralph_core::chat_socket::{check_socket_path, runtime_root, StoreKey};
+use ralph_core::chat_socket::{check_socket_path, StoreKey};
 use ralph_core::worker::{
     add_bridge_hook, bridge_hook_command, hook_socket_name, remove_bridge_hook, PermissionAnswer,
     SpawnRequest, CURSOR_HOOKS_FILE,
@@ -31,7 +31,7 @@ impl PrintHooks {
         store: &Path,
         events: &Events,
     ) -> Result<Self, String> {
-        let root = runtime_root(current_uid());
+        let root = default_runtime_root().map_err(|e| format!("runtime root: {e}"))?;
         ensure_store_root(&root).map_err(|e| format!("{}: {e}", root.display()))?;
         let serial = SOCKET_SERIAL.fetch_add(1, Ordering::SeqCst);
         let path = root.join(hook_socket_name(

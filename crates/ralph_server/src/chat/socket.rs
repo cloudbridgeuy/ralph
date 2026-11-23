@@ -1,12 +1,12 @@
 pub mod serve;
 
-use ralph_core::chat_socket::{runtime_dir_name, sidecar_name, socket_file_name, StoreKey};
+use ralph_core::chat_socket::{chat_files_dir, sidecar_name, socket_file_name, StoreKey};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct SocketFiles {
-    pub dir: PathBuf,
+    pub files_dir: PathBuf,
     pub socket: PathBuf,
     pub sidecar: PathBuf,
 }
@@ -19,16 +19,16 @@ pub struct SocketPlace<'a> {
 
 impl SocketFiles {
     pub fn new(place: &SocketPlace, pid: u32) -> Self {
-        let private = place.root.join(runtime_dir_name(&place.key, pid));
         Self {
-            socket: private.join(socket_file_name()),
-            dir: private,
+            files_dir: chat_files_dir(place.store, pid),
+            socket: place.root.join(socket_file_name(&place.key, pid)),
             sidecar: place.store.join(sidecar_name(pid)),
         }
     }
 
     pub fn remove(&self) {
-        fs::remove_dir_all(&self.dir).ok();
+        fs::remove_file(&self.socket).ok();
+        fs::remove_dir_all(&self.files_dir).ok();
         fs::remove_file(&self.sidecar).ok();
     }
 }

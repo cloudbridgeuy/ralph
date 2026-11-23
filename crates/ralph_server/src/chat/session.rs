@@ -9,16 +9,16 @@ use crate::chat::schedule_worker::alive_worker_ids;
 use crate::chat::send_it::{Screen, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
-    write_skill_plugin,
+    write_skill_plugin, RuntimeFiles,
 };
 use crate::chat::snapshots::TurnSnapshots;
-use crate::chat::socket::serve::{ChatSocket, Shared, SocketGuard};
+use crate::chat::socket::serve::{ChatSocket, Shared, SocketGuard, SocketHandle};
 use crate::chat::turn::{Turn, TurnOutcome};
 use crate::config::{AppConfig, ChatSection};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::schedule_store::ScheduleStore;
 use crate::watches::{locked, Watches};
-use crate::wire::store::current_uid;
+use crate::wire::store::default_runtime_root;
 use crate::worker_mcp::Inbox;
 use crate::workers::{running_workers, Workers};
 use ralph_core::cancel::CancelToken;
@@ -32,7 +32,7 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_process::UsageTail;
 use ralph_core::chat_send_it::{propose_prompt, usage, Limits, Seen, SendItCommand, Ticked};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, ChatSkill, SkillSources};
-use ralph_core::chat_socket::{runtime_root, system_prompt_path};
+use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{latest_states, Status};
 use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
@@ -95,10 +95,10 @@ pub struct Wiring {
     pub socket: ChatSocket,
     pub guard: SocketGuard,
     pub mcp_args: Vec<String>,
+    pub runtime_files: RuntimeFiles,
     pub system_prompt_file: PathBuf,
     pub skill_dirs: Vec<PathBuf>,
     pub skills: Vec<ChatSkill>,
-    pub plugin: Option<tempfile::TempDir>,
     pub plugin_args: Vec<String>,
 }
 
@@ -106,14 +106,20 @@ impl Wiring {
     pub fn open(wiring: &WiringConfig) -> io::Result<Self> {
         sweep_stale_server_records();
         let chat = &wiring.config.chat;
-        let socket = ChatSocket::bind(wiring.store_dir, &runtime_root(current_uid()))?;
+        let socket = ChatSocket::bind(wiring.store_dir, &default_runtime_root()?)?;
         let guard = SocketGuard(socket.files().clone());
         let imported = select_servers(
             &read_claude_config(wiring.config.claude.config_dir.as_deref()),
             &chat.mcp_servers,
         );
-        let mcp_args = write_mcp_config(wiring.store_dir, socket.path(), wiring.exe, &imported)?;
-        let system_prompt_file = system_prompt_path(socket.path());
+        let mcp = write_mcp_config(
+            wiring.store_dir,
+            socket.files_dir(),
+            socket.path(),
+            wiring.exe,
+            &imported,
+        )?;
+        let system_prompt_file = system_prompt_path(socket.files_dir());
         let skill_dirs = resolve_skills(
             &SkillSources {
                 cli: wiring.cli_skills,
@@ -123,19 +129,16 @@ impl Wiring {
             wiring.home,
         );
         let skills = link_skills(usable_skills(skill_dirs.clone()));
-        let plugin = write_skill_plugin(&skills)?;
-        let plugin_args = plugin
-            .as_ref()
-            .map(|plugin| build_plugin_args(plugin.path()))
-            .unwrap_or_default();
+        let plugin = write_skill_plugin(socket.files_dir(), &skills)?;
+        let plugin_args = plugin.as_deref().map(build_plugin_args).unwrap_or_default();
         Ok(Self {
             socket,
             guard,
-            mcp_args,
+            mcp_args: mcp.args,
+            runtime_files: mcp.files,
             system_prompt_file,
             skill_dirs,
             skills,
-            plugin,
             plugin_args,
         })
     }
@@ -201,8 +204,8 @@ pub fn serve(
     socket: ChatSocket,
     send_it: &SendIt,
     roster: impl Fn() -> String + Send + Sync + 'static,
-) {
-    socket.serve(
+) -> SocketHandle {
+    let handle = socket.serve(
         Shared {
             store: Store::new(core.store.dir().to_path_buf()),
             workers: core.workers.clone(),
@@ -213,6 +216,7 @@ pub fn serve(
         roster,
     );
     restore_schedule(&core.schedule, &alive_worker_ids(&core.store_dir));
+    handle
 }
 
 pub fn trigger_for(sending: bool) -> Trigger {

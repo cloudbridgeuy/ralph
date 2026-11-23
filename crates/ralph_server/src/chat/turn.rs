@@ -2,6 +2,8 @@ use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::backend::{ChatBackend, ChatSession};
 use crate::chat::fork::{fork_view, Fork};
 use crate::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
+use crate::chat::skills::{ensure_runtime_files, RuntimeFiles};
+use crate::chat::socket::serve::SocketHandle;
 use crate::chat::suggestion::SuggestionCell;
 use crate::history_log;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
@@ -138,6 +140,8 @@ pub struct Turn {
     pub store_dir: PathBuf,
     pub fork: Option<Fork>,
     pub mcp_args: Vec<String>,
+    pub runtime_files: RuntimeFiles,
+    pub socket: SocketHandle,
     pub system_prompt_file: PathBuf,
     pub permission_mode: String,
     pub plugin_args: Vec<String>,
@@ -493,6 +497,10 @@ impl Turn {
         }
     }
 
+    fn ensure_runtime(&self) -> io::Result<()> {
+        ensure_runtime_files(&self.runtime_files, &self.skills, Some(&self.socket))
+    }
+
     fn attempt(
         &self,
         reused: Option<Box<dyn ChatSession>>,
@@ -504,6 +512,9 @@ impl Turn {
         Result<StreamingSubprocessResult, SubprocessError>,
         bool,
     ) {
+        if let Err(e) = self.ensure_runtime() {
+            return (reused, Err(e.into()), false);
+        }
         let was_reused = reused.is_some();
         let started = match reused {
             Some(live) => Ok(live),
