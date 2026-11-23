@@ -5,6 +5,7 @@ use syntect::util::LinesWithEndings;
 use crate::render::escape;
 
 const MAX_HIGHLIGHT_BYTES: usize = 64 * 1024;
+const MAX_LINE_BYTES: usize = 4 * 1024;
 const MAX_LANG_LEN: usize = 32;
 const CLASS_STYLE: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "t-" };
 
@@ -33,8 +34,12 @@ fn valid_lang(raw: &str) -> Option<String> {
     ok.then_some(lang)
 }
 
+fn has_long_line(source: &str) -> bool {
+    source.lines().any(|line| line.len() > MAX_LINE_BYTES)
+}
+
 fn classed(syntaxes: &SyntaxSet, lang: Option<&str>, source: &str) -> Option<String> {
-    if source.len() > MAX_HIGHLIGHT_BYTES {
+    if source.len() > MAX_HIGHLIGHT_BYTES || has_long_line(source) {
         return None;
     }
     let syntax = syntaxes.find_syntax_by_token(lang?)?;
@@ -49,7 +54,9 @@ fn classed(syntaxes: &SyntaxSet, lang: Option<&str>, source: &str) -> Option<Str
 
 #[cfg(test)]
 mod tests {
-    use super::{highlight, valid_lang, CodeBlock, MAX_HIGHLIGHT_BYTES};
+    use super::{
+        has_long_line, highlight, valid_lang, CodeBlock, MAX_HIGHLIGHT_BYTES, MAX_LINE_BYTES,
+    };
     use crate::render::golden::{assert_golden, long_text};
     use crate::render::prose::syntaxes;
 
@@ -82,6 +89,26 @@ mod tests {
         let out = render("rust", &source);
         assert!(!out.contains("<span"));
         assert_golden("code_very_long", &out.replace(&source, "SOURCE"));
+    }
+
+    #[test]
+    fn a_line_over_the_cap_makes_the_block_plain_text() {
+        let source = format!("//{}\n", "a".repeat(5 * 1024));
+        let out = render("rust", &source);
+        assert!(!out.contains("<span"));
+        assert!(out.contains(&source));
+    }
+
+    #[test]
+    fn a_line_exactly_at_the_cap_still_highlights() {
+        let source = format!("//{}\n", "a".repeat(MAX_LINE_BYTES - 2));
+        assert!(render("rust", &source).contains("<span"));
+        assert!(!has_long_line(&source));
+        assert!(has_long_line(&format!(
+            "a\n{}\n",
+            "b".repeat(MAX_LINE_BYTES + 1)
+        )));
+        assert!(!has_long_line(""));
     }
 
     #[test]
