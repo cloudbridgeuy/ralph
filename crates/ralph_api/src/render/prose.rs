@@ -71,7 +71,7 @@ mod tests {
     fn deep_block_quotes_are_capped() {
         let md = "> ".repeat(10_000) + "deep";
         let out = render_markdown(&md);
-        assert!(out.matches("<blockquote>").count() <= 64);
+        assert_eq!(out.matches("<blockquote>").count(), 64);
         assert!(out.contains("deep"));
     }
 }

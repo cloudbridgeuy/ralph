@@ -368,8 +368,12 @@ mod tests {
 
     #[test]
     fn code_inside_deep_nesting_still_renders_escaped() {
-        let md = "> ".repeat(MAX_DEPTH + 5) + "```\n<a>\n```";
-        assert!(!html(&md).contains("<a>"));
+        let prefix = "> ".repeat(MAX_DEPTH + 5);
+        let md = format!("{prefix}```\n{prefix}<a>\n{prefix}```\n");
+        let out = html(&md);
+        assert_eq!(out.matches("<blockquote>").count(), MAX_DEPTH);
+        assert!(out.contains("&lt;a&gt;"));
+        assert!(!out.contains("<a>"));
     }
 
     #[test]
