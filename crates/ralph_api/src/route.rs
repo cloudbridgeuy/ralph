@@ -78,6 +78,13 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
     }
 }
 
+pub(crate) fn accepts_body(request: &ApiRequest, config: &ApiConfig, token: &Token) -> bool {
+    request.method == "POST"
+        && request.path == RENDER_PATH
+        && host_allowed(request.host.as_deref(), &config.allowed_hosts)
+        && authorized(request, token, &config.cookie_name)
+}
+
 fn catalogue_response() -> ApiResponse {
     ApiResponse {
         status: 200,
@@ -268,6 +275,34 @@ mod tests {
         req.host = Some("evil.test".to_string());
         req.body_too_large = true;
         assert_eq!(route(&req, &config(), &token()).status, 403);
+    }
+
+    #[test]
+    fn only_an_authorised_render_post_accepts_a_body() {
+        let (config, token) = (config(), token());
+        assert!(accepts_body(
+            &authed("POST", "/api/render"),
+            &config,
+            &token
+        ));
+        assert!(!accepts_body(
+            &authed("GET", "/api/render"),
+            &config,
+            &token
+        ));
+        assert!(!accepts_body(
+            &authed("POST", "/api/health"),
+            &config,
+            &token
+        ));
+        assert!(!accepts_body(&authed("POST", "/x"), &config, &token));
+        let unauthorised = request("POST", "/api/render", "");
+        assert!(!accepts_body(&unauthorised, &config, &token));
+        let mut bad_host = authed("POST", "/api/render");
+        bad_host.host = Some("evil.test".to_string());
+        assert!(!accepts_body(&bad_host, &config, &token));
+        bad_host.host = None;
+        assert!(!accepts_body(&bad_host, &config, &token));
     }
 
     #[test]

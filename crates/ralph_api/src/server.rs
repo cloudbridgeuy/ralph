@@ -1,7 +1,7 @@
 use crate::addr::{check_bind, BindError, BindPolicy};
 use crate::admit::{admit, Admission, MAX_HANDLERS};
 use crate::render_api::{exceeds_cap, plan_body, BodyPlan};
-use crate::route::{overloaded, route, ApiConfig, ApiRequest, ApiResponse};
+use crate::route::{accepts_body, overloaded, route, ApiConfig, ApiRequest, ApiResponse};
 use crate::token::Token;
 use ralph_server::warn::{warn, warn_if_err};
 use std::io::{Cursor, Read};
@@ -64,7 +64,7 @@ fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Ar
         let _slot = slot;
         let (config, token) = &*shared;
         let mut request = request;
-        let response = route(&to_api_request(&mut request), config, token);
+        let response = route(&to_api_request(&mut request, config, token), config, token);
         respond(request, response);
     });
 }
@@ -133,8 +133,8 @@ fn header_value(request: &Request, name: &'static str) -> Option<String> {
         .map(|header| header.value.to_string())
 }
 
-fn read_body(request: &mut Request) -> (Vec<u8>, bool) {
-    let limit = match plan_body(request.body_length()) {
+fn read_body(request: &mut Request, plan: BodyPlan) -> (Vec<u8>, bool) {
+    let limit = match plan {
         BodyPlan::Skip => return (Vec::new(), false),
         BodyPlan::TooLarge => return (Vec::new(), true),
         BodyPlan::Read(limit) => limit,
@@ -153,20 +153,22 @@ fn read_body(request: &mut Request) -> (Vec<u8>, bool) {
     }
 }
 
-fn to_api_request(request: &mut Request) -> ApiRequest {
-    let (body, body_too_large) = read_body(request);
+fn to_api_request(request: &mut Request, config: &ApiConfig, token: &Token) -> ApiRequest {
     let (path, query) = split_url(request.url());
-    ApiRequest {
+    let mut api = ApiRequest {
         method: request.method().as_str().to_string(),
         path: path.to_string(),
         query: query.to_string(),
         host: header_value(request, "Host"),
         authorization: header_value(request, "Authorization"),
         cookies: header_values(request, "Cookie"),
-        body,
+        body: Vec::new(),
         content_type: header_value(request, "Content-Type"),
-        body_too_large,
-    }
+        body_too_large: false,
+    };
+    let plan = plan_body(request.body_length(), accepts_body(&api, config, token));
+    (api.body, api.body_too_large) = read_body(request, plan);
+    api
 }
 
 fn to_http_response(response: ApiResponse) -> Response<Cursor<Vec<u8>>> {

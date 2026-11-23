@@ -10,10 +10,11 @@ pub(crate) enum BodyPlan {
     TooLarge,
 }
 
-pub(crate) fn plan_body(declared: Option<usize>) -> BodyPlan {
+pub(crate) fn plan_body(declared: Option<usize>, accepts: bool) -> BodyPlan {
     match declared {
-        Some(0) => BodyPlan::Skip,
         Some(length) if length > MAX_BODY => BodyPlan::TooLarge,
+        _ if !accepts => BodyPlan::Skip,
+        Some(0) => BodyPlan::Skip,
         Some(length) => BodyPlan::Read(length),
         None => BodyPlan::Read(MAX_BODY + 1),
     }
@@ -71,23 +72,35 @@ mod tests {
 
     #[test]
     fn zero_length_is_skipped() {
-        assert_eq!(plan_body(Some(0)), BodyPlan::Skip);
+        assert_eq!(plan_body(Some(0), true), BodyPlan::Skip);
+    }
+
+    #[test]
+    fn a_body_that_is_not_accepted_is_never_read() {
+        assert_eq!(plan_body(Some(MAX_BODY), false), BodyPlan::Skip);
+        assert_eq!(plan_body(Some(10), false), BodyPlan::Skip);
+        assert_eq!(plan_body(None, false), BodyPlan::Skip);
+    }
+
+    #[test]
+    fn a_declared_length_over_the_cap_is_refused_even_when_not_accepted() {
+        assert_eq!(plan_body(Some(MAX_BODY + 1), false), BodyPlan::TooLarge);
     }
 
     #[test]
     fn length_at_the_cap_is_read_in_full() {
-        assert_eq!(plan_body(Some(MAX_BODY)), BodyPlan::Read(MAX_BODY));
+        assert_eq!(plan_body(Some(MAX_BODY), true), BodyPlan::Read(MAX_BODY));
     }
 
     #[test]
     fn length_over_the_cap_is_refused_before_reading() {
-        assert_eq!(plan_body(Some(MAX_BODY + 1)), BodyPlan::TooLarge);
-        assert_eq!(plan_body(Some(usize::MAX)), BodyPlan::TooLarge);
+        assert_eq!(plan_body(Some(MAX_BODY + 1), true), BodyPlan::TooLarge);
+        assert_eq!(plan_body(Some(usize::MAX), true), BodyPlan::TooLarge);
     }
 
     #[test]
     fn unknown_length_reads_one_byte_past_the_cap() {
-        assert_eq!(plan_body(None), BodyPlan::Read(MAX_BODY + 1));
+        assert_eq!(plan_body(None, true), BodyPlan::Read(MAX_BODY + 1));
     }
 
     #[test]
