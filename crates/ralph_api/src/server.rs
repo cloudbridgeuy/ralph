@@ -1,6 +1,6 @@
 use crate::addr::{check_bind, BindError, BindPolicy};
 use crate::admit::{admit, Admission, MAX_HANDLERS};
-use crate::render_api::{exceeds_cap, plan_body, BodyPlan};
+use crate::render_api::{plan_body, read_outcome, BodyPlan};
 use crate::route::{accepts_body, overloaded, route, ApiConfig, ApiRequest, ApiResponse};
 use crate::token::Token;
 use ralph_server::warn::{warn, warn_if_err};
@@ -144,13 +144,7 @@ fn read_body(request: &mut Request, plan: BodyPlan) -> (Vec<u8>, bool) {
         .as_reader()
         .take(limit as u64)
         .read_to_end(&mut body);
-    match read {
-        Ok(_) => {
-            let too_large = exceeds_cap(body.len());
-            (body, too_large)
-        }
-        Err(_) => (Vec::new(), false),
-    }
+    read_outcome(body, read.is_err())
 }
 
 fn to_api_request(request: &mut Request, config: &ApiConfig, token: &Token) -> ApiRequest {

@@ -24,6 +24,16 @@ pub(crate) fn exceeds_cap(read: usize) -> bool {
     read > MAX_BODY
 }
 
+pub(crate) fn read_outcome(body: Vec<u8>, failed: bool) -> (Vec<u8>, bool) {
+    if exceeds_cap(body.len()) {
+        (Vec::new(), true)
+    } else if failed {
+        (Vec::new(), false)
+    } else {
+        (body, false)
+    }
+}
+
 pub(crate) fn reject_oversize(request: &ApiRequest) -> Option<ApiResponse> {
     (request.body_too_large || exceeds_cap(request.body.len())).then(|| error(413, "too large"))
 }
@@ -107,6 +117,22 @@ mod tests {
     fn bytes_read_are_checked_against_the_cap() {
         assert!(!exceeds_cap(MAX_BODY));
         assert!(exceeds_cap(MAX_BODY + 1));
+    }
+
+    #[test]
+    fn a_read_that_fails_past_the_cap_is_too_large() {
+        assert_eq!(read_outcome(vec![0; MAX_BODY + 1], true), (vec![], true));
+    }
+
+    #[test]
+    fn a_read_that_fails_under_the_cap_keeps_nothing_and_is_not_too_large() {
+        assert_eq!(read_outcome(vec![0; 10], true), (vec![], false));
+    }
+
+    #[test]
+    fn a_clean_read_keeps_its_bytes_unless_over_the_cap() {
+        assert_eq!(read_outcome(vec![1, 2], false), (vec![1, 2], false));
+        assert_eq!(read_outcome(vec![0; MAX_BODY + 1], false), (vec![], true));
     }
 
     #[test]
