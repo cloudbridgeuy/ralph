@@ -107,11 +107,15 @@ fn percent_decode(raw: &str) -> Result<String, QueryError> {
     String::from_utf8(out).map_err(|_| QueryError::Encoding)
 }
 
+pub(crate) fn segment_key(segment: &str) -> Result<String, QueryError> {
+    percent_decode(segment.split_once('=').map_or(segment, |(key, _)| key))
+}
+
 fn split_fields(raw: &str) -> Result<Fields, QueryError> {
     let mut fields = Fields::default();
     for segment in raw.split('&').filter(|segment| !segment.is_empty()) {
-        let (key, value) = segment.split_once('=').unwrap_or((segment, ""));
-        fields.set(&percent_decode(key)?, percent_decode(value)?)?;
+        let value = segment.split_once('=').map_or("", |(_, value)| value);
+        fields.set(&segment_key(segment)?, percent_decode(value)?)?;
     }
     Ok(fields)
 }
@@ -284,6 +288,14 @@ mod tests {
         assert_eq!(ok("thread=pl%61n").thread, thread("plan"));
         assert_eq!(ok("node=4%2D7").node, Some(Node::new(4, 8).unwrap()));
         assert_eq!(ok("after=%31%30").after, 10);
+    }
+
+    #[test]
+    fn segment_key_decodes_the_key_only() {
+        assert_eq!(segment_key("%74oken=%78"), Ok("token".to_string()));
+        assert_eq!(segment_key("a%3Db"), Ok("a=b".to_string()));
+        assert_eq!(segment_key("k"), Ok("k".to_string()));
+        assert_eq!(segment_key("%zz=1"), Err(QueryError::Encoding));
     }
 
     #[test]

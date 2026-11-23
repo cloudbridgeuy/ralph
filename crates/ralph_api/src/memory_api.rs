@@ -1,5 +1,5 @@
 use crate::memory::json::{entries_body, root_body, threads_body, zoom_body};
-use crate::memory::query::{parse_query, MemoryQuery, QueryError, Scope};
+use crate::memory::query::{parse_query, segment_key, MemoryQuery, QueryError, Scope};
 use crate::route::{error, json_ok, ApiConfig, ApiRequest, ApiResponse};
 use ralph_core::chat_memory::{page, root_view, zoom_view};
 use ralph_server::chat::memory::{list_threads, peek, thread_exists, Peek, ThreadInfo};
@@ -39,10 +39,13 @@ fn threads_response(threads: &[ThreadInfo]) -> ApiResponse {
     json_ok(threads_body(threads))
 }
 
-fn only_token_keys(raw: &str) -> bool {
-    raw.split('&')
-        .filter(|segment| !segment.is_empty())
-        .all(|segment| segment.split_once('=').map_or(segment, |(key, _)| key) == TOKEN_KEY)
+fn check_token_keys(raw: &str) -> Result<(), QueryError> {
+    for segment in raw.split('&').filter(|segment| !segment.is_empty()) {
+        if segment_key(segment)? != TOKEN_KEY {
+            return Err(QueryError::UnknownKey);
+        }
+    }
+    Ok(())
 }
 
 fn scope_dir(main: &Path, scope: &Scope) -> Option<PathBuf> {
@@ -79,8 +82,8 @@ pub(crate) fn entries(request: &ApiRequest, config: &ApiConfig) -> ApiResponse {
 }
 
 pub(crate) fn threads(request: &ApiRequest, config: &ApiConfig) -> ApiResponse {
-    if !only_token_keys(&request.query) {
-        return error(400, QueryError::UnknownKey.message());
+    if let Err(failure) = check_token_keys(&request.query) {
+        return error(400, failure.message());
     }
     match list_threads(&config.store) {
         Ok(found) => threads_response(&found),
@@ -167,16 +170,22 @@ mod tests {
     }
 
     #[test]
-    fn only_token_keys_accepts_token_and_empty() {
-        assert!(only_token_keys(""));
-        assert!(only_token_keys("token=abc"));
-        assert!(only_token_keys("token=a&&token"));
+    fn token_keys_accept_token_and_empty() {
+        assert_eq!(check_token_keys(""), Ok(()));
+        assert_eq!(check_token_keys("token=abc"), Ok(()));
+        assert_eq!(check_token_keys("token=a&&token"), Ok(()));
+        assert_eq!(check_token_keys("%74oken=a&to%6Ben"), Ok(()));
     }
 
     #[test]
-    fn only_token_keys_rejects_other_keys() {
-        assert!(!only_token_keys("thread=main"));
-        assert!(!only_token_keys("token=a&limit=1"));
-        assert!(!only_token_keys("tokens=a"));
+    fn token_keys_reject_other_keys() {
+        for raw in ["thread=main", "token=a&limit=1", "tokens=a", "%61fter=1"] {
+            assert_eq!(check_token_keys(raw), Err(QueryError::UnknownKey), "{raw}");
+        }
+    }
+
+    #[test]
+    fn token_keys_reject_bad_escapes() {
+        assert_eq!(check_token_keys("%7oken=a"), Err(QueryError::Encoding));
     }
 }

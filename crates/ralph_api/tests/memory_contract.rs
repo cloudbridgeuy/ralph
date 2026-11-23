@@ -540,3 +540,24 @@ fn golden_memory_entries_hostile() {
 fn golden_memory_threads() {
     golden("memory_threads", "/api/memory/threads");
 }
+
+#[test]
+fn threads_decode_query_keys_like_the_memory_routes() {
+    let server = TestServer::start_with_store(fixture);
+    let bearer = format!("Bearer {}", server.token());
+    let bearer_get = |query: &str| {
+        let target = format!("/api/memory/threads{query}");
+        server.exchange("GET", &target, Host::Own, &[("Authorization", &bearer)])
+    };
+    let plain = bearer_get("?token=x");
+    assert_eq!(plain.status, 200, "{}", plain.body);
+    let encoded = bearer_get("?%74oken=x");
+    assert_eq!(encoded.status, 200, "{}", encoded.body);
+    assert_eq!(json_of(&encoded), json_of(&plain));
+    error_of(&bearer_get("?%61fter=1"), 400, "unknown query key");
+    error_of(
+        &bearer_get("?%7oken=x"),
+        400,
+        "query is not valid percent-encoded UTF-8",
+    );
+}
