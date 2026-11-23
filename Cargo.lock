@@ -1668,9 +1668,11 @@ dependencies = [
  "pulldown-cmark",
  "ralph_server",
  "serde_json",
+ "syntect",
  "tempfile",
  "thiserror",
  "tiny_http",
+ "two-face",
 ]
 
 [[package]]

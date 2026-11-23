@@ -1,6 +1,14 @@
+use std::sync::OnceLock;
+
 use pulldown_cmark::{Options, Parser};
+use syntect::parsing::SyntaxSet;
 
 use crate::render::md_event::emit;
+
+pub(crate) fn syntaxes() -> &'static SyntaxSet {
+    static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
+    SYNTAXES.get_or_init(two_face::syntax::extra_newlines)
+}
 
 #[allow(dead_code, reason = "the render route calls this in the next commit")]
 pub fn render_markdown(markdown: &str) -> String {
@@ -8,7 +16,7 @@ pub fn render_markdown(markdown: &str) -> String {
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     format!(
         "<r-prose>{}</r-prose>",
-        emit(Parser::new_ext(markdown, options))
+        emit(Parser::new_ext(markdown, options), syntaxes())
     )
 }
 

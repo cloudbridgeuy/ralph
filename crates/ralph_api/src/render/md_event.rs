@@ -1,12 +1,20 @@
-use pulldown_cmark::{Event, HeadingLevel, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Tag, TagEnd};
+use syntect::parsing::SyntaxSet;
 
+use crate::render::code::{highlight, CodeBlock};
 use crate::render::escape;
 use crate::render::md_link::safe_href;
 
 const MAX_DEPTH: usize = 64;
 
-#[derive(Default)]
-struct Emitter {
+struct PendingCode {
+    lang: String,
+    source: String,
+}
+
+struct Emitter<'s> {
+    syntaxes: &'s SyntaxSet,
+    pending_code: Option<PendingCode>,
     out: String,
     depth: usize,
     overflow: usize,
@@ -15,15 +23,28 @@ struct Emitter {
     link_close: &'static str,
 }
 
-pub fn emit<'a>(events: impl Iterator<Item = Event<'a>>) -> String {
-    let mut emitter = Emitter::default();
+pub fn emit<'a>(events: impl Iterator<Item = Event<'a>>, syntaxes: &SyntaxSet) -> String {
+    let mut emitter = Emitter::new(syntaxes);
     for event in events {
         emitter.event(event);
     }
     emitter.out
 }
 
-impl Emitter {
+impl<'s> Emitter<'s> {
+    fn new(syntaxes: &'s SyntaxSet) -> Self {
+        Self {
+            syntaxes,
+            pending_code: None,
+            out: String::new(),
+            depth: 0,
+            overflow: 0,
+            image_depth: 0,
+            in_head: false,
+            link_close: "",
+        }
+    }
+
     fn event(&mut self, event: Event<'_>) {
         match event {
             Event::Start(tag) => self.start(tag),
@@ -47,6 +68,10 @@ impl Emitter {
     }
 
     fn text(&mut self, text: &str) {
+        if let Some(code) = self.pending_code.as_mut() {
+            code.source.push_str(text);
+            return;
+        }
         self.out.push_str(&escape(text).replace('\0', "\u{FFFD}"));
     }
 
@@ -85,6 +110,7 @@ impl Emitter {
                 }
             }
             _ if self.image_depth > 0 => {}
+            Tag::CodeBlock(kind) => self.pending_code = Some(pending_code(&kind)),
             Tag::Link { dest_url, .. } => self.open_link(&dest_url),
             Tag::TableHead => {
                 self.in_head = true;
@@ -110,6 +136,16 @@ impl Emitter {
         }
     }
 
+    fn finish_code(&mut self) {
+        if let Some(code) = self.pending_code.take() {
+            let block = CodeBlock {
+                lang: &code.lang,
+                source: &code.source,
+            };
+            self.out.push_str(&highlight(self.syntaxes, &block));
+        }
+    }
+
     fn end(&mut self, end: TagEnd) {
         if self.overflow > 0 {
             self.overflow -= 1;
@@ -126,6 +162,7 @@ impl Emitter {
                 }
             }
             _ if self.image_depth > 0 => {}
+            TagEnd::CodeBlock => self.finish_code(),
             TagEnd::Link => self.out.push_str(self.link_close),
             TagEnd::TableHead => {
                 self.in_head = false;
@@ -134,6 +171,17 @@ impl Emitter {
             TagEnd::Table => self.out.push_str("</tbody></table>"),
             other => self.out.push_str(close_tag(&other, in_head)),
         }
+    }
+}
+
+fn pending_code(kind: &CodeBlockKind<'_>) -> PendingCode {
+    let lang = match kind {
+        CodeBlockKind::Fenced(info) => info.split_whitespace().next().unwrap_or_default(),
+        CodeBlockKind::Indented => "",
+    };
+    PendingCode {
+        lang: lang.to_string(),
+        source: String::new(),
     }
 }
 
@@ -153,7 +201,6 @@ fn open_tag(tag: &Tag<'_>, in_head: bool) -> String {
         Tag::Paragraph | Tag::HtmlBlock => "<p>".into(),
         Tag::Heading { level, .. } => format!("<h{}>", heading(*level)),
         Tag::BlockQuote(_) => "<blockquote>".into(),
-        Tag::CodeBlock(_) => "<pre><code>".into(),
         Tag::List(Some(1)) => "<ol>".into(),
         Tag::List(Some(start)) => format!("<ol start=\"{start}\">"),
         Tag::List(None) => "<ul>".into(),
@@ -178,7 +225,6 @@ fn close_tag(end: &TagEnd, in_head: bool) -> &'static str {
         TagEnd::Heading(HeadingLevel::H5) => "</h5>",
         TagEnd::Heading(HeadingLevel::H6) => "</h6>",
         TagEnd::BlockQuote(_) => "</blockquote>",
-        TagEnd::CodeBlock => "</code></pre>",
         TagEnd::List(true) => "</ol>",
         TagEnd::List(false) => "</ul>",
         TagEnd::Item => "</li>",
@@ -195,12 +241,13 @@ fn close_tag(end: &TagEnd, in_head: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{emit, MAX_DEPTH};
+    use crate::render::prose::syntaxes;
     use pulldown_cmark::{Options, Parser};
 
     fn html(md: &str) -> String {
         let options =
             Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-        emit(Parser::new_ext(md, options))
+        emit(Parser::new_ext(md, options), syntaxes())
     }
 
     #[test]
@@ -266,7 +313,31 @@ mod tests {
 
     #[test]
     fn fenced_code_is_escaped() {
-        assert_eq!(html("```\n<a>\n```"), "<pre><code>&lt;a&gt;\n</code></pre>");
+        assert_eq!(
+            html("```\n<a>\n```"),
+            "<r-code><pre><code>&lt;a&gt;\n</code></pre></r-code>"
+        );
+    }
+
+    #[test]
+    fn fenced_code_with_a_language_is_classed() {
+        let out = html("```rust extra\nfn x() {}\n```");
+        assert!(out.starts_with("<r-code data-lang=\"rust\"><pre><code>"));
+        assert!(out.contains("class=\"t-"));
+    }
+
+    #[test]
+    fn indented_code_has_no_language() {
+        assert_eq!(
+            html("    <a>\n"),
+            "<r-code><pre><code>&lt;a&gt;\n</code></pre></r-code>"
+        );
+    }
+
+    #[test]
+    fn code_inside_deep_nesting_still_renders_escaped() {
+        let md = "> ".repeat(MAX_DEPTH + 5) + "```\n<a>\n```";
+        assert!(!html(&md).contains("<a>"));
     }
 
     #[test]

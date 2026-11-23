@@ -17,8 +17,10 @@ path = "src/lib.rs"
 pulldown-cmark = { workspace = true }
 ralph_server = { workspace = true }
 serde_json = { workspace = true }
+syntect = { workspace = true, features = ["html"] }
 thiserror = { workspace = true }
 tiny_http = { workspace = true }
+two-face = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

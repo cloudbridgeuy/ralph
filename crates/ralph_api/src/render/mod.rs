@@ -1,3 +1,4 @@
+mod code;
 mod empty;
 mod error;
 mod escape;
