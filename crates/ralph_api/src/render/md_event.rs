@@ -3,7 +3,7 @@ use syntect::parsing::SyntaxSet;
 
 use crate::render::code::{highlight, CodeBlock};
 use crate::render::escape;
-use crate::render::md_link::safe_href;
+use crate::render::md_link::{link_dest, safe_href};
 
 const MAX_DEPTH: usize = 64;
 
@@ -111,7 +111,11 @@ impl<'s> Emitter<'s> {
             }
             _ if self.image_depth > 0 => {}
             Tag::CodeBlock(kind) => self.pending_code = Some(pending_code(&kind)),
-            Tag::Link { dest_url, .. } => self.open_link(&dest_url),
+            Tag::Link {
+                link_type,
+                dest_url,
+                ..
+            } => self.open_link(&link_dest(link_type, &dest_url)),
             Tag::TableHead => {
                 self.in_head = true;
                 self.out.push_str("<table><thead><tr>");
@@ -271,6 +275,14 @@ mod tests {
         assert_eq!(
             html("[t](https://a.b)"),
             "<p><a href=\"https://a.b\" rel=\"noreferrer noopener\">t</a></p>"
+        );
+    }
+
+    #[test]
+    fn email_autolink_gets_a_mailto_href() {
+        assert_eq!(
+            html("<a@b.c>"),
+            "<p><a href=\"mailto:a@b.c\" rel=\"noreferrer noopener\">a@b.c</a></p>"
         );
     }
 

@@ -1,3 +1,12 @@
+use pulldown_cmark::LinkType;
+
+pub fn link_dest(link_type: LinkType, dest: &str) -> String {
+    match link_type {
+        LinkType::Email => format!("mailto:{dest}"),
+        _ => dest.to_string(),
+    }
+}
+
 pub fn safe_href(dest: &str) -> Option<String> {
     let cleaned: String = dest
         .chars()
@@ -12,7 +21,15 @@ pub fn safe_href(dest: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_href;
+    use super::{link_dest, safe_href};
+    use pulldown_cmark::LinkType;
+
+    #[test]
+    fn email_links_get_a_mailto_scheme() {
+        assert_eq!(link_dest(LinkType::Email, "a@b.c"), "mailto:a@b.c");
+        assert_eq!(link_dest(LinkType::Inline, "a@b.c"), "a@b.c");
+        assert_eq!(link_dest(LinkType::Autolink, "http://a.b"), "http://a.b");
+    }
 
     #[test]
     fn allows_http_https_mailto_and_fragments() {
