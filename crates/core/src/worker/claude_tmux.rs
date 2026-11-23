@@ -1,4 +1,5 @@
 use super::*;
+use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -88,6 +89,9 @@ pub fn worker_launch(args: &ClaudeWorkerArgs) -> Vec<String> {
     );
     if args.scheduled {
         command.extend(disallowed_tool_args());
+        if args.copied.iter().any(|name| name == MCPTOOLS_SERVER) {
+            command.extend(MCPTOOLS_ASK_RULES.map(str::to_string));
+        }
     }
     command.extend(["--append-system-prompt", worker_prompt(args.scheduled)].map(str::to_string));
     if let Some(model) = args.model {
@@ -286,6 +290,53 @@ mod tests {
         );
         assert_eq!(args[at + 2], "--settings");
         assert!(args[at + 2].starts_with("--"));
+    }
+
+    fn disallowed(args: &[String]) -> Vec<&str> {
+        let at = args
+            .iter()
+            .position(|arg| arg == "--disallowedTools")
+            .unwrap();
+        args[at + 1..]
+            .iter()
+            .take_while(|arg| !arg.starts_with("--"))
+            .map(String::as_str)
+            .collect()
+    }
+
+    #[test]
+    fn a_scheduled_worker_denies_the_mcptools_runners() {
+        let copied = ["mcptools".to_string()];
+        let args = worker_command(&ClaudeWorkerArgs {
+            scheduled: true,
+            copied: &copied,
+            ..claude_args(None)
+        });
+        assert_eq!(
+            disallowed(&args),
+            [
+                "Bash(git push:*)",
+                "Bash(gh pr:*)",
+                "Bash(gh api:*)",
+                "mcp__mcptools__execute",
+                "mcp__mcptools__call_tool"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_scheduled_worker_without_mcptools_denies_only_the_git_tools() {
+        let args = worker_command(&ClaudeWorkerArgs {
+            scheduled: true,
+            ..claude_args(None)
+        });
+        assert_eq!(disallowed(&args).len(), 3);
+        let copied = ["mcptools".to_string()];
+        let interactive = worker_command(&ClaudeWorkerArgs {
+            copied: &copied,
+            ..claude_args(None)
+        });
+        assert!(!interactive.contains(&"--disallowedTools".into()));
     }
 
     #[test]

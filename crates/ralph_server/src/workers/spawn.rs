@@ -22,14 +22,14 @@ use ralph_core::worker::{
     import_servers, opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
     resolve_codex_warning, resolve_cursor_model, resolve_opencode_model, resolve_ticket,
     rollback_plan, rollback_report, session_name, spawn_base_sha, spawn_event, spawn_handoff,
-    spawn_record_path, startup_state, task_dir_path, task_file_path, trust_key, with_start_warning,
-    worker_command, worker_config_path, worker_mcp_args, worker_mcp_config, worker_settings_path,
-    worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles,
-    HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFacts, SpawnFootprint, SpawnRecord,
-    SpawnRequest, Startup, Ticket, TicketKeys, UsageSink, WorkPhase, WorkerImport, WorkerMarkers,
-    WorktreeBase, WorktreeVia, AGY_AGENT, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND,
-    CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
+    spawn_record_path, startup_state, task_dir_path, task_file_path, trust_key, with_mcptools_asks,
+    with_start_warning, worker_command, worker_config_path, worker_mcp_args, worker_mcp_config,
+    worker_settings_path, worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs,
+    Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFacts, SpawnFootprint,
+    SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, UsageSink, WorkPhase, WorkerImport,
+    WorkerMarkers, WorktreeBase, WorktreeVia, AGY_AGENT, ATTACHMENTS_DIR, CLAUDE_COMMAND,
+    CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION,
+    INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -365,9 +365,9 @@ impl Workers {
                 ));
             }
             HarnessId::ClaudeTmux => {
-                let settings = self.write_settings(id, &markers, *site)?;
-                let task_dir = self.write_task(id, task)?;
                 let copied: Vec<String> = servers.keys().cloned().collect();
+                let settings = self.write_settings(id, &markers, *site, &copied)?;
+                let task_dir = self.write_task(id, task)?;
                 worker_command(&ClaudeWorkerArgs {
                     store: &fs::canonicalize(&self.store_dir)?,
                     mcp_config: &self.write_config(id, *site, servers)?,
@@ -601,23 +601,27 @@ impl Workers {
         id: &str,
         markers: &WorkerMarkers,
         site: Option<&WorkerSite>,
+        copied: &[String],
     ) -> io::Result<PathBuf> {
         fs::create_dir_all(self.store_dir.join(WORKERS_DIR))?;
         let usage = absolute_from(&usage_path(), &std::env::current_dir()?);
         let path = worker_settings_path(&self.store_dir, id);
         fs::write(
             &path,
-            claude_worker_settings_with_config(
-                &self.exe,
-                markers,
-                site,
-                &UsageSink {
-                    store: &self.store_dir,
-                    worker: id,
-                    usage: &usage,
-                    verify: false,
-                },
-                Some(&self.written_store),
+            with_mcptools_asks(
+                claude_worker_settings_with_config(
+                    &self.exe,
+                    markers,
+                    site,
+                    &UsageSink {
+                        store: &self.store_dir,
+                        worker: id,
+                        usage: &usage,
+                        verify: false,
+                    },
+                    Some(&self.written_store),
+                ),
+                copied,
             )
             .to_string(),
         )?;
@@ -910,12 +914,19 @@ mod tests {
             id: "A".into(),
             worktree: dir.path().join("w"),
         };
-        let path = workers.write_settings("A", &markers, Some(&site)).unwrap();
+        let copied = ["mcptools".to_string()];
+        let path = workers
+            .write_settings("A", &markers, Some(&site), &copied)
+            .unwrap();
         let settings: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
         let command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
         assert!(command.contains(&format!("--config-store '{}'", link.display())));
+        assert_eq!(
+            settings["permissions"]["ask"],
+            serde_json::json!(["mcp__mcptools__execute", "mcp__mcptools__call_tool"])
+        );
     }
 
     #[test]
