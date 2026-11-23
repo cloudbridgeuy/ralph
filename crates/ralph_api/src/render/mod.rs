@@ -5,7 +5,10 @@ mod frame;
 #[cfg(test)]
 mod golden;
 mod kv;
+mod md_event;
+mod md_link;
 mod pill;
+mod prose;
 mod rule;
 mod spark;
 mod spinner;
@@ -18,6 +21,11 @@ pub use escape::escape;
 pub use frame::frame;
 pub use kv::kv;
 pub use pill::{pill, Icon, PillShape};
+#[allow(
+    unused_imports,
+    reason = "the render route calls this in the next commit"
+)]
+pub use prose::render_markdown;
 pub use rule::rule;
 pub use spark::spark_svg;
 pub use spinner::spinner;

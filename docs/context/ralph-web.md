@@ -19,6 +19,7 @@
 | Asset files | `crates/ralph_api/assets/` | `index.html`, `app.css`, `fonts/` |
 | Colour lint | `xtask/src/lint/web_colour.rs` | checks the files in `assets/` |
 | Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
+| Markdown | `crates/ralph_api/src/render/{prose,md_event,md_link}.rs` | pure `render_markdown()`: pulldown-cmark events to HTML inside `<r-prose>` |
 | Catalogue page | `crates/ralph_api/src/catalogue/` | `page()` builds `/catalogue`; `fixture.rs` parses the fixture |
 | Fixture | `crates/ralph_api/fixtures/catalogue.json` | sanitised sample data for the catalogue |
 | Fixture generator | `xtask/src/catalogue/` | `core.rs` is pure; `mod.rs` reads and writes files |
@@ -115,6 +116,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent; `Shape`; `PillShape`; `Icon`), never from free text. `inner_html` of `frame()` must be built from these builders.
 - No builder writes a `style` attribute, because the CSP forbids inline style. No builder writes a raw colour. SVG uses `stroke="currentColor"` and classes.
 - `spark_points()` drops NaN and infinite values. A flat series and a single point draw a mid line. Huge values do not overflow.
+- `render_markdown(&str)` parses with tables, strikethrough and task lists. Its own emitter writes the HTML. Raw HTML is escaped as text, never passed through. Links keep `href` only for `http`, `https`, `mailto` and `#fragment`; the check strips control characters and spaces and ignores case. Other links keep their text without `href`. Links get `rel="noreferrer noopener"`. An image is never `<img>`: its alt text goes in a `<span>`. Blocks nested deeper than 64 levels render as escaped text. NUL bytes become U+FFFD. Fenced code is a plain escaped `<pre><code>`.
 - Goldens are in `crates/ralph_api/tests/golden/render/<primitive>_<state>.html`. Unit tests in `render/` compare them. The states are empty, sparse, dense, error and very-long where they apply, plus hostile text for escaping.
 - `app.css` holds the primitive styles. They use `var(--r-*)` colours only. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
 

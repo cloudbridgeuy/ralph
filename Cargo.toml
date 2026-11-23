@@ -96,6 +96,9 @@ ureq = { version = "3.4", default-features = false }
 # Local HTTP server for the wire proxy
 tiny_http = "0.12"
 
+# Markdown parser for the web render route (no HTML renderer, no SIMD)
+pulldown-cmark = { version = "0.13.5", default-features = false }
+
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 
