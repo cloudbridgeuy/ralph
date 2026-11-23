@@ -5,13 +5,16 @@ use crate::chat::inbox::{self, Display};
 use crate::chat::nudge;
 use crate::chat::prompt::Columns;
 use crate::chat::rerender;
-use crate::chat::thread::Memory;
+use crate::chat::thread::{self, Memory};
+use crate::chat::thread_cmd::{self, ThreadEnv};
 use crate::chat::view;
 use crate::chat::workers;
 use crate::config::ConfigSnapshot;
 use ralph_core::chat_help::help_with_store;
 use ralph_core::chat_memory::{history_tool_of, CallSource, MemoryCall};
 use ralph_core::chat_status::Route;
+use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::worker::{TicketKeys, HANDOFF_TIMEOUT};
@@ -39,6 +42,7 @@ pub struct LocalRoute<'a> {
     pub prices: &'a BTreeMap<String, PriceOverride>,
     pub tickets: &'a TicketKeys,
     pub store: &'a Path,
+    pub thread: Option<&'a ThreadName>,
     pub monitor: &'a Monitor,
     pub remote: &'a RemoteStatus,
     pub config: &'a ConfigSnapshot,
@@ -58,6 +62,7 @@ pub fn run_local(
             schedule::run(command, ctx.schedule, ctx.watches, &ctx.monitor.workers)
         }
         Route::Nudge(command) => nudge::run(command, ctx.monitor),
+        Route::ThreadOp { op, .. } => run_thread(op, ctx),
         other => {
             run_shown(other, ctx, out)?;
             return Ok(None);
@@ -66,6 +71,25 @@ pub fn run_local(
     writeln!(out, "{output}")?;
     refresh();
     Ok(Some(output))
+}
+
+fn run_thread(op: Result<ThreadOp, String>, ctx: &LocalRoute) -> String {
+    let main = thread::config_root(ctx.store);
+    let env = ThreadEnv {
+        store_dir: ctx.store,
+        in_thread: ctx.thread.is_some(),
+        mid_turn: true,
+        width: (ctx.columns)(),
+        display: Some(ctx.display),
+        notice: &|_| {},
+        curate: &|prompt, curator| crate::run_curator(prompt, curator),
+    };
+    op.and_then(|op| {
+        thread_cmd::run(&op, &env, &mut |_| None, &|name| {
+            thread::running_ids(&main, name)
+        })
+    })
+    .unwrap_or_else(|text| text)
 }
 
 pub(super) fn history_call(
@@ -128,6 +152,9 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
             history_log::record_refusal(ctx.store, tool, &message, CallSource::Slash);
             writeln!(out, "{message}")?
         }
+        Route::Switch {
+            parsed: Err(usage), ..
+        } => writeln!(out, "{usage}")?,
         Route::Send(_)
         | Route::Switch { .. }
         | Route::ThreadOp { .. }
@@ -149,7 +176,6 @@ mod tests {
     use super::*;
     use crate::chat::thread::thread_dir;
     use ralph_core::chat_memory::{history_path, parse_tool_call};
-    use ralph_core::chat_thread::ThreadName;
     use serde_json::{json, Value};
 
     #[test]
@@ -221,6 +247,7 @@ mod tests {
             prices: &config.wire.prices,
             tickets: &config.tickets,
             store: dir.path(),
+            thread: None,
             monitor: &monitor,
             remote: &remote,
             config: &snapshot,

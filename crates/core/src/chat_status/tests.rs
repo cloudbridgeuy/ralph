@@ -67,7 +67,7 @@ fn watch_states_are_equal_one_second_apart_at_twelve_minutes() {
 }
 
 #[test]
-fn only_read_only_routes_run_mid_turn() {
+fn read_only_routes_and_non_merge_thread_ops_run_mid_turn() {
     let runs =
         |line: &str| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()).runs_mid_turn();
     for line in [
@@ -82,6 +82,15 @@ fn only_read_only_routes_run_mid_turn() {
         "/watch",
         "/diff last 0",
         "/diff \"x",
+        "/thread ls",
+        "/thread open a",
+        "/thread open a --auto-merge --model sonnet",
+        "/thread pull a",
+        "/thread park a",
+        "/thread revive a",
+        "/thread drop a",
+        "/thread bogus",
+        "/thread switch",
     ] {
         assert!(runs(line), "{line}");
     }
@@ -98,6 +107,10 @@ fn only_read_only_routes_run_mid_turn() {
         "/hold w1",
         "/view a.md",
         "/view",
+        "/thread merge a",
+        "/thread merge a --view",
+        "/thread switch a",
+        "/thread main",
         "!!ls",
         "hello",
         "",
@@ -929,14 +942,14 @@ fn send_it_never_runs_mid_turn() {
 }
 
 #[test]
-fn a_switch_waits_for_the_turn() {
+fn a_valid_switch_waits_for_the_turn_and_a_usage_error_prints_at_once() {
     use crate::chat_switch::SwitchTarget;
     let switch = |parsed| Route::Switch {
         parsed,
         line: String::new(),
     };
     assert!(!switch(Ok(SwitchTarget::Main)).runs_mid_turn());
-    assert!(!switch(Err("usage".into())).runs_mid_turn());
+    assert!(switch(Err("usage".into())).runs_mid_turn());
 }
 
 #[test]

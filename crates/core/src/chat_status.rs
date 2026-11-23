@@ -176,7 +176,10 @@ impl Route {
             | Route::InboxUsage
             | Route::Watch(WatchCommand::List | WatchCommand::Usage)
             | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
-            | Route::Diff(DiffArgs::Usage(_) | DiffArgs::UnclosedQuote) => true,
+            | Route::Diff(DiffArgs::Usage(_) | DiffArgs::UnclosedQuote)
+            | Route::Switch { parsed: Err(_), .. }
+            | Route::ThreadOp { op: Err(_), .. } => true,
+            Route::ThreadOp { op: Ok(op), .. } => !matches!(op, ThreadOp::Merge { .. }),
             Route::Send(_)
             | Route::Shell(_)
             | Route::ReadInbox(_)
@@ -185,8 +188,7 @@ impl Route {
             | Route::Nudge(_)
             | Route::Direct(_)
             | Route::SendIt(_)
-            | Route::Switch { .. }
-            | Route::ThreadOp { .. }
+            | Route::Switch { parsed: Ok(_), .. }
             | Route::View(_)
             | Route::Rerender(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
