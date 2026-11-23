@@ -104,6 +104,7 @@ Served:
 - Ctrl-C: `cancel` for the attached key, sent on a second connection.
 - Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
 - SIGTERM / SIGHUP: detach and exit 0 at the prompt or mid-request; neither `cancel` nor `shutdown` is sent.
+- Tool blocks: `serve` runs every turn with tool blocks on, so `turn` frames carry `ToolInvocation` and `ToolResult` blocks. The client prints them only when its stdout is a terminal, the same gate as the terminal chat. Piped, it drops them and prints the rest.
 - Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
 
 Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.
