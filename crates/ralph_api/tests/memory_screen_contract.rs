@@ -301,3 +301,10 @@ fn only_the_entries_table_is_stackable() {
     assert!(body.contains(r#"el("r-table", null, { class: "stackable" })"#));
     assert_eq!(body.matches("stackable").count(), 1);
 }
+
+#[test]
+fn the_entry_number_column_is_a_num_column_in_head_and_body() {
+    let body = script();
+    assert!(body.contains(r##"el("th", name, name === "#" ? { class: "num" } : {})"##));
+    assert!(body.contains(r#"el("td", String(entry.i), { class: "num" })"#));
+}

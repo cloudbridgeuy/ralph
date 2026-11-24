@@ -398,7 +398,7 @@ function stateRow(columns, child) {
 const ENTRY_COLUMNS = ["#", "role", "at", "text"];
 
 function entriesTable(page) {
-  const head = append(el("tr"), ...ENTRY_COLUMNS.map((name) => el("th", name)));
+  const head = append(el("tr"), ...ENTRY_COLUMNS.map((name) => el("th", name, name === "#" ? { class: "num" } : {})));
   const body = el("tbody");
   if (page.items.length === 0) {
     append(body, stateRow(ENTRY_COLUMNS.length, el("r-empty", "no entries in this page")));
@@ -408,7 +408,7 @@ function entriesTable(page) {
       body,
       append(
         el("tr"),
-        el("td", String(entry.i)),
+        el("td", String(entry.i), { class: "num" }),
         el("td", entry.role),
         el("td", entry.at),
         el("td", firstLine(entry.text), { class: "clip" }),
