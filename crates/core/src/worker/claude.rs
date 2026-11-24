@@ -142,9 +142,12 @@ pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<Strin
     let id = &ask.content.request_id;
     let allow = || Some(permission_response(id, ALLOW_ONCE, &ask.input));
     match (mcptools_decision(ask), mode) {
-        (McptoolsDecision::Read, _) | (McptoolsDecision::Other, PermissionMode::Yolo) => allow(),
+        (McptoolsDecision::Read, _)
+        | (McptoolsDecision::Elevated(_) | McptoolsDecision::Other, PermissionMode::Yolo) => {
+            allow()
+        }
         (McptoolsDecision::Deny, _) => Some(deny_line(id)),
-        (McptoolsDecision::Elevated(_), _) | (McptoolsDecision::Other, PermissionMode::Ask) => None,
+        (McptoolsDecision::Elevated(_) | McptoolsDecision::Other, PermissionMode::Ask) => None,
     }
 }
 
