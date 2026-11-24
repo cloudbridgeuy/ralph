@@ -486,7 +486,17 @@ impl Turn {
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
                 *locked(&self.seen_len) = self.store.log_len().ok();
-                if let Some(suggestion) = from_reply(&reply) {
+                let next = from_reply(&reply);
+                let (suggestion, notice) =
+                    stage::check_next_step(&self.store, &(self.status)(), next.clone())
+                        .unwrap_or_else(|e| {
+                            self.warn(format!("Failed to check the Next step: {e}"));
+                            (next, None)
+                        });
+                if let Some(notice) = notice {
+                    self.warn(notice);
+                }
+                if let Some(suggestion) = suggestion {
                     self.suggestions.set(suggestion);
                 }
                 self.warn_if_err(

@@ -8,6 +8,7 @@ pub const STAGE_REPEAT_TURNS: usize = 5;
 pub const STAGE_ADD: &str = "stage_add";
 pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
+pub const STAGE_COMMAND: &str = "/stage";
 pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
 
 const NEEDS_USER_STATES: [&str; 3] = ["question", "blocked", "permission"];
@@ -198,6 +199,74 @@ pub fn render(items: &[Item], status: &Status, thread: Option<&ThreadName>) -> S
 fn line(label: &str, entries: impl Iterator<Item = String>) -> Option<String> {
     let entries: Vec<String> = entries.collect();
     (!entries.is_empty()).then(|| format!("{label}: {}", entries.join(", ")))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    pub label: String,
+    pub keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gap {
+    pub unnamed: Vec<String>,
+}
+
+impl Gap {
+    pub fn notice(&self) -> String {
+        format!(
+            "Next step skips pending decision: {}",
+            self.unnamed.join(", ")
+        )
+    }
+}
+
+pub fn suggestion_after(suggestion: Option<String>, gap: Option<&Gap>) -> Option<String> {
+    gap.map_or(suggestion, |_| Some(STAGE_COMMAND.to_string()))
+}
+
+pub fn pending_decisions(items: &[Item], status: &Status) -> Vec<Pending> {
+    let decisions = items
+        .iter()
+        .filter(|item| item.kind == Kind::Decision)
+        .map(|item| match &item.reference {
+            Some(reference) => Pending {
+                label: format!("{} ({reference})", item.id),
+                keys: vec![item.id.clone(), reference.clone()],
+            },
+            None => Pending {
+                label: item.id.clone(),
+                keys: vec![item.id.clone()],
+            },
+        });
+    let workers = status
+        .workers
+        .iter()
+        .filter(|worker| NEEDS_USER_STATES.contains(&worker.state.as_str()))
+        .map(|worker| Pending {
+            label: format!("{} {}", worker.id, worker.state),
+            keys: vec![worker.id.clone()],
+        });
+    decisions.chain(workers).collect()
+}
+
+fn names(text: &str, key: &str) -> bool {
+    let token = |c: char| c.is_alphanumeric() || c == '-' || c == '_';
+    text.match_indices(key).any(|(start, found)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + found.len()..].chars().next();
+        !before.is_some_and(token) && !after.is_some_and(token)
+    })
+}
+
+pub fn next_step_gap(next: Option<&str>, pending: &[Pending]) -> Option<Gap> {
+    let step = next.filter(|step| !step.starts_with("/hold")).unwrap_or("");
+    let unnamed: Vec<String> = pending
+        .iter()
+        .filter(|entry| !entry.keys.iter().any(|key| names(step, key)))
+        .map(|entry| entry.label.clone())
+        .collect();
+    (!pending.is_empty() && unnamed.len() == pending.len()).then_some(Gap { unnamed })
 }
 
 pub fn stage_due(mark: Option<&StageMark>, rendered: &str, thread: Option<&ThreadName>) -> bool {

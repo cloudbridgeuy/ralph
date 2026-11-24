@@ -4,8 +4,8 @@ use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::chat_stage::{
-    add, close, edit, expire, parse_add, parse_done, render, Actor, AuditRow, Closing, NewItem, Op,
-    Stage,
+    add, close, edit, expire, next_step_gap, parse_add, parse_done, pending_decisions, render,
+    suggestion_after, Actor, AuditRow, Closing, NewItem, Op, Stage,
 };
 use ralph_core::chat_stage::{STAGE_ADD, STAGE_DONE};
 use ralph_core::chat_status::Status;
@@ -54,6 +54,22 @@ pub fn rendered(
     thread: Option<&ThreadName>,
 ) -> Result<String, String> {
     Ok(render(&load(dir)?.items, status, thread))
+}
+
+pub fn check_next_step(
+    store: &Store,
+    status: &Status,
+    next: Option<String>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let pending = pending_decisions(&load(store.dir())?.items, status);
+    let gap = next_step_gap(next.as_deref(), &pending);
+    let notice = gap.as_ref().map(|gap| gap.notice());
+    if let Some(notice) = &notice {
+        store
+            .append(Role::User, &notice_record(notice))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok((suggestion_after(next, gap.as_ref()), notice))
 }
 
 pub fn call(store: &Store, request: &SocketRequest) -> Option<Result<String, String>> {

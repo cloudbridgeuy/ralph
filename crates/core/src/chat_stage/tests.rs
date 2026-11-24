@@ -299,3 +299,74 @@ fn a_thread_stage_is_due_every_turn_unchanged() {
     assert!(stage_due(Some(&mark), &rendered, Some(&thread)));
     assert!(!stage_due(Some(&mark), &rendered, None));
 }
+
+fn pending_of(items: &[Item], workers: Vec<WorkerState>) -> Vec<Pending> {
+    pending_decisions(
+        items,
+        &Status {
+            workers,
+            ..Status::default()
+        },
+    )
+}
+
+fn decision(id: &str, reference: Option<&str>) -> Item {
+    Item {
+        reference: reference.map(str::to_string),
+        ..item(id, Kind::Decision, 0)
+    }
+}
+
+#[test]
+fn no_pending_means_no_gap() {
+    assert_eq!(next_step_gap(None, &[]), None);
+    assert_eq!(next_step_gap(Some("/hold"), &[]), None);
+}
+
+#[test]
+fn a_decision_named_by_id_or_ref_is_no_gap() {
+    let pending = pending_of(&[decision("s2", Some("GUZ-1805"))], vec![]);
+    assert_eq!(next_step_gap(Some("answer s2 first"), &pending), None);
+    assert_eq!(next_step_gap(Some("decide GUZ-1805."), &pending), None);
+}
+
+#[test]
+fn a_worker_in_question_named_by_id_is_no_gap() {
+    let pending = pending_of(&[], vec![worker("w1", "question")]);
+    assert_eq!(next_step_gap(Some("@w1 yes"), &pending), None);
+}
+
+#[test]
+fn a_hold_is_a_gap_even_when_it_names_the_pending_entry() {
+    let pending = pending_of(&[decision("s1", None)], vec![]);
+    assert!(next_step_gap(Some("/hold s1"), &pending).is_some());
+}
+
+#[test]
+fn a_missing_next_step_is_a_gap() {
+    let pending = pending_of(
+        &[decision("s2", Some("GUZ-1805"))],
+        vec![worker("w1", "blocked")],
+    );
+    let gap = next_step_gap(None, &pending).unwrap();
+    assert_eq!(
+        gap.notice(),
+        "Next step skips pending decision: s2 (GUZ-1805), w1 blocked"
+    );
+}
+
+#[test]
+fn an_id_does_not_match_inside_a_longer_id() {
+    let pending = pending_of(&[decision("s1", None)], vec![]);
+    assert!(next_step_gap(Some("answer s12"), &pending).is_some());
+    assert!(next_step_gap(Some("answer xs1"), &pending).is_some());
+    assert!(next_step_gap(Some("answer s1"), &pending).is_none());
+}
+
+#[test]
+fn the_thread_line_never_counts_as_pending() {
+    let pending = pending_of(&[], vec![worker("w1", "working")]);
+    assert!(pending.is_empty());
+    assert_eq!(next_step_gap(Some("/hold"), &pending), None);
+    assert_eq!(next_step_gap(None, &pending), None);
+}

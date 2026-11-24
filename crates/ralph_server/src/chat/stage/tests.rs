@@ -204,3 +204,28 @@ fn no_stage_write_can_remove_the_thread_line() {
         "Stage:\nthread side: unresolved, end with /thread merge or drop"
     );
 }
+
+#[test]
+fn a_next_step_that_skips_a_decision_becomes_stage_and_leaves_a_notice_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 0);
+    save(
+        dir.path(),
+        &Stage {
+            items: vec![item("s1", Kind::Decision)],
+            last: 1,
+        },
+    )
+    .unwrap();
+    let (suggestion, notice) =
+        check_next_step(&store, &Status::default(), Some("/hold GUZ-1".to_string())).unwrap();
+    assert_eq!(suggestion.as_deref(), Some("/stage"));
+    assert_eq!(
+        notice.as_deref(),
+        Some("Next step skips pending decision: s1")
+    );
+    assert_eq!(store.log_len().unwrap(), 1);
+    let (kept, none) =
+        check_next_step(&store, &Status::default(), Some("answer s1".to_string())).unwrap();
+    assert_eq!((kept.as_deref(), none), (Some("answer s1"), None));
+}
