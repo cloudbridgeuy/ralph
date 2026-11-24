@@ -186,12 +186,12 @@ pub fn is_cell_command(line: &str) -> bool {
 }
 
 pub fn merging_notice(name: &ThreadName) -> String {
-    format!("merging {name} (one paid Haiku call, up to 3 if the digest is refused)...")
+    format!("merging {name} (one paid curator call, up to 3 if the digest is refused)...")
 }
 
 pub fn merge_question(name: &ThreadName) -> String {
     format!(
-        "Merge thread {name} into main? This makes one paid Haiku call, and up to 3 if the digest is refused. [y/n] "
+        "Merge thread {name} into main? This makes one paid curator call, and up to 3 if the digest is refused. [y/n] "
     )
 }
 
@@ -492,7 +492,7 @@ mod tests {
     fn the_merge_question_names_the_thread_the_cost_and_the_answer_keys() {
         let question = merge_question(&auth());
         assert!(question.contains("auth"), "{question}");
-        assert!(question.contains("Haiku"), "{question}");
+        assert!(question.contains("curator"), "{question}");
         assert!(question.ends_with("[y/n] "), "{question}");
     }
 

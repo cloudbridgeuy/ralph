@@ -34,3 +34,21 @@ fn chunked_body_over_cap_on_render_is_413() {
     assert_eq!(reply.status, 413);
     assert_eq!(reply.body, r#"{"error":"too large"}"#);
 }
+
+#[test]
+fn chunked_body_under_cap_on_render_is_200() {
+    let server = TestServer::start();
+    let head = format!(
+        "POST /api/render?token={} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+        server.token(),
+        server.own_host()
+    );
+    let mut stream = server.connect();
+    stream.write_all(head.as_bytes()).unwrap();
+    stream.write_all(b"9\r\n{\"markdow\r\n").unwrap();
+    stream.write_all(b"a\r\nn\":\"# Hi\"}\r\n").unwrap();
+    stream.write_all(b"0\r\n\r\n").unwrap();
+    let reply = common::read_reply(&mut stream);
+    assert_eq!(reply.status, 200);
+    assert_eq!(reply.body, r#"{"html":"<r-prose><h1>Hi</h1></r-prose>"}"#);
+}
