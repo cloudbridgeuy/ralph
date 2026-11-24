@@ -211,10 +211,13 @@ pub fn blocked_notice(
                 .iter()
                 .map(|option| option.option_id.as_str())
                 .collect();
+            let subject = if content.summary == content.tool {
+                content.tool.clone()
+            } else {
+                format!("{} {}", content.tool, content.summary)
+            };
             format!(
-                "{label} blocked: {} {} request {} options {}",
-                content.tool,
-                content.summary,
+                "{label} blocked: {subject} request {} options {}",
                 content.request_id,
                 options.join("|")
             )
@@ -663,5 +666,24 @@ mod tests {
             "Always allowing writes and spend; saved to /s/g.json."
         );
         assert!(answer_message(Choice::AllowAlways, both, None).contains("not saved"));
+    }
+
+    #[test]
+    fn blocked_notice_prints_the_tool_once_when_the_summary_is_the_tool() {
+        let content = |summary: &str| BlockedContent {
+            request_id: "r".into(),
+            tool: "mcp__mcptools__execute".into(),
+            summary: summary.into(),
+            options: Vec::new(),
+            pending: Vec::new(),
+        };
+        assert_eq!(
+            blocked_notice(None, "w", Some(&content("mcp__mcptools__execute"))),
+            "w blocked: mcp__mcptools__execute request r options "
+        );
+        assert_eq!(
+            blocked_notice(None, "w", Some(&content("ls"))),
+            "w blocked: mcp__mcptools__execute ls request r options "
+        );
     }
 }
