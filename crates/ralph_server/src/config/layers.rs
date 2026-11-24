@@ -290,6 +290,12 @@ mod tests {
     }
 
     #[test]
+    fn security_keys_flags_a_store_chat_permissions() {
+        let layer = table("[chat]\npermissions = \"yolo\"\n");
+        assert_eq!(security_keys(&layer), ["chat.permissions"]);
+    }
+
+    #[test]
     fn security_keys_finds_each_listed_key() {
         for key in SECURITY_KEYS {
             let (section, leaf) = key.split_once('.').unwrap();

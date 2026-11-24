@@ -52,6 +52,49 @@ pub fn mcptools_decision(ask: &ClaudePermission) -> McptoolsDecision {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Classes {
+    pub writes: bool,
+    pub spend: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grants {
+    #[serde(default)]
+    pub writes: bool,
+    #[serde(default)]
+    pub spend: bool,
+}
+
+impl Grants {
+    pub fn for_mode(_mode: PermissionMode) -> Grants {
+        Grants::default()
+    }
+
+    pub fn union(self, other: Grants) -> Grants {
+        Grants {
+            writes: self.writes || other.writes,
+            spend: self.spend || other.spend,
+        }
+    }
+}
+
+pub fn parse_grants(_text: Option<&str>) -> (Grants, Option<String>) {
+    (Grants::default(), None)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum GateCall {
+    Allow,
+    Deny,
+    Prompt(Classes),
+    Other,
+}
+
+pub fn mcptools_gate(_grants: Grants, _ask: &ClaudePermission) -> GateCall {
+    GateCall::Other
+}
+
 pub fn blocked_notice(
     thread: Option<&str>,
     worker: &str,
@@ -238,6 +281,123 @@ mod tests {
                 "{tool} {input}"
             );
         }
+    }
+
+    fn gate(grants: Grants, tool: &str, input: serde_json::Value) -> GateCall {
+        mcptools_gate(grants, &ask(tool, input))
+    }
+
+    const WRITES: Grants = Grants {
+        writes: true,
+        spend: false,
+    };
+    const SPEND: Grants = Grants {
+        writes: false,
+        spend: true,
+    };
+    const BOTH: Grants = Grants {
+        writes: true,
+        spend: true,
+    };
+
+    #[test]
+    fn gate_prompts_for_each_ungranted_class() {
+        let none = Grants::default();
+        let execute = "mcp__mcptools__execute";
+        assert_eq!(
+            gate(none, execute, json!({"allowWrites": true})),
+            GateCall::Prompt(Classes {
+                writes: true,
+                spend: false
+            })
+        );
+        assert_eq!(
+            gate(none, execute, json!({"allowSpend": true})),
+            GateCall::Prompt(Classes {
+                writes: false,
+                spend: true
+            })
+        );
+        assert_eq!(
+            gate(
+                none,
+                execute,
+                json!({"allowWrites": true, "allowSpend": true})
+            ),
+            GateCall::Prompt(Classes {
+                writes: true,
+                spend: true
+            })
+        );
+    }
+
+    #[test]
+    fn gate_allows_only_when_every_needed_class_is_granted() {
+        let call = "mcp__mcptools__call_tool";
+        let both = json!({"allowWrites": true, "allowSpend": true});
+        assert_eq!(
+            gate(WRITES, call, json!({"allowWrites": true})),
+            GateCall::Allow
+        );
+        assert_eq!(
+            gate(SPEND, call, json!({"allowSpend": true})),
+            GateCall::Allow
+        );
+        assert_eq!(gate(BOTH, call, both.clone()), GateCall::Allow);
+        assert_eq!(
+            gate(WRITES, call, both),
+            GateCall::Prompt(Classes {
+                writes: false,
+                spend: true
+            })
+        );
+        assert_eq!(
+            gate(SPEND, call, json!({"allowWrites": true})),
+            GateCall::Prompt(Classes {
+                writes: true,
+                spend: false
+            })
+        );
+    }
+
+    #[test]
+    fn gate_allows_reads_denies_malformed_and_skips_other_tools() {
+        let execute = "mcp__mcptools__execute";
+        for grants in [Grants::default(), BOTH] {
+            assert_eq!(
+                gate(grants, execute, json!({"code": "read"})),
+                GateCall::Allow
+            );
+            assert_eq!(
+                gate(grants, execute, json!({"allowWrites": "true"})),
+                GateCall::Deny
+            );
+            assert_eq!(
+                gate(grants, execute, json!({"allowSpend": null})),
+                GateCall::Deny
+            );
+            assert_eq!(gate(grants, "Bash", json!({})), GateCall::Other);
+        }
+    }
+
+    #[test]
+    fn yolo_grants_both_classes_and_ask_grants_none() {
+        assert_eq!(Grants::for_mode(PermissionMode::Yolo), BOTH);
+        assert_eq!(Grants::for_mode(PermissionMode::Ask), Grants::default());
+        assert_eq!(WRITES.union(SPEND), BOTH);
+    }
+
+    #[test]
+    fn grants_parse_missing_valid_and_invalid() {
+        assert_eq!(parse_grants(None), (Grants::default(), None));
+        assert_eq!(
+            parse_grants(Some("{\"writes\":true,\"spend\":false}")),
+            (WRITES, None)
+        );
+        assert_eq!(parse_grants(Some("{\"spend\":true}")), (SPEND, None));
+        let (grants, warning) = parse_grants(Some("not json"));
+        assert_eq!(grants, Grants::default());
+        assert!(warning.is_some());
     }
 
     fn options() -> Vec<PermissionOption> {

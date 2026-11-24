@@ -358,6 +358,8 @@ pub struct ChatSection {
     pub worktree_dir: Option<String>,
     #[serde(default)]
     pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub permissions: Option<toml::Value>,
     #[serde(default = "default_true")]
     pub inbox_alert_sound: bool,
     #[serde(default)]
@@ -446,6 +448,7 @@ impl Default for ChatSection {
             worker_base: None,
             worktree_dir: None,
             permission_mode: None,
+            permissions: None,
             inbox_alert_sound: true,
             inbox_alert_notification: false,
             inbox_alert_unknown_focus: UnknownFocus::Alert,
