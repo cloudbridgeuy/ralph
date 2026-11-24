@@ -51,13 +51,6 @@ impl BindPolicy {
     }
 }
 
-pub fn build_binds(port: u16, tailnet: Option<Ipv4Addr>) -> Vec<SocketAddr> {
-    std::iter::once(IpAddr::V4(Ipv4Addr::LOCALHOST))
-        .chain(tailnet.map(IpAddr::V4))
-        .map(|ip| SocketAddr::new(ip, port))
-        .collect()
-}
-
 pub fn tailnet_hosts(ip: Ipv4Addr, names: &TailnetNames, port: u16) -> Vec<String> {
     let mut hosts = allowed_hosts(
         &[
@@ -272,23 +265,6 @@ mod tests {
         let policy = BindPolicy::loopback_and(tailnet()).unwrap();
         assert_eq!(policy.primary(), Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
         assert_eq!(policy.allowed.len(), 3);
-    }
-
-    #[test]
-    fn build_binds_without_tailnet_is_loopback_only() {
-        assert_eq!(build_binds(4000, None), vec![addr("127.0.0.1:4000")]);
-    }
-
-    #[test]
-    fn build_binds_with_tailnet_adds_a_second_address_on_the_same_port() {
-        assert_eq!(
-            build_binds(4000, Some(Ipv4Addr::new(100, 101, 102, 103))),
-            vec![addr("127.0.0.1:4000"), addr("100.101.102.103:4000")]
-        );
-        assert_eq!(
-            build_binds(0, Some(Ipv4Addr::new(100, 101, 102, 103))),
-            vec![addr("127.0.0.1:0"), addr("100.101.102.103:0")]
-        );
     }
 
     fn names(short: Option<&str>, fqdn: Option<&str>) -> TailnetNames {

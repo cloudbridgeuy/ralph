@@ -38,7 +38,7 @@ pub fn tailscale_candidates() -> [&'static str; 2] {
     [PATH_CANDIDATE, APP_CANDIDATE]
 }
 
-pub fn classify(outcome: SpawnOutcome) -> Result<String, TailnetError> {
+fn classify(outcome: SpawnOutcome) -> Result<String, TailnetError> {
     match outcome {
         SpawnOutcome::Missing => Err(TailnetError::NotFound),
         SpawnOutcome::Ran {

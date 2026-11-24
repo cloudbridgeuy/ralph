@@ -12,7 +12,7 @@ mod tailnet;
 mod token;
 mod tokens;
 
-pub use addr::{allowed_hosts, bind_hosts, build_binds, tailnet_hosts, BindError, BindPolicy};
+pub use addr::{allowed_hosts, bind_hosts, tailnet_hosts, BindError, BindPolicy};
 pub use admit::MAX_HANDLERS;
 pub use route::ApiConfig;
 pub use server::{bind, bind_with_limits, serve, ApiError, Limits};
@@ -22,7 +22,7 @@ pub const FONT_NOTICE: &str = include_str!("../assets/fonts/NOTICE");
 pub const FONT_LICENCE: &str = include_str!("../assets/fonts/OFL.txt");
 
 pub use tailnet::{
-    classify, parse_ip_output, parse_status_json, pick_outcome, tailscale_candidates, SpawnOutcome,
+    parse_ip_output, parse_status_json, pick_outcome, tailscale_candidates, SpawnOutcome,
     TailnetError, TailnetNames,
 };
 pub use token::{cookie_name, Token};
