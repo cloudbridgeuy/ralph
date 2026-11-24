@@ -161,7 +161,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 | `r-rule` | `rule()` | `role="separator"` |
 | `r-table` | `table(headers, rows)` | `th scope="col"`; a short row is padded to the header count |
 | `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
-| `r-pill` | `pill(tone, shape, icon, text)`, `pill_with(variant, …)` | shape `square` or `round`; tone fill is 8% of the role over `--r-bg`, which keeps 4.5:1 for every tone in both themes (checked in `roles.rs`); `variant="outline"` has no fill; a pill with no tone has no fill; optional inline SVG icon (check, cross, warning, info, dot, pause) with `aria-hidden`; the text is cut with `…` at 32ch, and text over 32 chars is also in `title` |
+| `r-pill` | `pill(tone, shape, icon, text)`, `pill_with(variant, …)` | shape `square` or `round`; tone fill is 8% of the role over `--r-bg`, which keeps 4.5:1 for every tone in both themes (checked in `roles.rs`); `variant="outline"` has no fill; the fill lives on the tone rules in `app.css`; optional inline SVG icon (check, cross, warning, info, dot, pause) with `aria-hidden`; the text is cut with `…` at 32ch, and text over 32 chars is also in `title` |
 | `r-status` | `status(tone, text)` | `role="status"`, `aria-live="polite"`; a word (OK, Error, Warning, Info, Note) shows the tone, so colour is never the only signal |
 | `r-empty` | `empty(text)` | the empty state |
 | `r-error` | `error(text)` | `role="alert"` |
