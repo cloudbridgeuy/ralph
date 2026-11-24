@@ -91,6 +91,16 @@ fn narrow_block(css: &str) -> &str {
     &rest[..end]
 }
 
+fn narrow_rule<'a>(block: &'a str, selector: &str) -> &'a str {
+    let head = format!("\n  {selector} {{\n");
+    let start = block
+        .find(&head)
+        .unwrap_or_else(|| panic!("{selector} has no rule"))
+        + head.len();
+    let end = block[start..].find('}').unwrap();
+    &block[start..start + end]
+}
+
 #[test]
 fn the_stackable_table_stacks_at_760px_or_narrower() {
     let css = css();
@@ -121,8 +131,23 @@ fn stacked_rows_keep_the_states_and_pad_on_the_grid() {
     assert!(block.contains("padding: 10px 1ch 10px 0;"));
     assert!(block.contains("r-table.stackable tbody tr.open"));
     assert!(block.contains("r-table.stackable tbody tr[aria-selected=\"true\"]"));
-    assert!(block.contains("var(--r-hover)"));
     assert!(!block.contains("5px"));
+    let hover = narrow_rule(block, "r-table.stackable tbody tr:hover");
+    assert!(hover.contains("background: var(--r-hover);"), "{hover}");
+    let selected = narrow_rule(block, "r-table.stackable tbody tr[aria-selected=\"true\"]");
+    assert!(
+        selected.contains("background: var(--r-selected);"),
+        "{selected}"
+    );
+    assert!(
+        selected.contains("border-left-color: var(--r-accent);"),
+        "{selected}"
+    );
+    let open = narrow_rule(block, "r-table.stackable tbody tr.open");
+    assert!(
+        open.contains("border-left-color: var(--r-accent);"),
+        "{open}"
+    );
 }
 
 #[test]
