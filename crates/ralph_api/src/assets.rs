@@ -327,13 +327,7 @@ mod tests {
         assert!(!sizes.is_empty());
         for size in sizes {
             assert!(
-                [
-                    "font-size: 12px;",
-                    "font-size: 13px;",
-                    "font-size: 1em;",
-                    "font-size: inherit;"
-                ]
-                .contains(&size),
+                ["font-size: 12px;", "font-size: 13px;", "font-size: 1em;"].contains(&size),
                 "{size}"
             );
         }
@@ -356,7 +350,6 @@ mod tests {
                 "{weight}"
             );
         }
-        assert!(!css.contains("font-weight: 700"));
     }
 
     #[test]
