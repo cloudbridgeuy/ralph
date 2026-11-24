@@ -61,7 +61,7 @@ function preview(text, max) {
 }
 
 function extentSpan(lo, hi, total) {
-  if (!(total > 0) || lo >= hi || lo >= total) return null;
+  if (![lo, hi, total].every(Number.isFinite) || total <= 0 || lo >= hi || lo >= total) return null;
   const width = Math.max(((Math.min(hi, total) - lo) * 100) / total, EXTENT_MIN);
   return { x: Math.min((lo * 100) / total, 100 - width), width };
 }

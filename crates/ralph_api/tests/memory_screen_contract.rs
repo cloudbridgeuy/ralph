@@ -220,7 +220,7 @@ fn the_script_draws_the_same_chevron_and_extent_bar_as_the_rust_tree() {
     }
     for fragment in [
         "function extentSpan(lo, hi, total) {",
-        "if (!(total > 0) || lo >= hi || lo >= total) return null;",
+        "if (![lo, hi, total].every(Number.isFinite) || total <= 0 || lo >= hi || lo >= total) return null;",
         "Math.max(((Math.min(hi, total) - lo) * 100) / total, EXTENT_MIN)",
         "Math.min((lo * 100) / total, 100 - width)",
     ] {
