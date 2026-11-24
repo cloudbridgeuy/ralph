@@ -557,4 +557,12 @@ mod tests {
         assert_declares(&css, ".state h4", "color: var(--r-muted);");
         assert_declares(&css, ".group h3", "font-size: 1em;");
     }
+
+    #[test]
+    fn the_catalogue_theme_heading_is_on_the_scale() {
+        let css = css();
+        for declaration in ["margin: 0 0 10px;", "font-size: 1em;", "font-weight: 600;"] {
+            assert_declares(&css, "[data-theme] > h2", declaration);
+        }
+    }
 }

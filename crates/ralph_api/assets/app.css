@@ -90,6 +90,12 @@ main {
   color: var(--r-ink);
 }
 
+[data-theme] > h2 {
+  margin: 0 0 10px;
+  font-size: 1em;
+  font-weight: 600;
+}
+
 .group,
 .state {
   margin: 10px 0;
