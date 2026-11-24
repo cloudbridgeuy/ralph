@@ -92,6 +92,7 @@ fn curator_row_values(
         run: Some("run-1".into()),
         store: "/store".into(),
         at: "t".into(),
+        codex_model: None,
     };
     subprocess::recorded(outcome)
         .map(|done| curator_rows(&curator, done))
@@ -163,4 +164,81 @@ fn the_hidden_drift_flags_come_as_a_pair_and_never_with_live() {
     assert!(!parse(&[
         "--live", "--drift", "0.170.0", "--inbox", "/s/inbox"
     ]));
+}
+
+#[test]
+fn codex_curator_rows_preserve_model_and_do_not_invent_cost() {
+    let outcome = curator_outcome(Some(CURATOR_RESULT), timed_out);
+    let done = subprocess::recorded(&outcome).unwrap();
+    for model in ["gpt-5.4", "unknown-model"] {
+        let rows = CuratorRows {
+            kind: ralph_core::chat_memory::CallSite::Nap,
+            run: None,
+            store: "/store".into(),
+            at: "t".into(),
+            codex_model: Some(model.into()),
+        };
+        let value = serde_json::to_value(&curator_rows(&rows, done)[0]).unwrap();
+        assert_eq!(value["harness"], "codex");
+        assert_eq!(value["model"], model);
+        assert!(value["cost_usd"].is_null());
+        assert_eq!(value["per_thread_usage"], true);
+    }
+}
+
+fn codex_final_text(text: &str) -> String {
+    let mut stream = ralph_core::worker::ExecStream::default();
+    stream.observe(
+        &serde_json::json!({"type":"item.completed","item":{"type":"agent_message","text":text}})
+            .to_string(),
+    );
+    stream.observe(r#"{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}"#);
+    let (result, error) = stream.finish();
+    assert!(error.is_none());
+    stream_processor::extract_response_text(&result.output_blocks).unwrap()
+}
+
+#[test]
+fn codex_final_text_reaches_nap_merge_and_tag_parsers() {
+    let nap = codex_final_text("```markdown\nA useful summary\n```");
+    assert_eq!(
+        ralph_core::chat_memory::nap_summary(0, Some(&nap)).unwrap(),
+        "A useful summary"
+    );
+    let merge = codex_final_text("A merged summary #auth:1");
+    let merged = ralph_core::chat_memory::nap_summary(0, Some(&merge)).unwrap();
+    assert_eq!(
+        ralph_core::chat_thread::check_digest(
+            &merged,
+            &ralph_core::chat_thread::ThreadName::parse("auth").unwrap()
+        )
+        .unwrap(),
+        "A merged summary #auth:1"
+    );
+    let text = codex_final_text(r#"[{"n":1,"rule":true,"decision":false,"approval":false}]"#);
+    let run = MemoryRun {
+        code: 0,
+        text: Some(text),
+        failure: None,
+    };
+    let reply = memory_tag_reply(&run, true, false).unwrap();
+    assert_eq!(
+        ralph_core::chat_memory::parse_reply(&reply.text, &[1])
+            .tagged
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn malformed_codex_tag_payload_aborts_before_entry_failures() {
+    for text in ["not json", "{}", "[broken"] {
+        let run = MemoryRun {
+            code: 0,
+            text: Some(codex_final_text(text)),
+            failure: None,
+        };
+        assert!(memory_tag_reply(&run, true, false).is_err());
+        assert!(memory_tag_reply(&run, false, false).is_ok());
+    }
 }
