@@ -6,15 +6,6 @@ pub enum PillShape {
     Round,
 }
 
-impl PillVariant {
-    fn attribute(self) -> &'static str {
-        match self {
-            PillVariant::Tint => "",
-            PillVariant::Outline => " variant=\"outline\"",
-        }
-    }
-}
-
 impl PillShape {
     fn as_str(self) -> &'static str {
         match self {
@@ -28,6 +19,15 @@ impl PillShape {
 pub enum PillVariant {
     Tint,
     Outline,
+}
+
+impl PillVariant {
+    fn attribute(self) -> &'static str {
+        match self {
+            PillVariant::Tint => "",
+            PillVariant::Outline => " variant=\"outline\"",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
