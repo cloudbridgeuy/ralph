@@ -48,6 +48,8 @@ Each vendor crate has its own `Cargo.lock`. `--locked` fails the job when a lock
 
 Local patch in `vendor/tiny_http`: `Server::from_listener_with_timeouts` sets a read and write timeout on every accepted socket (GUZ-1755).
 
+Local patch in `vendor/tiny_http`: the `EqualReader` drop drain reads through a fixed 8 KiB buffer, so a huge declared `Content-Length` allocates nothing large (GUZ-1755).
+
 ## Two-Crate Architecture (Functional Core - Imperative Shell)
 
 Separate pure logic from I/O operations using two crates:
