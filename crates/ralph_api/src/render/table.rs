@@ -62,9 +62,19 @@ fn shell(headers: &[&str], numeric: &[bool], body: &str) -> String {
 }
 
 #[derive(Clone, Copy)]
-pub enum RowMark {
-    Selected,
-    Open,
+pub struct RowMark {
+    pub selected: bool,
+    pub open: bool,
+}
+
+fn row_attributes(mark: RowMark) -> String {
+    let open = if mark.open { " class=\"open\"" } else { "" };
+    let selected = if mark.selected {
+        " aria-selected=\"true\""
+    } else {
+        ""
+    };
+    format!("{open}{selected}")
 }
 
 pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
@@ -85,11 +95,10 @@ pub fn table_marked(headers: &[&str], rows: &[Vec<&str>], marks: &[(usize, RowMa
                 .enumerate()
                 .map(|(column, text)| cell("td", text, numeric[column]))
                 .collect();
-            let mark = match marks.iter().find(|(at, _)| *at == index) {
-                Some((_, RowMark::Selected)) => " aria-selected=\"true\"",
-                Some((_, RowMark::Open)) => " class=\"open\"",
-                None => "",
-            };
+            let mark = marks
+                .iter()
+                .find(|(at, _)| *at == index)
+                .map_or_else(String::new, |(_, mark)| row_attributes(*mark));
             format!("<tr{mark}>{cells}</tr>")
         })
         .collect();
@@ -107,6 +116,15 @@ pub fn table_state(headers: &[&str], inner_html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{is_number, numeric_columns, table, table_marked, table_state, RowMark};
+
+    const SELECTED: RowMark = RowMark {
+        selected: true,
+        open: false,
+    };
+    const OPEN: RowMark = RowMark {
+        selected: false,
+        open: true,
+    };
     use crate::render::golden::{assert_golden, hostile_text, long_text};
     use crate::render::{empty, error, spinner};
 
@@ -271,7 +289,7 @@ mod tests {
             &table_marked(
                 &["name"],
                 &[vec!["a"], vec!["b"], vec!["c"]],
-                &[(1, RowMark::Selected), (2, RowMark::Open)],
+                &[(1, SELECTED), (2, OPEN)],
             ),
         );
     }
@@ -280,8 +298,21 @@ mod tests {
     fn a_mark_past_the_last_row_changes_nothing() {
         let rows = [vec!["a"]];
         assert_eq!(
-            table_marked(&["n"], &rows, &[(5, RowMark::Open)]),
+            table_marked(&["n"], &rows, &[(5, OPEN)]),
             table(&["n"], &rows)
+        );
+    }
+
+    #[test]
+    fn a_row_marked_both_is_selected_and_open() {
+        let both = RowMark {
+            selected: true,
+            open: true,
+        };
+        let html = table_marked(&["n"], &[vec!["a"]], &[(0, both)]);
+        assert!(
+            html.contains("<tr class=\"open\" aria-selected=\"true\">"),
+            "{html}"
         );
     }
 }
