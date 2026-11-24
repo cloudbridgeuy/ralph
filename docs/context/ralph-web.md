@@ -1,13 +1,15 @@
 # ralph web Command
 
-`ralph web [--store <DIR>] [--port <N>]` serves a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `POST /api/render` and `GET /tokens.css`.
+`ralph web [--store <DIR>] [--port <N>] [--tailscale]` serves a local HTTP API on 127.0.0.1. With `--tailscale` it also serves on the Tailscale IP of the machine (see [Tailscale](#tailscale)). It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `POST /api/render` and `GET /tokens.css`.
 
 ## Code Locations
 
 | Component | File | Description |
 |-----------|------|-------------|
-| CLI args | `crates/ralph/src/cli/mod.rs` | `Web(WebArgs)`: `--store`, `--port` |
+| CLI args | `crates/ralph/src/cli/mod.rs` | `Web(WebArgs)`: `--store`, `--port`, `--tailscale` |
 | Shell | `crates/ralph/src/web.rs` | `run()`: store, token, bind, print URL, serve |
+| Tailscale shell | `crates/ralph/src/web_tailscale.rs` | `discover()`: runs `tailscale ip` and `tailscale status --json` |
+| Tailnet parsing | `crates/ralph_api/src/tailnet.rs` | pure: `parse_ip_output()`, `parse_status_json()`, `pick_outcome()`, `TailnetError` |
 | Tokens CSS | `crates/ralph_api/src/tokens.rs` | pure `tokens_css()`: the CSS text |
 | Tokens input | `crates/ralph/src/web_tokens.rs` | `render_tokens()`: theme slots and `[web]` to CSS |
 | Token | `crates/ralph_api/src/token.rs` | `Token::generate()`, `Token::matches()`, `extract_tokens()` |
@@ -26,7 +28,7 @@
 
 ## Start
 
-`ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. It also prints the store path. Open the URL. The server answers 302, sets the cookie and sends the browser to `/`.
+Without `--tailscale`, `ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. It also prints the store path. With `--tailscale` it prints a list of URLs. Open the URL. The server answers 302, sets the cookie and sends the browser to `/`.
 
 ## Token
 
@@ -44,6 +46,8 @@
 
 ## Loopback rule
 
+Loopback only is the default. `--tailscale` adds one address; see [Tailscale](#tailscale).
+
 - `ralph web` binds only to an address in the `BindPolicy`. `BindPolicy::loopback()` allows `127.0.0.1` and `::1`. It is the only place that holds these values. The shell reads the bind address from `BindPolicy::primary()` and the host names from `bind_hosts()`. An IPv6 host is written as `[::1]:<port>`.
 - `bind()` checks the requested address. It binds. Then it checks the address that the OS bound.
 - Any other address is refused with an error that names the address.
@@ -52,13 +56,43 @@
 
 ## Host check
 
-- `route()` accepts a request only when the `Host` header is in `allowed_hosts`. The shell builds the list after the bind: `127.0.0.1:<port>` and `localhost:<port>`.
+- `route()` accepts a request only when the `Host` header is in `allowed_hosts`. The shell builds the list after the bind: `127.0.0.1:<port>` and `localhost:<port>`. With `--tailscale` the list is longer.
 - A missing or other Host gives 403. This stops DNS rebinding.
 
 ## Port
 
-- `--port` sets the port on 127.0.0.1. The default is `0`, which picks a free port.
+- `--port` sets the port. The default is `0`, which picks a free port.
+- `[web] port` in `config.toml` sets a stable port. Precedence: `--port`, then `[web] port`, then `0`. `--port 0` forces a free port.
+- A busy port exits with 1: `port <N> in use (from --port|[web] port|ephemeral): <os error>`.
 - The printed URL shows the real port.
+
+## Tailscale
+
+`ralph web --tailscale` serves on the Tailscale IPv4 address too. Without the flag the server is loopback only: `BindPolicy::loopback()` is unchanged.
+
+Detection:
+- `ralph web` runs `tailscale ip`. It tries `tailscale` on PATH first. Then it tries `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+- It never guesses the address from 100.64.0.0/10. That range is shared CGNAT space.
+- It uses the first IPv4 address. It ignores IPv6 and extra addresses.
+- It exits with 1 and no fallback to loopback only when:
+  - Tailscale is not installed. The error names both paths.
+  - Tailscale is stopped or logged out. The error shows the first stderr line.
+  - Tailscale reports no IPv4 address.
+- `tailscale status --json` gives the machine name and the MagicDNS FQDN. If it fails, `ralph web` prints a warning and allows only the IP.
+
+Bind:
+- The servers bind `127.0.0.1` and exactly the reported IP, on the same port. With port 0, the second bind uses the port of the first.
+- The policy is `BindPolicy::loopback_and(ip)`. `bind()` checks it before and after the bind.
+- There are two servers on two threads. They share one token and one stop predicate. If one fails, both stop.
+- Allowed Host values, each with `:<port>`: `127.0.0.1`, `localhost`, the IP, the machine name and the FQDN. The compare is case-insensitive. Any other name gets 403, which stops DNS rebinding.
+- The start output lists the URLs: loopback, the Tailscale IP and the FQDN when known. Each has `?token=`.
+- A stable port helps the tailnet URL: set `[web] port` (see [Port](#port)).
+
+Risk:
+- The traffic is plain HTTP inside WireGuard. A browser treats it as an insecure context. The cookie cannot have the `Secure` attribute.
+- The cookie and URL token work as before. `ralph web` does not read Tailscale identity headers.
+- Every device that the tailnet ACLs allow can reach the server, shared nodes included. Only the token stands between them and the data.
+- If writes need per-user identity, use `tailscale serve` instead.
 
 ## Routes
 
@@ -162,9 +196,11 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 ## Limits
 
 - The server handles each request on its own thread. It runs at most 8 at the same time. The next one gets 503 at once.
-- An authorised `POST /api/render` can announce a body under the cap (by `Content-Length` or chunked) and never send it. That request keeps its slot until the client closes the socket. Any other request gets its answer without a body read. Read timeouts come with GUZ-1755.
-- tiny_http 0.12.0 runs one thread for each open connection: the accept loop in `Server::from_listener` hands each connection to `TaskPool::spawn`, which starts a new thread when none is free (`lib.rs:323`, `util/task_pool.rs:69-76`). An admitted stalled request costs two threads: the tiny_http connection thread and the handler thread that holds the slot. Past 8 requests in progress, a stalled request costs the connection thread and a thread that sends the 503. All of these threads end when the client closes the socket. Only GUZ-1755 timeouts bound them.
-- The server reads a request body up to 256 KiB, and only for an authorised `POST /api/render`. It checks Host and token on the headers first. A request that fails a check, or that targets another path, gets its answer without a body read, so `Expect: 100-continue` gets no `100 Continue`. A `Content-Length` over the cap gets 413 `{"error":"too large"}` at once, without a body read, on every route and method, before the Host and token checks. The bytes read are checked again against the cap. The 413 comes after the 503 check and before the 403 and 401 checks, so it leaks nothing about auth. A request with a body under the cap that stalls keeps its slot until the client closes the socket.
+- An authorised `POST /api/render` can announce a body under the cap (by `Content-Length` or chunked) and never send it. That request keeps its slot until the client closes the socket. Any other request gets its answer without a body read. A body that stalls is closed by the read timeout below.
+- tiny_http 0.12.0 runs one thread for each open connection: the accept loop in `Server::from_listener` hands each connection to `TaskPool::spawn`, which starts a new thread when none is free (`lib.rs:323`, `util/task_pool.rs:69-76`). An admitted stalled request costs two threads: the tiny_http connection thread and the handler thread that holds the slot. Past 8 requests in progress, a stalled request costs the connection thread and a thread that sends the 503. All of these threads end when the client closes the socket or a timeout fires.
+- The server reads a request body up to 256 KiB, and only for an authorised `POST /api/render`. It checks Host and token on the headers first. A request that fails a check, or that targets another path, gets its answer without a body read, so `Expect: 100-continue` gets no `100 Continue`. A `Content-Length` over the cap gets 413 `{"error":"too large"}` at once, without a body read, on every route and method, before the Host and token checks. The bytes read are checked again against the cap. The 413 comes after the 503 check and before the 403 and 401 checks, so it leaks nothing about auth. 
+- Each connection has a 10 s read timeout and a 10 s write timeout (`Limits` in `server.rs`). They come from the vendored tiny_http `Timeouts` (`vendor/tiny_http`). They apply to loopback too. A client that stalls on the body is closed when the read times out, and its slot is freed.
+- Open gap, not fixed in GUZ-1755: after the 413, tiny_http drains the unread body when the request drops. `Drop` for `EqualReader` (`vendor/tiny_http/src/util/equal_reader.rs:70`) does `vec![0; remaining_to_read]`. A huge declared `Content-Length` still allocates that size. The fix is a bounded chunk buffer in the vendored drain.
 - A stalled request never blocks the stop check.
 
 ## tokens.css
