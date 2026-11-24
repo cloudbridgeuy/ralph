@@ -448,6 +448,22 @@ mod tests {
     }
 
     #[test]
+    fn every_role_for_slot_target_is_declared_in_the_rendered_roles() {
+        let css = render_tokens(&AppConfig::default()).unwrap();
+        let targets: Vec<&str> = resolved_slots(&ThemeSection::default())
+            .iter()
+            .filter_map(|slot| role_for_slot(&slot.name))
+            .collect();
+        assert!(!targets.is_empty());
+        for role in targets {
+            assert!(
+                css.contains(&format!("\n  --r-{role}: ")),
+                "role {role} is not declared"
+            );
+        }
+    }
+
+    #[test]
     fn default_config_renders_tokens() {
         let css = render_tokens(&AppConfig::default()).unwrap();
         assert!(css.starts_with(
