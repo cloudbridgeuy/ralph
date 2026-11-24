@@ -2,6 +2,7 @@ use std::io::Read;
 use std::io::Result as IoResult;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
 
 /// A `Reader` that reads exactly the number of bytes from a sub-reader.
 ///
@@ -59,16 +60,20 @@ where
     }
 }
 
-impl<R> Drop for EqualReader<R>
+const DRAIN_BUDGET: usize = 64 * 1024;
+const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
+
+impl<R> EqualReader<R>
 where
     R: Read,
 {
-    fn drop(&mut self) {
-        let mut remaining_to_read = self.size;
+    fn drain(&mut self, budget: usize, deadline: Duration) {
+        let started = Instant::now();
+        let mut remaining_to_read = self.size.min(budget);
 
         let mut buf = [0u8; 8192];
 
-        while remaining_to_read > 0 {
+        while remaining_to_read > 0 && started.elapsed() < deadline {
             let chunk = remaining_to_read.min(buf.len());
 
             match self.reader.read(&mut buf[..chunk]) {
@@ -85,6 +90,15 @@ where
                 }
             }
         }
+    }
+}
+
+impl<R> Drop for EqualReader<R>
+where
+    R: Read,
+{
+    fn drop(&mut self) {
+        self.drain(DRAIN_BUDGET, DRAIN_DEADLINE);
     }
 }
 
@@ -172,5 +186,58 @@ mod tests {
 
         assert_eq!(inner.data.position(), 20000);
         assert!(rx.try_recv().is_err());
+    }
+
+    struct EndlessReader {
+        total: usize,
+    }
+
+    impl Read for EndlessReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            buf.fill(9);
+            self.total += buf.len();
+            Ok(buf.len())
+        }
+    }
+
+    struct SlowReader {
+        total: usize,
+    }
+
+    impl Read for SlowReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            buf[0] = 1;
+            self.total += 1;
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn drop_drain_stops_after_the_byte_budget() {
+        let mut inner = EndlessReader { total: 0 };
+
+        {
+            let (_equal_reader, _) = EqualReader::new(&mut inner, 1usize << 30);
+        }
+
+        assert!(inner.total > 0);
+        assert!(inner.total <= 65536);
+    }
+
+    #[test]
+    fn drain_stops_after_the_deadline() {
+        let mut inner = SlowReader { total: 0 };
+        let started = std::time::Instant::now();
+
+        {
+            let (equal_reader, _) = EqualReader::new(&mut inner, 200);
+            let mut equal_reader = std::mem::ManuallyDrop::new(equal_reader);
+            equal_reader.drain(65536, std::time::Duration::from_millis(50));
+        }
+
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(inner.total > 0);
+        assert!(inner.total < 20);
     }
 }
