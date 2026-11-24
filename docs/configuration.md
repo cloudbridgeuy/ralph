@@ -125,7 +125,7 @@ border = "magenta"
 | `quote`, `table` | termimad default | termimad default | Quote mark, table borders |
 | `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL |
 | `memory_ref` | `magenta` | `magenta` | `#N` memory references |
-| `border` | `dark_blue` | `dark_blue` | Worker header box border |
+| `border` | `dark_blue` | `dark_blue` | Worker header box border; no effect on `ralph web` |
 | `done`, `blocked`, `waiting` | `dark_green`, `dark_red`, `dark_yellow` | same | Worker status (`failed` uses `blocked`, `check` uses `waiting`) |
 | `pill_ok`, `pill_bad`, `pill_warn`, `pill_info`, `pill_accent` | `dark_green`, `dark_red`, `dark_yellow`, `blue`, `blue` | same | Emphasis pill colours (follow `done`, `blocked`, `waiting`, `link` by default) |
 
