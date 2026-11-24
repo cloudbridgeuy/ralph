@@ -227,6 +227,8 @@ pub const MCPTOOLS_SERVER: &str = "mcptools";
 
 pub const MCPTOOLS_ASK_RULES: [&str; 2] = ["mcp__mcptools__execute", "mcp__mcptools__call_tool"];
 
+pub const MCPTOOLS_BASH_ASK_RULE: &str = "Bash(mcptools:*)";
+
 pub fn server_allow_rule(name: &str) -> String {
     if name == MCPTOOLS_SERVER {
         "mcp__mcptools__find_tools".to_string()
@@ -236,7 +238,11 @@ pub fn server_allow_rule(name: &str) -> String {
 }
 
 pub fn mcptools_ask_settings() -> Value {
-    json!({ "permissions": { "ask": MCPTOOLS_ASK_RULES } })
+    let ask: Vec<&str> = MCPTOOLS_ASK_RULES
+        .into_iter()
+        .chain([MCPTOOLS_BASH_ASK_RULE])
+        .collect();
+    json!({ "permissions": { "ask": ask } })
 }
 
 fn allowed_tools(config: &Value) -> String {
@@ -778,7 +784,7 @@ mod tests {
         assert_eq!(server_allow_rule("mcptools"), "mcp__mcptools__find_tools");
         assert_eq!(
             mcptools_ask_settings(),
-            json!({"permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]}})
+            json!({"permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool", "Bash(mcptools:*)"]}})
         );
     }
 

@@ -28,7 +28,44 @@ pub enum McptoolsDecision {
     Other,
 }
 
+fn is_assignment(token: &str) -> bool {
+    token.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+fn segment_classes(segment: &str) -> Option<Classes> {
+    let mut tokens = segment
+        .split_whitespace()
+        .skip_while(|token| *token == "env" || is_assignment(token));
+    (tokens.next() == Some("mcptools")).then(|| {
+        let spend = tokens.next() == Some("images");
+        Classes {
+            writes: !spend,
+            spend,
+        }
+    })
+}
+
+fn bash_mcptools_classes(command: &str) -> Option<Classes> {
+    command
+        .split(['&', '|', ';', '\n'])
+        .filter_map(segment_classes)
+        .reduce(|a, b| Classes {
+            writes: a.writes || b.writes,
+            spend: a.spend || b.spend,
+        })
+}
+
 pub fn mcptools_decision(ask: &ClaudePermission) -> McptoolsDecision {
+    if ask.content.tool == "Bash" {
+        return ask
+            .input
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .and_then(bash_mcptools_classes)
+            .map_or(McptoolsDecision::Other, McptoolsDecision::Elevated);
+    }
     if !matches!(
         ask.content.tool.as_str(),
         "mcp__mcptools__execute" | "mcp__mcptools__call_tool"
@@ -487,6 +524,53 @@ mod tests {
             );
             assert_eq!(gate(grants, "Bash", json!({})), GateCall::Other);
         }
+    }
+
+    #[test]
+    fn bash_mcptools_commands_are_classified_by_segment() {
+        use McptoolsDecision::*;
+        let writes = || {
+            Elevated(Classes {
+                writes: true,
+                spend: false,
+            })
+        };
+        let spend = || {
+            Elevated(Classes {
+                writes: false,
+                spend: true,
+            })
+        };
+        let both = || {
+            Elevated(Classes {
+                writes: true,
+                spend: true,
+            })
+        };
+        for (command, want) in [
+            ("mcptools linear issue update X", writes()),
+            ("FOO=1 mcptools images generate", spend()),
+            ("env A=1 mcptools images generate", spend()),
+            ("cd x && mcptools linear issue get", writes()),
+            (
+                "mcptools images generate | cat; mcptools linear issue get",
+                both(),
+            ),
+            ("mcptools-x run", Other),
+            ("echo mcptools", Other),
+            ("/usr/bin/mcptools linear", Other),
+            ("", Other),
+        ] {
+            assert_eq!(
+                mcptools_decision(&ask("Bash", json!({ "command": command }))),
+                want,
+                "{command}"
+            );
+        }
+        assert_eq!(
+            mcptools_decision(&ask("Bash", json!({ "command": 7 }))),
+            Other
+        );
     }
 
     #[test]
