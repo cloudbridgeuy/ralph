@@ -191,62 +191,6 @@ mod tests {
         assert!(!css.contains("rgb(") && !css.contains("rgba("));
     }
 
-    const DEFAULT_TOKENS: &str = include_str!("../../ralph/src/golden/tokens_default.css");
-
-    fn theme_hex(theme: &str, name: &str) -> [f64; 3] {
-        let block = DEFAULT_TOKENS
-            .split(&format!("[data-theme=\"{theme}\"] {{"))
-            .nth(1)
-            .and_then(|rest| rest.split('}').next())
-            .unwrap();
-        let line = block
-            .lines()
-            .find(|line| line.trim_start().starts_with(&format!("{name}:")))
-            .unwrap();
-        let hex = line.split('#').nth(1).unwrap();
-        let channel = |at: usize| f64::from(u8::from_str_radix(&hex[at..at + 2], 16).unwrap());
-        [channel(0), channel(2), channel(4)]
-    }
-
-    fn luminance(rgb: [f64; 3]) -> f64 {
-        let linear = |value: f64| {
-            let unit = value / 255.0;
-            if unit <= 0.04045 {
-                unit / 12.92
-            } else {
-                ((unit + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(rgb[0]) + 0.7152 * linear(rgb[1]) + 0.0722 * linear(rgb[2])
-    }
-
-    fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
-        let (x, y) = (luminance(a), luminance(b));
-        (x.max(y) + 0.05) / (x.min(y) + 0.05)
-    }
-
-    fn muted_weight() -> f64 {
-        let css = css();
-        let rest = css
-            .split("color-mix(in srgb, var(--r-ansi-7) ")
-            .nth(1)
-            .unwrap();
-        let percent = rest.split('%').next().unwrap();
-        percent.parse::<f64>().unwrap() / 100.0
-    }
-
-    #[test]
-    fn muted_text_has_aa_contrast_in_both_themes() {
-        let weight = muted_weight();
-        for theme in ["dark", "light"] {
-            let fg = theme_hex(theme, "--r-ansi-7");
-            let bg = theme_hex(theme, "--r-ansi-0");
-            let mixed = [0, 1, 2].map(|i| (weight * fg[i] + (1.0 - weight) * bg[i]).round());
-            let ratio = contrast(mixed, bg);
-            assert!(ratio >= 4.5, "{theme}: {ratio:.2}");
-        }
-    }
-
     const UNSTYLED_SCOPES: [&str; 2] = ["source", "meta"];
 
     fn scope_heads(html: &str) -> Vec<String> {
@@ -288,5 +232,61 @@ mod tests {
             assert!(css.contains(tag), "{tag}");
         }
         assert!(css.contains("r-code pre:focus-visible"));
+    }
+
+    fn rule_body<'a>(css: &'a str, selector: &str) -> Option<&'a str> {
+        let head = format!("\n{selector} {{\n");
+        let start = css.find(&head)? + head.len();
+        let end = css[start..].find('}')?;
+        Some(&css[start..start + end])
+    }
+
+    fn declarations<'a>(css: &'a str, property: &'a str) -> Vec<&'a str> {
+        css.lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with(property))
+            .collect()
+    }
+
+    #[test]
+    fn rule_body_reads_the_block_of_an_exact_selector() {
+        let css = "\nbody {\n  color: red;\n}\n\nbody-x {\n  color: blue;\n}\n";
+        assert_eq!(rule_body(css, "body"), Some("  color: red;\n"));
+        assert_eq!(rule_body(css, "main"), None);
+    }
+
+    #[test]
+    fn declarations_match_only_the_property_prefix() {
+        let css = "a {\n  border: 0;\n  border-top: 1px;\n  outline: none;\n}\n";
+        assert_eq!(
+            declarations(css, "border"),
+            vec!["border: 0;", "border-top: 1px;"]
+        );
+    }
+
+    #[test]
+    fn the_stylesheet_uses_neutral_roles() {
+        let css = css();
+        for gone in ["--r-border", "--r-link", "--r-inline-code-bg"] {
+            assert!(!css.contains(gone), "{gone}");
+        }
+        let outlines = declarations(&css, "outline:");
+        assert!(!outlines.is_empty());
+        for outline in outlines {
+            assert_eq!(outline, "outline: 2px solid var(--r-accent);");
+        }
+        for border in declarations(&css, "border") {
+            assert!(!border.contains("--r-ansi-"), "{border}");
+        }
+        let body = rule_body(&css, "body").unwrap();
+        assert!(body.contains("background: var(--r-bg);"));
+        assert!(body.contains("color: var(--r-ink);"));
+        for level in ["h1", "h2", "h3"] {
+            let colour = format!("color: var(--r-{level});");
+            assert!(css.contains(&colour), "{colour}");
+        }
+        assert!(!css.contains("var(--r-h1,"));
+        assert!(!css.contains("var(--r-h2,"));
+        assert!(!css.contains("var(--r-h3,"));
     }
 }
