@@ -1,12 +1,19 @@
 use super::{group, text};
-use crate::render::{error, tree, Cells, TreeNode};
+use crate::render::{error, tree, Cells, Extent, TreeNode};
 
 const HOSTILE: &str = "</r-tree><script>alert(\"x\")</script> 'quote' & \"double\"";
 
+fn spanned(mut node: TreeNode<'_>, lo: usize, hi: usize, total: usize) -> TreeNode<'_> {
+    if let TreeNode::Branch { cells, .. } | TreeNode::Leaf { cells, .. } = &mut node {
+        cells.extent = Some(Extent { lo, hi, total });
+    }
+    node
+}
+
 fn cells(summary: Option<&str>) -> Cells<'_> {
     Cells {
-        count: None,
         summary,
+        ..Cells::default()
     }
 }
 
@@ -20,7 +27,7 @@ fn branch<'a>(
         label,
         cells: Cells {
             count: Some(count),
-            summary: None,
+            ..Cells::default()
         },
         expanded,
         children,
@@ -67,42 +74,52 @@ fn dense() -> Vec<TreeNode<'static>> {
         212,
         true,
         vec![
-            branch(
-                "Week 1",
+            spanned(
+                branch(
+                    "Week 1",
+                    90,
+                    true,
+                    vec![
+                        branch(
+                            "Monday",
+                            30,
+                            true,
+                            vec![
+                                leaf("Set up the workspace", None),
+                                leaf("Wrote the clap router", Some("done")),
+                                leaf("Fixed the flaky timer test", None),
+                            ],
+                        ),
+                        branch(
+                            "Tuesday",
+                            60,
+                            false,
+                            vec![leaf("Reworked the stream collector", None)],
+                        ),
+                    ],
+                ),
+                0,
                 90,
-                true,
-                vec![
-                    branch(
-                        "Monday",
-                        30,
-                        true,
-                        vec![
-                            leaf("Set up the workspace", None),
-                            leaf("Wrote the clap router", Some("done")),
-                            leaf("Fixed the flaky timer test", None),
-                        ],
-                    ),
-                    branch(
-                        "Tuesday",
-                        60,
-                        false,
-                        vec![leaf("Reworked the stream collector", None)],
-                    ),
-                ],
+                212,
             ),
-            branch(
-                "Week 2",
-                122,
-                true,
-                vec![
-                    branch(
-                        "Thursday",
-                        40,
-                        true,
-                        vec![leaf("Added the wire proxy", Some("merged"))],
-                    ),
-                    leaf("Reviewed the release notes", None),
-                ],
+            spanned(
+                branch(
+                    "Week 2",
+                    122,
+                    true,
+                    vec![
+                        branch(
+                            "Thursday",
+                            40,
+                            true,
+                            vec![leaf("Added the wire proxy", Some("merged"))],
+                        ),
+                        leaf("Reviewed the release notes", None),
+                    ],
+                ),
+                90,
+                212,
+                212,
             ),
             leaf("Parked the thread merge idea", None),
         ],
@@ -127,6 +144,7 @@ pub(super) fn trees(very_long_summary: &str) -> String {
             cells: Cells {
                 count: Some(1200),
                 summary: Some(very_long_summary),
+                ..Cells::default()
             },
             expanded: true,
             children: vec![],
@@ -137,6 +155,7 @@ pub(super) fn trees(very_long_summary: &str) -> String {
         cells: Cells {
             count: Some(1),
             summary: Some(HOSTILE),
+            ..Cells::default()
         },
         expanded: true,
         children: vec![leaf(HOSTILE, None)],
@@ -275,7 +294,7 @@ mod tests {
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
                     .collect();
                 let allowed = [
-                    "ul", "li", "button", "span", "svg", "path", "r-empty", "r-error", "p",
+                    "ul", "li", "button", "span", "svg", "path", "rect", "r-empty", "r-error", "p",
                 ];
                 assert!(allowed.contains(&name.as_str()), "{name}");
             }

@@ -29,7 +29,7 @@ pub use spark::spark_svg;
 pub use spinner::spinner;
 pub use status::status;
 pub use table::table;
-pub use tree::{tree, Cells, TreeNode};
+pub use tree::{tree, Cells, Extent, TreeNode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
