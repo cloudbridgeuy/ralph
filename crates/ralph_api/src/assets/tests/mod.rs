@@ -5,6 +5,7 @@ mod pill;
 mod primitives;
 mod shell;
 mod spacing;
+mod table;
 mod tree;
 mod typography;
 

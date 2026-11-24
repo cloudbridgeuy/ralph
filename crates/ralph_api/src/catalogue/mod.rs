@@ -1,6 +1,7 @@
 use crate::render::{
     empty, error, escape, frame, kv, kv_inline, kv_sourced, pill, pill_with, render_markdown, rule,
-    spark_bars_svg, spark_svg, spinner, status, table, Icon, PillShape, PillVariant, Shape, Tone,
+    spark_bars_svg, spark_svg, spinner, status, table, table_marked, table_state, Icon, PillShape,
+    PillVariant, RowMark, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -67,6 +68,18 @@ fn cost_rows(fixture: &Fixture) -> Vec<Vec<String>> {
         .iter()
         .map(|(day, turns, cost)| vec![day.clone(), turns.to_string(), cost.to_string()])
         .collect()
+}
+
+fn table_marked_html(headers: &[&str], rows: &[Vec<String>]) -> String {
+    let cells: Vec<Vec<&str>> = rows
+        .iter()
+        .map(|row| row.iter().map(String::as_str).collect())
+        .collect();
+    table_marked(
+        headers,
+        &cells,
+        &[(1, RowMark::Selected), (2, RowMark::Open)],
+    )
 }
 
 fn table_html(headers: &[&str], rows: &[Vec<String>]) -> String {
@@ -139,10 +152,18 @@ fn tables(fixture: &Fixture) -> String {
     group(
         "r-table",
         &[
-            ("empty", table_html(&headers, &[])),
+            ("empty", table_state(&headers, &empty("No rows yet"))),
+            ("loading", table_state(&headers, &spinner("Loading rows"))),
             ("sparse", table_html(&headers, &one)),
             ("dense", table_html(&headers, &rows)),
-            ("error", error("could not load rows")),
+            (
+                "selected",
+                table_marked_html(&headers, &rows[..rows.len().min(3)]),
+            ),
+            (
+                "error",
+                table_state(&headers, &error("could not load rows")),
+            ),
             ("very-long", table_html(&headers, &long)),
         ],
     )
@@ -455,6 +476,13 @@ mod tests {
             }
         }
         hits
+    }
+
+    #[test]
+    fn the_table_examples_show_a_selected_row_and_an_open_row() {
+        let html = html();
+        assert!(html.contains("<tr aria-selected=\"true\">"));
+        assert!(html.contains("<tr class=\"open\">"));
     }
 
     #[test]
