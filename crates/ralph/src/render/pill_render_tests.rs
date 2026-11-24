@@ -313,8 +313,7 @@ fn an_icon_pill_never_breaks_and_counts_the_icon_as_one_column() {
     let text = "aaaa bbbb [[Done 3 files]] cccc dddd eeee\n";
     let whole = format!("{NB}{DONE_ICON}{NB}Done{NB}3{NB}files{NB}");
     for round in [false, true] {
-        let narrowest = if round { 18 } else { 17 };
-        for cols in narrowest..=40 {
+        for cols in 17..=40 {
             let shown = visible(&render(text, cols, &icons_on(round), true, false));
             let lines: Vec<&str> = shown.lines().collect();
             assert_eq!(
@@ -502,7 +501,17 @@ fn a_moved_end_marker_still_closes_styles_on_both_lines() {
     let body = "\x1b[1m\x1b[42m\x1b[97m";
     let out = render("foo([[Done]])", 11, &theme, true, false);
     let want = format!(
-        "foo({tone}{CAP_L}{body}{NB}Done\n{body}\x1b[22m\x1b[39m\x1b[49m{tone}{CAP_R}\x1b[39m)\n"
+        "foo({tone}{CAP_L}{body}{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m{tone}\n{tone}{CAP_R}\x1b[39m)\n"
     );
     assert_eq!(out, want);
+}
+
+#[test]
+fn an_exact_fit_wrap_keeps_the_closing_padding_and_resets_the_style_on_line_one() {
+    let out = render("foo([[Done]])", 11, &round_on(), true, false);
+    let first = out.lines().next().unwrap_or_default();
+    assert!(
+        first.contains(&format!("{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m")),
+        "{out:?}"
+    );
 }

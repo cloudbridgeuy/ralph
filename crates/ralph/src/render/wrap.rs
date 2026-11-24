@@ -6,7 +6,7 @@ use termimad::{CompositeKind, FmtComposite, FmtLine, FmtText, MadSkin};
 use unicode_linebreak::linebreaks;
 use unicode_width::UnicodeWidthChar;
 
-use super::marker::is_marker;
+use super::marker::{is_closing_marker, is_marker};
 
 static WRAP_CAP: OnceLock<usize> = OnceLock::new();
 
@@ -166,11 +166,13 @@ fn hard_cut(text: &str, start: usize, limit: usize) -> usize {
     let mut used = 0;
     let mut taken_end = None;
     for (index, ch) in text[start..].char_indices() {
-        let width = marker_free_width(ch);
         if is_marker(ch) {
+            if is_closing_marker(ch) && taken_end == Some(index) {
+                taken_end = Some(index + ch.len_utf8());
+            }
             continue;
         }
-        used += width;
+        used += marker_free_width(ch);
         if used > limit {
             return start + taken_end.unwrap_or(index + ch.len_utf8());
         }
@@ -328,7 +330,7 @@ mod tests {
     const ROUND_PILL: &str = "\u{FDD1}\u{E0B6}\u{FDDB}\u{A0}Done\u{A0}\u{FDD0}\u{E0B4}\u{FDD6}";
 
     #[test]
-    fn an_exact_fit_hard_cut_never_ends_a_line_on_a_marker() {
+    fn an_exact_fit_hard_cut_never_ends_a_line_on_an_opening_marker() {
         let text = format!("foo({ROUND_PILL})");
         let ranges = break_lines(&text, 4, 4);
         for range in &ranges {
@@ -336,7 +338,7 @@ mod tests {
                 !text[range.clone()]
                     .chars()
                     .next_back()
-                    .is_some_and(is_marker),
+                    .is_some_and(|ch| is_marker(ch) && !is_closing_marker(ch)),
                 "{:?}",
                 ranges.iter().map(|r| &text[r.clone()]).collect::<Vec<_>>()
             );
@@ -349,6 +351,27 @@ mod tests {
         let lines = wrap(&text, 4);
         let cap_line = lines.iter().find(|line| line.contains('\u{E0B6}')).unwrap();
         assert!(cap_line.starts_with('\u{FDD1}'), "{lines:?}");
+    }
+
+    #[test]
+    fn closing_markers_stay_with_the_text_before_them_and_opening_markers_move() {
+        let text = format!("foo({ROUND_PILL})");
+        let lines = wrap(&text, 4 + 1 + 1 + 4 + 1);
+        assert_eq!(
+            lines,
+            [
+                "foo(\u{FDD1}\u{E0B6}\u{FDDB}\u{A0}Done\u{A0}\u{FDD0}",
+                "\u{E0B4}\u{FDD6})"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_closing_run_before_an_opening_marker_splits_between_them() {
+        assert_eq!(
+            hard_cut("a\u{FDD0}\u{FDD6}\u{FDD1}bc", 0, 1),
+            "a\u{FDD0}\u{FDD6}".len()
+        );
     }
 
     #[test]
