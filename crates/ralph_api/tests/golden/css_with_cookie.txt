@@ -25,8 +25,8 @@ body {
   background: var(--r-bg);
   color: var(--r-ink);
   font-family: var(--r-font, ui-monospace, Menlo, monospace);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 20px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -153,6 +153,7 @@ r-table td {
 }
 
 r-table th {
+  font-size: 12px;
   font-weight: 700;
   border-bottom-color: var(--r-line-strong);
 }
@@ -171,6 +172,7 @@ r-kv div {
 }
 
 r-kv dt {
+  font-size: 12px;
   min-width: 12ch;
   color: var(--r-muted);
   overflow-wrap: anywhere;
@@ -184,6 +186,7 @@ r-kv dd {
 
 r-pill {
   display: inline-flex;
+  font-size: 12px;
   align-items: center;
   gap: 0.5ch;
   max-width: 100%;
@@ -274,6 +277,7 @@ r-spinner::before {
 
 r-spark {
   display: inline-block;
+  font-size: 12px;
   max-width: 100%;
 }
 
@@ -383,6 +387,7 @@ r-prose td {
 }
 
 r-prose th {
+  font-size: 12px;
   font-weight: 700;
   border-bottom-color: var(--r-line-strong);
 }

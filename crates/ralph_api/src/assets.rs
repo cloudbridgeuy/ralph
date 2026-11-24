@@ -299,4 +299,43 @@ mod tests {
             assert!(!colour.contains("--r-line-strong"), "{colour}");
         }
     }
+
+    fn assert_declares(css: &str, selector: &str, declaration: &str) {
+        let body = rule_body(css, selector).unwrap_or_else(|| panic!("{selector} has no rule"));
+        assert!(body.contains(declaration), "{selector} lacks {declaration}");
+    }
+
+    #[test]
+    fn the_body_is_13px_on_a_20px_line() {
+        let css = css();
+        assert_declares(&css, "body", "font-size: 13px;");
+        assert_declares(&css, "body", "line-height: 20px;");
+    }
+
+    #[test]
+    fn meta_text_is_12px() {
+        let css = css();
+        for selector in ["r-table th", "r-prose th", "r-kv dt", "r-pill", "r-spark"] {
+            assert_declares(&css, selector, "font-size: 12px;");
+        }
+    }
+
+    #[test]
+    fn every_font_size_is_on_the_scale() {
+        let css = css();
+        let sizes = declarations(&css, "font-size:");
+        assert!(!sizes.is_empty());
+        for size in sizes {
+            assert!(
+                [
+                    "font-size: 12px;",
+                    "font-size: 13px;",
+                    "font-size: 1em;",
+                    "font-size: inherit;"
+                ]
+                .contains(&size),
+                "{size}"
+            );
+        }
+    }
 }
