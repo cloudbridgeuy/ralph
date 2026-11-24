@@ -3,7 +3,6 @@
 const SCREENS = ["/memory"];
 const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
-const PREVIEW = 80;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const EXTENT_MIN = 1;
 const SPINNER_DELAY_MS = 200;
@@ -56,9 +55,11 @@ function oneLine(text) {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
-function preview(text, max) {
-  const line = oneLine(text);
-  return line.length > max ? line.slice(0, max - 1) + "…" : line;
+function firstLine(text) {
+  const line = String(text)
+    .split(/\r?\n/)
+    .find((part) => part.trim() !== "");
+  return line === undefined ? "" : line.trim();
 }
 
 function extentSpan(lo, hi, total) {
@@ -258,7 +259,7 @@ function nodeItem(level, node, total) {
 
 function entryItem(level, entry) {
   const label = "#" + entry.i + " " + entry.role;
-  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + preview(entry.text, PREVIEW) });
+  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + firstLine(entry.text) });
   item.dataset.entry = entry.text;
   return item;
 }
@@ -401,7 +402,7 @@ function entriesTable(page) {
         el("td", String(entry.i)),
         el("td", entry.role),
         el("td", entry.at),
-        el("td", preview(entry.text, PREVIEW)),
+        el("td", firstLine(entry.text), { class: "clip" }),
       ),
     );
   });

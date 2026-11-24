@@ -14,3 +14,17 @@ fn numeric_cells_align_right_with_tabular_digits() {
     assert_declares(&css, "r-table .num", "text-align: right;");
     assert_declares(&css, "r-table .num", "font-variant-numeric: tabular-nums;");
 }
+
+#[test]
+fn a_clip_cell_cuts_with_an_ellipsis_on_the_real_width() {
+    let css = css();
+    for declaration in [
+        "max-width: 0;",
+        "width: 100%;",
+        "white-space: nowrap;",
+        "overflow: hidden;",
+        "text-overflow: ellipsis;",
+    ] {
+        assert_declares(&css, "r-table .clip", declaration);
+    }
+}

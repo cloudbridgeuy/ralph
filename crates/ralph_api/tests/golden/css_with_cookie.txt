@@ -196,6 +196,14 @@ r-table th {
   border-bottom-color: var(--r-line-strong);
 }
 
+r-table .clip {
+  max-width: 0;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 r-table .num {
   text-align: right;
   font-variant-numeric: tabular-nums;

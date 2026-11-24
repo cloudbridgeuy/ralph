@@ -270,3 +270,18 @@ fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
     assert!(body.contains("String(data.roots.entries)]]))"));
     assert!(!body.contains("source"));
 }
+
+#[test]
+fn the_entry_text_is_sent_whole_with_no_character_cut() {
+    let body = script();
+    assert!(!body.contains("PREVIEW"));
+    assert!(!body.contains("function preview("));
+    assert!(!body.contains("slice(0, max"));
+    assert!(body.contains("function firstLine(text)"));
+}
+
+#[test]
+fn the_entries_table_text_cell_is_a_clip_cell_holding_the_first_line() {
+    let body = script();
+    assert!(body.contains(r#"el("td", firstLine(entry.text), { class: "clip" })"#));
+}
