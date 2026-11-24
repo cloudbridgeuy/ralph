@@ -249,8 +249,7 @@ impl TerminalLoop<'_> {
     fn redraw_after_resize(&self) {
         let cols = screen_columns();
         if self.resize.take_pending() && self.resize.take_redraw(true, cols) {
-            let display = (self.inbox_display)(self.color);
-            if let Some(text) = redraw_text(self.store_dir, &display, cols) {
+            if let Some(text) = redraw_text(self.store_dir, self.local.reply_display, cols) {
                 print!("{text}");
             }
         }

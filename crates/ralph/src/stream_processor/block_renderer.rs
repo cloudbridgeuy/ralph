@@ -24,19 +24,7 @@ impl BlockRenderer {
         theme_config: Option<ThemeConfig>,
         highlighting_enabled: bool,
     ) -> Result<Self, ThemeError> {
-        let markdown = MarkdownTheme::new(
-            theme_config
-                .as_ref()
-                .map(|config| config.palette().clone())
-                .unwrap_or_default(),
-        )
-        .with_emphasis(theme_config.as_ref().is_some_and(ThemeConfig::emphasis))
-        .with_pill_style(
-            theme_config
-                .as_ref()
-                .map(ThemeConfig::pill_style)
-                .unwrap_or_default(),
-        );
+        let markdown = MarkdownTheme::from_config(theme_config.as_ref());
         let diff_colors = theme_config
             .as_ref()
             .map(|config| *config.diff())
