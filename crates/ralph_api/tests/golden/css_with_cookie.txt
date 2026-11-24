@@ -573,6 +573,10 @@ select {
   font: inherit;
 }
 
+r-tree li[aria-expanded="true"] {
+  padding-bottom: 0;
+}
+
 r-tree button {
   display: inline;
   margin: 0;

@@ -595,4 +595,13 @@ mod tests {
         assert_declares(&css, "p", "margin: 10px 0;");
         assert!(rule_body(&css, "r-prose p").is_none());
     }
+
+    #[test]
+    fn expanded_tree_rows_drop_the_bottom_padding() {
+        assert_declares(
+            &css(),
+            "r-tree li[aria-expanded=\"true\"]",
+            "padding-bottom: 0;",
+        );
+    }
 }
