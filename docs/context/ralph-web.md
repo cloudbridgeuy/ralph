@@ -274,7 +274,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - Route `#/memory`. Other routes keep the placeholder text. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `olderAfter`, `newerAfter`, `navTarget`) sit apart from the DOM code.
 - State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, no `after`) are left out. `hashchange` draws the screen again, so back and forward work. Zooming a node updates `node` with `replaceState`.
 - The screen shows a thread select (`main` and the names from `/api/memory/threads`), thread and entry counts, the root nodes as an `r-tree`, and a `recent entries` table (20 rows) with `older` and `newer` links that change `after`. With no `after` in the hash, the table opens on the newest page (`max(0, entries - 20)`, from `defaultAfter`). An `after` in the hash, even `after=0`, overrides this. An `after` at or past the entry count opens the newest page (`clampAfter`).
-- Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, one-line preview). A node with no summary shows `summary pending`.
+- Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, one-line preview). A node with no summary shows `summary pending` in the zoom summary row only. Its tree row shows the neutral `pending` pill.
 - An entry row opens its full text. Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
 - States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node.
@@ -290,7 +290,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - Only native tags go inside `r-tree`, plus inline `svg`, `path`, `rect` and `r-pill`. The depth comes from `.g` guide spans, one per level below the first. `aria-level` starts at 1.
 - The chevron is an inline SVG that turns 90 degrees when the branch is open. The CSS has no `data:` URI and no inline style.
 - The extent bar is an inline SVG with `viewBox="0 0 100 6"` and `preserveAspectRatio="none"`. A grey track holds one span from `lo` to `hi` of `total`. A span is never narrower than 1 unit, so a one-entry node stays visible when the total is 5,000 or more. Without an extent the cell is an empty `<span class="extent">`.
-- `Summary` is `Empty`, `Text` or `Pending`. Text is escaped and cut to one line with an ellipsis. `Pending` draws one neutral `r-pill` with the text `pending`.
+- `Summary` is `Empty`, `Text` or `Pending`. Text is escaped and its whitespace is collapsed to one line. The CSS adds the ellipsis when the text is too long. `Pending` draws one neutral `r-pill` with the text `pending`.
 - `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML.
 - The button has no default chrome and a `:focus-visible` outline. `/app.js` makes the button toggle the branch.
 - Every label and summary text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
