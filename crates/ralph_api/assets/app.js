@@ -3,7 +3,6 @@
 const SCREENS = ["/memory"];
 const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
-const PREVIEW = 80;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const EXTENT_MIN = 1;
 const SPINNER_DELAY_MS = 200;
@@ -56,9 +55,11 @@ function oneLine(text) {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
-function preview(text, max) {
-  const line = oneLine(text);
-  return line.length > max ? line.slice(0, max - 1) + "…" : line;
+function firstLine(text) {
+  const line = String(text ?? "")
+    .split(/\r?\n/)
+    .find((part) => part.trim() !== "");
+  return line === undefined ? "" : line.trim();
 }
 
 function extentSpan(lo, hi, total) {
@@ -289,7 +290,7 @@ function nodeItem(level, node, total) {
 
 function entryItem(level, entry) {
   const label = "#" + entry.i + " " + entry.role;
-  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + preview(entry.text, PREVIEW) });
+  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + firstLine(entry.text) });
   item.dataset.entry = entry.text;
   return item;
 }
@@ -436,23 +437,32 @@ function threadSelect(threads, current) {
   return append(el("label"), el("span", "thread ", { class: "meta" }), select);
 }
 
+function stateRow(columns, child) {
+  const cell = append(el("td", null, { class: "state", colspan: String(columns) }), child);
+  return append(el("tr", null, { class: "state" }), cell);
+}
+
+const ENTRY_COLUMNS = ["#", "role", "at", "text"];
+
 function entriesTable(page) {
-  if (page.items.length === 0) return emptyState("no entries in this page", true);
-  const head = append(el("tr"), ...["#", "role", "at", "text"].map((name) => el("th", name)));
+  const head = append(el("tr"), ...ENTRY_COLUMNS.map((name) => el("th", name, name === "#" ? { class: "num" } : {})));
   const body = el("tbody");
+  if (page.items.length === 0) {
+    append(body, stateRow(ENTRY_COLUMNS.length, emptyState("no entries in this page", true)));
+  }
   page.items.forEach((entry) => {
     append(
       body,
       append(
         el("tr"),
-        el("td", String(entry.i)),
+        el("td", String(entry.i), { class: "num" }),
         el("td", entry.role),
         el("td", entry.at),
-        el("td", preview(entry.text, PREVIEW)),
+        el("td", firstLine(entry.text), { class: "clip" }),
       ),
     );
   });
-  return append(el("r-table"), append(el("table"), append(el("thead"), head), body));
+  return append(el("r-table", null, { class: "stackable" }), append(el("table"), append(el("thead"), head), body));
 }
 
 function pager(page, state) {

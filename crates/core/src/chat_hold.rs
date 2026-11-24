@@ -1,4 +1,5 @@
 use crate::chat_status::Status;
+use crate::chat_thread_auto::is_close_report;
 use crate::inbox::{Entry, Position};
 use crate::schedule::watch_id;
 use crate::schedule_worker::source_matches_worker;
@@ -72,7 +73,7 @@ impl HoldFilter {
 pub fn first_match(entries: &[Entry], filter: &HoldFilter) -> Option<Position> {
     entries
         .iter()
-        .position(|entry| filter.matches(entry))
+        .position(|entry| !is_close_report(&entry.report) && filter.matches(entry))
         .and_then(Position::at_index)
 }
 

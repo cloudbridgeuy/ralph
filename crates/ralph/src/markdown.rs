@@ -22,6 +22,7 @@
 //! let rendered = renderer.render("# Hello\n\nThis is **bold** text.");
 //! ```
 
+use crate::highlight::ThemeConfig;
 use crate::render::pill_style::PillStyle;
 use ralph_server::config::theme::RoleTheme;
 use termimad::crossterm::style::{Attribute, Color};
@@ -305,6 +306,12 @@ impl MarkdownTheme {
             emphasis: false,
             pill_style: PillStyle::default(),
         }
+    }
+
+    pub fn from_config(config: Option<&ThemeConfig>) -> Self {
+        Self::new(config.map(|c| c.palette().clone()).unwrap_or_default())
+            .with_emphasis(config.is_some_and(ThemeConfig::emphasis))
+            .with_pill_style(config.map(ThemeConfig::pill_style).unwrap_or_default())
     }
 
     pub fn with_emphasis(mut self, emphasis: bool) -> Self {

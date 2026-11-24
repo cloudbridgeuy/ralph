@@ -30,6 +30,7 @@ use ralph_core::chat_suggestion::{
 };
 use ralph_core::chat_switch::{SwitchArgv, SwitchTarget};
 use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread_auto::{close_footer, close_names, fresh_closes};
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::program_status::Phase;
 use ralph_core::worker::Report;
@@ -78,6 +79,7 @@ pub(super) struct TerminalLoop<'a> {
     pub(super) offered: Option<(String, u64)>,
     pub(super) carried: Vec<String>,
     pub(super) leaving: Option<ChatExit>,
+    pub(super) announced: Vec<ThreadName>,
     pub(super) resize: &'a Resize,
 }
 
@@ -249,8 +251,7 @@ impl TerminalLoop<'_> {
     fn redraw_after_resize(&self) {
         let cols = screen_columns();
         if self.resize.take_pending() && self.resize.take_redraw(true, cols) {
-            let display = (self.inbox_display)(self.color);
-            if let Some(text) = redraw_text(self.store_dir, &display, cols) {
+            if let Some(text) = redraw_text(self.store_dir, self.local.reply_display, cols) {
                 print!("{text}");
             }
         }
@@ -425,7 +426,18 @@ impl TerminalLoop<'_> {
                 return Ok(Flow::Stop);
             }
         }
+        self.announce_closes();
         Ok(Flow::Next)
+    }
+
+    fn announce_closes(&mut self) {
+        self.session.refresh();
+        let pending = self.session.status().closes;
+        let fresh = fresh_closes(&pending, &self.announced);
+        if let Some(line) = close_footer(&fresh, screen_columns()) {
+            print!("{}", self.prompt.dim(&line));
+        }
+        self.announced = close_names(&pending);
     }
 
     pub(super) fn switch(

@@ -6,6 +6,7 @@ mod primitives;
 mod shell;
 mod spacing;
 mod states;
+mod table;
 mod tree;
 mod typography;
 

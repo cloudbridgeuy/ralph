@@ -117,6 +117,19 @@ impl ThemeConfig {
         self.pill_style
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_markdown_style(
+        mut self,
+        palette: Palette,
+        emphasis: bool,
+        pill_style: PillStyle,
+    ) -> Self {
+        self.palette = palette;
+        self.emphasis = emphasis;
+        self.pill_style = pill_style;
+        self
+    }
+
     pub fn without_emphasis(mut self) -> Self {
         self.emphasis = false;
         self.pill_style = PillStyle::default();
