@@ -41,6 +41,7 @@ pub struct LocalRoute<'a> {
     pub watches: &'a Watches,
     pub schedule: &'a ScheduleStore,
     pub display: &'a Display<'a>,
+    pub reply_display: &'a Display<'a>,
     pub changes: &'a ChangesSection,
     pub prices: &'a BTreeMap<String, PriceOverride>,
     pub tickets: &'a TicketKeys,
@@ -163,7 +164,7 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::Help => write!(out, "{}", help_with_store((ctx.columns)(), ctx.store))?,
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
-        Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.display, ctx.resize),
+        Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.reply_display, ctx.resize),
         Route::History(call) => {
             let text = history_call(ctx.store, &call, CallSource::Slash)
                 .map_or_else(|e| e, |answer| answer.text);
@@ -265,6 +266,7 @@ mod tests {
             watches: &monitor.watches,
             schedule: &monitor.schedule,
             display: &display,
+            reply_display: &display,
             changes: &config.changes,
             prices: &config.wire.prices,
             tickets: &config.tickets,
