@@ -1,5 +1,5 @@
 use super::*;
-use ralph_core::worker::Report;
+use ralph_core::worker::{Grants, Report};
 use tempfile::TempDir;
 
 const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
@@ -556,4 +556,28 @@ fn a_prompt_this_chat_owns_but_has_not_adopted_stays_queued() {
         .prompt
         .join(ralph_core::worker::lost_marker_name("e1"))
         .exists());
+}
+
+#[test]
+fn allow_always_allows_and_saves_the_classes_while_deny_saves_nothing() {
+    let ask = mcptools_ask("w1", r#"{"allowWrites":true}"#);
+    let denied = run(PermissionMode::Ask, &[&ask]);
+    denied
+        .shared
+        .answer(r#"{"request_id":"p.w1","option_id":"deny"}"#)
+        .unwrap();
+    assert_eq!(saved_grants(denied.dir.path()), Grants::default());
+    let always = run(PermissionMode::Ask, &[&ask]);
+    always
+        .shared
+        .answer(r#"{"request_id":"p.w1","option_id":"allow_always"}"#)
+        .unwrap();
+    assert!(always.written().contains(r#""behavior":"allow""#));
+    assert_eq!(
+        saved_grants(always.dir.path()),
+        Grants {
+            writes: true,
+            spend: false
+        }
+    );
 }

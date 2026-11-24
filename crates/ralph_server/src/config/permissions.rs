@@ -89,7 +89,7 @@ pub fn saved_grants(store_dir: &Path) -> Grants {
     saved
 }
 
-fn save_grants(store_dir: &Path, classes: Classes) -> Result<PathBuf, String> {
+pub fn save_grants(store_dir: &Path, classes: Classes) -> Result<PathBuf, String> {
     let path = config_root(store_dir).join(GRANTS_FILE);
     let (json, warning) = merged_grants(read_grants_text(&path).as_deref(), classes);
     warning.into_iter().for_each(warn);
