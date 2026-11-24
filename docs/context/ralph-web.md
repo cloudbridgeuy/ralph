@@ -183,7 +183,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 ## Store
 
-- `--store` sets the store. Without it, `RALPH_CHAT_STORE` is used, then `~/.ralph/chat`.
+- `--store` sets the store. Without it, `RALPH_CHAT_STORE` is used, then `./.ralph`.
 - The store must exist. `ralph web` does not create it. A missing store gives `store not found: <path>`.
 
 ## Shutdown
