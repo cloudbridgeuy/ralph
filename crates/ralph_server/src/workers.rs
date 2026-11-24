@@ -30,6 +30,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod agy;
 mod close;
 mod guard;
+pub(crate) use guard::common_dir;
 pub mod headless;
 #[cfg(test)]
 mod interrupt_token_test;

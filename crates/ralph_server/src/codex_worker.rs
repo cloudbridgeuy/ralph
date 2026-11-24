@@ -48,9 +48,11 @@ use std::time::{Duration, Instant};
 pub(crate) mod pipes;
 mod queue;
 pub(crate) mod resume;
+mod sandbox;
 mod verify;
 
 use pipes::{logged_stdin, pipe_lines};
+use sandbox::configured_sandbox;
 pub(crate) use verify::verify;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -560,6 +562,7 @@ impl CodexWorker {
         let (selection, open, mode) = match &launch {
             Launch::Fresh(_) => {
                 let codex = configured_codex();
+                let sandbox = configured_sandbox(&codex, &request.worktree)?;
                 let selection = resolve_selection(
                     request.model.as_deref(),
                     codex.model.as_deref(),
@@ -567,15 +570,21 @@ impl CodexWorker {
                 );
                 let open = (
                     THREAD_START,
-                    thread_start_params(&request.worktree, &selection, &server),
+                    thread_start_params(&request.worktree, &selection, &server, &sandbox),
                 );
                 (selection, open, configured_mode())
             }
-            Launch::Resume(record) => (
-                record_selection(record),
-                (THREAD_RESUME, thread_resume_params(record, &server)),
-                record.permissions.unwrap_or_else(configured_mode),
-            ),
+            Launch::Resume(record) => {
+                let sandbox = configured_sandbox(&configured_codex(), &record.cwd)?;
+                (
+                    record_selection(record),
+                    (
+                        THREAD_RESUME,
+                        thread_resume_params(record, &server, &sandbox),
+                    ),
+                    record.permissions.unwrap_or_else(configured_mode),
+                )
+            }
         };
         let thread = handshake(&mut wire, &selection, open, deadline, warning)?;
         worker

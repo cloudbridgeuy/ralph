@@ -45,7 +45,7 @@ pub(super) fn apply(repo: &Path, worktree: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn common_dir(repo: &Path) -> io::Result<PathBuf> {
+pub(crate) fn common_dir(repo: &Path) -> io::Result<PathBuf> {
     let common = git_value(repo, &["rev-parse", "--git-common-dir"])?
         .ok_or_else(|| io::Error::other("could not find the git common directory"))?;
     Ok(repo.join(common))
