@@ -144,7 +144,7 @@ mod tests {
     fn short_rows_are_padded_and_long_rows_keep_every_cell() {
         assert_golden(
             "table_ragged",
-            &table(&["a", "b", "c"], &[vec!["1"], vec!["1", "2", "3", "4"]]),
+            &table(&["a", "b", "c"], &[vec!["x"], vec!["x", "y", "z", "w"]]),
         );
     }
 
