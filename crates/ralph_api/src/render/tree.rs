@@ -57,8 +57,8 @@ fn extent_geometry(extent: &Extent) -> Option<(f64, f64)> {
 }
 
 fn number(value: f64) -> String {
-    let text = format!("{value:.2}");
-    text.trim_end_matches('0').trim_end_matches('.').to_string()
+    // Half away from zero, as the script's Math.round does for these positive values.
+    ((value * 100.0).round() / 100.0).to_string()
 }
 
 fn extent_html(extent: Option<&Extent>) -> String {
@@ -377,6 +377,15 @@ mod tests {
     fn extent_numbers_have_at_most_two_decimals() {
         let html = row_with(Some(extent(1, 2, 3)));
         assert!(html.contains("x=\"33.33\" width=\"33.33\""), "{html}");
+    }
+
+    #[test]
+    fn a_tie_rounds_half_up_like_the_script() {
+        // 1 of 800 is 0.125 exactly. The script uses Math.round(v * 100) / 100.
+        let html = row_with(Some(extent(1, 2, 800)));
+        assert!(html.contains("x=\"0.13\""), "{html}");
+        assert_eq!(super::number(2.5), "2.5");
+        assert_eq!(super::number(0.005), "0.01");
     }
 
     #[test]
