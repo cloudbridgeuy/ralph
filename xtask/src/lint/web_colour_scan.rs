@@ -6,12 +6,38 @@ fn starts_url(out: &str, rest: &str) -> bool {
         && out.chars().next_back().is_none_or(|c| !is_ident_char(c))
 }
 
+const REGEX_KEYWORDS: &[&str] = &[
+    "return",
+    "typeof",
+    "case",
+    "yield",
+    "await",
+    "void",
+    "in",
+    "of",
+    "delete",
+    "new",
+    "throw",
+    "instanceof",
+    "else",
+];
+
 fn regex_may_start(out: &str) -> bool {
-    let line = &out[out.rfind('\n').map_or(0, |at| at + 1)..];
-    line.trim_end()
-        .chars()
-        .next_back()
-        .is_none_or(|c| "(,=:[!&|?{};".contains(c))
+    let line = out[out.rfind('\n').map_or(0, |at| at + 1)..].trim_end();
+    let Some(last) = line.chars().next_back() else {
+        return true;
+    };
+    if "(,=:[!&|?{};>+-*%<~^".contains(last) {
+        return true;
+    }
+    let word_start = line
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+        .last()
+        .map_or(line.len(), |(at, _)| at);
+    let before = line[..word_start].chars().next_back();
+    before != Some('.') && REGEX_KEYWORDS.contains(&&line[word_start..])
 }
 
 fn regex_len(rest: &str) -> usize {
@@ -310,5 +336,32 @@ mod tests {
     fn a_regex_literal_is_only_special_in_scripts() {
         assert_eq!(strip_comments("x = /*c*/ 1", true), "x =   1");
         assert_eq!(strip_comments("x = /a/*c*/", false), "x = /a ");
+    }
+
+    #[test]
+    fn a_regex_literal_after_an_operator_or_keyword_is_kept_whole() {
+        for text in [
+            "f = s => /\\/\\//.test(s); y",
+            "return /\\/\\//.test(s); y",
+            "x = a < /\\/\\//; y",
+            "x = typeof /\\/\\//; y",
+            "case /\\/\\//: y",
+            "  else /\\/\\//.test(s); y",
+            "x = 1 - /\\/\\//.x; y",
+        ] {
+            assert_eq!(strip_comments(text, true), text, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_slash_after_a_name_ending_in_a_keyword_is_division() {
+        assert_eq!(
+            strip_comments("x = myreturn / 2; // c", true),
+            "x = myreturn / 2;  "
+        );
+        assert_eq!(
+            strip_comments("x = a.of / 2; // c", true),
+            "x = a.of / 2;  "
+        );
     }
 }
