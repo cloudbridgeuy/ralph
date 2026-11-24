@@ -259,3 +259,8 @@ fn btn_has_the_shared_focus_ring_and_a_default_cursor_when_disabled() {
     assert_declares(&css, ".btn:focus-visible", "outline-offset: 2px;");
     assert_declares(&css, ".btn:disabled", "cursor: default;");
 }
+
+#[test]
+fn the_error_status_pill_sits_one_character_after_the_what_text() {
+    assert_declares(&css(), "r-error .what r-pill", "margin-left: 1ch;");
+}

@@ -418,6 +418,10 @@ r-error .what {
   font-weight: 600;
 }
 
+r-error .what r-pill {
+  margin-left: 1ch;
+}
+
 r-error .why {
   display: block;
   color: var(--r-ink);
