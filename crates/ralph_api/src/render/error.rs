@@ -1,6 +1,6 @@
 use crate::render::{escape, pill_with, PillShape, PillVariant, Tone};
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 pub struct ErrorParts<'a> {
     pub what: &'a str,
     pub why: Option<&'a str>,
