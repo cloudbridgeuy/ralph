@@ -416,19 +416,108 @@ mod tests {
         }
     }
 
-    #[test]
-    fn vertical_spacing_uses_the_20px_grid() {
-        let css = css();
-        for line in spacing_declarations(&css) {
-            if line == "margin: -1px;" {
+    const SPACING_GRID: [&str; 4] = ["0", "10px", "20px", "30px"];
+    const FINE_PADDING_SELECTORS: [&str; 3] = [
+        "r-table th,\nr-table td",
+        "r-prose th,\nr-prose td",
+        "r-tree li",
+    ];
+
+    fn vertical_tokens(line: &str) -> Vec<&str> {
+        let Some((property, value)) = line.trim_end_matches(';').split_once(": ") else {
+            return Vec::new();
+        };
+        let values: Vec<&str> = value.split(' ').collect();
+        match property {
+            "margin" | "padding" => match values.len() {
+                1 | 2 => vec![values[0]],
+                _ => vec![values[0], values[2]],
+            },
+            "margin-top"
+            | "margin-bottom"
+            | "margin-block"
+            | "margin-block-start"
+            | "margin-block-end"
+            | "padding-top"
+            | "padding-bottom"
+            | "padding-block"
+            | "padding-block-start"
+            | "padding-block-end" => values,
+            _ => Vec::new(),
+        }
+    }
+
+    fn vertical_violations(css: &str) -> Vec<String> {
+        let mut found = Vec::new();
+        for chunk in css.split('}') {
+            let Some((head, body)) = chunk.rsplit_once('{') else {
+                continue;
+            };
+            let selector = head.trim();
+            if selector == ".sr-only" {
                 continue;
             }
-            for token in line.trim_end_matches(';').split(' ').skip(1) {
-                if token.ends_with("px") {
-                    assert!(["2px", "10px", "20px", "30px"].contains(&token), "{line}");
+            for line in body.lines().map(str::trim) {
+                let fine =
+                    line.starts_with("padding") && FINE_PADDING_SELECTORS.contains(&selector);
+                let bad = vertical_tokens(line)
+                    .into_iter()
+                    .any(|token| !(SPACING_GRID.contains(&token) || fine && token == "2px"));
+                if bad {
+                    found.push(line.to_string());
                 }
             }
         }
+        found
+    }
+
+    #[test]
+    fn vertical_tokens_pick_only_the_vertical_positions() {
+        assert_eq!(
+            vertical_tokens("margin: 1px 2px 3px 4px;"),
+            vec!["1px", "3px"]
+        );
+        assert_eq!(vertical_tokens("padding: 1px 2px 3px;"), vec!["1px", "3px"]);
+        assert_eq!(vertical_tokens("padding: 1px 2px;"), vec!["1px"]);
+        assert_eq!(vertical_tokens("margin: 5px;"), vec!["5px"]);
+        assert_eq!(
+            vertical_tokens("margin-block: 1px 2px;"),
+            vec!["1px", "2px"]
+        );
+        assert!(vertical_tokens("margin-inline-start: 1ch;").is_empty());
+        assert!(vertical_tokens("color: red;").is_empty());
+    }
+
+    #[test]
+    fn vertical_violations_exempt_only_named_selectors() {
+        let hidden = "\n.sr-only {\n  margin: -1px;\n}\n";
+        assert!(vertical_violations(hidden).is_empty());
+        let cell = "\nr-tree li {\n  padding: 2px 0;\n}\n";
+        assert!(vertical_violations(cell).is_empty());
+        let other = "\nmain {\n  padding: 2px 0;\n}\n";
+        assert_eq!(vertical_violations(other), vec!["padding: 2px 0;"]);
+    }
+
+    #[test]
+    fn vertical_spacing_uses_the_20px_grid() {
+        let css = css();
+        assert_eq!(vertical_violations(&css), Vec::<String>::new());
+    }
+
+    #[test]
+    fn vertical_violations_flag_rem_and_off_grid_values() {
+        for old in [
+            "margin: 0.25rem 0;",
+            "padding: 0.25rem 1ch;",
+            "margin: 0.5rem 0;",
+            "padding: 7px 1ch;",
+        ] {
+            let css = format!("a {{\n  {old}\n}}\n");
+            assert_eq!(vertical_violations(&css), vec![old.to_string()], "{old}");
+        }
+        let fine =
+            "a {\n  margin: 20px 0 10px;\n  padding: 0 2ch;\n  margin-inline-start: 1ch;\n}\n";
+        assert!(vertical_violations(fine).is_empty());
     }
 
     #[test]
