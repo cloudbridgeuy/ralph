@@ -12,7 +12,7 @@ mod tailnet;
 mod token;
 mod tokens;
 
-pub use addr::{allowed_hosts, bind_hosts, BindError, BindPolicy};
+pub use addr::{allowed_hosts, bind_hosts, build_binds, tailnet_hosts, BindError, BindPolicy};
 pub use admit::MAX_HANDLERS;
 pub use route::ApiConfig;
 pub use server::{bind, bind_with_limits, serve, ApiError, Limits};

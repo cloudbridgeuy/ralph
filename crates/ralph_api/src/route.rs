@@ -630,4 +630,21 @@ mod tests {
         assert_eq!(response.status, 405);
         assert!(response.headers.contains(&("Allow", "GET")));
     }
+
+    #[test]
+    fn host_match_ignores_ascii_case_but_nothing_else() {
+        let allowed = vec!["phone.tail1234.ts.net:8080".to_string()];
+        assert!(host_allowed(Some("Phone.TAIL1234.ts.net:8080"), &allowed));
+        for bad in [
+            "evil.example:8080",
+            "phone.tail1234.ts.net:8081",
+            "phone.tail1234.ts.net",
+            "phone.tail1234.ts.net.:8080",
+            "user@phone.tail1234.ts.net:8080",
+            "",
+        ] {
+            assert!(!host_allowed(Some(bad), &allowed), "{bad}");
+        }
+        assert!(!host_allowed(None, &allowed));
+    }
 }
