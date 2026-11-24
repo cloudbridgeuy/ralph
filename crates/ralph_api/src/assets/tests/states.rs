@@ -197,9 +197,18 @@ fn a_failed_node_open_keeps_the_item_expanded() {
 #[test]
 fn empty_states_use_one_helper_with_compact_and_full_forms() {
     let js = script();
-    assert!(!js.contains(r#"el("r-empty", "#));
+    assert_eq!(js.matches(r#"el("r-empty""#).count(), 1);
     assert!(js.contains(r#"emptyState("summary pending", true)"#));
     assert!(js.contains(r#"emptyState("no entries in this page", true)"#));
     assert_eq!(js.matches(r#"emptyState("no entries yet")"#).count(), 2);
     assert!(function_body(&js, "emptyState").contains(r#"class: "what""#));
+}
+
+#[test]
+fn a_script_built_empty_state_is_a_status_region() {
+    let body = function_body(&script(), "emptyState");
+    assert!(
+        body.contains(r#"el("r-empty", null, { role: "status" })"#),
+        "{body}"
+    );
 }

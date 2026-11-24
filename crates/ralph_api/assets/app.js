@@ -148,7 +148,7 @@ function setRendered(host, html) {
 }
 
 function emptyState(what, compact) {
-  const box = el("r-empty");
+  const box = el("r-empty", null, { role: "status" });
   if (compact) box.setAttribute("compact", "");
   return append(box, el("span", what, { class: "what" }));
 }
