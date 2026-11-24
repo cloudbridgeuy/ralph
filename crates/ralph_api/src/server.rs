@@ -5,11 +5,11 @@ use crate::route::{accepts_body, overloaded, route, ApiConfig, ApiRequest, ApiRe
 use crate::token::Token;
 use ralph_server::warn::{warn, warn_if_err};
 use std::io::{Cursor, Read};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tiny_http::{Header, Request, Response, Server};
+use tiny_http::{Header, Request, Response, Server, Timeouts};
 
 const POLL: Duration = Duration::from_millis(100);
 
@@ -25,12 +25,42 @@ pub enum ApiError {
     Recv(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub read: Duration,
+    pub write: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            read: Duration::from_secs(10),
+            write: Duration::from_secs(10),
+        }
+    }
+}
+
+fn timeouts_for(limits: &Limits) -> Timeouts {
+    Timeouts {
+        read: Some(limits.read),
+        write: Some(limits.write),
+    }
+}
+
 pub fn bind(addr: SocketAddr, policy: &BindPolicy) -> Result<Server, ApiError> {
+    bind_with_limits(addr, policy, &Limits::default())
+}
+
+pub fn bind_with_limits(
+    addr: SocketAddr,
+    policy: &BindPolicy,
+    limits: &Limits,
+) -> Result<Server, ApiError> {
     check_bind(addr, policy)?;
-    let server = Server::http(addr).map_err(|error| ApiError::Listen {
-        addr,
-        reason: error.to_string(),
-    })?;
+    let listen_error = |reason: String| ApiError::Listen { addr, reason };
+    let listener = TcpListener::bind(addr).map_err(|error| listen_error(error.to_string()))?;
+    let server = Server::from_listener_with_timeouts(listener, None, timeouts_for(limits))
+        .map_err(|error| listen_error(error.to_string()))?;
     let bound = server.server_addr().to_ip().ok_or(ApiError::NotIp)?;
     check_bind(bound, policy)?;
     Ok(server)
@@ -184,6 +214,24 @@ fn to_http_response(response: ApiResponse) -> Response<Cursor<Vec<u8>>> {
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn timeouts_for_maps_each_limit_to_its_direction() {
+        let limits = Limits {
+            read: Duration::from_millis(1234),
+            write: Duration::from_millis(2345),
+        };
+        let timeouts = timeouts_for(&limits);
+        assert_eq!(timeouts.read, Some(limits.read));
+        assert_eq!(timeouts.write, Some(limits.write));
+    }
+
+    #[test]
+    fn default_limits_are_ten_seconds_each() {
+        let limits = Limits::default();
+        assert_eq!(limits.read, Duration::from_secs(10));
+        assert_eq!(limits.write, Duration::from_secs(10));
+    }
 
     #[test]
     fn split_url_separates_path_and_query() {

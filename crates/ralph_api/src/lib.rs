@@ -14,7 +14,7 @@ mod tokens;
 pub use addr::{allowed_hosts, bind_hosts, BindError, BindPolicy};
 pub use admit::MAX_HANDLERS;
 pub use route::ApiConfig;
-pub use server::{bind, serve, ApiError};
+pub use server::{bind, bind_with_limits, serve, ApiError, Limits};
 /// Notice for the bundled Geist Mono font: tag, source and SHA-256.
 pub const FONT_NOTICE: &str = include_str!("../assets/fonts/NOTICE");
 /// SIL Open Font License text shipped with Geist Mono.
