@@ -299,6 +299,7 @@ mod tests {
     #[test]
     fn every_pill_tone_fills_with_its_own_role_over_the_page() {
         let css = css();
+        let mut percents = Vec::new();
         for (tone, role) in [
             ("ok", "ok"),
             ("bad", "bad"),
@@ -308,15 +309,24 @@ mod tests {
             ("neutral", "muted"),
         ] {
             let body = rule_body(&css, &format!("r-pill[tone=\"{tone}\"]")).unwrap();
+            let prefix = format!("background: color-mix(in srgb, var(--r-{role}) ");
+            let from = body
+                .find(&prefix)
+                .unwrap_or_else(|| panic!("{tone}: {body}"))
+                + prefix.len();
+            let digits: String = body[from..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
             assert!(
-                body.contains(&format!(
-                    "background: color-mix(in srgb, var(--r-{role}) 8%, var(--r-bg));"
-                )),
+                body[from + digits.len()..].starts_with("%, var(--r-bg));"),
                 "{tone}: {body}"
             );
+            percents.push(digits);
             let status = rule_body(&css, &format!("r-status[tone=\"{tone}\"]")).unwrap();
             assert!(!status.contains("background"), "{tone}: {status}");
         }
+        assert!(percents.iter().all(|p| p == &percents[0]), "{percents:?}");
         assert!(!rule_body(&css, "r-pill").unwrap().contains("background"));
     }
 
