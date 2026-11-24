@@ -1,4 +1,5 @@
 use super::web_colour_names::{COLOUR_FUNCTIONS, NAMED_COLOURS, PAINT_ATTRIBUTES, PRIMITIVES};
+use super::web_colour_scan::{statements, strip_comments, without_urls, Terminator};
 use crate::prelude::*;
 
 const ASSET_DIR: &str = "crates/ralph_api/assets";
@@ -10,36 +11,7 @@ pub struct WebViolation {
     pub reason: String,
 }
 
-fn strip_comments(line: &str, in_comment: &mut bool) -> String {
-    let mut out = String::new();
-    let mut rest = line;
-    loop {
-        if *in_comment {
-            match rest.find("*/") {
-                Some(at) => {
-                    rest = &rest[at + 2..];
-                    *in_comment = false;
-                }
-                None => return out,
-            }
-        } else {
-            match rest.find("/*") {
-                Some(at) => {
-                    out.push_str(&rest[..at]);
-                    out.push(' ');
-                    rest = &rest[at + 2..];
-                    *in_comment = true;
-                }
-                None => {
-                    out.push_str(rest);
-                    return out;
-                }
-            }
-        }
-    }
-}
-
-fn is_ident_char(c: char) -> bool {
+pub(super) fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
@@ -277,101 +249,6 @@ fn without_token_mixes(line: &str) -> String {
     out
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Terminator {
-    Semicolon,
-    OpenBrace,
-    CloseBrace,
-    End,
-}
-
-struct Statement<'a> {
-    line: usize,
-    text: &'a str,
-    terminator: Terminator,
-}
-
-fn statement_between(
-    text: &str,
-    start: usize,
-    end: usize,
-    terminator: Terminator,
-) -> Option<Statement<'_>> {
-    let piece = &text[start..end];
-    let body = piece.trim_start();
-    if body.trim().is_empty() {
-        return None;
-    }
-    let lead = &piece[..piece.len() - body.len()];
-    Some(Statement {
-        line: 1 + text[..start].matches('\n').count() + lead.matches('\n').count(),
-        text: body.trim_end(),
-        terminator,
-    })
-}
-
-fn statements(text: &str) -> Vec<Statement<'_>> {
-    let mut found = Vec::new();
-    let mut quote: Option<char> = None;
-    let mut start = 0;
-    for (at, c) in text.char_indices() {
-        match (quote, c) {
-            (Some(open), c) if c == open => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(c),
-            (None, ';' | '{' | '}') => {
-                let terminator = match c {
-                    ';' => Terminator::Semicolon,
-                    '{' => Terminator::OpenBrace,
-                    _ => Terminator::CloseBrace,
-                };
-                found.extend(statement_between(text, start, at, terminator));
-                start = at + 1;
-            }
-            (None, _) => {}
-        }
-    }
-    found.extend(statement_between(text, start, text.len(), Terminator::End));
-    found
-}
-
-fn url_end(rest: &str) -> usize {
-    let body = rest.trim_start();
-    let skipped = rest.len() - body.len();
-    let search_from = match body.chars().next().filter(|c| *c == '"' || *c == '\'') {
-        Some(quote) => body[1..]
-            .find(quote)
-            .map_or(body.len(), |at| skipped + at + 2),
-        None => 0,
-    };
-    rest[search_from..]
-        .find(')')
-        .map_or(rest.len(), |at| search_from + at + 1)
-}
-
-fn without_urls(line: &str) -> String {
-    const NAME: &str = "url(";
-    let lower = line.to_ascii_lowercase();
-    let mut out = String::new();
-    let mut from = 0;
-    while let Some(found) = lower[from..].find(NAME) {
-        let at = from + found;
-        let boundary = line[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !is_ident_char(c));
-        if !boundary {
-            out.push_str(&line[from..at + NAME.len()]);
-            from = at + NAME.len();
-            continue;
-        }
-        out.push_str(&line[from..at]);
-        from = at + NAME.len() + url_end(&line[at + NAME.len()..]);
-    }
-    out.push_str(&line[from..]);
-    out
-}
-
 fn text_reasons(path: &str, raw: &str, selector: bool) -> Vec<String> {
     let text = without_token_mixes(raw);
     let line = text.as_str();
@@ -400,6 +277,10 @@ fn text_reasons(path: &str, raw: &str, selector: bool) -> Vec<String> {
     reasons
 }
 
+fn is_script(path: &str) -> bool {
+    path.ends_with(".js") || path.ends_with(".mjs")
+}
+
 fn is_checked(path: &str) -> bool {
     ["css", "html", "htm", "svg", "js", "mjs"]
         .iter()
@@ -407,14 +288,6 @@ fn is_checked(path: &str) -> bool {
             path.rsplit_once('.')
                 .is_some_and(|(_, found)| found == *ext)
         })
-}
-
-fn strip_all_comments(text: &str) -> String {
-    let mut in_comment = false;
-    text.lines()
-        .map(|raw| strip_comments(raw, &mut in_comment))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn push_reasons(found: &mut Vec<WebViolation>, lines: &[&str], line: usize, reasons: Vec<String>) {
@@ -440,7 +313,7 @@ fn find_web_violations(path: &str, text: &str) -> Vec<WebViolation> {
         return Vec::new();
     }
     let raw_lines: Vec<&str> = text.lines().collect();
-    let cleaned = without_urls(&strip_all_comments(text));
+    let cleaned = without_urls(&strip_comments(text, is_script(path)));
     let mut found = Vec::new();
     if path.ends_with(".css") {
         for statement in statements(&cleaned) {
@@ -796,15 +669,6 @@ mod tests {
     }
 
     #[test]
-    fn without_urls_drops_the_url_call() {
-        assert_eq!(without_urls("a url(x.svg) b"), "a  b");
-        assert_eq!(without_urls("a url(\"x)y.png\") b"), "a  b");
-        assert_eq!(without_urls("URL(#add)"), "");
-        assert_eq!(without_urls("curl(red) b"), "curl(red) b");
-        assert_eq!(without_urls("none"), "none");
-    }
-
-    #[test]
     fn the_contents_of_url_are_not_scanned() {
         for value in [
             "url(gold.svg)",
@@ -821,38 +685,6 @@ mod tests {
     fn a_colour_beside_a_url_is_still_flagged() {
         assert_eq!(lines(CSS, "a { background: red url(x.svg); }\n"), vec![1]);
         assert_eq!(lines(CSS, "a { border: 1px solid gold; }\n"), vec![1]);
-    }
-
-    fn statement_parts(text: &str) -> Vec<(usize, &str, Terminator)> {
-        statements(text)
-            .into_iter()
-            .map(|s| (s.line, s.text, s.terminator))
-            .collect()
-    }
-
-    #[test]
-    fn statements_split_at_semicolons_and_braces() {
-        assert_eq!(
-            statement_parts("a {\n  color:\n    red;\n  margin: 0\n}\nb"),
-            vec![
-                (1, "a", Terminator::OpenBrace),
-                (2, "color:\n    red", Terminator::Semicolon),
-                (4, "margin: 0", Terminator::CloseBrace),
-                (6, "b", Terminator::End),
-            ]
-        );
-    }
-
-    #[test]
-    fn statements_skip_blank_pieces_and_quoted_separators() {
-        assert_eq!(statement_parts(" ; } \n"), vec![]);
-        assert_eq!(
-            statement_parts("a::after { content: \"{;}\"; }"),
-            vec![
-                (1, "a::after", Terminator::OpenBrace),
-                (1, "content: \"{;}\"", Terminator::Semicolon),
-            ]
-        );
     }
 
     #[test]
@@ -914,6 +746,53 @@ mod tests {
         assert!(lines(HTML, "<a href=\"#add\">x</a>\n").is_empty());
         let js = "crates/ralph_api/assets/app.js";
         assert_eq!(lines(js, "el.style.color = \"#fff\";\n"), vec![1]);
+    }
+
+    #[test]
+    fn a_js_line_comment_is_not_scanned() {
+        let js = "crates/ralph_api/assets/app.js";
+        for text in [
+            "// color: #fff\n",
+            "x(); // color: red; rgb(0 0 0)\n",
+            "// <r-card>\n",
+        ] {
+            assert!(reasons(js, text).is_empty(), "{text}");
+        }
+        let mjs = "crates/ralph_api/assets/app.mjs";
+        assert!(reasons(mjs, "// style color: #fff\n").is_empty());
+    }
+
+    #[test]
+    fn a_js_string_with_slashes_is_still_scanned() {
+        let js = "crates/ralph_api/assets/app.js";
+        assert_eq!(
+            lines(js, "u = \"http://x\"; el.style.color = \"#fff\";\n"),
+            vec![1]
+        );
+        assert_eq!(lines(js, "u = '/*'; el.style.color = '#fff';\n"), vec![1]);
+        assert_eq!(lines(js, "// note\nel.style.color = \"#fff\";\n"), vec![2]);
+    }
+
+    #[test]
+    fn a_double_slash_in_css_is_not_a_comment() {
+        assert_eq!(lines(CSS, "a { color: red; // x\n}\n"), vec![1]);
+        assert_eq!(
+            lines(CSS, "a {\n  // color: red;\n  color: blue;\n}\n"),
+            vec![3]
+        );
+        assert_eq!(lines(HTML, "<p style=\"color: red\"> // x\n"), vec![1]);
+    }
+
+    #[test]
+    fn a_comment_inside_a_multi_line_value_keeps_line_numbers() {
+        let text = "a {\n  color: /* x\n y */\n    red;\n}\n";
+        assert_eq!(lines(CSS, text), vec![2]);
+    }
+
+    #[test]
+    fn a_token_definition_in_a_comment_is_ignored_but_one_after_it_is_not() {
+        assert!(reasons(CSS, "/* --r-x: 1; */\n").is_empty());
+        assert_eq!(lines(CSS, "/* a */ :root { --r-x: 1; }\n"), vec![1]);
     }
 
     #[test]
