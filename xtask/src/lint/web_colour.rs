@@ -1,190 +1,8 @@
+use super::web_colour_names::{COLOUR_FUNCTIONS, NAMED_COLOURS, PAINT_ATTRIBUTES, PRIMITIVES};
+use super::web_colour_scan::{statements, strip_comments, Terminator};
 use crate::prelude::*;
 
 const ASSET_DIR: &str = "crates/ralph_api/assets";
-
-const PRIMITIVES: &[&str] = &[
-    "r-box",
-    "r-rule",
-    "r-table",
-    "r-kv",
-    "r-tree",
-    "r-pill",
-    "r-status",
-    "r-graph",
-    "r-code",
-    "r-prose",
-    "r-spinner",
-    "r-spark",
-    "r-empty",
-    "r-error",
-];
-
-const COLOUR_FUNCTIONS: &[&str] = &[
-    "rgb",
-    "rgba",
-    "hsl",
-    "hsla",
-    "hwb",
-    "lab",
-    "lch",
-    "oklab",
-    "oklch",
-    "color",
-    "color-mix",
-];
-
-const PAINT_ATTRIBUTES: &[&str] = &["fill", "stroke", "stop-color", "flood-color", "color"];
-
-const NAMED_COLOURS: &[&str] = &[
-    "aliceblue",
-    "antiquewhite",
-    "aqua",
-    "aquamarine",
-    "azure",
-    "beige",
-    "bisque",
-    "black",
-    "blanchedalmond",
-    "blue",
-    "blueviolet",
-    "brown",
-    "burlywood",
-    "cadetblue",
-    "chartreuse",
-    "chocolate",
-    "coral",
-    "cornflowerblue",
-    "cornsilk",
-    "crimson",
-    "cyan",
-    "darkblue",
-    "darkcyan",
-    "darkgoldenrod",
-    "darkgray",
-    "darkgreen",
-    "darkgrey",
-    "darkkhaki",
-    "darkmagenta",
-    "darkolivegreen",
-    "darkorange",
-    "darkorchid",
-    "darkred",
-    "darksalmon",
-    "darkseagreen",
-    "darkslateblue",
-    "darkslategray",
-    "darkslategrey",
-    "darkturquoise",
-    "darkviolet",
-    "deeppink",
-    "deepskyblue",
-    "dimgray",
-    "dimgrey",
-    "dodgerblue",
-    "firebrick",
-    "floralwhite",
-    "forestgreen",
-    "fuchsia",
-    "gainsboro",
-    "ghostwhite",
-    "gold",
-    "goldenrod",
-    "gray",
-    "green",
-    "greenyellow",
-    "grey",
-    "honeydew",
-    "hotpink",
-    "indianred",
-    "indigo",
-    "ivory",
-    "khaki",
-    "lavender",
-    "lavenderblush",
-    "lawngreen",
-    "lemonchiffon",
-    "lightblue",
-    "lightcoral",
-    "lightcyan",
-    "lightgoldenrodyellow",
-    "lightgray",
-    "lightgreen",
-    "lightgrey",
-    "lightpink",
-    "lightsalmon",
-    "lightseagreen",
-    "lightskyblue",
-    "lightslategray",
-    "lightslategrey",
-    "lightsteelblue",
-    "lightyellow",
-    "lime",
-    "limegreen",
-    "linen",
-    "magenta",
-    "maroon",
-    "mediumaquamarine",
-    "mediumblue",
-    "mediumorchid",
-    "mediumpurple",
-    "mediumseagreen",
-    "mediumslateblue",
-    "mediumspringgreen",
-    "mediumturquoise",
-    "mediumvioletred",
-    "midnightblue",
-    "mintcream",
-    "mistyrose",
-    "moccasin",
-    "navajowhite",
-    "navy",
-    "oldlace",
-    "olive",
-    "olivedrab",
-    "orange",
-    "orangered",
-    "orchid",
-    "palegoldenrod",
-    "palegreen",
-    "paleturquoise",
-    "palevioletred",
-    "papayawhip",
-    "peachpuff",
-    "peru",
-    "pink",
-    "plum",
-    "powderblue",
-    "purple",
-    "rebeccapurple",
-    "red",
-    "rosybrown",
-    "royalblue",
-    "saddlebrown",
-    "salmon",
-    "sandybrown",
-    "seagreen",
-    "seashell",
-    "sienna",
-    "silver",
-    "skyblue",
-    "slateblue",
-    "slategray",
-    "slategrey",
-    "snow",
-    "springgreen",
-    "steelblue",
-    "tan",
-    "teal",
-    "thistle",
-    "tomato",
-    "turquoise",
-    "violet",
-    "wheat",
-    "white",
-    "whitesmoke",
-    "yellow",
-    "yellowgreen",
-];
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct WebViolation {
@@ -193,36 +11,7 @@ pub struct WebViolation {
     pub reason: String,
 }
 
-fn strip_comments(line: &str, in_comment: &mut bool) -> String {
-    let mut out = String::new();
-    let mut rest = line;
-    loop {
-        if *in_comment {
-            match rest.find("*/") {
-                Some(at) => {
-                    rest = &rest[at + 2..];
-                    *in_comment = false;
-                }
-                None => return out,
-            }
-        } else {
-            match rest.find("/*") {
-                Some(at) => {
-                    out.push_str(&rest[..at]);
-                    out.push(' ');
-                    rest = &rest[at + 2..];
-                    *in_comment = true;
-                }
-                None => {
-                    out.push_str(rest);
-                    return out;
-                }
-            }
-        }
-    }
-}
-
-fn is_ident_char(c: char) -> bool {
+pub(super) fn is_ident_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
@@ -399,8 +188,11 @@ fn is_token_colour_argument(argument: &str) -> bool {
     let words: Vec<&str> = argument.split_whitespace().collect();
     match words.as_slice() {
         [token] => is_token_reference(token),
-        [percent, token] if is_percentage(percent) => is_token_reference(token),
-        [token, percent] if is_percentage(percent) => is_token_reference(token),
+        [first, second] => {
+            let is_amount = |word: &str| is_percentage(word) || is_token_reference(word);
+            (is_percentage(first) && is_token_reference(second))
+                || (is_token_reference(first) && is_amount(second))
+        }
         _ => false,
     }
 }
@@ -460,17 +252,18 @@ fn without_token_mixes(line: &str) -> String {
     out
 }
 
-fn line_reasons(path: &str, raw_line: &str) -> Vec<String> {
-    let line = without_token_mixes(raw_line);
-    let line = line.as_str();
+fn text_reasons(path: &str, raw: &str, selector: bool) -> Vec<String> {
+    let text = without_token_mixes(raw);
+    let line = text.as_str();
+    let paint = !selector;
     let mut reasons = Vec::new();
-    if has_paint_context(path, line) && hex_colour(line) || paint_attribute_hex(line) {
+    if paint && (has_paint_context(path, line) && hex_colour(line) || paint_attribute_hex(line)) {
         reasons.push("raw hex colour; use a var(--r-*) token".to_string());
     }
     if colour_function(line) {
         reasons.push("colour function; use a var(--r-*) token".to_string());
     }
-    if named_colour_declaration(line) || named_paint_attribute(line) {
+    if paint && (named_colour_declaration(line) || named_paint_attribute(line)) {
         reasons.push("named colour; use a var(--r-*) token".to_string());
     }
     if foreign_variable(line) {
@@ -487,6 +280,10 @@ fn line_reasons(path: &str, raw_line: &str) -> Vec<String> {
     reasons
 }
 
+fn is_script(path: &str) -> bool {
+    path.ends_with(".js") || path.ends_with(".mjs")
+}
+
 fn is_checked(path: &str) -> bool {
     ["css", "html", "htm", "svg", "js", "mjs"]
         .iter()
@@ -496,25 +293,48 @@ fn is_checked(path: &str) -> bool {
         })
 }
 
+fn push_reasons(found: &mut Vec<WebViolation>, lines: &[&str], line: usize, reasons: Vec<String>) {
+    let earlier = found.len();
+    for reason in reasons {
+        if !found[..earlier]
+            .iter()
+            .any(|v| v.line == line && v.reason == reason)
+        {
+            found.push(WebViolation {
+                line,
+                snippet: lines
+                    .get(line - 1)
+                    .map_or(String::new(), |raw| raw.trim().to_string()),
+                reason,
+            });
+        }
+    }
+}
+
 fn find_web_violations(path: &str, text: &str) -> Vec<WebViolation> {
     if !is_checked(path) {
         return Vec::new();
     }
-    let mut in_comment = false;
-    text.lines()
-        .enumerate()
-        .flat_map(|(index, raw)| {
-            let line = strip_comments(raw, &mut in_comment);
-            line_reasons(path, &line)
-                .into_iter()
-                .map(|reason| WebViolation {
-                    line: index + 1,
-                    snippet: raw.trim().to_string(),
-                    reason,
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+    let raw_lines: Vec<&str> = text.lines().collect();
+    let cleaned = strip_comments(text, is_script(path));
+    let mut found = Vec::new();
+    if path.ends_with(".css") {
+        for statement in statements(&cleaned) {
+            let selector = statement.terminator == Terminator::OpenBrace;
+            let reasons = text_reasons(path, statement.text, selector);
+            push_reasons(&mut found, &raw_lines, statement.line, reasons);
+        }
+    } else {
+        for (index, line) in cleaned.lines().enumerate() {
+            push_reasons(
+                &mut found,
+                &raw_lines,
+                index + 1,
+                text_reasons(path, line, false),
+            );
+        }
+    }
+    found
 }
 
 const BINARY_EXTENSIONS: &[&str] = &["woff", "woff2", "png", "jpg", "jpeg", "gif", "ico", "webp"];
@@ -709,6 +529,40 @@ mod tests {
     }
 
     #[test]
+    fn allows_a_token_as_the_mix_percentage() {
+        for mix in [
+            "color-mix(in srgb, var(--r-h) var(--r-head-k), var(--r-ink))",
+            "color-mix(in srgb, var(--r-head-k) var(--r-h), var(--r-ink))",
+            "color-mix(in srgb, var(--r-ink), var(--r-h) var(--r-head-k))",
+        ] {
+            let text = format!("a {{ color: {mix}; }}\n");
+            assert!(lines(CSS, &text).is_empty(), "{mix}");
+        }
+    }
+
+    #[test]
+    fn a_full_line_mix_with_a_token_percentage_is_clean() {
+        let text = "color: color-mix(in srgb, var(--r-heading1) var(--r-head-k), var(--r-ink));\n";
+        assert!(lines(CSS, text).is_empty());
+    }
+
+    #[test]
+    fn refuses_a_non_token_in_a_two_word_mix_argument() {
+        for mix in [
+            "color-mix(in srgb, var(--r-a) var(--foreign), var(--r-b))",
+            "color-mix(in srgb, var(--foreign) var(--r-k), var(--r-b))",
+            "color-mix(in srgb, #fff var(--r-k), var(--r-ink))",
+            "color-mix(in srgb, var(--r-a) red, var(--r-b))",
+            "color-mix(in srgb, red var(--r-k), var(--r-b))",
+        ] {
+            let text = format!("a {{ color: {mix}; }}\n");
+            let mut found = lines(CSS, &text);
+            found.dedup();
+            assert_eq!(found, vec![1], "{mix}");
+        }
+    }
+
+    #[test]
     fn flags_colour_functions() {
         for func in [
             "rgb(0 0 0)",
@@ -826,6 +680,220 @@ mod tests {
         let text = "Copyright (c) <the-holder> color: #fff red\n";
         assert!(reasons("crates/ralph_api/assets/fonts/OFL.txt", text).is_empty());
         assert!(reasons("crates/ralph_api/assets/fonts/NOTICE", text).is_empty());
+    }
+
+    #[test]
+    fn an_id_selector_that_looks_like_hex_is_not_a_colour() {
+        for text in [
+            "#add {\n  margin: 0;\n}\n",
+            "a:hover #add,\n#bee {\n  margin: 0;\n}\n",
+            "#add,\n#bee {\n  margin: 0;\n}\n",
+            "#add { margin: 0; }\n",
+        ] {
+            assert!(reasons(CSS, text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_hex_value_in_a_declaration_is_still_a_colour() {
+        for text in [
+            "a { color: #add; }\n",
+            "#add { color: #add; }\n",
+            "a { box-shadow: 0 0 #add, 0 0 #bee; }\n",
+        ] {
+            assert_eq!(lines(CSS, text), vec![1], "{text}");
+        }
+    }
+
+    #[test]
+    fn the_contents_of_url_are_not_scanned() {
+        for value in [
+            "url(gold.svg)",
+            "url(#add)",
+            "url(\"red.png\")",
+            "url('blue.png')",
+        ] {
+            let text = format!("a {{ background: {value}; }}\n");
+            assert!(reasons(CSS, &text).is_empty(), "{value}");
+        }
+    }
+
+    #[test]
+    fn a_colour_beside_a_url_is_still_flagged() {
+        assert_eq!(lines(CSS, "a { background: red url(x.svg); }\n"), vec![1]);
+        assert_eq!(lines(CSS, "a { border: 1px solid gold; }\n"), vec![1]);
+    }
+
+    #[test]
+    fn a_value_split_across_lines_is_judged_whole() {
+        for text in [
+            "a {\n  color:\n    red;\n}\n",
+            "a {\n  --x:\n    #fff;\n}\n",
+            "a {\n  color: color-mix(in srgb, var(--r-fg),\n    red);\n}\n",
+            "a {\n  color: var(--r-fg,\n    red);\n}\n",
+        ] {
+            let found = lines(CSS, text);
+            assert!(!found.is_empty(), "{text}");
+            assert!(found.iter().all(|line| *line == 2), "{text}: {found:?}");
+        }
+    }
+
+    #[test]
+    fn a_multi_line_value_of_tokens_is_allowed() {
+        for text in [
+            "a {\n  color: color-mix(in srgb,\n    var(--r-fg) 60%,\n    var(--r-bg));\n}\n",
+            "a {\n  color: var(\n    --r-fg);\n}\n",
+            "a {\n  box-shadow:\n    0 0 1px var(--r-fg),\n    0 0 2px var(--r-bg);\n}\n",
+        ] {
+            assert!(reasons(CSS, text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_multi_line_selector_is_never_a_colour() {
+        let text = "a:hover #add,\n#bee,\nred {\n  margin: 0;\n}\n";
+        assert!(reasons(CSS, text).is_empty());
+    }
+
+    #[test]
+    fn two_statements_on_one_line_report_one_reason() {
+        let text = "a { color: red; background: blue; }\n";
+        assert_eq!(lines(CSS, text), vec![1]);
+    }
+
+    #[test]
+    fn a_token_definition_is_refused_even_across_lines() {
+        for text in [
+            ":root { --r-x: var(--r-fg); }\n",
+            ":root {\n  --r-x:\n    red;\n}\n",
+        ] {
+            let found = reasons(CSS, text);
+            assert!(
+                found
+                    .iter()
+                    .any(|(_, reason)| reason.contains("token definition")),
+                "{text}: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn html_and_js_keep_the_per_line_paint_rules() {
+        assert_eq!(lines(HTML, "<p style=\"color: #fff\">x</p>\n"), vec![1]);
+        assert!(lines(HTML, "<a href=\"#add\">x</a>\n").is_empty());
+        let js = "crates/ralph_api/assets/app.js";
+        assert_eq!(lines(js, "el.style.color = \"#fff\";\n"), vec![1]);
+    }
+
+    #[test]
+    fn a_js_line_comment_is_not_scanned() {
+        let js = "crates/ralph_api/assets/app.js";
+        for text in [
+            "// color: #fff\n",
+            "x(); // color: red; rgb(0 0 0)\n",
+            "// <r-card>\n",
+        ] {
+            assert!(reasons(js, text).is_empty(), "{text}");
+        }
+        let mjs = "crates/ralph_api/assets/app.mjs";
+        assert!(reasons(mjs, "// style color: #fff\n").is_empty());
+    }
+
+    #[test]
+    fn a_js_string_with_slashes_is_still_scanned() {
+        let js = "crates/ralph_api/assets/app.js";
+        assert_eq!(
+            lines(js, "u = \"http://x\"; el.style.color = \"#fff\";\n"),
+            vec![1]
+        );
+        assert_eq!(lines(js, "u = '/*'; el.style.color = '#fff';\n"), vec![1]);
+        assert_eq!(lines(js, "// note\nel.style.color = \"#fff\";\n"), vec![2]);
+    }
+
+    #[test]
+    fn a_double_slash_in_css_is_not_a_comment() {
+        assert_eq!(lines(CSS, "a { color: red; // x\n}\n"), vec![1]);
+        assert_eq!(
+            lines(CSS, "a {\n  // color: red;\n  color: blue;\n}\n"),
+            vec![3]
+        );
+        assert_eq!(lines(HTML, "<p style=\"color: red\"> // x\n"), vec![1]);
+    }
+
+    #[test]
+    fn a_comment_inside_a_multi_line_value_keeps_line_numbers() {
+        let text = "a {\n  color: /* x\n y */\n    red;\n}\n";
+        assert_eq!(lines(CSS, text), vec![2]);
+    }
+
+    #[test]
+    fn a_token_definition_in_a_comment_is_ignored_but_one_after_it_is_not() {
+        assert!(reasons(CSS, "/* --r-x: 1; */\n").is_empty());
+        assert_eq!(lines(CSS, "/* a */ :root { --r-x: 1; }\n"), vec![1]);
+    }
+
+    #[test]
+    fn an_unclosed_quote_in_url_does_not_hide_the_rest_of_the_file() {
+        let text = "a { background: url(\"x; }\nb { color: #fff; }\n";
+        assert_eq!(lines(CSS, text), vec![2]);
+    }
+
+    #[test]
+    fn an_unclosed_quote_does_not_merge_statements_across_lines() {
+        let text = "a { content: \"x;\nb { color: red; }\nc { content: \"y\"\"  d {\n";
+        assert_eq!(lines(CSS, text), vec![2]);
+    }
+
+    #[test]
+    fn an_unclosed_url_in_text_does_not_hide_later_lines() {
+        let text = "<p>url(</p>\n<p style=\"color:#fff\">x</p>\n";
+        assert_eq!(lines(HTML, text), vec![2]);
+        let js = "crates/ralph_api/assets/app.js";
+        assert_eq!(
+            lines(js, "a = \"url(\";\nel.style.color = \"#fff\";\n"),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn a_js_regex_literal_does_not_open_a_comment() {
+        let js = "crates/ralph_api/assets/app.js";
+        for text in [
+            "const re = /\\/\\//; el.style.color = \"#fff\";\n",
+            "const re = /[/*]/; el.style.color = \"#fff\";\n",
+            "x(/a\\/\\/b/); el.style.color = \"#fff\";\n",
+            "  /\\/\\//.test(s); el.style.color = \"#fff\";\n",
+        ] {
+            assert_eq!(lines(js, text), vec![1], "{text}");
+        }
+        assert!(reasons(js, "a = 4 / 2; // el.style.color = \"#fff\";\n").is_empty());
+    }
+
+    #[test]
+    fn a_js_regex_after_an_arrow_or_keyword_does_not_open_a_comment() {
+        let js = "crates/ralph_api/assets/app.js";
+        for text in [
+            "const f = s => /\\/\\//.test(s); el.style.color = \"#fff\";\n",
+            "return /\\/\\//.test(s) && (el.style.color = \"#fff\");\n",
+            "x = 1 + /\\/\\//.test(s) + (el.style.color = \"#fff\");\n",
+            "if (a) return /\\/\\//.test(s), el.style.color = \"#fff\";\n",
+        ] {
+            assert_eq!(lines(js, text), vec![1], "{text}");
+        }
+    }
+
+    #[test]
+    fn a_url_inside_a_js_string_hides_nothing() {
+        let js = "crates/ralph_api/assets/app.js";
+        let text = "a = \"url(\"; el.style.color = \"#fff\"; c = \")\";\n";
+        assert_eq!(lines(js, text), vec![1]);
+        assert_eq!(
+            lines(
+                CSS,
+                "a::after { content: \"url(\"; color: #fff; x: \")\"; }\n"
+            ),
+            vec![1]
+        );
     }
 
     #[test]

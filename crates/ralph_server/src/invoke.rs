@@ -114,6 +114,14 @@ pub fn prompt_stdin(prompt: &str) -> String {
     strip_controls(prompt).into_owned()
 }
 
+pub fn build_codex_memory_command(model: &str, workdir: &Path) -> String {
+    format!(
+        "codex exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C {} --model {} --disable shell_tool --disable apps --disable multi_agent -c 'web_search=\"disabled\"' -",
+        shell_quote(&workdir.to_string_lossy()),
+        shell_quote(model),
+    )
+}
+
 pub fn build_memory_command(model: &str, home: Option<&Path>, config_dir: Option<&Path>) -> String {
     memory_command(model, "", &Isolation::for_memory(config_dir), home)
 }
@@ -217,6 +225,15 @@ mod tests {
     fn chat_inbox_command_rejects_a_missing_store() {
         let dir = tempfile::tempdir().unwrap();
         assert!(with_chat_inbox("claude -p".to_string(), &dir.path().join("missing")).is_err());
+    }
+
+    #[test]
+    fn codex_memory_command_is_isolated() {
+        let cmd = build_codex_memory_command("model 'x'", Path::new("/tmp/a b"));
+        assert_eq!(
+            cmd,
+            r#"codex exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C '/tmp/a b' --model 'model '"'"'x'"'"'' --disable shell_tool --disable apps --disable multi_agent -c 'web_search="disabled"' -"#
+        );
     }
 
     #[test]

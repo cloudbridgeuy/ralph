@@ -16,11 +16,36 @@
   --r-ansi-13: #b4009e;
   --r-ansi-14: #61d6d6;
   --r-ansi-15: #f2f2f2;
+  --r-bg-src: var(--r-ansi-0);
+  --r-ink-src: var(--r-ansi-7);
+  --r-ink-strong-src: var(--r-ansi-15);
+  --r-accent-src: var(--r-ansi-12);
+  --r-bad-src: var(--r-ansi-9);
+  --r-tone-k: 100%;
+  --r-head-k: 62%;
+  --r-bg: var(--r-bg-src);
+  --r-ink: var(--r-ink-src);
+  --r-ink-strong: var(--r-ink-strong-src);
+  --r-muted: color-mix(in srgb, var(--r-ink) 62%, var(--r-bg));
+  --r-faint: color-mix(in srgb, var(--r-ink) 42%, var(--r-bg));
+  --r-line: color-mix(in srgb, var(--r-ink) 14%, var(--r-bg));
+  --r-line-strong: color-mix(in srgb, var(--r-ink) 30%, var(--r-bg));
+  --r-surface: color-mix(in srgb, var(--r-ink) 5%, var(--r-bg));
+  --r-hover: color-mix(in srgb, var(--r-ink) 9%, var(--r-bg));
+  --r-accent: var(--r-accent-src);
+  --r-selected: color-mix(in srgb, var(--r-accent) 16%, var(--r-bg));
+  --r-ok: color-mix(in srgb, var(--r-ansi-2) var(--r-tone-k), var(--r-ink));
+  --r-warn: color-mix(in srgb, var(--r-ansi-3) var(--r-tone-k), var(--r-ink));
+  --r-info: color-mix(in srgb, var(--r-ansi-6) var(--r-tone-k), var(--r-ink));
+  --r-bad: var(--r-bad-src);
+  --r-h1: color-mix(in srgb, var(--r-heading1, var(--r-ink)) var(--r-head-k), var(--r-ink));
+  --r-h2: color-mix(in srgb, var(--r-heading2, var(--r-ink)) var(--r-head-k), var(--r-ink));
+  --r-h3: color-mix(in srgb, var(--r-heading3, var(--r-ink)) var(--r-head-k), var(--r-ink));
   --r-heading1: var(--r-ansi-14);
   --r-heading2: var(--r-ansi-12);
   --r-heading3: var(--r-ansi-13);
   --r-inline-code: var(--r-ansi-11);
-  --r-inline-code-bg: #262626;
+  --r-inline-code-bg: var(--r-surface);
   --r-bullet: var(--r-ansi-8);
   --r-link: var(--r-ansi-12);
   --r-url: var(--r-ansi-14);
@@ -44,7 +69,7 @@
   --r-status-mode-inbox-bg: var(--r-ansi-11);
   --r-status-mode-work-fg: var(--r-ansi-15);
   --r-status-mode-work-bg: var(--r-ansi-12);
-  --r-status-base-bg: #303030;
+  --r-status-base-bg: var(--r-surface);
   --r-diff-add-fg: var(--r-ansi-2);
   --r-diff-del-fg: var(--r-ansi-1);
   --r-diff-hunk-fg: var(--r-ansi-6);
@@ -65,7 +90,7 @@
   --r-ui-ask-ok: var(--r-ansi-2);
   --r-ui-ask-error: var(--r-ansi-1);
   --r-ui-warning: var(--r-ansi-3);
-  --r-ui-rule: #444444;
+  --r-ui-rule: var(--r-line-strong);
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -85,6 +110,31 @@
     --r-ansi-13: #b4009e;
     --r-ansi-14: #61d6d6;
     --r-ansi-15: #767676;
+    --r-bg-src: var(--r-ansi-8);
+    --r-ink-src: var(--r-ansi-7);
+    --r-ink-strong-src: var(--r-ansi-7);
+    --r-accent-src: var(--r-ansi-4);
+    --r-bad-src: var(--r-ansi-1);
+    --r-tone-k: 62%;
+    --r-head-k: 50%;
+    --r-bg: var(--r-bg-src);
+    --r-ink: var(--r-ink-src);
+    --r-ink-strong: var(--r-ink-strong-src);
+    --r-muted: color-mix(in srgb, var(--r-ink) 62%, var(--r-bg));
+    --r-faint: color-mix(in srgb, var(--r-ink) 42%, var(--r-bg));
+    --r-line: color-mix(in srgb, var(--r-ink) 14%, var(--r-bg));
+    --r-line-strong: color-mix(in srgb, var(--r-ink) 30%, var(--r-bg));
+    --r-surface: color-mix(in srgb, var(--r-ink) 5%, var(--r-bg));
+    --r-hover: color-mix(in srgb, var(--r-ink) 9%, var(--r-bg));
+    --r-accent: var(--r-accent-src);
+    --r-selected: color-mix(in srgb, var(--r-accent) 16%, var(--r-bg));
+    --r-ok: color-mix(in srgb, var(--r-ansi-2) var(--r-tone-k), var(--r-ink));
+    --r-warn: color-mix(in srgb, var(--r-ansi-3) var(--r-tone-k), var(--r-ink));
+    --r-info: color-mix(in srgb, var(--r-ansi-6) var(--r-tone-k), var(--r-ink));
+    --r-bad: var(--r-bad-src);
+    --r-h1: color-mix(in srgb, var(--r-heading1, var(--r-ink)) var(--r-head-k), var(--r-ink));
+    --r-h2: color-mix(in srgb, var(--r-heading2, var(--r-ink)) var(--r-head-k), var(--r-ink));
+    --r-h3: color-mix(in srgb, var(--r-heading3, var(--r-ink)) var(--r-head-k), var(--r-ink));
   }
 }
 [data-theme="dark"] {
@@ -104,11 +154,36 @@
   --r-ansi-13: #b4009e;
   --r-ansi-14: #61d6d6;
   --r-ansi-15: #f2f2f2;
+  --r-bg-src: var(--r-ansi-0);
+  --r-ink-src: var(--r-ansi-7);
+  --r-ink-strong-src: var(--r-ansi-15);
+  --r-accent-src: var(--r-ansi-12);
+  --r-bad-src: var(--r-ansi-9);
+  --r-tone-k: 100%;
+  --r-head-k: 62%;
+  --r-bg: var(--r-bg-src);
+  --r-ink: var(--r-ink-src);
+  --r-ink-strong: var(--r-ink-strong-src);
+  --r-muted: color-mix(in srgb, var(--r-ink) 62%, var(--r-bg));
+  --r-faint: color-mix(in srgb, var(--r-ink) 42%, var(--r-bg));
+  --r-line: color-mix(in srgb, var(--r-ink) 14%, var(--r-bg));
+  --r-line-strong: color-mix(in srgb, var(--r-ink) 30%, var(--r-bg));
+  --r-surface: color-mix(in srgb, var(--r-ink) 5%, var(--r-bg));
+  --r-hover: color-mix(in srgb, var(--r-ink) 9%, var(--r-bg));
+  --r-accent: var(--r-accent-src);
+  --r-selected: color-mix(in srgb, var(--r-accent) 16%, var(--r-bg));
+  --r-ok: color-mix(in srgb, var(--r-ansi-2) var(--r-tone-k), var(--r-ink));
+  --r-warn: color-mix(in srgb, var(--r-ansi-3) var(--r-tone-k), var(--r-ink));
+  --r-info: color-mix(in srgb, var(--r-ansi-6) var(--r-tone-k), var(--r-ink));
+  --r-bad: var(--r-bad-src);
+  --r-h1: color-mix(in srgb, var(--r-heading1, var(--r-ink)) var(--r-head-k), var(--r-ink));
+  --r-h2: color-mix(in srgb, var(--r-heading2, var(--r-ink)) var(--r-head-k), var(--r-ink));
+  --r-h3: color-mix(in srgb, var(--r-heading3, var(--r-ink)) var(--r-head-k), var(--r-ink));
   --r-heading1: var(--r-ansi-14);
   --r-heading2: var(--r-ansi-12);
   --r-heading3: var(--r-ansi-13);
   --r-inline-code: var(--r-ansi-11);
-  --r-inline-code-bg: #262626;
+  --r-inline-code-bg: var(--r-surface);
   --r-bullet: var(--r-ansi-8);
   --r-link: var(--r-ansi-12);
   --r-url: var(--r-ansi-14);
@@ -132,7 +207,7 @@
   --r-status-mode-inbox-bg: var(--r-ansi-11);
   --r-status-mode-work-fg: var(--r-ansi-15);
   --r-status-mode-work-bg: var(--r-ansi-12);
-  --r-status-base-bg: #303030;
+  --r-status-base-bg: var(--r-surface);
   --r-diff-add-fg: var(--r-ansi-2);
   --r-diff-del-fg: var(--r-ansi-1);
   --r-diff-hunk-fg: var(--r-ansi-6);
@@ -153,7 +228,7 @@
   --r-ui-ask-ok: var(--r-ansi-2);
   --r-ui-ask-error: var(--r-ansi-1);
   --r-ui-warning: var(--r-ansi-3);
-  --r-ui-rule: #444444;
+  --r-ui-rule: var(--r-line-strong);
 }
 [data-theme="light"] {
   --r-ansi-0: #cccccc;
@@ -172,11 +247,36 @@
   --r-ansi-13: #b4009e;
   --r-ansi-14: #61d6d6;
   --r-ansi-15: #767676;
+  --r-bg-src: var(--r-ansi-8);
+  --r-ink-src: var(--r-ansi-7);
+  --r-ink-strong-src: var(--r-ansi-7);
+  --r-accent-src: var(--r-ansi-4);
+  --r-bad-src: var(--r-ansi-1);
+  --r-tone-k: 62%;
+  --r-head-k: 50%;
+  --r-bg: var(--r-bg-src);
+  --r-ink: var(--r-ink-src);
+  --r-ink-strong: var(--r-ink-strong-src);
+  --r-muted: color-mix(in srgb, var(--r-ink) 62%, var(--r-bg));
+  --r-faint: color-mix(in srgb, var(--r-ink) 42%, var(--r-bg));
+  --r-line: color-mix(in srgb, var(--r-ink) 14%, var(--r-bg));
+  --r-line-strong: color-mix(in srgb, var(--r-ink) 30%, var(--r-bg));
+  --r-surface: color-mix(in srgb, var(--r-ink) 5%, var(--r-bg));
+  --r-hover: color-mix(in srgb, var(--r-ink) 9%, var(--r-bg));
+  --r-accent: var(--r-accent-src);
+  --r-selected: color-mix(in srgb, var(--r-accent) 16%, var(--r-bg));
+  --r-ok: color-mix(in srgb, var(--r-ansi-2) var(--r-tone-k), var(--r-ink));
+  --r-warn: color-mix(in srgb, var(--r-ansi-3) var(--r-tone-k), var(--r-ink));
+  --r-info: color-mix(in srgb, var(--r-ansi-6) var(--r-tone-k), var(--r-ink));
+  --r-bad: var(--r-bad-src);
+  --r-h1: color-mix(in srgb, var(--r-heading1, var(--r-ink)) var(--r-head-k), var(--r-ink));
+  --r-h2: color-mix(in srgb, var(--r-heading2, var(--r-ink)) var(--r-head-k), var(--r-ink));
+  --r-h3: color-mix(in srgb, var(--r-heading3, var(--r-ink)) var(--r-head-k), var(--r-ink));
   --r-heading1: var(--r-ansi-14);
   --r-heading2: var(--r-ansi-12);
   --r-heading3: var(--r-ansi-13);
   --r-inline-code: var(--r-ansi-11);
-  --r-inline-code-bg: #262626;
+  --r-inline-code-bg: var(--r-surface);
   --r-bullet: var(--r-ansi-8);
   --r-link: var(--r-ansi-12);
   --r-url: var(--r-ansi-14);
@@ -200,7 +300,7 @@
   --r-status-mode-inbox-bg: var(--r-ansi-11);
   --r-status-mode-work-fg: var(--r-ansi-15);
   --r-status-mode-work-bg: var(--r-ansi-12);
-  --r-status-base-bg: #303030;
+  --r-status-base-bg: var(--r-surface);
   --r-diff-add-fg: var(--r-ansi-2);
   --r-diff-del-fg: var(--r-ansi-1);
   --r-diff-hunk-fg: var(--r-ansi-6);
@@ -221,5 +321,5 @@
   --r-ui-ask-ok: var(--r-ansi-2);
   --r-ui-ask-error: var(--r-ansi-1);
   --r-ui-warning: var(--r-ansi-3);
-  --r-ui-rule: #444444;
+  --r-ui-rule: var(--r-line-strong);
 }

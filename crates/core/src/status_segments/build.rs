@@ -13,6 +13,7 @@ const COST_PRIORITY: u8 = 7;
 const WORKERS_PRIORITY: u8 = 8;
 const WATCHES_PRIORITY: u8 = 9;
 const SCHEDULE_PRIORITY: u8 = 10;
+const STAGE_PRIORITY: u8 = 11;
 
 fn known(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|v| !v.is_empty())
@@ -168,6 +169,14 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             schedule_variants(&status.schedule),
         )
     });
+    let stage = (status.stage > 0).then(|| {
+        Segment::new(
+            Side::Right,
+            Kind::Stage,
+            STAGE_PRIORITY,
+            vec![format!("stage {}", status.stage)],
+        )
+    });
     let process = status.process.as_ref().map(|cell| {
         Segment::new(
             Side::Right,
@@ -199,6 +208,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         workers,
         watches,
         schedule,
+        stage,
         process,
         cost,
     ]
@@ -557,5 +567,33 @@ mod tests {
         priorities.sort_unstable();
         priorities.dedup();
         assert_eq!(priorities.len(), all.len());
+    }
+
+    #[test]
+    fn stage_count_is_hidden_at_zero_and_shown_at_three() {
+        assert!(!line(&status(), 200).contains("stage"));
+        let counted = Status {
+            stage: 3,
+            ..with_schedule(1)
+        };
+        assert!(line(&counted, 200).contains("stage 3"));
+    }
+
+    #[test]
+    fn stage_count_drops_before_any_other_right_segment() {
+        let counted = Status {
+            stage: 3,
+            ..with_schedule(1)
+        };
+        let all = segments(&counted, &context());
+        for width in 1..=200 {
+            let kinds: Vec<Kind> = layout(&all, width, Separator::Block)
+                .iter()
+                .map(|placed| all[placed.segment].kind)
+                .collect();
+            if kinds.contains(&Kind::Stage) {
+                assert!(kinds.contains(&Kind::Schedule), "{width}: {kinds:?}");
+            }
+        }
     }
 }

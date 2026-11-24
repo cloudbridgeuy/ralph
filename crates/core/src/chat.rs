@@ -163,8 +163,12 @@ pub fn turn_system_prompt(custom: &CustomPrompt, images: ReplyImages, older: &[S
     )
 }
 
-pub fn turn_prompt(view_lines: &[String], message: &str) -> String {
-    format!("{}\n\nNew message:\n{message}", view_lines.join("\n"))
+pub fn turn_prompt(view_lines: &[String], stage: &str, message: &str) -> String {
+    let view = view_lines.join("\n");
+    match stage {
+        "" => format!("{view}\n\nNew message:\n{message}"),
+        stage => format!("{view}\n\n{stage}\n\nNew message:\n{message}"),
+    }
 }
 
 pub struct ImportedServers {
@@ -655,8 +659,17 @@ mod tests {
     fn turn_prompt_puts_view_before_message() {
         let lines = vec!["0 user: hi".to_string(), "#1-2 s".to_string()];
         assert_eq!(
-            turn_prompt(&lines, "yo"),
+            turn_prompt(&lines, "", "yo"),
             "0 user: hi\n#1-2 s\n\nNew message:\nyo"
+        );
+    }
+
+    #[test]
+    fn turn_prompt_puts_the_stage_right_before_the_message() {
+        let lines = vec!["0 user: hi".to_string()];
+        assert_eq!(
+            turn_prompt(&lines, "Stage:\ns1 owed x", "yo"),
+            "0 user: hi\n\nStage:\ns1 owed x\n\nNew message:\nyo"
         );
     }
 

@@ -11,6 +11,7 @@
 | Tailscale shell | `crates/ralph/src/web_tailscale.rs` | `discover()`: runs `tailscale ip` and `tailscale status --json` |
 | Tailnet parsing | `crates/ralph_api/src/tailnet.rs` | pure: `parse_ip_output()`, `parse_status_json()`, `pick_outcome()`, `TailnetError` |
 | Tokens CSS | `crates/ralph_api/src/tokens.rs` | pure `tokens_css()`: the CSS text |
+| Colour roles | `crates/ralph_api/src/roles.rs` | pure `role_lines()`: the colour role tokens |
 | Tokens input | `crates/ralph/src/web_tokens.rs` | `render_tokens()`: theme slots and `[web]` to CSS |
 | Token | `crates/ralph_api/src/token.rs` | `Token::generate()`, `Token::matches()`, `extract_tokens()` |
 | Routes | `crates/ralph_api/src/route.rs` | pure `route()`: Host check, token check, paths |
@@ -147,7 +148,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 - The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
 - `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.
 - The `[web]` font default starts with `"Geist Mono"`.
-- `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. Thirteen are built: r-box, r-rule, r-table, r-kv, r-tree, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code and r-prose. The other two (r-tree and r-graph) pass the lint; r-tree is built, r-graph has no builder yet. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint.
+- `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. Thirteen are built: r-box, r-rule, r-table, r-kv, r-tree, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code and r-prose. The fourteenth, r-graph, passes the lint but has no builder yet. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint. It does not scan `url(...)` contents or comments (`/* */`, and `//` in `.js` and `.mjs` only), and it does not read a css id selector such as `#add` as a hex colour. A `color-mix()` may take a `var(--r-*)` token as its percentage. In `.css` files it judges each declaration as one statement, even when it spans lines; HTML `style=` and `<style>` content stay judged line by line.
 - A body of 32 KB or more goes out with chunked transfer encoding. The test client decodes it.
 
 ## Primitives
@@ -173,7 +174,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - `spark_points()` drops NaN and infinite values. A flat series and a single point draw a mid line. Huge values do not overflow.
 - `render_markdown(&str)` parses with tables, strikethrough and task lists. Its own emitter writes the HTML. Raw HTML is escaped as text, never passed through. Links keep `href` only for `http`, `https`, `mailto` and `#fragment`. An email autolink becomes a `mailto:` link. The check trims control characters and whitespace at both ends, drops control characters inside, writes each inner whitespace character as `%20`, and ignores case. A space inside the scheme gives no `href`. Other links keep their text without `href`. Links get `rel="noreferrer noopener"`. An image is never `<img>`: its alt text goes in a `<span>`. Tags nested deeper than 64 levels render as plain text. NUL bytes become U+FFFD. A table becomes `<table tabindex="0">`. A fenced or indented code block becomes `<r-code data-lang="rust"><pre tabindex="0"><code>…</code></pre></r-code>`. `highlight()` in `code.rs` uses the `two_face::syntax::extra_newlines()` set (built once in `prose.rs`) and the syntect `ClassedHTMLGenerator` with class prefix `t-`. There is no generated theme CSS; `app.css` maps the `t-*` scope classes to `--r-*` slots. `data-lang` is the first word of the info string, lower-cased, and must match `[a-z0-9+#-]{1,32}`; otherwise the attribute is dropped. An unknown language, no language, a block over 64 KiB, or a block with a line over 4 KiB, gives plain escaped text inside `r-code`. The `[theme]` syntax theme does not apply on the web.
 - Goldens are in `crates/ralph_api/tests/golden/render/<primitive>_<state>.html`. Unit tests in `render/` compare them. The states are empty, sparse, dense, error and very-long where they apply, plus hostile text for escaping.
-- `app.css` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use `var(--r-*)` colours only. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
+- `app.css` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use role colours for everything except the `t-*` scope rules. Those rules use `--r-ansi-N` slots. Rows and inner rules use `--r-line`. Boxes, headers and code use `--r-line-strong`. Accent is only for focus (a 2px outline), links and the accent tone. The info tone and the accent tone differ. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
 
 ## Catalogue
 
@@ -221,11 +222,30 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - An index 16-255 becomes `#rrggbb` through the xterm cube and greys.
 - A `#rrggbb` value passes through.
 - A slot set to the terminal default (Reset) is omitted. A slot that is unset is omitted too.
-- The dark table is in the default `:root` block. The light block overrides only the 16 ANSI variables inside `@media (prefers-color-scheme: light)`.
+- The dark table is in the default `:root` block. The light block overrides the 16 ANSI variables and the roles inside `@media (prefers-color-scheme: light)`.
+- `[theme] border` does not drive web borders. The web uses `--r-line` and `--r-line-strong`.
+
+### Colour roles
+
+`role_lines()` in `roles.rs` writes the colour roles. Roles come from the ANSI table, so one table change moves every role. The roles are in the `:root` block, the light `@media` block and both `[data-theme]` blocks.
+
+- There are 15 roles: `--r-bg`, `--r-ink`, `--r-ink-strong`, `--r-muted`, `--r-faint`, `--r-line`, `--r-line-strong`, `--r-surface`, `--r-hover`, `--r-accent`, `--r-selected`, `--r-ok`, `--r-warn`, `--r-info` and `--r-bad`.
+- There are 3 heading roles: `--r-h1`, `--r-h2` and `--r-h3`. Each mixes its heading slot toward ink by `--r-head-k`. `--r-head-k` is 62% in dark and 50% in light. A heading role falls back to ink if its heading slot is unset.
+- Each theme picks its sources with `--r-bg-src`, `--r-ink-src`, `--r-ink-strong-src`, `--r-accent-src` and `--r-bad-src`. Two more values, `--r-tone-k` and `--r-head-k`, set the mix strength.
+- `--r-bg`, `--r-ink`, `--r-ink-strong`, `--r-accent` and `--r-bad` copy their `-src` pick.
+- `--r-muted` is ink 62% in bg. `--r-faint` is ink 42% in bg.
+- `--r-line` is ink 14% in bg. `--r-line-strong` is ink 30% in bg.
+- `--r-surface` is ink 5% in bg. `--r-hover` is ink 9% in bg.
+- `--r-selected` is accent 16% in bg.
+- `--r-ok`, `--r-warn` and `--r-info` are ANSI 2, 3 and 6 at `--r-tone-k` in ink. `--r-tone-k` is 100% in dark and 62% in light.
+- `--r-faint` and `--r-line-strong` are for decoration (guides, rules, borders). Do not use them for text. They do not reach 4.5:1: about 2.97 and 2.82 for `--r-faint`, and 2.07 and 2.00 for `--r-line-strong`, on the background in dark and light. `--r-muted` and the heading roles reach AA 4.5:1 text contrast in both themes. `--r-muted` gives 5.16 in dark and 5.37 in light.
+- In the light theme, the roles take the background from ANSI slot 8. They take text and strong text from slot 7. The default light table has `#f2f2f2` in slot 8 and `#0c0c0c` in slot 7. Slot 0 is `#cccccc`. The page background does not use it. A custom `[web] ansi_light` table that changes slot 7 or 8 moves every role, so contrast can drop below AA. Dark uses slot 0 for the background, slot 7 for text and slot 15 for strong text.
+- The slots `inline-code-bg`, `status-base-bg` and `ui-rule` come from roles. `inline-code-bg` and `status-base-bg` use `--r-surface`. `ui-rule` uses `--r-line-strong`.
+- For these three slots, the web maps the slot to its role when the value equals the default colour. A user value that differs stays as written. A slot set to exactly the default colour also maps to the role, because the web cannot tell it from an unset slot.
 
 ## Store
 
-- `--store` sets the store. Without it, `RALPH_CHAT_STORE` is used, then `~/.ralph/chat`.
+- `--store` sets the store. Without it, `RALPH_CHAT_STORE` is used, then `./.ralph`.
 - The store must exist. `ralph web` does not create it. A missing store gives `store not found: <path>`.
 
 ## Shutdown

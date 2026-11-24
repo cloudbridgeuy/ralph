@@ -161,7 +161,7 @@ ralph web [--store DIR] [--port N] [--tailscale]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--store` | `RALPH_CHAT_STORE`, then `~/.ralph/chat` | Store directory; it must exist |
+| `--store` | `RALPH_CHAT_STORE`, then `./.ralph` | Store directory; it must exist |
 | `--port` | `[web] port`, then `0` | Port on 127.0.0.1; `0` picks a free port. It overrides `[web] port` |
 | `--tailscale` | off | Also bind the Tailscale IPv4 address on the same port. Exits with 1 if Tailscale is missing, stopped or has no IPv4. Prints one URL for each name. See [Tailscale](context/ralph-web.md#tailscale) |
 

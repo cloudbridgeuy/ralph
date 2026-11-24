@@ -22,6 +22,7 @@ pub mod settle;
 pub mod skills;
 pub mod snapshots;
 pub mod socket;
+pub mod stage;
 pub mod stall;
 pub mod suggestion;
 pub mod tag_store;

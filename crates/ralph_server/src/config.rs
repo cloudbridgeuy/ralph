@@ -645,8 +645,8 @@ impl AppConfig {
             ("nap", &self.nap.harness, &self.nap.model),
             ("tag", &self.tag.harness, &self.tag.model),
         ] {
-            let message = if harness != "claude" {
-                Some(format!("{name}.harness must be claude"))
+            let message = if !matches!(harness.as_str(), "claude" | "codex") {
+                Some(format!("{name}.harness must be claude or codex"))
             } else if model.trim().is_empty()
                 || model.trim_start().starts_with('-')
                 || model.chars().any(char::is_control)
@@ -654,6 +654,8 @@ impl AppConfig {
                 Some(format!(
                     "{name}.model must be nonempty and must not start with an option"
                 ))
+            } else if harness == "codex" && matches!(model.as_str(), "haiku" | "claude-haiku-5-5") {
+                Some(format!("{name}.model must be set to a Codex model"))
             } else {
                 None
             };

@@ -16,8 +16,8 @@
 
 body {
   margin: 0;
-  background: var(--r-ansi-0);
-  color: var(--r-ansi-7);
+  background: var(--r-bg);
+  color: var(--r-ink);
   font-family: var(--r-font, ui-monospace, Menlo, monospace);
   font-size: 14px;
   line-height: 1.5;
@@ -29,7 +29,7 @@ body {
   display: flex;
   gap: 2ch;
   padding: 0.25rem 1ch;
-  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+  border-bottom: 1px solid var(--r-line);
 }
 
 .brand {
@@ -38,11 +38,11 @@ body {
 
 .note,
 .empty {
-  color: color-mix(in srgb, var(--r-ansi-7) 70%, var(--r-ansi-0));
+  color: var(--r-muted);
 }
 
 a {
-  color: var(--r-link, var(--r-ansi-12));
+  color: var(--r-accent);
   text-decoration: none;
 }
 
@@ -51,7 +51,7 @@ a:hover {
 }
 
 a:focus-visible {
-  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline: 2px solid var(--r-accent);
   outline-offset: 2px;
 }
 
@@ -80,8 +80,8 @@ main {
 [data-theme] {
   min-width: 0;
   padding: 0.25rem 1ch;
-  background: var(--r-ansi-0);
-  color: var(--r-ansi-7);
+  background: var(--r-bg);
+  color: var(--r-ink);
 }
 
 .group,
@@ -94,14 +94,14 @@ main {
   margin: 0;
   font-size: 1em;
   font-weight: 400;
-  color: color-mix(in srgb, var(--r-ansi-7) 70%, var(--r-ansi-0));
+  color: var(--r-muted);
 }
 
 r-box {
   display: block;
   margin: 0.25rem 0;
   padding: 0.25rem 1ch;
-  border: 1px solid var(--r-border, var(--r-ansi-8));
+  border: 1px solid var(--r-line-strong);
   overflow-wrap: anywhere;
 }
 
@@ -125,7 +125,7 @@ r-box .title {
 r-rule {
   display: block;
   margin: 0.5rem 0;
-  border-top: 1px solid var(--r-border, var(--r-ansi-8));
+  border-top: 1px solid var(--r-line);
 }
 
 r-table {
@@ -142,12 +142,13 @@ r-table th,
 r-table td {
   padding: 0 1ch;
   text-align: left;
-  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+  border-bottom: 1px solid var(--r-line);
   overflow-wrap: anywhere;
 }
 
 r-table th {
   font-weight: 700;
+  border-bottom-color: var(--r-line-strong);
 }
 
 r-kv {
@@ -165,7 +166,7 @@ r-kv div {
 
 r-kv dt {
   min-width: 12ch;
-  color: color-mix(in srgb, var(--r-ansi-7) 70%, var(--r-ansi-0));
+  color: var(--r-muted);
   overflow-wrap: anywhere;
 }
 
@@ -210,32 +211,32 @@ r-status .mark {
 
 r-pill[tone="ok"],
 r-status[tone="ok"] {
-  color: var(--r-ansi-2);
+  color: var(--r-ok);
 }
 
 r-pill[tone="bad"],
 r-status[tone="bad"] {
-  color: var(--r-ansi-1);
+  color: var(--r-bad);
 }
 
 r-pill[tone="warn"],
 r-status[tone="warn"] {
-  color: var(--r-ansi-3);
+  color: var(--r-warn);
 }
 
 r-pill[tone="info"],
 r-status[tone="info"] {
-  color: var(--r-ansi-4);
+  color: var(--r-info);
 }
 
 r-pill[tone="accent"],
 r-status[tone="accent"] {
-  color: var(--r-ansi-5);
+  color: var(--r-accent);
 }
 
 r-empty {
   display: block;
-  color: color-mix(in srgb, var(--r-ansi-7) 70%, var(--r-ansi-0));
+  color: var(--r-muted);
   overflow-wrap: anywhere;
 }
 
@@ -243,7 +244,7 @@ r-error {
   display: block;
   padding-left: 1ch;
   border-left: 2px solid currentColor;
-  color: var(--r-ansi-1);
+  color: var(--r-bad);
   overflow-wrap: anywhere;
 }
 
@@ -297,21 +298,21 @@ r-prose h6 {
 }
 
 r-prose h1 {
-  color: var(--r-heading1, var(--r-ansi-6));
-  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+  color: var(--r-h1);
+  border-bottom: 1px solid var(--r-line);
   text-transform: uppercase;
 }
 
 r-prose h2 {
-  color: var(--r-heading2, var(--r-ansi-4));
-  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+  color: var(--r-h2);
+  border-bottom: 1px solid var(--r-line);
 }
 
 r-prose h3,
 r-prose h4,
 r-prose h5,
 r-prose h6 {
-  color: var(--r-heading3, var(--r-ansi-5));
+  color: var(--r-h3);
 }
 
 r-prose p {
@@ -341,7 +342,7 @@ r-prose ul {
 }
 
 r-prose li::marker {
-  color: var(--r-bullet, var(--r-ansi-8));
+  color: var(--r-muted);
 }
 
 r-prose li input[type="checkbox"] {
@@ -351,14 +352,14 @@ r-prose li input[type="checkbox"] {
 r-prose blockquote {
   margin: 0.5rem 0;
   padding-left: 1ch;
-  border-left: 1px solid var(--r-border, var(--r-ansi-8));
+  border-left: 1px solid var(--r-line);
   font-style: italic;
 }
 
 r-prose hr {
   margin: 0.5rem 0;
   border: 0;
-  border-top: 1px solid var(--r-border, var(--r-ansi-8));
+  border-top: 1px solid var(--r-line);
 }
 
 r-prose table {
@@ -372,23 +373,24 @@ r-prose th,
 r-prose td {
   padding: 0 1ch;
   text-align: left;
-  border-bottom: 1px solid var(--r-border, var(--r-ansi-8));
+  border-bottom: 1px solid var(--r-line);
 }
 
 r-prose th {
   font-weight: 700;
+  border-bottom-color: var(--r-line-strong);
 }
 
 r-prose a {
-  color: var(--r-link, var(--r-ansi-12));
+  color: var(--r-accent);
   text-decoration: underline;
 }
 
 r-prose code {
   padding: 0 0.5ch;
-  background: var(--r-inline-code-bg, transparent);
-  color: var(--r-inline-code, var(--r-ansi-3));
-  border: 1px solid var(--r-border, var(--r-ansi-8));
+  background: var(--r-surface);
+  color: var(--r-ink);
+  border: 1px solid var(--r-line-strong);
 }
 
 r-code {
@@ -400,16 +402,16 @@ r-code pre {
   margin: 0;
   padding: 0.25rem 1ch;
   overflow-x: auto;
-  border: 1px solid var(--r-border, var(--r-ansi-8));
-  background: var(--r-inline-code-bg, transparent);
-  color: var(--r-ansi-7);
+  border: 1px solid var(--r-line-strong);
+  background: var(--r-surface);
+  color: var(--r-ink);
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
 }
 
 r-code pre:focus-visible {
-  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline: 2px solid var(--r-accent);
   outline-offset: 2px;
 }
 
@@ -424,7 +426,7 @@ r-code code {
 }
 
 r-code .t-comment {
-  color: var(--r-bullet, var(--r-ansi-8));
+  color: var(--r-muted);
   font-style: italic;
 }
 
@@ -507,7 +509,7 @@ r-code .t-markup.t-underline {
 }
 
 r-prose table:focus-visible {
-  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline: 2px solid var(--r-accent);
   outline-offset: 2px;
 }
 
@@ -525,7 +527,7 @@ r-tree ul {
 r-tree ul[role="group"] {
   margin-inline-start: 1ch;
   padding-inline-start: 1ch;
-  border-inline-start: 1px solid var(--r-border, var(--r-ansi-8));
+  border-inline-start: 1px solid var(--r-line);
 }
 
 r-tree li {
@@ -566,12 +568,12 @@ r-tree .label::before {
 
 r-tree .meta {
   margin-inline-start: 1ch;
-  color: color-mix(in srgb, var(--r-ansi-7) 70%, var(--r-ansi-0));
+  color: var(--r-muted);
   font-variant-numeric: tabular-nums;
 }
 
 r-tree button:focus-visible {
-  outline: 1px solid var(--r-link, var(--r-ansi-12));
+  outline: 2px solid var(--r-accent);
   outline-offset: 2px;
 }
 

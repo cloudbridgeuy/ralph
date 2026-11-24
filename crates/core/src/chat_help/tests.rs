@@ -61,6 +61,7 @@ fn full_status() -> Status {
             held: false,
         }),
         hold: None,
+        stage: 0,
     }
 }
 
@@ -85,6 +86,7 @@ fn lists_hold_every_variant() {
             Hold,
             Nudge,
             SendIt,
+            Stage,
             Thread,
             Config,
             View,

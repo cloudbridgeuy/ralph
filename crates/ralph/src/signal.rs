@@ -1,6 +1,6 @@
 use ralph_core::cancel::CancelToken;
 use ralph_server::warn::warn;
-use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM, SIGWINCH};
 use signal_hook::flag::register;
 use signal_hook::low_level::unregister;
 use signal_hook::SigId;
@@ -41,6 +41,13 @@ pub fn arm_terminate(flag: &Arc<AtomicBool>) -> Option<Armed> {
         flag.store(true, Ordering::SeqCst);
     }
     Some(armed)
+}
+
+pub fn arm_resize(flag: &Arc<AtomicBool>) -> Option<Armed> {
+    register(SIGWINCH, Arc::clone(flag))
+        .map(|id| Armed([Some(id), None]))
+        .inspect_err(|e| warn(format!("Failed to arm the resize handler: {e}")))
+        .ok()
 }
 
 pub fn init() -> io::Result<()> {

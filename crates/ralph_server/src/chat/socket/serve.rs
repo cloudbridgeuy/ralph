@@ -1,6 +1,7 @@
 use crate::chat::memory::Store;
 use crate::chat::send_it::SendIt;
 use crate::chat::socket::{SocketFiles, SocketPlace};
+use crate::chat::stage;
 use crate::cursor_owner::process_start;
 use crate::schedule_store::ScheduleStore;
 use crate::warn::{warn, warn_if_err};
@@ -317,6 +318,9 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
     } = shared;
     if request.tool == WATCH_LIST {
         return Ok(watch_requests::list_text(watches, store.dir(), Utc::now()));
+    }
+    if let Some(result) = stage::call(store, request) {
+        return result;
     }
     let pending = store
         .pending_turn()

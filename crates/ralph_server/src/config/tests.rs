@@ -811,8 +811,8 @@ fn memory_defaults_and_validation() {
         ("claude", ralph_core::chat_memory::TAG_MODEL)
     );
     for text in [
-        "[nap]\nharness = 'codex'",
-        "[tag]\nharness = 'codex'",
+        "[nap]\nharness = 'other'",
+        "[tag]\nharness = 'other'",
         "[nap]\nmodel = ''",
         "[tag]\nmodel = ' --help'",
     ] {
@@ -832,6 +832,31 @@ fn memory_defaults_and_validation() {
     let serialized = toml::to_string(&config).unwrap();
     assert!(serialized.contains("[nap]"));
     assert!(serialized.contains("[tag]"));
+}
+
+#[test]
+fn memory_codex_models_are_validated() {
+    for section in ["nap", "tag"] {
+        for model in ["gpt-5-codex", "custom-model"] {
+            let text = format!("[{section}]\nharness = 'codex'\nmodel = '{model}'");
+            assert!(
+                AppConfig::parse_reporting_unknown(&text, "test").is_ok(),
+                "{text}"
+            );
+        }
+        for model in ["haiku", "claude-haiku-5-5"] {
+            let text = format!("[{section}]\nharness = 'codex'\nmodel = '{model}'");
+            let error = AppConfig::parse_reporting_unknown(&text, "test")
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("Codex model"), "{error}");
+        }
+        let text = format!("[{section}]\nharness = 'codex'");
+        let error = AppConfig::parse_reporting_unknown(&text, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Codex model"), "{error}");
+    }
 }
 
 #[test]

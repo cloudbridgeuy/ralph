@@ -5,6 +5,7 @@ use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest,
 use crate::chat_help::{config_topic, help_tool, help_topic};
 use crate::chat_send_it::{propose_run_tool, step_result_tool};
 use crate::chat_socket::is_socket_tool;
+use crate::chat_stage::{stage_add_tool, stage_done_tool};
 use crate::chat_thread::{scope_arg, split_scope, Scope};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::watch_tools::{watch_list_definition, watch_stop_definition};
@@ -56,6 +57,8 @@ pub fn tool_definitions() -> Value {
         list.push(watch_stop_definition());
         list.push(propose_run_tool());
         list.push(step_result_tool());
+        list.push(stage_add_tool());
+        list.push(stage_done_tool());
         list.push(help_tool());
     }
     tools
@@ -308,6 +311,8 @@ mod tests {
                 "watch_stop",
                 "propose_run",
                 "step_result",
+                "stage_add",
+                "stage_done",
                 "help"
             ]
         );

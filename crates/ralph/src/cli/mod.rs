@@ -61,7 +61,7 @@ pub enum Commands {
     ///
     /// Runs when no subcommand is given. One Claude process serves the chat,
     /// started with a compressed view of the chat so far, stored under
-    /// ~/.ralph/chat.
+    /// ./.ralph.
     Chat(ChatArgs),
 
     #[command(
@@ -254,7 +254,7 @@ pub struct ThreadArgs {
         long,
         value_name = "DIR",
         global = true,
-        help = "Chat store directory (default: RALPH_CHAT_STORE, then ~/.ralph/chat)"
+        help = "Chat store directory (default: RALPH_CHAT_STORE, then ./.ralph)"
     )]
     pub store: Option<PathBuf>,
 }
@@ -271,7 +271,7 @@ pub enum ThreadCommand {
         name: ThreadName,
     },
     #[command(
-        about = "Squash a thread into main: Haiku writes a digest (up to 3 calls) that is written to main's log; the thread stays read-only."
+        about = "Squash a thread into main: the configured curator writes a digest (up to 3 calls) that is written to main's log; the thread stays read-only."
     )]
     Merge {
         #[arg(value_parser = ThreadName::parse, help = "Thread name")]
@@ -279,7 +279,7 @@ pub enum ThreadCommand {
         #[arg(
             long,
             alias = "rebase",
-            help = "Post the thread's labelled memory view (100 lines, at most 64 KB) to main's log instead of a Haiku digest; no model call."
+            help = "Post the thread's labelled memory view (100 lines, at most 64 KB) to main's log instead of a curator digest; no model call."
         )]
         view: bool,
     },
@@ -514,7 +514,7 @@ pub struct ChatArgs {
         long,
         value_name = "DIR",
         global = true,
-        help = "Chat store directory (default: RALPH_CHAT_STORE, then ~/.ralph/chat)"
+        help = "Chat store directory (default: RALPH_CHAT_STORE, then ./.ralph)"
     )]
     pub store: Option<std::path::PathBuf>,
 

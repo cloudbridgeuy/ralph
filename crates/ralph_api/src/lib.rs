@@ -6,6 +6,7 @@ mod memory;
 mod memory_api;
 pub(crate) mod render;
 mod render_api;
+mod roles;
 mod route;
 mod server;
 mod tailnet;

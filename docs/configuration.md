@@ -85,7 +85,7 @@ name = "Solarized (dark)"
 
 ### `[nap]` and `[tag]` - Memory models
 
-`[nap]` controls nap summaries and thread merge digests. `[tag]` controls entry tagging. Each accepts `harness` (default `"claude"`; only `"claude"` is supported) and `model` (default `"haiku"` for nap and `"claude-haiku-5-5"` for tag). Model names must be nonempty and cannot start with an option. Settings merge per key between global and invoking store config. Invalid config prevents model calls.
+`[nap]` controls nap summaries and thread merge digests. `[tag]` controls entry tagging. Each accepts `harness` (`"claude"` or `"codex"`, default `"claude"`) and `model` (default `"haiku"` for nap and `"claude-haiku-5-5"` for tag). Model names must be nonempty and cannot start with an option. Codex requires an explicit valid model; inherited Haiku defaults are rejected. Models do not need an entry in the price table. Settings merge per key between global and invoking store config. Invalid config prevents model calls.
 
 ### `[theme]` - Syntax Highlighting
 
@@ -119,13 +119,13 @@ border = "magenta"
 | `code` | `[theme] name` | assistant code theme | Syntax theme for fenced code blocks |
 | `heading1`, `heading2`, `heading3` | `cyan`, `blue`, `magenta` | `green`, `dark_green`, `dark_yellow` | Headings (always bold) |
 | `bold`, `italic` | terminal default | terminal default | Emphasis color |
-| `inline_code` | `yellow` | `dark_cyan` | Inline code text |
+| `inline_code` | `yellow` | `dark_cyan` | Inline code text; no effect on `ralph web` |
 | `inline_code_bg` | ANSI `235` (dark gray) | ANSI `235` (dark gray) | Inline code background |
-| `bullet` | `dark_grey` | `dark_green` | List bullets |
+| `bullet` | `dark_grey` | `dark_green` | List bullets; no effect on `ralph web` |
 | `quote`, `table` | termimad default | termimad default | Quote mark, table borders |
-| `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL |
+| `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL; no effect on `ralph web` |
 | `memory_ref` | `magenta` | `magenta` | `#N` memory references |
-| `border` | `dark_blue` | `dark_blue` | Worker header box border |
+| `border` | `dark_blue` | `dark_blue` | Worker header box border; no effect on `ralph web` |
 | `done`, `blocked`, `waiting` | `dark_green`, `dark_red`, `dark_yellow` | same | Worker status (`failed` uses `blocked`, `check` uses `waiting`) |
 | `pill_ok`, `pill_bad`, `pill_warn`, `pill_info`, `pill_accent` | `dark_green`, `dark_red`, `dark_yellow`, `blue`, `blue` | same | Emphasis pill colours (follow `done`, `blocked`, `waiting`, `link` by default) |
 
@@ -581,7 +581,7 @@ Rules:
 
 ## Chat Store
 
-`ralph ask` stores only a usage row, not the prompt or reply. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
+`ralph ask` stores only a usage row, not the prompt or reply. `ralph chat` keeps its store at `./.ralph` in the cwd. The precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `./.ralph`; the old default `~/.ralph/chat` is not read unless you pass it; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
 
 ## Verbose Tools Configuration
 
