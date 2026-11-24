@@ -60,6 +60,17 @@ fn icon_svg(icon: Icon) -> String {
     )
 }
 
+/// The CSS cuts a pill at 32ch, so only longer text needs its full form in a tooltip.
+const CUT_AT_CHARS: usize = 32;
+
+fn title_attribute(text: &str) -> String {
+    if text.chars().count() > CUT_AT_CHARS {
+        format!(" title=\"{}\"", escape(text))
+    } else {
+        String::new()
+    }
+}
+
 pub fn pill(tone: Tone, shape: PillShape, icon: Option<Icon>, text: &str) -> String {
     pill_with(PillVariant::Tint, tone, shape, icon, text)
 }
@@ -72,10 +83,11 @@ pub fn pill_with(
     text: &str,
 ) -> String {
     format!(
-        "<r-pill tone=\"{}\" shape=\"{}\"{}>{}<span>{}</span></r-pill>",
+        "<r-pill tone=\"{}\" shape=\"{}\"{}{}>{}<span>{}</span></r-pill>",
         tone.as_str(),
         shape.as_str(),
         variant.attribute(),
+        title_attribute(text),
         icon.map(icon_svg).unwrap_or_default(),
         escape(text)
     )
@@ -134,6 +146,31 @@ mod tests {
             "pill_icon_pause",
             &pill(Tone::Warn, PillShape::Round, Some(Icon::Pause), "paused"),
         );
+    }
+
+    #[test]
+    fn long_text_is_repeated_in_title() {
+        let text = long_text();
+        let html = pill(Tone::Accent, PillShape::Square, None, &text);
+        assert!(html.contains(&format!("title=\"{text}\"")), "{html}");
+    }
+
+    #[test]
+    fn long_hostile_text_is_escaped_in_title() {
+        let text = hostile_text().repeat(2);
+        assert_golden(
+            "pill_long_hostile",
+            &pill(Tone::Warn, PillShape::Round, None, &text),
+        );
+    }
+
+    #[test]
+    fn title_starts_past_32_chars_not_bytes() {
+        let at_limit = "é".repeat(32);
+        let past = "é".repeat(33);
+        assert!(!pill(Tone::Ok, PillShape::Round, None, &at_limit).contains("title"));
+        assert!(pill(Tone::Ok, PillShape::Round, None, &past).contains("title="));
+        assert!(!pill(Tone::Ok, PillShape::Round, None, "idle").contains("title"));
     }
 
     #[test]

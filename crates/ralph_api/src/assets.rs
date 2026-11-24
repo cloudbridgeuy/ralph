@@ -331,6 +331,23 @@ mod tests {
     }
 
     #[test]
+    fn a_long_pill_is_cut_with_an_ellipsis_at_32ch() {
+        let css = css();
+        let pill = rule_body(&css, "r-pill").unwrap();
+        assert!(pill.contains("max-width: min(32ch, 100%);"), "{pill}");
+        assert!(!pill.contains("overflow-wrap"), "{pill}");
+        let text = rule_body(&css, "r-pill > span").unwrap();
+        for declaration in [
+            "min-width: 0;",
+            "overflow: hidden;",
+            "text-overflow: ellipsis;",
+            "white-space: nowrap;",
+        ] {
+            assert!(text.contains(declaration), "{declaration}: {text}");
+        }
+    }
+
+    #[test]
     fn info_and_accent_pills_use_different_roles() {
         let css = css();
         let info = rule_body(&css, "r-pill[tone=\"info\"]").unwrap();

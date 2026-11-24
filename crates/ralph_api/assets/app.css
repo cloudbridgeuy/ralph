@@ -180,10 +180,16 @@ r-pill {
   display: inline-flex;
   align-items: center;
   gap: 0.5ch;
-  max-width: 100%;
+  max-width: min(32ch, 100%);
   padding: 0 1ch;
   border: 1px solid currentColor;
-  overflow-wrap: anywhere;
+}
+
+r-pill > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 r-pill[shape="square"] {
