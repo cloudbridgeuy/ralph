@@ -105,12 +105,14 @@ pub(super) fn statements(text: &str) -> Vec<Statement<'_>> {
 }
 
 pub(super) fn url_end(rest: &str) -> usize {
+    let line_end = rest.find('\n').unwrap_or(rest.len());
     let body = rest.trim_start();
     let skipped = rest.len() - body.len();
     let search_from = match body.chars().next().filter(|c| *c == '"' || *c == '\'') {
-        Some(quote) => body[1..]
-            .find(quote)
-            .map_or(rest.len(), |at| skipped + at + 2),
+        Some(quote) => match body[1..].find(quote) {
+            Some(at) if skipped + at + 1 < line_end => skipped + at + 2,
+            _ => return line_end,
+        },
         None => 0,
     };
     rest[search_from..]

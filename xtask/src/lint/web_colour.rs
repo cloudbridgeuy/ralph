@@ -796,6 +796,12 @@ mod tests {
     }
 
     #[test]
+    fn an_unclosed_quote_in_url_does_not_hide_the_rest_of_the_file() {
+        let text = "a { background: url(\"x; }\nb { color: #fff; }\n";
+        assert_eq!(lines(CSS, text), vec![2]);
+    }
+
+    #[test]
     fn the_bundled_shell_and_stylesheet_pass() {
         let html = include_str!("../../../crates/ralph_api/assets/index.html");
         let css = include_str!("../../../crates/ralph_api/assets/app.css");
