@@ -202,23 +202,19 @@ mod tests {
         }
     }
 
-    fn resolve(theme: Theme, ansi: &[Rgb; 16], name: &str, headings_set: bool) -> Rgb {
+    fn resolve(theme: Theme, ansi: &[Rgb; 16], name: &str) -> Rgb {
         if let Some(n) = name.strip_prefix("ansi-") {
             return ansi[n.parse::<usize>().unwrap()];
         }
         if let Some(target) = pick_target(theme, name) {
-            return resolve(theme, ansi, target, headings_set);
+            return resolve(theme, ansi, target);
         }
         let (_, value) = ROLES.iter().find(|(n, _)| *n == name).unwrap();
         match value {
-            Value::Var(v) => resolve(theme, ansi, v, headings_set),
+            Value::Var(v) => resolve(theme, ansi, v),
             Value::Heading(slot) => {
-                let ink = resolve(theme, ansi, "ink", headings_set);
-                let head = if headings_set {
-                    ansi[heading_source(slot).unwrap()]
-                } else {
-                    ink
-                };
+                let ink = resolve(theme, ansi, "ink");
+                let head = ansi[heading_source(slot).unwrap()];
                 mix(head, picks(theme).head_k, ink)
             }
             Value::Mix { a, pct, b } => {
@@ -227,21 +223,13 @@ mod tests {
                     Pct::Var("head-k") => picks(theme).head_k,
                     Pct::Var(_) => picks(theme).tone_k,
                 };
-                mix(
-                    resolve(theme, ansi, a, headings_set),
-                    pct,
-                    resolve(theme, ansi, b, headings_set),
-                )
+                mix(resolve(theme, ansi, a), pct, resolve(theme, ansi, b))
             }
         }
     }
 
     fn role(theme: Theme, name: &str) -> Rgb {
-        resolve(theme, &table_for(theme), name, true)
-    }
-
-    fn role_without_headings(theme: Theme, name: &str) -> Rgb {
-        resolve(theme, &table_for(theme), name, false)
+        resolve(theme, &table_for(theme), name)
     }
 
     fn assert_ratio(a: Rgb, b: Rgb, min: f64, what: &str) {
@@ -406,21 +394,6 @@ mod tests {
                 let got = contrast(role(theme, name), bg);
                 assert!(got >= 4.5, "{theme:?} {name}: {got:.2}");
                 assert!((got - want).abs() < 0.01, "{theme:?} {name}: {got:.2}");
-            }
-        }
-    }
-
-    #[test]
-    fn unset_heading_slots_fall_back_to_ink() {
-        let expected = [(Theme::Dark, 12.18), (Theme::Light, 17.47)];
-        for (theme, want) in expected {
-            let bg = role(theme, "bg");
-            let ink = role(theme, "ink");
-            for name in ["h1", "h2", "h3"] {
-                let got = role_without_headings(theme, name);
-                assert_eq!(got, ink, "{theme:?} {name}");
-                let ratio = contrast(got, bg);
-                assert!((ratio - want).abs() < 0.01, "{theme:?} {name}: {ratio:.2}");
             }
         }
     }
