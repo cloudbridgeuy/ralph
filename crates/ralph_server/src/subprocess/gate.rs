@@ -1,4 +1,4 @@
-use ralph_core::worker::{blocked_notice, permission_response, ClaudePermission};
+use ralph_core::worker::{blocked_notice, permission_response, ClaudePermission, Grants};
 use std::io::{self, Write};
 use std::sync::{Mutex, MutexGuard};
 
@@ -39,6 +39,7 @@ struct GateState {
     held: Held,
     listening: bool,
     permissions: Vec<PendingPermission>,
+    grants: Grants,
 }
 
 #[derive(Debug)]
@@ -82,6 +83,19 @@ fn emit(chunk: &Chunk) {
 impl OutputGate {
     pub fn new() -> OutputGate {
         OutputGate::default()
+    }
+
+    pub fn with_grants(grants: Grants) -> OutputGate {
+        OutputGate {
+            state: Mutex::new(GateState {
+                grants,
+                ..GateState::default()
+            }),
+        }
+    }
+
+    pub(super) fn grants(&self) -> Grants {
+        self.lock().grants
     }
 
     pub fn listen(&self, active: bool) {

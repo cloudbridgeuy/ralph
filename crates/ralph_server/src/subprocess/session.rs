@@ -8,7 +8,7 @@ use ralph_core::cancel::CancelToken;
 use ralph_core::chat_memory::{model_usage_since, writes_usage_row};
 use ralph_core::stream::{interrupt_line, result_is_error, user_line, IterationCosts, ModelTotals};
 use ralph_core::worker::{
-    deny_line, mcptools_decision, permission_response, ClaudeLine, McptoolsDecision, ALLOW_ONCE,
+    deny_line, mcptools_gate, permission_response, ClaudeLine, GateCall, Grants, ALLOW_ONCE,
 };
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -42,21 +42,20 @@ pub(super) fn control_reply(
             if gate.is_some_and(|gate| gate.retire_duplicate(&ask.content.request_id)) {
                 return Ok(Some(deny_line(&ask.content.request_id)));
             }
-            if !interrupted
-                && mcptools_decision(&ask) == McptoolsDecision::Elevated
-                && gate.is_some_and(|gate| gate.request_permission(ask.clone()))
-            {
-                return Ok(None);
-            }
-            Ok(Some(match mcptools_decision(&ask) {
-                McptoolsDecision::Read if !interrupted => {
-                    permission_response(&ask.content.request_id, ALLOW_ONCE, &ask.input)
+            let grants = gate.map_or_else(Grants::default, OutputGate::grants);
+            Ok(match (interrupted, mcptools_gate(grants, &ask)) {
+                (false, GateCall::Allow) => Some(permission_response(
+                    &ask.content.request_id,
+                    ALLOW_ONCE,
+                    &ask.input,
+                )),
+                (false, GateCall::Prompt(_))
+                    if gate.is_some_and(|gate| gate.request_permission(ask.clone())) =>
+                {
+                    None
                 }
-                McptoolsDecision::Read
-                | McptoolsDecision::Elevated
-                | McptoolsDecision::Deny
-                | McptoolsDecision::Other => deny_line(&ask.content.request_id),
-            }))
+                _ => Some(deny_line(&ask.content.request_id)),
+            })
         }
         ClaudeLine::Malformed => {
             let value: serde_json::Value = serde_json::from_str(line).map_err(|_| ())?;
@@ -427,6 +426,25 @@ mod tests {
 
     fn reply(line: &str) -> Result<Option<String>, ()> {
         control_reply(ralph_core::worker::decode_line(line), line, false, None)
+    }
+
+    #[test]
+    fn yolo_gate_allows_elevated_calls_without_a_notice() {
+        let line = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"mcp__mcptools__execute","input":{"allowWrites":true,"allowSpend":true}}}"#;
+        let gate =
+            OutputGate::with_grants(Grants::for_mode(ralph_core::worker::PermissionMode::Yolo));
+        gate.listen(true);
+        let reply = control_reply(
+            ralph_core::worker::decode_line(line),
+            line,
+            false,
+            Some(&gate),
+        )
+        .unwrap()
+        .unwrap();
+        let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(reply["response"]["response"]["behavior"], "allow");
+        assert!(gate.permission_reply(false).is_none());
     }
 
     #[test]

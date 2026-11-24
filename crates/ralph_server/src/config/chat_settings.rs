@@ -1,4 +1,5 @@
 use super::empty_submit;
+use super::permissions::permission_setting;
 use super::{ChatSection, EditorSetting, WORKER_QUIET_SECS};
 use ralph_core::chat::{ResetLimits, RESET_TOKENS, RESET_TURNS};
 use ralph_core::chat_send_it::{Limits, VerifyMode};
@@ -75,7 +76,7 @@ impl ChatSection {
     }
 
     pub fn permissions_setting(&self) -> (PermissionMode, Option<String>) {
-        (PermissionMode::Ask, None)
+        permission_setting("chat", self.permissions.as_ref())
     }
 
     pub fn worker_quiet_setting(&self) -> (u64, Option<String>) {

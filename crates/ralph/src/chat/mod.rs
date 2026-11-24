@@ -179,7 +179,11 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         ReplyImages::Text
     };
     let resize = Arc::new(Resize::default());
-    let (gate, sink) = prompt::turn_output(&theme_config, Arc::clone(&resize))?;
+    let (gate, sink) = prompt::turn_output(
+        &theme_config,
+        Arc::clone(&resize),
+        ralph_server::config::effective_grants(&config.chat, &store_dir),
+    )?;
     let terminal_status = status_enabled(
         chat_config.terminal_status,
         std::io::stdout().is_terminal(),

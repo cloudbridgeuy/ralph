@@ -1,7 +1,13 @@
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ChatSection};
 use crate::warn::warn;
+use ralph_core::chat_thread::config_root;
 use ralph_core::worker::PermissionMode;
+use ralph_core::worker::{parse_grants, Grants};
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
 
+pub const GRANTS_FILE: &str = "mcptools-grants.json";
 pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
 pub const ASK_DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
 
@@ -52,4 +58,23 @@ pub fn configured_permission_mode(
             PermissionMode::Ask
         }
     }
+}
+
+pub fn effective_grants(chat: &ChatSection, store_dir: &Path) -> Grants {
+    let (mode, mode_warning) = chat.permissions_setting();
+    let path = config_root(store_dir).join(GRANTS_FILE);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == ErrorKind::NotFound => None,
+        Err(e) => {
+            warn(format!(
+                "could not read {}: {e}; no saved grants",
+                path.display()
+            ));
+            None
+        }
+    };
+    let (saved, saved_warning) = parse_grants(text.as_deref());
+    mode_warning.into_iter().chain(saved_warning).for_each(warn);
+    Grants::for_mode(mode).union(saved)
 }

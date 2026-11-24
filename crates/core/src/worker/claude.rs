@@ -144,7 +144,7 @@ pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<Strin
     match (mcptools_decision(ask), mode) {
         (McptoolsDecision::Read, _) | (McptoolsDecision::Other, PermissionMode::Yolo) => allow(),
         (McptoolsDecision::Deny, _) => Some(deny_line(id)),
-        (McptoolsDecision::Elevated, _) | (McptoolsDecision::Other, PermissionMode::Ask) => None,
+        (McptoolsDecision::Elevated(_), _) | (McptoolsDecision::Other, PermissionMode::Ask) => None,
     }
 }
 

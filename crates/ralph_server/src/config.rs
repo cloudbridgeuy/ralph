@@ -45,8 +45,8 @@ pub use layers::{leaf_sources, Row, Source};
 pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;
 pub use permissions::{
-    configured_permission_mode, resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE,
-    CHAT_DEFAULT_PERMISSION_MODE,
+    configured_permission_mode, effective_grants, resolve_permission_mode,
+    ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
 };
 pub use usage::{configured_ledger, ledger_path, UsageSection};
 pub use web::{parse_ansi_table, WebSection};

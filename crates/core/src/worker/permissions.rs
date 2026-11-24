@@ -23,7 +23,7 @@ pub struct BlockedContent {
 #[derive(Debug, PartialEq, Eq)]
 pub enum McptoolsDecision {
     Read,
-    Elevated,
+    Elevated(Classes),
     Deny,
     Other,
 }
@@ -42,13 +42,16 @@ pub fn mcptools_decision(ask: &ClaudePermission) -> McptoolsDecision {
     {
         return McptoolsDecision::Deny;
     }
-    if flags
-        .iter()
-        .any(|flag| matches!(flag, Some(serde_json::Value::Bool(true))))
-    {
-        McptoolsDecision::Elevated
-    } else {
+    let set =
+        |flag: Option<&serde_json::Value>| matches!(flag, Some(serde_json::Value::Bool(true)));
+    let classes = Classes {
+        writes: set(flags[0]),
+        spend: set(flags[1]),
+    };
+    if classes == Classes::default() {
         McptoolsDecision::Read
+    } else {
+        McptoolsDecision::Elevated(classes)
     }
 }
 
@@ -67,8 +70,19 @@ pub struct Grants {
 }
 
 impl Grants {
-    pub fn for_mode(_mode: PermissionMode) -> Grants {
-        Grants::default()
+    pub fn for_mode(mode: PermissionMode) -> Grants {
+        let granted = mode == PermissionMode::Yolo;
+        Grants {
+            writes: granted,
+            spend: granted,
+        }
+    }
+
+    fn missing(self, needed: Classes) -> Classes {
+        Classes {
+            writes: needed.writes && !self.writes,
+            spend: needed.spend && !self.spend,
+        }
     }
 
     pub fn union(self, other: Grants) -> Grants {
@@ -79,8 +93,15 @@ impl Grants {
     }
 }
 
-pub fn parse_grants(_text: Option<&str>) -> (Grants, Option<String>) {
-    (Grants::default(), None)
+pub fn parse_grants(text: Option<&str>) -> (Grants, Option<String>) {
+    match text.map(serde_json::from_str::<Grants>) {
+        None => (Grants::default(), None),
+        Some(Ok(grants)) => (grants, None),
+        Some(Err(e)) => (
+            Grants::default(),
+            Some(format!("unreadable mcptools grants: {e}; no saved grants")),
+        ),
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -91,8 +112,16 @@ pub enum GateCall {
     Other,
 }
 
-pub fn mcptools_gate(_grants: Grants, _ask: &ClaudePermission) -> GateCall {
-    GateCall::Other
+pub fn mcptools_gate(grants: Grants, ask: &ClaudePermission) -> GateCall {
+    match mcptools_decision(ask) {
+        McptoolsDecision::Other => GateCall::Other,
+        McptoolsDecision::Deny => GateCall::Deny,
+        McptoolsDecision::Read => GateCall::Allow,
+        McptoolsDecision::Elevated(needed) => match grants.missing(needed) {
+            missing if missing == Classes::default() => GateCall::Allow,
+            missing => GateCall::Prompt(missing),
+        },
+    }
 }
 
 pub fn blocked_notice(
@@ -259,12 +288,18 @@ mod tests {
             (
                 "mcp__mcptools__execute",
                 json!({"allowWrites": true}),
-                Elevated,
+                Elevated(Classes {
+                    writes: true,
+                    spend: false,
+                }),
             ),
             (
                 "mcp__mcptools__call_tool",
                 json!({"allowSpend": true}),
-                Elevated,
+                Elevated(Classes {
+                    writes: false,
+                    spend: true,
+                }),
             ),
             ("mcp__mcptools__execute", json!({"allowSpend": null}), Deny),
             (
