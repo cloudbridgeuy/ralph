@@ -5,7 +5,14 @@ use std::os::unix::net as unix_net;
 use std::{
     net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     path::PathBuf,
+    time::Duration,
 };
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Timeouts {
+    pub read: Option<Duration>,
+    pub write: Option<Duration>,
+}
 
 /// Unified listener. Either a [`TcpListener`] or [`std::os::unix::net::UnixListener`]
 pub enum Listener {
@@ -22,14 +29,19 @@ impl Listener {
         }
     }
 
-    pub(crate) fn accept(&self) -> std::io::Result<(Connection, Option<SocketAddr>)> {
-        match self {
+    pub(crate) fn accept(
+        &self,
+        timeouts: Timeouts,
+    ) -> std::io::Result<(Connection, Option<SocketAddr>)> {
+        let (conn, addr) = match self {
             Self::Tcp(l) => l
                 .accept()
-                .map(|(conn, addr)| (Connection::from(conn), Some(addr))),
+                .map(|(conn, addr)| (Connection::from(conn), Some(addr)))?,
             #[cfg(unix)]
-            Self::Unix(l) => l.accept().map(|(conn, _)| (Connection::from(conn), None)),
-        }
+            Self::Unix(l) => l.accept().map(|(conn, _)| (Connection::from(conn), None))?,
+        };
+        conn.set_timeouts(timeouts)?;
+        Ok((conn, addr))
     }
 }
 impl From<TcpListener> for Listener {
@@ -84,6 +96,20 @@ impl Connection {
             Self::Tcp(s) => s.peer_addr().map(Some),
             #[cfg(unix)]
             Self::Unix(_) => Ok(None),
+        }
+    }
+
+    fn set_timeouts(&self, timeouts: Timeouts) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(s) => {
+                s.set_read_timeout(timeouts.read)?;
+                s.set_write_timeout(timeouts.write)
+            }
+            #[cfg(unix)]
+            Self::Unix(s) => {
+                s.set_read_timeout(timeouts.read)?;
+                s.set_write_timeout(timeouts.write)
+            }
         }
     }
 
@@ -190,5 +216,40 @@ impl std::fmt::Display for ListenAddr {
             #[cfg(unix)]
             Self::Unix(s) => std::fmt::Debug::fmt(s, f),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn accepted_tcp(timeouts: Timeouts) -> TcpStream {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        match Listener::from(listener).accept(timeouts).unwrap().0 {
+            Connection::Tcp(stream) => stream,
+            #[cfg(unix)]
+            Connection::Unix(_) => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn accepted_socket_gets_the_configured_timeouts() {
+        let stream = accepted_tcp(Timeouts {
+            read: Some(Duration::from_secs(7)),
+            write: Some(Duration::from_secs(9)),
+        });
+        assert_eq!(stream.read_timeout().unwrap(), Some(Duration::from_secs(7)));
+        assert_eq!(
+            stream.write_timeout().unwrap(),
+            Some(Duration::from_secs(9))
+        );
+    }
+
+    #[test]
+    fn default_timeouts_leave_the_accepted_socket_blocking() {
+        let stream = accepted_tcp(Timeouts::default());
+        assert_eq!(stream.read_timeout().unwrap(), None);
+        assert_eq!(stream.write_timeout().unwrap(), None);
     }
 }
