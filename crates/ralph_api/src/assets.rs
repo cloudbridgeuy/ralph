@@ -403,7 +403,6 @@ mod tests {
         assert_declares(&css, "main", "padding: 20px 2ch 30px;");
         assert_declares(&css, ".bar,\n.nav", "padding: 0 2ch;");
         assert_declares(&css, "r-box", "padding: 10px 2ch;");
-        assert_declares(&css, ".columns", "gap: 2ch;");
         assert_declares(&css, "r-prose", "max-width: 92ch;");
     }
 
@@ -438,5 +437,19 @@ mod tests {
         assert_declares(&css, "r-table th,\nr-table td", "padding: 2px 1ch;");
         assert_declares(&css, "r-prose th,\nr-prose td", "padding: 2px 1ch;");
         assert_declares(&css, "r-tree li", "min-height: 24px;");
+    }
+
+    #[test]
+    fn prose_code_and_grid_spacing_follow_the_design_values() {
+        let css = css();
+        let headings =
+            "r-prose h1,\nr-prose h2,\nr-prose h3,\nr-prose h4,\nr-prose h5,\nr-prose h6";
+        assert_declares(&css, headings, "margin: 20px 0 10px;");
+        assert_declares(&css, "r-prose hr", "margin: 20px 0;");
+        assert_declares(&css, "r-code", "margin: 20px 0 10px;");
+        assert_declares(&css, "[data-theme]", "padding: 20px 2ch 30px;");
+        assert_declares(&css, ".columns", "gap: 20px 2ch;");
+        assert_declares(&css, ".bar,\n.nav", "min-height: 30px;");
+        assert_declares(&css, ".bar,\n.nav", "align-items: center;");
     }
 }

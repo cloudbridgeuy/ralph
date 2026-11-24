@@ -34,6 +34,8 @@ body {
 .nav {
   display: flex;
   gap: 2ch;
+  align-items: center;
+  min-height: 30px;
   padding: 0 2ch;
   border-bottom: 1px solid var(--r-line);
 }
@@ -80,12 +82,12 @@ main {
 .columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(36ch, 1fr));
-  gap: 2ch;
+  gap: 20px 2ch;
 }
 
 [data-theme] {
   min-width: 0;
-  padding: 10px 2ch;
+  padding: 20px 2ch 30px;
   background: var(--r-bg);
   color: var(--r-ink);
 }
@@ -304,7 +306,7 @@ r-prose h3,
 r-prose h4,
 r-prose h5,
 r-prose h6 {
-  margin: 20px 0 2px;
+  margin: 20px 0 10px;
   font-size: 1em;
   font-weight: 600;
 }
@@ -369,7 +371,7 @@ r-prose blockquote {
 }
 
 r-prose hr {
-  margin: 10px 0;
+  margin: 20px 0;
   border: 0;
   border-top: 1px solid var(--r-line);
 }
@@ -408,7 +410,7 @@ r-prose code {
 
 r-code {
   display: block;
-  margin: 10px 0;
+  margin: 20px 0 10px;
 }
 
 r-code pre {
