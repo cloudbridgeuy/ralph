@@ -1,5 +1,5 @@
-use super::project_slug;
 use super::worktree::{BRANCH_PREFIX, WORKTREE_PREFIX};
+use super::{project_slug, Command};
 use std::path::{Component, Path, PathBuf};
 
 const BARE_LINE: &str = "bare";
@@ -13,7 +13,7 @@ pub struct WorktreeEntry {
     pub bare: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TargetRequest<'a> {
     pub repo: Option<&'a str>,
     pub lane: Option<&'a str>,
@@ -40,6 +40,46 @@ pub enum SpawnTarget {
         worktree: PathBuf,
         branch: Option<String>,
     },
+}
+
+impl Command {
+    pub fn spawn_target(&self) -> TargetRequest<'_> {
+        match self {
+            Command::Spawn { repo, lane, .. } => TargetRequest {
+                repo: repo.as_deref(),
+                lane: lane.as_deref(),
+            },
+            _ => TargetRequest::default(),
+        }
+    }
+}
+
+impl SpawnTarget {
+    pub fn repo(&self) -> &Path {
+        match self {
+            SpawnTarget::Cwd { repo }
+            | SpawnTarget::Repo { repo }
+            | SpawnTarget::Lane { repo, .. } => repo,
+        }
+    }
+
+    pub fn lane(&self) -> Option<(&Path, Option<&str>)> {
+        match self {
+            SpawnTarget::Lane {
+                worktree, branch, ..
+            } => Some((worktree, branch.as_deref())),
+            SpawnTarget::Cwd { .. } | SpawnTarget::Repo { .. } => None,
+        }
+    }
+
+    pub fn slug(&self) -> String {
+        match self {
+            SpawnTarget::Cwd { repo } => project_slug(repo),
+            SpawnTarget::Repo { repo } | SpawnTarget::Lane { repo, .. } => {
+                qualified_project_slug(repo)
+            }
+        }
+    }
 }
 
 pub fn parse_worktree_entries(porcelain: &str) -> Vec<WorktreeEntry> {
@@ -368,5 +408,57 @@ mod tests {
         assert_eq!(qualified_project_slug(a), "vntana-model-ops-0ca42700");
         assert_ne!(qualified_project_slug(a), qualified_project_slug(b));
         assert!(qualified_project_slug(b).starts_with(&project_slug(b)));
+    }
+
+    #[test]
+    fn a_cwd_target_keeps_the_plain_slug_and_the_others_are_qualified() {
+        let cwd = SpawnTarget::Cwd {
+            repo: PathBuf::from("/p/a/vntana-model-ops"),
+        };
+        let repo = SpawnTarget::Repo {
+            repo: PathBuf::from("/p/a/vntana-model-ops"),
+        };
+        let lane = SpawnTarget::Lane {
+            repo: PathBuf::from("/p/a/vntana-model-ops"),
+            worktree: PathBuf::from("/p/a/vntana-model-ops/.worktrees/x"),
+            branch: None,
+        };
+        assert_eq!(cwd.slug(), "vntana-model-ops");
+        assert_eq!(repo.slug(), "vntana-model-ops-0ca42700");
+        assert_eq!(lane.slug(), "vntana-model-ops-0ca42700");
+        assert_eq!(lane.repo(), Path::new("/p/a/vntana-model-ops"));
+        assert_eq!(
+            lane.lane(),
+            Some((Path::new("/p/a/vntana-model-ops/.worktrees/x"), None))
+        );
+        assert_eq!(cwd.lane(), None);
+        assert_eq!(repo.lane(), None);
+    }
+
+    #[test]
+    fn a_spawn_command_exposes_its_target_request() {
+        let spawn = Command::Spawn {
+            id: "A".into(),
+            task: "t".into(),
+            harness: super::super::HarnessId::Claude,
+            model: None,
+            ticket: None,
+            phase: None,
+            repo: Some("r".into()),
+            lane: Some("l".into()),
+        };
+        assert_eq!(
+            spawn.spawn_target(),
+            TargetRequest {
+                repo: Some("r"),
+                lane: Some("l")
+            }
+        );
+        let close = Command::Close {
+            id: "A".into(),
+            abandon: false,
+            force: false,
+        };
+        assert_eq!(close.spawn_target(), TargetRequest::default());
     }
 }

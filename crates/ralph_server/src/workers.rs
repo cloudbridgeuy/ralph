@@ -37,6 +37,8 @@ mod interrupt_token_test;
 mod reply;
 pub use reply::answer_permission;
 mod spawn;
+mod target;
+pub(crate) use target::resolve_spawn_target;
 mod verify;
 pub use spawn::SpawnArgs;
 pub(crate) use verify::verify;

@@ -1,6 +1,6 @@
 use super::{
-    check, clear_marker, exclude, git_value, guard, locate_worktree, repo_root,
-    resolve_base_branch, run, Workers,
+    check, clear_marker, exclude, git_value, guard, locate_worktree, resolve_base_branch,
+    resolve_spawn_target, run, Workers,
 };
 use crate::chat::memory::usage_path;
 use crate::chat::skills::read_claude_config;
@@ -19,17 +19,18 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings_with_config, close_clear_paths, encode_spawn_record,
     exclude_lines, fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text,
-    import_servers, opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
+    import_servers, opencode_config, resolve_claude_model, resolve_claude_shell,
     resolve_codex_warning, resolve_cursor_model, resolve_opencode_model, resolve_ticket,
     rollback_plan, rollback_report, session_name, spawn_base_sha, spawn_event, spawn_handoff,
     spawn_record_path, startup_state, task_dir_path, task_file_path, trust_key, with_mcptools_asks,
     with_start_warning, worker_command, worker_config_path, worker_mcp_args, worker_mcp_config,
     worker_settings_path, worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs,
     Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFacts, SpawnFootprint,
-    SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, UsageSink, WorkPhase, WorkerImport,
-    WorkerMarkers, WorktreeBase, WorktreeVia, AGY_AGENT, ATTACHMENTS_DIR, CLAUDE_COMMAND,
-    CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
+    SpawnRecord, SpawnRequest, SpawnTarget, Startup, TargetRequest, Ticket, TicketKeys, UsageSink,
+    WorkPhase, WorkerImport, WorkerMarkers, WorktreeBase, WorktreeDir, WorktreeVia, AGY_AGENT,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS,
+    FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
+    WORKERS_DIR,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -84,9 +85,11 @@ impl Workers {
             ticket,
             scheduled,
             phase,
+            target: request,
         } = *args;
-        let repo = repo_root()?;
-        let project = project_slug(&repo);
+        let target = resolve_spawn_target(&request)?;
+        let repo = target.repo().to_path_buf();
+        let project = target.slug();
         self.refuse_busy_headless(id, false)?;
         match self.owner(&project, id) {
             Owner::Missing => {}
@@ -127,10 +130,21 @@ impl Workers {
             )
         })?;
         let session = session_name(&project, id);
-        let (worktree, worktree_dir) =
-            locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
+        let (worktree, worktree_dir) = match target.lane() {
+            Some((lane, _)) => (
+                lane.to_path_buf(),
+                WorktreeDir {
+                    path: repo.clone(),
+                    warning: None,
+                },
+            ),
+            None => locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?,
+        };
         exclude(&repo, &exclude_lines(harness, &repo, &worktree_dir.path))?;
-        let branch = branch_name(id);
+        let branch = target
+            .lane()
+            .and_then(|(_, branch)| branch)
+            .map_or_else(|| branch_name(id), str::to_string);
         let created_worktree = !worktree.join(".git").exists();
         let created_branch = !branch_exists(&repo, &branch)?;
         let via = ensure_worktree(
@@ -245,7 +259,8 @@ impl Workers {
             ticket,
             base_sha: created_at.clone(),
             phase,
-            started: started_text(id, &worktree, &via, &warnings),
+            started: started_text(id, &worktree, &branch, &via, &warnings),
+            target: &target,
         };
         if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
             changes.snapshot_turn_or_warn();
@@ -342,8 +357,6 @@ impl Workers {
             worktree,
             site,
             session,
-            ticket,
-            base_sha,
             started,
             ..
         } = launch;
@@ -354,7 +367,7 @@ impl Workers {
         for marker in close_clear_paths(&self.store_dir, id) {
             clear_marker(&marker)?;
         }
-        self.write_spawn_record(id, *harness, ticket.clone(), base_sha.clone())?;
+        self.write_spawn_record(launch)?;
         let command = match harness {
             HarnessId::Agy => {
                 let warning =
@@ -443,18 +456,19 @@ impl Workers {
         })
     }
 
-    fn write_spawn_record(
-        &self,
-        id: &str,
-        harness: HarnessId,
-        ticket: Option<Ticket>,
-        base_sha: Option<String>,
-    ) -> io::Result<()> {
+    fn write_spawn_record(&self, launch: &Launch) -> io::Result<()> {
+        let id = launch.id;
         let path = spawn_record_path(&self.store_dir, id);
         let dir = path.parent().unwrap_or(&self.store_dir);
         fs::create_dir_all(dir)?;
         let tmp = dir.join(format!(".{id}.{}.tmp", std::process::id()));
-        let record = SpawnRecord::new(ticket, base_sha, harness, now_secs());
+        let record = SpawnRecord::new(
+            launch.ticket.clone(),
+            launch.base_sha.clone(),
+            launch.harness,
+            now_secs(),
+        )
+        .with_target(launch.target);
         fs::write(&tmp, encode_spawn_record(&record)?)?;
         fs::rename(tmp, path)
     }
@@ -675,6 +689,7 @@ struct Launch<'a> {
     base_sha: Option<String>,
     phase: Option<WorkPhase>,
     started: String,
+    target: &'a SpawnTarget,
 }
 
 #[derive(Clone, Copy)]
@@ -686,6 +701,7 @@ pub struct SpawnArgs<'a> {
     pub ticket: Option<&'a str>,
     pub scheduled: bool,
     pub phase: Option<WorkPhase>,
+    pub target: TargetRequest<'a>,
 }
 
 fn require_on_path(program: &str) -> io::Result<()> {
@@ -737,11 +753,17 @@ fn roll_back(repo: &Path, launch: &Launch, plan: &Rollback) -> Vec<String> {
     failures
 }
 
-fn started_text(id: &str, worktree: &Path, via: &WorktreeVia, warnings: &[Option<&str>]) -> String {
+fn started_text(
+    id: &str,
+    worktree: &Path,
+    branch: &str,
+    via: &WorktreeVia,
+    warnings: &[Option<&str>],
+) -> String {
     let started = format!(
         "Worker {id} started in {} on branch {}. {}",
         worktree.display(),
-        branch_name(id),
+        branch,
         via.note()
     );
     warnings
@@ -879,6 +901,20 @@ fn ensure_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reused_lane_names_its_own_branch() {
+        assert_eq!(
+            started_text(
+                "A",
+                Path::new("/p/r/.worktrees/feat"),
+                "feat",
+                &WorktreeVia::Existing,
+                &[]
+            ),
+            "Worker A started in /p/r/.worktrees/feat on branch feat. Reused its existing worktree."
+        );
+    }
 
     #[test]
     fn a_failed_config_load_falls_back_to_the_default_allow_list() {
