@@ -548,4 +548,13 @@ mod tests {
         let body = rule_body(&css, "r-kv dt").unwrap();
         assert!(!body.contains("font-size"), "{body}");
     }
+
+    #[test]
+    fn catalogue_state_names_are_12px_and_group_names_keep_the_base() {
+        let css = css();
+        assert_declares(&css, ".state h4", "font-size: 12px;");
+        assert_declares(&css, ".state h4", "font-weight: 400;");
+        assert_declares(&css, ".state h4", "color: var(--r-muted);");
+        assert_declares(&css, ".group h3", "font-size: 1em;");
+    }
 }
