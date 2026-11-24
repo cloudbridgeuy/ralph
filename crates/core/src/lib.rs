@@ -39,6 +39,7 @@ pub mod chat_rerender;
 pub mod chat_send_it;
 pub mod chat_skills;
 pub mod chat_socket;
+pub mod chat_stage;
 pub mod chat_status;
 pub mod chat_suggestion;
 pub mod chat_switch;
