@@ -119,11 +119,11 @@ border = "magenta"
 | `code` | `[theme] name` | assistant code theme | Syntax theme for fenced code blocks |
 | `heading1`, `heading2`, `heading3` | `cyan`, `blue`, `magenta` | `green`, `dark_green`, `dark_yellow` | Headings (always bold) |
 | `bold`, `italic` | terminal default | terminal default | Emphasis color |
-| `inline_code` | `yellow` | `dark_cyan` | Inline code text |
+| `inline_code` | `yellow` | `dark_cyan` | Inline code text; no effect on `ralph web` |
 | `inline_code_bg` | ANSI `235` (dark gray) | ANSI `235` (dark gray) | Inline code background |
-| `bullet` | `dark_grey` | `dark_green` | List bullets |
+| `bullet` | `dark_grey` | `dark_green` | List bullets; no effect on `ralph web` |
 | `quote`, `table` | termimad default | termimad default | Quote mark, table borders |
-| `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL |
+| `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL; no effect on `ralph web` |
 | `memory_ref` | `magenta` | `magenta` | `#N` memory references |
 | `border` | `dark_blue` | `dark_blue` | Worker header box border; no effect on `ralph web` |
 | `done`, `blocked`, `waiting` | `dark_green`, `dark_red`, `dark_yellow` | same | Worker status (`failed` uses `blocked`, `check` uses `waiting`) |
