@@ -6,13 +6,16 @@ pub fn frame(
     inner_html: &str,
     aside_html: Option<&str>,
 ) -> String {
-    let (attrs, title) = title.map_or_else(Default::default, |text| {
-        let text = escape(text);
-        (
-            format!(" role=\"group\" aria-label=\"{text}\""),
-            format!("<div class=\"title\">{text}</div>"),
-        )
-    });
+    let (attrs, title) =
+        title
+            .filter(|text| !text.is_empty())
+            .map_or_else(Default::default, |text| {
+                let text = escape(text);
+                (
+                    format!(" role=\"group\" aria-label=\"{text}\""),
+                    format!("<div class=\"title\">{text}</div>"),
+                )
+            });
     let aside = aside_html
         .map(|html| format!("<div class=\"aside\">{html}</div>"))
         .unwrap_or_default();
@@ -79,5 +82,13 @@ mod tests {
         let html = frame(Shape::Heavy, None, "", Some(&escape("<script>\"x\"'")));
         assert!(!html.contains("<script>"));
         assert_golden("frame_aside_hostile", &html);
+    }
+
+    #[test]
+    fn empty_title_renders_like_no_title() {
+        assert_eq!(
+            frame(Shape::Square, Some(""), "<p>body</p>", Some("3 items")),
+            frame(Shape::Square, None, "<p>body</p>", Some("3 items"))
+        );
     }
 }
