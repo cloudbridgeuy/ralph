@@ -1,14 +1,35 @@
 use crate::render::escape;
 
+fn all_digits(text: &str) -> bool {
+    text.chars().all(|c| c.is_ascii_digit())
+}
+
+fn grouped_integer(text: &str) -> bool {
+    let mut groups = text.split(',');
+    let first = groups.next().unwrap_or("");
+    let rest: Vec<&str> = groups.collect();
+    if rest.is_empty() {
+        return all_digits(first);
+    }
+    (1..=3).contains(&first.len())
+        && all_digits(first)
+        && rest
+            .iter()
+            .all(|group| group.len() == 3 && all_digits(group))
+}
+
 fn is_number(text: &str) -> bool {
     let body = text.strip_prefix(['+', '-']).unwrap_or(text);
     let body = body.strip_prefix('$').unwrap_or(body);
     let body = body.strip_suffix('%').unwrap_or(body);
-    body.chars().any(|c| c.is_ascii_digit())
-        && body
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == ',' || c == '.')
-        && body.matches('.').count() <= 1
+    let (whole, fraction) = match body.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (body, None),
+    };
+    let fraction_ok = fraction.is_none_or(|digits| !digits.is_empty() && all_digits(digits));
+    let whole_ok =
+        whole.is_empty() && fraction.is_some() || !whole.is_empty() && grouped_integer(whole);
+    fraction_ok && whole_ok
 }
 
 fn numeric_columns(headers: &[&str], rows: &[Vec<&str>]) -> Vec<bool> {
@@ -148,6 +169,19 @@ mod tests {
     fn numbers_allow_a_sign_a_currency_mark_separators_and_a_percent() {
         for text in ["0", "12", "-3", "+3", "1.20", "$1,200.50", "45%", "1,000"] {
             assert!(is_number(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn comma_groups_have_three_digits_and_a_dot_needs_digits_after_it() {
+        for text in ["1,234", "12,345.6", "1,234,567", "$1,000.50", ".5", "0.50"] {
+            assert!(is_number(text), "{text}");
+        }
+        for text in [
+            "1,2,3", ",,1", ",1", "1,", "1.", "1,23", "1,2345", "1,234,56", "1,234.", "1.2.3",
+            "1,.5",
+        ] {
+            assert!(!is_number(text), "{text:?}");
         }
     }
 
