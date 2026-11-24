@@ -7,6 +7,9 @@ fn all_digits(text: &str) -> bool {
 fn grouped_integer(text: &str) -> bool {
     let mut groups = text.split(',');
     let first = groups.next().unwrap_or("");
+    if first.len() > 1 && first.starts_with('0') {
+        return false;
+    }
     let rest: Vec<&str> = groups.collect();
     if rest.is_empty() {
         return all_digits(first);
@@ -209,6 +212,16 @@ mod tests {
             "", " ", "d1", "1e5", "NaN", "inf", "1.2.3x", "-", "$", "12 ms", ".",
         ] {
             assert!(!is_number(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_leading_zero_before_another_digit_is_text() {
+        for text in ["007", "00", "-007", "$01.5"] {
+            assert!(!is_number(text), "{text:?}");
+        }
+        for text in ["0", "0.5", "-0.5", "0.05", "10", "100"] {
+            assert!(is_number(text), "{text:?}");
         }
     }
 
