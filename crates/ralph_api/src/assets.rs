@@ -525,7 +525,8 @@ mod tests {
         let css = css();
         assert_declares(&css, "r-table th,\nr-table td", "padding: 2px 1ch;");
         assert_declares(&css, "r-prose th,\nr-prose td", "padding: 2px 1ch;");
-        assert_declares(&css, "r-tree li", "min-height: 24px;");
+        assert_declares(&css, "r-tree li", "padding: 2px 0;");
+        assert!(!rule_body(&css, "r-tree li").unwrap().contains("min-height"));
     }
 
     #[test]
