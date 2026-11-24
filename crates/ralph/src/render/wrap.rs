@@ -164,11 +164,17 @@ fn break_opportunities(text: &str) -> Vec<usize> {
 
 fn hard_cut(text: &str, start: usize, limit: usize) -> usize {
     let mut used = 0;
+    let mut taken_end = None;
     for (index, ch) in text[start..].char_indices() {
-        used += marker_free_width(ch);
-        if used > limit && index > 0 {
-            return start + index;
+        let width = marker_free_width(ch);
+        if is_marker(ch) {
+            continue;
         }
+        used += width;
+        if used > limit {
+            return start + taken_end.unwrap_or(index + ch.len_utf8());
+        }
+        taken_end = Some(index + ch.len_utf8());
     }
     text.len()
 }
@@ -317,6 +323,44 @@ mod tests {
                 "{width}: {lines:?}"
             );
         }
+    }
+
+    const ROUND_PILL: &str = "\u{FDD1}\u{E0B6}\u{FDDB}\u{A0}Done\u{A0}\u{FDD0}\u{E0B4}\u{FDD6}";
+
+    #[test]
+    fn an_exact_fit_hard_cut_never_ends_a_line_on_a_marker() {
+        let text = format!("foo({ROUND_PILL})");
+        let ranges = break_lines(&text, 4, 4);
+        for range in &ranges {
+            assert!(
+                !text[range.clone()]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_marker),
+                "{:?}",
+                ranges.iter().map(|r| &text[r.clone()]).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn an_exact_fit_hard_cut_keeps_the_tone_marker_with_the_left_cap() {
+        let text = format!("foo({ROUND_PILL})");
+        let lines = wrap(&text, 4);
+        let cap_line = lines.iter().find(|line| line.contains('\u{E0B6}')).unwrap();
+        assert!(cap_line.starts_with('\u{FDD1}'), "{lines:?}");
+    }
+
+    #[test]
+    fn markers_before_a_too_wide_char_leave_no_marker_only_line() {
+        let text = "\u{FDD1}日本";
+        let lines = wrap(text, 1);
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.chars().any(|ch| !is_marker(ch))),
+            "{lines:?}"
+        );
     }
 
     #[test]

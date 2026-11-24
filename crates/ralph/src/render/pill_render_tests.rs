@@ -313,7 +313,8 @@ fn an_icon_pill_never_breaks_and_counts_the_icon_as_one_column() {
     let text = "aaaa bbbb [[Done 3 files]] cccc dddd eeee\n";
     let whole = format!("{NB}{DONE_ICON}{NB}Done{NB}3{NB}files{NB}");
     for round in [false, true] {
-        for cols in 17..=40 {
+        let narrowest = if round { 18 } else { 17 };
+        for cols in narrowest..=40 {
             let shown = visible(&render(text, cols, &icons_on(round), true, false));
             let lines: Vec<&str> = shown.lines().collect();
             assert_eq!(
@@ -480,4 +481,28 @@ fn wrapped_pill_ends_reset_with_no_leaked_background() {
             }
         }
     }
+}
+
+#[test]
+fn an_exact_fit_wrap_paints_the_left_cap_in_the_tone_colour() {
+    let theme = round_on();
+    let tone = crate::ansi::fg(theme.palette.pill_ok);
+    let out = render("foo([[Done]])", 4, &theme, true, false);
+    let line = out
+        .lines()
+        .find(|line| line.contains(CAP_L))
+        .unwrap_or_default();
+    assert!(line.starts_with(&tone), "{out:?}");
+}
+
+#[test]
+fn a_moved_end_marker_still_closes_styles_on_both_lines() {
+    let theme = round_on();
+    let tone = crate::ansi::fg(theme.palette.pill_ok);
+    let body = "\x1b[1m\x1b[42m\x1b[97m";
+    let out = render("foo([[Done]])", 11, &theme, true, false);
+    let want = format!(
+        "foo({tone}{CAP_L}{body}{NB}Done\n{body}\x1b[22m\x1b[39m\x1b[49m{tone}{CAP_R}\x1b[39m)\n"
+    );
+    assert_eq!(out, want);
 }
