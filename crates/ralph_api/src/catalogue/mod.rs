@@ -82,10 +82,15 @@ fn boxes(fixture: &Fixture) -> String {
     group(
         "r-box",
         &[
-            ("empty", frame(Shape::Square, None, "")),
+            ("empty", frame(Shape::Square, None, "", None)),
             (
                 "sparse",
-                frame(Shape::Round, Some(first_title(fixture)), &text("one line")),
+                frame(
+                    Shape::Round,
+                    Some(first_title(fixture)),
+                    &text("one line"),
+                    None,
+                ),
             ),
             (
                 "dense",
@@ -93,13 +98,31 @@ fn boxes(fixture: &Fixture) -> String {
                     Shape::Heavy,
                     Some("Counts"),
                     &kv(&borrowed(&pairs(&fixture.counts))),
+                    None,
+                ),
+            ),
+            (
+                "aside",
+                frame(
+                    Shape::Round,
+                    Some("Usage"),
+                    &text("one line"),
+                    Some(&escape("3 items")),
                 ),
             ),
             (
                 "error",
-                frame(Shape::Square, Some("Failed"), &error("could not load")),
+                frame(
+                    Shape::Square,
+                    Some("Failed"),
+                    &error("could not load"),
+                    None,
+                ),
             ),
-            ("very-long", frame(Shape::Square, Some(long), &text(long))),
+            (
+                "very-long",
+                frame(Shape::Square, Some(long), &text(long), None),
+            ),
         ],
     )
 }

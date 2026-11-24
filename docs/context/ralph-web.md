@@ -159,7 +159,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 | Tag | Builder | Notes |
 |-----|---------|-------|
-| `r-box` | `frame(shape, title, inner_html)` | shape `square`, `round` or `heavy`; optional title. The title sits in the top border and a long title is cut with `…`. With a title the box has `role="group"` and an `aria-label` with the full text |
+| `r-box` | `frame(shape, title, inner_html, aside_html)` | shape `square`, `round` or `heavy`; optional title and optional aside. The aside is trusted HTML in a `div.aside` on the right of the top border, after the title. The caller escapes its own text. The title sits in the top border and a long title is cut with `…`. With a title the box has `role="group"` and an `aria-label` with the full text |
 | `r-rule` | `rule()` | `role="separator"` |
 | `r-table` | `table(headers, rows)` | `th scope="col"`; a short row is padded to the header count |
 | `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
@@ -180,7 +180,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 ## Catalogue
 
-`GET /catalogue` shows every primitive in the states that apply to it. r-box, r-table, r-kv, r-pill, r-status, r-spark, r-prose and r-code show all five: empty, sparse, dense, error and very-long. r-pill also shows an outline state. r-empty shows empty, sparse and very-long. r-error shows empty, error and very-long. r-rule and r-spinner show only sparse. The r-prose and r-code states come from `render_markdown()` on short markdown constants in the catalogue module, not from the fixture, because the fixture holds no markdown; the error state is an `r-error`. The page has two columns, `<section data-theme="dark">` and `<section data-theme="light">`. The shell nav links to `/catalogue`. It is not `#/catalogue`: the shell has no script, so a hash link cannot reach a server page. The page has a link back to `/`.
+`GET /catalogue` shows every primitive in the states that apply to it. r-box, r-table, r-kv, r-pill, r-status, r-spark, r-prose and r-code show all five: empty, sparse, dense, error and very-long. r-box also shows an aside state. r-pill also shows an outline state. r-empty shows empty, sparse and very-long. r-error shows empty, error and very-long. r-rule and r-spinner show only sparse. The r-prose and r-code states come from `render_markdown()` on short markdown constants in the catalogue module, not from the fixture, because the fixture holds no markdown; the error state is an `r-error`. The page has two columns, `<section data-theme="dark">` and `<section data-theme="light">`. The shell nav links to `/catalogue`. It is not `#/catalogue`: the shell has no script, so a hash link cannot reach a server page. The page has a link back to `/`.
 
 - The route passes the same Host and token checks as the shell. It sends `no-store` and the shell CSP, unchanged.
 - `include_str!` embeds the fixture. `catalogue::page()` renders it. A fixture that does not parse gives an `r-error` in both columns.

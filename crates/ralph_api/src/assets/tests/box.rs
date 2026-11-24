@@ -36,3 +36,31 @@ fn box_title_sits_in_the_top_border() {
         assert_declares(&css, "r-box > .title", declaration);
     }
 }
+
+#[test]
+fn box_aside_sits_in_the_top_border_on_the_right() {
+    let css = css();
+    for declaration in [
+        "position: absolute;",
+        "top: -10px;",
+        "right: 1ch;",
+        "line-height: 20px;",
+        "padding: 0 1ch;",
+        "background: var(--r-bg);",
+        "white-space: nowrap;",
+        "overflow: hidden;",
+        "text-overflow: ellipsis;",
+        "max-width: 40%;",
+        "font-size: 12px;",
+        "color: var(--r-muted);",
+    ] {
+        assert_declares(&css, "r-box > .aside", declaration);
+    }
+}
+
+#[test]
+fn box_aside_text_is_not_faint() {
+    let css = css();
+    let body = rule_body(&css, "r-box > .aside").unwrap();
+    assert!(!body.contains("--r-faint"));
+}
