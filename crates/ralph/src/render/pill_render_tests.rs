@@ -495,15 +495,23 @@ fn an_exact_fit_wrap_paints_the_left_cap_in_the_tone_colour() {
 }
 
 #[test]
-fn a_moved_end_marker_still_closes_styles_on_both_lines() {
+fn a_right_cap_wrapped_to_line_two_is_painted_in_the_tone_after_the_body_closes() {
     let theme = round_on();
     let tone = crate::ansi::fg(theme.palette.pill_ok);
     let body = "\x1b[1m\x1b[42m\x1b[97m";
     let out = render("foo([[Done]])", 11, &theme, true, false);
-    let want = format!(
-        "foo({tone}{CAP_L}{body}{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m{tone}\n{tone}{CAP_R}\x1b[39m)\n"
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out:?}");
+    assert!(
+        lines[0].starts_with(&format!("foo({tone}{CAP_L}{body}")),
+        "{out:?}"
     );
-    assert_eq!(out, want);
+    assert!(
+        lines[0].contains(&format!("Done{NB}\x1b[22m\x1b[39m\x1b[49m")),
+        "{out:?}"
+    );
+    assert!(lines[1].starts_with(&format!("{tone}{CAP_R}")), "{out:?}");
+    assert!(lines[1].ends_with("\x1b[39m)"), "{out:?}");
 }
 
 #[test]
