@@ -334,10 +334,12 @@ mod tests {
     fn a_long_pill_is_cut_with_an_ellipsis_at_32ch() {
         let css = css();
         let pill = rule_body(&css, "r-pill").unwrap();
-        assert!(pill.contains("max-width: min(32ch, 100%);"), "{pill}");
+        assert!(pill.contains("max-width: 100%;"), "{pill}");
+        assert!(!pill.contains("32ch"), "{pill}");
         assert!(!pill.contains("overflow-wrap"), "{pill}");
         let text = rule_body(&css, "r-pill > span").unwrap();
         for declaration in [
+            "max-width: 32ch;",
             "min-width: 0;",
             "overflow: hidden;",
             "text-overflow: ellipsis;",
