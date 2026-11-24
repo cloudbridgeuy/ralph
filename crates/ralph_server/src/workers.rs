@@ -11,8 +11,8 @@ use ralph_core::worker::{
     activity_path, base_branch, base_config_key, blocked_path, branch_name, capabilities,
     close_clear_paths, close_handoff, close_remove_paths, delivery_line, describe, interrupt_reply,
     legacy_base_unset_warning, lost_marker_name, opencode_close_handoff, parse_interrupt_result,
-    project_slug, prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path,
-    session_name, session_owner, session_survived_kill, tagged_sessions, uptake, via_permission,
+    prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path, session_name,
+    session_owner, session_survived_kill, tagged_sessions, uptake, via_permission,
     worktree_for_branch, worktree_path, ActivityMark, Base, CloseStep, Feature, Handoff,
     HandoffFiles, HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep,
     TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_OWNER_DIR, REPLY_CONFIRM,
@@ -38,7 +38,7 @@ mod reply;
 pub use reply::answer_permission;
 mod spawn;
 mod target;
-pub(crate) use target::resolve_spawn_target;
+pub(crate) use target::{locate_repo, resolve_spawn_target};
 mod verify;
 pub use spawn::SpawnArgs;
 pub(crate) use verify::verify;
@@ -185,7 +185,7 @@ impl Workers {
                 "interrupt needs a Cursor, Codex or opencode worker",
             ));
         }
-        let session = match self.owner(&project_slug(&repo_root()?), id) {
+        let session = match self.owner(&locate_repo(self.spawn_record(id).as_ref())?.1, id) {
             Owner::Mine(session) => session.name,
             Owner::Missing => return Err(io::Error::other(format!("worker {id} is not running"))),
             Owner::Foreign(session) => {
@@ -297,8 +297,8 @@ impl Workers {
     }
 
     pub fn stop_harness(&self, id: &str) -> io::Result<String> {
-        let repo = repo_root()?;
-        match self.owner(&project_slug(&repo), id) {
+        let (repo, project) = locate_repo(self.spawn_record(id).as_ref())?;
+        match self.owner(&project, id) {
             Owner::Mine(session) => {
                 self.close_step(&CloseStep::KillSession(session.name), &repo, &repo, id)?;
                 Ok(format!(

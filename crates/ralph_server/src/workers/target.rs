@@ -1,6 +1,7 @@
-use super::{git_value, repo_root, run};
+use super::{git_value, repo_root, run, Workers};
 use ralph_core::worker::{
-    parse_worktree_entries, resolve_target, SpawnTarget, TargetFacts, TargetRequest,
+    decode_spawn_record, parse_worktree_entries, project_slug, resolve_target, spawn_record_path,
+    SpawnRecord, SpawnTarget, TargetFacts, TargetRequest,
 };
 use std::fs;
 use std::io;
@@ -39,4 +40,23 @@ pub(crate) fn resolve_spawn_target(request: &TargetRequest) -> io::Result<SpawnT
         entries,
     };
     resolve_target(request, &facts).map_err(io::Error::other)
+}
+
+impl Workers {
+    pub(crate) fn spawn_record(&self, id: &str) -> Option<SpawnRecord> {
+        fs::read_to_string(spawn_record_path(&self.store_dir, id))
+            .ok()
+            .and_then(|raw| decode_spawn_record(&raw))
+    }
+}
+
+pub(crate) fn locate_repo(record: Option<&SpawnRecord>) -> io::Result<(PathBuf, String)> {
+    match record.and_then(SpawnRecord::recorded_repo) {
+        Some(found) => Ok(found),
+        None => {
+            let repo = repo_root()?;
+            let project = project_slug(&repo);
+            Ok((repo, project))
+        }
+    }
 }

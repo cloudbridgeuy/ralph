@@ -1,5 +1,5 @@
 use super::{
-    clear_marker, locate_worktree, repo_root, resolve_base_branch, run, stdout_line,
+    clear_marker, locate_repo, locate_worktree, resolve_base_branch, run, stdout_line,
     unset_legacy_base, Workers,
 };
 use crate::claude_cleanup::cleanup_worktree_leftovers;
@@ -16,9 +16,9 @@ use ralph_core::claude_leftovers::{
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     branch_name, close_clear_paths, close_event, close_harness, close_kind, close_plan,
-    close_remove_paths, close_summary, decode_spawn_record, diff_range, project_slug,
-    spawn_record_path, turn_count, CloseFacts, CloseState, CloseStep, HandoffFiles, HarnessId,
-    LiveHarness, Owner, OPENCODE_CONFIG_FILE,
+    close_remove_paths, close_summary, diff_range, lane_observations, turn_count, CloseFacts,
+    CloseState, CloseStep, HandoffFiles, HarnessId, LiveHarness, Owner, WorktreeDir,
+    OPENCODE_CONFIG_FILE,
 };
 use ralph_core::workers_view::{parse_numstat, Diff};
 use std::fs;
@@ -38,13 +38,23 @@ fn branch_diff(repo: &Path, range: &str) -> Option<Diff> {
 
 impl Workers {
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
-        let repo = repo_root()?;
+        let record = self.spawn_record(id);
+        let (repo, project) = locate_repo(record.as_ref())?;
         self.refuse_busy_headless(id, true)?;
-        let owner = self.owner(&project_slug(&repo), id);
+        let owner = self.owner(&project, id);
         let foreign_owner = matches!(owner, Owner::Foreign(_));
         let config = AppConfig::load().map_err(|e| e.to_string());
-        let (worktree, worktree_dir) =
-            locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
+        let lane = record.as_ref().and_then(|record| record.lane.as_deref());
+        let (worktree, worktree_dir) = match lane {
+            Some(lane) => (
+                PathBuf::from(lane),
+                WorktreeDir {
+                    path: repo.clone(),
+                    warning: None,
+                },
+            ),
+            None => locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?,
+        };
         let branch = branch_name(id);
         let dirty_worktree = if worktree.join(".git").exists() {
             Some(
@@ -69,9 +79,8 @@ impl Workers {
         } else {
             None
         };
-        let record = fs::read_to_string(spawn_record_path(&self.store_dir, id))
-            .ok()
-            .and_then(|raw| decode_spawn_record(&raw));
+        let (dirty_worktree, unmerged_commits) =
+            lane_observations(lane.is_some(), dirty_worktree, unmerged_commits);
         let live = LiveHarness {
             agy: {
                 let files = HandoffFiles::agy(&self.store_dir, id);
