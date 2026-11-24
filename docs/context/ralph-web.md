@@ -285,9 +285,14 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 ## r-tree markup
 
 - `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty>…</r-empty></r-tree>`.
-- A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">label</button>[<span class="meta">]<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
-- Only native tags go inside `r-tree`. The depth comes from the nested `ul`, one indent and one guide line per level; `aria-level` starts at 1.
-- `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML. The marker is a CSS `+` or `-`.
+- A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">guides, chevron, <span class="id">label</span></button>cells<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` with the same parts and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
+- Cells come from `Cells { count, extent, summary }`. They follow the label as `<span class="n">`, the extent bar and `<span class="sum">`. Each row is a CSS grid: `24ch 4ch 9ch 1fr`. The nested `ul` spans all columns on row 2. The label column is fixed, so a deep label can clip.
+- Only native tags go inside `r-tree`, plus inline `svg`, `path`, `rect` and `r-pill`. The depth comes from `.g` guide spans, one per level below the first. `aria-level` starts at 1.
+- The chevron is an inline SVG that turns 90 degrees when the branch is open. The CSS has no `data:` URI and no inline style.
+- The extent bar is an inline SVG with `viewBox="0 0 100 6"` and `preserveAspectRatio="none"`. A grey track holds one span from `lo` to `hi` of `total`. A span is never narrower than 1 unit, so a one-entry node stays visible when the total is 5,000 or more. Without an extent the cell is an empty `<span class="extent">`.
+- `Summary` is `Empty`, `Text` or `Pending`. Text is escaped and cut to one line with an ellipsis. `Pending` draws one neutral `r-pill` with the text `pending`.
+- `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML.
 - The button has no default chrome and a `:focus-visible` outline. `/app.js` makes the button toggle the branch.
-- Every label and meta text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
-- The catalogue shows empty, sparse, dense (4 levels), error, very-long, collapsed, expanded, hostile and focus; the code is in `catalogue/tree.rs`.
+- Every label and summary text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
+- The memory screen does not call the Rust renderer. `app.js` builds the same markup, and `tests/memory_screen_contract.rs` reads the `tree_extent` and `tree_pending` goldens and checks that the script builds the same classes, SVG and attributes. It also checks the keyboard selectors `li[role=treeitem] > button` and `:scope > ul[role=group]`.
+- The catalogue shows empty, sparse, dense (4 levels), error, very-long, collapsed, expanded, hostile, pending and focus; the code is in `catalogue/tree.rs`.
