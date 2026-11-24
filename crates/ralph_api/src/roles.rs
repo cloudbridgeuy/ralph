@@ -64,7 +64,15 @@ const fn tone(ansi: &'static str) -> Value {
     }
 }
 
-const ROLES: [(&str, Value); 15] = [
+const fn heading(slot: &'static str) -> Value {
+    Value::Mix {
+        a: slot,
+        pct: Pct::Var("head-k"),
+        b: "ink",
+    }
+}
+
+const ROLES: [(&str, Value); 18] = [
     ("bg", Value::Var("bg-src")),
     ("ink", Value::Var("ink-src")),
     ("ink-strong", Value::Var("ink-strong-src")),
@@ -87,6 +95,9 @@ const ROLES: [(&str, Value); 15] = [
     ("warn", tone("ansi-3")),
     ("info", tone("ansi-6")),
     ("bad", Value::Var("bad-src")),
+    ("h1", heading("heading1")),
+    ("h2", heading("heading2")),
+    ("h3", heading("heading3")),
 ];
 
 fn picks(theme: Theme) -> &'static Picks {
@@ -209,9 +220,21 @@ mod tests {
         }
     }
 
+    fn heading_source(name: &str) -> Option<usize> {
+        match name {
+            "heading1" => Some(14),
+            "heading2" => Some(12),
+            "heading3" => Some(13),
+            _ => None,
+        }
+    }
+
     fn resolve(theme: Theme, ansi: &[Rgb; 16], name: &str) -> Rgb {
         if let Some(n) = name.strip_prefix("ansi-") {
             return ansi[n.parse::<usize>().unwrap()];
+        }
+        if let Some(n) = heading_source(name) {
+            return ansi[n];
         }
         if let Some(target) = pick_target(theme, name) {
             return resolve(theme, ansi, target);
@@ -222,6 +245,7 @@ mod tests {
             Value::Mix { a, pct, b } => {
                 let pct = match pct {
                     Pct::Lit(n) => *n,
+                    Pct::Var("head-k") => picks(theme).head_k,
                     Pct::Var(_) => picks(theme).tone_k,
                 };
                 mix(resolve(theme, ansi, a), pct, resolve(theme, ansi, b))
@@ -231,14 +255,6 @@ mod tests {
 
     fn role(theme: Theme, name: &str) -> Rgb {
         resolve(theme, &table_for(theme), name)
-    }
-
-    fn heading(theme: Theme, ansi_n: usize) -> Rgb {
-        mix(
-            table_for(theme)[ansi_n],
-            picks(theme).head_k,
-            role(theme, "ink"),
-        )
     }
 
     fn assert_ratio(a: Rgb, b: Rgb, min: f64, what: &str) {
@@ -278,8 +294,29 @@ mod tests {
                 "--r-warn",
                 "--r-info",
                 "--r-bad",
+                "--r-h1",
+                "--r-h2",
+                "--r-h3",
             ]
         );
+    }
+
+    #[test]
+    fn heading_roles_are_emitted_in_every_scope() {
+        for (theme, indent) in [
+            (Theme::Dark, "  "),
+            (Theme::Light, "    "),
+            (Theme::Dark, "  "),
+            (Theme::Light, "  "),
+        ] {
+            let css = role_lines(theme, indent);
+            for (name, slot) in [("h1", "heading1"), ("h2", "heading2"), ("h3", "heading3")] {
+                let line = format!(
+                    "{indent}--r-{name}: color-mix(in srgb, var(--r-{slot}) var(--r-head-k), var(--r-ink));\n"
+                );
+                assert!(css.contains(&line), "{theme:?} lacks {line}");
+            }
+        }
     }
 
     #[test]
@@ -378,13 +415,10 @@ mod tests {
         ];
         for (theme, ratios) in expected {
             let bg = role(theme, "bg");
-            for (ansi_n, want) in [14, 12, 13].into_iter().zip(ratios) {
-                let got = contrast(heading(theme, ansi_n), bg);
-                assert!(got >= 4.5, "{theme:?} ansi-{ansi_n}: {got:.2}");
-                assert!(
-                    (got - want).abs() < 0.01,
-                    "{theme:?} ansi-{ansi_n}: {got:.2}"
-                );
+            for (name, want) in ["h1", "h2", "h3"].into_iter().zip(ratios) {
+                let got = contrast(role(theme, name), bg);
+                assert!(got >= 4.5, "{theme:?} {name}: {got:.2}");
+                assert!((got - want).abs() < 0.01, "{theme:?} {name}: {got:.2}");
             }
         }
     }

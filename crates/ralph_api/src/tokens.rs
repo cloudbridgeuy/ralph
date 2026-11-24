@@ -260,7 +260,7 @@ mod tests {
             .unwrap();
         assert!(!light.contains("--r-font"));
         assert!(!light.contains("--r-fg"));
-        assert_eq!(declarations(light), 16 + 22);
+        assert_eq!(declarations(light), 16 + 25);
         assert!(light.contains("--r-ansi-0: #646464;"));
         assert!(light.contains("--r-ansi-15: #737373;"));
     }
@@ -344,8 +344,8 @@ mod tests {
         let css = render("x", &[slot("fg", ColorSpec::Ansi(3))]);
         let dark = theme_block(&css, "dark");
         let light = theme_block(&css, "light");
-        assert_eq!(declarations(dark), 16 + 22 + 1);
-        assert_eq!(declarations(light), 16 + 22 + 1);
+        assert_eq!(declarations(dark), 16 + 25 + 1);
+        assert_eq!(declarations(light), 16 + 25 + 1);
         assert!(dark.contains("  --r-fg: var(--r-ansi-3);\n"));
         assert!(light.contains("  --r-fg: var(--r-ansi-3);\n"));
         assert!(dark.contains("--r-ansi-0: #000000;"));
@@ -412,6 +412,25 @@ mod tests {
             assert!(block.find("--r-ansi-15:").unwrap() < at);
             assert_eq!(block.matches("--r-bg-src:").count(), 1);
             assert_eq!(block.matches(&format!("{indent}--r-muted:")).count(), 1);
+        }
+    }
+
+    #[test]
+    fn all_four_scopes_emit_the_heading_roles() {
+        let css = render("x", &[]);
+        let scopes = [
+            (root_block(&css), "  "),
+            (media_block(&css), "    "),
+            (theme_block(&css, "dark"), "  "),
+            (theme_block(&css, "light"), "  "),
+        ];
+        for (block, indent) in scopes {
+            for (name, slot) in [("h1", "heading1"), ("h2", "heading2"), ("h3", "heading3")] {
+                let line = format!(
+                    "{indent}--r-{name}: color-mix(in srgb, var(--r-{slot}) var(--r-head-k), var(--r-ink));\n"
+                );
+                assert!(block.contains(&line), "missing {line}");
+            }
         }
     }
 
