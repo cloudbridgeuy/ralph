@@ -31,19 +31,31 @@ pub(super) fn resolve_store(
     let env = env.filter(|dir| !dir.as_os_str().is_empty());
     match flag.or(env) {
         Some(dir) => Ok(cwd.join(dir)),
-        None => home
-            .map(|home| home.join(".ralph").join("chat"))
-            .ok_or_else(|| io::Error::other("home directory not found")),
+        None => {
+            let store = cwd.join(".ralph");
+            match home {
+                Some(home) if store == home.join(".ralph") => Err(io::Error::other(format!(
+                    "the default store {} is ralph's runtime directory; pass --store or set {STORE_ENV}",
+                    store.display()
+                ))),
+                _ => Ok(store),
+            }
+        }
     }
 }
 
 pub(crate) fn store_dir(flag: Option<PathBuf>) -> io::Result<PathBuf> {
+    let home = dirs::home_dir().map(|home| canonical_or_raw(&home));
     resolve_store(
         flag,
         std::env::var_os(STORE_ENV).map(PathBuf::from),
-        &std::env::current_dir()?,
-        dirs::home_dir().as_deref(),
+        &canonical_or_raw(&std::env::current_dir()?),
+        home.as_deref(),
     )
+}
+
+fn canonical_or_raw(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub(super) fn chat_dir(flag: Option<PathBuf>, thread: Option<&ThreadName>) -> io::Result<PathBuf> {

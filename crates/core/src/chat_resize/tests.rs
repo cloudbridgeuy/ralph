@@ -5,12 +5,11 @@ fn input(rendered: Option<usize>, new_cols: usize) -> ResizeInput {
         rendered,
         new_cols,
         idle: true,
-        main_view: true,
     }
 }
 
 #[test]
-fn narrowing_at_an_idle_main_view_redraws() {
+fn narrowing_while_idle_redraws() {
     assert!(should_redraw(&input(Some(255), 48)));
 }
 
@@ -22,15 +21,6 @@ fn widening_does_not_redraw() {
 #[test]
 fn the_same_width_does_not_redraw() {
     assert!(!should_redraw(&input(Some(48), 48)));
-}
-
-#[test]
-fn a_thread_view_never_redraws() {
-    let thread = ResizeInput {
-        main_view: false,
-        ..input(Some(255), 48)
-    };
-    assert!(!should_redraw(&thread));
 }
 
 #[test]

@@ -439,7 +439,6 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         resized: &resized,
         done: &done,
         at_prompt: &at_prompt,
-        main_view: args.thread.is_none(),
         state: &resize,
         store: &store_dir,
         display: &display,
