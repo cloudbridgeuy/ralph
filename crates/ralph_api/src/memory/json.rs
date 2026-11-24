@@ -2,6 +2,7 @@ use super::query::Scope;
 use ralph_core::chat_memory::{EntryView, NodeView, Page, ZoomChild, ZoomView};
 use ralph_server::chat::memory::ThreadInfo;
 use serde_json::{json, Value};
+use std::path::Path;
 
 fn node_json(view: &NodeView) -> Value {
     json!({
@@ -67,8 +68,16 @@ pub(crate) fn entries_body(scope: &Scope, total: usize, page: &Page) -> Value {
     })
 }
 
-pub(crate) fn threads_body(threads: &[ThreadInfo]) -> Value {
+pub(crate) fn store_name(store: &Path) -> String {
+    store.file_name().map_or_else(
+        || "store".to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+pub(crate) fn threads_body(store: &str, threads: &[ThreadInfo]) -> Value {
     json!({
+        "store": store,
         "threads": threads
             .iter()
             .map(|thread| json!({
@@ -237,12 +246,35 @@ mod tests {
             "memory",
             "json",
             "threads",
-            &pretty(&threads_body(&threads)),
+            &pretty(&threads_body("store", &threads)),
         );
     }
 
     #[test]
     fn threads_empty() {
-        assert_eq!(threads_body(&[]), serde_json::json!({"threads": []}));
+        assert_eq!(
+            threads_body("s", &[]),
+            serde_json::json!({"store": "s", "threads": []})
+        );
+    }
+
+    #[test]
+    fn store_name_is_the_last_component_only() {
+        assert_eq!(
+            store_name(Path::new("/home/me/secret/chat-store")),
+            "chat-store"
+        );
+        assert_eq!(
+            store_name(Path::new("/home/me/secret/chat-store/")),
+            "chat-store"
+        );
+        assert_eq!(store_name(Path::new("relative")), "relative");
+    }
+
+    #[test]
+    fn store_name_falls_back_without_a_final_component() {
+        assert_eq!(store_name(Path::new("/")), "store");
+        assert_eq!(store_name(Path::new("")), "store");
+        assert_eq!(store_name(Path::new("..")), "store");
     }
 }

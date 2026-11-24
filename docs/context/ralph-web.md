@@ -122,7 +122,7 @@ Risk:
 | other method on `/tokens.css` | 405 with `Allow: GET` |
 | `GET /api/memory` with `?thread=` and `?node=` | 200 root nodes of the memory tree (`{thread, entries, nodes}`), or with `node` one zoom step (`{thread, node, children}`); `after` and `limit` are ignored |
 | `GET /api/memory/entries` with `?thread=`, `?after=` and `?limit=` | 200 `{thread, entries, items, next_after}`; `limit` defaults to 50, is at most 200 and `0` is 400; `next_after` is `null` on the last page; `node` is 400 |
-| `GET /api/memory/threads` | 200 `{threads: [{name, parked, merged}]}` sorted by name; any key other than `token` is 400 |
+| `GET /api/memory/threads` | 200 `{store, threads: [{name, parked, merged}]}` sorted by name; `store` is the last component of the store path (`store` when there is none), never the full path, and the shell header shows it with a `read-only` badge; any key other than `token` is 400 |
 | bad `thread`, `node`, `after` or `limit`, an unknown or repeated key, or bad percent-encoding on a memory route | 400 `{"error":"<reason>"}` |
 | unknown thread, or `node` past the last entry | 404 `{"error":"not found"}` |
 | memory store missing or unreadable | 500 `{"error":"memory unavailable"}`, with no path and no system text |

@@ -147,6 +147,34 @@ mod tests {
     }
 
     #[test]
+    fn the_header_carries_a_read_only_badge_and_an_empty_store_slot() {
+        let html = shell();
+        let header = &html[html.find("<header").unwrap()..html.find("</header>").unwrap()];
+        assert!(header.contains("<span class=\"badge\">read-only</span>"));
+        assert!(header.contains("<span class=\"store\" id=\"store\"></span>"));
+    }
+
+    #[test]
+    fn the_script_sets_the_store_name_as_text_from_the_threads_reply() {
+        let js = script();
+        assert!(js.contains("getElementById(\"store\").textContent = threads.store"));
+    }
+
+    #[test]
+    fn the_badge_and_store_use_existing_roles_only() {
+        let css = css();
+        let badge = rule_body(&css, ".badge").unwrap();
+        assert!(badge.contains("border: 1px solid var(--r-line-strong);"));
+        assert!(badge.contains("color: var(--r-muted);"));
+        assert!(badge.contains("font-size: 12px;"));
+        assert!(!badge.contains('#'));
+        let store = rule_body(&css, ".store").unwrap();
+        assert!(store.contains("color: var(--r-muted);"));
+        assert!(store.contains("margin-left: auto;"));
+        assert!(!store.contains("--r-faint"));
+    }
+
+    #[test]
     fn the_script_marks_the_current_tab_and_falls_back_to_the_first_screen() {
         let js = script();
         assert!(js.contains("\"aria-current\""));
@@ -576,7 +604,15 @@ mod tests {
     #[test]
     fn meta_text_is_12px() {
         let css = css();
-        for selector in [".note", "r-table th", "r-prose th", "r-pill", "r-spark"] {
+        for selector in [
+            ".note",
+            ".badge",
+            ".store",
+            "r-table th",
+            "r-prose th",
+            "r-pill",
+            "r-spark",
+        ] {
             assert_declares(&css, selector, "font-size: 12px;");
         }
     }

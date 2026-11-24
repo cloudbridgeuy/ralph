@@ -60,6 +60,19 @@ body {
   font-size: 12px;
 }
 
+.store {
+  margin-left: auto;
+  color: var(--r-muted);
+  font-size: 12px;
+}
+
+.badge {
+  padding: 0 1ch;
+  border: 1px solid var(--r-line-strong);
+  color: var(--r-muted);
+  font-size: 12px;
+}
+
 .empty {
   color: var(--r-muted);
 }

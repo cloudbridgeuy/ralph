@@ -376,6 +376,7 @@ async function loadMemory(state) {
   ]);
   const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : clampAfter(state.after, roots.entries, PAGE_SIZE);
   const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
+  document.getElementById("store").textContent = threads.store;
   return { threads: threads.threads, roots, page, after };
 }
 
