@@ -69,7 +69,7 @@ fn shell(headers: &[&str], numeric: &[bool], body: &str) -> String {
     format!("<r-table><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></r-table>")
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowMark {
     pub selected: bool,
     pub open: bool,
