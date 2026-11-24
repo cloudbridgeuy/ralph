@@ -591,15 +591,22 @@ r-tree ul {
   list-style: none;
 }
 
-r-tree ul[role="group"] {
-  margin-inline-start: 1ch;
-  padding-inline-start: 1ch;
-  border-inline-start: 1px solid var(--r-line);
+r-tree li {
+  display: grid;
+  grid-template-columns: 24ch 4ch 9ch minmax(0, 1fr);
+  column-gap: 1.5ch;
+  align-items: center;
+  margin: 0;
+  padding: 0;
 }
 
-r-tree li {
-  margin: 0;
-  padding: 2px 0;
+r-tree li[role="none"] {
+  display: block;
+}
+
+r-tree ul[role="group"] {
+  grid-column: 1 / -1;
+  grid-row: 2;
 }
 
 button,
@@ -607,8 +614,19 @@ select {
   font: inherit;
 }
 
-r-tree button {
-  display: inline;
+r-tree li > button,
+r-tree .label {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 24px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+r-tree li > button {
   margin: 0;
   padding: 0;
   border: 0;
@@ -617,31 +635,84 @@ r-tree button {
   font: inherit;
   font-weight: 600;
   text-align: start;
-  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
-r-tree button::before {
-  content: "- ";
+r-tree .id {
+  color: var(--r-ink-strong);
 }
 
-r-tree li[aria-expanded="false"] > button::before {
-  content: "+ ";
+r-tree .g {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+  width: 2ch;
+}
+
+r-tree .g::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(1ch - 0.5px);
+  border-inline-start: 1px solid var(--r-line-strong);
+}
+
+r-tree .chev {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-inline: calc(1ch - 4px);
+  fill: none;
+  stroke: var(--r-muted);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+r-tree li[aria-expanded="true"] > button .chev {
+  transform: rotate(90deg);
+  stroke: var(--r-ink-strong);
 }
 
 r-tree li[aria-expanded="false"] > ul {
   display: none;
 }
 
-r-tree .label::before {
-  content: "  ";
-  white-space: pre;
-}
-
-r-tree .meta {
-  margin-inline-start: 1ch;
+r-tree .n {
+  grid-column: 2;
+  grid-row: 1;
+  line-height: 24px;
+  text-align: right;
   color: var(--r-muted);
   font-variant-numeric: tabular-nums;
+}
+
+r-tree .extent {
+  grid-column: 3;
+  grid-row: 1;
+  display: block;
+  width: 100%;
+  height: 6px;
+}
+
+r-tree .extent .track {
+  fill: var(--r-line);
+}
+
+r-tree .extent .span {
+  fill: var(--r-muted);
+}
+
+r-tree .sum {
+  grid-column: 4;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 24px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--r-muted);
 }
 
 r-tree button:focus-visible {
