@@ -1,5 +1,6 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR};
+use crate::chat::resize::Resize;
 use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::switch::ChatExit;
@@ -71,10 +72,12 @@ fn chat_session_info() -> SpinnerSessionInfo {
 
 pub(super) fn turn_output(
     theme: &ThemeConfig,
+    reply_width: Arc<Resize>,
 ) -> Result<(Arc<OutputGate>, Arc<dyn TurnSink>), ThemeError> {
     let gate = Arc::new(OutputGate::new());
     let sink = TerminalSink::new(Some(Arc::clone(&gate)), theme, screen_columns)?
-        .with_session(chat_session_info());
+        .with_session(chat_session_info())
+        .with_reply_width(reply_width);
     Ok((gate, Arc::new(sink)))
 }
 
