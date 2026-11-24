@@ -308,3 +308,9 @@ fn the_entry_number_column_is_a_num_column_in_head_and_body() {
     assert!(body.contains(r##"el("th", name, name === "#" ? { class: "num" } : {})"##));
     assert!(body.contains(r#"el("td", String(entry.i), { class: "num" })"#));
 }
+
+#[test]
+fn first_line_reads_null_and_undefined_as_empty_text() {
+    let body = script();
+    assert!(body.contains(r#"String(text ?? "")"#));
+}

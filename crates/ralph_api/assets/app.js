@@ -56,7 +56,7 @@ function oneLine(text) {
 }
 
 function firstLine(text) {
-  const line = String(text)
+  const line = String(text ?? "")
     .split(/\r?\n/)
     .find((part) => part.trim() !== "");
   return line === undefined ? "" : line.trim();
