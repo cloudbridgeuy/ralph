@@ -28,7 +28,7 @@ body {
 .nav {
   display: flex;
   gap: 2ch;
-  padding: 0.25rem 1ch;
+  padding: 0 2ch;
   border-bottom: 1px solid var(--r-line);
 }
 
@@ -56,7 +56,7 @@ a:focus-visible {
 }
 
 main {
-  padding: 0.5rem 1ch;
+  padding: 20px 2ch 30px;
 }
 
 .sr-only {
@@ -74,19 +74,19 @@ main {
 .columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(36ch, 1fr));
-  gap: 1ch;
+  gap: 2ch;
 }
 
 [data-theme] {
   min-width: 0;
-  padding: 0.25rem 1ch;
+  padding: 10px 2ch;
   background: var(--r-bg);
   color: var(--r-ink);
 }
 
 .group,
 .state {
-  margin: 0.5rem 0;
+  margin: 10px 0;
 }
 
 .group h3,
@@ -99,8 +99,8 @@ main {
 
 r-box {
   display: block;
-  margin: 0.25rem 0;
-  padding: 0.25rem 1ch;
+  margin: 10px 0;
+  padding: 10px 2ch;
   border: 1px solid var(--r-line-strong);
   overflow-wrap: anywhere;
 }
@@ -124,7 +124,7 @@ r-box .title {
 
 r-rule {
   display: block;
-  margin: 0.5rem 0;
+  margin: 20px 0 10px;
   border-top: 1px solid var(--r-line);
 }
 
@@ -288,6 +288,7 @@ r-spark .line {
 
 r-prose {
   display: block;
+  max-width: 92ch;
   overflow-wrap: anywhere;
 }
 
@@ -297,7 +298,7 @@ r-prose h3,
 r-prose h4,
 r-prose h5,
 r-prose h6 {
-  margin: 0.75rem 0 0.25rem;
+  margin: 20px 0 2px;
   font-size: 1em;
   font-weight: 600;
 }
@@ -321,7 +322,7 @@ r-prose h6 {
 }
 
 r-prose p {
-  margin: 0.5rem 0;
+  margin: 10px 0;
 }
 
 r-prose strong {
@@ -338,7 +339,7 @@ r-prose del {
 
 r-prose ul,
 r-prose ol {
-  margin: 0.25rem 0;
+  margin: 10px 0;
   padding-left: 3ch;
 }
 
@@ -355,14 +356,14 @@ r-prose li input[type="checkbox"] {
 }
 
 r-prose blockquote {
-  margin: 0.5rem 0;
+  margin: 10px 0;
   padding-left: 1ch;
   border-left: 1px solid var(--r-line);
   font-style: italic;
 }
 
 r-prose hr {
-  margin: 0.5rem 0;
+  margin: 10px 0;
   border: 0;
   border-top: 1px solid var(--r-line);
 }
@@ -401,12 +402,12 @@ r-prose code {
 
 r-code {
   display: block;
-  margin: 0.5rem 0;
+  margin: 10px 0;
 }
 
 r-code pre {
   margin: 0;
-  padding: 0.25rem 1ch;
+  padding: 10px 2ch;
   overflow-x: auto;
   border: 1px solid var(--r-line-strong);
   background: var(--r-surface);

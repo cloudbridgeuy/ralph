@@ -381,4 +381,54 @@ mod tests {
             assert_declares(&css, selector, "font-weight: 600;");
         }
     }
+
+    fn spacing_declarations(css: &str) -> Vec<&str> {
+        let mut all = declarations(css, "margin");
+        all.extend(declarations(css, "padding"));
+        all
+    }
+
+    #[test]
+    fn spacing_declarations_collect_margins_and_paddings() {
+        let css = "a {\n  margin: 0;\n  padding-left: 1ch;\n  color: red;\n}\n";
+        assert_eq!(
+            spacing_declarations(css),
+            vec!["margin: 0;", "padding-left: 1ch;"]
+        );
+    }
+
+    #[test]
+    fn page_gutters_are_2ch() {
+        let css = css();
+        assert_declares(&css, "main", "padding: 20px 2ch 30px;");
+        assert_declares(&css, ".bar,\n.nav", "padding: 0 2ch;");
+        assert_declares(&css, "r-box", "padding: 10px 2ch;");
+        assert_declares(&css, ".columns", "gap: 2ch;");
+        assert_declares(&css, "r-prose", "max-width: 92ch;");
+    }
+
+    #[test]
+    fn spacing_has_no_rem() {
+        let css = css();
+        let spacing = spacing_declarations(&css);
+        assert!(!spacing.is_empty());
+        for line in spacing {
+            assert!(!line.contains("rem"), "{line}");
+        }
+    }
+
+    #[test]
+    fn vertical_spacing_uses_the_20px_grid() {
+        let css = css();
+        for line in spacing_declarations(&css) {
+            if line == "margin: -1px;" {
+                continue;
+            }
+            for token in line.trim_end_matches(';').split(' ').skip(1) {
+                if token.ends_with("px") {
+                    assert!(["2px", "10px", "20px", "30px"].contains(&token), "{line}");
+                }
+            }
+        }
+    }
 }
