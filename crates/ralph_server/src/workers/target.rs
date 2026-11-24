@@ -9,8 +9,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub(crate) fn resolve_spawn_target(request: &TargetRequest) -> io::Result<SpawnTarget> {
-    let TargetRequest { repo, lane } = *request;
     let cwd = fs::canonicalize(std::env::current_dir()?)?;
+    let repo_real = real_absolute(request.repo);
+    let lane_real = real_absolute(request.lane);
+    let request = &TargetRequest {
+        repo: repo_real.as_deref().or(request.repo),
+        lane: lane_real.as_deref().or(request.lane),
+    };
+    let TargetRequest { repo, lane } = *request;
     let probe = repo
         .or(lane.filter(|lane| Path::new(lane.trim()).is_absolute()))
         .map(|path| cwd.join(path.trim()));
@@ -40,6 +46,15 @@ pub(crate) fn resolve_spawn_target(request: &TargetRequest) -> io::Result<SpawnT
         entries,
     };
     resolve_target(request, &facts).map_err(io::Error::other)
+}
+
+fn real_absolute(path: Option<&str>) -> Option<String> {
+    let path = path?.trim();
+    Path::new(path)
+        .is_absolute()
+        .then(|| fs::canonicalize(path).ok())
+        .flatten()
+        .map(|real| real.to_string_lossy().into_owned())
 }
 
 impl Workers {
