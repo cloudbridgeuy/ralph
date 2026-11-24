@@ -133,6 +133,7 @@ fn status_summary(
     state: State,
     unread: usize,
     blocked: &[String],
+    stage: usize,
 ) -> String {
     let mut line = format!(
         "{}: {}, {unread} unread",
@@ -141,6 +142,9 @@ fn status_summary(
     );
     if !blocked.is_empty() {
         line.push_str(&format!(", blocked: {}", blocked.join(", ")));
+    }
+    if stage > 0 {
+        line.push_str(&format!(", stage {stage}"));
     }
     line
 }
@@ -309,6 +313,7 @@ impl RemoteSession {
                 unread,
                 blocked,
                 turns,
+                stage,
             } => {
                 self.turns.set(turns);
                 Ok(Some(status_summary(
@@ -316,6 +321,7 @@ impl RemoteSession {
                     report.state,
                     unread,
                     &blocked,
+                    stage,
                 )))
             }
             ServerMsg::Error { message } => Err(Refused(message).into()),

@@ -3,6 +3,7 @@ use crate::chat::host::{tick_events, HostEvent};
 use crate::chat::keepalive::Stamp;
 use crate::chat::memory::{self, Store};
 use crate::chat::settle;
+use crate::chat::stage;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::schedule_store::ScheduleStore;
 use crate::warn::{warn, warn_if_err};
@@ -382,6 +383,7 @@ impl Monitor {
             napping: self.store.napping(),
             queue: None,
             hold: None,
+            stage: stage::load(&self.store_dir).map_or(0, |stage| stage.items.len()),
         };
         let changed = *status != next;
         *status = next;

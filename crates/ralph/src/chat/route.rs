@@ -13,15 +13,17 @@ use crate::chat::workers;
 use crate::config::ConfigSnapshot;
 use ralph_core::chat_help::help_with_store;
 use ralph_core::chat_memory::{history_tool_of, CallSource, MemoryCall};
+use ralph_core::chat_stage::{stage_text, StageCommand, STAGE_USAGE};
 use ralph_core::chat_status::Route;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::worker::{TicketKeys, HANDOFF_TIMEOUT};
-use ralph_server::chat::memory::Answer;
+use ralph_server::chat::memory::{Answer, Store};
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::chat::schedule;
+use ralph_server::chat::stage;
 use ralph_server::chat::watch;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::config::ChangesSection;
@@ -65,6 +67,7 @@ pub fn run_local(
         }
         Route::Nudge(command) => nudge::run(command, ctx.monitor),
         Route::ThreadOp { op, .. } => run_thread(op, ctx),
+        Route::Stage(command) => run_stage(command, ctx),
         other => {
             run_shown(other, ctx, out)?;
             return Ok(None);
@@ -73,6 +76,19 @@ pub fn run_local(
     writeln!(out, "{output}")?;
     refresh();
     Ok(Some(output))
+}
+
+fn run_stage(command: StageCommand, ctx: &LocalRoute) -> String {
+    let store = Store::new(ctx.store.to_path_buf());
+    match command {
+        StageCommand::Show => stage::rendered(ctx.store, &ctx.monitor.status(), ctx.thread)
+            .map(|rendered| stage_text(&rendered).to_string()),
+        StageCommand::Add(new) => stage::user_add(&store, new),
+        StageCommand::Done(id) => stage::user_done(&store, &id),
+        StageCommand::Edit { id, text } => stage::user_edit(&store, &id, &text),
+        StageCommand::Usage => Ok(STAGE_USAGE.to_string()),
+    }
+    .unwrap_or_else(|text| text)
 }
 
 fn run_thread(op: Result<ThreadOp, String>, ctx: &LocalRoute) -> String {
@@ -164,6 +180,7 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         | Route::ReadInbox(_)
         | Route::Hold(_)
         | Route::SendIt(_)
+        | Route::Stage(_)
         | Route::DropInbox(_)
         | Route::Watch(_)
         | Route::Schedule(_)
