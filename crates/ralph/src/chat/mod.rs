@@ -452,6 +452,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         offered: None,
         carried: Vec::new(),
         leaving: None,
+        announced: Vec::new(),
         resize: &resize,
     };
     let resized = Arc::new(AtomicBool::new(false));
