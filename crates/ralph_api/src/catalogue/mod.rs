@@ -384,8 +384,29 @@ mod tests {
         out
     }
 
+    fn without_aria_labels(html: &str) -> String {
+        let mut out = String::new();
+        let mut rest = html;
+        while let Some(start) = rest.find(" aria-label=\"") {
+            out.push_str(&rest[..start]);
+            let value = &rest[start + " aria-label=\"".len()..];
+            rest = value.find('"').map_or("", |end| &value[end + 1..]);
+        }
+        out.push_str(rest);
+        out
+    }
+
+    #[test]
+    fn aria_label_values_are_dropped_before_the_colour_scan() {
+        assert_eq!(
+            without_aria_labels("<r-box aria-label=\"#abc\" a=\"b\">x</r-box>"),
+            "<r-box a=\"b\">x</r-box>"
+        );
+        assert_eq!(without_aria_labels("<p>plain</p>"), "<p>plain</p>");
+    }
+
     fn colour_hits(html: &str) -> Vec<String> {
-        let html = &markup_only(html);
+        let html = &markup_only(&without_aria_labels(html));
         let mut hits = Vec::new();
         for (index, _) in html.match_indices('#') {
             let run = html[index + 1..]

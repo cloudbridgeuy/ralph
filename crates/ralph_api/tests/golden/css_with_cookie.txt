@@ -140,6 +140,7 @@ main {
 }
 
 r-box {
+  position: relative;
   display: block;
   margin: 10px 0;
   padding: 10px 2ch;
@@ -160,8 +161,19 @@ r-box[shape="heavy"] {
   border-radius: 0;
 }
 
-r-box .title {
+r-box > .title {
+  position: absolute;
+  top: -10px;
+  left: 1ch;
+  max-width: 60%;
+  padding: 0 1ch;
+  overflow: hidden;
+  background: var(--r-bg);
+  color: var(--r-ink-strong);
   font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 r-rule {

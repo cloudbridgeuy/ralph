@@ -1,11 +1,15 @@
 use crate::render::{escape, Shape};
 
 pub fn frame(shape: Shape, title: Option<&str>, inner_html: &str) -> String {
-    let title = title
-        .map(|text| format!("<div class=\"title\">{}</div>", escape(text)))
-        .unwrap_or_default();
+    let (attrs, title) = title.map_or_else(Default::default, |text| {
+        let text = escape(text);
+        (
+            format!(" role=\"group\" aria-label=\"{text}\""),
+            format!("<div class=\"title\">{text}</div>"),
+        )
+    });
     format!(
-        "<r-box shape=\"{}\">{title}{inner_html}</r-box>",
+        "<r-box shape=\"{}\"{attrs}>{title}{inner_html}</r-box>",
         shape.as_str()
     )
 }

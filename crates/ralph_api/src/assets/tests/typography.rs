@@ -68,7 +68,7 @@ fn names_and_titles_weigh_600() {
     let css = css();
     for selector in [
         ".brand",
-        "r-box .title",
+        "r-box > .title",
         "r-status .mark",
         "r-prose strong",
         "r-tree li > button",

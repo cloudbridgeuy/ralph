@@ -159,7 +159,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 | Tag | Builder | Notes |
 |-----|---------|-------|
-| `r-box` | `frame(shape, title, inner_html)` | shape `square`, `round` or `heavy`; optional title |
+| `r-box` | `frame(shape, title, inner_html)` | shape `square`, `round` or `heavy`; optional title. The title sits in the top border and a long title is cut with `…`. With a title the box has `role="group"` and an `aria-label` with the full text |
 | `r-rule` | `rule()` | `role="separator"` |
 | `r-table` | `table(headers, rows)` | `th scope="col"`; a short row is padded to the header count |
 | `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
@@ -225,7 +225,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - A `#rrggbb` value passes through.
 - A slot set to the terminal default (Reset) is omitted. A slot that is unset is omitted too.
 - The dark table is in the default `:root` block. The light block overrides the 16 ANSI variables and the roles inside `@media (prefers-color-scheme: light)`.
-- `[theme] border` does not drive web borders. The web uses `--r-line` and `--r-line-strong`.
+- `[theme] border` does not drive web borders. The web uses the neutral `--r-line` and `--r-line-strong` roles.
 
 ### Colour roles
 
