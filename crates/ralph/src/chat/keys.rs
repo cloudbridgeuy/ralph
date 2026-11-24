@@ -18,7 +18,7 @@ use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
-use ralph_core::worker::Choice;
+use ralph_core::worker::{blocked_path, oldest_worker_answer, Choice, HANDOFF_TIMEOUT};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::subprocess::OutputGate;
@@ -30,7 +30,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 const SETTLE_LIMIT: Duration = Duration::from_millis(300);
 const SETTLE_STEP: Duration = Duration::from_millis(10);
@@ -211,6 +211,38 @@ impl Keys<'_> {
         queue
     }
 
+    fn answer_oldest_worker(&self, choice: Choice) -> Option<String> {
+        let store = &self.monitor.store_dir;
+        let markers: Vec<(String, u128, String)> = self
+            .monitor
+            .status()
+            .workers
+            .into_iter()
+            .filter_map(|worker| {
+                let path = blocked_path(store, &worker.id);
+                let since = std::fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .ok()?;
+                let since = since.duration_since(UNIX_EPOCH).ok()?.as_millis();
+                Some((worker.id, since, std::fs::read_to_string(path).ok()?))
+            })
+            .collect();
+        let answer = oldest_worker_answer(
+            markers
+                .iter()
+                .map(|(id, since, marker)| (id.as_str(), *since, marker.as_str())),
+            choice,
+        )?;
+        let sent = ralph_server::workers::answer_permission(
+            self.store,
+            HANDOFF_TIMEOUT,
+            &answer.worker,
+            &answer.request,
+            &answer.option,
+        );
+        Some(sent.unwrap_or_else(|error| error.to_string()))
+    }
+
     fn routed(&self, text: &str) -> Route {
         let status = self.monitor.status();
         route_input(
@@ -244,14 +276,17 @@ impl Keys<'_> {
             self.gate.listen(false);
         }
         let answered = match &exit {
-            EditorExit::Submitted(text) => {
-                Choice::from_key(text).and_then(|choice| self.gate.answer_oldest(choice))
-            }
+            EditorExit::Submitted(text) => Choice::from_key(text).and_then(|choice| {
+                self.gate
+                    .answer_oldest(choice)
+                    .map(|outcome| outcome.report(self.store))
+                    .or_else(|| self.answer_oldest_worker(choice))
+            }),
             _ => None,
         };
         let exit = match (answered, exit) {
-            (Some(outcome), _) => {
-                println!("{}", outcome.report(self.store));
+            (Some(message), _) => {
+                println!("{message}");
                 EditorExit::Submitted(String::new())
             }
             (None, EditorExit::Submitted(text)) => match at_once(self.routed(&text)) {

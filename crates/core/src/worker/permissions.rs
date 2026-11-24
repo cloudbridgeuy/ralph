@@ -1,3 +1,4 @@
+use crate::chat_answer::AnswerArgs;
 use crate::worker::{
     deny_line, permission_response, ClaudePermission, Report, ReportStatus, ALLOW_ONCE,
 };
@@ -304,6 +305,25 @@ pub fn pending_requests(marker: &str) -> Vec<String> {
         Ok(published) if !published.request_id.is_empty() => vec![published.request_id],
         _ => Vec::new(),
     }
+}
+
+pub fn oldest_worker_answer<'a>(
+    blocked: impl IntoIterator<Item = (&'a str, u128, &'a str)>,
+    choice: Choice,
+) -> Option<AnswerArgs> {
+    let (worker, _, marker) = blocked.into_iter().min_by_key(|(_, since, _)| *since)?;
+    let content = serde_json::from_str::<BlockedContent>(marker).ok()?;
+    let option = choice.option_id();
+    let request = pending_requests(marker).into_iter().next()?;
+    content
+        .options
+        .iter()
+        .any(|offered| offered.option_id == option)
+        .then(|| AnswerArgs {
+            worker: worker.to_string(),
+            request,
+            option: option.to_string(),
+        })
 }
 
 impl BlockedContent {
@@ -851,5 +871,56 @@ mod tests {
         assert_eq!(auto_answer(mode, WRITES, &both), None);
         assert_eq!(auto_answer(mode, Grants::default(), &writes), None);
         assert_eq!(auto_answer(mode, SPEND, &writes), None);
+    }
+    fn marker(request: &str, pending: &[&str], options: &[&str]) -> String {
+        BlockedContent {
+            request_id: request.into(),
+            tool: "Bash".into(),
+            summary: String::new(),
+            options: options
+                .iter()
+                .map(|id| PermissionOption {
+                    option_id: (*id).into(),
+                    name: String::new(),
+                    kind: String::new(),
+                })
+                .collect(),
+            pending: pending.iter().map(|id| (*id).into()).collect(),
+        }
+        .render()
+    }
+
+    #[test]
+    fn a_bare_key_answers_the_front_request_of_the_oldest_blocked_worker() {
+        let old = marker(
+            "p.2",
+            &["p.2", "p.3"],
+            &["allow_once", "deny", "allow_always"],
+        );
+        let new = marker("p.9", &[], &["allow_once", "deny"]);
+        let blocked = [("b", 20, new.as_str()), ("a", 10, old.as_str())];
+        let answer = oldest_worker_answer(blocked, Choice::AllowAlways).unwrap();
+        assert_eq!(
+            (
+                answer.worker.as_str(),
+                answer.request.as_str(),
+                answer.option.as_str()
+            ),
+            ("a", "p.2", "allow_always")
+        );
+        assert_eq!(
+            oldest_worker_answer([("a", 1, new.as_str())], Choice::AllowAlways),
+            None
+        );
+        assert_eq!(
+            oldest_worker_answer([("a", 1, "not json")], Choice::Deny),
+            None
+        );
+        assert_eq!(oldest_worker_answer([], Choice::Deny), None);
+        let cursor = marker("p.1", &[], &["allow_once", "reject_once"]);
+        assert_eq!(
+            oldest_worker_answer([("a", 1, cursor.as_str())], Choice::Deny),
+            None
+        );
     }
 }
