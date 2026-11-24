@@ -199,6 +199,7 @@ r-pill {
   display: inline-flex;
   font-size: 12px;
   font-weight: 500;
+  line-height: 16px;
   align-items: center;
   gap: 0.5ch;
   max-width: 100%;

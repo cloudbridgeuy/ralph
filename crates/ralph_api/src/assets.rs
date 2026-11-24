@@ -565,4 +565,9 @@ mod tests {
             assert_declares(&css, "[data-theme] > h2", declaration);
         }
     }
+
+    #[test]
+    fn the_pill_line_is_16px() {
+        assert_declares(&css(), "r-pill", "line-height: 16px;");
+    }
 }
