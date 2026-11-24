@@ -220,6 +220,8 @@ pub enum Command {
         model: Option<String>,
         ticket: Option<String>,
         phase: Option<WorkPhase>,
+        repo: Option<String>,
+        lane: Option<String>,
     },
     Reply {
         id: String,

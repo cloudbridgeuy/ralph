@@ -12,6 +12,9 @@ use crate::watch_request::parse_watch_args;
 use crate::watch_tools::parse_stop_args;
 use serde_json::{json, Value};
 
+const REPO_DESCRIPTION: &str = "Path of the git checkout the worker belongs to, inside the chat's start folder. Needed when the chat folder is not a git repository. Omit to use the chat folder's repository.";
+const LANE_DESCRIPTION: &str = "An existing worktree to reuse, as its absolute path or its branch name in repo. No new worktree or worker branch is made, and close_worker never removes it. Omit to make worker/<id>.";
+
 pub fn command_definitions() -> [Value; 5] {
     [
         json!({
@@ -24,6 +27,8 @@ pub fn command_definitions() -> [Value; 5] {
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
                     "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
+                    "repo": {"type": "string", "description": REPO_DESCRIPTION},
+                    "lane": {"type": "string", "description": LANE_DESCRIPTION},
                     "phase": {"type": "string", "enum": WorkPhase::ALL.map(WorkPhase::as_str), "description": "What this worker does: plan, build, fix or live-check. Recorded in the lifecycle log. Omit when none fits."},
                     "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. agy: an advertised model slug; default [agy] model in the ralph config, else agy's own default. claude-tmux: as claude."}
                 },
@@ -84,6 +89,8 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
                 model: spawn.model,
                 ticket: ticket_arg(args)?,
                 phase: phase_arg(args)?,
+                repo: path_arg(args, "repo")?,
+                lane: path_arg(args, "lane")?,
             })
         }),
         "reply" => string_arg(args, "text").and_then(|text| {
@@ -146,6 +153,13 @@ fn ticket_arg(args: &Value) -> Result<Option<String>, String> {
                 ))
             }
         }
+    }
+}
+
+fn path_arg(args: &Value, name: &str) -> Result<Option<String>, String> {
+    match args.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => string_arg(args, name).map(Some),
     }
 }
 
@@ -329,6 +343,8 @@ mod tests {
                 model: None,
                 ticket: None,
                 phase: None,
+                repo: None,
+                lane: None,
             }))
         );
         assert_eq!(
@@ -434,6 +450,61 @@ mod tests {
             Some(Err(e)) => Err(e),
             None => panic!("not a worker command"),
         }
+    }
+
+    fn spawn_target(extra: Value) -> Result<(Option<String>, Option<String>), String> {
+        let mut args = json!({"id": "A", "task": "t"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        match parse_command("spawn_worker", &args) {
+            Some(Ok(Command::Spawn { repo, lane, .. })) => Ok((repo, lane)),
+            Some(Ok(other)) => panic!("unexpected {other:?}"),
+            Some(Err(e)) => Err(e),
+            None => panic!("not a worker command"),
+        }
+    }
+
+    #[test]
+    fn spawn_reads_repo_and_lane() {
+        assert_eq!(spawn_target(json!({})), Ok((None, None)));
+        assert_eq!(
+            spawn_target(json!({"repo": "vntana-model-ops", "lane": "feat-x"})),
+            Ok((Some("vntana-model-ops".into()), Some("feat-x".into())))
+        );
+        assert_eq!(
+            spawn_target(json!({"lane": "/p/r/.worktrees/feat"})),
+            Ok((None, Some("/p/r/.worktrees/feat".into())))
+        );
+        assert_eq!(spawn_target(json!({"repo": null})), Ok((None, None)));
+    }
+
+    #[test]
+    fn spawn_refuses_a_bad_repo_or_lane() {
+        for extra in [
+            json!({"repo": 3}),
+            json!({"repo": ""}),
+            json!({"repo": "  "}),
+            json!({"lane": false}),
+            json!({"lane": ""}),
+        ] {
+            let error = spawn_target(extra.clone()).unwrap_err();
+            assert!(
+                error.contains("repo") || error.contains("lane"),
+                "{extra} {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_worker_schema_lists_repo_and_lane() {
+        let properties = &command_definitions()[0]["inputSchema"]["properties"];
+        assert_eq!(properties["repo"]["type"], "string");
+        assert_eq!(properties["lane"]["type"], "string");
+        assert!(properties["lane"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("close_worker never removes it"));
     }
 
     #[test]

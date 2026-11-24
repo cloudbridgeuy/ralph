@@ -344,6 +344,7 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
             model,
             ticket,
             phase,
+            ..
         } => workers.spawn(&SpawnArgs {
             id,
             task,
