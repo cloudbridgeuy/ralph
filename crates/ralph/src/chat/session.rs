@@ -31,9 +31,16 @@ pub(super) fn resolve_store(
     let env = env.filter(|dir| !dir.as_os_str().is_empty());
     match flag.or(env) {
         Some(dir) => Ok(cwd.join(dir)),
-        None => home
-            .map(|home| home.join(".ralph").join("chat"))
-            .ok_or_else(|| io::Error::other("home directory not found")),
+        None => {
+            let store = cwd.join(".ralph");
+            match home {
+                Some(home) if store == home.join(".ralph") => Err(io::Error::other(format!(
+                    "the default store {} is ralph's runtime directory; pass --store or set {STORE_ENV}",
+                    store.display()
+                ))),
+                _ => Ok(store),
+            }
+        }
     }
 }
 

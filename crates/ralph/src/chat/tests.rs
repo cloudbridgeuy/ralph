@@ -156,7 +156,7 @@ fn vi_find_v_still_moves() {
 }
 
 #[test]
-fn store_precedence_is_flag_then_env_then_home() {
+fn store_precedence_is_flag_then_env_then_cwd() {
     let cwd = Path::new("/work");
     let home = Some(Path::new("/home/u"));
     let path = |s: &str| Some(PathBuf::from(s));
@@ -170,7 +170,7 @@ fn store_precedence_is_flag_then_env_then_home() {
     );
     assert_eq!(
         resolve_store(None, None, cwd, home).unwrap(),
-        PathBuf::from("/home/u/.ralph/chat")
+        PathBuf::from("/work/.ralph")
     );
 }
 
@@ -189,14 +189,36 @@ fn relative_store_joins_cwd() {
 }
 
 #[test]
-fn empty_env_store_is_ignored_and_missing_home_errors() {
+fn empty_env_store_is_ignored_and_missing_home_still_resolves() {
     let cwd = Path::new("/work");
     let empty = Some(PathBuf::new());
     assert_eq!(
         resolve_store(None, empty.clone(), cwd, Some(Path::new("/h"))).unwrap(),
-        PathBuf::from("/h/.ralph/chat")
+        PathBuf::from("/work/.ralph")
     );
-    assert!(resolve_store(None, empty, cwd, None).is_err());
+    assert_eq!(
+        resolve_store(None, empty, cwd, None).unwrap(),
+        PathBuf::from("/work/.ralph")
+    );
+}
+
+#[test]
+fn default_store_refuses_the_runtime_dir_under_home() {
+    let home = Some(Path::new("/home/u"));
+    let path = |s: &str| Some(PathBuf::from(s));
+    assert!(resolve_store(None, None, Path::new("/home/u"), home).is_err());
+    assert_eq!(
+        resolve_store(None, None, Path::new("/home/u/p"), home).unwrap(),
+        PathBuf::from("/home/u/p/.ralph")
+    );
+    assert_eq!(
+        resolve_store(path(".ralph"), None, Path::new("/home/u"), home).unwrap(),
+        PathBuf::from("/home/u/.ralph")
+    );
+    assert_eq!(
+        resolve_store(None, path("/home/u/.ralph"), Path::new("/home/u"), home).unwrap(),
+        PathBuf::from("/home/u/.ralph")
+    );
 }
 
 #[test]
