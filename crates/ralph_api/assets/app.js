@@ -1,6 +1,7 @@
 "use strict";
 
-const ROUTE = "/memory";
+const SCREENS = ["/memory"];
+const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
 const PREVIEW = 80;
 const SPINNER_DELAY_MS = 200;
@@ -396,6 +397,13 @@ function drawMemory(main, hashState, data) {
   append(box, empty ? el("r-empty", "no entries yet") : entriesTable(data.page), pager(data.page, state));
 }
 
+function markCurrentScreen(route) {
+  for (const link of document.querySelectorAll("nav a")) {
+    if (link.getAttribute("href") === "#" + route) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+}
+
 let generation = 0;
 
 async function show() {
@@ -403,10 +411,11 @@ async function show() {
   const main = document.getElementById("main");
   const mine = ++generation;
   const focusKey = document.activeElement && document.activeElement.dataset.key;
-  if (state.route !== ROUTE) {
-    main.replaceChildren(el("p", "No screens yet.", { class: "empty" }));
+  if (!SCREENS.includes(state.route)) {
+    location.replace(buildHash(state));
     return;
   }
+  markCurrentScreen(state.route);
   main.replaceChildren();
   const stop = delayedSpinner(main, "Loading memory");
   try {

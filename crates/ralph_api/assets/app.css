@@ -34,6 +34,23 @@ body {
   border-bottom: 1px solid var(--r-line);
 }
 
+.nav a {
+  color: var(--r-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.nav a[aria-current="page"] {
+  color: var(--r-ink-strong);
+  font-weight: 600;
+  border-bottom-color: var(--r-accent);
+}
+
+.nav .n {
+  color: var(--r-muted);
+  margin-right: 1ch;
+  font-weight: 400;
+}
+
 .brand {
   font-weight: 600;
 }
