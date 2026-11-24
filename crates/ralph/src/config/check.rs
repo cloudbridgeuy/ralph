@@ -41,6 +41,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(config.theme.warnings())
         .chain(config.changes.warnings())
         .chain(config.mermaid.style.warnings())
+        .chain(chat.permissions_setting().1)
         .chain(chat.worker_quiet_setting().1)
         .chain(chat.reset_limits_setting().1)
         .chain(chat.send_it_setting().1)

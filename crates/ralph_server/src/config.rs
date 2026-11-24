@@ -45,8 +45,8 @@ pub use layers::{leaf_sources, Row, Source};
 pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;
 pub use permissions::{
-    configured_permission_mode, resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE,
-    CHAT_DEFAULT_PERMISSION_MODE,
+    configured_permission_mode, confirm_answer, effective_grants, resolve_permission_mode,
+    ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
 };
 pub use usage::{configured_ledger, ledger_path, UsageSection};
 pub use web::{parse_ansi_table, WebSection};
@@ -358,6 +358,8 @@ pub struct ChatSection {
     pub worktree_dir: Option<String>,
     #[serde(default)]
     pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub permissions: Option<toml::Value>,
     #[serde(default = "default_true")]
     pub inbox_alert_sound: bool,
     #[serde(default)]
@@ -446,6 +448,7 @@ impl Default for ChatSection {
             worker_base: None,
             worktree_dir: None,
             permission_mode: None,
+            permissions: None,
             inbox_alert_sound: true,
             inbox_alert_notification: false,
             inbox_alert_unknown_focus: UnknownFocus::Alert,

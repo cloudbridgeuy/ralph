@@ -18,6 +18,7 @@ use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
+use ralph_core::worker::Choice;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::subprocess::OutputGate;
@@ -242,8 +243,18 @@ impl Keys<'_> {
         if closed {
             self.gate.listen(false);
         }
-        let exit = match exit {
-            EditorExit::Submitted(text) => match at_once(self.routed(&text)) {
+        let answered = match &exit {
+            EditorExit::Submitted(text) => {
+                Choice::from_key(text).and_then(|choice| self.gate.answer_oldest(choice))
+            }
+            _ => None,
+        };
+        let exit = match (answered, exit) {
+            (Some(outcome), _) => {
+                println!("{}", outcome.report(self.store));
+                EditorExit::Submitted(String::new())
+            }
+            (None, EditorExit::Submitted(text)) => match at_once(self.routed(&text)) {
                 MidTurn::Run(route) => {
                     let record = mid_turn_record(&route, &text);
                     let ran = run_local(*route, self.local, &mut std::io::stdout(), || {
@@ -273,7 +284,7 @@ impl Keys<'_> {
                 }
                 MidTurn::Queue => EditorExit::Submitted(text),
             },
-            other => other,
+            (None, other) => other,
         };
         let (queue, action) = on_exit(queue, exit);
         self.gate.resume();

@@ -142,9 +142,12 @@ pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<Strin
     let id = &ask.content.request_id;
     let allow = || Some(permission_response(id, ALLOW_ONCE, &ask.input));
     match (mcptools_decision(ask), mode) {
-        (McptoolsDecision::Read, _) | (McptoolsDecision::Other, PermissionMode::Yolo) => allow(),
+        (McptoolsDecision::Read, _)
+        | (McptoolsDecision::Elevated(_) | McptoolsDecision::Other, PermissionMode::Yolo) => {
+            allow()
+        }
         (McptoolsDecision::Deny, _) => Some(deny_line(id)),
-        (McptoolsDecision::Elevated, _) | (McptoolsDecision::Other, PermissionMode::Ask) => None,
+        (McptoolsDecision::Elevated(_) | McptoolsDecision::Other, PermissionMode::Ask) => None,
     }
 }
 
@@ -759,13 +762,13 @@ mod tests {
     }
 
     #[test]
-    fn yolo_leaves_elevated_mcptools_calls_for_the_person() {
+    fn yolo_allows_elevated_mcptools_calls_and_ask_leaves_them_for_the_person() {
         for tool in ["mcp__mcptools__execute", "mcp__mcptools__call_tool"] {
             for flag in ["allowWrites", "allowSpend"] {
                 let ask = mcptools_ask(tool, json!({flag: true}));
                 assert_eq!(
-                    auto_answer(PermissionMode::Yolo, &ask),
-                    None,
+                    behavior(auto_answer(PermissionMode::Yolo, &ask)).as_deref(),
+                    Some("allow"),
                     "{tool} {flag}"
                 );
                 assert_eq!(

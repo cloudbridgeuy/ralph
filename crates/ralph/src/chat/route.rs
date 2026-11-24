@@ -144,7 +144,10 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::Answer(answer) => {
             let message = answer.and_then(|answer| {
                 if answer.worker == "@chat" {
-                    return Ok(ctx.gate.answer_permission(&answer.request, &answer.option));
+                    return Ok(ctx
+                        .gate
+                        .answer_permission(&answer.request, &answer.option)
+                        .report(ctx.store));
                 }
                 ralph_server::workers::answer_permission(
                     ctx.store,
