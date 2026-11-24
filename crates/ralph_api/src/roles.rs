@@ -382,6 +382,67 @@ mod tests {
         }
     }
 
+    /// The tint percentage of a tone's own `r-pill` rule, or `None` when the
+    /// rule has no `color-mix` fill over `--r-bg` from `--r-<role>`.
+    fn tint_percent(css: &str, tone: &str, role: &str) -> Option<u8> {
+        let head = format!("\nr-pill[tone=\"{tone}\"] {{\n");
+        let start = css.find(&head)? + head.len();
+        let body = &css[start..start + css[start..].find('}')?];
+        let prefix = format!("color-mix(in srgb, var(--r-{role}) ");
+        let from = body.find(&prefix)? + prefix.len();
+        let digits: String = body[from..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let rest = &body[from + digits.len()..];
+        rest.starts_with("%, var(--r-bg))")
+            .then(|| digits.parse().ok())?
+    }
+
+    #[test]
+    fn tint_percent_reads_a_tone_rule() {
+        let css = "\nr-pill[tone=\"ok\"] {\n  color: var(--r-ok);\n  background: color-mix(in srgb, var(--r-ok) 8%, var(--r-bg));\n}\n";
+        assert_eq!(tint_percent(css, "ok", "ok"), Some(8));
+        assert_eq!(tint_percent(css, "bad", "bad"), None);
+        assert_eq!(tint_percent(css, "ok", "bad"), None);
+    }
+
+    #[test]
+    fn tones_are_readable_on_their_tinted_pill_fill() {
+        let css = include_str!("../assets/app.css");
+        let mut report = String::new();
+        let mut failed = false;
+        for theme in THEMES {
+            let bg = role(theme, "bg");
+            for (tone, name) in [
+                ("ok", "ok"),
+                ("bad", "bad"),
+                ("warn", "warn"),
+                ("info", "info"),
+                ("accent", "accent"),
+                ("neutral", "muted"),
+            ] {
+                let Some(pct) = tint_percent(css, tone, name) else {
+                    failed = true;
+                    report.push_str(&format!("{theme:?} {tone}: no fill in its r-pill rule\n"));
+                    continue;
+                };
+                let text = role(theme, name);
+                let c = contrast(text, mix(text, pct, bg));
+                failed |= c < 4.5;
+                report.push_str(&format!("{theme:?} {tone} @{pct}%: {c:.2}\n"));
+            }
+        }
+        assert!(!failed, "{report}");
+    }
+
+    #[test]
+    fn info_and_accent_resolve_to_different_colours_in_both_themes() {
+        for theme in THEMES {
+            assert_ne!(role(theme, "info"), role(theme, "accent"), "{theme:?}");
+        }
+    }
+
     #[test]
     fn headings_are_readable_on_bg() {
         let expected = [

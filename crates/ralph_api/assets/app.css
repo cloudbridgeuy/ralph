@@ -19,8 +19,8 @@ body {
   background: var(--r-bg);
   color: var(--r-ink);
   font-family: var(--r-font, ui-monospace, Menlo, monospace);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 20px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -28,15 +28,21 @@ body {
 .nav {
   display: flex;
   gap: 2ch;
-  padding: 0.25rem 1ch;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 2ch;
   border-bottom: 1px solid var(--r-line);
 }
 
 .brand {
-  font-weight: 700;
+  font-weight: 600;
 }
 
-.note,
+.note {
+  color: var(--r-muted);
+  font-size: 12px;
+}
+
 .empty {
   color: var(--r-muted);
 }
@@ -56,7 +62,7 @@ a:focus-visible {
 }
 
 main {
-  padding: 0.5rem 1ch;
+  padding: 20px 2ch 30px;
 }
 
 .sr-only {
@@ -74,33 +80,45 @@ main {
 .columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(36ch, 1fr));
-  gap: 1ch;
+  gap: 20px 2ch;
 }
 
 [data-theme] {
   min-width: 0;
-  padding: 0.25rem 1ch;
+  padding: 20px 2ch 30px;
   background: var(--r-bg);
   color: var(--r-ink);
 }
 
-.group,
-.state {
-  margin: 0.5rem 0;
+[data-theme] > h2 {
+  margin: 0 0 10px;
+  font-size: 1em;
+  font-weight: 600;
 }
 
-.group h3,
-.state h4 {
+.group,
+.state {
+  margin: 10px 0;
+}
+
+.group h3 {
   margin: 0;
   font-size: 1em;
   font-weight: 400;
   color: var(--r-muted);
 }
 
+.state h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--r-muted);
+}
+
 r-box {
   display: block;
-  margin: 0.25rem 0;
-  padding: 0.25rem 1ch;
+  margin: 10px 0;
+  padding: 10px 2ch;
   border: 1px solid var(--r-line-strong);
   overflow-wrap: anywhere;
 }
@@ -119,12 +137,12 @@ r-box[shape="heavy"] {
 }
 
 r-box .title {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-rule {
   display: block;
-  margin: 0.5rem 0;
+  margin: 20px 0 10px;
   border-top: 1px solid var(--r-line);
 }
 
@@ -140,14 +158,15 @@ r-table table {
 
 r-table th,
 r-table td {
-  padding: 0 1ch;
+  padding: 2px 1ch;
   text-align: left;
   border-bottom: 1px solid var(--r-line);
   overflow-wrap: anywhere;
 }
 
 r-table th {
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 500;
   border-bottom-color: var(--r-line-strong);
 }
 
@@ -178,12 +197,22 @@ r-kv dd {
 
 r-pill {
   display: inline-flex;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
   align-items: center;
   gap: 0.5ch;
   max-width: 100%;
   padding: 0 1ch;
   border: 1px solid currentColor;
-  overflow-wrap: anywhere;
+}
+
+r-pill > span {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 r-pill[shape="square"] {
@@ -206,32 +235,65 @@ r-status {
 }
 
 r-status .mark {
-  font-weight: 700;
+  font-weight: 600;
 }
 
-r-pill[tone="ok"],
+r-pill[tone="ok"] {
+  color: var(--r-ok);
+  background: color-mix(in srgb, var(--r-ok) 8%, var(--r-bg));
+}
+
 r-status[tone="ok"] {
   color: var(--r-ok);
 }
 
-r-pill[tone="bad"],
+r-pill[tone="bad"] {
+  color: var(--r-bad);
+  background: color-mix(in srgb, var(--r-bad) 8%, var(--r-bg));
+}
+
 r-status[tone="bad"] {
   color: var(--r-bad);
 }
 
-r-pill[tone="warn"],
+r-pill[tone="warn"] {
+  color: var(--r-warn);
+  background: color-mix(in srgb, var(--r-warn) 8%, var(--r-bg));
+}
+
 r-status[tone="warn"] {
   color: var(--r-warn);
 }
 
-r-pill[tone="info"],
+r-pill[tone="info"] {
+  color: var(--r-info);
+  background: color-mix(in srgb, var(--r-info) 8%, var(--r-bg));
+}
+
 r-status[tone="info"] {
   color: var(--r-info);
 }
 
-r-pill[tone="accent"],
+r-pill[tone="accent"] {
+  color: var(--r-accent);
+  background: color-mix(in srgb, var(--r-accent) 8%, var(--r-bg));
+}
+
 r-status[tone="accent"] {
   color: var(--r-accent);
+}
+
+r-pill[tone="neutral"] {
+  color: var(--r-muted);
+  background: color-mix(in srgb, var(--r-muted) 8%, var(--r-bg));
+}
+
+r-status[tone="neutral"] {
+  color: var(--r-muted);
+}
+
+r-pill[variant="outline"] {
+  background: transparent;
 }
 
 r-empty {
@@ -268,6 +330,7 @@ r-spinner::before {
 
 r-spark {
   display: inline-block;
+  font-size: 12px;
   max-width: 100%;
 }
 
@@ -283,6 +346,7 @@ r-spark .line {
 
 r-prose {
   display: block;
+  max-width: 92ch;
   overflow-wrap: anywhere;
 }
 
@@ -292,9 +356,9 @@ r-prose h3,
 r-prose h4,
 r-prose h5,
 r-prose h6 {
-  margin: 0.75rem 0 0.25rem;
+  margin: 20px 0 10px;
   font-size: 1em;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-prose h1 {
@@ -315,12 +379,12 @@ r-prose h6 {
   color: var(--r-h3);
 }
 
-r-prose p {
-  margin: 0.5rem 0;
+p {
+  margin: 10px 0;
 }
 
 r-prose strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-prose em {
@@ -333,7 +397,7 @@ r-prose del {
 
 r-prose ul,
 r-prose ol {
-  margin: 0.25rem 0;
+  margin: 10px 0;
   padding-left: 3ch;
 }
 
@@ -350,14 +414,14 @@ r-prose li input[type="checkbox"] {
 }
 
 r-prose blockquote {
-  margin: 0.5rem 0;
+  margin: 10px 0;
   padding-left: 1ch;
   border-left: 1px solid var(--r-line);
   font-style: italic;
 }
 
 r-prose hr {
-  margin: 0.5rem 0;
+  margin: 20px 0;
   border: 0;
   border-top: 1px solid var(--r-line);
 }
@@ -371,13 +435,14 @@ r-prose table {
 
 r-prose th,
 r-prose td {
-  padding: 0 1ch;
+  padding: 2px 1ch;
   text-align: left;
   border-bottom: 1px solid var(--r-line);
 }
 
 r-prose th {
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 500;
   border-bottom-color: var(--r-line-strong);
 }
 
@@ -388,6 +453,7 @@ r-prose a {
 
 r-prose code {
   padding: 0 0.5ch;
+  font: inherit;
   background: var(--r-surface);
   color: var(--r-ink);
   border: 1px solid var(--r-line-strong);
@@ -395,12 +461,13 @@ r-prose code {
 
 r-code {
   display: block;
-  margin: 0.5rem 0;
+  margin: 20px 0 10px;
 }
 
 r-code pre {
   margin: 0;
-  padding: 0.25rem 1ch;
+  font: inherit;
+  padding: 10px 2ch;
   overflow-x: auto;
   border: 1px solid var(--r-line-strong);
   background: var(--r-surface);
@@ -436,7 +503,7 @@ r-code .t-string {
 
 r-code .t-keyword {
   color: var(--r-ansi-5);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-code .t-constant {
@@ -449,7 +516,7 @@ r-code .t-entity {
 
 r-code .t-storage {
   color: var(--r-ansi-5);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-code .t-support {
@@ -469,7 +536,7 @@ r-code .t-markup {
 }
 
 r-code .t-markup.t-bold {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-code .t-markup.t-italic {
@@ -532,7 +599,12 @@ r-tree ul[role="group"] {
 
 r-tree li {
   margin: 0;
-  padding: 0;
+  padding: 2px 0;
+}
+
+button,
+select {
+  font: inherit;
 }
 
 r-tree button {
@@ -543,7 +615,7 @@ r-tree button {
   background: none;
   color: inherit;
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
   text-align: start;
   overflow-wrap: anywhere;
   cursor: pointer;

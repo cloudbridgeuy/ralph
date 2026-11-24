@@ -27,6 +27,8 @@
 | Fixture | `crates/ralph_api/fixtures/catalogue.json` | sanitised sample data for the catalogue |
 | Fixture generator | `xtask/src/catalogue/` | `core.rs` is pure; `mod.rs` reads and writes files |
 
+The stylesheet uses a 13px text size on a 20px line, 12px meta text, weights 400, 500 and 600, 24px rows, and gutters in `ch`.
+
 ## Start
 
 Without `--tailscale`, `ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. It also prints the store path. With `--tailscale` it prints a list of URLs. Open the URL. The server answers 302, sets the cookie and sends the browser to `/`.
@@ -161,7 +163,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 | `r-rule` | `rule()` | `role="separator"` |
 | `r-table` | `table(headers, rows)` | `th scope="col"`; a short row is padded to the header count |
 | `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
-| `r-pill` | `pill(tone, shape, icon, text)` | shape `square` or `round`; optional inline SVG icon with `aria-hidden` |
+| `r-pill` | `pill(tone, shape, icon, text)`, `pill_with(variant, …)` | shape `square` or `round`; tone fill is 8% of the role over `--r-bg`, which keeps 4.5:1 for every tone in both themes (checked in `roles.rs`); `variant="outline"` has no fill; the fill lives on the tone rules in `app.css`; optional inline SVG icon (check, cross, warning, info, dot, pause) with `aria-hidden`; the text is cut with `…` at 32ch, and text over 32 chars is also in `title` |
 | `r-status` | `status(tone, text)` | `role="status"`, `aria-live="polite"`; a word (OK, Error, Warning, Info, Note) shows the tone, so colour is never the only signal |
 | `r-empty` | `empty(text)` | the empty state |
 | `r-error` | `error(text)` | `role="alert"` |
@@ -169,7 +171,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 | `r-spark` | `spark_svg(values, w, h)` | returns `None` for an empty series; the caller renders `r-empty` |
 
 - Every builder is a pure function that returns a `String`. One `escape()` handles text and attribute values (`& < > " '`).
-- Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent; `Shape`; `PillShape`; `Icon`), never from free text. `inner_html` of `frame()` must be built from these builders.
+- Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent, neutral; `Shape`; `PillShape`; `PillVariant`; `Icon`), never from free text. `inner_html` of `frame()` must be built from these builders.
 - No builder writes a `style` attribute, because the CSP forbids inline style. No builder writes a raw colour. SVG uses `stroke="currentColor"` and classes.
 - `spark_points()` drops NaN and infinite values. A flat series and a single point draw a mid line. Huge values do not overflow.
 - `render_markdown(&str)` parses with tables, strikethrough and task lists. Its own emitter writes the HTML. Raw HTML is escaped as text, never passed through. Links keep `href` only for `http`, `https`, `mailto` and `#fragment`. An email autolink becomes a `mailto:` link. The check trims control characters and whitespace at both ends, drops control characters inside, writes each inner whitespace character as `%20`, and ignores case. A space inside the scheme gives no `href`. Other links keep their text without `href`. Links get `rel="noreferrer noopener"`. An image is never `<img>`: its alt text goes in a `<span>`. Tags nested deeper than 64 levels render as plain text. NUL bytes become U+FFFD. A table becomes `<table tabindex="0">`. A fenced or indented code block becomes `<r-code data-lang="rust"><pre tabindex="0"><code>…</code></pre></r-code>`. `highlight()` in `code.rs` uses the `two_face::syntax::extra_newlines()` set (built once in `prose.rs`) and the syntect `ClassedHTMLGenerator` with class prefix `t-`. There is no generated theme CSS; `app.css` maps the `t-*` scope classes to `--r-*` slots. `data-lang` is the first word of the info string, lower-cased, and must match `[a-z0-9+#-]{1,32}`; otherwise the attribute is dropped. An unknown language, no language, a block over 64 KiB, or a block with a line over 4 KiB, gives plain escaped text inside `r-code`. The `[theme]` syntax theme does not apply on the web.
@@ -178,7 +180,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 ## Catalogue
 
-`GET /catalogue` shows every primitive in the states that apply to it. r-box, r-table, r-kv, r-pill, r-status, r-spark, r-prose and r-code show all five: empty, sparse, dense, error and very-long. r-empty shows empty, sparse and very-long. r-error shows empty, error and very-long. r-rule and r-spinner show only sparse. The r-prose and r-code states come from `render_markdown()` on short markdown constants in the catalogue module, not from the fixture, because the fixture holds no markdown; the error state is an `r-error`. The page has two columns, `<section data-theme="dark">` and `<section data-theme="light">`. The shell nav links to `/catalogue`. It is not `#/catalogue`: the shell has no script, so a hash link cannot reach a server page. The page has a link back to `/`.
+`GET /catalogue` shows every primitive in the states that apply to it. r-box, r-table, r-kv, r-pill, r-status, r-spark, r-prose and r-code show all five: empty, sparse, dense, error and very-long. r-pill also shows an outline state. r-empty shows empty, sparse and very-long. r-error shows empty, error and very-long. r-rule and r-spinner show only sparse. The r-prose and r-code states come from `render_markdown()` on short markdown constants in the catalogue module, not from the fixture, because the fixture holds no markdown; the error state is an `r-error`. The page has two columns, `<section data-theme="dark">` and `<section data-theme="light">`. The shell nav links to `/catalogue`. It is not `#/catalogue`: the shell has no script, so a hash link cannot reach a server page. The page has a link back to `/`.
 
 - The route passes the same Host and token checks as the shell. It sends `no-store` and the shell CSP, unchanged.
 - `include_str!` embeds the fixture. `catalogue::page()` renders it. A fixture that does not parse gives an `r-error` in both columns.

@@ -1,14 +1,28 @@
 use crate::render::{
-    empty, error, escape, frame, kv, pill, render_markdown, rule, spark_svg, spinner, status,
-    table, Icon, PillShape, Shape, Tone,
+    empty, error, escape, frame, kv, pill, pill_with, render_markdown, rule, spark_svg, spinner,
+    status, table, Icon, PillShape, PillVariant, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
 mod fixture;
 mod tree;
 
-const TONES: [Tone; 5] = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent];
-const ICONS: [Icon; 4] = [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info];
+const TONES: [Tone; 6] = [
+    Tone::Ok,
+    Tone::Bad,
+    Tone::Warn,
+    Tone::Info,
+    Tone::Accent,
+    Tone::Neutral,
+];
+const ICONS: [Icon; 6] = [
+    Icon::Check,
+    Icon::Cross,
+    Icon::Warning,
+    Icon::Info,
+    Icon::Dot,
+    Icon::Pause,
+];
 
 const PROSE_SPARSE: &str = "A short **note** with a [link](https://example.com).";
 const PROSE_DENSE: &str = "# Heading\n\n## Second\n\nText with *emphasis*, ~~strike~~ and `inline code`.\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n\n- [x] done\n- [ ] open\n\n> A quote.\n\n| day | turns |\n|-----|-------|\n| mon | 3 |\n\n[site](https://example.com)\n";
@@ -153,6 +167,16 @@ fn pills(fixture: &Fixture) -> String {
                 ),
             ),
             ("dense", dense),
+            (
+                "outline",
+                pill_with(
+                    PillVariant::Outline,
+                    Tone::Info,
+                    PillShape::Round,
+                    Some(Icon::Info),
+                    "queued",
+                ),
+            ),
             (
                 "error",
                 pill(Tone::Bad, PillShape::Square, Some(Icon::Cross), "failed"),
