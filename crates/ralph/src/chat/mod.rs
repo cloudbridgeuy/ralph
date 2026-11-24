@@ -370,6 +370,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         remote: &remote,
         config: &config_snapshot,
         columns: prompt::screen_columns,
+        resize: &resize,
     };
     let keys = Keys {
         gate: &turn.gate,

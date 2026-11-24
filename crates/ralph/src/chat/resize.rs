@@ -2,7 +2,9 @@ use crate::chat::inbox::Display;
 use crate::chat::prompt::screen_columns;
 use crate::chat::rerender::redraw_text;
 use crate::turn_sink::ReplyWidth;
-use ralph_core::chat_resize::{debounce, on_render, should_redraw, ResizeInput, DEBOUNCE_MS};
+use ralph_core::chat_resize::{
+    debounce, next_width, should_redraw, Render, ResizeInput, DEBOUNCE_MS,
+};
 use ralph_server::watches::locked;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,11 +27,16 @@ impl ReplyWidth for Resize {
 
     fn rendered(&self, cols: usize) {
         let mut rendered = locked(&self.rendered);
-        *rendered = Some(on_render(*rendered, cols));
+        *rendered = Some(next_width(*rendered, Render::Chunk(cols)));
     }
 }
 
 impl Resize {
+    pub(super) fn reprinted(&self, cols: usize) {
+        let mut rendered = locked(&self.rendered);
+        *rendered = Some(next_width(*rendered, Render::Reprint(cols)));
+    }
+
     pub(super) fn take_pending(&self) -> bool {
         self.pending.swap(false, Ordering::SeqCst)
     }

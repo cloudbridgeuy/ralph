@@ -1,5 +1,7 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat::inbox::Display;
+use crate::chat::prompt::screen_columns;
+use crate::chat::resize::Resize;
 use crate::chat::view;
 use ralph_core::chat_rerender::{reprint, Reprint};
 use ralph_server::chat::memory::Store;
@@ -20,11 +22,12 @@ pub(super) fn redraw_text(store: &Path, display: &Display, cols: usize) -> Optio
     ))
 }
 
-pub fn run(n: &Result<usize, String>, store: &Path, display: &Display) {
+pub fn run(n: &Result<usize, String>, store: &Path, display: &Display, resize: &Resize) {
     match n.clone().and_then(|n| reprint_of(n, store)) {
         Ok(reprint) => {
             println!("{DIM}{}{RESET}", reprint.header);
             print!("{}", view::render(display, &reprint.markdown));
+            resize.reprinted(screen_columns());
         }
         Err(message) => println!("{message}"),
     }

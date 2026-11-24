@@ -8,8 +8,17 @@ pub struct ResizeInput {
     pub main_view: bool,
 }
 
-pub fn on_render(prev: Option<usize>, cols: usize) -> usize {
-    prev.map_or(cols, |prev| prev.min(cols))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Render {
+    Chunk(usize),
+    Reprint(usize),
+}
+
+pub fn next_width(prev: Option<usize>, render: Render) -> usize {
+    match render {
+        Render::Chunk(cols) => prev.map_or(cols, |prev| prev.min(cols)),
+        Render::Reprint(cols) => cols,
+    }
 }
 
 pub fn should_redraw(input: &ResizeInput) -> bool {

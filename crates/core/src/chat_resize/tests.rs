@@ -49,10 +49,25 @@ fn no_rendered_reply_does_not_redraw() {
 
 #[test]
 fn a_reply_keeps_the_narrowest_chunk_width() {
-    let after_wide_then_narrow = on_render(Some(on_render(None, 255)), 48);
+    let after_wide_then_narrow = next_width(
+        Some(next_width(None, Render::Chunk(255))),
+        Render::Chunk(48),
+    );
     assert_eq!(after_wide_then_narrow, 48);
     assert!(!should_redraw(&input(Some(after_wide_then_narrow), 48)));
-    assert_eq!(on_render(Some(on_render(None, 48)), 255), 48);
+    assert_eq!(
+        next_width(
+            Some(next_width(None, Render::Chunk(48))),
+            Render::Chunk(255)
+        ),
+        48
+    );
+}
+
+#[test]
+fn a_reprint_overwrites_the_recorded_width() {
+    assert_eq!(next_width(Some(48), Render::Reprint(255)), 255);
+    assert_eq!(next_width(None, Render::Reprint(80)), 80);
 }
 
 #[test]
@@ -66,7 +81,7 @@ fn a_phone_desktop_phone_round_trip_redraws_once() {
         Step::Size(48),
     ] {
         match step {
-            Step::Reply(cols) => rendered = Some(on_render(None, cols)),
+            Step::Reply(cols) => rendered = Some(next_width(None, Render::Chunk(cols))),
             Step::Size(cols) => {
                 if should_redraw(&input(rendered, cols)) {
                     redraws += 1;
