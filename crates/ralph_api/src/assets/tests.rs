@@ -409,7 +409,7 @@ fn the_stylesheet_styles_prose_and_code() {
     assert!(css.contains("r-code pre:focus-visible"));
 }
 
-fn rule_body<'a>(css: &'a str, selector: &str) -> Option<&'a str> {
+pub(super) fn rule_body<'a>(css: &'a str, selector: &str) -> Option<&'a str> {
     let head = format!("\n{selector} {{\n");
     let start = css.find(&head)? + head.len();
     let end = css[start..].find('}')?;

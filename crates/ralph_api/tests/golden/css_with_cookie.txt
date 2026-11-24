@@ -196,6 +196,28 @@ r-table th {
   border-bottom-color: var(--r-line-strong);
 }
 
+r-table th:first-child,
+r-table td:first-child {
+  border-left: 2px solid transparent;
+}
+
+r-table tbody tr:hover > td {
+  background: var(--r-hover);
+}
+
+r-table tbody tr[aria-selected="true"] > td {
+  background: var(--r-selected);
+}
+
+r-table tbody tr[aria-selected="true"] > td:first-child,
+r-table tbody tr.open > td:first-child {
+  border-left-color: var(--r-accent);
+}
+
+r-table tbody tr.open > td {
+  border-bottom-color: transparent;
+}
+
 r-table .clip {
   max-width: 0;
   width: 100%;
