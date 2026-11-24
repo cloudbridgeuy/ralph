@@ -5,7 +5,6 @@ pub struct ResizeInput {
     pub rendered: Option<usize>,
     pub new_cols: usize,
     pub idle: bool,
-    pub main_view: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +22,6 @@ pub fn next_width(prev: Option<usize>, render: Render) -> usize {
 
 pub fn should_redraw(input: &ResizeInput) -> bool {
     input.idle
-        && input.main_view
         && input
             .rendered
             .is_some_and(|rendered| input.new_cols < rendered)
