@@ -126,15 +126,21 @@ fn mcptools_ask(id: &str, input: &str) -> String {
 }
 
 #[test]
-fn an_elevated_mcptools_call_waits_for_the_person_in_both_modes() {
-    for mode in [PermissionMode::Yolo, PermissionMode::Ask] {
-        let run = run(mode, &[&mcptools_ask("w1", r#"{"allowWrites":true}"#)]);
-        assert!(matches!(
-            run.permission_events().as_slice(),
-            [WorkerEvent::PermissionAsked(content)] if content.tool == "mcp__mcptools__execute"
-        ));
-        assert_eq!(run.written(), "");
-    }
+fn an_elevated_mcptools_call_waits_for_the_person_in_ask_and_is_allowed_in_yolo() {
+    let ask = mcptools_ask("w1", r#"{"allowWrites":true}"#);
+    let asked = run(PermissionMode::Ask, &[&ask]);
+    assert!(matches!(
+        asked.permission_events().as_slice(),
+        [WorkerEvent::PermissionAsked(content)] if content.tool == "mcp__mcptools__execute"
+    ));
+    assert_eq!(asked.written(), "");
+    let yolo = run(PermissionMode::Yolo, &[&ask]);
+    assert!(yolo.permission_events().is_empty());
+    assert!(
+        yolo.written().contains(r#""behavior":"allow""#),
+        "{}",
+        yolo.written()
+    );
 }
 
 #[test]
