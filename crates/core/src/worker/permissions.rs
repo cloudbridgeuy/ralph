@@ -104,6 +104,72 @@ pub fn parse_grants(text: Option<&str>) -> (Grants, Option<String>) {
     }
 }
 
+impl From<Classes> for Grants {
+    fn from(classes: Classes) -> Grants {
+        Grants {
+            writes: classes.writes,
+            spend: classes.spend,
+        }
+    }
+}
+
+pub fn merged_grants(existing: Option<&str>, added: Classes) -> (String, Option<String>) {
+    let _ = (existing, added);
+    (String::new(), None)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    AllowOnce,
+    Deny,
+    AllowAlways,
+}
+
+impl Choice {
+    pub fn from_key(line: &str) -> Option<Choice> {
+        let _ = line;
+        None
+    }
+
+    pub fn from_option(option: &str) -> Option<Choice> {
+        [Choice::AllowOnce, Choice::Deny, Choice::AllowAlways]
+            .into_iter()
+            .find(|choice| choice.option_id() == option)
+    }
+
+    pub fn option_id(self) -> &'static str {
+        match self {
+            Choice::AllowOnce => "allow_once",
+            Choice::Deny => "deny",
+            Choice::AllowAlways => "allow_always",
+        }
+    }
+}
+
+pub fn classes_label(classes: Classes) -> &'static str {
+    let _ = classes;
+    ""
+}
+
+pub fn answer_hint(token: &str, missing: Classes) -> String {
+    format!(
+        "y allow once \u{b7} n deny \u{b7} a always allow {}\n/answer @chat {token} allow_once|deny|allow_always",
+        classes_label(missing)
+    )
+}
+
+pub fn answer_message(choice: Choice, classes: Classes, saved_to: Option<&str>) -> String {
+    let label = classes_label(classes);
+    match (choice, saved_to) {
+        (Choice::AllowOnce, _) => "Allowed once.".into(),
+        (Choice::Deny, _) => "Denied.".into(),
+        (Choice::AllowAlways, Some(path)) => format!("Always allowing {label}; saved to {path}."),
+        (Choice::AllowAlways, None) => {
+            format!("Always allowing {label} for this session; not saved.")
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum GateCall {
     Allow,
@@ -507,5 +573,87 @@ mod tests {
     fn no_option_message_lists_every_option_id() {
         let message = no_option_message(&options());
         assert!(message.contains("allow-once, reject-once"));
+    }
+
+    #[test]
+    fn keys_y_n_a_pick_a_choice_and_anything_else_is_not_an_answer() {
+        for (line, want) in [
+            ("y", Some(Choice::AllowOnce)),
+            (" y ", Some(Choice::AllowOnce)),
+            ("Y", Some(Choice::AllowOnce)),
+            ("n", Some(Choice::Deny)),
+            ("A", Some(Choice::AllowAlways)),
+            ("yes", None),
+            ("", None),
+            ("y please", None),
+        ] {
+            assert_eq!(Choice::from_key(line), want, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn option_ids_round_trip_through_choice() {
+        for choice in [Choice::AllowOnce, Choice::Deny, Choice::AllowAlways] {
+            assert_eq!(Choice::from_option(choice.option_id()), Some(choice));
+        }
+        assert_eq!(Choice::from_option("once"), None);
+    }
+
+    #[test]
+    fn the_hint_names_the_missing_classes_and_keeps_the_fallback_line() {
+        let class = |writes, spend| Classes { writes, spend };
+        for (missing, label) in [
+            (class(true, false), "always allow writes\n"),
+            (class(false, true), "always allow spend\n"),
+            (class(true, true), "always allow writes and spend\n"),
+        ] {
+            let hint = answer_hint("tok", missing);
+            assert!(
+                hint.starts_with("y allow once \u{b7} n deny \u{b7} a "),
+                "{hint}"
+            );
+            assert!(hint.contains(label), "{hint}");
+            assert!(hint.ends_with("/answer @chat tok allow_once|deny|allow_always"));
+        }
+    }
+
+    #[test]
+    fn saved_grants_merge_with_the_new_classes() {
+        let writes = Classes {
+            writes: true,
+            spend: false,
+        };
+        let spend = Classes {
+            writes: false,
+            spend: true,
+        };
+        let merged = |text: Option<&str>, added| {
+            let (json, _) = merged_grants(text, added);
+            parse_grants(Some(&json)).0
+        };
+        assert_eq!(merged(None, writes), WRITES);
+        assert_eq!(merged(Some(r#"{"writes":true}"#), spend), BOTH);
+        assert_eq!(merged(Some(r#"{"spend":true}"#), spend), SPEND);
+        let (json, warning) = merged_grants(Some("not json"), writes);
+        assert_eq!(parse_grants(Some(&json)).0, WRITES);
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn answer_messages_say_what_happened() {
+        let both = Classes {
+            writes: true,
+            spend: true,
+        };
+        assert_eq!(
+            answer_message(Choice::AllowOnce, both, None),
+            "Allowed once."
+        );
+        assert_eq!(answer_message(Choice::Deny, both, None), "Denied.");
+        assert_eq!(
+            answer_message(Choice::AllowAlways, both, Some("/s/g.json")),
+            "Always allowing writes and spend; saved to /s/g.json."
+        );
+        assert!(answer_message(Choice::AllowAlways, both, None).contains("not saved"));
     }
 }

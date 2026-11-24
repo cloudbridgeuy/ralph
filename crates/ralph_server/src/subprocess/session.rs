@@ -49,8 +49,8 @@ pub(super) fn control_reply(
                     ALLOW_ONCE,
                     &ask.input,
                 )),
-                (false, GateCall::Prompt(_))
-                    if gate.is_some_and(|gate| gate.request_permission(ask.clone())) =>
+                (false, GateCall::Prompt(missing))
+                    if gate.is_some_and(|gate| gate.request_permission(ask.clone(), missing)) =>
                 {
                     None
                 }
