@@ -33,25 +33,19 @@ pub fn run(args: WebArgs) -> Result<(), Box<dyn Error>> {
     let ip = policy
         .primary()
         .ok_or("the bind policy allows no address")?;
-    let server = bind(SocketAddr::new(ip, port), &policy).map_err(|error| match error {
-        ApiError::Listen { reason, .. } => port_conflict_message(port, source, &reason).into(),
-        other => Box::<dyn Error>::from(other),
-    })?;
-    let bound = server
-        .server_addr()
-        .to_ip()
-        .ok_or("the server is not listening on an IP address")?;
-    let second = match &tailnet {
-        Some(found) => {
-            let addr = SocketAddr::new(IpAddr::V4(found.ip), bound.port());
-            Some(bind(addr, &policy).map_err(|error| match error {
-                ApiError::Listen { reason, .. } => {
-                    port_conflict_message(bound.port(), source, &reason).into()
-                }
-                other => Box::<dyn Error>::from(other),
-            })?)
+    let mut attempt = 1;
+    let (server, second, bound) = loop {
+        match bind_pair(ip, port, tailnet.as_ref().map(|found| found.ip), &policy) {
+            Ok(pair) => break pair,
+            Err(BindFailure::Second(..)) if should_retry_bind(source, attempt) => attempt += 1,
+            Err(BindFailure::First(reason)) => {
+                return Err(port_conflict_message(port, source, &reason).into())
+            }
+            Err(BindFailure::Second(bound_port, reason)) => {
+                return Err(port_conflict_message(bound_port, source, &reason).into())
+            }
+            Err(BindFailure::Other(other)) => return Err(other),
         }
-        None => None,
     };
     let mut config = api_config(store, bound, crate::version::current(), tokens_css);
     if let Some(found) = &tailnet {
@@ -88,6 +82,47 @@ fn resolve_port(cli: Option<u16>, cfg: Option<u16>) -> (u16, PortSource) {
         (Some(port), _) => (port, PortSource::Flag),
         (None, Some(port)) => (port, PortSource::Config),
     }
+}
+
+const EPHEMERAL_BIND_ATTEMPTS: usize = 5;
+
+fn should_retry_bind(source: PortSource, attempt: usize) -> bool {
+    source == PortSource::Ephemeral && attempt < EPHEMERAL_BIND_ATTEMPTS
+}
+
+enum BindFailure {
+    First(String),
+    Second(u16, String),
+    Other(Box<dyn Error>),
+}
+
+type BoundPair = (Server, Option<Server>, SocketAddr);
+
+fn bind_pair(
+    ip: IpAddr,
+    port: u16,
+    tailnet: Option<Ipv4Addr>,
+    policy: &BindPolicy,
+) -> Result<BoundPair, BindFailure> {
+    let server = bind(SocketAddr::new(ip, port), policy).map_err(|error| match error {
+        ApiError::Listen { reason, .. } => BindFailure::First(reason),
+        other => BindFailure::Other(other.into()),
+    })?;
+    let bound = server
+        .server_addr()
+        .to_ip()
+        .ok_or_else(|| BindFailure::Other("the server is not listening on an IP address".into()))?;
+    let second = tailnet
+        .map(|tail| {
+            bind(SocketAddr::new(IpAddr::V4(tail), bound.port()), policy).map_err(|error| {
+                match error {
+                    ApiError::Listen { reason, .. } => BindFailure::Second(bound.port(), reason),
+                    other => BindFailure::Other(other.into()),
+                }
+            })
+        })
+        .transpose()?;
+    Ok((server, second, bound))
 }
 
 fn port_conflict_message(port: u16, source: PortSource, reason: &str) -> String {
@@ -307,5 +342,32 @@ mod tests {
             port_conflict_message(81, PortSource::Config, "denied"),
             "port 81 in use (from [web] port): denied"
         );
+    }
+
+    #[test]
+    fn ephemeral_retries_up_to_the_cap() {
+        for attempt in 1..EPHEMERAL_BIND_ATTEMPTS {
+            assert!(
+                should_retry_bind(PortSource::Ephemeral, attempt),
+                "{attempt}"
+            );
+        }
+        assert!(!should_retry_bind(
+            PortSource::Ephemeral,
+            EPHEMERAL_BIND_ATTEMPTS
+        ));
+        assert!(!should_retry_bind(
+            PortSource::Ephemeral,
+            EPHEMERAL_BIND_ATTEMPTS + 1
+        ));
+    }
+
+    #[test]
+    fn fixed_ports_never_retry() {
+        for source in [PortSource::Flag, PortSource::Config] {
+            for attempt in 1..=EPHEMERAL_BIND_ATTEMPTS {
+                assert!(!should_retry_bind(source, attempt), "{source:?} {attempt}");
+            }
+        }
     }
 }
