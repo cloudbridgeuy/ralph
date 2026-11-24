@@ -1,4 +1,5 @@
 use crate::chat_status::Status;
+use crate::chat_thread::ThreadName;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -148,7 +149,11 @@ pub fn expire(stage: Stage, log_len: usize) -> (Stage, Vec<Item>) {
     )
 }
 
-pub fn render(items: &[Item], status: &Status) -> String {
+pub fn thread_line(name: &ThreadName) -> String {
+    format!("thread {name}: unresolved, end with /thread merge or drop")
+}
+
+pub fn render(items: &[Item], status: &Status, thread: Option<&ThreadName>) -> String {
     let item_lines = items.iter().map(|item| match &item.reference {
         Some(reference) => format!(
             "{} {} {reference}: {}",
@@ -178,7 +183,12 @@ pub fn render(items: &[Item], status: &Status) -> String {
         ),
         (status.unread > 0).then(|| format!("inbox: {} unread", status.unread)),
     ];
-    let lines: Vec<String> = item_lines.chain(facts.into_iter().flatten()).collect();
+    let lines: Vec<String> = thread
+        .map(thread_line)
+        .into_iter()
+        .chain(item_lines)
+        .chain(facts.into_iter().flatten())
+        .collect();
     if lines.is_empty() {
         return String::new();
     }
@@ -190,7 +200,10 @@ fn line(label: &str, entries: impl Iterator<Item = String>) -> Option<String> {
     (!entries.is_empty()).then(|| format!("{label}: {}", entries.join(", ")))
 }
 
-pub fn stage_due(mark: Option<&StageMark>, rendered: &str) -> bool {
+pub fn stage_due(mark: Option<&StageMark>, rendered: &str, thread: Option<&ThreadName>) -> bool {
+    if thread.is_some() {
+        return true;
+    }
     match mark {
         None => !rendered.is_empty(),
         Some(mark) => {

@@ -313,11 +313,13 @@ impl Turn {
             Trigger::User | Trigger::SendIt => expand_slash_command(message, &self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
-        let rendered = stage::rendered(&self.store_dir, &(self.status)()).unwrap_or_else(|e| {
-            self.warn(format!("Failed to read the stage: {e}"));
-            String::new()
-        });
-        let due = stage_due(locked(&self.stage_mark).as_ref(), &rendered);
+        let thread = self.fork.as_ref().map(|fork| &fork.name);
+        let rendered =
+            stage::rendered(&self.store_dir, &(self.status)(), thread).unwrap_or_else(|e| {
+                self.warn(format!("Failed to read the stage: {e}"));
+                String::new()
+            });
+        let due = stage_due(locked(&self.stage_mark).as_ref(), &rendered, thread);
         let live_stage = if due { stage_text(&rendered) } else { "" };
         let texts = turn_texts(&unseen, live_stage, &sent, logged);
         let pre_log_len = logged_before_reply(trigger)

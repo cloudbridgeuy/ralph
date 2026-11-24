@@ -9,6 +9,7 @@ use ralph_core::chat_stage::{
 };
 use ralph_core::chat_stage::{STAGE_ADD, STAGE_DONE};
 use ralph_core::chat_status::Status;
+use ralph_core::chat_thread::ThreadName;
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -47,8 +48,12 @@ pub fn append_audit(dir: &Path, rows: &[AuditRow]) -> Result<(), String> {
         .map_err(|error| format!("could not write {}: {error}", path.display()))
 }
 
-pub fn rendered(dir: &Path, status: &Status) -> Result<String, String> {
-    Ok(render(&load(dir)?.items, status))
+pub fn rendered(
+    dir: &Path,
+    status: &Status,
+    thread: Option<&ThreadName>,
+) -> Result<String, String> {
+    Ok(render(&load(dir)?.items, status, thread))
 }
 
 pub fn call(store: &Store, request: &SocketRequest) -> Option<Result<String, String>> {

@@ -22,7 +22,7 @@ fn worker(id: &str, state: &str) -> WorkerState {
 
 #[test]
 fn nothing_open_renders_nothing() {
-    assert_eq!(render(&[], &Status::default()), "");
+    assert_eq!(render(&[], &Status::default(), None), "");
 }
 
 #[test]
@@ -31,14 +31,18 @@ fn empty_categories_are_omitted() {
         unread: 2,
         ..Status::default()
     };
-    assert_eq!(render(&[], &status), "Stage:\ninbox: 2 unread");
+    assert_eq!(render(&[], &status, None), "Stage:\ninbox: 2 unread");
 }
 
 #[test]
 fn model_items_take_one_line_each_with_the_ref_when_given() {
     let mut first = item("s2", Kind::Decision, 0);
     first.reference = Some("GUZ-1805".to_string());
-    let rendered = render(&[first, item("s3", Kind::Owed, 0)], &Status::default());
+    let rendered = render(
+        &[first, item("s3", Kind::Owed, 0)],
+        &Status::default(),
+        None,
+    );
     assert_eq!(
         rendered,
         "Stage:\ns2 decision GUZ-1805: approve merge\ns3 owed approve merge"
@@ -58,7 +62,7 @@ fn workers_needing_the_user_get_their_own_line() {
         ..Status::default()
     };
     assert_eq!(
-        render(&[], &status),
+        render(&[], &status, None),
         "Stage:\nneeds you: w1 question, w3 blocked, w4 permission\nworkers: w2, w5"
     );
 }
@@ -77,7 +81,7 @@ fn watches_show_no_countdown_and_schedules_show_their_time() {
         ..Status::default()
     };
     assert_eq!(
-        render(&[], &status),
+        render(&[], &status, None),
         "Stage:\nwatches: wa1\nschedule: sc1 14:30"
     );
 }
@@ -113,22 +117,22 @@ fn an_item_expires_exactly_at_the_distance() {
 #[test]
 fn the_stage_is_due_on_first_send_on_change_and_at_the_repeat() {
     let mark = StageMark::sent("Stage:\na");
-    assert!(stage_due(None, "Stage:\na"));
-    assert!(!stage_due(None, ""));
-    assert!(stage_due(Some(&mark), "Stage:\nb"));
-    assert!(!stage_due(Some(&mark), "Stage:\na"));
+    assert!(stage_due(None, "Stage:\na", None));
+    assert!(!stage_due(None, "", None));
+    assert!(stage_due(Some(&mark), "Stage:\nb", None));
+    assert!(!stage_due(Some(&mark), "Stage:\na", None));
     let waiting = (0..STAGE_REPEAT_TURNS).fold(mark, |mark, _| mark.skipped());
-    assert!(stage_due(Some(&waiting), "Stage:\na"));
+    assert!(stage_due(Some(&waiting), "Stage:\na", None));
 }
 
 #[test]
 fn an_emptied_stage_is_due_once() {
     let mark = StageMark::sent("Stage:\na");
-    assert!(stage_due(Some(&mark), ""));
+    assert!(stage_due(Some(&mark), "", None));
     assert_eq!(stage_text(""), "Stage: empty");
     let after = StageMark::sent("");
     let later = (0..STAGE_REPEAT_TURNS).fold(after, |mark, _| mark.skipped());
-    assert!(!stage_due(Some(&later), ""));
+    assert!(!stage_due(Some(&later), "", None));
 }
 
 #[test]
@@ -258,4 +262,40 @@ fn edit_replaces_the_text_and_keeps_the_rest() {
     assert_eq!(stage.items[0].text, "other");
     assert_eq!((edited.turn, edited.kind), (3, Kind::Owed));
     assert!(edit(stage, "s9", "x").is_err());
+}
+
+fn side() -> ThreadName {
+    ThreadName::parse("side").unwrap()
+}
+
+#[test]
+fn a_thread_stage_opens_with_the_fixed_line_even_when_otherwise_empty() {
+    let thread = side();
+    let line = "thread side: unresolved, end with /thread merge or drop";
+    assert_eq!(
+        render(&[], &Status::default(), Some(&thread)),
+        format!("Stage:\n{line}")
+    );
+    let status = Status {
+        unread: 1,
+        ..Status::default()
+    };
+    let rendered = render(&[item("s1", Kind::Owed, 0)], &status, Some(&thread));
+    assert_eq!(rendered.lines().nth(1), Some(line));
+    assert!(rendered.lines().nth(2).unwrap().starts_with("s1 "));
+}
+
+#[test]
+fn main_never_carries_the_thread_line() {
+    assert!(!render(&[item("s1", Kind::Owed, 0)], &Status::default(), None).contains("thread"));
+}
+
+#[test]
+fn a_thread_stage_is_due_every_turn_unchanged() {
+    let thread = side();
+    let rendered = render(&[], &Status::default(), Some(&thread));
+    let mark = StageMark::sent(&rendered);
+    assert!(stage_due(None, &rendered, Some(&thread)));
+    assert!(stage_due(Some(&mark), &rendered, Some(&thread)));
+    assert!(!stage_due(Some(&mark), &rendered, None));
 }

@@ -182,3 +182,25 @@ fn the_stage_lock_blocks_a_second_holder_until_it_is_dropped() {
     let other = open_stage_lock(dir.path()).unwrap();
     assert!(other.try_lock().is_ok());
 }
+
+#[test]
+fn no_stage_write_can_remove_the_thread_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 0);
+    let thread = ralph_core::chat_thread::ThreadName::parse("side").unwrap();
+    let add = NewItem {
+        kind: Kind::Owed,
+        reference: None,
+        text: "x".to_string(),
+    };
+    user_add(&store, add).unwrap();
+    user_done(&store, "s1").unwrap();
+    assert!(user_done(&store, "thread").is_err());
+    assert!(tool_done(&store, &json!({"id": "side"})).is_err());
+    assert!(user_edit(&store, "thread", "gone").is_err());
+    let rendered = rendered(dir.path(), &Status::default(), Some(&thread)).unwrap();
+    assert_eq!(
+        rendered,
+        "Stage:\nthread side: unresolved, end with /thread merge or drop"
+    );
+}

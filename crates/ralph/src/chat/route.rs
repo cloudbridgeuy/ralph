@@ -81,7 +81,7 @@ pub fn run_local(
 fn run_stage(command: StageCommand, ctx: &LocalRoute) -> String {
     let store = Store::new(ctx.store.to_path_buf());
     match command {
-        StageCommand::Show => stage::rendered(ctx.store, &ctx.monitor.status())
+        StageCommand::Show => stage::rendered(ctx.store, &ctx.monitor.status(), ctx.thread)
             .map(|rendered| stage_text(&rendered).to_string()),
         StageCommand::Add(new) => stage::user_add(&store, new),
         StageCommand::Done(id) => stage::user_done(&store, &id),
