@@ -177,10 +177,11 @@ fn a_retry_moves_focus_to_a_tabindex_target_or_the_new_retry_button() {
     assert!(function_body(&js, "focusTarget").contains(r#"setAttribute("tabindex", "-1")"#));
     assert!(function_body(&js, "focusTarget").contains(".focus()"));
     assert!(function_body(&js, "focusRetry").contains(".focus()"));
+    for name in ["show", "fillRendered"] {
+        assert!(function_body(&js, name).contains("focusTarget("), "{name}");
+    }
     for name in ["show", "openNode", "fillRendered"] {
-        let body = function_body(&js, name);
-        assert!(body.contains("focusTarget("), "{name}");
-        assert!(body.contains("focusRetry("), "{name}");
+        assert!(function_body(&js, name).contains("focusRetry("), "{name}");
     }
 }
 
@@ -211,4 +212,28 @@ fn a_script_built_empty_state_is_a_status_region() {
         body.contains(r#"el("r-empty", null, { role: "status" })"#),
         "{body}"
     );
+}
+
+#[test]
+fn a_successful_retry_focuses_a_treeitem_button_not_a_role_none_or_group() {
+    let js = script();
+    let open = function_body(&js, "openNode");
+    assert!(!open.contains("focusTarget(group)"), "{open}");
+    assert!(
+        open.contains(r#"group.querySelector(':scope > li[role="treeitem"] > button')"#),
+        "{open}"
+    );
+    assert!(open.contains("parentButton(item)"), "{open}");
+    let fill = function_body(&js, "fillRendered");
+    assert!(!fill.contains("focusTarget(row)"), "{fill}");
+    assert!(fill.contains("row.firstElementChild"), "{fill}");
+    assert!(fill.contains("focusTarget(prose)"), "{fill}");
+    assert!(fill.contains("parentButton(row)"), "{fill}");
+    let parent = function_body(&js, "parentButton");
+    assert!(
+        parent.contains(r#"closest('[role="treeitem"]')"#),
+        "{parent}"
+    );
+    assert!(!js.contains(r#"role: "none", tabindex"#));
+    assert!(!js.contains(r#"role: "group", tabindex"#));
 }

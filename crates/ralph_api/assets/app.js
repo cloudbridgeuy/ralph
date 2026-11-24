@@ -178,6 +178,10 @@ function focusTarget(node) {
   node.focus();
 }
 
+function parentButton(node) {
+  return node.closest('[role="treeitem"]').querySelector(":scope > button");
+}
+
 function focusRetry(box) {
   const button = box.querySelector("button.btn");
   if (button) button.focus();
@@ -296,7 +300,11 @@ async function fillRendered(row, markdown, retried) {
   const stop = delayedSpinner(row, "Loading text");
   try {
     setRendered(row, (await renderMarkdown(markdown)).html);
-    if (retried) focusTarget(row);
+    if (retried) {
+      const prose = row.firstElementChild;
+      if (prose) focusTarget(prose);
+      else parentButton(row).focus();
+    }
   } catch (error) {
     row.textContent = "";
     const box = failure(error, () => {
@@ -346,7 +354,10 @@ async function openNode(item, ctx, retried) {
         else fillRendered(summary, row.markdown);
       } else append(group, row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child));
     });
-    if (retried) focusTarget(group);
+    if (retried) {
+      const first = group.querySelector(':scope > li[role="treeitem"] > button');
+      (first || parentButton(item)).focus();
+    }
     history.replaceState(null, "", buildHash({ ...ctx, node: item.dataset.node }));
   } catch (error) {
     stop();
