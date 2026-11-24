@@ -196,6 +196,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - `--r-surface` is ink 5% in bg. `--r-hover` is ink 9% in bg.
 - `--r-selected` is accent 16% in bg.
 - `--r-ok`, `--r-warn` and `--r-info` are ANSI 2, 3 and 6 at `--r-tone-k` in ink. `--r-tone-k` is 100% in dark and 62% in light.
+- `--r-faint` and `--r-line-strong` are for decoration (guides, rules, borders). Do not use them for text. They do not reach 4.5:1: about 2.97 and 2.82 for `--r-faint`, and 2.07 and 2.00 for `--r-line-strong`, on the background in dark and light. `--r-muted` and the heading roles reach AA 4.5:1 text contrast in both themes. `--r-muted` gives 5.16 in dark and 5.37 in light.
 - The slots `inline-code-bg`, `status-base-bg` and `ui-rule` come from roles. `inline-code-bg` and `status-base-bg` use `--r-surface`. `ui-rule` uses `--r-line-strong`.
 
 ## Store
