@@ -292,12 +292,42 @@ mod tests {
     #[test]
     fn the_neutral_tone_is_muted() {
         let css = css();
-        let body = rule_body(
-            &css,
-            "r-pill[tone=\"neutral\"],\nr-status[tone=\"neutral\"]",
-        )
-        .unwrap();
+        let body = rule_body(&css, "r-pill[tone=\"neutral\"]").unwrap();
         assert!(body.contains("color: var(--r-muted);"), "{body}");
+    }
+
+    #[test]
+    fn every_pill_tone_fills_with_its_own_role_over_the_page() {
+        let css = css();
+        for (tone, role) in [
+            ("ok", "ok"),
+            ("bad", "bad"),
+            ("warn", "warn"),
+            ("info", "info"),
+            ("accent", "accent"),
+            ("neutral", "muted"),
+        ] {
+            let body = rule_body(&css, &format!("r-pill[tone=\"{tone}\"]")).unwrap();
+            assert!(
+                body.contains(&format!(
+                    "background: color-mix(in srgb, var(--r-{role}) 8%, var(--r-bg));"
+                )),
+                "{tone}: {body}"
+            );
+            let status = rule_body(&css, &format!("r-status[tone=\"{tone}\"]")).unwrap();
+            assert!(!status.contains("background"), "{tone}: {status}");
+        }
+        assert!(!rule_body(&css, "r-pill").unwrap().contains("background"));
+    }
+
+    #[test]
+    fn info_and_accent_pills_use_different_roles() {
+        let css = css();
+        let info = rule_body(&css, "r-pill[tone=\"info\"]").unwrap();
+        let accent = rule_body(&css, "r-pill[tone=\"accent\"]").unwrap();
+        assert!(info.contains("var(--r-info)"), "{info}");
+        assert!(accent.contains("var(--r-accent)"), "{accent}");
+        assert_ne!(info, accent);
     }
 
     #[test]

@@ -215,32 +215,56 @@ r-status .mark {
   font-weight: 700;
 }
 
-r-pill[tone="ok"],
+r-pill[tone="ok"] {
+  color: var(--r-ok);
+  background: color-mix(in srgb, var(--r-ok) 8%, var(--r-bg));
+}
+
 r-status[tone="ok"] {
   color: var(--r-ok);
 }
 
-r-pill[tone="bad"],
+r-pill[tone="bad"] {
+  color: var(--r-bad);
+  background: color-mix(in srgb, var(--r-bad) 8%, var(--r-bg));
+}
+
 r-status[tone="bad"] {
   color: var(--r-bad);
 }
 
-r-pill[tone="warn"],
+r-pill[tone="warn"] {
+  color: var(--r-warn);
+  background: color-mix(in srgb, var(--r-warn) 8%, var(--r-bg));
+}
+
 r-status[tone="warn"] {
   color: var(--r-warn);
 }
 
-r-pill[tone="info"],
+r-pill[tone="info"] {
+  color: var(--r-info);
+  background: color-mix(in srgb, var(--r-info) 8%, var(--r-bg));
+}
+
 r-status[tone="info"] {
   color: var(--r-info);
 }
 
-r-pill[tone="accent"],
+r-pill[tone="accent"] {
+  color: var(--r-accent);
+  background: color-mix(in srgb, var(--r-accent) 8%, var(--r-bg));
+}
+
 r-status[tone="accent"] {
   color: var(--r-accent);
 }
 
-r-pill[tone="neutral"],
+r-pill[tone="neutral"] {
+  color: var(--r-muted);
+  background: color-mix(in srgb, var(--r-muted) 8%, var(--r-bg));
+}
+
 r-status[tone="neutral"] {
   color: var(--r-muted);
 }
