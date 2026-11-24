@@ -140,7 +140,7 @@ r-table table {
 
 r-table th,
 r-table td {
-  padding: 0 1ch;
+  padding: 2px 1ch;
   text-align: left;
   border-bottom: 1px solid var(--r-line);
   overflow-wrap: anywhere;
@@ -377,7 +377,7 @@ r-prose table {
 
 r-prose th,
 r-prose td {
-  padding: 0 1ch;
+  padding: 2px 1ch;
   text-align: left;
   border-bottom: 1px solid var(--r-line);
 }
@@ -540,6 +540,7 @@ r-tree ul[role="group"] {
 r-tree li {
   margin: 0;
   padding: 0;
+  min-height: 24px;
 }
 
 r-tree button {

@@ -431,4 +431,12 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn table_cells_and_tree_rows_are_24px() {
+        let css = css();
+        assert_declares(&css, "r-table th,\nr-table td", "padding: 2px 1ch;");
+        assert_declares(&css, "r-prose th,\nr-prose td", "padding: 2px 1ch;");
+        assert_declares(&css, "r-tree li", "min-height: 24px;");
+    }
 }
