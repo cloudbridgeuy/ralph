@@ -1,3 +1,4 @@
+use ralph_core::worker::WorkerShell;
 use ralph_core::workers_view::Layout;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +18,7 @@ fn default_cache_secs() -> u64 {
     60
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkersSection {
     #[serde(default)]
     pub view: Layout,
@@ -29,6 +30,8 @@ pub struct WorkersSection {
     pub cache_secs: u64,
     #[serde(default = "super::default_true")]
     pub verify_on_drift: bool,
+    #[serde(default)]
+    pub shell: Option<toml::Value>,
 }
 
 impl Default for WorkersSection {
@@ -39,6 +42,7 @@ impl Default for WorkersSection {
             lookup_timeout_ms: default_lookup_timeout_ms(),
             cache_secs: default_cache_secs(),
             verify_on_drift: true,
+            shell: None,
         }
     }
 }
@@ -52,6 +56,19 @@ impl WorkersSection {
             return Err("[workers] lookup_timeout_ms must be at least 1".to_string());
         }
         Ok(())
+    }
+
+    pub fn shell_setting(&self) -> (Option<WorkerShell>, Option<String>) {
+        match &self.shell {
+            None => (None, None),
+            Some(value) => match value.clone().try_into::<WorkerShell>() {
+                Ok(shell) => (Some(shell), None),
+                Err(_) => (
+                    None,
+                    Some("[workers] shell must be \"zsh\", \"bash\", or \"none\"".to_string()),
+                ),
+            },
+        }
     }
 }
 
@@ -68,6 +85,7 @@ mod tests {
             lookup_timeout_ms: 5000,
             cache_secs: 60,
             verify_on_drift: true,
+            shell: None,
         };
         assert_eq!(AppConfig::new().workers, expected);
         let empty: AppConfig = toml::from_str("[workers]\n").unwrap();
@@ -88,12 +106,44 @@ mod tests {
                 lookup_timeout_ms: 250,
                 cache_secs: 1,
                 verify_on_drift: true,
+                shell: None,
             }
         );
         let off: AppConfig = toml::from_str("[workers]\nverify_on_drift = false\n").unwrap();
         assert!(!off.workers.verify_on_drift);
         let github: AppConfig = toml::from_str("[workers]\npr_provider = \"github\"\n").unwrap();
         assert_eq!(github.workers.pr_provider, PrProvider::Github);
+    }
+
+    #[test]
+    fn workers_shell_parses_valid_values_defaults_to_unset_and_warns_on_bad_values() {
+        let parse = |text: &str| {
+            toml::from_str::<AppConfig>(text)
+                .unwrap()
+                .workers
+                .shell_setting()
+        };
+        assert_eq!(parse(""), (None, None));
+        assert_eq!(
+            parse("[workers]\nshell = \"zsh\"\n"),
+            (Some(WorkerShell::Zsh), None)
+        );
+        assert_eq!(
+            parse("[workers]\nshell = \"bash\"\n"),
+            (Some(WorkerShell::Bash), None)
+        );
+        assert_eq!(
+            parse("[workers]\nshell = \"none\"\n"),
+            (Some(WorkerShell::None), None)
+        );
+        for bad in ["\"fish\"", "1", "[\"bash\"]"] {
+            let (shell, warning) = parse(&format!("[workers]\nshell = {bad}\n"));
+            assert_eq!(shell, None);
+            assert_eq!(
+                warning.as_deref(),
+                Some("[workers] shell must be \"zsh\", \"bash\", or \"none\"")
+            );
+        }
     }
 
     #[test]
