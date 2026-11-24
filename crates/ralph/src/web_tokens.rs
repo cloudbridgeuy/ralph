@@ -96,7 +96,7 @@ fn group_slots(
         .collect()
 }
 
-pub(crate) fn theme_slots(theme: &ThemeSection) -> Vec<Slot> {
+fn resolved_slots(theme: &ThemeSection) -> Vec<Slot> {
     let (palette, _) = theme.assistant.palette(ThemeRole::Assistant);
     let mut slots = palette_slots(&palette);
     slots.extend(group_slots(
@@ -130,6 +130,39 @@ pub(crate) fn theme_slots(theme: &ThemeSection) -> Vec<Slot> {
         &theme.ui.colors,
     ));
     slots
+}
+
+fn role_for_slot(name: &str) -> Option<&'static str> {
+    match name {
+        "inline-code-bg" | "status-base-bg" => Some("surface"),
+        "ui-rule" => Some("line-strong"),
+        _ => None,
+    }
+}
+
+fn apply_roles(slots: Vec<Slot>, defaults: &[Slot]) -> Vec<Slot> {
+    slots
+        .into_iter()
+        .map(|slot| {
+            let is_default = defaults
+                .iter()
+                .any(|default| default.name == slot.name && default.color == slot.color);
+            match role_for_slot(&slot.name) {
+                Some(role) if is_default => Slot {
+                    color: ColorSpec::Role(role),
+                    ..slot
+                },
+                _ => slot,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn theme_slots(theme: &ThemeSection) -> Vec<Slot> {
+    apply_roles(
+        resolved_slots(theme),
+        &resolved_slots(&ThemeSection::default()),
+    )
 }
 
 pub(crate) fn ansi_table(name: &str, entries: &[String]) -> Result<[Rgb; 16], String> {
@@ -239,6 +272,91 @@ mod tests {
             find(&slots, "diff-add-bg"),
             Some(ColorSpec::Rgb(_))
         ));
+    }
+
+    #[test]
+    fn default_theme_derives_three_slots_from_roles() {
+        let slots = theme_slots(&ThemeSection::default());
+        assert_eq!(
+            find(&slots, "inline-code-bg"),
+            Some(&ColorSpec::Role("surface"))
+        );
+        assert_eq!(
+            find(&slots, "status-base-bg"),
+            Some(&ColorSpec::Role("surface"))
+        );
+        assert_eq!(
+            find(&slots, "ui-rule"),
+            Some(&ColorSpec::Role("line-strong"))
+        );
+    }
+
+    #[test]
+    fn user_override_of_a_role_slot_stays_rgb() {
+        let mut theme = ThemeSection::default();
+        theme
+            .assistant
+            .colors
+            .insert("inline_code_bg".to_string(), "#112233".to_string());
+        theme.status.colors = BTreeMap::from([("base_bg".to_string(), "#010203".to_string())]);
+        theme.ui.colors = BTreeMap::from([("rule".to_string(), "#040506".to_string())]);
+        let slots = theme_slots(&theme);
+        let rgb = |r, g, b| ColorSpec::Rgb(Rgb { r, g, b });
+        assert_eq!(find(&slots, "inline-code-bg"), Some(&rgb(0x11, 0x22, 0x33)));
+        assert_eq!(find(&slots, "status-base-bg"), Some(&rgb(1, 2, 3)));
+        assert_eq!(find(&slots, "ui-rule"), Some(&rgb(4, 5, 6)));
+    }
+
+    fn rgb_slot(name: &str, value: u8) -> Slot {
+        Slot {
+            name: name.to_string(),
+            color: ColorSpec::Rgb(Rgb {
+                r: value,
+                g: value,
+                b: value,
+            }),
+        }
+    }
+
+    #[test]
+    fn apply_roles_replaces_only_default_valued_role_slots() {
+        let defaults = [rgb_slot("ui-rule", 1), rgb_slot("inline-code-bg", 2)];
+        let slots = vec![
+            rgb_slot("ui-rule", 1),
+            rgb_slot("inline-code-bg", 9),
+            rgb_slot("link", 3),
+        ];
+        let applied = apply_roles(slots, &defaults);
+        assert_eq!(
+            find(&applied, "ui-rule"),
+            Some(&ColorSpec::Role("line-strong"))
+        );
+        assert_eq!(
+            find(&applied, "inline-code-bg"),
+            Some(&ColorSpec::Rgb(Rgb { r: 9, g: 9, b: 9 }))
+        );
+        assert_eq!(
+            find(&applied, "link"),
+            Some(&ColorSpec::Rgb(Rgb { r: 3, g: 3, b: 3 }))
+        );
+    }
+
+    #[test]
+    fn other_default_slots_keep_their_colors() {
+        let slots = theme_slots(&ThemeSection::default());
+        assert!(matches!(
+            find(&slots, "diff-add-bg"),
+            Some(ColorSpec::Rgb(_))
+        ));
+        assert_eq!(find(&slots, "link"), Some(&ColorSpec::Ansi(12)));
+    }
+
+    #[test]
+    fn default_render_references_roles() {
+        let css = render_tokens(&AppConfig::default()).unwrap();
+        assert!(css.contains("--r-inline-code-bg: var(--r-surface);"));
+        assert!(css.contains("--r-status-base-bg: var(--r-surface);"));
+        assert!(css.contains("--r-ui-rule: var(--r-line-strong);"));
     }
 
     #[test]

@@ -19,6 +19,7 @@ impl fmt::Display for Rgb {
 pub enum ColorSpec {
     Ansi(u8),
     Rgb(Rgb),
+    Role(&'static str),
 }
 
 pub struct Slot {
@@ -73,6 +74,7 @@ fn slot_line(slot: &Slot) -> Option<String> {
         }
         ColorSpec::Ansi(_) => None,
         ColorSpec::Rgb(rgb) => Some(format!("  --r-{}: {rgb};\n", slot.name)),
+        ColorSpec::Role(role) => Some(format!("  --r-{}: var(--r-{role});\n", slot.name)),
     }
 }
 
@@ -127,6 +129,12 @@ mod tests {
             let v = base + i as u8;
             Rgb { r: v, g: v, b: v }
         })
+    }
+
+    #[test]
+    fn role_slot_references_the_role_variable() {
+        let css = render("x", &[slot("inline-code-bg", ColorSpec::Role("surface"))]);
+        assert!(css.contains("  --r-inline-code-bg: var(--r-surface);\n"));
     }
 
     fn slot(name: &str, color: ColorSpec) -> Slot {
