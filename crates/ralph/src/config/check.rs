@@ -84,6 +84,15 @@ mod tests {
     }
 
     #[test]
+    fn web_port_is_validated() {
+        assert!(check("[web]\nport = 65536\n", "c").is_err());
+        assert!(check("[web]\nport = 8080\n", "c")
+            .unwrap()
+            .errors
+            .is_empty());
+    }
+
+    #[test]
     fn claude_shell_accepts_bash_and_rejects_unknown() {
         assert_eq!(
             errors("[claude]\nshell = \"fish\"\n"),

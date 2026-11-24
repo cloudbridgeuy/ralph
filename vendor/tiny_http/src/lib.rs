@@ -111,7 +111,7 @@ use connection::Connection;
 use util::MessagesQueue;
 
 pub use common::{HTTPVersion, Header, HeaderField, Method, StatusCode};
-pub use connection::{ConfigListenAddr, ListenAddr, Listener};
+pub use connection::{ConfigListenAddr, ListenAddr, Listener, Timeouts};
 pub use request::{ReadWrite, Request};
 pub use response::{Response, ResponseBox};
 pub use test::TestRequest;
@@ -243,6 +243,14 @@ impl Server {
         listener: L,
         ssl_config: Option<SslConfig>,
     ) -> Result<Server, Box<dyn Error + Send + Sync + 'static>> {
+        Self::from_listener_with_timeouts(listener, ssl_config, Timeouts::default())
+    }
+
+    pub fn from_listener_with_timeouts<L: Into<Listener>>(
+        listener: L,
+        ssl_config: Option<SslConfig>,
+        timeouts: Timeouts,
+    ) -> Result<Server, Box<dyn Error + Send + Sync + 'static>> {
         let listener = listener.into();
         // building the "close" variable
         let close_trigger = Arc::new(AtomicBool::new(false));
@@ -291,7 +299,7 @@ impl Server {
 
             log::debug!("Running accept thread");
             while !inside_close_trigger.load(Relaxed) {
-                let new_client = match server.accept() {
+                let new_client = match server.accept(timeouts) {
                     Ok((sock, _)) => {
                         use util::RefinedTcpStream;
                         let (read_closable, write_closable) = match ssl {

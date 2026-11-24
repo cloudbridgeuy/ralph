@@ -563,6 +563,7 @@ ansi_dark = [
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `font` | `"Geist Mono", ui-monospace, Menlo, monospace` | CSS `font-family` list |
+| `port` | unset (`0`) | Port for `ralph web` on 127.0.0.1; `0` or unset picks a free port. `--port` overrides it |
 | `ansi_dark` | Windows Terminal Campbell | 16 `#rrggbb` entries in ANSI order 0-15, used with a dark colour scheme |
 | `ansi_light` | Campbell with slots 0 and 7 swapped, and 8 and 15 swapped | 16 `#rrggbb` entries in ANSI order 0-15, used with a light colour scheme |
 
@@ -572,6 +573,7 @@ Rules:
 
 - `font` must not be empty.
 - `font` may use only letters, digits, space, `,`, `-`, `_` and `.`, plus quoted names with balanced `"` or `'` quotes. For example `"Fira Code", monospace`. Any other character is an error.
+- `port` must be an integer from 0 to 65535.
 - Each table must have 16 entries.
 - Each entry must be `#rrggbb`.
 

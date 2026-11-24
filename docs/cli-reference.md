@@ -153,16 +153,19 @@ ralph wire sessions [--dir PATH] [--json]
 
 ## ralph web
 
-Serve a local HTTP API on 127.0.0.1. It runs in the foreground until Ctrl-C. Details: [ralph web](context/ralph-web.md).
+Serve a local HTTP API on 127.0.0.1, and on the Tailscale IP with `--tailscale`. It runs in the foreground until Ctrl-C. Details: [ralph web](context/ralph-web.md).
 
 ```bash
-ralph web [--store DIR] [--port N]
+ralph web [--store DIR] [--port N] [--tailscale]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store` | `RALPH_CHAT_STORE`, then `./.ralph` | Store directory; it must exist |
-| `--port` | `0` | Port on 127.0.0.1; `0` picks a free port |
+| `--port` | `[web] port`, then `0` | Port on 127.0.0.1; `0` picks a free port. It overrides `[web] port` |
+| `--tailscale` | off | Also bind the Tailscale IPv4 address on the same port. Exits with 1 if Tailscale is missing, stopped or has no IPv4. Prints one URL for each name. See [Tailscale](context/ralph-web.md#tailscale) |
+
+If the port is in use, the command exits with 1 and names the port and its source.
 
 The command prints `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. Open the URL in a browser. Every request needs the token. The command serves the embedded shell and its assets, `GET /api/health` and `GET /tokens.css`. See [ralph web](context/ralph-web.md) for the routes, the token and the cookie.
 
