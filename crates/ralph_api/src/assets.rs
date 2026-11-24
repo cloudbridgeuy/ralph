@@ -241,7 +241,7 @@ mod tests {
         Some(&css[start..start + end])
     }
 
-    fn declarations<'a>(css: &'a str, property: &'a str) -> Vec<&'a str> {
+    fn declarations<'a>(css: &'a str, property: &str) -> Vec<&'a str> {
         css.lines()
             .map(str::trim)
             .filter(|line| line.starts_with(property))
