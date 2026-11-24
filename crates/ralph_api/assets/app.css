@@ -382,10 +382,12 @@ r-empty {
 }
 
 r-empty .what {
+  display: block;
   color: var(--r-ink);
 }
 
 r-empty .next {
+  display: block;
   margin-top: 10px;
   color: var(--r-muted);
 }
@@ -405,15 +407,18 @@ r-error {
 }
 
 r-error .what {
+  display: block;
   color: var(--r-bad);
   font-weight: 600;
 }
 
 r-error .why {
+  display: block;
   color: var(--r-ink);
 }
 
 r-error .next {
+  display: block;
   margin-top: 10px;
   color: var(--r-muted);
 }

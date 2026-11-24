@@ -1,6 +1,7 @@
 use crate::render::{
-    empty, error, escape, frame, kv, kv_inline, kv_sourced, pill, pill_with, render_markdown, rule,
-    spark_bars_svg, spark_svg, spinner, status, table, Icon, PillShape, PillVariant, Shape, Tone,
+    empty, empty_next, error, error_with, escape, frame, kv, kv_inline, kv_sourced, pill,
+    pill_with, render_markdown, rule, spark_bars_svg, spark_svg, spinner, status, table,
+    ErrorParts, Icon, PillShape, PillVariant, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -256,7 +257,10 @@ fn empties(fixture: &Fixture) -> String {
         "r-empty",
         &[
             ("empty", empty("")),
-            ("sparse", empty("No sessions yet")),
+            (
+                "sparse",
+                empty_next("No sessions yet", "Start a chat to see one here"),
+            ),
             ("very-long", empty(&fixture.very_long_title)),
         ],
     )
@@ -267,7 +271,16 @@ fn errors(fixture: &Fixture) -> String {
         "r-error",
         &[
             ("empty", error("")),
-            ("error", error("could not read the store")),
+            (
+                "error",
+                error_with(&ErrorParts {
+                    what: "Could not read the store",
+                    why: Some("the store is locked by another process"),
+                    status: Some(503),
+                    next: Some("Retry"),
+                    compact: false,
+                }),
+            ),
             ("very-long", error(&fixture.very_long_title)),
         ],
     )

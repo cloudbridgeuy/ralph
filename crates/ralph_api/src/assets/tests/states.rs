@@ -102,3 +102,17 @@ fn state_rules_add_no_tint_or_literal_colour() {
         );
     }
 }
+
+#[test]
+fn state_lines_stack_as_blocks() {
+    let css = css();
+    for selector in [
+        "r-empty .what",
+        "r-empty .next",
+        "r-error .what",
+        "r-error .why",
+        "r-error .next",
+    ] {
+        assert_declares(&css, selector, "display: block;");
+    }
+}

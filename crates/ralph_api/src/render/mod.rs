@@ -17,8 +17,8 @@ mod status;
 mod table;
 mod tree;
 
-pub use empty::empty;
-pub use error::error;
+pub use empty::{empty, empty_compact, empty_next};
+pub use error::{error, error_with, ErrorParts};
 pub use escape::escape;
 pub use frame::frame;
 pub use kv::{kv, kv_inline, kv_sourced};

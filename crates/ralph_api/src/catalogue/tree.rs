@@ -1,5 +1,5 @@
 use super::{group, text};
-use crate::render::{error, tree, Cells, Extent, Summary, TreeNode};
+use crate::render::{error_with, tree, Cells, ErrorParts, Extent, Summary, TreeNode};
 
 const HOSTILE: &str = "</r-tree><script>alert(\"x\")</script> 'quote' & \"double\"";
 
@@ -156,7 +156,12 @@ pub(super) fn trees(very_long_summary: &str) -> String {
             "Session summary",
             12,
             true,
-            vec![TreeNode::Row(error("could not load the children"))],
+            vec![TreeNode::Row(error_with(&ErrorParts {
+                what: "Could not load the children",
+                next: Some("Retry"),
+                compact: true,
+                ..ErrorParts::default()
+            }))],
         ),
         leaf("Open question on token limits", None),
     ];
@@ -266,7 +271,7 @@ mod tests {
     fn the_empty_state_holds_r_empty_and_the_error_state_r_error() {
         for group in tree_groups() {
             let parts: Vec<&str> = group.split("<div class=\"state\">").collect();
-            assert!(parts[1].contains("<r-tree><r-empty>"));
+            assert!(parts[1].contains("<r-tree><r-empty compact>"));
             assert!(parts[4].contains("<r-error"));
         }
     }
