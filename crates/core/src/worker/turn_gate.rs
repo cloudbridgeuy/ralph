@@ -159,6 +159,8 @@ mod tests {
             model: None,
             ticket: None,
             phase: None,
+            repo: None,
+            lane: None,
         }
     }
 

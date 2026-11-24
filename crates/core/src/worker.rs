@@ -39,6 +39,7 @@ mod rollback;
 mod scheduled;
 mod startup;
 mod status;
+mod target;
 mod task_files;
 mod ticket;
 mod tools;
@@ -86,6 +87,7 @@ pub use rollback::*;
 pub use scheduled::*;
 pub use startup::*;
 pub use status::*;
+pub use target::*;
 pub use task_files::*;
 pub use ticket::*;
 pub use tools::*;
@@ -218,6 +220,8 @@ pub enum Command {
         model: Option<String>,
         ticket: Option<String>,
         phase: Option<WorkPhase>,
+        repo: Option<String>,
+        lane: Option<String>,
     },
     Reply {
         id: String,

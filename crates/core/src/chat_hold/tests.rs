@@ -14,6 +14,12 @@ fn entry(worker: &str) -> Entry {
     }
 }
 
+fn close_entry(thread: &str) -> Entry {
+    let mut closed = entry(&format!("thread:{thread}"));
+    closed.report.status = "thread-closed".to_string();
+    closed
+}
+
 fn source(name: &str) -> HoldFilter {
     HoldFilter::Source(name.to_string())
 }
@@ -352,4 +358,18 @@ fn completion_offers_idle_and_done_workers() {
     status.workers[0].state = "idle".to_string();
     status.workers[1].state = "done".to_string();
     assert_eq!(values("/hold ", &status), ["w1", "w2"]);
+}
+
+#[test]
+fn first_match_skips_thread_closed_entries() {
+    let entries = [close_entry("side"), entry("w1")];
+    let found = first_match(&entries, &HoldFilter::Any).unwrap();
+    assert_eq!(found.to_string(), "2");
+}
+
+#[test]
+fn first_match_none_when_only_close_entry() {
+    let entries = [close_entry("side")];
+    assert_eq!(first_match(&entries, &HoldFilter::Any), None);
+    assert_eq!(first_match(&entries, &source("thread:side")), None);
 }
