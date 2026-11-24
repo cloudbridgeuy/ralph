@@ -101,36 +101,51 @@ fn records_and_notices_are_known_and_person_text_is_not() {
 }
 
 #[test]
-fn catch_up_prompt_puts_unseen_rows_before_the_message() {
+fn turn_texts_live_puts_unseen_rows_before_the_message() {
     assert_eq!(
-        catch_up_prompt(
+        turn_texts(
             &rows(&["7 user: /send-it off", "Result: gone"]),
             "",
-            "next?"
-        ),
+            "next?",
+            &[]
+        )
+        .live,
         "Since your last turn:\n7 user: /send-it off\nResult: gone\n\nNew message:\nnext?"
     );
 }
 
 #[test]
-fn catch_up_prompt_without_rows_is_the_message() {
-    assert_eq!(catch_up_prompt(&[], "", "next?"), "next?");
+fn turn_texts_live_without_rows_is_the_message() {
+    assert_eq!(turn_texts(&[], "", "next?", &[]).live, "next?");
 }
 
 #[test]
-fn catch_up_prompt_puts_the_stage_after_the_rows_and_before_the_message() {
+fn turn_texts_live_puts_the_stage_after_the_rows_and_before_the_message() {
     assert_eq!(
-        catch_up_prompt(&rows(&["7 user: hi"]), "Stage:\ns1 owed x", "next?"),
+        turn_texts(&rows(&["7 user: hi"]), "Stage:\ns1 owed x", "next?", &[]).live,
         "Since your last turn:\n7 user: hi\n\nStage:\ns1 owed x\n\nNew message:\nnext?"
     );
 }
 
 #[test]
-fn catch_up_prompt_with_only_a_stage_has_no_since_header() {
+fn turn_texts_live_with_only_a_stage_has_no_since_header() {
     assert_eq!(
-        catch_up_prompt(&[], "Stage: empty", "next?"),
+        turn_texts(&[], "Stage: empty", "next?", &[]).live,
         "Stage: empty\n\nNew message:\nnext?"
     );
+}
+
+#[test]
+fn turn_texts_keep_the_stage_out_of_the_logged_rows() {
+    let texts = turn_texts(
+        &rows(&["7 user: hi"]),
+        "Stage:\ns1 owed x",
+        "next?",
+        &rows(&["next?"]),
+    );
+    assert!(texts.live.contains("Stage:\ns1 owed x"));
+    assert_eq!(texts.logged, rows(&["next?"]));
+    assert!(texts.logged.iter().all(|row| !row.contains("Stage:")));
 }
 
 fn logged(texts: &[&str]) -> Vec<crate::chat_memory::Entry> {

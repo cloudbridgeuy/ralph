@@ -25,7 +25,7 @@ use ralph_core::chat::{
     VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
-use ralph_core::chat_local::{catch_up_prompt, unseen_lines};
+use ralph_core::chat_local::{turn_texts, unseen_lines};
 use ralph_core::chat_memory::{
     carry_metadata, reply_entries, resolve_scope, scope_label, split_view, subagent_records,
     trigger_entries, turn_row, usage_record, view_line_ids, view_stats, CallSite, Trigger,
@@ -309,12 +309,6 @@ impl Turn {
             self.warn(format!("Failed to read the chat log for the catch-up: {e}"));
             Vec::new()
         });
-        let pre_log_len = logged_before_reply(trigger)
-            .then(|| self.store.log_len())
-            .transpose()?;
-        if logged_before_reply(trigger) {
-            self.append_logged(trigger, logged)?;
-        }
         let sent = match trigger {
             Trigger::User | Trigger::SendIt => expand_slash_command(message, &self.skills),
             Trigger::Worker => Cow::Borrowed(message),
@@ -325,10 +319,16 @@ impl Turn {
         });
         let due = stage_due(locked(&self.stage_mark).as_ref(), &rendered);
         let live_stage = if due { stage_text(&rendered) } else { "" };
-        let live = catch_up_prompt(&unseen, live_stage, &sent);
+        let texts = turn_texts(&unseen, live_stage, &sent, logged);
+        let pre_log_len = logged_before_reply(trigger)
+            .then(|| self.store.log_len())
+            .transpose()?;
+        if logged_before_reply(trigger) {
+            self.append_logged(trigger, &texts.logged)?;
+        }
         let input = TurnInput {
             sent: &sent,
-            live: &live,
+            live: &texts.live,
             stage: &rendered,
             cancel,
         };
@@ -478,7 +478,7 @@ impl Turn {
         match extract_response_text(&result.stream_result.output_blocks) {
             Some(reply) if result.exit_code == 0 && !blocked => {
                 if !logged_before_reply(trigger) {
-                    self.append_logged(trigger, logged)?;
+                    self.append_logged(trigger, &texts.logged)?;
                 }
                 reply_entries(&reply)
                     .iter()
