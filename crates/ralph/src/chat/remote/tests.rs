@@ -93,6 +93,7 @@ fn frames_that_do_not_belong_mid_turn_are_ignored() {
         unread: 0,
         blocked: Vec::new(),
         turns: 0,
+        stage: 0,
     };
     for msg in [
         ServerMsg::Hello { proto: 1 },
@@ -293,12 +294,12 @@ fn request(line: &str) -> Option<Result<ThreadCmd, String>> {
 fn status_summary_lists_unread_and_blocked_workers() {
     let blocked = vec!["a".to_string(), "b".to_string()];
     assert_eq!(
-        status_summary(None, State::Idle, 2, &blocked),
+        status_summary(None, State::Idle, 2, &blocked, 0),
         "main: idle, 2 unread, blocked: a, b"
     );
     assert_eq!(
-        status_summary(Some("fix"), State::Working, 0, &[]),
-        "fix: working, 0 unread"
+        status_summary(Some("fix"), State::Working, 0, &[], 3),
+        "fix: working, 0 unread, stage 3"
     );
 }
 

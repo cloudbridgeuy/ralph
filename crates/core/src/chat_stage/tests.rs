@@ -199,3 +199,63 @@ fn a_launch_or_a_send_resets_the_mark_and_a_skip_counts_a_turn() {
     assert_eq!(next_mark(Some(&held), false, true, ""), StageMark::sent(""));
     assert_eq!(next_mark(None, true, true, "x"), StageMark::sent("x"));
 }
+
+#[test]
+fn stage_args_parse_into_commands() {
+    let add = |kind, text: &str| {
+        StageCommand::Add(NewItem {
+            kind,
+            reference: None,
+            text: text.to_string(),
+        })
+    };
+    assert_eq!(parse_stage_args(""), StageCommand::Show);
+    assert_eq!(parse_stage_args("  "), StageCommand::Show);
+    assert_eq!(
+        parse_stage_args(" add decision merge it now "),
+        add(Kind::Decision, "merge it now")
+    );
+    assert_eq!(
+        parse_stage_args("add owed ping w1"),
+        add(Kind::Owed, "ping w1")
+    );
+    assert_eq!(
+        parse_stage_args("done s4"),
+        StageCommand::Done("s4".to_string())
+    );
+    assert_eq!(
+        parse_stage_args("edit s4 new words"),
+        StageCommand::Edit {
+            id: "s4".to_string(),
+            text: "new words".to_string()
+        }
+    );
+}
+
+#[test]
+fn bad_stage_args_become_usage() {
+    for args in [
+        "add",
+        "add decision",
+        "add nope text",
+        "done",
+        "done s1 s2",
+        "edit s1",
+        "edit",
+        "wipe",
+    ] {
+        assert_eq!(parse_stage_args(args), StageCommand::Usage, "{args}");
+    }
+}
+
+#[test]
+fn edit_replaces_the_text_and_keeps_the_rest() {
+    let stage = Stage {
+        items: vec![item("s1", Kind::Owed, 3)],
+        last: 1,
+    };
+    let (stage, edited) = edit(stage, "s1", "other").unwrap();
+    assert_eq!(stage.items[0].text, "other");
+    assert_eq!((edited.turn, edited.kind), (3, Kind::Owed));
+    assert!(edit(stage, "s9", "x").is_err());
+}

@@ -7,6 +7,7 @@ pub const STAGE_REPEAT_TURNS: usize = 5;
 pub const STAGE_ADD: &str = "stage_add";
 pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
+pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
 
 const NEEDS_USER_STATES: [&str; 3] = ["question", "blocked", "permission"];
 
@@ -62,6 +63,7 @@ pub enum Actor {
 pub enum Op {
     Add,
     Done,
+    Edit,
     Expire,
 }
 
@@ -236,6 +238,68 @@ pub fn close(stage: Stage, id: &str) -> Result<(Stage, Item), String> {
         },
         item,
     ))
+}
+
+pub fn edit(stage: Stage, id: &str, text: &str) -> Result<(Stage, Item), String> {
+    let mut items = stage.items;
+    let item = items
+        .iter_mut()
+        .find(|item| item.id == id)
+        .ok_or_else(|| format!("No open stage item {id}."))?;
+    item.text = text.to_string();
+    let edited = item.clone();
+    Ok((
+        Stage {
+            items,
+            last: stage.last,
+        },
+        edited,
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StageCommand {
+    Show,
+    Add(NewItem),
+    Done(String),
+    Edit { id: String, text: String },
+    Usage,
+}
+
+pub fn parse_stage_args(args: &str) -> StageCommand {
+    let (verb, rest) = split_word(args);
+    let parsed = match verb {
+        "" => Ok(StageCommand::Show),
+        "add" => {
+            let (kind, text) = split_word(rest);
+            parse_add(&json!({"kind": kind, "text": text})).map(StageCommand::Add)
+        }
+        "done" => one_word(rest).map(StageCommand::Done),
+        "edit" => {
+            let (id, text) = split_word(rest);
+            one_line(Some(text), "text").map(|text| StageCommand::Edit {
+                id: id.to_string(),
+                text,
+            })
+        }
+        _ => Err(String::new()),
+    };
+    parsed.unwrap_or(StageCommand::Usage)
+}
+
+fn split_word(text: &str) -> (&str, &str) {
+    let text = text.trim();
+    text.split_once(char::is_whitespace)
+        .map_or((text, ""), |(word, rest)| (word, rest.trim_start()))
+}
+
+fn one_word(text: &str) -> Result<String, String> {
+    let text = one_line(Some(text), "id")?;
+    if text.contains(char::is_whitespace) {
+        Err("id must be one word.".to_string())
+    } else {
+        Ok(text)
+    }
 }
 
 pub fn stage_add_tool() -> Value {

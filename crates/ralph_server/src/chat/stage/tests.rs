@@ -1,5 +1,5 @@
 use super::*;
-use ralph_core::chat_stage::{Item, Kind};
+use ralph_core::chat_stage::{Item, Kind, NewItem};
 use serde_json::json;
 
 fn item(id: &str, kind: Kind) -> Item {
@@ -129,4 +129,56 @@ fn a_bad_call_changes_nothing() {
     assert!(tool_add(&store, &json!({"kind": "owed", "text": "a\nb"})).is_err());
     assert!(!dir.path().join(STAGE_FILE).exists());
     assert!(!dir.path().join(AUDIT_FILE).exists());
+}
+
+#[test]
+fn a_user_add_edit_and_done_write_user_rows_and_edit_keeps_the_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 4);
+    let new = NewItem {
+        kind: Kind::Owed,
+        reference: None,
+        text: "ping w1".to_string(),
+    };
+    assert_eq!(user_add(&store, new), Ok("s1 added".to_string()));
+    assert_eq!(
+        user_edit(&store, "s1", "ping w2"),
+        Ok("s1 edited".to_string())
+    );
+    assert_eq!(user_done(&store, "s1"), Ok("s1 done".to_string()));
+    let rows = audit_rows(dir.path());
+    let ops: Vec<_> = rows.iter().map(|row| (row.actor, row.op)).collect();
+    assert_eq!(
+        ops,
+        [
+            (Actor::User, Op::Add),
+            (Actor::User, Op::Edit),
+            (Actor::User, Op::Done)
+        ]
+    );
+    assert_eq!(rows[1].item.text, "ping w2");
+    assert_eq!(rows[1].item.turn, 4);
+    assert!(load(dir.path()).unwrap().items.is_empty());
+}
+
+#[test]
+fn a_bad_user_edit_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 0);
+    assert!(user_edit(&store, "s3", "x").is_err());
+    assert!(user_done(&store, "s3").is_err());
+    assert!(!dir.path().join(STAGE_FILE).exists());
+    assert!(!dir.path().join(AUDIT_FILE).exists());
+}
+
+#[test]
+fn the_stage_lock_blocks_a_second_holder_until_it_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let inside = locked(dir.path(), || {
+        let other = open_stage_lock(dir.path()).unwrap();
+        Ok(other.try_lock().is_err())
+    });
+    assert_eq!(inside, Ok(true));
+    let other = open_stage_lock(dir.path()).unwrap();
+    assert!(other.try_lock().is_ok());
 }

@@ -30,6 +30,9 @@ fn commands_that_change_state_are_recorded() {
         "/schedule cancel s1",
         "/inbox drop 1",
         "/nudge GUZ-1 keep going",
+        "/stage add owed ping w1",
+        "/stage done s1",
+        "/stage edit s1 new text",
     ] {
         assert!(recorded(&route(line)), "{line}");
     }
@@ -55,6 +58,9 @@ fn read_only_commands_and_messages_are_not_recorded() {
         "/help",
         "/config",
         "/diff",
+        "/stage",
+        "/stage add",
+        "/stage wipe",
         "@GUZ-1 hi",
         "hello",
     ] {
