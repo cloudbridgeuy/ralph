@@ -207,7 +207,7 @@ fn every_path_is_unique_and_absolute() {
     }
 }
 
-fn css() -> String {
+pub(super) fn css() -> String {
     String::from_utf8(bytes_of("/assets/app.css").to_vec()).unwrap()
 }
 
@@ -555,7 +555,7 @@ fn faint_and_line_strong_stay_off_text_colours() {
     }
 }
 
-fn assert_declares(css: &str, selector: &str, declaration: &str) {
+pub(super) fn assert_declares(css: &str, selector: &str, declaration: &str) {
     let body = rule_body(css, selector).unwrap_or_else(|| panic!("{selector} has no rule"));
     assert!(body.contains(declaration), "{selector} lacks {declaration}");
 }

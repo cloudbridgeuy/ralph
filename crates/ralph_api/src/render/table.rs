@@ -1,9 +1,42 @@
 use crate::render::escape;
 
+fn is_number(text: &str) -> bool {
+    let body = text.strip_prefix(['+', '-']).unwrap_or(text);
+    let body = body.strip_prefix('$').unwrap_or(body);
+    let body = body.strip_suffix('%').unwrap_or(body);
+    body.chars().any(|c| c.is_ascii_digit())
+        && body
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == ',' || c == '.')
+        && body.matches('.').count() <= 1
+}
+
+fn numeric_columns(headers: &[&str], rows: &[Vec<&str>]) -> Vec<bool> {
+    let width = rows.iter().map(Vec::len).fold(headers.len(), usize::max);
+    (0..width)
+        .map(|column| {
+            let mut cells = rows
+                .iter()
+                .filter_map(|row| row.get(column))
+                .filter(|cell| !cell.is_empty())
+                .peekable();
+            cells.peek().is_some() && cells.all(|cell| is_number(cell))
+        })
+        .collect()
+}
+
+fn cell(tag: &str, text: &str, numeric: bool) -> String {
+    let class = if numeric { " class=\"num\"" } else { "" };
+    let scope = if tag == "th" { " scope=\"col\"" } else { "" };
+    format!("<{tag}{scope}{class}>{}</{tag}>", escape(text))
+}
+
 pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
+    let numeric = numeric_columns(headers, rows);
     let head: String = headers
         .iter()
-        .map(|text| format!("<th scope=\"col\">{}</th>", escape(text)))
+        .enumerate()
+        .map(|(column, text)| cell("th", text, numeric[column]))
         .collect();
     let body: String = rows
         .iter()
@@ -13,16 +46,18 @@ pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
                 .iter()
                 .copied()
                 .chain(std::iter::repeat_n("", padding))
-                .map(|text| format!("<td>{}</td>", escape(text)))
+                .enumerate()
+                .map(|(column, text)| cell("td", text, numeric[column]))
                 .collect();
             format!("<tr>{cells}</tr>")
         })
         .collect();
     format!("<r-table><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></r-table>")
 }
+
 #[cfg(test)]
 mod tests {
-    use super::table;
+    use super::{is_number, numeric_columns, table};
     use crate::render::golden::{assert_golden, hostile_text, long_text};
 
     #[test]
@@ -77,6 +112,61 @@ mod tests {
         assert_golden(
             "table_very_long",
             &table(&[&long, "x"], &[vec![&long, &long]]),
+        );
+    }
+
+    #[test]
+    fn numbers_allow_a_sign_a_currency_mark_separators_and_a_percent() {
+        for text in ["0", "12", "-3", "+3", "1.20", "$1,200.50", "45%", "1,000"] {
+            assert!(is_number(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn words_and_near_numbers_are_not_numbers() {
+        for text in [
+            "", " ", "d1", "1e5", "NaN", "inf", "1.2.3x", "-", "$", "12 ms", ".",
+        ] {
+            assert!(!is_number(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_column_is_numeric_when_every_non_empty_cell_is_a_number() {
+        let rows = vec![vec!["a", "1", ""], vec!["b", "2.5", "3"]];
+        assert_eq!(
+            numeric_columns(&["k", "n", "m"], &rows),
+            vec![false, true, true]
+        );
+    }
+
+    #[test]
+    fn a_stray_number_in_a_text_column_keeps_the_column_left() {
+        let rows = vec![vec!["alpha"], vec!["42"], vec!["beta"]];
+        assert_eq!(numeric_columns(&["name"], &rows), vec![false]);
+    }
+
+    #[test]
+    fn an_all_empty_column_is_not_numeric() {
+        let rows = vec![vec![""], vec![""]];
+        assert_eq!(numeric_columns(&["x"], &rows), vec![false]);
+        assert_eq!(numeric_columns(&["x"], &[]), vec![false]);
+    }
+
+    #[test]
+    fn cells_past_the_header_count_get_their_own_column() {
+        let rows = vec![vec!["1", "2", "3"]];
+        assert_eq!(numeric_columns(&["a"], &rows), vec![true, true, true]);
+    }
+
+    #[test]
+    fn numeric_columns_align_right_in_head_and_body() {
+        assert_golden(
+            "table_numeric",
+            &table(
+                &["name", "cost"],
+                &[vec!["opus", "1.20"], vec!["7", "$3"], vec!["sonnet", ""]],
+            ),
         );
     }
 }

@@ -191,7 +191,14 @@ r-table td {
 r-table th {
   font-size: 12px;
   font-weight: 500;
+  color: var(--r-muted);
+  white-space: nowrap;
   border-bottom-color: var(--r-line-strong);
+}
+
+r-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 r-kv {
