@@ -85,7 +85,7 @@ name = "Solarized (dark)"
 
 ### `[nap]` and `[tag]` - Memory models
 
-`[nap]` controls nap summaries and thread merge digests. `[tag]` controls entry tagging. Each accepts `harness` (default `"claude"`; only `"claude"` is supported) and `model` (default `"haiku"` for nap and `"claude-haiku-5-5"` for tag). Model names must be nonempty and cannot start with an option. Settings merge per key between global and invoking store config. Invalid config prevents model calls.
+`[nap]` controls nap summaries and thread merge digests. `[tag]` controls entry tagging. Each accepts `harness` (`"claude"` or `"codex"`, default `"claude"`) and `model` (default `"haiku"` for nap and `"claude-haiku-5-5"` for tag). Model names must be nonempty and cannot start with an option. Codex requires an explicit valid model; inherited Haiku defaults are rejected. Models do not need an entry in the price table. Settings merge per key between global and invoking store config. Invalid config prevents model calls.
 
 ### `[theme]` - Syntax Highlighting
 

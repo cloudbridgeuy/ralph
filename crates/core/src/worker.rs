@@ -53,6 +53,7 @@ pub use claude::*;
 pub use claude_tmux::*;
 pub use claude_tmux_verify::*;
 pub use claude_verify::*;
+pub use codex::exec::ExecStream;
 pub use codex::*;
 pub use cursor_hooks::*;
 pub use cursor_model::{
