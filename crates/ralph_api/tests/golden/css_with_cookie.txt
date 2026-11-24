@@ -599,7 +599,7 @@ r-tree ul {
 
 r-tree li {
   display: grid;
-  grid-template-columns: 24ch 4ch 9ch minmax(0, 1fr);
+  grid-template-columns: 24ch 7ch 9ch minmax(0, 1fr);
   column-gap: 1.5ch;
   align-items: center;
   margin: 0;

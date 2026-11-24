@@ -611,7 +611,7 @@ mod tests {
         assert_declares(
             &css,
             row,
-            "grid-template-columns: 24ch 4ch 9ch minmax(0, 1fr);",
+            "grid-template-columns: 24ch 7ch 9ch minmax(0, 1fr);",
         );
         assert_declares(&css, row, "column-gap: 1.5ch;");
         assert_declares(&css, "r-tree li[role=\"none\"]", "display: block;");
