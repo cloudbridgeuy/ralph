@@ -239,6 +239,17 @@ fn a_successful_retry_focuses_a_treeitem_button_not_a_role_none_or_group() {
 }
 
 #[test]
+fn tree_keys_fall_back_to_the_parent_button_when_the_target_is_not_a_tree_button() {
+    let body = function_body(&script(), "onTreeKey");
+    assert!(
+        body.contains(
+            r#"event.target.closest('li[role="treeitem"] > button') || (inItem && parentButton(event.target))"#
+        ),
+        "{body}"
+    );
+}
+
+#[test]
 fn a_node_open_checks_the_generation_before_writing_the_hash() {
     let body = function_body(&script(), "openNode");
     assert!(body.contains("const mine = generation;"), "{body}");

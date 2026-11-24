@@ -220,7 +220,8 @@ function setActive(tree, button) {
 }
 
 function onTreeKey(tree, event) {
-  const button = event.target.closest('li[role="treeitem"] > button');
+  const inItem = event.target.closest('[role="treeitem"]');
+  const button = event.target.closest('li[role="treeitem"] > button') || (inItem && parentButton(event.target));
   if (!button) return;
   const items = visibleRows(tree);
   const at = items.indexOf(button.parentElement);
