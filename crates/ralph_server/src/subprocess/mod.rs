@@ -11,7 +11,7 @@ mod timed;
 mod timeout;
 mod types;
 
-pub use gate::{write_to, OutputGate, Stream};
+pub use gate::{write_to, Outcome, OutputGate, Stream};
 pub use session::{RunningCosts, Session};
 pub use spinner::{
     invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,

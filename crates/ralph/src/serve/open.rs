@@ -8,6 +8,7 @@ use ralph_core::chat::ReplyImages;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_process::SessionKey;
 use ralph_core::turn_event::TurnSink;
+use ralph_core::worker::Grants;
 use ralph_server::chat::claim::ChatClaim;
 use ralph_server::chat::fork::open_fork;
 use ralph_server::chat::host::{spawn_session_host, HostGuard};
@@ -16,6 +17,7 @@ use ralph_server::chat::serve_proto::{status_frame, ServerMsg};
 use ralph_server::chat::session::Session;
 use ralph_server::chat::socket::serve::SocketGuard;
 use ralph_server::chat::turn::TurnOutcome;
+use ralph_server::config::effective_grants;
 use ralph_server::subprocess::OutputGate;
 use ralph_server::warn::warn;
 use ralph_server::watches::CloseGuard;
@@ -132,7 +134,10 @@ pub(super) fn open_session(
         skills: &[],
         worktree_dir: None,
         custom_prompt,
-        output: serve_output(turn_sink),
+        output: serve_output(
+            turn_sink,
+            effective_grants(&settings.loaded.config.chat, store_dir),
+        ),
         events: Arc::new(|_| {}),
     })?;
     let idle = Arc::new(AtomicBool::new(true));
@@ -203,9 +208,9 @@ impl Sessions {
     }
 }
 
-fn serve_output(sink: Arc<dyn TurnSink>) -> TurnOutput {
+fn serve_output(sink: Arc<dyn TurnSink>, grants: Grants) -> TurnOutput {
     TurnOutput {
-        gate: Arc::new(OutputGate::new()),
+        gate: Arc::new(OutputGate::with_grants(grants)),
         sink,
         reply_images: ReplyImages::Text,
         show_tools: true,
@@ -220,7 +225,7 @@ mod tests {
 
     #[test]
     fn serve_output_keeps_tool_blocks_for_remote_clients() {
-        assert!(serve_output(Arc::new(SocketSink::default())).show_tools);
+        assert!(serve_output(Arc::new(SocketSink::default()), Grants::default()).show_tools);
     }
 
     #[test]

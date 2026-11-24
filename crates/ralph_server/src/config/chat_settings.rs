@@ -1,9 +1,11 @@
 use super::empty_submit;
+use super::permissions::permission_setting;
 use super::{ChatSection, EditorSetting, WORKER_QUIET_SECS};
 use ralph_core::chat::{ResetLimits, RESET_TOKENS, RESET_TURNS};
 use ralph_core::chat_send_it::{Limits, VerifyMode};
 use ralph_core::chat_skills::expand_home;
 use ralph_core::chat_status::EmptySubmit;
+use ralph_core::worker::PermissionMode;
 use std::path::{Path, PathBuf};
 
 fn positive_setting(value: Option<&toml::Value>, key: &str, default: u64) -> (u64, Option<String>) {
@@ -71,6 +73,10 @@ impl ChatSection {
                 .collect(),
             emphasis: self.emphasis,
         }
+    }
+
+    pub fn permissions_setting(&self) -> (PermissionMode, Option<String>) {
+        permission_setting("chat", self.permissions.as_ref())
     }
 
     pub fn worker_quiet_setting(&self) -> (u64, Option<String>) {
@@ -285,5 +291,23 @@ mod tests {
             }
         );
         assert_eq!(warnings.len(), 2);
+    }
+
+    #[test]
+    fn chat_permissions_parse_default_to_ask_and_warn_on_wrong_values() {
+        let parse = |text: &str| {
+            toml::from_str::<crate::config::AppConfig>(text)
+                .unwrap()
+                .chat
+                .permissions_setting()
+        };
+        assert_eq!(
+            parse("[chat]\npermissions = \"yolo\"\n"),
+            (PermissionMode::Yolo, None)
+        );
+        assert_eq!(parse(""), (PermissionMode::Ask, None));
+        let (mode, warning) = parse("[chat]\npermissions = \"auto\"\n");
+        assert_eq!(mode, PermissionMode::Ask);
+        assert!(warning.unwrap().starts_with("[chat]"));
     }
 }

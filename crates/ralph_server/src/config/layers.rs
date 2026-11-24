@@ -83,8 +83,9 @@ pub fn culprit_path<'a, E: PartialEq>(
         .map_or(fallback, |(path, _)| path)
 }
 
-const SECURITY_KEYS: [&str; 17] = [
+const SECURITY_KEYS: [&str; 18] = [
     "chat.permission_mode",
+    "chat.permissions",
     "chat.mcp_servers",
     "chat.user_settings",
     "chat.prompt_file",
@@ -287,6 +288,12 @@ mod tests {
             culprit_path(&[], Path::new("/f"), &"x".to_string(), error_by_key),
             Path::new("/f")
         );
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_chat_permissions() {
+        let layer = table("[chat]\npermissions = \"yolo\"\n");
+        assert_eq!(security_keys(&layer), ["chat.permissions"]);
     }
 
     #[test]

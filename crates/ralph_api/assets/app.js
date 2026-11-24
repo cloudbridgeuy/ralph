@@ -1,6 +1,7 @@
 "use strict";
 
-const ROUTE = "/memory";
+const SCREENS = ["/memory"];
+const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
 const PREVIEW = 80;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -157,8 +158,9 @@ function failure(error, retry) {
   return box;
 }
 
-function delayedSpinner(host) {
-  const spinner = el("r-spinner", null, { role: "status", "aria-label": "loading" });
+function delayedSpinner(host, label) {
+  const spinner = el("r-spinner", null, { role: "status" });
+  spinner.appendChild(el("span", label));
   const timer = setTimeout(() => host.appendChild(spinner), SPINNER_DELAY_MS);
   return () => {
     clearTimeout(timer);
@@ -266,7 +268,7 @@ function setExpanded(item, expanded) {
 }
 
 async function fillRendered(row, markdown) {
-  const stop = delayedSpinner(row);
+  const stop = delayedSpinner(row, "Loading text");
   try {
     setRendered(row, (await renderMarkdown(markdown)).html);
   } catch (error) {
@@ -296,7 +298,7 @@ async function openNode(item, ctx) {
   const group = item.querySelector(':scope > ul[role="group"]');
   const level = Number(item.getAttribute("aria-level")) + 1;
   const total = Number(item.closest("r-tree").dataset.total);
-  const stop = delayedSpinner(group);
+  const stop = delayedSpinner(group, "Loading entries");
   try {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
     stop();
@@ -366,10 +368,8 @@ function buildTree(roots, ctx, total) {
 
 function kv(pairs) {
   const list = el("dl");
-  pairs.forEach(([name, value]) => {
-    append(list, append(el("div"), el("dt", name), el("dd", value)));
-  });
-  return append(el("r-kv"), list);
+  pairs.forEach(([name, value]) => append(list, append(el("div"), el("dt", name), el("dd", value))));
+  return append(el("r-kv", null, { two: "" }), list);
 }
 
 function threadSelect(threads, current) {
@@ -424,6 +424,7 @@ async function loadMemory(state) {
   ]);
   const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : clampAfter(state.after, roots.entries, PAGE_SIZE);
   const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
+  document.getElementById("store").textContent = threads.store;
   return { threads: threads.threads, roots, page, after };
 }
 
@@ -445,6 +446,13 @@ function drawMemory(main, hashState, data) {
   append(box, empty ? el("r-empty", "no entries yet") : entriesTable(data.page), pager(data.page, state));
 }
 
+function markCurrentScreen(route) {
+  for (const link of document.querySelectorAll("nav a")) {
+    if (link.getAttribute("href") === "#" + route) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+}
+
 let generation = 0;
 
 async function show() {
@@ -452,12 +460,13 @@ async function show() {
   const main = document.getElementById("main");
   const mine = ++generation;
   const focusKey = document.activeElement && document.activeElement.dataset.key;
-  if (state.route !== ROUTE) {
-    main.replaceChildren(el("p", "No screens yet.", { class: "empty" }));
+  if (!SCREENS.includes(state.route)) {
+    location.replace(buildHash(state));
     return;
   }
+  markCurrentScreen(state.route);
   main.replaceChildren();
-  const stop = delayedSpinner(main);
+  const stop = delayedSpinner(main, "Loading memory");
   try {
     const data = await loadMemory(state);
     if (mine !== generation) return;

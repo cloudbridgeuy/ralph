@@ -261,3 +261,12 @@ fn the_script_makes_svg_with_the_svg_namespace_and_no_inline_style() {
     assert!(!body.contains("data:"));
     assert!(!body.contains("setAttribute(\"style\""));
 }
+
+#[test]
+fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
+    let body = script();
+    assert!(body.contains("function kv(pairs)"));
+    assert!(body.contains("el(\"r-kv\", null, { two: \"\" })"));
+    assert!(body.contains("String(data.roots.entries)]]))"));
+    assert!(!body.contains("source"));
+}
