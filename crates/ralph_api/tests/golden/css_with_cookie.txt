@@ -455,9 +455,15 @@ r-error[compact] .next {
   background: var(--r-surface);
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+}
+
 .btn:disabled {
   color: var(--r-muted);
   border-color: var(--r-line);
+  cursor: default;
 }
 
 r-spinner {

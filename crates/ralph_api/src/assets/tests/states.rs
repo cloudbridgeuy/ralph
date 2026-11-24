@@ -247,3 +247,15 @@ fn a_node_open_checks_the_generation_before_writing_the_hash() {
     assert!(guard.is_some() && write.is_some(), "{body}");
     assert!(guard < write, "{body}");
 }
+
+#[test]
+fn btn_has_the_shared_focus_ring_and_a_default_cursor_when_disabled() {
+    let css = css();
+    assert_declares(
+        &css,
+        ".btn:focus-visible",
+        "outline: 2px solid var(--r-accent);",
+    );
+    assert_declares(&css, ".btn:focus-visible", "outline-offset: 2px;");
+    assert_declares(&css, ".btn:disabled", "cursor: default;");
+}
