@@ -1,8 +1,8 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    allowed_tools, mcptools_decision, Action, ActivityMark, BlockedContent, McptoolsDecision,
-    PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal, TurnEnd, Turns,
-    VersionGate, SERVER_NAME,
+    allowed_tools, mcptools_decision, offer_allow_always, Action, ActivityMark, BlockedContent,
+    McptoolsDecision, PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal,
+    TurnEnd, Turns, VersionGate, ALLOW_ALWAYS, SERVER_NAME,
 };
 use crate::chat::{mcptools_ask_settings, MCPTOOLS_SERVER};
 use crate::stream::{interrupt_line, result_is_error};
@@ -101,7 +101,7 @@ fn permission(control: &Value) -> Option<ClaudePermission> {
         name: name.to_string(),
         kind: kind.to_string(),
     };
-    Some(ClaudePermission {
+    Some(offer_allow_always(ClaudePermission {
         content: BlockedContent {
             request_id: request_id.to_string(),
             tool: tool.to_string(),
@@ -113,11 +113,11 @@ fn permission(control: &Value) -> Option<ClaudePermission> {
             pending: Vec::new(),
         },
         input,
-    })
+    }))
 }
 
 pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> String {
-    let decision = if option_id == ALLOW_ONCE {
+    let decision = if matches!(option_id, ALLOW_ONCE | ALLOW_ALWAYS) {
         json!({"behavior": "allow", "updatedInput": input})
     } else {
         json!({"behavior": "deny", "message": "The person denied this tool call."})

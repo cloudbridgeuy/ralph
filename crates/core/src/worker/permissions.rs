@@ -28,6 +28,19 @@ pub enum McptoolsDecision {
     Other,
 }
 
+pub const ALLOW_ALWAYS: &str = "allow_always";
+
+pub fn offer_allow_always(mut ask: ClaudePermission) -> ClaudePermission {
+    if matches!(mcptools_decision(&ask), McptoolsDecision::Elevated(_)) {
+        ask.content.options.push(PermissionOption {
+            option_id: ALLOW_ALWAYS.to_string(),
+            name: "Always allow".to_string(),
+            kind: "allow_always".to_string(),
+        });
+    }
+    ask
+}
+
 pub fn mcptools_decision(ask: &ClaudePermission) -> McptoolsDecision {
     if !matches!(
         ask.content.tool.as_str(),
@@ -685,5 +698,32 @@ mod tests {
             blocked_notice(None, "w", Some(&content("ls"))),
             "w blocked: mcp__mcptools__execute ls request r options "
         );
+    }
+
+    #[test]
+    fn only_elevated_mcptools_asks_offer_allow_always_and_it_allows() {
+        let ids = |tool: &str, input: serde_json::Value| -> Vec<String> {
+            offer_allow_always(ask(tool, input))
+                .content
+                .options
+                .iter()
+                .map(|option| option.option_id.clone())
+                .collect()
+        };
+        assert_eq!(
+            ids(
+                "mcp__mcptools__execute",
+                serde_json::json!({"allowWrites": true})
+            ),
+            ["allow_always"]
+        );
+        assert!(ids("Bash", serde_json::json!({"allowWrites": true})).is_empty());
+        let allow: serde_json::Value = serde_json::from_str(&crate::worker::permission_response(
+            "r1",
+            ALLOW_ALWAYS,
+            &serde_json::json!({}),
+        ))
+        .unwrap();
+        assert_eq!(allow["response"]["response"]["behavior"], "allow");
     }
 }
