@@ -147,8 +147,9 @@ function setRendered(host, html) {
   host.innerHTML = html;
 }
 
-function emptyState(what, compact) {
+function emptyState(what, compact, quiet) {
   const box = el("r-empty", null, { role: "status" });
+  if (quiet) box.removeAttribute("role");
   if (compact) box.setAttribute("compact", "");
   return append(box, el("span", what, { class: "what" }));
 }
@@ -489,7 +490,7 @@ function drawMemory(main, hashState, data) {
     if (state.node) expandTo(list, state.node, ctx);
   }
   append(box, el("r-rule"), el("span", "recent entries", { class: "title" }));
-  append(box, empty ? emptyState("no entries yet") : entriesTable(data.page), pager(data.page, state));
+  append(box, empty ? emptyState("no entries yet", false, true) : entriesTable(data.page), pager(data.page, state));
 }
 
 function markCurrentScreen(route) {

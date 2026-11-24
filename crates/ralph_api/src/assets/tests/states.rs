@@ -201,7 +201,13 @@ fn empty_states_use_one_helper_with_compact_and_full_forms() {
     assert_eq!(js.matches(r#"el("r-empty""#).count(), 1);
     assert!(js.contains(r#"emptyState("summary pending", true)"#));
     assert!(js.contains(r#"emptyState("no entries in this page", true)"#));
-    assert_eq!(js.matches(r#"emptyState("no entries yet")"#).count(), 2);
+    assert_eq!(js.matches(r#"emptyState("no entries yet")"#).count(), 1);
+    assert_eq!(
+        js.matches(r#"emptyState("no entries yet", false, true)"#)
+            .count(),
+        1
+    );
+    assert!(function_body(&js, "emptyState").contains(r#"if (quiet) box.removeAttribute("role");"#));
     assert!(function_body(&js, "emptyState").contains(r#"class: "what""#));
 }
 
