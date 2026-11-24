@@ -33,7 +33,7 @@ body {
 }
 
 .brand {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .note,
@@ -119,7 +119,7 @@ r-box[shape="heavy"] {
 }
 
 r-box .title {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-rule {
@@ -148,7 +148,7 @@ r-table td {
 
 r-table th {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   border-bottom-color: var(--r-line-strong);
 }
 
@@ -181,6 +181,7 @@ r-kv dd {
 r-pill {
   display: inline-flex;
   font-size: 12px;
+  font-weight: 500;
   align-items: center;
   gap: 0.5ch;
   max-width: 100%;
@@ -209,7 +210,7 @@ r-status {
 }
 
 r-status .mark {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-pill[tone="ok"],
@@ -298,7 +299,7 @@ r-prose h5,
 r-prose h6 {
   margin: 0.75rem 0 0.25rem;
   font-size: 1em;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-prose h1 {
@@ -324,7 +325,7 @@ r-prose p {
 }
 
 r-prose strong {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-prose em {
@@ -382,7 +383,7 @@ r-prose td {
 
 r-prose th {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   border-bottom-color: var(--r-line-strong);
 }
 
@@ -441,7 +442,7 @@ r-code .t-string {
 
 r-code .t-keyword {
   color: var(--r-ansi-5);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-code .t-constant {
@@ -454,7 +455,7 @@ r-code .t-entity {
 
 r-code .t-storage {
   color: var(--r-ansi-5);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-code .t-support {
@@ -474,7 +475,7 @@ r-code .t-markup {
 }
 
 r-code .t-markup.t-bold {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 r-code .t-markup.t-italic {
@@ -548,7 +549,7 @@ r-tree button {
   background: none;
   color: inherit;
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
   text-align: start;
   overflow-wrap: anywhere;
   cursor: pointer;

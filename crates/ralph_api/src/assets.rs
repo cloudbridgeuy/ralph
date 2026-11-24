@@ -338,4 +338,47 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn font_weights_stay_on_the_three_step_scale() {
+        let css = css();
+        let weights = declarations(&css, "font-weight:");
+        assert!(!weights.is_empty());
+        for weight in weights {
+            assert!(
+                [
+                    "font-weight: 100 900;",
+                    "font-weight: 400;",
+                    "font-weight: 500;",
+                    "font-weight: 600;"
+                ]
+                .contains(&weight),
+                "{weight}"
+            );
+        }
+        assert!(!css.contains("font-weight: 700"));
+    }
+
+    #[test]
+    fn headers_and_pills_weigh_500() {
+        let css = css();
+        for selector in ["r-table th", "r-prose th", "r-pill"] {
+            assert_declares(&css, selector, "font-weight: 500;");
+        }
+    }
+
+    #[test]
+    fn names_and_titles_weigh_600() {
+        let css = css();
+        for selector in [
+            ".brand",
+            "r-box .title",
+            "r-status .mark",
+            "r-prose strong",
+            "r-tree button",
+            "r-prose h1,\nr-prose h2,\nr-prose h3,\nr-prose h4,\nr-prose h5,\nr-prose h6",
+        ] {
+            assert_declares(&css, selector, "font-weight: 600;");
+        }
+    }
 }
