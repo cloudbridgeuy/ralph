@@ -568,6 +568,11 @@ r-tree li {
   padding: 2px 0;
 }
 
+button,
+select {
+  font: inherit;
+}
+
 r-tree button {
   display: inline;
   margin: 0;
