@@ -145,38 +145,15 @@ mod tests {
     use super::*;
     use crate::tokens::Rgb;
 
-    const DARK_HEX: [&str; 16] = [
-        "#0c0c0c", "#c50f1f", "#13a10e", "#c19c00", "#0037da", "#881798", "#3a96dd", "#cccccc",
-        "#767676", "#e74856", "#16c60c", "#f9f1a5", "#3b78ff", "#b4009e", "#61d6d6", "#f2f2f2",
-    ];
-
-    fn parse(hex: &str) -> Rgb {
-        let n = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
-        Rgb {
-            r: n(1),
-            g: n(3),
-            b: n(5),
-        }
-    }
-
-    fn dark_table() -> [Rgb; 16] {
-        std::array::from_fn(|i| parse(DARK_HEX[i]))
-    }
-
-    fn light_table() -> [Rgb; 16] {
-        let mut t = dark_table();
-        t[0] = parse("#cccccc");
-        t[7] = parse("#0c0c0c");
-        t[8] = parse("#f2f2f2");
-        t[15] = parse("#767676");
-        t
-    }
-
     fn table_for(theme: Theme) -> [Rgb; 16] {
-        match theme {
-            Theme::Dark => dark_table(),
-            Theme::Light => light_table(),
-        }
+        let web = ralph_server::config::WebSection::default();
+        let (name, entries) = match theme {
+            Theme::Dark => ("ansi_dark", web.ansi_dark),
+            Theme::Light => ("ansi_light", web.ansi_light),
+        };
+        ralph_server::config::parse_ansi_table(name, &entries)
+            .unwrap()
+            .map(|[r, g, b]| Rgb { r, g, b })
     }
 
     const THEMES: [Theme; 2] = [Theme::Dark, Theme::Light];
