@@ -1,5 +1,5 @@
 use super::{group, text};
-use crate::render::{error, tree, Cells, Extent, TreeNode};
+use crate::render::{error, tree, Cells, Extent, Summary, TreeNode};
 
 const HOSTILE: &str = "</r-tree><script>alert(\"x\")</script> 'quote' & \"double\"";
 
@@ -12,7 +12,7 @@ fn spanned(mut node: TreeNode<'_>, lo: usize, hi: usize, total: usize) -> TreeNo
 
 fn cells(summary: Option<&str>) -> Cells<'_> {
     Cells {
-        summary,
+        summary: summary.map_or(Summary::Empty, Summary::Text),
         ..Cells::default()
     }
 }
@@ -126,6 +126,29 @@ fn dense() -> Vec<TreeNode<'static>> {
     )]
 }
 
+fn pending() -> Vec<TreeNode<'static>> {
+    let waiting = |label| TreeNode::Branch {
+        label,
+        cells: Cells {
+            count: Some(8),
+            summary: Summary::Pending,
+            ..Cells::default()
+        },
+        expanded: true,
+        children: vec![],
+    };
+    vec![
+        waiting("0-7"),
+        TreeNode::Leaf {
+            label: "#8 user",
+            cells: Cells {
+                summary: Summary::Text("a one-entry block shows its text"),
+                ..Cells::default()
+            },
+        },
+    ]
+}
+
 pub(super) fn trees(very_long_summary: &str) -> String {
     let unbroken = "memory-summary-".repeat(34);
     let failed = vec![
@@ -143,7 +166,7 @@ pub(super) fn trees(very_long_summary: &str) -> String {
             label: very_long_summary,
             cells: Cells {
                 count: Some(1200),
-                summary: Some(very_long_summary),
+                summary: Summary::Text(very_long_summary),
                 ..Cells::default()
             },
             expanded: true,
@@ -154,7 +177,7 @@ pub(super) fn trees(very_long_summary: &str) -> String {
         label: HOSTILE,
         cells: Cells {
             count: Some(1),
-            summary: Some(HOSTILE),
+            summary: Summary::Text(HOSTILE),
             ..Cells::default()
         },
         expanded: true,
@@ -171,6 +194,7 @@ pub(super) fn trees(very_long_summary: &str) -> String {
             ("collapsed", tree(&earlier(false))),
             ("expanded", tree(&earlier(true))),
             ("hostile", tree(&hostile)),
+            ("pending", tree(&pending())),
             (
                 "focus",
                 format!(
@@ -231,6 +255,7 @@ mod tests {
                     "collapsed",
                     "expanded",
                     "hostile",
+                    "pending",
                     "focus"
                 ]
             );
@@ -294,7 +319,8 @@ mod tests {
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
                     .collect();
                 let allowed = [
-                    "ul", "li", "button", "span", "svg", "path", "rect", "r-empty", "r-error", "p",
+                    "ul", "li", "button", "span", "svg", "path", "rect", "r-pill", "r-empty",
+                    "r-error", "p",
                 ];
                 assert!(allowed.contains(&name.as_str()), "{name}");
             }

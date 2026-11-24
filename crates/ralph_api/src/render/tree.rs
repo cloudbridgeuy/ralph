@@ -1,4 +1,4 @@
-use crate::render::{empty, escape};
+use crate::render::{empty, escape, pill, PillShape, Tone};
 
 /// A half-open range of entries `lo..hi` inside a thread of `total` entries.
 pub struct Extent {
@@ -8,10 +8,18 @@ pub struct Extent {
 }
 
 #[derive(Default)]
+pub enum Summary<'a> {
+    #[default]
+    Empty,
+    Text(&'a str),
+    Pending,
+}
+
+#[derive(Default)]
 pub struct Cells<'a> {
     pub count: Option<usize>,
     pub extent: Option<Extent>,
-    pub summary: Option<&'a str>,
+    pub summary: Summary<'a>,
 }
 
 pub enum TreeNode<'a> {
@@ -64,9 +72,21 @@ fn extent_html(extent: Option<&Extent>) -> String {
     }
 }
 
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn summary_html(summary: &Summary) -> String {
+    match summary {
+        Summary::Empty => String::new(),
+        Summary::Text(text) => escape(&one_line(text)),
+        Summary::Pending => pill(Tone::Neutral, PillShape::Square, None, "pending"),
+    }
+}
+
 fn cells_html(cells: &Cells) -> String {
     let count = cells.count.map(|n| n.to_string()).unwrap_or_default();
-    let summary = cells.summary.map(escape).unwrap_or_default();
+    let summary = summary_html(&cells.summary);
     format!(
         "<span class=\"n\">{count}</span>{}<span class=\"sum\">{summary}</span>",
         extent_html(cells.extent.as_ref())
@@ -119,7 +139,7 @@ pub fn tree(nodes: &[TreeNode]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extent_geometry, tree, Cells, Extent, TreeNode};
+    use super::{extent_geometry, one_line, tree, Cells, Extent, Summary, TreeNode};
     use crate::render::golden::{assert_golden, hostile_text, long_text};
 
     fn leaf<'a>(label: &'a str) -> TreeNode<'a> {
@@ -149,7 +169,7 @@ mod tests {
             label: "0-31",
             cells: Cells {
                 count: Some(32),
-                summary: Some("Early work"),
+                summary: Summary::Text("Early work"),
                 ..Cells::default()
             },
             expanded: true,
@@ -157,7 +177,7 @@ mod tests {
                 label: "#4 user",
                 cells: Cells {
                     count: None,
-                    summary: Some("hello"),
+                    summary: Summary::Text("hello"),
                     ..Cells::default()
                 },
             }],
@@ -171,7 +191,7 @@ mod tests {
             label: "0-31",
             cells: Cells {
                 count: Some(32),
-                summary: Some("Early work"),
+                summary: Summary::Text("Early work"),
                 ..Cells::default()
             },
             expanded: true,
@@ -258,7 +278,7 @@ mod tests {
             label: hostile_text(),
             cells: Cells {
                 count: Some(1),
-                summary: Some(hostile_text()),
+                summary: Summary::Text(hostile_text()),
                 ..Cells::default()
             },
             expanded: true,
@@ -276,7 +296,7 @@ mod tests {
             label: &long,
             cells: Cells {
                 count: Some(1),
-                summary: Some(&long),
+                summary: Summary::Text(&long),
                 ..Cells::default()
             },
             expanded: true,
@@ -365,7 +385,7 @@ mod tests {
             label: "0-31",
             cells: Cells {
                 count: Some(32),
-                summary: Some("Early work"),
+                summary: Summary::Text("Early work"),
                 extent: Some(extent(0, 32, 45)),
             },
             expanded: true,
@@ -375,5 +395,64 @@ mod tests {
             }],
         }];
         assert_golden("tree_extent", &tree(&nodes));
+    }
+
+    #[test]
+    fn a_summary_is_one_line_whatever_the_source_text() {
+        assert_eq!(one_line("a\n\n  b\t c "), "a b c");
+        assert_eq!(one_line("\n"), "");
+        assert_eq!(one_line("# Title\n- item"), "# Title - item");
+    }
+
+    #[test]
+    fn a_multi_line_summary_renders_on_one_line() {
+        let html = tree(&[TreeNode::Leaf {
+            label: "x",
+            cells: Cells {
+                summary: Summary::Text("first\nsecond"),
+                ..Cells::default()
+            },
+        }]);
+        assert!(html.contains("<span class=\"sum\">first second</span>"));
+    }
+
+    #[test]
+    fn a_pending_node_shows_one_neutral_pill_and_no_sentence() {
+        let html = tree(&[TreeNode::Leaf {
+            label: "x",
+            cells: Cells {
+                summary: Summary::Pending,
+                ..Cells::default()
+            },
+        }]);
+        assert!(html.contains(
+            "<span class=\"sum\"><r-pill tone=\"neutral\" shape=\"square\"><span>pending</span></r-pill></span>"
+        ));
+        assert!(!html.contains("summary pending"));
+        assert_eq!(html.matches("<r-pill").count(), 1);
+    }
+
+    #[test]
+    fn rows_with_text_pending_and_no_summary() {
+        let nodes = [TreeNode::Branch {
+            label: "0-7",
+            cells: Cells {
+                count: Some(8),
+                summary: Summary::Pending,
+                ..Cells::default()
+            },
+            expanded: true,
+            children: vec![
+                TreeNode::Leaf {
+                    label: "#0 user",
+                    cells: Cells {
+                        summary: Summary::Text("hello"),
+                        ..Cells::default()
+                    },
+                },
+                leaf("#1 assistant"),
+            ],
+        }];
+        assert_golden("tree_pending", &tree(&nodes));
     }
 }
