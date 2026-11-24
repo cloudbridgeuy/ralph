@@ -149,6 +149,38 @@ fn health_status(port: u16, token: &str) -> u16 {
     read_status(&mut client)
 }
 
+const POLL_DEADLINE: Duration = Duration::from_secs(5);
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+fn poll_until_served(mut probe: impl FnMut() -> u16, deadline: Duration) -> (u16, usize) {
+    let started = Instant::now();
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let status = probe();
+        if status != 503 || started.elapsed() >= deadline {
+            return (status, attempts);
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+#[test]
+fn polling_is_bounded_by_the_deadline_over_the_interval() {
+    let deadline = Duration::from_millis(100);
+    let (status, attempts) = poll_until_served(|| 503, deadline);
+    assert_eq!(status, 503);
+    let cap = (deadline.as_millis() / POLL_INTERVAL.as_millis()) as usize + 1;
+    assert!(attempts <= cap, "{attempts} attempts exceed the cap {cap}");
+}
+
+#[test]
+fn polling_stops_at_the_first_non_503() {
+    let mut replies = vec![503, 503, 200].into_iter().rev().collect::<Vec<_>>();
+    let (status, attempts) = poll_until_served(|| replies.pop().unwrap(), POLL_DEADLINE);
+    assert_eq!((status, attempts), (200, 3));
+}
+
 #[test]
 fn stalled_clients_are_closed_by_the_read_timeout_and_free_their_slots() {
     let (port, token, stop, thread) = start_limited(Duration::from_millis(200));
@@ -173,15 +205,8 @@ fn stalled_clients_are_closed_by_the_read_timeout_and_free_their_slots() {
             "server did not close a stalled client"
         );
     }
-    let mut status = 503;
-    for _ in 0..100_000 {
-        status = health_status(port, &token);
-        if status != 503 {
-            break;
-        }
-        std::thread::yield_now();
-    }
-    assert_eq!(status, 200);
+    let (status, _) = poll_until_served(|| health_status(port, &token), POLL_DEADLINE);
+    assert_eq!(status, 200, "slots were not freed before the deadline");
     stop.store(true, Ordering::SeqCst);
     thread.join().unwrap();
 }
