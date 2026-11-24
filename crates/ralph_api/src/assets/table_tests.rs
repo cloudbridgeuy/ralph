@@ -83,3 +83,53 @@ fn a_state_row_pads_its_cell_on_the_grid_and_has_no_hover_fill() {
         "background: none;",
     );
 }
+
+fn narrow_block(css: &str) -> &str {
+    let start = css.find("@media (max-width: 760px) {").unwrap();
+    let rest = &css[start..];
+    let end = rest.find("\n}\n").unwrap();
+    &rest[..end]
+}
+
+#[test]
+fn the_stackable_table_stacks_at_760px_or_narrower() {
+    let css = css();
+    let block = narrow_block(&css);
+    for needle in [
+        "r-table.stackable thead {\n    display: none;",
+        "r-table.stackable tbody tr:not(.state) {\n    display: grid;",
+        "r-table.stackable td.clip {\n    grid-column: 1 / -1;",
+    ] {
+        assert!(block.contains(needle), "{needle}");
+    }
+}
+
+#[test]
+fn the_stacked_text_line_wraps_to_two_lines_never_per_character() {
+    let css = css();
+    let block = narrow_block(&css);
+    assert!(block.contains("-webkit-line-clamp: 2;"));
+    assert!(block.contains("white-space: normal;"));
+    assert!(!block.contains("overflow-wrap: anywhere"));
+    assert!(!block.contains("word-break: break-all"));
+}
+
+#[test]
+fn stacked_rows_keep_the_states_and_pad_on_the_grid() {
+    let css = css();
+    let block = narrow_block(&css);
+    assert!(block.contains("padding: 10px 1ch 10px 0;"));
+    assert!(block.contains("r-table.stackable tbody tr.open"));
+    assert!(block.contains("r-table.stackable tbody tr[aria-selected=\"true\"]"));
+    assert!(block.contains("var(--r-hover)"));
+    assert!(!block.contains("5px"));
+}
+
+#[test]
+fn only_the_stackable_class_changes_a_table_at_760px() {
+    let css = css();
+    let block = narrow_block(&css);
+    for line in block.lines().filter(|line| line.contains("r-table")) {
+        assert!(line.contains("r-table.stackable"), "{line}");
+    }
+}

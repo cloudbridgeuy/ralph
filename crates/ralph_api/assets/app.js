@@ -415,7 +415,7 @@ function entriesTable(page) {
       ),
     );
   });
-  return append(el("r-table"), append(el("table"), append(el("thead"), head), body));
+  return append(el("r-table", null, { class: "stackable" }), append(el("table"), append(el("thead"), head), body));
 }
 
 function pager(page, state) {

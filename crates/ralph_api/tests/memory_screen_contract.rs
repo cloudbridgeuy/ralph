@@ -294,3 +294,10 @@ fn an_empty_page_is_a_state_row_inside_the_table() {
     assert!(body.contains(r#"colspan: String(columns)"#));
     assert!(!body.contains(r#"return el("r-empty", "no entries in this page")"#));
 }
+
+#[test]
+fn only_the_entries_table_is_stackable() {
+    let body = script();
+    assert!(body.contains(r#"el("r-table", null, { class: "stackable" })"#));
+    assert_eq!(body.matches("stackable").count(), 1);
+}
