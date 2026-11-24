@@ -23,8 +23,8 @@ X-Content-Type-Options: nosniff
 <span class="badge">read-only</span>
 </header>
 <nav class="nav" aria-label="Screens">
-<a href="#/memory"><span class="n">1</span>memory</a>
-<a href="/catalogue"><span class="n">2</span>catalogue</a>
+<a href="#/memory"><span class="n" aria-hidden="true">1</span>memory</a>
+<a href="/catalogue"><span class="n" aria-hidden="true">2</span>catalogue</a>
 </nav>
 <main id="main"></main>
 </body>

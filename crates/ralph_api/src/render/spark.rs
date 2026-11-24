@@ -108,7 +108,7 @@ fn wrap(values: &[f64], width: f64, height: f64, body: &str) -> Option<String> {
     let (min, max) = bounds(values)?;
     let last = values.last().copied()?;
     Some(format!(
-        "<r-spark><svg class=\"spark\" role=\"img\" aria-label=\"min {}, max {}, last {}\" viewBox=\"0 0 {} {}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">{body}</svg><b>{}</b></r-spark>",
+        "<r-spark><svg class=\"spark\" role=\"img\" aria-label=\"min {}, max {}, last {}\" viewBox=\"0 0 {} {}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">{body}</svg><b aria-hidden=\"true\">{}</b></r-spark>",
         number(min),
         number(max),
         number(last),
@@ -261,7 +261,10 @@ mod tests {
             html.contains("<circle class=\"last\" cx=\"100\" cy=\"10\""),
             "{html}"
         );
-        assert!(html.ends_with("<b>2</b></r-spark>"), "{html}");
+        assert!(
+            html.ends_with("<b aria-hidden=\"true\">2</b></r-spark>"),
+            "{html}"
+        );
         assert_golden("spark_last_value", &html);
     }
 
@@ -276,15 +279,18 @@ mod tests {
     fn a_single_value_ends_its_line_at_the_right_edge() {
         let html = svg(&[5.0]);
         assert!(html.contains("cx=\"100\" cy=\"10\""), "{html}");
-        assert!(html.ends_with("<b>5</b></r-spark>"), "{html}");
+        assert!(
+            html.ends_with("<b aria-hidden=\"true\">5</b></r-spark>"),
+            "{html}"
+        );
     }
 
     #[test]
     fn the_last_value_uses_the_short_number_format() {
-        assert!(svg(&[1.0, 1.5]).ends_with("<b>1.5</b></r-spark>"));
-        assert!(svg(&[1.0, -0.0]).ends_with("<b>0</b></r-spark>"));
-        assert!(svg(&[1.0, 1234567.0]).ends_with("<b>1234567</b></r-spark>"));
-        assert!(svg(&[1.0, 1e-9]).ends_with("<b>1.00e-9</b></r-spark>"));
+        assert!(svg(&[1.0, 1.5]).ends_with("<b aria-hidden=\"true\">1.5</b></r-spark>"));
+        assert!(svg(&[1.0, -0.0]).ends_with("<b aria-hidden=\"true\">0</b></r-spark>"));
+        assert!(svg(&[1.0, 1234567.0]).ends_with("<b aria-hidden=\"true\">1234567</b></r-spark>"));
+        assert!(svg(&[1.0, 1e-9]).ends_with("<b aria-hidden=\"true\">1.00e-9</b></r-spark>"));
     }
 
     #[test]
@@ -292,7 +298,10 @@ mod tests {
         let html = spark_bars_svg(&[1.0, 3.0, 2.0], 100.0, 20.0).unwrap();
         assert_eq!(html.matches("<rect class=\"bar\"").count(), 2, "{html}");
         assert_eq!(html.matches("<rect class=\"bar hi\"").count(), 1, "{html}");
-        assert!(html.ends_with("<b>2</b></r-spark>"), "{html}");
+        assert!(
+            html.ends_with("<b aria-hidden=\"true\">2</b></r-spark>"),
+            "{html}"
+        );
         assert_golden("spark_bars", &html);
     }
 

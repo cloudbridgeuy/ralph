@@ -140,8 +140,8 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                "<span class=\"n\">1</span>memory",
-                "<span class=\"n\">2</span>catalogue"
+                "<span class=\"n\" aria-hidden=\"true\">1</span>memory",
+                "<span class=\"n\" aria-hidden=\"true\">2</span>catalogue"
             ]
         );
     }
@@ -271,10 +271,13 @@ mod tests {
     fn spark_baseline_area_and_last_point_use_existing_roles() {
         let css = css();
         assert_declares(&css, "r-spark .base", "stroke: var(--r-line-strong);");
-        assert_declares(&css, "r-spark .area", "fill: var(--r-ink);");
-        assert_declares(&css, "r-spark .area", "fill-opacity: 0.08;");
+        assert_declares(&css, "r-spark .area", "fill: var(--r-hover);");
+        assert!(!rule_body(&css, "r-spark .area")
+            .unwrap()
+            .contains("fill-opacity"));
         assert_declares(&css, "r-spark .area", "stroke: none;");
         assert_declares(&css, "r-spark .last", "fill: var(--r-accent);");
+        assert_declares(&css, "r-spark .last", "stroke: none;");
     }
 
     #[test]
@@ -283,6 +286,7 @@ mod tests {
         assert_declares(&css, "r-spark b", "font-weight: 600;");
         assert_declares(&css, "r-spark b", "color: var(--r-ink-strong);");
         assert_declares(&css, "r-spark .bar", "fill: var(--r-muted);");
+        assert_declares(&css, "r-spark .bar", "stroke: none;");
         assert_declares(&css, "r-spark .bar.hi", "fill: var(--r-accent);");
     }
 
@@ -847,12 +851,13 @@ mod tests {
     }
 
     #[test]
-    fn the_kv_source_is_12px_right_aligned_muted_and_ink_when_set() {
+    fn the_kv_source_is_12px_right_aligned_muted_and_medium_weight_when_set() {
         let css = css();
         assert_declares(&css, "r-kv dd.src", "font-size: 12px;");
         assert_declares(&css, "r-kv dd.src", "text-align: right;");
         assert_declares(&css, "r-kv dd.src", "color: var(--r-muted);");
-        assert_declares(&css, "r-kv dd.src.set", "color: var(--r-ink);");
+        assert_declares(&css, "r-kv dd.src.set", "color: var(--r-muted);");
+        assert_declares(&css, "r-kv dd.src.set", "font-weight: 500;");
         assert!(!rule_body(&css, "r-kv dd.src")
             .unwrap()
             .contains("--r-faint"));

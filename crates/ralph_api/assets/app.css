@@ -226,7 +226,8 @@ r-kv dd.src {
 }
 
 r-kv dd.src.set {
-  color: var(--r-ink);
+  color: var(--r-muted);
+  font-weight: 500;
 }
 
 r-kv[two] dl {
@@ -404,8 +405,7 @@ r-spark .line {
 }
 
 r-spark .area {
-  fill: var(--r-ink);
-  fill-opacity: 0.08;
+  fill: var(--r-hover);
   stroke: none;
 }
 
