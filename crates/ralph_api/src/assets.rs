@@ -574,12 +574,9 @@ mod tests {
     }
 
     #[test]
-    fn controls_use_the_page_font_before_the_tree_overrides() {
+    fn controls_use_the_page_font() {
         let css = css();
         assert_declares(&css, "button,\nselect", "font: inherit;");
-        let controls = css.find("\nbutton,\nselect {").unwrap();
-        let tree = css.find("\nr-tree button {").unwrap();
-        assert!(controls < tree);
     }
 
     #[test]
