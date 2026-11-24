@@ -1,30 +1,43 @@
 use super::{group, text};
-use crate::render::{error, tree, TreeNode};
+use crate::render::{error, tree, Cells, TreeNode};
 
 const HOSTILE: &str = "</r-tree><script>alert(\"x\")</script> 'quote' & \"double\"";
 
+fn cells(summary: Option<&str>) -> Cells<'_> {
+    Cells {
+        count: None,
+        summary,
+    }
+}
+
 fn branch<'a>(
     label: &'a str,
-    meta: Option<&'a str>,
+    count: usize,
     expanded: bool,
     children: Vec<TreeNode<'a>>,
 ) -> TreeNode<'a> {
     TreeNode::Branch {
         label,
-        meta,
+        cells: Cells {
+            count: Some(count),
+            summary: None,
+        },
         expanded,
         children,
     }
 }
 
-fn leaf<'a>(label: &'a str, meta: Option<&'a str>) -> TreeNode<'a> {
-    TreeNode::Leaf { label, meta }
+fn leaf<'a>(label: &'a str, summary: Option<&'a str>) -> TreeNode<'a> {
+    TreeNode::Leaf {
+        label,
+        cells: cells(summary),
+    }
 }
 
 fn earlier(expanded: bool) -> Vec<TreeNode<'static>> {
     vec![branch(
         "Earlier work",
-        Some("48 turns"),
+        48,
         expanded,
         vec![leaf("Ported the nap pass", None)],
     )]
@@ -34,13 +47,13 @@ fn sparse() -> Vec<TreeNode<'static>> {
     vec![
         branch(
             "Session summary",
-            Some("12 turns"),
+            12,
             true,
             vec![leaf("Chose SQLite for the store", Some("decision"))],
         ),
         branch(
             "Earlier work",
-            Some("48 turns"),
+            48,
             false,
             vec![leaf("Ported the nap pass", None)],
         ),
@@ -51,17 +64,17 @@ fn sparse() -> Vec<TreeNode<'static>> {
 fn dense() -> Vec<TreeNode<'static>> {
     vec![branch(
         "Memory root",
-        Some("212 turns"),
+        212,
         true,
         vec![
             branch(
                 "Week 1",
-                Some("90 turns"),
+                90,
                 true,
                 vec![
                     branch(
                         "Monday",
-                        Some("30 turns"),
+                        30,
                         true,
                         vec![
                             leaf("Set up the workspace", None),
@@ -71,7 +84,7 @@ fn dense() -> Vec<TreeNode<'static>> {
                     ),
                     branch(
                         "Tuesday",
-                        Some("60 turns"),
+                        60,
                         false,
                         vec![leaf("Reworked the stream collector", None)],
                     ),
@@ -79,12 +92,12 @@ fn dense() -> Vec<TreeNode<'static>> {
             ),
             branch(
                 "Week 2",
-                Some("122 turns"),
+                122,
                 true,
                 vec![
                     branch(
                         "Thursday",
-                        Some("40 turns"),
+                        40,
                         true,
                         vec![leaf("Added the wire proxy", Some("merged"))],
                     ),
@@ -101,22 +114,33 @@ pub(super) fn trees(very_long_summary: &str) -> String {
     let failed = vec![
         branch(
             "Session summary",
-            Some("12 turns"),
+            12,
             true,
             vec![TreeNode::Row(error("could not load the children"))],
         ),
         leaf("Open question on token limits", None),
     ];
     let long = vec![
-        branch(&unbroken, Some("1 turn"), true, vec![leaf(&unbroken, None)]),
-        branch(very_long_summary, Some(very_long_summary), true, vec![]),
+        branch(&unbroken, 1, true, vec![leaf(&unbroken, None)]),
+        TreeNode::Branch {
+            label: very_long_summary,
+            cells: Cells {
+                count: Some(1200),
+                summary: Some(very_long_summary),
+            },
+            expanded: true,
+            children: vec![],
+        },
     ];
-    let hostile = vec![branch(
-        HOSTILE,
-        Some(HOSTILE),
-        true,
-        vec![leaf(HOSTILE, None)],
-    )];
+    let hostile = vec![TreeNode::Branch {
+        label: HOSTILE,
+        cells: Cells {
+            count: Some(1),
+            summary: Some(HOSTILE),
+        },
+        expanded: true,
+        children: vec![leaf(HOSTILE, None)],
+    }];
     group(
         "r-tree",
         &[
@@ -250,7 +274,9 @@ mod tests {
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
                     .collect();
-                let allowed = ["ul", "li", "button", "span", "r-empty", "r-error", "p"];
+                let allowed = [
+                    "ul", "li", "button", "span", "svg", "path", "r-empty", "r-error", "p",
+                ];
                 assert!(allowed.contains(&name.as_str()), "{name}");
             }
         }
