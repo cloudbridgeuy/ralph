@@ -1,5 +1,4 @@
 use super::*;
-use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -88,10 +87,7 @@ pub fn worker_launch(args: &ClaudeWorkerArgs) -> Vec<String> {
         .map(str::to_string),
     );
     if args.scheduled {
-        command.extend(disallowed_tool_args());
-        if args.copied.iter().any(|name| name == MCPTOOLS_SERVER) {
-            command.extend(MCPTOOLS_ASK_RULES.map(str::to_string));
-        }
+        command.extend(scheduled_disallowed_args(args.copied));
     }
     command.extend(["--append-system-prompt", worker_prompt(args.scheduled)].map(str::to_string));
     if let Some(model) = args.model {

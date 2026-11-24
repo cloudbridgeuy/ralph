@@ -43,6 +43,21 @@ Every headless worker process (agy and Cursor ACP, Cursor print turns, claude, c
 
 The argv is `/bin/sh -c <isolate> <shell> <flags> <restore> <program> <args...>`. `/bin/sh` saves the protocol pipes on fds 3 and 4, points stdout at stderr and stdin at `/dev/null`, then execs the shell. zsh runs `-lic`; bash runs `--norc --noprofile -ic` and sources `/etc/profile` and the first readable of `~/.bash_profile`, `~/.bash_login` and `~/.profile` (the bash manual's login order), because bash 3.2 closes inherited fds 3 and up under `-l`. The restore step puts the pipes back on 0 and 1, closes 3 and 4 and execs the program, so the worker keeps the spawned pid and process group. A wrapped worker starts in a new session (`setsid`) with no controlling terminal, so an interactive shell cannot take the chat terminal or read a prompt from `/dev/tty`; a direct worker keeps `process_group(0)` (`LoginShell::session`). rc output goes to the worker log as stderr, and an rc prompt (an oh-my-zsh update `[y/N]`) reads end of file instead of hanging. A top-level `set --` in a zsh rc file changes the worker arguments; bash saves them first. A slow rc delays the start by its run time. `ralph worker verify` and the version-drift probes still run the program from ralph's own `PATH`.
 
+## Scheduled workers: unattended permissions
+
+A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The headless hosts do not call them yet; until they do, a scheduled headless worker still queues requests for a person.
+
+| Harness | Rule | Result |
+| --- | --- | --- |
+| claude | `unattended_claude_answer`: allow a read-only mcptools call, deny every other request. `scheduled_claude_mode` forces native mode `auto`; `scheduled_disallowed_args` adds `--disallowedTools` for git push, gh pr, gh api, and for mcptools `execute` and `call_tool` when mcptools is copied (the same list as claude-tmux, decision A of GUZ-1786). | deny line on stdio |
+| codex | `unattended` picks the first `reject_once` option (`decline`). `scheduled_sandbox_mode` never goes wider than `workspace-write`: unset or `danger-full-access` becomes `workspace-write`, `read-only` stays. | decline |
+| cursor, agy (ACP) | `unattended` picks the first `reject_once` option; with none, the host answers `Cancelled`. | reject or cancel |
+| opencode | `unattended` picks the `reject_once` option (`reject`). | reject |
+
+`unattended` allows only the `ralph-worker` report and set_status tools, by identity. On every denial the host posts `unattended_denied_report`, a `blocked` report, so the task ends as `Attention` even when the model never reports.
+
+Harnesses that raise few or no requests have little to deny, and no tool deny list: opencode (yolo is always on; only prompts the server raises reach ralph), cursor print mode (only shell commands reach the hook bridge; MCP calls are not gated) and agy under its yolo process flag. For these the push barrier is `guard::apply` (git hooks and refused remote URLs), not a deny list.
+
 ## Adding the next headless harness
 
 The shared trait unifies lifecycle orchestration only; it is not a plugin registry or a generic spawn/reply protocol. A future headless Claude or Codex adapter needs the following wiring, following the existing Cursor and opencode implementations:

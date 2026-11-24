@@ -1,4 +1,10 @@
-use super::WORKER_PROMPT;
+use super::acp::REPORT_TOOL;
+use super::{
+    deny_line, disallowed_tool_args, mcptools_decision, permission_response, BlockedContent,
+    ClaudePermission, McptoolsDecision, PermissionMode, PermissionOption, Report, ReportStatus,
+    SandboxMode, ALLOW_ONCE, SERVER_NAME, WORKER_PROMPT,
+};
+use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
 use std::ffi::OsString;
 
 pub const SCHEDULED_WORKER_PROMPT: &str = "\
@@ -21,6 +27,76 @@ pub fn worker_prompt(scheduled: bool) -> &'static str {
 }
 
 pub const SCHEDULED_PERMISSION_MODE: &str = "auto";
+
+const WORKER_TOOLS: [&str; 2] = [REPORT_TOOL, "set_status"];
+
+pub fn scheduled_disallowed_args(copied: &[String]) -> Vec<String> {
+    let mut args = disallowed_tool_args();
+    if copied.iter().any(|name| name == MCPTOOLS_SERVER) {
+        args.extend(MCPTOOLS_ASK_RULES.map(str::to_string));
+    }
+    args
+}
+
+pub fn scheduled_claude_mode(scheduled: bool, configured: PermissionMode) -> PermissionMode {
+    if scheduled {
+        PermissionMode::Yolo
+    } else {
+        configured
+    }
+}
+
+pub fn scheduled_sandbox_mode(configured: Option<SandboxMode>) -> SandboxMode {
+    match configured {
+        Some(SandboxMode::ReadOnly) => SandboxMode::ReadOnly,
+        _ => SandboxMode::WorkspaceWrite,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unattended<'a> {
+    Allow(&'a PermissionOption),
+    Deny(&'a PermissionOption),
+    Cancel,
+}
+
+fn is_worker_tool(content: &BlockedContent) -> bool {
+    let tool = content.tool.trim();
+    tool == SERVER_NAME
+        || WORKER_TOOLS
+            .iter()
+            .any(|name| tool == format!("{SERVER_NAME}-{name}: {name}"))
+}
+
+pub fn unattended(content: &BlockedContent) -> Unattended<'_> {
+    let with_kind = |kind: &str| content.options.iter().find(|option| option.kind == kind);
+    is_worker_tool(content)
+        .then(|| with_kind(ALLOW_ONCE))
+        .flatten()
+        .map(Unattended::Allow)
+        .or_else(|| with_kind("reject_once").map(Unattended::Deny))
+        .unwrap_or(Unattended::Cancel)
+}
+
+pub fn unattended_claude_answer(ask: &ClaudePermission) -> String {
+    let id = &ask.content.request_id;
+    match mcptools_decision(ask) {
+        McptoolsDecision::Read => permission_response(id, ALLOW_ONCE, &ask.input),
+        _ => deny_line(id),
+    }
+}
+
+pub fn unattended_denied_report(id: &str, at: &str, content: &BlockedContent) -> Report {
+    Report {
+        worker: id.to_string(),
+        at: at.to_string(),
+        status: ReportStatus::Blocked.as_str().to_string(),
+        text: format!(
+            "Scheduled worker {id} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
+            content.tool, content.summary
+        ),
+    }
+}
 
 pub const ORIGIN_MAIN: &str = "origin/main";
 
@@ -74,9 +150,11 @@ pub fn fetch_timeout_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        worker_command, worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs,
+        claude_args as claude_launch_args, worker_command, worktree_add_args, wt_switch_args,
+        ClaudeArgs, ClaudeSession, ClaudeShell, ClaudeWorkerArgs,
     };
     use super::*;
+    use serde_json::json;
     use std::path::Path;
 
     fn claude_args() -> ClaudeWorkerArgs<'static> {
@@ -353,5 +431,189 @@ mod tests {
                 && SCHEDULED_WORKER_PROMPT.contains("not blocked"),
             "{SCHEDULED_WORKER_PROMPT}"
         );
+    }
+
+    fn option(id: &str, kind: &str) -> PermissionOption {
+        PermissionOption {
+            option_id: id.to_string(),
+            name: id.to_string(),
+            kind: kind.to_string(),
+        }
+    }
+
+    fn content(tool: &str, options: Vec<PermissionOption>) -> BlockedContent {
+        BlockedContent {
+            request_id: "r1".to_string(),
+            tool: tool.to_string(),
+            summary: "do it".to_string(),
+            options,
+            pending: Vec::new(),
+        }
+    }
+
+    fn codex_options() -> Vec<PermissionOption> {
+        vec![
+            option("accept", "allow_once"),
+            option("decline", "reject_once"),
+            option("cancel", "reject_once"),
+        ]
+    }
+
+    fn claude_ask(tool: &str, input: serde_json::Value) -> ClaudePermission {
+        ClaudePermission {
+            input,
+            content: content(tool, Vec::new()),
+        }
+    }
+
+    #[test]
+    fn scheduled_disallowed_args_add_the_mcptools_pair_only_when_it_is_copied() {
+        let bare = scheduled_disallowed_args(&[]);
+        assert_eq!(bare, disallowed_tool_args());
+        let copied = scheduled_disallowed_args(&[MCPTOOLS_SERVER.to_string()]);
+        assert_eq!(copied[..bare.len()], bare[..]);
+        assert_eq!(
+            copied[bare.len()..],
+            ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]
+        );
+    }
+
+    #[test]
+    fn a_scheduled_claude_headless_worker_runs_in_auto_mode_whatever_is_configured() {
+        let mode_of = |mode: PermissionMode| {
+            let args = claude_launch_args(&ClaudeArgs {
+                model: None,
+                mcp_config: "/c.json",
+                attachments: Path::new("/a"),
+                mode,
+                session: ClaudeSession::New("sid"),
+                copied: &[],
+            });
+            mode_after_flag(&args).to_string()
+        };
+        assert_eq!(
+            mode_of(scheduled_claude_mode(true, PermissionMode::Ask)),
+            "auto"
+        );
+        assert_eq!(
+            mode_of(scheduled_claude_mode(true, PermissionMode::Yolo)),
+            "auto"
+        );
+        assert_eq!(
+            mode_of(scheduled_claude_mode(false, PermissionMode::Ask)),
+            "default"
+        );
+    }
+
+    #[test]
+    fn unattended_denies_with_the_reject_option_and_never_asks() {
+        let codex = content("command", codex_options());
+        assert_eq!(unattended(&codex), Unattended::Deny(&codex.options[1]));
+        let elicitation = content(
+            "mcp server",
+            vec![
+                option("decline", "reject_once"),
+                option("cancel", "reject_once"),
+            ],
+        );
+        assert_eq!(
+            unattended(&elicitation),
+            Unattended::Deny(&elicitation.options[0])
+        );
+        let opencode = content(
+            "bash",
+            vec![
+                option("once", "allow_once"),
+                option("always", "allow_always"),
+                option("reject", "reject_once"),
+            ],
+        );
+        assert_eq!(
+            unattended(&opencode),
+            Unattended::Deny(&opencode.options[2])
+        );
+    }
+
+    #[test]
+    fn unattended_cancels_when_no_option_rejects() {
+        let only_allow = content("bash", vec![option("allow", "allow_once")]);
+        assert_eq!(unattended(&only_allow), Unattended::Cancel);
+        assert_eq!(unattended(&content("bash", Vec::new())), Unattended::Cancel);
+    }
+
+    #[test]
+    fn unattended_allows_only_the_worker_report_tools() {
+        let server = content(SERVER_NAME, codex_options());
+        assert_eq!(unattended(&server), Unattended::Allow(&server.options[0]));
+        for name in ["report", "set_status"] {
+            let label = format!("{SERVER_NAME}-{name}: {name}");
+            let acp = content(&label, vec![option("allow", "allow_once")]);
+            assert_eq!(unattended(&acp), Unattended::Allow(&acp.options[0]));
+        }
+        let lookalike = content("ralph-worker-report: delete", codex_options());
+        assert_eq!(
+            unattended(&lookalike),
+            Unattended::Deny(&lookalike.options[1])
+        );
+        let no_allow = content(SERVER_NAME, vec![option("decline", "reject_once")]);
+        assert_eq!(
+            unattended(&no_allow),
+            Unattended::Deny(&no_allow.options[0])
+        );
+    }
+
+    #[test]
+    fn unattended_claude_allows_reads_and_denies_everything_else() {
+        let allowed = |ask: &ClaudePermission| {
+            unattended_claude_answer(ask).contains(r#""behavior":"allow""#)
+        };
+        assert!(allowed(&claude_ask(
+            "mcp__mcptools__execute",
+            json!({"code": "x"})
+        )));
+        for ask in [
+            claude_ask("mcp__mcptools__execute", json!({"allowWrites": true})),
+            claude_ask("mcp__mcptools__call_tool", json!({"allowSpend": true})),
+            claude_ask("mcp__mcptools__execute", json!({"allowSpend": null})),
+            claude_ask("mcp__mcptools__find_tools", json!({})),
+            claude_ask("Bash", json!({"command": "ls"})),
+        ] {
+            let answer = unattended_claude_answer(&ask);
+            assert!(answer.contains(r#""behavior":"deny""#), "{answer}");
+            assert!(answer.contains(r#""request_id":"r1""#), "{answer}");
+        }
+    }
+
+    #[test]
+    fn the_denied_report_blocks_the_worker_and_names_the_tool() {
+        let report = unattended_denied_report(
+            "sched-1",
+            "2026-11-24T10:00:00Z",
+            &content("Bash", Vec::new()),
+        );
+        assert_eq!(report.worker, "sched-1");
+        assert_eq!(report.at, "2026-11-24T10:00:00Z");
+        assert_eq!(report.status, ReportStatus::Blocked.as_str());
+        assert!(report.text.contains("Bash"));
+        assert!(report.text.contains("do it"));
+        assert!(report.text.contains("nobody was watching"));
+    }
+
+    #[test]
+    fn a_scheduled_codex_sandbox_is_never_wider_than_workspace_write() {
+        for (configured, want) in [
+            (None, SandboxMode::WorkspaceWrite),
+            (
+                Some(SandboxMode::DangerFullAccess),
+                SandboxMode::WorkspaceWrite,
+            ),
+            (
+                Some(SandboxMode::WorkspaceWrite),
+                SandboxMode::WorkspaceWrite,
+            ),
+            (Some(SandboxMode::ReadOnly), SandboxMode::ReadOnly),
+        ] {
+            assert_eq!(scheduled_sandbox_mode(configured), want, "{configured:?}");
+        }
     }
 }
