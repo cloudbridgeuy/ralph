@@ -10,6 +10,7 @@ use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
+use crate::worker_shell::{in_shell, worker_shell};
 use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
@@ -334,10 +335,11 @@ impl Shared {
             .args(args)
             .current_dir(&self.run.worktree)
             .envs([inbox_env(&self.run.store)]);
-        let (mut child, mut stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
-            *locked(&self.proc) = on_release();
-            format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
-        })?;
+        let (mut child, mut stdin, stdout, stderr) =
+            spawn_piped(in_shell(&worker_shell(), command)).map_err(|e| {
+                *locked(&self.proc) = on_release();
+                format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
+            })?;
         let turn = self.spawns.fetch_add(1, Ordering::SeqCst);
         self.log
             .append("turn", print_spawn_note(turn, chat.as_deref()).as_bytes());
