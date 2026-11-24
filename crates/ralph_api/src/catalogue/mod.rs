@@ -95,10 +95,15 @@ fn boxes(fixture: &Fixture) -> String {
     group(
         "r-box",
         &[
-            ("empty", frame(Shape::Square, None, "")),
+            ("empty", frame(Shape::Square, None, "", None)),
             (
                 "sparse",
-                frame(Shape::Round, Some(first_title(fixture)), &text("one line")),
+                frame(
+                    Shape::Round,
+                    Some(first_title(fixture)),
+                    &text("one line"),
+                    None,
+                ),
             ),
             (
                 "dense",
@@ -106,13 +111,31 @@ fn boxes(fixture: &Fixture) -> String {
                     Shape::Heavy,
                     Some("Counts"),
                     &kv(&borrowed(&pairs(&fixture.counts))),
+                    None,
+                ),
+            ),
+            (
+                "aside",
+                frame(
+                    Shape::Round,
+                    Some("Usage"),
+                    &text("one line"),
+                    Some(&escape("3 items")),
                 ),
             ),
             (
                 "error",
-                frame(Shape::Square, Some("Failed"), &error("could not load")),
+                frame(
+                    Shape::Square,
+                    Some("Failed"),
+                    &error("could not load"),
+                    None,
+                ),
             ),
-            ("very-long", frame(Shape::Square, Some(long), &text(long))),
+            (
+                "very-long",
+                frame(Shape::Square, Some(long), &text(long), None),
+            ),
         ],
     )
 }
@@ -405,8 +428,29 @@ mod tests {
         out
     }
 
+    fn without_aria_labels(html: &str) -> String {
+        let mut out = String::new();
+        let mut rest = html;
+        while let Some(start) = rest.find(" aria-label=\"") {
+            out.push_str(&rest[..start]);
+            let value = &rest[start + " aria-label=\"".len()..];
+            rest = value.find('"').map_or("", |end| &value[end + 1..]);
+        }
+        out.push_str(rest);
+        out
+    }
+
+    #[test]
+    fn aria_label_values_are_dropped_before_the_colour_scan() {
+        assert_eq!(
+            without_aria_labels("<r-box aria-label=\"#abc\" a=\"b\">x</r-box>"),
+            "<r-box a=\"b\">x</r-box>"
+        );
+        assert_eq!(without_aria_labels("<p>plain</p>"), "<p>plain</p>");
+    }
+
     fn colour_hits(html: &str) -> Vec<String> {
-        let html = &markup_only(html);
+        let html = &markup_only(&without_aria_labels(html));
         let mut hits = Vec::new();
         for (index, _) in html.match_indices('#') {
             let run = html[index + 1..]

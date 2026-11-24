@@ -159,11 +159,11 @@ impl From<Request> for Message {
     }
 }
 
-// this trait is to make sure that Server implements Share and Send
-#[doc(hidden)]
-trait MustBeShareDummy: Sync + Send {}
-#[doc(hidden)]
-impl MustBeShareDummy for Server {}
+// Compile-time assertion that Server implements Sync and Send.
+const _: () = {
+    const fn assert_sync_send<T: Sync + Send>() {}
+    assert_sync_send::<Server>();
+};
 
 pub struct IncomingRequests<'a> {
     server: &'a Server,

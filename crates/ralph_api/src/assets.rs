@@ -34,6 +34,4 @@ pub(crate) fn find(path: &str) -> Option<&'static Asset> {
 }
 
 #[cfg(test)]
-mod table_tests;
-#[cfg(test)]
 mod tests;

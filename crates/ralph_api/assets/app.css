@@ -134,6 +134,7 @@ main {
 }
 
 r-box {
+  position: relative;
   display: block;
   margin: 10px 0;
   padding: 10px 2ch;
@@ -146,16 +147,42 @@ r-box[shape="square"] {
 }
 
 r-box[shape="round"] {
-  border-radius: 0.75rem;
+  border-radius: 3px;
 }
 
 r-box[shape="heavy"] {
-  border-width: 3px;
+  border: 2px solid var(--r-ink);
   border-radius: 0;
 }
 
-r-box .title {
+r-box > .title {
+  position: absolute;
+  top: -10px;
+  left: 1ch;
+  max-width: calc(60% - 2ch);
+  padding: 0 1ch;
+  overflow: hidden;
+  background: var(--r-bg);
+  color: var(--r-ink-strong);
   font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+r-box > .aside {
+  position: absolute;
+  top: -10px;
+  right: 1ch;
+  max-width: calc(40% - 2ch);
+  padding: 0 1ch;
+  overflow: hidden;
+  background: var(--r-bg);
+  color: var(--r-muted);
+  font-size: 12px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 r-rule {

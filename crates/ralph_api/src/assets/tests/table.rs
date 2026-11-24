@@ -1,4 +1,4 @@
-use super::tests::{assert_declares, css, rule_body};
+use super::{assert_declares, css, rule_body};
 
 #[test]
 fn the_table_header_is_muted_12px_and_does_not_wrap() {
