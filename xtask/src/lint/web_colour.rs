@@ -50,14 +50,39 @@ fn has_paint_context(path: &str, line: &str) -> bool {
             .any(|marker| line.contains(marker))
 }
 
+fn hex_at(line: &str, at: usize) -> bool {
+    let digits = line[at + 1..]
+        .chars()
+        .take_while(char::is_ascii_alphanumeric)
+        .collect::<String>();
+    matches!(digits.len(), 3 | 4 | 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 fn hex_colour(line: &str) -> bool {
-    line.match_indices('#').any(|(at, _)| {
-        let digits = line[at + 1..]
-            .chars()
-            .take_while(char::is_ascii_alphanumeric)
-            .collect::<String>();
-        matches!(digits.len(), 3 | 4 | 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit())
+    line.match_indices('#').any(|(at, _)| hex_at(line, at))
+}
+
+fn has_declaration_colon(head: &str) -> bool {
+    head.char_indices().any(|(at, c)| {
+        c == ':'
+            && head[at + 1..]
+                .chars()
+                .next()
+                .is_none_or(|next| !(next.is_ascii_alphabetic() || next == ':'))
     })
+}
+
+fn is_id_selector(line: &str, at: usize) -> bool {
+    let rest = line[at..]
+        .trim_start_matches(|c: char| c == '#' || c.is_ascii_alphanumeric())
+        .trim_start();
+    rest.starts_with('{')
+        || ((rest.is_empty() || rest.starts_with(',')) && !has_declaration_colon(&line[..at]))
+}
+
+fn css_hex_colour(line: &str) -> bool {
+    line.match_indices('#')
+        .any(|(at, _)| hex_at(line, at) && !is_id_selector(line, at))
 }
 
 fn colour_function(line: &str) -> bool {
@@ -277,11 +302,53 @@ fn without_token_mixes(line: &str) -> String {
     out
 }
 
+fn url_end(rest: &str) -> usize {
+    let body = rest.trim_start();
+    let skipped = rest.len() - body.len();
+    let search_from = match body.chars().next().filter(|c| *c == '"' || *c == '\'') {
+        Some(quote) => body[1..]
+            .find(quote)
+            .map_or(body.len(), |at| skipped + at + 2),
+        None => 0,
+    };
+    rest[search_from..]
+        .find(')')
+        .map_or(rest.len(), |at| search_from + at + 1)
+}
+
+fn without_urls(line: &str) -> String {
+    const NAME: &str = "url(";
+    let lower = line.to_ascii_lowercase();
+    let mut out = String::new();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(NAME) {
+        let at = from + found;
+        let boundary = line[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c));
+        if !boundary {
+            out.push_str(&line[from..at + NAME.len()]);
+            from = at + NAME.len();
+            continue;
+        }
+        out.push_str(&line[from..at]);
+        from = at + NAME.len() + url_end(&line[at + NAME.len()..]);
+    }
+    out.push_str(&line[from..]);
+    out
+}
+
 fn line_reasons(path: &str, raw_line: &str) -> Vec<String> {
-    let line = without_token_mixes(raw_line);
+    let line = without_token_mixes(&without_urls(raw_line));
     let line = line.as_str();
     let mut reasons = Vec::new();
-    if has_paint_context(path, line) && hex_colour(line) || paint_attribute_hex(line) {
+    let hex = if path.ends_with(".css") {
+        css_hex_colour(line)
+    } else {
+        has_paint_context(path, line) && hex_colour(line)
+    };
+    if hex || paint_attribute_hex(line) {
         reasons.push("raw hex colour; use a var(--r-*) token".to_string());
     }
     if colour_function(line) {
@@ -643,6 +710,57 @@ mod tests {
         let text = "Copyright (c) <the-holder> color: #fff red\n";
         assert!(reasons("crates/ralph_api/assets/fonts/OFL.txt", text).is_empty());
         assert!(reasons("crates/ralph_api/assets/fonts/NOTICE", text).is_empty());
+    }
+
+    #[test]
+    fn an_id_selector_that_looks_like_hex_is_not_a_colour() {
+        for text in [
+            "#add {\n  margin: 0;\n}\n",
+            "a:hover #add,\n#bee {\n  margin: 0;\n}\n",
+            "#add,\n#bee {\n  margin: 0;\n}\n",
+            "#add { margin: 0; }\n",
+        ] {
+            assert!(reasons(CSS, text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_hex_value_in_a_declaration_is_still_a_colour() {
+        for text in [
+            "a { color: #add; }\n",
+            "#add { color: #add; }\n",
+            "a { box-shadow: 0 0 #add, 0 0 #bee; }\n",
+        ] {
+            assert_eq!(lines(CSS, text), vec![1], "{text}");
+        }
+    }
+
+    #[test]
+    fn without_urls_drops_the_url_call() {
+        assert_eq!(without_urls("a url(x.svg) b"), "a  b");
+        assert_eq!(without_urls("a url(\"x)y.png\") b"), "a  b");
+        assert_eq!(without_urls("URL(#add)"), "");
+        assert_eq!(without_urls("curl(red) b"), "curl(red) b");
+        assert_eq!(without_urls("none"), "none");
+    }
+
+    #[test]
+    fn the_contents_of_url_are_not_scanned() {
+        for value in [
+            "url(gold.svg)",
+            "url(#add)",
+            "url(\"red.png\")",
+            "url('blue.png')",
+        ] {
+            let text = format!("a {{ background: {value}; }}\n");
+            assert!(reasons(CSS, &text).is_empty(), "{value}");
+        }
+    }
+
+    #[test]
+    fn a_colour_beside_a_url_is_still_flagged() {
+        assert_eq!(lines(CSS, "a { background: red url(x.svg); }\n"), vec![1]);
+        assert_eq!(lines(CSS, "a { border: 1px solid gold; }\n"), vec![1]);
     }
 
     #[test]
