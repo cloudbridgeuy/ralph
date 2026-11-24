@@ -28,7 +28,7 @@ pub use rule::rule;
 pub use spark::{spark_bars_svg, spark_svg};
 pub use spinner::spinner;
 pub use status::status;
-pub use table::table;
+pub use table::{table, table_state};
 pub use tree::{tree, Cells, Extent, Summary, TreeNode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

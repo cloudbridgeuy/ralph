@@ -285,3 +285,12 @@ fn the_entries_table_text_cell_is_a_clip_cell_holding_the_first_line() {
     let body = script();
     assert!(body.contains(r#"el("td", firstLine(entry.text), { class: "clip" })"#));
 }
+
+#[test]
+fn an_empty_page_is_a_state_row_inside_the_table() {
+    let body = script();
+    assert!(body.contains("function stateRow(columns, child)"));
+    assert!(body.contains(r#"el("tr", null, { class: "state" })"#));
+    assert!(body.contains(r#"colspan: String(columns)"#));
+    assert!(!body.contains(r#"return el("r-empty", "no entries in this page")"#));
+}

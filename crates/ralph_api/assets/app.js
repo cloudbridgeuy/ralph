@@ -390,10 +390,19 @@ function threadSelect(threads, current) {
   return append(el("label"), el("span", "thread ", { class: "meta" }), select);
 }
 
+function stateRow(columns, child) {
+  const cell = append(el("td", null, { class: "state", colspan: String(columns) }), child);
+  return append(el("tr", null, { class: "state" }), cell);
+}
+
+const ENTRY_COLUMNS = ["#", "role", "at", "text"];
+
 function entriesTable(page) {
-  if (page.items.length === 0) return el("r-empty", "no entries in this page");
-  const head = append(el("tr"), ...["#", "role", "at", "text"].map((name) => el("th", name)));
+  const head = append(el("tr"), ...ENTRY_COLUMNS.map((name) => el("th", name)));
   const body = el("tbody");
+  if (page.items.length === 0) {
+    append(body, stateRow(ENTRY_COLUMNS.length, el("r-empty", "no entries in this page")));
+  }
   page.items.forEach((entry) => {
     append(
       body,

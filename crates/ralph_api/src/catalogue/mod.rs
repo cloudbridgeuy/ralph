@@ -1,6 +1,7 @@
 use crate::render::{
     empty, error, escape, frame, kv, kv_inline, kv_sourced, pill, pill_with, render_markdown, rule,
-    spark_bars_svg, spark_svg, spinner, status, table, Icon, PillShape, PillVariant, Shape, Tone,
+    spark_bars_svg, spark_svg, spinner, status, table, table_state, Icon, PillShape, PillVariant,
+    Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -116,10 +117,14 @@ fn tables(fixture: &Fixture) -> String {
     group(
         "r-table",
         &[
-            ("empty", table_html(&headers, &[])),
+            ("empty", table_state(&headers, &empty("No rows yet"))),
+            ("loading", table_state(&headers, &spinner("Loading rows"))),
             ("sparse", table_html(&headers, &one)),
             ("dense", table_html(&headers, &rows)),
-            ("error", error("could not load rows")),
+            (
+                "error",
+                table_state(&headers, &error("could not load rows")),
+            ),
             ("very-long", table_html(&headers, &long)),
         ],
     )

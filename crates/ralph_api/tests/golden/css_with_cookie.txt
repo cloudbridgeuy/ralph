@@ -218,6 +218,14 @@ r-table tbody tr.open > td {
   border-bottom-color: transparent;
 }
 
+r-table tbody tr.state > td {
+  padding: 10px 1ch;
+}
+
+r-table tbody tr.state:hover > td {
+  background: none;
+}
+
 r-table .clip {
   max-width: 0;
   width: 100%;

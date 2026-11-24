@@ -72,3 +72,14 @@ fn an_open_row_gets_an_accent_bar_and_no_fill() {
     assert!(rule_body(&css, "r-table tbody tr.open > td")
         .is_some_and(|body| !body.contains("background")));
 }
+
+#[test]
+fn a_state_row_pads_its_cell_on_the_grid_and_has_no_hover_fill() {
+    let css = css();
+    assert_declares(&css, "r-table tbody tr.state > td", "padding: 10px 1ch;");
+    assert_declares(
+        &css,
+        "r-table tbody tr.state:hover > td",
+        "background: none;",
+    );
+}

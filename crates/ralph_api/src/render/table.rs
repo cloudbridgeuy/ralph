@@ -31,13 +31,17 @@ fn cell(tag: &str, text: &str, numeric: bool) -> String {
     format!("<{tag}{scope}{class}>{}</{tag}>", escape(text))
 }
 
-pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
-    let numeric = numeric_columns(headers, rows);
+fn shell(headers: &[&str], numeric: &[bool], body: &str) -> String {
     let head: String = headers
         .iter()
         .enumerate()
-        .map(|(column, text)| cell("th", text, numeric[column]))
+        .map(|(column, text)| cell("th", text, numeric.get(column).copied().unwrap_or(false)))
         .collect();
+    format!("<r-table><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></r-table>")
+}
+
+pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
+    let numeric = numeric_columns(headers, rows);
     let body: String = rows
         .iter()
         .map(|row| {
@@ -52,13 +56,22 @@ pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
             format!("<tr>{cells}</tr>")
         })
         .collect();
-    format!("<r-table><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></r-table>")
+    shell(headers, &numeric, &body)
+}
+
+pub fn table_state(headers: &[&str], inner_html: &str) -> String {
+    let columns = headers.len().max(1);
+    let row = format!(
+        "<tr class=\"state\"><td class=\"state\" colspan=\"{columns}\">{inner_html}</td></tr>"
+    );
+    shell(headers, &[], &row)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_number, numeric_columns, table};
+    use super::{is_number, numeric_columns, table, table_state};
     use crate::render::golden::{assert_golden, hostile_text, long_text};
+    use crate::render::{empty, error, spinner};
 
     #[test]
     fn no_columns_and_no_rows() {
@@ -168,5 +181,36 @@ mod tests {
                 &[vec!["opus", "1.20"], vec!["7", "$3"], vec!["sonnet", ""]],
             ),
         );
+    }
+
+    #[test]
+    fn an_empty_state_row_spans_every_column() {
+        assert_golden(
+            "table_state_empty",
+            &table_state(&["day", "turns", "cost"], &empty("No rows yet")),
+        );
+    }
+
+    #[test]
+    fn a_loading_state_row_holds_the_spinner() {
+        assert_golden(
+            "table_state_loading",
+            &table_state(&["day", "turns"], &spinner("Loading rows")),
+        );
+    }
+
+    #[test]
+    fn an_error_state_row_holds_the_error() {
+        assert_golden(
+            "table_state_error",
+            &table_state(&["day"], &error("could not load rows")),
+        );
+    }
+
+    #[test]
+    fn a_state_table_with_no_headers_still_spans_one_column() {
+        let html = table_state(&[], "x");
+        assert!(html.contains("colspan=\"1\""), "{html}");
+        assert!(html.contains("<tbody><tr class=\"state\">"), "{html}");
     }
 }
