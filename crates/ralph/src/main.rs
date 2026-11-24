@@ -462,20 +462,22 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
         run: args.run.clone(),
         timeout: args.timeout,
     };
-    let command = invoke::build_tag_command(
+    let command = memory_command(
+        &config.tag.harness,
         &config.tag.model,
         ralph_core::chat_memory::TAG_PROMPT,
-        dirs::home_dir().as_deref(),
-        config.claude.config_dir.as_deref(),
-    );
+        || {
+            invoke::build_tag_command(
+                &config.tag.model,
+                ralph_core::chat_memory::TAG_PROMPT,
+                dirs::home_dir().as_deref(),
+                config.claude.config_dir.as_deref(),
+            )
+        },
+    )?;
     let pass = store.run_pass(&config.tag.model, &now, &mut |batch| {
         let run = run_memory_command(&command, batch, &curator).map_err(|e| e.message)?;
-        ralph_core::chat_memory::tag_reply(
-            run.failure,
-            signal::is_terminated(),
-            run.code,
-            run.text.as_deref(),
-        )
+        memory_tag_reply(&run, command.codex_model.is_some(), signal::is_terminated())
     })?;
     if let chat::tag_store::Pass::Done(report) = pass {
         if report.failed > 0 {
@@ -486,6 +488,23 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
         }
     }
     Ok(())
+}
+
+fn memory_tag_reply(
+    run: &MemoryRun,
+    codex: bool,
+    terminated: bool,
+) -> Result<ralph_core::chat_memory::CallReply, String> {
+    let reply =
+        ralph_core::chat_memory::tag_reply(run.failure, terminated, run.code, run.text.as_deref())?;
+    if codex
+        && reply.exited_ok
+        && !serde_json::from_str::<serde_json::Value>(&reply.text)
+            .is_ok_and(|value| value.is_array())
+    {
+        return Err("Codex returned invalid tag JSON".into());
+    }
+    Ok(reply)
 }
 
 pub(crate) struct Curator<'a> {
@@ -500,6 +519,7 @@ struct CuratorRows {
     run: Option<String>,
     store: String,
     at: String,
+    codex_model: Option<String>,
 }
 
 fn curator_rows(
@@ -507,17 +527,34 @@ fn curator_rows(
     done: &subprocess::StreamingSubprocessResult,
 ) -> Vec<ralph_core::chat_memory::LedgerRow> {
     let costs = &done.stream_result.costs;
-    let metadata = &done.stream_result.metadata;
+    let mut metadata = done.stream_result.metadata.clone();
+    let caps = if let Some(model) = &rows.codex_model {
+        metadata.model.get_or_insert_with(|| model.clone());
+        ralph_core::chat_backend::Caps {
+            harness: "codex",
+            cost: ralph_core::worker::Support::None,
+            ..CLAUDE
+        }
+    } else {
+        CLAUDE
+    };
     ralph_core::chat_memory::usage_record(
         rows.kind.clone(),
         rows.at.clone(),
         costs,
-        metadata,
-        &CLAUDE,
+        &metadata,
+        &caps,
     )
+    .map(|row| {
+        if rows.codex_model.is_some() {
+            row.with_per_thread_usage()
+        } else {
+            row
+        }
+    })
     .into_iter()
     .chain(ralph_core::chat_memory::subagent_records(
-        &rows.at, costs, metadata, &CLAUDE,
+        &rows.at, costs, &metadata, &caps,
     ))
     .map(|row| {
         row.with_run(rows.run.clone())
@@ -531,34 +568,75 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
     run_curator_with_command(prompt, curator, &command).map_err(|e| e.message)
 }
 
-fn curator_command(curator: &Curator) -> Result<String, ralph_server::config::ConfigError> {
+struct MemoryCommand {
+    command: String,
+    codex_model: Option<String>,
+    instructions: String,
+    _workdir: Option<tempfile::TempDir>,
+}
+
+fn memory_command(
+    harness: &str,
+    model: &str,
+    instructions: &str,
+    claude: impl FnOnce() -> String,
+) -> std::io::Result<MemoryCommand> {
+    let codex = harness == "codex";
+    let workdir = if codex {
+        Some(tempfile::tempdir()?)
+    } else {
+        None
+    };
+    let command = match workdir.as_ref() {
+        Some(dir) => invoke::build_codex_memory_command(model, dir.path()),
+        None => claude(),
+    };
+    Ok(MemoryCommand {
+        command,
+        codex_model: codex.then(|| model.to_string()),
+        instructions: instructions.to_string(),
+        _workdir: workdir,
+    })
+}
+
+fn curator_command(curator: &Curator) -> Result<MemoryCommand, Box<dyn std::error::Error>> {
     let config_file = ralph_core::chat_thread::config_root(curator.store).join("config.toml");
     let config = ralph_server::config::AppConfig::load_layers(
         &ralph_server::config::config_path(),
         Some(&config_file),
     )?;
     let home = dirs::home_dir();
-    Ok(
-        if matches!(curator.kind, ralph_core::chat_memory::CallSite::Nap) {
-            invoke::build_nap_command(
-                &config.nap.model,
-                home.as_deref(),
-                config.claude.config_dir.as_deref(),
-            )
+    let nap = matches!(curator.kind, ralph_core::chat_memory::CallSite::Nap);
+    Ok(memory_command(
+        &config.nap.harness,
+        &config.nap.model,
+        &if nap {
+            ralph_core::chat_memory::nap_system()
         } else {
-            invoke::build_memory_command(
-                &config.nap.model,
-                home.as_deref(),
-                config.claude.config_dir.as_deref(),
-            )
+            String::new()
         },
-    )
+        || {
+            if nap {
+                invoke::build_nap_command(
+                    &config.nap.model,
+                    home.as_deref(),
+                    config.claude.config_dir.as_deref(),
+                )
+            } else {
+                invoke::build_memory_command(
+                    &config.nap.model,
+                    home.as_deref(),
+                    config.claude.config_dir.as_deref(),
+                )
+            }
+        },
+    )?)
 }
 
 fn run_curator_with_command(
     prompt: &str,
     curator: &Curator,
-    command: &str,
+    command: &MemoryCommand,
 ) -> Result<String, ralph_core::chat_memory::CuratorError> {
     let run = run_memory_command(command, prompt, curator)?;
     ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref()).map_err(|message| {
@@ -570,24 +648,25 @@ fn run_curator_with_command(
     })
 }
 
-/// What a finished memory call left behind. `failure` is how the final
-/// attempt was classified, so a caller can tell an outage that ran out of
-/// retries from an ordinary failure.
 struct MemoryRun {
     code: i32,
     text: Option<String>,
     failure: Option<ralph_core::retry::FailureKind>,
 }
 
-/// Runs one memory call. An error means the call never finished (timeout or a
-/// spawn error); the exit code and reply text are left to the caller.
 fn run_memory_command(
-    command: &str,
+    command: &MemoryCommand,
     prompt: &str,
     curator: &Curator,
 ) -> Result<MemoryRun, ralph_core::chat_memory::CuratorError> {
     let theme_config = highlight::ThemeConfig::from_config_and_env().without_emphasis();
-    let stdin = invoke::prompt_stdin(prompt);
+    let stdin = invoke::prompt_stdin(&if command.codex_model.is_some()
+        && !command.instructions.is_empty()
+    {
+        format!("{}\n\n{}", command.instructions, prompt)
+    } else {
+        prompt.to_string()
+    });
     let outcome = backoff::retry_on_outage(
         "chat memory curator",
         || {
@@ -595,17 +674,20 @@ fn run_memory_command(
                 turn_sink::TerminalSink::plain(&theme_config)
                     .map_err(|error| subprocess::SubprocessError::Theme(error.to_string()))
                     .and_then(|sink| {
-                        subprocess::invoke_subprocess_silent(&subprocess::SpinnerSubprocessConfig {
-                            command: command.to_string(),
-                            timeout_secs: Some(curator.timeout),
-                            verbose_tools: stream_processor::VerboseToolsConfig::new(),
-                            show_tools: std::io::stdout().is_terminal(),
-                            terminated: signal::is_terminated,
-                            sink: std::sync::Arc::new(sink),
-                            gate: None,
-                            interrupt: None,
-                            stdin: Some(stdin.clone()),
-                        })
+                        subprocess::invoke_subprocess_silent(
+                            &subprocess::SpinnerSubprocessConfig {
+                                command: command.command.clone(),
+                                timeout_secs: Some(curator.timeout),
+                                verbose_tools: stream_processor::VerboseToolsConfig::new(),
+                                show_tools: std::io::stdout().is_terminal(),
+                                terminated: signal::is_terminated,
+                                sink: std::sync::Arc::new(sink),
+                                gate: None,
+                                interrupt: None,
+                                stdin: Some(stdin.clone()),
+                            },
+                            command.codex_model.is_some(),
+                        )
                     }),
             )
         },
@@ -617,6 +699,7 @@ fn run_memory_command(
             run: curator.run.clone(),
             store: ralph_server::workers::usage_store(curator.store),
             at: chrono::Utc::now().to_rfc3339(),
+            codex_model: command.codex_model.clone(),
         };
         warn_if_err(
             ralph_server::ledger::record_all(
@@ -632,6 +715,17 @@ fn run_memory_command(
         exit: e.partial_result().map(|partial| partial.exit_code),
         message: e.to_string(),
     })?;
+    if command.codex_model.is_some() && result.exit_code != 0 {
+        return Err(ralph_core::chat_memory::CuratorError {
+            message: if result.stderr.is_empty() {
+                format!("codex exited with status {}", result.exit_code)
+            } else {
+                result.stderr.clone()
+            },
+            timed_out: false,
+            exit: Some(result.exit_code),
+        });
+    }
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
     Ok(MemoryRun {
         code: result.exit_code,

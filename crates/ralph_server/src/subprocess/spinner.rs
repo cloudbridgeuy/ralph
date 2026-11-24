@@ -45,13 +45,14 @@ fn drain_stderr(readers: &Readers, captured: &mut String, sink: Option<&dyn Turn
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
-    run_subprocess_with_spinner(config, Display::Shown)
+    run_subprocess_with_spinner(config, Display::Shown, false)
 }
 
 pub fn invoke_subprocess_silent(
     config: &SpinnerSubprocessConfig,
+    codex: bool,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
-    run_subprocess_with_spinner(config, Display::Silent)
+    run_subprocess_with_spinner(config, Display::Silent, codex)
 }
 
 pub(super) fn spawn_piped(command_text: &str, stdin: Stdio) -> io::Result<Child> {
@@ -161,6 +162,7 @@ impl Drop for Shown {
 pub(super) struct Pump {
     shown: Option<Shown>,
     collector: StreamCollector,
+    codex: Option<ralph_core::worker::ExecStream>,
     last_output_time: Instant,
     pending_tool_count: usize,
     stderr: String,
@@ -182,6 +184,7 @@ impl Pump {
         Pump {
             shown,
             collector,
+            codex: None,
             last_output_time: Instant::now(),
             pending_tool_count: 0,
             stderr: String::new(),
@@ -213,6 +216,10 @@ impl Pump {
         }
         match readers.line_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok(line)) => {
+                if let Some(codex) = self.codex.as_mut() {
+                    codex.observe(&line);
+                    return Ok(Step::Pending);
+                }
                 if let control @ (ralph_core::worker::ClaudeLine::Permission(_)
                 | ralph_core::worker::ClaudeLine::Malformed
                 | ralph_core::worker::ClaudeLine::Cancel(_)) =
@@ -240,6 +247,10 @@ impl Pump {
                 Ok(Step::Pending)
             }
             Ok(Err(e)) => {
+                if let Some(codex) = self.codex.as_mut() {
+                    codex.observe("invalid stdout frame");
+                    return Ok(Step::Pending);
+                }
                 self.stop_spinner();
                 Err(SubprocessError::OutputCaptureFailed(format!(
                     "Failed to read stdout: {}",
@@ -270,6 +281,11 @@ impl Pump {
         show_stderr: bool,
     ) -> StreamingSubprocessResult {
         self.stop_spinner();
+        if let Some(codex) = self.codex.as_mut() {
+            for line in readers.line_rx.try_iter() {
+                codex.observe(line.as_deref().unwrap_or("invalid stdout frame"));
+            }
+        }
         for line in readers.take_queued() {
             let blocks = self.collector.process_line(&line, &DiskFiles);
             if let (false, Some(shown)) = (blocks.is_empty(), self.shown.as_mut()) {
@@ -282,8 +298,22 @@ impl Pump {
         if let (false, Some(shown)) = (flushed.is_empty(), self.shown.as_mut()) {
             shown.show(flushed);
         }
+        let (stream_result, diagnostic) = match self.codex.take() {
+            Some(codex) => codex.finish(),
+            None => (stream_result, None),
+        };
+        if let Some(message) = diagnostic.as_ref() {
+            if !self.stderr.is_empty() && !self.stderr.ends_with('\n') {
+                self.stderr.push('\n');
+            }
+            self.stderr.push_str(message);
+        }
         StreamingSubprocessResult {
-            exit_code,
+            exit_code: if exit_code == 0 && diagnostic.is_some() {
+                1
+            } else {
+                exit_code
+            },
             stderr: self.stderr,
             stream_result,
             request_at: self.request_at,
@@ -317,6 +347,7 @@ fn report_prompt_write(writer: Option<thread::JoinHandle<io::Result<()>>>) {
 fn run_subprocess_with_spinner(
     config: &SpinnerSubprocessConfig,
     display: Display,
+    codex: bool,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     let stdin = match config.stdin {
         Some(_) => Stdio::piped(),
@@ -331,6 +362,7 @@ fn run_subprocess_with_spinner(
     };
     let mut readers = Readers::start(&mut child)?;
     let mut pump = Pump::start(config, display);
+    pump.codex = codex.then(Default::default);
     let start = Instant::now();
 
     loop {
