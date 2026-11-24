@@ -1,5 +1,5 @@
 use super::{usage_seen_path, ActivityState, WorkerMarkers, REPORT_REMINDER};
-use crate::chat::{mcptools_ask_settings, MCPTOOLS_SERVER};
+use crate::chat::mcptools_ask_settings;
 use crate::snapshot::WorkerSite;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -73,10 +73,8 @@ fn command_hook(command: String) -> Value {
     json!({"type": "command", "command": command})
 }
 
-pub fn with_mcptools_asks(mut settings: Value, copied: &[String]) -> Value {
-    if copied.iter().any(|name| name == MCPTOOLS_SERVER) {
-        settings["permissions"] = mcptools_ask_settings()["permissions"].clone();
-    }
+pub fn with_mcptools_asks(mut settings: Value) -> Value {
+    settings["permissions"] = mcptools_ask_settings()["permissions"].clone();
     settings
 }
 
@@ -244,18 +242,15 @@ mod tests {
     }
 
     #[test]
-    fn settings_ask_for_the_mcptools_runners_only_when_mcptools_is_copied() {
+    fn settings_ask_for_the_mcptools_runners_and_cli() {
         let markers = WorkerMarkers::new(Path::new("/s"), "A");
         let base = claude_worker_settings(Path::new("/bin/ralph"), &markers, None, &sink());
-        let copied = ["docs".to_string(), "mcptools".to_string()];
-        let asked = with_mcptools_asks(base.clone(), &copied);
+        let asked = with_mcptools_asks(base.clone());
         assert_eq!(
             asked["permissions"],
-            json!({"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]})
+            json!({"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool", "Bash(mcptools:*)"]})
         );
         assert_eq!(asked["hooks"], base["hooks"]);
-        let docs = ["docs".to_string()];
-        assert_eq!(with_mcptools_asks(base.clone(), &docs), base);
     }
 
     #[test]

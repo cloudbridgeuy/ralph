@@ -1,4 +1,5 @@
 pub mod serve;
+pub mod sweep;
 
 use ralph_core::chat_socket::{chat_files_dir, sidecar_name, socket_file_name, StoreKey};
 use std::fs;

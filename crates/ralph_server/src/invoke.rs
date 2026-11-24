@@ -90,7 +90,7 @@ fn isolation_args(
     if mcptools {
         settings.insert(
             "permissions".to_string(),
-            serde_json::json!({ "ask": ralph_core::chat::MCPTOOLS_ASK_RULES }),
+            ralph_core::chat::mcptools_ask_settings()["permissions"].clone(),
         );
     }
     settings.insert("totalTokensReminder".to_string(), "off".into());
@@ -395,7 +395,7 @@ mod tests {
                 settings,
                 serde_json::json!({
                     "autoCompactEnabled": false,
-                    "permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]},
+                    "permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool", "Bash(mcptools:*)"]},
                     "totalTokensReminder": "off"
                 })
             );
