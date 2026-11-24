@@ -498,12 +498,11 @@ fn an_exact_fit_wrap_paints_the_left_cap_in_the_tone_colour() {
 fn a_right_cap_wrapped_to_line_two_is_painted_in_the_tone_after_the_body_closes() {
     let theme = round_on();
     let tone = crate::ansi::fg(theme.palette.pill_ok);
-    let body = "\x1b[1m\x1b[42m\x1b[97m";
     let out = render("foo([[Done]])", 11, &theme, true, false);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 2, "{out:?}");
     assert!(
-        lines[0].starts_with(&format!("foo({tone}{CAP_L}{body}")),
+        lines[0].starts_with(&format!("foo({tone}{CAP_L}{BODY}")),
         "{out:?}"
     );
     assert!(
