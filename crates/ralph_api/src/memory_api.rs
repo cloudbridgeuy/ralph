@@ -1,4 +1,4 @@
-use crate::memory::json::{entries_body, root_body, threads_body, zoom_body};
+use crate::memory::json::{entries_body, root_body, store_name, threads_body, zoom_body};
 use crate::memory::query::{parse_query, segment_key, MemoryQuery, QueryError, Scope};
 use crate::route::{error, json_ok, ApiConfig, ApiRequest, ApiResponse};
 use ralph_core::chat_memory::{page, root_view, zoom_view};
@@ -35,8 +35,8 @@ fn entries_response(query: &MemoryQuery, data: &Peek) -> ApiResponse {
     json_ok(entries_body(&query.thread, data.entries.len(), &chosen))
 }
 
-fn threads_response(threads: &[ThreadInfo]) -> ApiResponse {
-    json_ok(threads_body(threads))
+fn threads_response(store: &Path, threads: &[ThreadInfo]) -> ApiResponse {
+    json_ok(threads_body(&store_name(store), threads))
 }
 
 fn check_token_keys(raw: &str) -> Result<(), QueryError> {
@@ -86,7 +86,7 @@ pub(crate) fn threads(request: &ApiRequest, config: &ApiConfig) -> ApiResponse {
         return error(400, failure.message());
     }
     match list_threads(&config.store) {
-        Ok(found) => threads_response(&found),
+        Ok(found) => threads_response(&config.store, &found),
         Err(_) => unavailable(),
     }
 }
@@ -165,8 +165,10 @@ mod tests {
             parked: false,
             merged: true,
         };
-        let response = threads_response(&[info]);
+        let response = threads_response(Path::new("/a/b/chat"), &[info]);
         assert_eq!(body(&response)["threads"][0]["name"], "side");
+        assert_eq!(body(&response)["store"], "chat");
+        assert!(!String::from_utf8(response.body).unwrap().contains("/a/b"));
     }
 
     #[test]

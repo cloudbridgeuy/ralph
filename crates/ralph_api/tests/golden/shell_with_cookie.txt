@@ -19,20 +19,14 @@ X-Content-Type-Options: nosniff
 <body>
 <header class="bar">
 <span class="brand">ralph web</span>
-<span class="note">read-only</span>
+<span class="store" id="store"></span>
+<span class="badge">read-only</span>
 </header>
 <nav class="nav" aria-label="Screens">
-<a href="#/config">config</a>
-<a href="#/memory">memory</a>
-<a href="#/workers">workers</a>
-<a href="#/schedules">schedules</a>
-<a href="#/watches">watches</a>
-<a href="#/threads">threads</a>
-<a href="/catalogue">catalogue</a>
+<a href="#/memory"><span class="n" aria-hidden="true">1</span>memory</a>
+<a href="/catalogue"><span class="n" aria-hidden="true">2</span>catalogue</a>
 </nav>
-<main id="main">
-<p class="empty">No screens yet.</p>
-</main>
+<main id="main"></main>
 </body>
 </html>
 

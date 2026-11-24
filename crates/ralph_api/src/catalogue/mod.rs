@@ -1,6 +1,6 @@
 use crate::render::{
-    empty, error, escape, frame, kv, pill, pill_with, render_markdown, rule, spark_svg, spinner,
-    status, table, Icon, PillShape, PillVariant, Shape, Tone,
+    empty, error, escape, frame, kv, kv_inline, kv_sourced, pill, pill_with, render_markdown, rule,
+    spark_bars_svg, spark_svg, spinner, status, table, Icon, PillShape, PillVariant, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -82,10 +82,15 @@ fn boxes(fixture: &Fixture) -> String {
     group(
         "r-box",
         &[
-            ("empty", frame(Shape::Square, None, "")),
+            ("empty", frame(Shape::Square, None, "", None)),
             (
                 "sparse",
-                frame(Shape::Round, Some(first_title(fixture)), &text("one line")),
+                frame(
+                    Shape::Round,
+                    Some(first_title(fixture)),
+                    &text("one line"),
+                    None,
+                ),
             ),
             (
                 "dense",
@@ -93,13 +98,31 @@ fn boxes(fixture: &Fixture) -> String {
                     Shape::Heavy,
                     Some("Counts"),
                     &kv(&borrowed(&pairs(&fixture.counts))),
+                    None,
+                ),
+            ),
+            (
+                "aside",
+                frame(
+                    Shape::Round,
+                    Some("Usage"),
+                    &text("one line"),
+                    Some(&escape("3 items")),
                 ),
             ),
             (
                 "error",
-                frame(Shape::Square, Some("Failed"), &error("could not load")),
+                frame(
+                    Shape::Square,
+                    Some("Failed"),
+                    &error("could not load"),
+                    None,
+                ),
             ),
-            ("very-long", frame(Shape::Square, Some(long), &text(long))),
+            (
+                "very-long",
+                frame(Shape::Square, Some(long), &text(long), None),
+            ),
         ],
     )
 }
@@ -138,8 +161,25 @@ fn kvs(fixture: &Fixture) -> String {
             ("dense", kv(&borrowed(&all))),
             ("error", error("could not load pairs")),
             ("very-long", kv(&[(long, long)])),
+            ("source", kv_sourced(&sourced_rows(&counts))),
+            ("two", kv(&borrowed(&counts))),
+            ("inline", kv_inline(&borrowed(&counts))),
         ],
     )
+}
+
+fn sourced_rows(rows: &[(String, String)]) -> Vec<(&str, &str, &str)> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, (name, value))| {
+            let source = if index % 2 == 0 {
+                "default"
+            } else {
+                "config.toml"
+            };
+            (name.as_str(), value.as_str(), source)
+        })
+        .collect()
 }
 
 fn pills(fixture: &Fixture) -> String {
@@ -234,7 +274,7 @@ fn errors(fixture: &Fixture) -> String {
 }
 
 fn spinners() -> String {
-    group("r-spinner", &[("sparse", spinner())])
+    group("r-spinner", &[("sparse", spinner("Loading memory"))])
 }
 
 fn sparks(fixture: &Fixture) -> String {
@@ -253,6 +293,10 @@ fn sparks(fixture: &Fixture) -> String {
             ("dense", svg(&costs)),
             ("error", error("could not load the series")),
             ("very-long", svg(&costs.repeat(10))),
+            (
+                "bars",
+                spark_bars_svg(&costs, 160.0, 24.0).unwrap_or_else(|| empty("No cost data")),
+            ),
         ],
     )
 }
@@ -363,8 +407,29 @@ mod tests {
         out
     }
 
+    fn without_aria_labels(html: &str) -> String {
+        let mut out = String::new();
+        let mut rest = html;
+        while let Some(start) = rest.find(" aria-label=\"") {
+            out.push_str(&rest[..start]);
+            let value = &rest[start + " aria-label=\"".len()..];
+            rest = value.find('"').map_or("", |end| &value[end + 1..]);
+        }
+        out.push_str(rest);
+        out
+    }
+
+    #[test]
+    fn aria_label_values_are_dropped_before_the_colour_scan() {
+        assert_eq!(
+            without_aria_labels("<r-box aria-label=\"#abc\" a=\"b\">x</r-box>"),
+            "<r-box a=\"b\">x</r-box>"
+        );
+        assert_eq!(without_aria_labels("<p>plain</p>"), "<p>plain</p>");
+    }
+
     fn colour_hits(html: &str) -> Vec<String> {
-        let html = &markup_only(html);
+        let html = &markup_only(&without_aria_labels(html));
         let mut hits = Vec::new();
         for (index, _) in html.match_indices('#') {
             let run = html[index + 1..]

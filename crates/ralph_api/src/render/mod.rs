@@ -21,15 +21,15 @@ pub use empty::empty;
 pub use error::error;
 pub use escape::escape;
 pub use frame::frame;
-pub use kv::kv;
+pub use kv::{kv, kv_inline, kv_sourced};
 pub use pill::{pill, pill_with, Icon, PillShape, PillVariant};
 pub use prose::render_markdown;
 pub use rule::rule;
-pub use spark::spark_svg;
+pub use spark::{spark_bars_svg, spark_svg};
 pub use spinner::spinner;
 pub use status::status;
 pub use table::table;
-pub use tree::{tree, TreeNode};
+pub use tree::{tree, Cells, Extent, Summary, TreeNode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {

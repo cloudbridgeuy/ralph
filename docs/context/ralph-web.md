@@ -122,7 +122,7 @@ Risk:
 | other method on `/tokens.css` | 405 with `Allow: GET` |
 | `GET /api/memory` with `?thread=` and `?node=` | 200 root nodes of the memory tree (`{thread, entries, nodes}`), or with `node` one zoom step (`{thread, node, children}`); `after` and `limit` are ignored |
 | `GET /api/memory/entries` with `?thread=`, `?after=` and `?limit=` | 200 `{thread, entries, items, next_after}`; `limit` defaults to 50, is at most 200 and `0` is 400; `next_after` is `null` on the last page; `node` is 400 |
-| `GET /api/memory/threads` | 200 `{threads: [{name, parked, merged}]}` sorted by name; any key other than `token` is 400 |
+| `GET /api/memory/threads` | 200 `{store, threads: [{name, parked, merged}]}` sorted by name; `store` is the last component of the store path (`store` when there is none), never the full path, and the shell header shows it with a `read-only` badge; any key other than `token` is 400 |
 | bad `thread`, `node`, `after` or `limit`, an unknown or repeated key, or bad percent-encoding on a memory route | 400 `{"error":"<reason>"}` |
 | unknown thread, or `node` past the last entry | 404 `{"error":"not found"}` |
 | memory store missing or unreadable | 500 `{"error":"memory unavailable"}`, with no path and no system text |
@@ -159,7 +159,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 | Tag | Builder | Notes |
 |-----|---------|-------|
-| `r-box` | `frame(shape, title, inner_html)` | shape `square`, `round` or `heavy`; optional title |
+| `r-box` | `frame(shape, title, inner_html, aside_html)` | shape `square`, `round` or `heavy`; optional title and optional aside. The aside is trusted HTML in a `div.aside` on the right of the top border, after the title. The caller escapes its own text. The title sits in the top border and a long title is cut with `…`. With a title the box has `role="group"` and an `aria-label` with the full text |
 | `r-rule` | `rule()` | `role="separator"` |
 | `r-table` | `table(headers, rows)` | `th scope="col"`; a short row is padded to the header count |
 | `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
@@ -171,16 +171,16 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 | `r-spark` | `spark_svg(values, w, h)` | returns `None` for an empty series; the caller renders `r-empty` |
 
 - Every builder is a pure function that returns a `String`. One `escape()` handles text and attribute values (`& < > " '`).
-- Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent, neutral; `Shape`; `PillShape`; `PillVariant`; `Icon`), never from free text. `inner_html` of `frame()` must be built from these builders.
+- Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent, neutral; `Shape`; `PillShape`; `PillVariant`; `Icon`), never from free text. The one exception is the `r-box` title: it goes into `aria-label`, escaped by `escape()`. `inner_html` of `frame()` must be built from these builders.
 - No builder writes a `style` attribute, because the CSP forbids inline style. No builder writes a raw colour. SVG uses `stroke="currentColor"` and classes.
 - `spark_points()` drops NaN and infinite values. A flat series and a single point draw a mid line. Huge values do not overflow.
 - `render_markdown(&str)` parses with tables, strikethrough and task lists. Its own emitter writes the HTML. Raw HTML is escaped as text, never passed through. Links keep `href` only for `http`, `https`, `mailto` and `#fragment`. An email autolink becomes a `mailto:` link. The check trims control characters and whitespace at both ends, drops control characters inside, writes each inner whitespace character as `%20`, and ignores case. A space inside the scheme gives no `href`. Other links keep their text without `href`. Links get `rel="noreferrer noopener"`. An image is never `<img>`: its alt text goes in a `<span>`. Tags nested deeper than 64 levels render as plain text. NUL bytes become U+FFFD. A table becomes `<table tabindex="0">`. A fenced or indented code block becomes `<r-code data-lang="rust"><pre tabindex="0"><code>…</code></pre></r-code>`. `highlight()` in `code.rs` uses the `two_face::syntax::extra_newlines()` set (built once in `prose.rs`) and the syntect `ClassedHTMLGenerator` with class prefix `t-`. There is no generated theme CSS; `app.css` maps the `t-*` scope classes to `--r-*` slots. `data-lang` is the first word of the info string, lower-cased, and must match `[a-z0-9+#-]{1,32}`; otherwise the attribute is dropped. An unknown language, no language, a block over 64 KiB, or a block with a line over 4 KiB, gives plain escaped text inside `r-code`. The `[theme]` syntax theme does not apply on the web.
 - Goldens are in `crates/ralph_api/tests/golden/render/<primitive>_<state>.html`. Unit tests in `render/` compare them. The states are empty, sparse, dense, error and very-long where they apply, plus hostile text for escaping.
-- `app.css` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use role colours for everything except the `t-*` scope rules. Those rules use `--r-ansi-N` slots. Rows and inner rules use `--r-line`. Boxes, headers and code use `--r-line-strong`. Accent is only for focus (a 2px outline), links and the accent tone. The info tone and the accent tone differ. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
+- `app.css` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use role colours for everything except the `t-*` scope rules. Those rules use `--r-ansi-N` slots. Rows and inner rules use `--r-line`. Boxes, headers and code use `--r-line-strong`. The heavy box is the one deliberate exception. It uses a 2px `--r-ink` border for emphasis. Accent is only for focus (a 2px outline), links and the accent tone. The info tone and the accent tone differ. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
 
 ## Catalogue
 
-`GET /catalogue` shows every primitive in the states that apply to it. r-box, r-table, r-kv, r-pill, r-status, r-spark, r-prose and r-code show all five: empty, sparse, dense, error and very-long. r-pill also shows an outline state. r-empty shows empty, sparse and very-long. r-error shows empty, error and very-long. r-rule and r-spinner show only sparse. The r-prose and r-code states come from `render_markdown()` on short markdown constants in the catalogue module, not from the fixture, because the fixture holds no markdown; the error state is an `r-error`. The page has two columns, `<section data-theme="dark">` and `<section data-theme="light">`. The shell nav links to `/catalogue`. It is not `#/catalogue`: the shell has no script, so a hash link cannot reach a server page. The page has a link back to `/`.
+`GET /catalogue` shows every primitive in the states that apply to it. r-box, r-table, r-kv, r-pill, r-status, r-spark, r-prose and r-code show all five: empty, sparse, dense, error and very-long. r-box also shows an aside state. r-pill also shows an outline state. r-empty shows empty, sparse and very-long. r-error shows empty, error and very-long. r-rule and r-spinner show only sparse. The r-prose and r-code states come from `render_markdown()` on short markdown constants in the catalogue module, not from the fixture, because the fixture holds no markdown; the error state is an `r-error`. The page has two columns, `<section data-theme="dark">` and `<section data-theme="light">`. The shell nav links to `/catalogue`. It is not `#/catalogue`: the shell has no script, so a hash link cannot reach a server page. The page has a link back to `/`.
 
 - The route passes the same Host and token checks as the shell. It sends `no-store` and the shell CSP, unchanged.
 - `include_str!` embeds the fixture. `catalogue::page()` renders it. A fixture that does not parse gives an `r-error` in both columns.
@@ -225,7 +225,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - A `#rrggbb` value passes through.
 - A slot set to the terminal default (Reset) is omitted. A slot that is unset is omitted too.
 - The dark table is in the default `:root` block. The light block overrides the 16 ANSI variables and the roles inside `@media (prefers-color-scheme: light)`.
-- `[theme] border` does not drive web borders. The web uses `--r-line` and `--r-line-strong`.
+- `[theme] border` does not drive web borders. The web uses the neutral `--r-line` and `--r-line-strong` roles. The heavy box border is the one exception: it uses `--r-ink`.
 
 ### Colour roles
 
@@ -274,7 +274,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - Route `#/memory`. Other routes keep the placeholder text. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `olderAfter`, `newerAfter`, `navTarget`) sit apart from the DOM code.
 - State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, no `after`) are left out. `hashchange` draws the screen again, so back and forward work. Zooming a node updates `node` with `replaceState`.
 - The screen shows a thread select (`main` and the names from `/api/memory/threads`), thread and entry counts, the root nodes as an `r-tree`, and a `recent entries` table (20 rows) with `older` and `newer` links that change `after`. With no `after` in the hash, the table opens on the newest page (`max(0, entries - 20)`, from `defaultAfter`). An `after` in the hash, even `after=0`, overrides this. An `after` at or past the entry count opens the newest page (`clampAfter`).
-- Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, one-line preview). A node with no summary shows `summary pending`.
+- Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, one-line preview). A node with no summary shows `summary pending` in the zoom summary row only. Its tree row shows the neutral `pending` pill.
 - An entry row opens its full text. Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
 - States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node.
@@ -285,9 +285,14 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 ## r-tree markup
 
 - `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty>…</r-empty></r-tree>`.
-- A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">label</button>[<span class="meta">]<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
-- Only native tags go inside `r-tree`. The depth comes from the nested `ul`, one indent and one guide line per level; `aria-level` starts at 1.
-- `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML. The marker is a CSS `+` or `-`.
+- A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">guides, chevron, <span class="id">label</span></button>cells<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` with the same parts and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
+- Cells come from `Cells { count, extent, summary }`. They follow the label as `<span class="n">`, the extent bar and `<span class="sum">`. Each row is a CSS grid: `24ch 7ch 9ch 1fr`. The count column fits six digits. The nested `ul` spans all columns on row 2. The label column is fixed, so a deep label can clip.
+- Only native tags go inside `r-tree`, plus inline `svg`, `path`, `rect` and `r-pill`. The depth comes from `.g` guide spans, one per level below the first. `aria-level` starts at 1.
+- The chevron is an inline SVG that turns 90 degrees when the branch is open. The CSS has no `data:` URI and no inline style.
+- The extent bar is an inline SVG with `viewBox="0 0 100 6"` and `preserveAspectRatio="none"`. A grey track holds one span from `lo` to `hi` of `total`. A span is never narrower than 1 unit, so a one-entry node stays visible when the total is 5,000 or more. Without an extent the cell is an empty `<span class="extent">`.
+- `Summary` is `Empty`, `Text` or `Pending`. Text is escaped and its whitespace is collapsed to one line. The CSS adds the ellipsis when the text is too long. `Pending` draws one neutral `r-pill` with the text `pending`.
+- `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML.
 - The button has no default chrome and a `:focus-visible` outline. `/app.js` makes the button toggle the branch.
-- Every label and meta text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
-- The catalogue shows empty, sparse, dense (4 levels), error, very-long, collapsed, expanded, hostile and focus; the code is in `catalogue/tree.rs`.
+- Every label and summary text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
+- The memory screen does not call the Rust renderer. `app.js` builds the same markup, and `tests/memory_screen_contract.rs` reads the `tree_extent` and `tree_pending` goldens and checks that the script builds the same classes, SVG and attributes. It also checks the keyboard selectors `li[role=treeitem] > button` and `:scope > ul[role=group]`.
+- The catalogue shows empty, sparse, dense (4 levels), error, very-long, collapsed, expanded, hostile, pending and focus; the code is in `catalogue/tree.rs`.

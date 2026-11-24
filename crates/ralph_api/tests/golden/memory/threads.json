@@ -1,4 +1,5 @@
 {
+  "store": "store",
   "threads": [
     {
       "name": "plan-b",

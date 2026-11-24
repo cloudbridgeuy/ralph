@@ -110,7 +110,7 @@ Verify: never state as fact what you have not checked. A worker or subagent \"do
 
 Cite history: when you state a fact from older chat, check it with zoom or recall, name its #<id>, and say if it came from a summary.
 
-Development roles: you never do the work yourself; you scope it, decide, and accept results. Read inline only to scope, with at most 3 tool calls per question. Reads across several files, broad searches, and test runs go to the evidence-collector subagent. All code edits go to the implementer subagent. Fixing or finishing work that fell short goes to the reviser subagent. Every dispatch prompt states the goal, the exact question, known facts, the files the worker owns (all other code is read-only), output format and size cap, stop condition and tool budget, \"Report not-found, do not widen scope.\", and \"You are a subagent. Don't run mem.\" After 2 failed repair rounds on one issue, diagnose before you dispatch again; after a 3rd, stop and wait for the person.";
+Development roles: you never do the work yourself; you scope it, decide, and accept results. Implementation, fixes, code reviews, and test runs go to `spawn_worker` (phase build or fix), never to an in-chat Agent subagent: workers run in the background and show in /workers and /hold. The evidence-collector subagent is only for read-only scoping of at most 3 tool calls that you could not do inline. Read inline only to scope, with at most 3 tool calls per question. If `spawn_worker` fails, tell the person the exact error and wait. Never fall back to subagents or to doing the work inline. Every dispatch prompt states the goal, the exact question, known facts, the files the worker owns (all other code is read-only), output format and size cap, stop condition and tool budget, \"Report not-found, do not widen scope.\", and \"You are a subagent. Don't run mem.\" After 2 failed repair rounds on one issue, diagnose before you dispatch again; after a 3rd, stop and wait for the person.";
 
 const PROMPT_TAIL: &str = "\
 Forget requests: you have no erase tool. Say so plainly; never summarize the item as resolved.
@@ -227,6 +227,8 @@ pub const MCPTOOLS_SERVER: &str = "mcptools";
 
 pub const MCPTOOLS_ASK_RULES: [&str; 2] = ["mcp__mcptools__execute", "mcp__mcptools__call_tool"];
 
+pub const MCPTOOLS_BASH_ASK_RULE: &str = "Bash(mcptools:*)";
+
 pub fn server_allow_rule(name: &str) -> String {
     if name == MCPTOOLS_SERVER {
         "mcp__mcptools__find_tools".to_string()
@@ -236,7 +238,11 @@ pub fn server_allow_rule(name: &str) -> String {
 }
 
 pub fn mcptools_ask_settings() -> Value {
-    json!({ "permissions": { "ask": MCPTOOLS_ASK_RULES } })
+    let ask: Vec<&str> = MCPTOOLS_ASK_RULES
+        .into_iter()
+        .chain([MCPTOOLS_BASH_ASK_RULE])
+        .collect();
+    json!({ "permissions": { "ask": ask } })
 }
 
 fn allowed_tools(config: &Value) -> String {
@@ -467,6 +473,21 @@ mod tests {
         ));
         assert!(prompt
             .contains("Otherwise say what happened; look the id up with git or gh when asked."));
+    }
+
+    #[test]
+    fn development_roles_send_dev_work_to_spawn_worker() {
+        let prompt = default_prompt();
+        let roles = prompt
+            .split("Development roles:")
+            .nth(1)
+            .and_then(|rest| rest.split("\n\n").next())
+            .unwrap();
+        assert!(roles.contains("go to `spawn_worker`"));
+        assert!(roles.contains("never to an in-chat Agent subagent"));
+        assert!(roles.contains("If `spawn_worker` fails, tell the person the exact error and wait"));
+        assert!(roles.contains("Never fall back to subagents"));
+        assert!(!roles.contains("All code edits go to the implementer subagent"));
     }
 
     #[test]
@@ -763,7 +784,7 @@ mod tests {
         assert_eq!(server_allow_rule("mcptools"), "mcp__mcptools__find_tools");
         assert_eq!(
             mcptools_ask_settings(),
-            json!({"permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool"]}})
+            json!({"permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool", "Bash(mcptools:*)"]}})
         );
     }
 
