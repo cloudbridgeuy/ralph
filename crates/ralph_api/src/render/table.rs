@@ -14,6 +14,9 @@ fn grouped_integer(text: &str) -> bool {
     if rest.is_empty() {
         return all_digits(first);
     }
+    if first == "0" {
+        return false;
+    }
     (1..=3).contains(&first.len())
         && all_digits(first)
         && rest
@@ -226,6 +229,16 @@ mod tests {
             assert!(!is_number(text), "{text:?}");
         }
         for text in ["0", "0.5", "-0.5", "0.05", "10", "100"] {
+            assert!(is_number(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_zero_group_before_more_groups_is_text() {
+        for text in ["0,123", "0,000", "$0,123.50"] {
+            assert!(!is_number(text), "{text:?}");
+        }
+        for text in ["0", "0.5", "$0.50"] {
             assert!(is_number(text), "{text:?}");
         }
     }
