@@ -3,6 +3,8 @@
 const ROUTE = "/memory";
 const PAGE_SIZE = 20;
 const PREVIEW = 80;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const EXTENT_MIN = 1;
 const SPINNER_DELAY_MS = 200;
 
 function parseHash(hash) {
@@ -49,9 +51,23 @@ function newerAfter(nextAfter) {
   return Number.isInteger(nextAfter) ? nextAfter : null;
 }
 
+function oneLine(text) {
+  return String(text).replace(/\s+/g, " ").trim();
+}
+
 function preview(text, max) {
-  const line = String(text).replace(/\s+/g, " ").trim();
+  const line = oneLine(text);
   return line.length > max ? line.slice(0, max - 1) + "…" : line;
+}
+
+function extentSpan(lo, hi, total) {
+  if (!(total > 0) || lo >= hi || lo >= total) return null;
+  const width = Math.max(((Math.min(hi, total) - lo) * 100) / total, EXTENT_MIN);
+  return { x: Math.min((lo * 100) / total, 100 - width), width };
+}
+
+function percent(value) {
+  return String(Math.round(value * 100) / 100);
 }
 
 function idRange(id) {
@@ -184,26 +200,63 @@ function onTreeKey(tree, event) {
   else items[target.focus].firstElementChild.focus();
 }
 
-function treeItem(level, key, label, meta) {
+function svgEl(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs).forEach(([name, value]) => node.setAttribute(name, value));
+  return node;
+}
+
+function chevron() {
+  const svg = svgEl("svg", { class: "chev", viewBox: "0 0 8 8", "aria-hidden": "true" });
+  return append(svg, svgEl("path", { d: "M2.5 1l3.5 3-3.5 3" }));
+}
+
+function extentCell(extent) {
+  const span = extent && extentSpan(extent.lo, extent.hi, extent.total);
+  if (!span) return el("span", null, { class: "extent" });
+  const svg = svgEl("svg", { class: "extent", viewBox: "0 0 100 6", preserveAspectRatio: "none", "aria-hidden": "true" });
+  return append(
+    svg,
+    svgEl("rect", { class: "track", y: "2", width: "100", height: "2" }),
+    svgEl("rect", { class: "span", x: percent(span.x), width: percent(span.width), height: "6" }),
+  );
+}
+
+function summaryCell(summary) {
+  const cell = el("span", null, { class: "sum" });
+  if (summary === null) {
+    append(cell, append(el("r-pill", null, { tone: "neutral", shape: "square" }), el("span", "pending")));
+  } else if (summary) cell.textContent = oneLine(summary);
+  return cell;
+}
+
+function treeItem(level, key, label, cells) {
   const item = el("li", null, { role: "treeitem", "aria-expanded": "false", "aria-level": String(level) });
-  const button = el("button", label, { type: "button", tabindex: "-1" });
+  const button = el("button", null, { type: "button", tabindex: "-1" });
   button.dataset.key = key;
+  for (let guide = 1; guide < level; guide += 1) append(button, el("span", null, { class: "g" }));
+  append(button, chevron(), el("span", label, { class: "id" }));
   append(item, button);
-  if (meta) append(item, el("span", meta, { class: "meta" }));
+  append(item, el("span", cells.count === undefined ? null : String(cells.count), { class: "n" }));
+  append(item, extentCell(cells.extent), summaryCell(cells.summary));
   append(item, el("ul", null, { role: "group" }));
   return item;
 }
 
-function nodeItem(level, node) {
-  const meta = node.summary === null ? "summary pending" : preview(node.summary, PREVIEW);
-  const item = treeItem(level, node.id, "[" + node.lo + "-" + (node.hi - 1) + "]", meta);
+function nodeItem(level, node, total) {
+  const cells = {
+    count: node.hi - node.lo,
+    extent: { lo: node.lo, hi: node.hi, total },
+    summary: node.summary,
+  };
+  const item = treeItem(level, node.id, "[" + node.lo + "-" + (node.hi - 1) + "]", cells);
   item.dataset.node = node.id;
   return item;
 }
 
 function entryItem(level, entry) {
   const label = "#" + entry.i + " " + entry.role;
-  const item = treeItem(level, "e" + entry.i, label, entry.at + " " + preview(entry.text, PREVIEW));
+  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + preview(entry.text, PREVIEW) });
   item.dataset.entry = entry.text;
   return item;
 }
@@ -242,6 +295,7 @@ function zoomRows(zoom) {
 async function openNode(item, ctx) {
   const group = item.querySelector(':scope > ul[role="group"]');
   const level = Number(item.getAttribute("aria-level")) + 1;
+  const total = Number(item.closest("r-tree").dataset.total);
   const stop = delayedSpinner(group);
   try {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
@@ -252,7 +306,7 @@ async function openNode(item, ctx) {
         append(group, summary);
         if (row.markdown === null) summary.appendChild(el("r-empty", "summary pending"));
         else fillRendered(summary, row.markdown);
-      } else append(group, row.row === "node" ? nodeItem(level, row.child) : entryItem(level, row.child));
+      } else append(group, row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child));
     });
     return true;
   } catch (error) {
@@ -292,11 +346,11 @@ async function expandTo(tree, target, ctx) {
   }
 }
 
-function buildTree(roots, ctx) {
-  const tree = el("r-tree");
+function buildTree(roots, ctx, total) {
+  const tree = el("r-tree", null, { "data-total": String(total) });
   const list = el("ul", null, { role: "tree" });
   append(tree, list);
-  roots.forEach((node) => append(list, nodeItem(1, node)));
+  roots.forEach((node) => append(list, nodeItem(1, node, total)));
   list.addEventListener("click", (event) => {
     const button = event.target.closest('li[role="treeitem"] > button');
     if (button) toggleItem(button.parentElement, ctx);
@@ -383,7 +437,7 @@ function drawMemory(main, hashState, data) {
   const empty = data.roots.entries === 0;
   if (empty) append(box, el("r-empty", "no entries yet"));
   else {
-    const { tree, list } = buildTree(data.roots.nodes, ctx);
+    const { tree, list } = buildTree(data.roots.nodes, ctx, data.roots.entries);
     append(box, tree);
     if (state.node) expandTo(list, state.node, ctx);
   }
