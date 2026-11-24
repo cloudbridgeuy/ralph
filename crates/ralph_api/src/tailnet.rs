@@ -90,7 +90,7 @@ pub fn parse_ip_output(stdout: &str) -> Result<Ipv4Addr, TailnetError> {
 fn self_field(root: &Value, key: &str) -> Option<String> {
     let value = root.get("Self")?.get(key)?.as_str()?;
     let trimmed = value.trim().trim_end_matches('.').to_lowercase();
-    (!trimmed.is_empty()).then_some(trimmed)
+    (!trimmed.is_empty() && !trimmed.starts_with('.')).then_some(trimmed)
 }
 
 fn first_label(fqdn: &str) -> Option<String> {
@@ -301,6 +301,14 @@ mod tests {
         let names = parse_status_json(r#"{"Self":{"DNSName":"Box."}}"#);
         assert_eq!(names.short.as_deref(), Some("box"));
         assert_eq!(names.fqdn.as_deref(), Some("box"));
+    }
+
+    #[test]
+    fn status_json_leading_dot_dns_name_is_missing() {
+        for dns in [".x", ".x.ts.net.", ".", "..", ".X.Ts.Net."] {
+            let json = format!(r#"{{"Self":{{"DNSName":"{dns}"}}}}"#);
+            assert_eq!(parse_status_json(&json), TailnetNames::default(), "{dns}");
+        }
     }
 
     #[test]
