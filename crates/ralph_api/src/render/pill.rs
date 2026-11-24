@@ -36,6 +36,8 @@ pub enum Icon {
     Cross,
     Warning,
     Info,
+    Dot,
+    Pause,
 }
 
 impl Icon {
@@ -45,6 +47,8 @@ impl Icon {
             Icon::Cross => "M4 4L12 12M12 4L4 12",
             Icon::Warning => "M8 2L15 14H1ZM8 6V9M8 11.5V12",
             Icon::Info => "M8 7V12M8 4V4.5",
+            Icon::Dot => "M8 5.5A2.5 2.5 0 1 1 8 10.5A2.5 2.5 0 1 1 8 5.5Z",
+            Icon::Pause => "M6 4V12M10 4V12",
         }
     }
 }
@@ -83,6 +87,15 @@ mod tests {
     use crate::render::golden::{assert_golden, hostile_text, long_text};
     use crate::render::Tone;
 
+    const ALL_ICONS: [Icon; 6] = [
+        Icon::Check,
+        Icon::Cross,
+        Icon::Warning,
+        Icon::Info,
+        Icon::Dot,
+        Icon::Pause,
+    ];
+
     #[test]
     fn plain_pill() {
         assert_golden(
@@ -104,6 +117,22 @@ mod tests {
         assert_golden(
             "pill_icon_ok",
             &pill(Tone::Ok, PillShape::Round, Some(Icon::Check), "done"),
+        );
+    }
+
+    #[test]
+    fn idle_pill_with_dot_icon() {
+        assert_golden(
+            "pill_icon_dot",
+            &pill(Tone::Neutral, PillShape::Round, Some(Icon::Dot), "idle"),
+        );
+    }
+
+    #[test]
+    fn paused_pill_with_pause_icon() {
+        assert_golden(
+            "pill_icon_pause",
+            &pill(Tone::Warn, PillShape::Round, Some(Icon::Pause), "paused"),
         );
     }
 
@@ -150,7 +179,7 @@ mod tests {
 
     #[test]
     fn every_icon_is_hidden_from_assistive_tech() {
-        for icon in [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info] {
+        for icon in ALL_ICONS {
             let html = pill(Tone::Ok, PillShape::Round, Some(icon), "x");
             assert!(html.contains("aria-hidden=\"true\""), "{html}");
             assert!(!html.contains("style="), "{html}");
@@ -159,10 +188,7 @@ mod tests {
 
     #[test]
     fn icon_paths_differ() {
-        let paths: Vec<&str> = [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info]
-            .into_iter()
-            .map(Icon::path)
-            .collect();
+        let paths: Vec<&str> = ALL_ICONS.into_iter().map(Icon::path).collect();
         let mut unique = paths.clone();
         unique.sort_unstable();
         unique.dedup();

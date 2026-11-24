@@ -15,7 +15,14 @@ const TONES: [Tone; 6] = [
     Tone::Accent,
     Tone::Neutral,
 ];
-const ICONS: [Icon; 4] = [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info];
+const ICONS: [Icon; 6] = [
+    Icon::Check,
+    Icon::Cross,
+    Icon::Warning,
+    Icon::Info,
+    Icon::Dot,
+    Icon::Pause,
+];
 
 const PROSE_SPARSE: &str = "A short **note** with a [link](https://example.com).";
 const PROSE_DENSE: &str = "# Heading\n\n## Second\n\nText with *emphasis*, ~~strike~~ and `inline code`.\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n\n- [x] done\n- [ ] open\n\n> A quote.\n\n| day | turns |\n|-----|-------|\n| mon | 3 |\n\n[site](https://example.com)\n";
