@@ -571,4 +571,12 @@ mod tests {
     fn the_pill_line_is_16px() {
         assert_declares(&css(), "r-pill", "line-height: 16px;");
     }
+
+    #[test]
+    fn code_uses_the_page_font() {
+        let css = css();
+        for selector in ["r-code pre", "r-prose code"] {
+            assert_declares(&css, selector, "font: inherit;");
+        }
+    }
 }

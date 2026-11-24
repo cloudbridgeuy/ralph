@@ -419,6 +419,7 @@ r-prose a {
 
 r-prose code {
   padding: 0 0.5ch;
+  font: inherit;
   background: var(--r-surface);
   color: var(--r-ink);
   border: 1px solid var(--r-line-strong);
@@ -431,6 +432,7 @@ r-code {
 
 r-code pre {
   margin: 0;
+  font: inherit;
   padding: 10px 2ch;
   overflow-x: auto;
   border: 1px solid var(--r-line-strong);
