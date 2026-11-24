@@ -165,8 +165,8 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 | `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
 | `r-pill` | `pill(tone, shape, icon, text)`, `pill_with(variant, …)` | shape `square` or `round`; tone fill is 8% of the role over `--r-bg`, which keeps 4.5:1 for every tone in both themes (checked in `roles.rs`); `variant="outline"` has no fill; the fill lives on the tone rules in `app.css`; optional inline SVG icon (check, cross, warning, info, dot, pause) with `aria-hidden`; the text is cut with `…` at 32ch, and text over 32 chars is also in `title` |
 | `r-status` | `status(tone, text)` | `role="status"`, `aria-live="polite"`; a word (OK, Error, Warning, Info, Note) shows the tone, so colour is never the only signal |
-| `r-empty` | `empty(text)` | the empty state |
-| `r-error` | `error(text)` | `role="alert"` |
+| `r-empty` | `empty(what)`, `empty_next(what, next)`, `empty_compact(what)` | the empty state; a `span.what` and an optional `span.next`; `compact` drops the padding |
+| `r-error` | `error(what)`, `error_with(&ErrorParts)` | `role="alert"`; a `span.what` with an optional outline bad `r-pill` status code, an optional `span.why` and an optional `span.next`; every text is escaped; `compact` is one flex row with `next` on the right |
 | `r-spinner` | `spinner()` | `role="status"` with visually hidden "Loading" text |
 | `r-spark` | `spark_svg(values, w, h)` | returns `None` for an empty series; the caller renders `r-empty` |
 
@@ -277,14 +277,14 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, one-line preview). A node with no summary shows `summary pending` in the zoom summary row only. Its tree row shows the neutral `pending` pill.
 - An entry row opens its full text. Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
-- States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node.
+- States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status code, server message as text and a `.btn` Retry button; the retry runs the same load again and moves focus to the new content or the new Retry button), and 404 for an unknown thread or node.
 - Keyboard: Tab reaches the select, the links and one tree item (roving tabindex). Up and Down move between visible items. Right expands or goes to the first child. Left collapses or goes to the parent. Home and End go to the first and last item. Enter and Space zoom. Focus returns to the same item after a redraw.
 - Not shown: `tags.jsonl`, analytics, `history.jsonl`, paths.
 - Contract tests: `tests/memory_screen_contract.rs` (script served like the other assets, one `innerHTML`, no `eval(`, `style.`, `<img`, only primitive tags).
 
 ## r-tree markup
 
-- `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty>…</r-empty></r-tree>`.
+- `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty compact>…</r-empty></r-tree>`.
 - A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">guides, chevron, <span class="id">label</span></button>cells<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` with the same parts and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
 - Cells come from `Cells { count, extent, summary }`. They follow the label as `<span class="n">`, the extent bar and `<span class="sum">`. Each row is a CSS grid: `24ch 7ch 9ch 1fr`. The count column fits six digits. The nested `ul` spans all columns on row 2. The label column is fixed, so a deep label can clip.
 - Only native tags go inside `r-tree`, plus inline `svg`, `path`, `rect` and `r-pill`. The depth comes from `.g` guide spans, one per level below the first. `aria-level` starts at 1.
