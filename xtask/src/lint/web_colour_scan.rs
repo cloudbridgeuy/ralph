@@ -110,7 +110,7 @@ pub(super) fn url_end(rest: &str) -> usize {
     let search_from = match body.chars().next().filter(|c| *c == '"' || *c == '\'') {
         Some(quote) => body[1..]
             .find(quote)
-            .map_or(body.len(), |at| skipped + at + 2),
+            .map_or(rest.len(), |at| skipped + at + 2),
         None => 0,
     };
     rest[search_from..]
@@ -227,5 +227,13 @@ mod tests {
     fn the_contents_of_url_are_kept_whole() {
         assert_eq!(strip_comments("url(http://x/*y)", true), "url(http://x/*y)");
         assert_eq!(strip_comments("url(\"//x\") // z", true), "url(\"//x\")  ");
+    }
+
+    #[test]
+    fn a_url_after_unicode_whitespace_does_not_panic() {
+        assert_eq!(without_urls("url(\u{3000}x.svg) b"), " b");
+        assert_eq!(without_urls("url(\u{3000}\"x.svg\") b"), " b");
+        assert_eq!(without_urls("url(\u{3000}\"x"), "");
+        assert_eq!(strip_comments("url(\u{3000}\"x", false), "url(\u{3000}\"x");
     }
 }
