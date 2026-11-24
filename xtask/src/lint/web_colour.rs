@@ -1,5 +1,5 @@
 use super::web_colour_names::{COLOUR_FUNCTIONS, NAMED_COLOURS, PAINT_ATTRIBUTES, PRIMITIVES};
-use super::web_colour_scan::{statements, strip_comments, without_urls, Terminator};
+use super::web_colour_scan::{statements, strip_comments, Terminator};
 use crate::prelude::*;
 
 const ASSET_DIR: &str = "crates/ralph_api/assets";
@@ -313,7 +313,7 @@ fn find_web_violations(path: &str, text: &str) -> Vec<WebViolation> {
         return Vec::new();
     }
     let raw_lines: Vec<&str> = text.lines().collect();
-    let cleaned = without_urls(&strip_comments(text, is_script(path)));
+    let cleaned = strip_comments(text, is_script(path));
     let mut found = Vec::new();
     if path.ends_with(".css") {
         for statement in statements(&cleaned) {
@@ -843,6 +843,20 @@ mod tests {
         ] {
             assert_eq!(lines(js, text), vec![1], "{text}");
         }
+    }
+
+    #[test]
+    fn a_url_inside_a_js_string_hides_nothing() {
+        let js = "crates/ralph_api/assets/app.js";
+        let text = "a = \"url(\"; el.style.color = \"#fff\"; c = \")\";\n";
+        assert_eq!(lines(js, text), vec![1]);
+        assert_eq!(
+            lines(
+                CSS,
+                "a::after { content: \"url(\"; color: #fff; x: \")\"; }\n"
+            ),
+            vec![1]
+        );
     }
 
     #[test]

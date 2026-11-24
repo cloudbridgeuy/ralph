@@ -92,9 +92,13 @@ pub(super) fn strip_comments(text: &str, line_comments: bool) -> String {
             out.push_str(&rest[..end]);
             at += end;
         } else if starts_url(&out, rest) {
-            let end = 4 + url_end(&rest[4..]).unwrap_or(0);
-            out.push_str(&rest[..end]);
-            at += end;
+            match url_end(&rest[4..]) {
+                Some(len) => at += 4 + len,
+                None => {
+                    out.push_str(&rest[..4]);
+                    at += 4;
+                }
+            }
         } else {
             if matches!(c, '"' | '\'') || (line_comments && c == '`') {
                 quote = Some(c);
@@ -165,7 +169,7 @@ pub(super) fn statements(text: &str) -> Vec<Statement<'_>> {
     found
 }
 
-pub(super) fn url_end(rest: &str) -> Option<usize> {
+fn url_end(rest: &str) -> Option<usize> {
     let line = &rest[..rest.find('\n').unwrap_or(rest.len())];
     let body = line.trim_start();
     let skipped = line.len() - body.len();
@@ -174,34 +178,6 @@ pub(super) fn url_end(rest: &str) -> Option<usize> {
         None => 0,
     };
     line[search_from..].find(')').map(|at| search_from + at + 1)
-}
-
-pub(super) fn without_urls(line: &str) -> String {
-    const NAME: &str = "url(";
-    let lower = line.to_ascii_lowercase();
-    let mut out = String::new();
-    let mut from = 0;
-    while let Some(found) = lower[from..].find(NAME) {
-        let at = from + found;
-        let boundary = line[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !is_ident_char(c));
-        let closed = boundary
-            .then(|| url_end(&line[at + NAME.len()..]))
-            .flatten();
-        let Some(len) = closed else {
-            out.push_str(&line[from..at + NAME.len()]);
-            from = at + NAME.len();
-            continue;
-        };
-        out.push_str(&line[from..at]);
-        let end = at + NAME.len() + len;
-        out.extend(line[at..end].chars().filter(|c| *c == '\n'));
-        from = end;
-    }
-    out.push_str(&line[from..]);
-    out
 }
 
 #[cfg(test)]
@@ -241,12 +217,12 @@ mod tests {
     }
 
     #[test]
-    fn without_urls_drops_the_url_call() {
-        assert_eq!(without_urls("a url(x.svg) b"), "a  b");
-        assert_eq!(without_urls("a url(\"x)y.png\") b"), "a  b");
-        assert_eq!(without_urls("URL(#add)"), "");
-        assert_eq!(without_urls("curl(red) b"), "curl(red) b");
-        assert_eq!(without_urls("none"), "none");
+    fn the_url_call_is_dropped() {
+        assert_eq!(strip_comments("a url(x.svg) b", false), "a  b");
+        assert_eq!(strip_comments("a url(\"x)y.png\") b", false), "a  b");
+        assert_eq!(strip_comments("URL(#add)", false), "");
+        assert_eq!(strip_comments("curl(red) b", false), "curl(red) b");
+        assert_eq!(strip_comments("none", false), "none");
     }
 
     #[test]
@@ -285,16 +261,16 @@ mod tests {
     }
 
     #[test]
-    fn the_contents_of_url_are_kept_whole() {
-        assert_eq!(strip_comments("url(http://x/*y)", true), "url(http://x/*y)");
-        assert_eq!(strip_comments("url(\"//x\") // z", true), "url(\"//x\")  ");
+    fn the_contents_of_url_are_dropped_whole() {
+        assert_eq!(strip_comments("url(http://x/*y)", true), "");
+        assert_eq!(strip_comments("url(\"//x\") // z", true), "  ");
     }
 
     #[test]
     fn a_url_after_unicode_whitespace_does_not_panic() {
-        assert_eq!(without_urls("url(\u{3000}x.svg) b"), " b");
-        assert_eq!(without_urls("url(\u{3000}\"x.svg\") b"), " b");
-        assert_eq!(without_urls("url(\u{3000}\"x"), "url(\u{3000}\"x");
+        assert_eq!(strip_comments("url(\u{3000}x.svg) b", false), " b");
+        assert_eq!(strip_comments("url(\u{3000}\"x.svg\") b", false), " b");
+        assert_eq!(strip_comments("url(\u{3000}\"x", false), "url(\u{3000}\"x");
         assert_eq!(strip_comments("url(\u{3000}\"x", false), "url(\u{3000}\"x");
     }
 
