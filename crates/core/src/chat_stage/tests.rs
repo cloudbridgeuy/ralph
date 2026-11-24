@@ -146,8 +146,43 @@ fn add_arguments_are_checked() {
 
 #[test]
 fn done_needs_an_id() {
-    assert_eq!(parse_done(&json!({"id": "s4"})), Ok("s4".to_string()));
+    let closing = parse_done(&json!({"id": "s4", "note": "approved"})).unwrap();
+    assert_eq!(
+        (closing.id.as_str(), closing.note.as_deref()),
+        ("s4", Some("approved"))
+    );
+    assert_eq!(parse_done(&json!({"id": "s4"})).unwrap().note, None);
     assert!(parse_done(&json!({})).is_err());
+    assert!(parse_done(&json!({"id": "s4", "note": "a\nb"})).is_err());
+}
+
+fn new_item(text: &str) -> NewItem {
+    NewItem {
+        kind: Kind::Owed,
+        reference: None,
+        text: text.to_string(),
+    }
+}
+
+#[test]
+fn ids_grow_and_are_never_reused_after_a_close() {
+    let (stage, first) = add(Stage::default(), new_item("a"), "t", 3);
+    let (stage, second) = add(stage, new_item("b"), "t", 4);
+    assert_eq!((first.id.as_str(), second.id.as_str()), ("s1", "s2"));
+    assert_eq!(second.turn, 4);
+    let (stage, _) = close(stage, "s2").unwrap();
+    let (_, third) = add(stage, new_item("c"), "t", 5);
+    assert_eq!(third.id, "s3");
+}
+
+#[test]
+fn closing_removes_the_item_and_an_unknown_id_is_an_error() {
+    let (stage, _) = add(Stage::default(), new_item("a"), "t", 0);
+    assert!(close(stage.clone(), "s9").is_err());
+    let (left, gone) = close(stage, "s1").unwrap();
+    assert_eq!(gone.text, "a");
+    assert!(left.items.is_empty());
+    assert_eq!(left.last, 1);
 }
 
 #[test]

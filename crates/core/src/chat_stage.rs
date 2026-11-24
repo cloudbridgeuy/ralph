@@ -1,9 +1,11 @@
 use crate::chat_status::Status;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub const STAGE_EXPIRY_LOG_DISTANCE: usize = 60;
 pub const STAGE_REPEAT_TURNS: usize = 5;
+pub const STAGE_ADD: &str = "stage_add";
+pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
 
 const NEEDS_USER_STATES: [&str; 3] = ["question", "blocked", "permission"];
@@ -69,6 +71,24 @@ pub struct AuditRow {
     pub actor: Actor,
     pub op: Op,
     pub item: Item,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl AuditRow {
+    pub fn new(ts: &str, actor: Actor, op: Op, item: &Item) -> Self {
+        Self {
+            ts: ts.to_string(),
+            actor,
+            op,
+            item: item.clone(),
+            note: None,
+        }
+    }
+
+    pub fn with_note(self, note: Option<String>) -> Self {
+        Self { note, ..self }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +96,12 @@ pub struct NewItem {
     pub kind: Kind,
     pub reference: Option<String>,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Closing {
+    pub id: String,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +206,69 @@ pub fn stage_text(rendered: &str) -> &str {
     }
 }
 
+pub fn add(stage: Stage, new: NewItem, created: &str, turn: usize) -> (Stage, Item) {
+    let last = stage.last + 1;
+    let item = Item {
+        id: format!("s{last}"),
+        kind: new.kind,
+        reference: new.reference,
+        text: new.text,
+        created: created.to_string(),
+        turn,
+    };
+    let mut items = stage.items;
+    items.push(item.clone());
+    (Stage { items, last }, item)
+}
+
+pub fn close(stage: Stage, id: &str) -> Result<(Stage, Item), String> {
+    let position = stage
+        .items
+        .iter()
+        .position(|item| item.id == id)
+        .ok_or_else(|| format!("No open stage item {id}."))?;
+    let mut items = stage.items;
+    let item = items.remove(position);
+    Ok((
+        Stage {
+            items,
+            last: stage.last,
+        },
+        item,
+    ))
+}
+
+pub fn stage_add_tool() -> Value {
+    json!({
+        "name": STAGE_ADD,
+        "description": "Add an item to the stage when you leave something open: a decision waiting on the user, a question owed to a worker, or a follow-up you will do. Close it with stage_done when it closes. When a decision is open, name its sN or ref in your Next step line. Owed and followup items expire after 30 turns; decisions stay until closed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["decision", "owed", "followup"]},
+                "text": {"type": "string", "description": "One line of plain text."},
+                "ref": {"type": "string", "description": "Optional: a ticket, worker or branch the item is about."}
+            },
+            "required": ["kind", "text"]
+        }
+    })
+}
+
+pub fn stage_done_tool() -> Value {
+    json!({
+        "name": STAGE_DONE,
+        "description": "Close a stage item by its id (s4) when what it tracked is settled.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The item id, such as s4."},
+                "note": {"type": "string", "description": "Optional: how it closed, one line."}
+            },
+            "required": ["id"]
+        }
+    })
+}
+
 pub fn parse_add(args: &Value) -> Result<NewItem, String> {
     let kind = match args["kind"].as_str() {
         Some("decision") => Kind::Decision,
@@ -188,10 +277,7 @@ pub fn parse_add(args: &Value) -> Result<NewItem, String> {
         _ => return Err("kind must be decision, owed or followup.".to_string()),
     };
     let text = one_line(args["text"].as_str(), "text")?;
-    let reference = match args.get("ref").filter(|value| !value.is_null()) {
-        Some(value) => Some(one_line(value.as_str(), "ref")?),
-        None => None,
-    };
+    let reference = optional_line(args, "ref")?;
     Ok(NewItem {
         kind,
         reference,
@@ -199,8 +285,18 @@ pub fn parse_add(args: &Value) -> Result<NewItem, String> {
     })
 }
 
-pub fn parse_done(args: &Value) -> Result<String, String> {
-    one_line(args["id"].as_str(), "id")
+pub fn parse_done(args: &Value) -> Result<Closing, String> {
+    Ok(Closing {
+        id: one_line(args["id"].as_str(), "id")?,
+        note: optional_line(args, "note")?,
+    })
+}
+
+fn optional_line(args: &Value, name: &str) -> Result<Option<String>, String> {
+    args.get(name)
+        .filter(|value| !value.is_null())
+        .map(|value| one_line(value.as_str(), name))
+        .transpose()
 }
 
 fn one_line(raw: Option<&str>, name: &str) -> Result<String, String> {

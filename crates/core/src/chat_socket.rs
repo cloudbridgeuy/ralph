@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-const SOCKET_TOOLS: [&str; 10] = [
+const SOCKET_TOOLS: [&str; 12] = [
     "workers",
     "spawn_worker",
     "reply",
@@ -16,6 +16,8 @@ const SOCKET_TOOLS: [&str; 10] = [
     "schedule",
     "propose_run",
     "step_result",
+    "stage_add",
+    "stage_done",
 ];
 const SOCKET_PREFIX: &str = "chat-";
 const RUNTIME_PARENT: &str = ".ralph";
@@ -267,6 +269,8 @@ mod tests {
             "schedule",
             "propose_run",
             "step_result",
+            "stage_add",
+            "stage_done",
         ] {
             assert!(is_socket_tool(name));
         }

@@ -1,5 +1,6 @@
 use super::*;
 use ralph_core::chat_stage::{Item, Kind};
+use serde_json::json;
 
 fn item(id: &str, kind: Kind) -> Item {
     Item {
@@ -63,4 +64,69 @@ fn nothing_due_touches_no_file() {
     expire_due(&store, dir.path()).unwrap();
     assert!(!dir.path().join(AUDIT_FILE).exists());
     assert_eq!(store.log_len().unwrap(), 59);
+}
+
+fn audit_rows(dir: &Path) -> Vec<AuditRow> {
+    fs::read_to_string(dir.join(AUDIT_FILE))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+fn add_and_done_write_one_audit_row_each_and_ids_do_not_come_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 2);
+    let added = tool_add(
+        &store,
+        &json!({"kind": "decision", "text": "merge?", "ref": "GUZ-1"}),
+    );
+    assert_eq!(added, Ok("s1 added".to_string()));
+    assert_eq!(load(dir.path()).unwrap().items[0].turn, 2);
+    assert_eq!(
+        tool_done(&store, &json!({"id": "s1", "note": "yes"})),
+        Ok("s1 done".to_string())
+    );
+    assert_eq!(
+        tool_add(&store, &json!({"kind": "owed", "text": "x"})),
+        Ok("s2 added".to_string())
+    );
+    let rows = audit_rows(dir.path());
+    let ops: Vec<_> = rows.iter().map(|row| (row.actor, row.op)).collect();
+    assert_eq!(
+        ops,
+        [
+            (Actor::Model, Op::Add),
+            (Actor::Model, Op::Done),
+            (Actor::Model, Op::Add)
+        ]
+    );
+    assert_eq!(rows[1].note.as_deref(), Some("yes"));
+}
+
+#[test]
+fn only_stage_tools_are_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 0);
+    let request = |tool: &str, args| SocketRequest {
+        tool: tool.to_string(),
+        args,
+    };
+    assert_eq!(call(&store, &request("workers", json!({}))), None);
+    let added = call(
+        &store,
+        &request("stage_add", json!({"kind": "owed", "text": "x"})),
+    );
+    assert_eq!(added, Some(Ok("s1 added".to_string())));
+}
+
+#[test]
+fn a_bad_call_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 0);
+    assert!(tool_done(&store, &json!({"id": "s7"})).is_err());
+    assert!(tool_add(&store, &json!({"kind": "owed", "text": "a\nb"})).is_err());
+    assert!(!dir.path().join(STAGE_FILE).exists());
+    assert!(!dir.path().join(AUDIT_FILE).exists());
 }
