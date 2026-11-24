@@ -45,13 +45,12 @@ impl Resize {
         self.pending.store(true, Ordering::SeqCst);
     }
 
-    pub(super) fn take_redraw(&self, idle: bool, main_view: bool, new_cols: usize) -> bool {
+    pub(super) fn take_redraw(&self, idle: bool, new_cols: usize) -> bool {
         let mut rendered = locked(&self.rendered);
         let redraw = should_redraw(&ResizeInput {
             rendered: *rendered,
             new_cols,
             idle,
-            main_view,
         });
         if redraw {
             *rendered = Some(new_cols);
@@ -64,7 +63,6 @@ pub(super) struct Watch<'a> {
     pub(super) resized: &'a AtomicBool,
     pub(super) done: &'a AtomicBool,
     pub(super) at_prompt: &'a AtomicBool,
-    pub(super) main_view: bool,
     pub(super) state: &'a Resize,
     pub(super) store: &'a Path,
     pub(super) display: &'a Display<'a>,
@@ -96,7 +94,7 @@ impl Watch<'_> {
             self.state.mark_pending();
             return;
         }
-        if !self.state.take_redraw(true, self.main_view, cols) {
+        if !self.state.take_redraw(true, cols) {
             return;
         }
         if let Some(text) = redraw_text(self.store, self.display, cols) {

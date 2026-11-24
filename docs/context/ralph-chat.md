@@ -422,9 +422,9 @@ The chat sets the store config layer to the canonical store path, so its store w
 
 ### Redraw on resize
 
-When the terminal gets narrower than the width the last main-chat reply was printed at, chat prints that reply again at the new width, after a dim `re-rendered at N cols` header. Nothing is erased and the chat log is not touched; it is a fresh copy, like `/rerender`.
+When the terminal gets narrower than the width the last reply was printed at, chat prints that reply again at the new width, after a dim `re-rendered at N cols` header. Nothing is erased and the chat log is not touched; it is a fresh copy, like `/rerender`.
 
-- Rule: redraw only when idle at the prompt, in the main chat (never in a `--thread` chat), a reply was rendered in this process, and the new width is smaller than the reply's width. Widening or the same width never redraws. The reply's width is its narrowest prose chunk (`on_render`, reset when a turn starts). `/rerender` sets the width to the width it printed at, replacing the stored one rather than taking the narrower. After a redraw the stored width is the new one.
+- Rule: redraw only when idle at the prompt, in every view (the main chat and `--thread` chats), a reply was rendered in this process, and the new width is smaller than the reply's width. Widening or the same width never redraws. The reply's width is its narrowest prose chunk (`on_render`, reset when a turn starts). `/rerender` sets the width to the width it printed at, replacing the stored one rather than taking the narrower. After a redraw the stored width is the new one.
 - A SIGWINCH watcher waits 250 ms after the first signal of a burst, then reads the settled width (`debounce`). At the prompt the copy goes through the reedline `ExternalPrinter`. During a turn the watcher only marks a resize as pending; the loop checks it before the next prompt and prints directly.
 - A reply printed before this process started, such as the startup recap, has no stored width, so it is never redrawn.
 - Pure logic: `ralph_core::chat_resize::{next_width, should_redraw, debounce}`. The shell is `crates/ralph/src/chat/resize.rs`; the copy is built by `redraw_text` in `rerender.rs`.
