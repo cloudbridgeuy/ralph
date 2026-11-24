@@ -1,30 +1,103 @@
-use crate::render::{empty, escape};
+use crate::render::{empty, escape, pill, PillShape, Tone};
+
+/// A half-open range of entries `lo..hi` inside a thread of `total` entries.
+pub struct Extent {
+    pub lo: usize,
+    pub hi: usize,
+    pub total: usize,
+}
+
+#[derive(Default)]
+pub enum Summary<'a> {
+    #[default]
+    Empty,
+    Text(&'a str),
+    Pending,
+}
+
+#[derive(Default)]
+pub struct Cells<'a> {
+    pub count: Option<usize>,
+    pub extent: Option<Extent>,
+    pub summary: Summary<'a>,
+}
 
 pub enum TreeNode<'a> {
     Branch {
         label: &'a str,
-        meta: Option<&'a str>,
+        cells: Cells<'a>,
         expanded: bool,
         children: Vec<TreeNode<'a>>,
     },
     Leaf {
         label: &'a str,
-        meta: Option<&'a str>,
+        cells: Cells<'a>,
     },
     Row(String),
 }
 
-fn meta_html(meta: Option<&str>) -> String {
-    meta.map_or_else(String::new, |text| {
-        format!("<span class=\"meta\">{}</span>", escape(text))
-    })
+const CHEVRON: &str = "<svg class=\"chev\" viewBox=\"0 0 8 8\" aria-hidden=\"true\"><path d=\"M2.5 1l3.5 3-3.5 3\"/></svg>";
+
+fn guides(level: usize) -> String {
+    "<span class=\"g\"></span>".repeat(level.saturating_sub(1))
+}
+
+/// The bar is 100 units wide whatever the cell width, and a span is never thinner than this.
+const MIN_SPAN: f64 = 1.0;
+
+/// Returns the start and width of the span, in percent of the track.
+fn extent_geometry(extent: &Extent) -> Option<(f64, f64)> {
+    if extent.total == 0 || extent.lo >= extent.hi || extent.lo >= extent.total {
+        return None;
+    }
+    let percent = |entries: usize| entries as f64 * 100.0 / extent.total as f64;
+    let width = percent(extent.hi.min(extent.total) - extent.lo).max(MIN_SPAN);
+    let start = percent(extent.lo).min(100.0 - width);
+    Some((start, width))
+}
+
+fn number(value: f64) -> String {
+    // Half away from zero, as the script's Math.round does for these positive values.
+    ((value * 100.0).round() / 100.0).to_string()
+}
+
+fn extent_html(extent: Option<&Extent>) -> String {
+    match extent.and_then(extent_geometry) {
+        Some((x, width)) => format!(
+            "<svg class=\"extent\" viewBox=\"0 0 100 6\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><rect class=\"track\" y=\"2\" width=\"100\" height=\"2\"/><rect class=\"span\" x=\"{}\" width=\"{}\" height=\"6\"/></svg>",
+            number(x),
+            number(width)
+        ),
+        None => "<span class=\"extent\"></span>".to_string(),
+    }
+}
+
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn summary_html(summary: &Summary) -> String {
+    match summary {
+        Summary::Empty => String::new(),
+        Summary::Text(text) => escape(&one_line(text)),
+        Summary::Pending => pill(Tone::Neutral, PillShape::Square, None, "pending"),
+    }
+}
+
+fn cells_html(cells: &Cells) -> String {
+    let count = cells.count.map(|n| n.to_string()).unwrap_or_default();
+    let summary = summary_html(&cells.summary);
+    format!(
+        "<span class=\"n\">{count}</span>{}<span class=\"sum\">{summary}</span>",
+        extent_html(cells.extent.as_ref())
+    )
 }
 
 fn item(node: &TreeNode, level: usize) -> String {
     match node {
         TreeNode::Branch {
             label,
-            meta,
+            cells,
             expanded,
             children,
         } => {
@@ -34,15 +107,17 @@ fn item(node: &TreeNode, level: usize) -> String {
                 format!("<ul role=\"group\">{}</ul>", items(children, level + 1))
             };
             format!(
-                "<li role=\"treeitem\" aria-expanded=\"{expanded}\" aria-level=\"{level}\"><button type=\"button\">{}</button>{}{group}</li>",
+                "<li role=\"treeitem\" aria-expanded=\"{expanded}\" aria-level=\"{level}\"><button type=\"button\">{}{CHEVRON}<span class=\"id\">{}</span></button>{}{group}</li>",
+                guides(level),
                 escape(label),
-                meta_html(*meta)
+                cells_html(cells)
             )
         }
-        TreeNode::Leaf { label, meta } => format!(
-            "<li role=\"treeitem\" aria-level=\"{level}\"><span class=\"label\">{}</span>{}</li>",
+        TreeNode::Leaf { label, cells } => format!(
+            "<li role=\"treeitem\" aria-level=\"{level}\"><span class=\"label\">{}<span class=\"chev\"></span><span class=\"id\">{}</span></span>{}</li>",
+            guides(level),
             escape(label),
-            meta_html(*meta)
+            cells_html(cells)
         ),
         TreeNode::Row(html) => format!("<li role=\"none\">{html}</li>"),
     }
@@ -64,11 +139,23 @@ pub fn tree(nodes: &[TreeNode]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{tree, TreeNode};
+    use super::{extent_geometry, one_line, tree, Cells, Extent, Summary, TreeNode};
     use crate::render::golden::{assert_golden, hostile_text, long_text};
 
     fn leaf<'a>(label: &'a str) -> TreeNode<'a> {
-        TreeNode::Leaf { label, meta: None }
+        TreeNode::Leaf {
+            label,
+            cells: Cells::default(),
+        }
+    }
+
+    fn branch<'a>(label: &'a str, expanded: bool, children: Vec<TreeNode<'a>>) -> TreeNode<'a> {
+        TreeNode::Branch {
+            label,
+            cells: Cells::default(),
+            expanded,
+            children,
+        }
     }
 
     #[test]
@@ -77,27 +164,76 @@ mod tests {
     }
 
     #[test]
-    fn one_expanded_branch_with_a_leaf_and_meta() {
+    fn one_expanded_branch_with_a_leaf_and_cells() {
         let nodes = [TreeNode::Branch {
-            label: "Summary",
-            meta: Some("3 turns"),
+            label: "0-31",
+            cells: Cells {
+                count: Some(32),
+                summary: Summary::Text("Early work"),
+                ..Cells::default()
+            },
             expanded: true,
             children: vec![TreeNode::Leaf {
-                label: "Decision",
-                meta: Some("ok"),
+                label: "#4 user",
+                cells: Cells {
+                    count: None,
+                    summary: Summary::Text("hello"),
+                    ..Cells::default()
+                },
             }],
         }];
         assert_golden("tree_sparse", &tree(&nodes));
     }
 
     #[test]
-    fn collapsed_branch_keeps_its_children_and_says_so() {
+    fn a_row_has_label_count_and_summary_cells_in_order() {
         let nodes = [TreeNode::Branch {
-            label: "Old",
-            meta: None,
-            expanded: false,
-            children: vec![leaf("hidden")],
+            label: "0-31",
+            cells: Cells {
+                count: Some(32),
+                summary: Summary::Text("Early work"),
+                ..Cells::default()
+            },
+            expanded: true,
+            children: vec![],
         }];
+        let html = tree(&nodes);
+        let at = |needle: &str| html.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(at("<span class=\"id\">0-31</span>") < at("<span class=\"n\">32</span>"));
+        assert!(at("<span class=\"n\">32</span>") < at("<span class=\"sum\">Early work</span>"));
+    }
+
+    #[test]
+    fn a_missing_cell_still_leaves_an_empty_span_so_columns_hold() {
+        let html = tree(&[leaf("a")]);
+        assert!(html.contains("<span class=\"n\"></span>"));
+        assert!(html.contains("<span class=\"sum\"></span>"));
+    }
+
+    #[test]
+    fn every_level_below_the_first_adds_one_guide() {
+        let nodes = [branch("a", true, vec![branch("b", true, vec![leaf("c")])])];
+        let html = tree(&nodes);
+        assert_eq!(html.matches("<span class=\"g\"></span>").count(), 3);
+        let c = &html[html.find("<span class=\"id\">c").unwrap()..];
+        assert!(c.starts_with("<span class=\"id\">c</span>"));
+        let row_c = &html[..html.find("<span class=\"id\">c").unwrap()];
+        assert!(row_c.ends_with(
+            "<span class=\"g\"></span><span class=\"g\"></span><span class=\"chev\"></span>"
+        ));
+    }
+
+    #[test]
+    fn a_branch_has_an_svg_chevron_and_a_leaf_an_empty_spacer() {
+        let html = tree(&[branch("a", true, vec![leaf("b")])]);
+        assert!(html.contains("<svg class=\"chev\" viewBox=\"0 0 8 8\" aria-hidden=\"true\"><path d=\"M2.5 1l3.5 3-3.5 3\"/></svg>"));
+        assert!(html.contains("<span class=\"chev\"></span>"));
+        assert!(!html.contains("data:"));
+    }
+
+    #[test]
+    fn collapsed_branch_keeps_its_children_and_says_so() {
+        let nodes = [branch("Old", false, vec![leaf("hidden")])];
         let html = tree(&nodes);
         assert!(html.contains("aria-expanded=\"false\""));
         assert!(html.contains("hidden"));
@@ -106,17 +242,7 @@ mod tests {
 
     #[test]
     fn levels_count_from_one_and_grow_with_depth() {
-        let nodes = [TreeNode::Branch {
-            label: "a",
-            meta: None,
-            expanded: true,
-            children: vec![TreeNode::Branch {
-                label: "b",
-                meta: None,
-                expanded: true,
-                children: vec![leaf("c")],
-            }],
-        }];
+        let nodes = [branch("a", true, vec![branch("b", true, vec![leaf("c")])])];
         let html = tree(&nodes);
         for level in 1..=3 {
             assert!(html.contains(&format!("aria-level=\"{level}\"")), "{level}");
@@ -126,13 +252,16 @@ mod tests {
 
     #[test]
     fn a_branch_without_children_has_no_group() {
-        let nodes = [TreeNode::Branch {
-            label: "a",
-            meta: None,
-            expanded: true,
-            children: vec![],
-        }];
+        let nodes = [branch("a", true, vec![])];
         assert!(!tree(&nodes).contains("role=\"group\""));
+    }
+
+    #[test]
+    fn the_button_holds_guides_chevron_and_label_and_the_group_follows_the_cells() {
+        let html = tree(&[branch("a", true, vec![leaf("b")])]);
+        assert!(html.contains("<button type=\"button\"><svg class=\"chev\""));
+        assert!(html.contains("<span class=\"id\">a</span></button><span class=\"n\"></span>"));
+        assert!(html.contains("</span><ul role=\"group\">"));
     }
 
     #[test]
@@ -147,7 +276,11 @@ mod tests {
     fn hostile_text_is_escaped() {
         let nodes = [TreeNode::Branch {
             label: hostile_text(),
-            meta: Some(hostile_text()),
+            cells: Cells {
+                count: Some(1),
+                summary: Summary::Text(hostile_text()),
+                ..Cells::default()
+            },
             expanded: true,
             children: vec![leaf(hostile_text())],
         }];
@@ -161,10 +294,174 @@ mod tests {
         let long = long_text();
         let nodes = [TreeNode::Branch {
             label: &long,
-            meta: Some(&long),
+            cells: Cells {
+                count: Some(1),
+                summary: Summary::Text(&long),
+                ..Cells::default()
+            },
             expanded: true,
             children: vec![leaf(&long)],
         }];
         assert_golden("tree_very_long", &tree(&nodes));
+    }
+
+    fn extent(lo: usize, hi: usize, total: usize) -> Extent {
+        Extent { lo, hi, total }
+    }
+
+    fn row_with(extent: Option<Extent>) -> String {
+        tree(&[TreeNode::Leaf {
+            label: "x",
+            cells: Cells {
+                extent,
+                ..Cells::default()
+            },
+        }])
+    }
+
+    #[test]
+    fn the_extent_is_a_percent_of_the_thread() {
+        assert_eq!(extent_geometry(&extent(0, 50, 100)), Some((0.0, 50.0)));
+        assert_eq!(extent_geometry(&extent(25, 75, 100)), Some((25.0, 50.0)));
+    }
+
+    #[test]
+    fn a_one_entry_node_in_a_huge_thread_keeps_a_visible_span() {
+        for lo in [0, 2_500, 4_999] {
+            let (x, width) = extent_geometry(&extent(lo, lo + 1, 5_000)).unwrap();
+            assert!(width >= 1.0, "{lo}: {width}");
+            assert!(x >= 0.0 && x + width <= 100.0, "{lo}: {x} {width}");
+        }
+        let (_, width) = extent_geometry(&extent(0, 1, 1_000_000)).unwrap();
+        assert!(width >= 1.0);
+    }
+
+    #[test]
+    fn a_span_past_the_total_is_clamped_to_the_track() {
+        let (x, width) = extent_geometry(&extent(90, 500, 100)).unwrap();
+        assert_eq!((x, width), (90.0, 10.0));
+    }
+
+    #[test]
+    fn a_degenerate_extent_draws_no_bar() {
+        for bad in [
+            extent(0, 1, 0),
+            extent(5, 5, 10),
+            extent(7, 3, 10),
+            extent(10, 12, 10),
+        ] {
+            assert_eq!(extent_geometry(&bad), None);
+        }
+        assert!(row_with(Some(extent(5, 5, 10))).contains("<span class=\"extent\"></span>"));
+    }
+
+    #[test]
+    fn no_extent_leaves_an_empty_cell_so_columns_hold() {
+        let html = row_with(None);
+        assert!(html.contains("<span class=\"extent\"></span>"));
+        assert!(!html.contains("<rect"));
+    }
+
+    #[test]
+    fn the_bar_stretches_with_the_cell_and_uses_no_inline_style() {
+        let html = row_with(Some(extent(10, 20, 100)));
+        assert!(html
+            .contains("viewBox=\"0 0 100 6\" preserveAspectRatio=\"none\" aria-hidden=\"true\""));
+        assert!(html.contains("<rect class=\"track\" y=\"2\" width=\"100\" height=\"2\"/>"));
+        assert!(html.contains("<rect class=\"span\" x=\"10\" width=\"10\" height=\"6\"/>"));
+        assert!(!html.contains("style="));
+        assert!(!html.contains("data:"));
+    }
+
+    #[test]
+    fn extent_numbers_have_at_most_two_decimals() {
+        let html = row_with(Some(extent(1, 2, 3)));
+        assert!(html.contains("x=\"33.33\" width=\"33.33\""), "{html}");
+    }
+
+    #[test]
+    fn a_tie_rounds_half_up_like_the_script() {
+        // 1 of 800 is 0.125 exactly. The script uses Math.round(v * 100) / 100.
+        let html = row_with(Some(extent(1, 2, 800)));
+        assert!(html.contains("x=\"0.13\""), "{html}");
+        assert_eq!(super::number(2.5), "2.5");
+        assert_eq!(super::number(0.005), "0.01");
+    }
+
+    #[test]
+    fn rows_with_an_extent_bar() {
+        let nodes = [TreeNode::Branch {
+            label: "0-31",
+            cells: Cells {
+                count: Some(32),
+                summary: Summary::Text("Early work"),
+                extent: Some(extent(0, 32, 45)),
+            },
+            expanded: true,
+            children: vec![TreeNode::Leaf {
+                label: "#40 user",
+                cells: Cells::default(),
+            }],
+        }];
+        assert_golden("tree_extent", &tree(&nodes));
+    }
+
+    #[test]
+    fn a_summary_is_one_line_whatever_the_source_text() {
+        assert_eq!(one_line("a\n\n  b\t c "), "a b c");
+        assert_eq!(one_line("\n"), "");
+        assert_eq!(one_line("# Title\n- item"), "# Title - item");
+    }
+
+    #[test]
+    fn a_multi_line_summary_renders_on_one_line() {
+        let html = tree(&[TreeNode::Leaf {
+            label: "x",
+            cells: Cells {
+                summary: Summary::Text("first\nsecond"),
+                ..Cells::default()
+            },
+        }]);
+        assert!(html.contains("<span class=\"sum\">first second</span>"));
+    }
+
+    #[test]
+    fn a_pending_node_shows_one_neutral_pill_and_no_sentence() {
+        let html = tree(&[TreeNode::Leaf {
+            label: "x",
+            cells: Cells {
+                summary: Summary::Pending,
+                ..Cells::default()
+            },
+        }]);
+        assert!(html.contains(
+            "<span class=\"sum\"><r-pill tone=\"neutral\" shape=\"square\"><span>pending</span></r-pill></span>"
+        ));
+        assert!(!html.contains("summary pending"));
+        assert_eq!(html.matches("<r-pill").count(), 1);
+    }
+
+    #[test]
+    fn rows_with_text_pending_and_no_summary() {
+        let nodes = [TreeNode::Branch {
+            label: "0-7",
+            cells: Cells {
+                count: Some(8),
+                summary: Summary::Pending,
+                ..Cells::default()
+            },
+            expanded: true,
+            children: vec![
+                TreeNode::Leaf {
+                    label: "#0 user",
+                    cells: Cells {
+                        summary: Summary::Text("hello"),
+                        ..Cells::default()
+                    },
+                },
+                leaf("#1 assistant"),
+            ],
+        }];
+        assert_golden("tree_pending", &tree(&nodes));
     }
 }

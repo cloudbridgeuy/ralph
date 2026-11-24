@@ -244,7 +244,7 @@ fn threads_lists_sorted_flags() {
     assert_eq!(reply.status, 200);
     assert_eq!(
         json_of(&reply),
-        json!({"threads": [
+        json!({"store": store_name(&server), "threads": [
             {"name": "done", "parked": true, "merged": true},
             {"name": "side", "parked": false, "merged": false},
         ]})
@@ -256,8 +256,28 @@ fn threads_empty_without_threads_dir() {
     let server = TestServer::start_with_store(fixture);
     assert_eq!(
         json_of(&get(&server, "/api/memory/threads")),
-        json!({"threads": []})
+        json!({"store": store_name(&server), "threads": []})
     );
+}
+
+fn store_name(server: &TestServer) -> String {
+    server
+        .store_path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[test]
+fn threads_name_the_store_folder_but_never_its_path() {
+    let server = TestServer::start_with_store(fixture);
+    let reply = get(&server, "/api/memory/threads");
+    let text = reply.body;
+    let path = server.store_path();
+    assert!(text.contains(&store_name(&server)));
+    assert!(!text.contains(path.to_str().unwrap()));
+    assert!(!text.contains(path.parent().unwrap().to_str().unwrap()));
 }
 
 #[test]
@@ -522,7 +542,8 @@ fn reads_write_nothing() {
 
 fn golden(name: &str, target: &str) {
     let server = TestServer::start_with_store(fixture_with_thread);
-    let reply = get(&server, target);
+    let mut reply = get(&server, target);
+    reply.body = reply.body.replace(&store_name(&server), "chat-store");
     assert_golden(name, &reply);
 }
 

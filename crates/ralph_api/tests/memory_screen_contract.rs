@@ -169,3 +169,104 @@ fn append_results_are_never_taken_as_the_new_child() {
     assert!(!body.contains("append(group, rowItem()).appendChild("));
     assert!(body.contains("function zoomRows(zoom)"));
 }
+
+const TREE_EXTENT: &str = include_str!("golden/render/tree_extent.html");
+const TREE_PENDING: &str = include_str!("golden/render/tree_pending.html");
+
+fn class_names(html: &str) -> Vec<String> {
+    let mut found: Vec<String> = html
+        .split("class=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .flat_map(|names| names.split(' ').map(str::to_string))
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+#[test]
+fn the_script_builds_every_class_the_rust_tree_golden_emits() {
+    let body = script();
+    let mut names = class_names(TREE_EXTENT);
+    names.extend(class_names(TREE_PENDING));
+    for name in ["g", "chev", "id", "n", "extent", "track", "span", "sum"] {
+        assert!(
+            names.iter().any(|found| found == name),
+            "golden lacks {name}"
+        );
+    }
+    // The memory screen has no leaf rows: every node and entry row can open.
+    for name in names.into_iter().filter(|name| name != "label") {
+        assert!(
+            body.contains(&format!("class: \"{name}\"")),
+            "script lacks class: \"{name}\""
+        );
+    }
+}
+
+#[test]
+fn the_script_draws_the_same_chevron_and_extent_bar_as_the_rust_tree() {
+    let body = script();
+    for shared in [
+        "0 0 8 8",
+        "M2.5 1l3.5 3-3.5 3",
+        "0 0 100 6",
+        "preserveAspectRatio",
+        "none",
+    ] {
+        assert!(TREE_EXTENT.contains(shared), "golden lacks {shared}");
+        assert!(body.contains(shared), "script lacks {shared}");
+    }
+    for fragment in [
+        "function extentSpan(lo, hi, total) {",
+        "if (![lo, hi, total].every(Number.isFinite) || total <= 0 || lo >= hi || lo >= total) return null;",
+        "Math.max(((Math.min(hi, total) - lo) * 100) / total, EXTENT_MIN)",
+        "Math.min((lo * 100) / total, 100 - width)",
+    ] {
+        assert!(body.contains(fragment), "script lacks {fragment}");
+    }
+    assert!(body.contains("const EXTENT_MIN = 1;"));
+    assert!(body.contains("function oneLine(text)"));
+    assert!(body.contains("replace(/\\s+/g, \" \")"));
+}
+
+#[test]
+fn a_pending_node_gets_the_neutral_pill_not_a_sentence_in_its_row() {
+    let body = script();
+    assert!(TREE_PENDING
+        .contains("<r-pill tone=\"neutral\" shape=\"square\"><span>pending</span></r-pill>"));
+    assert!(body.contains("\"r-pill\""));
+    assert!(body.contains("tone: \"neutral\""));
+    assert!(body.contains("shape: \"square\""));
+    assert!(!body.contains("node.summary === null ? \"summary pending\""));
+}
+
+#[test]
+fn the_tree_keeps_the_selectors_the_keyboard_navigation_uses() {
+    let body = script();
+    assert!(body.contains("li[role=\"treeitem\"] > button"));
+    assert!(body.contains(":scope > ul[role=\"group\"]"));
+    assert!(body.contains(".firstElementChild.focus()"));
+    let build = &body[body.find("function treeItem(").unwrap()..];
+    let button = build.find("append(item, button").unwrap();
+    let group = build.find("el(\"ul\", null, { role: \"group\" })").unwrap();
+    assert!(button < group);
+}
+
+#[test]
+fn the_script_makes_svg_with_the_svg_namespace_and_no_inline_style() {
+    let body = script();
+    assert!(body.contains("createElementNS"));
+    assert!(!body.contains("data:"));
+    assert!(!body.contains("setAttribute(\"style\""));
+}
+
+#[test]
+fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
+    let body = script();
+    assert!(body.contains("function kv(pairs)"));
+    assert!(body.contains("el(\"r-kv\", null, { two: \"\" })"));
+    assert!(body.contains("String(data.roots.entries)]]))"));
+    assert!(!body.contains("source"));
+}

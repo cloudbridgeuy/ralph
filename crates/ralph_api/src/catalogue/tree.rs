@@ -1,30 +1,50 @@
 use super::{group, text};
-use crate::render::{error, tree, TreeNode};
+use crate::render::{error, tree, Cells, Extent, Summary, TreeNode};
 
 const HOSTILE: &str = "</r-tree><script>alert(\"x\")</script> 'quote' & \"double\"";
 
+fn spanned(mut node: TreeNode<'_>, lo: usize, hi: usize, total: usize) -> TreeNode<'_> {
+    if let TreeNode::Branch { cells, .. } | TreeNode::Leaf { cells, .. } = &mut node {
+        cells.extent = Some(Extent { lo, hi, total });
+    }
+    node
+}
+
+fn cells(summary: Option<&str>) -> Cells<'_> {
+    Cells {
+        summary: summary.map_or(Summary::Empty, Summary::Text),
+        ..Cells::default()
+    }
+}
+
 fn branch<'a>(
     label: &'a str,
-    meta: Option<&'a str>,
+    count: usize,
     expanded: bool,
     children: Vec<TreeNode<'a>>,
 ) -> TreeNode<'a> {
     TreeNode::Branch {
         label,
-        meta,
+        cells: Cells {
+            count: Some(count),
+            ..Cells::default()
+        },
         expanded,
         children,
     }
 }
 
-fn leaf<'a>(label: &'a str, meta: Option<&'a str>) -> TreeNode<'a> {
-    TreeNode::Leaf { label, meta }
+fn leaf<'a>(label: &'a str, summary: Option<&'a str>) -> TreeNode<'a> {
+    TreeNode::Leaf {
+        label,
+        cells: cells(summary),
+    }
 }
 
 fn earlier(expanded: bool) -> Vec<TreeNode<'static>> {
     vec![branch(
         "Earlier work",
-        Some("48 turns"),
+        48,
         expanded,
         vec![leaf("Ported the nap pass", None)],
     )]
@@ -34,13 +54,13 @@ fn sparse() -> Vec<TreeNode<'static>> {
     vec![
         branch(
             "Session summary",
-            Some("12 turns"),
+            12,
             true,
             vec![leaf("Chose SQLite for the store", Some("decision"))],
         ),
         branch(
             "Earlier work",
-            Some("48 turns"),
+            48,
             false,
             vec![leaf("Ported the nap pass", None)],
         ),
@@ -51,49 +71,82 @@ fn sparse() -> Vec<TreeNode<'static>> {
 fn dense() -> Vec<TreeNode<'static>> {
     vec![branch(
         "Memory root",
-        Some("212 turns"),
+        212,
         true,
         vec![
-            branch(
-                "Week 1",
-                Some("90 turns"),
-                true,
-                vec![
-                    branch(
-                        "Monday",
-                        Some("30 turns"),
-                        true,
-                        vec![
-                            leaf("Set up the workspace", None),
-                            leaf("Wrote the clap router", Some("done")),
-                            leaf("Fixed the flaky timer test", None),
-                        ],
-                    ),
-                    branch(
-                        "Tuesday",
-                        Some("60 turns"),
-                        false,
-                        vec![leaf("Reworked the stream collector", None)],
-                    ),
-                ],
+            spanned(
+                branch(
+                    "Week 1",
+                    90,
+                    true,
+                    vec![
+                        branch(
+                            "Monday",
+                            30,
+                            true,
+                            vec![
+                                leaf("Set up the workspace", None),
+                                leaf("Wrote the clap router", Some("done")),
+                                leaf("Fixed the flaky timer test", None),
+                            ],
+                        ),
+                        branch(
+                            "Tuesday",
+                            60,
+                            false,
+                            vec![leaf("Reworked the stream collector", None)],
+                        ),
+                    ],
+                ),
+                0,
+                90,
+                212,
             ),
-            branch(
-                "Week 2",
-                Some("122 turns"),
-                true,
-                vec![
-                    branch(
-                        "Thursday",
-                        Some("40 turns"),
-                        true,
-                        vec![leaf("Added the wire proxy", Some("merged"))],
-                    ),
-                    leaf("Reviewed the release notes", None),
-                ],
+            spanned(
+                branch(
+                    "Week 2",
+                    122,
+                    true,
+                    vec![
+                        branch(
+                            "Thursday",
+                            40,
+                            true,
+                            vec![leaf("Added the wire proxy", Some("merged"))],
+                        ),
+                        leaf("Reviewed the release notes", None),
+                    ],
+                ),
+                90,
+                212,
+                212,
             ),
             leaf("Parked the thread merge idea", None),
         ],
     )]
+}
+
+fn pending() -> Vec<TreeNode<'static>> {
+    let waiting = |label| TreeNode::Branch {
+        label,
+        cells: Cells {
+            count: Some(8),
+            summary: Summary::Pending,
+            ..Cells::default()
+        },
+        expanded: true,
+        children: vec![],
+    };
+    vec![
+        waiting("0-7"),
+        TreeNode::Leaf {
+            label: "#8 user",
+            cells: Cells {
+                summary: Summary::Text("a one-entry block shows its text"),
+                ..Cells::default()
+            },
+        },
+    ]
 }
 
 pub(super) fn trees(very_long_summary: &str) -> String {
@@ -101,22 +154,35 @@ pub(super) fn trees(very_long_summary: &str) -> String {
     let failed = vec![
         branch(
             "Session summary",
-            Some("12 turns"),
+            12,
             true,
             vec![TreeNode::Row(error("could not load the children"))],
         ),
         leaf("Open question on token limits", None),
     ];
     let long = vec![
-        branch(&unbroken, Some("1 turn"), true, vec![leaf(&unbroken, None)]),
-        branch(very_long_summary, Some(very_long_summary), true, vec![]),
+        branch(&unbroken, 1, true, vec![leaf(&unbroken, None)]),
+        TreeNode::Branch {
+            label: very_long_summary,
+            cells: Cells {
+                count: Some(1200),
+                summary: Summary::Text(very_long_summary),
+                ..Cells::default()
+            },
+            expanded: true,
+            children: vec![],
+        },
     ];
-    let hostile = vec![branch(
-        HOSTILE,
-        Some(HOSTILE),
-        true,
-        vec![leaf(HOSTILE, None)],
-    )];
+    let hostile = vec![TreeNode::Branch {
+        label: HOSTILE,
+        cells: Cells {
+            count: Some(1),
+            summary: Summary::Text(HOSTILE),
+            ..Cells::default()
+        },
+        expanded: true,
+        children: vec![leaf(HOSTILE, None)],
+    }];
     group(
         "r-tree",
         &[
@@ -128,6 +194,7 @@ pub(super) fn trees(very_long_summary: &str) -> String {
             ("collapsed", tree(&earlier(false))),
             ("expanded", tree(&earlier(true))),
             ("hostile", tree(&hostile)),
+            ("pending", tree(&pending())),
             (
                 "focus",
                 format!(
@@ -188,6 +255,7 @@ mod tests {
                     "collapsed",
                     "expanded",
                     "hostile",
+                    "pending",
                     "focus"
                 ]
             );
@@ -250,7 +318,10 @@ mod tests {
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
                     .collect();
-                let allowed = ["ul", "li", "button", "span", "r-empty", "r-error", "p"];
+                let allowed = [
+                    "ul", "li", "button", "span", "svg", "path", "rect", "r-pill", "r-empty",
+                    "r-error", "p",
+                ];
                 assert!(allowed.contains(&name.as_str()), "{name}");
             }
         }
