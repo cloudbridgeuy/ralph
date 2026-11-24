@@ -394,6 +394,26 @@ r-error {
   overflow-wrap: anywhere;
 }
 
+.btn {
+  height: 20px;
+  padding: 0 2ch;
+  border: 1px solid var(--r-line-strong);
+  border-radius: 3px;
+  background: var(--r-bg);
+  color: var(--r-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--r-surface);
+}
+
+.btn:disabled {
+  color: var(--r-muted);
+  border-color: var(--r-line);
+}
+
 r-spinner {
   display: inline-flex;
   align-items: center;
