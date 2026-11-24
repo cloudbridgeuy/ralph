@@ -8,6 +8,7 @@ pub mod error;
 mod hooks;
 mod install;
 mod web_colour;
+mod web_colour_names;
 
 /// Code quality checks and git hooks management
 #[derive(Debug, clap::Parser)]
