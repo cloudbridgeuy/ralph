@@ -22,7 +22,7 @@ pub use error::error;
 pub use escape::escape;
 pub use frame::frame;
 pub use kv::kv;
-pub use pill::{pill, Icon, PillShape};
+pub use pill::{pill, pill_with, Icon, PillShape, PillVariant};
 pub use prose::render_markdown;
 pub use rule::rule;
 pub use spark::spark_svg;

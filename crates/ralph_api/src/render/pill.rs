@@ -6,6 +6,15 @@ pub enum PillShape {
     Round,
 }
 
+impl PillVariant {
+    fn attribute(self) -> &'static str {
+        match self {
+            PillVariant::Tint => "",
+            PillVariant::Outline => " variant=\"outline\"",
+        }
+    }
+}
+
 impl PillShape {
     fn as_str(self) -> &'static str {
         match self {
@@ -13,6 +22,12 @@ impl PillShape {
             PillShape::Round => "round",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillVariant {
+    Tint,
+    Outline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,10 +57,21 @@ fn icon_svg(icon: Icon) -> String {
 }
 
 pub fn pill(tone: Tone, shape: PillShape, icon: Option<Icon>, text: &str) -> String {
+    pill_with(PillVariant::Tint, tone, shape, icon, text)
+}
+
+pub fn pill_with(
+    variant: PillVariant,
+    tone: Tone,
+    shape: PillShape,
+    icon: Option<Icon>,
+    text: &str,
+) -> String {
     format!(
-        "<r-pill tone=\"{}\" shape=\"{}\">{}<span>{}</span></r-pill>",
+        "<r-pill tone=\"{}\" shape=\"{}\"{}>{}<span>{}</span></r-pill>",
         tone.as_str(),
         shape.as_str(),
+        variant.attribute(),
         icon.map(icon_svg).unwrap_or_default(),
         escape(text)
     )
@@ -53,7 +79,7 @@ pub fn pill(tone: Tone, shape: PillShape, icon: Option<Icon>, text: &str) -> Str
 
 #[cfg(test)]
 mod tests {
-    use super::{pill, Icon, PillShape};
+    use super::{pill, pill_with, Icon, PillShape, PillVariant};
     use crate::render::golden::{assert_golden, hostile_text, long_text};
     use crate::render::Tone;
 
@@ -79,6 +105,26 @@ mod tests {
             "pill_icon_ok",
             &pill(Tone::Ok, PillShape::Round, Some(Icon::Check), "done"),
         );
+    }
+
+    #[test]
+    fn outline_pill() {
+        assert_golden(
+            "pill_outline",
+            &pill_with(
+                PillVariant::Outline,
+                Tone::Info,
+                PillShape::Round,
+                Some(Icon::Info),
+                "queued",
+            ),
+        );
+    }
+
+    #[test]
+    fn tint_is_the_default_and_has_no_variant_attribute() {
+        let html = pill(Tone::Ok, PillShape::Round, None, "x");
+        assert!(!html.contains("variant"), "{html}");
     }
 
     #[test]

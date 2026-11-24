@@ -1,6 +1,6 @@
 use crate::render::{
-    empty, error, escape, frame, kv, pill, render_markdown, rule, spark_svg, spinner, status,
-    table, Icon, PillShape, Shape, Tone,
+    empty, error, escape, frame, kv, pill, pill_with, render_markdown, rule, spark_svg, spinner,
+    status, table, Icon, PillShape, PillVariant, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -160,6 +160,16 @@ fn pills(fixture: &Fixture) -> String {
                 ),
             ),
             ("dense", dense),
+            (
+                "outline",
+                pill_with(
+                    PillVariant::Outline,
+                    Tone::Info,
+                    PillShape::Round,
+                    Some(Icon::Info),
+                    "queued",
+                ),
+            ),
             (
                 "error",
                 pill(Tone::Bad, PillShape::Square, Some(Icon::Cross), "failed"),

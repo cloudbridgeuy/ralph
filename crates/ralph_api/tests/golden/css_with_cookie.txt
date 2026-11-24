@@ -269,6 +269,10 @@ r-status[tone="neutral"] {
   color: var(--r-muted);
 }
 
+r-pill[variant="outline"] {
+  background: transparent;
+}
+
 r-empty {
   display: block;
   color: var(--r-muted);

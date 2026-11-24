@@ -321,6 +321,16 @@ mod tests {
     }
 
     #[test]
+    fn the_outline_pill_has_no_fill_and_follows_every_tone_rule() {
+        let css = css();
+        let body = rule_body(&css, "r-pill[variant=\"outline\"]").unwrap();
+        assert!(body.contains("background: transparent;"), "{body}");
+        let outline = css.find("r-pill[variant=\"outline\"]").unwrap();
+        let last_tone = css.find("r-pill[tone=\"neutral\"]").unwrap();
+        assert!(outline > last_tone);
+    }
+
+    #[test]
     fn info_and_accent_pills_use_different_roles() {
         let css = css();
         let info = rule_body(&css, "r-pill[tone=\"info\"]").unwrap();
