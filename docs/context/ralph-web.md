@@ -64,7 +64,7 @@ Loopback only is the default. `--tailscale` adds one address; see [Tailscale](#t
 - `--port` sets the port. The default is `0`, which picks a free port.
 - `[web] port` in `config.toml` sets a stable port. Precedence: `--port`, then `[web] port`, then `0`. `--port 0` forces a free port.
 - A busy port exits with 1: `port <N> in use (from --port|[web] port|ephemeral): <os error>`.
-- With `--tailscale` and an ephemeral port, a tailnet bind that hits a taken port retries the whole loopback and tailnet pair up to 5 times with a fresh port. A fixed port never retries.
+- With `--tailscale` and an ephemeral port, a tailnet bind that hits a taken port retries the whole loopback and tailnet pair up to 5 attempts in total, each with a fresh port. A fixed port never retries.
 - The printed URL shows the real port.
 
 ## Tailscale
