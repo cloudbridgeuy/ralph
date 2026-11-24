@@ -289,4 +289,14 @@ mod tests {
         assert!(!css.contains("var(--r-h2,"));
         assert!(!css.contains("var(--r-h3,"));
     }
+    #[test]
+    fn faint_and_line_strong_stay_off_text_colours() {
+        let css = css();
+        let colours = declarations(&css, "color:");
+        assert!(!colours.is_empty());
+        for colour in colours {
+            assert!(!colour.contains("--r-faint"), "{colour}");
+            assert!(!colour.contains("--r-line-strong"), "{colour}");
+        }
+    }
 }
