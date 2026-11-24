@@ -44,7 +44,11 @@ body {
   font-weight: 600;
 }
 
-.note,
+.note {
+  color: var(--r-muted);
+  font-size: 12px;
+}
+
 .empty {
   color: var(--r-muted);
 }

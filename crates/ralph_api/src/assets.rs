@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn meta_text_is_12px() {
         let css = css();
-        for selector in ["r-table th", "r-prose th", "r-pill", "r-spark"] {
+        for selector in [".note", "r-table th", "r-prose th", "r-pill", "r-spark"] {
             assert_declares(&css, selector, "font-size: 12px;");
         }
     }
