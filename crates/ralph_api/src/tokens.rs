@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::roles::{role_lines, Theme};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb {
     pub r: u8,
@@ -82,11 +84,12 @@ fn ansi_lines(table: &[Rgb; 16], indent: &str) -> String {
         .collect()
 }
 
-fn theme_block(theme: &str, table: &[Rgb; 16], slots: &[Slot]) -> String {
+fn theme_block(name: &str, theme: Theme, table: &[Rgb; 16], slots: &[Slot]) -> String {
     let slot_lines: String = slots.iter().filter_map(slot_line).collect();
     format!(
-        "[data-theme=\"{theme}\"] {{\n{}{slot_lines}}}\n",
-        ansi_lines(table, "  ")
+        "[data-theme=\"{name}\"] {{\n{}{}{slot_lines}}}\n",
+        ansi_lines(table, "  "),
+        role_lines(theme, "  ")
     )
 }
 
@@ -94,12 +97,24 @@ pub fn tokens_css(input: &TokensInput) -> String {
     let mut css = String::from(":root {\n");
     css.push_str(&format!("  --r-font: {};\n", sanitize_font(input.font)));
     css.push_str(&ansi_lines(input.ansi_dark, "  "));
+    css.push_str(&role_lines(Theme::Dark, "  "));
     css.extend(input.slots.iter().filter_map(slot_line));
     css.push_str("}\n@media (prefers-color-scheme: light) {\n  :root {\n");
     css.push_str(&ansi_lines(input.ansi_light, "    "));
+    css.push_str(&role_lines(Theme::Light, "    "));
     css.push_str("  }\n}\n");
-    css.push_str(&theme_block("dark", input.ansi_dark, input.slots));
-    css.push_str(&theme_block("light", input.ansi_light, input.slots));
+    css.push_str(&theme_block(
+        "dark",
+        Theme::Dark,
+        input.ansi_dark,
+        input.slots,
+    ));
+    css.push_str(&theme_block(
+        "light",
+        Theme::Light,
+        input.ansi_light,
+        input.slots,
+    ));
     css
 }
 
@@ -164,20 +179,24 @@ mod tests {
         for i in 0..16 {
             expected.push_str(&format!("  --r-ansi-{i}: #010203;\n"));
         }
+        expected.push_str(&role_lines(Theme::Dark, "  "));
         expected.push_str("  --r-bg: #000000;\n  --r-accent: var(--r-ansi-3);\n}\n");
         expected.push_str("@media (prefers-color-scheme: light) {\n  :root {\n");
         for i in 0..16 {
             expected.push_str(&format!("    --r-ansi-{i}: #fffefd;\n"));
         }
+        expected.push_str(&role_lines(Theme::Light, "    "));
         expected.push_str("  }\n}\n[data-theme=\"dark\"] {\n");
         for i in 0..16 {
             expected.push_str(&format!("  --r-ansi-{i}: #010203;\n"));
         }
+        expected.push_str(&role_lines(Theme::Dark, "  "));
         expected.push_str("  --r-bg: #000000;\n  --r-accent: var(--r-ansi-3);\n");
         expected.push_str("}\n[data-theme=\"light\"] {\n");
         for i in 0..16 {
             expected.push_str(&format!("  --r-ansi-{i}: #fffefd;\n"));
         }
+        expected.push_str(&role_lines(Theme::Light, "  "));
         expected.push_str("  --r-bg: #000000;\n  --r-accent: var(--r-ansi-3);\n");
         expected.push_str("}\n");
         assert_eq!(css, expected);
@@ -215,8 +234,8 @@ mod tests {
 
     #[test]
     fn ansi_out_of_range_emits_nothing() {
-        let css = render("x", &[slot("bad", ColorSpec::Ansi(16))]);
-        assert!(!css.contains("--r-bad"));
+        let css = render("x", &[slot("nope", ColorSpec::Ansi(16))]);
+        assert!(!css.contains("--r-nope"));
         assert!(!css.contains("--r-ansi-16"));
         assert_eq!(css, render("x", &[]));
     }
@@ -233,7 +252,7 @@ mod tests {
             .unwrap();
         assert!(!light.contains("--r-font"));
         assert!(!light.contains("--r-fg"));
-        assert_eq!(light.matches("--r-").count(), 16);
+        assert_eq!(declarations(light), 16 + 22);
         assert!(light.contains("--r-ansi-0: #646464;"));
         assert!(light.contains("--r-ansi-15: #737373;"));
     }
@@ -299,6 +318,13 @@ mod tests {
         );
     }
 
+    fn declarations(block: &str) -> usize {
+        block
+            .lines()
+            .filter(|l| l.trim_start().starts_with("--r-"))
+            .count()
+    }
+
     fn theme_block<'a>(css: &'a str, theme: &str) -> &'a str {
         let start = css.find(&format!("[data-theme=\"{theme}\"] {{\n")).unwrap();
         let rest = &css[start..];
@@ -310,8 +336,8 @@ mod tests {
         let css = render("x", &[slot("fg", ColorSpec::Ansi(3))]);
         let dark = theme_block(&css, "dark");
         let light = theme_block(&css, "light");
-        assert_eq!(dark.matches("--r-").count(), 18);
-        assert_eq!(light.matches("--r-").count(), 18);
+        assert_eq!(declarations(dark), 16 + 22 + 1);
+        assert_eq!(declarations(light), 16 + 22 + 1);
         assert!(dark.contains("  --r-fg: var(--r-ansi-3);\n"));
         assert!(light.contains("  --r-fg: var(--r-ansi-3);\n"));
         assert!(dark.contains("--r-ansi-0: #000000;"));
@@ -348,5 +374,85 @@ mod tests {
             assert!(table < border);
             assert!(block.contains("--r-code-bg: #090807;"));
         }
+    }
+
+    fn media_block(css: &str) -> &str {
+        css.split("@media")
+            .nth(1)
+            .unwrap()
+            .split("[data-theme")
+            .next()
+            .unwrap()
+    }
+
+    fn root_block(css: &str) -> &str {
+        css.split("@media").next().unwrap()
+    }
+
+    #[test]
+    fn all_four_scopes_declare_the_roles_after_the_ansi_table() {
+        let css = render("x", &[]);
+        let scopes = [
+            (root_block(&css), Theme::Dark, "  "),
+            (media_block(&css), Theme::Light, "    "),
+            (theme_block(&css, "dark"), Theme::Dark, "  "),
+            (theme_block(&css, "light"), Theme::Light, "  "),
+        ];
+        for (block, theme, indent) in scopes {
+            let roles = role_lines(theme, indent);
+            let at = block.find(&roles).unwrap();
+            assert!(block.find("--r-ansi-15:").unwrap() < at);
+            assert_eq!(block.matches("--r-bg-src:").count(), 1);
+            assert_eq!(block.matches(&format!("{indent}--r-muted:")).count(), 1);
+        }
+    }
+
+    #[test]
+    fn roles_come_before_user_slots_in_each_scope() {
+        let css = render("x", &[slot("fg", ColorSpec::Ansi(3))]);
+        for block in [
+            root_block(&css),
+            theme_block(&css, "dark"),
+            theme_block(&css, "light"),
+        ] {
+            assert!(block.find("--r-bad:").unwrap() < block.find("--r-fg:").unwrap());
+        }
+    }
+
+    #[test]
+    fn media_block_picks_the_light_background() {
+        let css = render("x", &[]);
+        assert!(media_block(&css).contains("    --r-bg-src: var(--r-ansi-8);\n"));
+        assert!(root_block(&css).contains("  --r-bg-src: var(--r-ansi-0);\n"));
+        assert!(theme_block(&css, "light").contains("  --r-bg-src: var(--r-ansi-8);\n"));
+        assert!(theme_block(&css, "dark").contains("  --r-bg-src: var(--r-ansi-0);\n"));
+    }
+
+    #[test]
+    fn ansi_tables_are_unchanged_by_roles() {
+        let css = render("x", &[]);
+        let ansi_only = |block: &str, indent: &str| -> String {
+            block
+                .lines()
+                .filter(|l| l.starts_with(&format!("{indent}--r-ansi-")))
+                .map(|l| format!("{l}\n"))
+                .collect()
+        };
+        assert_eq!(
+            ansi_only(root_block(&css), "  "),
+            ansi_lines(&table(0), "  ")
+        );
+        assert_eq!(
+            ansi_only(media_block(&css), "    "),
+            ansi_lines(&table(100), "    ")
+        );
+        assert_eq!(
+            ansi_only(theme_block(&css, "dark"), "  "),
+            ansi_lines(&table(0), "  ")
+        );
+        assert_eq!(
+            ansi_only(theme_block(&css, "light"), "  "),
+            ansi_lines(&table(100), "  ")
+        );
     }
 }
