@@ -510,17 +510,24 @@ mod tests {
         assert!(html.contains("<tr class=\"open\" aria-selected=\"true\">"));
     }
 
+    fn table_groups(html: &str) -> Vec<&str> {
+        html.split("<h3>r-table</h3>")
+            .skip(1)
+            .map(|rest| rest.split("<div class=\"group\">").next().unwrap_or(rest))
+            .collect()
+    }
+
     #[test]
     fn the_marked_table_sample_keeps_every_mark() {
         let html = html();
-        let themes = 2;
+        let groups = table_groups(&html);
+        assert_eq!(groups.len(), html.matches("<section data-theme=").count());
         let selected = MARKS.iter().filter(|(_, mark)| mark.selected).count();
         let open = MARKS.iter().filter(|(_, mark)| mark.open).count();
-        assert_eq!(
-            html.matches("aria-selected=\"true\"").count(),
-            selected * themes
-        );
-        assert_eq!(html.matches("class=\"open\"").count(), open * themes);
+        for group in groups {
+            assert_eq!(group.matches("aria-selected=\"true\"").count(), selected);
+            assert_eq!(group.matches("class=\"open\"").count(), open);
+        }
     }
 
     #[test]
