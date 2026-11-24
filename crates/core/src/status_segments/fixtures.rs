@@ -22,6 +22,7 @@ pub(super) fn status() -> Status {
         napping: false,
         queue: None,
         hold: None,
+        stage: 0,
     }
 }
 

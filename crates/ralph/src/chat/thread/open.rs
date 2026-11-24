@@ -199,4 +199,33 @@ mod tests {
         pull_thread(main, &n).unwrap();
         assert_eq!(stored(main, "t").model.as_deref(), Some("haiku"));
     }
+
+    #[test]
+    fn a_thread_starts_with_an_empty_stage_and_a_dropped_name_does_not_inherit_one() {
+        use ralph_core::chat_stage::{Item, Kind, Stage};
+        use ralph_server::chat::stage::{load, save};
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path();
+        let item = Item {
+            id: "s1".to_string(),
+            kind: Kind::Decision,
+            reference: None,
+            text: "merge?".to_string(),
+            created: "t".to_string(),
+            turn: 0,
+        };
+        let stage = Stage {
+            items: vec![item],
+            last: 1,
+        };
+        save(main, &stage).unwrap();
+        let dir = thread_dir(main, &name("t"));
+        reopen(main, &name("t"), None).unwrap();
+        assert_eq!(load(&dir).unwrap(), Stage::default());
+        save(&dir, &stage).unwrap();
+        crate::chat::thread::drop_thread(main, &name("t"), &[]).unwrap();
+        reopen(main, &name("t"), None).unwrap();
+        assert_eq!(load(&dir).unwrap(), Stage::default());
+        assert_eq!(load(main).unwrap(), stage);
+    }
 }

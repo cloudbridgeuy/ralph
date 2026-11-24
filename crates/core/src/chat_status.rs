@@ -8,6 +8,7 @@ use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
 use crate::chat_rerender::parse_rerender_args;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
+use crate::chat_stage::{parse_stage_args, StageCommand};
 use crate::chat_switch::SwitchTarget;
 use crate::chat_thread_auto::PendingClose;
 use crate::chat_thread_cmd::{parse_thread_args, ThreadLine, ThreadOp};
@@ -91,6 +92,7 @@ pub struct Status {
     pub napping: bool,
     pub queue: Option<QueueCell>,
     pub hold: Option<HoldFilter>,
+    pub stage: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +113,7 @@ pub enum Route {
     Nudge(NudgeCommand),
     Direct(Direct),
     SendIt(SendItCommand),
+    Stage(StageCommand),
     Switch {
         parsed: Result<SwitchTarget, String>,
         line: String,
@@ -170,6 +173,7 @@ impl Route {
             | Route::ListInbox
             | Route::Help
             | Route::Config
+            | Route::Stage(StageCommand::Show | StageCommand::Usage)
             | Route::Answer(_)
             | Route::History(_)
             | Route::HistoryRefused { .. }
@@ -188,6 +192,7 @@ impl Route {
             | Route::Nudge(_)
             | Route::Direct(_)
             | Route::SendIt(_)
+            | Route::Stage(_)
             | Route::Switch { parsed: Ok(_), .. }
             | Route::View(_)
             | Route::Rerender(_)
@@ -235,6 +240,7 @@ pub fn route_input(
                 Command::Hold => hold_route(args, line, hold_targets),
                 Command::Nudge => Route::Nudge(parse_nudge_args(args)),
                 Command::SendIt => Route::SendIt(parse_send_it_args(args)),
+                Command::Stage => Route::Stage(parse_stage_args(args)),
                 Command::Thread => match parse_thread_args(args) {
                     ThreadLine::Switch(parsed) => Route::Switch {
                         parsed,
