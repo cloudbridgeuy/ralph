@@ -19,6 +19,7 @@ mod recap;
 mod refusal;
 mod remote;
 mod rerender;
+mod resize;
 mod route;
 mod schedule;
 pub(crate) use ralph_server::chat::tag_store;
@@ -42,6 +43,7 @@ use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::prompt::ChatPrompt;
+use crate::chat::resize::{Resize, Watch};
 use crate::chat::route::LocalRoute;
 use crate::chat::schedule::approve_proposed;
 use crate::chat::send_it::InboxTurn;
@@ -86,7 +88,7 @@ use session::resolve_store;
 use session::{chat_dir, load_custom_prompt, print_history, store_dir};
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub(crate) use switch::ChatExit;
 
@@ -176,7 +178,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     } else {
         ReplyImages::Text
     };
-    let (gate, sink) = prompt::turn_output(&theme_config)?;
+    let resize = Arc::new(Resize::default());
+    let (gate, sink) = prompt::turn_output(&theme_config, Arc::clone(&resize))?;
     let terminal_status = status_enabled(
         chat_config.terminal_status,
         std::io::stdout().is_terminal(),
@@ -262,6 +265,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion, sent_style));
     let printer = ExternalPrinter::new(PROMPT_ROWS);
     let prompt_sink = printer.sender();
+    let resize_sink = printer.sender();
     let mut editor = build_editor(&store_dir, edit_mode, highlighter, Arc::clone(&monitor))?
         .with_submit_highlighter(Box::new(sent_style))
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
@@ -425,8 +429,27 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         offered: None,
         carried: Vec::new(),
         leaving: None,
+        resize: &resize,
     };
-    lp.run()
+    let resized = Arc::new(AtomicBool::new(false));
+    let _winch = signal::arm_resize(&resized);
+    let done = AtomicBool::new(false);
+    let watch = Watch {
+        resized: &resized,
+        done: &done,
+        at_prompt: &at_prompt,
+        main_view: args.thread.is_none(),
+        state: &resize,
+        store: &store_dir,
+        display: &display,
+        sink: resize_sink,
+    };
+    std::thread::scope(|scope| {
+        scope.spawn(|| watch.run());
+        let exit = lp.run();
+        done.store(true, Ordering::SeqCst);
+        exit
+    })
 }
 
 #[cfg(test)]

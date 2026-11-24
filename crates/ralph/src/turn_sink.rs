@@ -1,9 +1,10 @@
 use crate::highlight::{ThemeConfig, ThemeError};
 use crate::render::wrap_width;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
-use crate::stream_processor::BlockRenderer;
+use crate::stream_processor::{BlockRenderer, OutputBlock};
 use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
+use ralph_core::chunk::ChunkType;
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use ralph_server::subprocess::{write_to, OutputGate, Stream};
 use ralph_server::watches::locked;
@@ -40,6 +41,17 @@ pub(crate) fn written(
     }
 }
 
+pub(crate) trait ReplyWidth: Send + Sync {
+    fn begin(&self);
+    fn rendered(&self, cols: usize);
+}
+
+fn has_prose(blocks: &[OutputBlock]) -> bool {
+    blocks.iter().any(
+        |block| matches!(block, OutputBlock::Text(text) if text.chunk.chunk_type == ChunkType::Prose),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Spin {
     Fresh(SpinnerContext),
@@ -63,6 +75,7 @@ pub(crate) struct TerminalSink {
     session: SpinnerSessionInfo,
     spinner: Mutex<Option<Spinner>>,
     renderer: Mutex<BlockRenderer>,
+    reply_width: Option<Arc<dyn ReplyWidth>>,
 }
 
 impl TerminalSink {
@@ -87,6 +100,7 @@ impl TerminalSink {
             session: SpinnerSessionInfo::default(),
             spinner: Mutex::new(None),
             renderer: Mutex::new(BlockRenderer::new(Some(theme.clone()), highlighting)?),
+            reply_width: None,
         })
     }
 
@@ -96,6 +110,26 @@ impl TerminalSink {
 
     pub(crate) fn with_session(self, session: SpinnerSessionInfo) -> Self {
         TerminalSink { session, ..self }
+    }
+
+    pub(crate) fn with_reply_width(self, reply_width: Arc<dyn ReplyWidth>) -> Self {
+        TerminalSink {
+            reply_width: Some(reply_width),
+            ..self
+        }
+    }
+
+    fn track(&self, event: &TurnEvent) {
+        let Some(reply_width) = &self.reply_width else {
+            return;
+        };
+        match event {
+            TurnEvent::Busy(Wait::Response) => reply_width.begin(),
+            TurnEvent::Blocks(blocks) if has_prose(blocks) => {
+                reply_width.rendered((self.columns)());
+            }
+            _ => {}
+        }
     }
 
     fn spinner(&self) -> Spinner {
@@ -123,6 +157,7 @@ impl TerminalSink {
 
 impl TurnSink for TerminalSink {
     fn emit(&self, event: TurnEvent) {
+        self.track(&event);
         if let Some(step) = spin(&event) {
             self.turn(step);
             return;
