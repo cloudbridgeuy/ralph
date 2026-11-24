@@ -85,6 +85,7 @@ pub(super) fn statements(text: &str) -> Vec<Statement<'_>> {
     let mut start = 0;
     for (at, c) in text.char_indices() {
         match (quote, c) {
+            (Some(_), '\n') => quote = None,
             (Some(open), c) if c == open => quote = None,
             (Some(_), _) => {}
             (None, '"' | '\'') => quote = Some(c),
@@ -237,5 +238,16 @@ mod tests {
         assert_eq!(without_urls("url(\u{3000}\"x.svg\") b"), " b");
         assert_eq!(without_urls("url(\u{3000}\"x"), "");
         assert_eq!(strip_comments("url(\u{3000}\"x", false), "url(\u{3000}\"x");
+    }
+
+    #[test]
+    fn an_unclosed_quote_ends_the_statement_quote_at_the_newline() {
+        assert_eq!(
+            statement_parts("a { x: \"q;\nb: c; }"),
+            vec![
+                (1, "a", Terminator::OpenBrace),
+                (1, "x: \"q;\nb: c", Terminator::Semicolon),
+            ]
+        );
     }
 }

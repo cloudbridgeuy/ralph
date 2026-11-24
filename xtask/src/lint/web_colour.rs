@@ -802,6 +802,12 @@ mod tests {
     }
 
     #[test]
+    fn an_unclosed_quote_does_not_merge_statements_across_lines() {
+        let text = "a { content: \"x;\nb { color: red; }\nc { content: \"y\"\"  d {\n";
+        assert_eq!(lines(CSS, text), vec![2]);
+    }
+
+    #[test]
     fn the_bundled_shell_and_stylesheet_pass() {
         let html = include_str!("../../../crates/ralph_api/assets/index.html");
         let css = include_str!("../../../crates/ralph_api/assets/app.css");
