@@ -9,7 +9,7 @@ pub struct ErrorParts<'a> {
     pub compact: bool,
 }
 
-fn line(class: &str, inner: &str) -> String {
+fn wrap_html(class: &str, inner: &str) -> String {
     format!("<span class=\"{class}\">{inner}</span>")
 }
 
@@ -26,14 +26,14 @@ fn status_pill(status: u16) -> String {
 pub fn error_with(parts: &ErrorParts) -> String {
     let attribute = if parts.compact { " compact" } else { "" };
     let status = parts.status.map(status_pill).unwrap_or_default();
-    let what = line("what", &format!("{}{status}", escape(parts.what)));
+    let what = wrap_html("what", &format!("{}{status}", escape(parts.what)));
     let why = parts
         .why
-        .map(|text| line("why", &escape(text)))
+        .map(|text| wrap_html("why", &escape(text)))
         .unwrap_or_default();
     let next = parts
         .next
-        .map(|text| line("next", &escape(text)))
+        .map(|text| wrap_html("next", &escape(text)))
         .unwrap_or_default();
     format!("<r-error role=\"alert\"{attribute}>{what}{why}{next}</r-error>")
 }
