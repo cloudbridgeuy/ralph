@@ -22,8 +22,13 @@ fn grouped_integer(text: &str) -> bool {
 }
 
 fn is_number(text: &str) -> bool {
-    let body = text.strip_prefix(['+', '-']).unwrap_or(text);
+    let signed = text.strip_prefix(['+', '-']);
+    let body = signed.unwrap_or(text);
     let body = body.strip_prefix('$').unwrap_or(body);
+    let body = match signed {
+        Some(_) => body,
+        None => body.strip_prefix(['+', '-']).unwrap_or(body),
+    };
     let body = body.strip_suffix('%').unwrap_or(body);
     let (whole, fraction) = match body.split_once('.') {
         Some((whole, fraction)) => (whole, Some(fraction)),
@@ -223,6 +228,15 @@ mod tests {
         for text in ["0", "0.5", "-0.5", "0.05", "10", "100"] {
             assert!(is_number(text), "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_currency_mark_and_a_sign_go_in_either_order() {
+        for text in ["$-1,000", "-$1,000", "$1,000", "$+3", "+$3"] {
+            assert!(is_number(text), "{text:?}");
+        }
+        assert!(!is_number("$-$1"));
+        assert!(!is_number("-$-1"));
     }
 
     #[test]
