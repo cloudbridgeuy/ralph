@@ -101,18 +101,6 @@ main {
   padding: 20px 2ch 30px;
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(36ch, 1fr));

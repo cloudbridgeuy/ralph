@@ -312,16 +312,10 @@ function buildTree(roots, ctx) {
   return { tree, list };
 }
 
-function kv(rows, variant) {
+function kv(pairs) {
   const list = el("dl");
-  rows.forEach(([name, value, source]) => {
-    const line = append(el("div"), el("dt", name), el("dd", value));
-    if (source !== undefined) {
-      append(line, el("dd", source, { class: source === "default" ? "src" : "src set" }));
-    }
-    append(list, line);
-  });
-  return append(el("r-kv", null, variant ? { [variant]: "" } : {}), list);
+  pairs.forEach(([name, value]) => append(list, append(el("div"), el("dt", name), el("dd", value))));
+  return append(el("r-kv", null, { two: "" }), list);
 }
 
 function threadSelect(threads, current) {
@@ -386,7 +380,7 @@ function drawMemory(main, hashState, data) {
   const box = append(el("r-box", null, { shape: "square" }), el("span", "memory", { class: "title" }));
   main.replaceChildren(box);
   append(box, el("div"), threadSelect(data.threads, state.thread));
-  append(box, kv([["thread", state.thread], ["entries", String(data.roots.entries)]], "two"));
+  append(box, kv([["thread", state.thread], ["entries", String(data.roots.entries)]]));
   const empty = data.roots.entries === 0;
   if (empty) append(box, el("r-empty", "no entries yet"));
   else {

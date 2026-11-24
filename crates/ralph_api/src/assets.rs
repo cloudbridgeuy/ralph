@@ -385,11 +385,11 @@ mod tests {
     }
 
     #[test]
-    fn the_stylesheet_has_the_two_theme_columns_and_a_hidden_text_class() {
+    fn the_stylesheet_has_the_two_theme_columns_and_no_unused_hidden_text_class() {
         let css = css();
         assert!(css.contains(".columns"));
         assert!(css.contains("[data-theme]"));
-        assert!(css.contains(".sr-only"));
+        assert!(!css.contains(".sr-only"));
     }
 
     #[test]
@@ -744,9 +744,6 @@ mod tests {
                 continue;
             };
             let selector = head.trim();
-            if selector == ".sr-only" {
-                continue;
-            }
             for line in body.lines().map(str::trim) {
                 let fine =
                     line.starts_with("padding") && FINE_PADDING_SELECTORS.contains(&selector);
@@ -780,8 +777,6 @@ mod tests {
 
     #[test]
     fn vertical_violations_exempt_only_named_selectors() {
-        let hidden = "\n.sr-only {\n  margin: -1px;\n}\n";
-        assert!(vertical_violations(hidden).is_empty());
         let cell = "\nr-tree li {\n  padding: 2px 0;\n}\n";
         assert!(vertical_violations(cell).is_empty());
         let other = "\nmain {\n  padding: 2px 0;\n}\n";

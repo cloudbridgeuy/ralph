@@ -171,10 +171,10 @@ fn append_results_are_never_taken_as_the_new_child() {
 }
 
 #[test]
-fn the_memory_header_kv_uses_the_two_variant_and_the_source_is_optional() {
+fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
     let body = script();
-    assert!(body.contains("function kv(rows, variant)"));
-    assert!(body.contains("String(data.roots.entries)]], \"two\")"));
-    assert!(body.contains("if (source !== undefined)"));
-    assert!(body.contains("source === \"default\" ? \"src\" : \"src set\""));
+    assert!(body.contains("function kv(pairs)"));
+    assert!(body.contains("el(\"r-kv\", null, { two: \"\" })"));
+    assert!(body.contains("String(data.roots.entries)]]))"));
+    assert!(!body.contains("source"));
 }
