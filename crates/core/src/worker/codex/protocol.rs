@@ -3,7 +3,7 @@ use crate::worker::{
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const INITIALIZE: &str = "initialize";
 pub const INITIALIZED: &str = "initialized";
@@ -40,12 +40,45 @@ pub fn next_cursor(page: &Value) -> Option<String> {
     page["nextCursor"].as_str().map(str::to_string)
 }
 
-pub fn thread_start_params(cwd: &Path, selection: &Selection, mcp_server: &Value) -> Value {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxMode {
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl SandboxMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+            Self::DangerFullAccess => "danger-full-access",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        [Self::ReadOnly, Self::WorkspaceWrite, Self::DangerFullAccess]
+            .into_iter()
+            .find(|mode| mode.as_str() == text)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Sandbox {
+    pub mode: Option<SandboxMode>,
+    pub writable_roots: Vec<PathBuf>,
+}
+
+pub fn thread_start_params(
+    cwd: &Path,
+    selection: &Selection,
+    mcp_server: &Value,
+    sandbox: &Sandbox,
+) -> Value {
     let mut params = json!({
         "cwd": cwd,
         "approvalPolicy": "on-request",
         "approvalsReviewer": "user",
-        "sandbox": "workspace-write",
         "config": {
             "mcp_servers": {
                 (SERVER_NAME): {
@@ -60,6 +93,13 @@ pub fn thread_start_params(cwd: &Path, selection: &Selection, mcp_server: &Value
             }
         }
     });
+    if let Some(mode) = sandbox.mode {
+        params["sandbox"] = json!(mode.as_str());
+        if mode == SandboxMode::WorkspaceWrite && !sandbox.writable_roots.is_empty() {
+            params["config"]["sandbox_workspace_write"] =
+                json!({"writable_roots": sandbox.writable_roots});
+        }
+    }
     if let Some(model) = &selection.model {
         params["model"] = json!(model);
     }
@@ -70,7 +110,12 @@ pub fn thread_start_params(cwd: &Path, selection: &Selection, mcp_server: &Value
 }
 
 pub fn verify_thread_start_params(cwd: &Path) -> Value {
-    let mut params = thread_start_params(cwd, &Selection::default(), &Value::Null);
+    let mut params = thread_start_params(
+        cwd,
+        &Selection::default(),
+        &Value::Null,
+        &Sandbox::default(),
+    );
     params["sandbox"] = json!("read-only");
     if let Some(config) = params["config"].as_object_mut() {
         config.remove("mcp_servers");
@@ -89,8 +134,13 @@ pub fn record_selection(record: &SessionRecord) -> Selection {
     }
 }
 
-pub fn thread_resume_params(record: &SessionRecord, mcp_server: &Value) -> Value {
-    let mut params = thread_start_params(&record.cwd, &record_selection(record), mcp_server);
+pub fn thread_resume_params(
+    record: &SessionRecord,
+    mcp_server: &Value,
+    sandbox: &Sandbox,
+) -> Value {
+    let mut params =
+        thread_start_params(&record.cwd, &record_selection(record), mcp_server, sandbox);
     params["threadId"] = json!(record.session_id);
     params["excludeTurns"] = json!(true);
     params
@@ -351,6 +401,7 @@ mod tests {
                 effort: None,
             },
             &server,
+            &Sandbox::default(),
         );
         assert_eq!(
             params,
@@ -359,7 +410,6 @@ mod tests {
                 "model": "gpt-6.1-sol",
                 "approvalPolicy": "on-request",
                 "approvalsReviewer": "user",
-                "sandbox": "workspace-write",
                 "config": {"mcp_servers": {"ralph-worker": {
                     "command": "/bin/ralph",
                     "args": ["worker-mcp", "--id", "A"],
@@ -368,18 +418,107 @@ mod tests {
                 }}, "projects": {"/w": {"trust_level": "trusted"}}}
             })
         );
-        assert!(
-            thread_start_params(Path::new("/w"), &Selection::default(), &server)
-                .get("model")
-                .is_none()
-        );
+        assert!(thread_start_params(
+            Path::new("/w"),
+            &Selection::default(),
+            &server,
+            &Sandbox::default()
+        )
+        .get("model")
+        .is_none());
         let effort = Selection {
             model: None,
             effort: Some("high".into()),
         };
-        let params = thread_start_params(Path::new("/w"), &effort, &server);
+        let params = thread_start_params(Path::new("/w"), &effort, &server, &Sandbox::default());
         assert_eq!(params["config"]["model_reasoning_effort"], "high");
         assert!(params["config"]["mcp_servers"].is_object());
+    }
+
+    fn sandbox_of(mode: Option<SandboxMode>, roots: &[&str]) -> Sandbox {
+        Sandbox {
+            mode,
+            writable_roots: roots.iter().map(PathBuf::from).collect(),
+        }
+    }
+
+    fn resume_record() -> SessionRecord {
+        SessionRecord {
+            session_id: "t".into(),
+            cwd: "/w".into(),
+            inbox: "/i".into(),
+            store: None,
+            model: None,
+            effort: None,
+            permissions: None,
+        }
+    }
+
+    #[test]
+    fn an_unset_sandbox_omits_the_key_on_start_and_resume() {
+        let start = thread_start_params(
+            Path::new("/w"),
+            &Selection::default(),
+            &Value::Null,
+            &Sandbox::default(),
+        );
+        let resume = thread_resume_params(&resume_record(), &Value::Null, &Sandbox::default());
+        for params in [start, resume] {
+            assert!(params.get("sandbox").is_none());
+            assert_eq!(params["approvalPolicy"], "on-request");
+            assert_eq!(params["approvalsReviewer"], "user");
+        }
+    }
+
+    #[test]
+    fn each_sandbox_mode_sets_its_string_on_start_and_resume() {
+        for (mode, text) in [
+            (SandboxMode::ReadOnly, "read-only"),
+            (SandboxMode::WorkspaceWrite, "workspace-write"),
+            (SandboxMode::DangerFullAccess, "danger-full-access"),
+        ] {
+            let sandbox = sandbox_of(Some(mode), &[]);
+            let start = thread_start_params(
+                Path::new("/w"),
+                &Selection::default(),
+                &Value::Null,
+                &sandbox,
+            );
+            let resume = thread_resume_params(&resume_record(), &Value::Null, &sandbox);
+            assert_eq!(start["sandbox"], text);
+            assert_eq!(resume["sandbox"], text);
+            assert!(start["config"].get("sandbox_workspace_write").is_none());
+            assert_eq!(SandboxMode::parse(text), Some(mode));
+        }
+        assert_eq!(SandboxMode::parse("workspace_write"), None);
+    }
+
+    #[test]
+    fn writable_roots_apply_only_to_workspace_write() {
+        let params_for = |mode| {
+            thread_resume_params(
+                &resume_record(),
+                &Value::Null,
+                &sandbox_of(Some(mode), &["/repo/.git"]),
+            )
+        };
+        let write = params_for(SandboxMode::WorkspaceWrite);
+        assert_eq!(
+            write["config"]["sandbox_workspace_write"],
+            json!({"writable_roots": ["/repo/.git"]})
+        );
+        assert!(write["config"]["projects"].is_object());
+        for mode in [SandboxMode::ReadOnly, SandboxMode::DangerFullAccess] {
+            let params = params_for(mode);
+            assert!(params["config"].get("sandbox_workspace_write").is_none());
+        }
+        let unset = thread_start_params(
+            Path::new("/w"),
+            &Selection::default(),
+            &Value::Null,
+            &sandbox_of(None, &["/repo/.git"]),
+        );
+        assert!(unset["config"].get("sandbox_workspace_write").is_none());
     }
 
     #[test]
@@ -394,9 +533,13 @@ mod tests {
             effort: Some("low".into()),
             permissions: None,
         };
-        let params = thread_resume_params(&record, &server);
-        let mut expected =
-            thread_start_params(Path::new("/w"), &record_selection(&record), &server);
+        let params = thread_resume_params(&record, &server, &Sandbox::default());
+        let mut expected = thread_start_params(
+            Path::new("/w"),
+            &record_selection(&record),
+            &server,
+            &Sandbox::default(),
+        );
         expected["threadId"] = json!("thread-1");
         expected["excludeTurns"] = json!(true);
         assert_eq!(params, expected);
