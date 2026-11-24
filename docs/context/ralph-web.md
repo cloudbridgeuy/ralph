@@ -19,7 +19,7 @@
 | Admit | `crates/ralph_api/src/admit.rs` | pure `admit()` and `MAX_HANDLERS`: the cap rule |
 | Server | `crates/ralph_api/src/server.rs` | `bind()`, `serve()` on tiny_http |
 | Assets | `crates/ralph_api/src/assets.rs` | embedded table: `find()` |
-| Asset files | `crates/ralph_api/assets/` | `index.html`, `app.css`, `fonts/` |
+| Asset files | `crates/ralph_api/assets/` | `index.html`, `css/*.css`, `fonts/` |
 | Colour lint | `xtask/src/lint/web_colour.rs` | checks the files in `assets/` |
 | Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
 | Markdown | `crates/ralph_api/src/render/{prose,md_event,md_link,code}.rs` | `render_markdown()`: pulldown-cmark events to HTML inside `<r-prose>`; `code.rs` highlights fenced blocks |
@@ -113,7 +113,7 @@ Risk:
 | other method on `/api/render` | 405 with `Allow: POST` |
 | `GET /` with a valid `?token=` | 302 to `/` with `Set-Cookie` |
 | `GET /` with the cookie or Bearer token | 200 `text/html` shell, with a `Content-Security-Policy` |
-| `GET /assets/app.css` | 200 `text/css` |
+| `GET /assets/app.css` | 200 `text/css`; the build joins `assets/css/*.css` in a fixed order |
 | `GET /assets/geist-mono.woff2` | 200 `font/woff2` |
 | other method on `/` or `/assets/*` | 405 with `Allow: GET` |
 | `GET /catalogue` | 200 `text/html` page with the same headers and CSP as the shell |
@@ -155,7 +155,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 
 ## Primitives
 
-The UI has no JavaScript. Each primitive is a hyphenated tag that the server renders as plain HTML. A browser treats an unknown hyphenated tag as an inline element, and `app.css` styles it. The colour lint allows only these tags.
+The UI has no JavaScript. Each primitive is a hyphenated tag that the server renders as plain HTML. A browser treats an unknown hyphenated tag as an inline element, and the stylesheet styles it. The stylesheet is the files in `crates/ralph_api/assets/css/`, joined in order by `concat!` in `assets.rs` and served as `/assets/app.css`. The colour lint allows only these tags.
 
 | Tag | Builder | Notes |
 |-----|---------|-------|
@@ -176,7 +176,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - `spark_points()` drops NaN and infinite values. A flat series and a single point draw a mid line. Huge values do not overflow.
 - `render_markdown(&str)` parses with tables, strikethrough and task lists. Its own emitter writes the HTML. Raw HTML is escaped as text, never passed through. Links keep `href` only for `http`, `https`, `mailto` and `#fragment`. An email autolink becomes a `mailto:` link. The check trims control characters and whitespace at both ends, drops control characters inside, writes each inner whitespace character as `%20`, and ignores case. A space inside the scheme gives no `href`. Other links keep their text without `href`. Links get `rel="noreferrer noopener"`. An image is never `<img>`: its alt text goes in a `<span>`. Tags nested deeper than 64 levels render as plain text. NUL bytes become U+FFFD. A table becomes `<table tabindex="0">`. A fenced or indented code block becomes `<r-code data-lang="rust"><pre tabindex="0"><code>…</code></pre></r-code>`. `highlight()` in `code.rs` uses the `two_face::syntax::extra_newlines()` set (built once in `prose.rs`) and the syntect `ClassedHTMLGenerator` with class prefix `t-`. There is no generated theme CSS; `app.css` maps the `t-*` scope classes to `--r-*` slots. `data-lang` is the first word of the info string, lower-cased, and must match `[a-z0-9+#-]{1,32}`; otherwise the attribute is dropped. An unknown language, no language, a block over 64 KiB, or a block with a line over 4 KiB, gives plain escaped text inside `r-code`. The `[theme]` syntax theme does not apply on the web.
 - Goldens are in `crates/ralph_api/tests/golden/render/<primitive>_<state>.html`. Unit tests in `render/` compare them. The states are empty, sparse, dense, error and very-long where they apply, plus hostile text for escaping.
-- `app.css` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use role colours for everything except the `t-*` scope rules. Those rules use `--r-ansi-N` slots. Rows and inner rules use `--r-line`. Boxes, headers and code use `--r-line-strong`. The heavy box is the one deliberate exception. It uses a 2px `--r-ink` border for emphasis. Accent is only for focus (a 2px outline), links and the accent tone. The info tone and the accent tone differ. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
+- `assets/css/` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use role colours for everything except the `t-*` scope rules. Those rules use `--r-ansi-N` slots. Rows and inner rules use `--r-line`. Boxes, headers and code use `--r-line-strong`. The heavy box is the one deliberate exception. It uses a 2px `--r-ink` border for emphasis. Accent is only for focus (a 2px outline), links and the accent tone. The info tone and the accent tone differ. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
 
 ## Catalogue
 

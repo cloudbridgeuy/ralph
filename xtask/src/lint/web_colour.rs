@@ -427,7 +427,7 @@ pub async fn run_web_colour_check(global: &crate::Global) -> super::error::Resul
 mod tests {
     use super::*;
 
-    const CSS: &str = "crates/ralph_api/assets/app.css";
+    const CSS: &str = "crates/ralph_api/assets/css/base.css";
     const HTML: &str = "crates/ralph_api/assets/index.html";
 
     fn reasons(path: &str, text: &str) -> Vec<(usize, String)> {
@@ -899,7 +899,16 @@ mod tests {
     #[test]
     fn the_bundled_shell_and_stylesheet_pass() {
         let html = include_str!("../../../crates/ralph_api/assets/index.html");
-        let css = include_str!("../../../crates/ralph_api/assets/app.css");
+        let css = concat!(
+            include_str!("../../../crates/ralph_api/assets/css/base.css"),
+            include_str!("../../../crates/ralph_api/assets/css/table.css"),
+            include_str!("../../../crates/ralph_api/assets/css/data.css"),
+            include_str!("../../../crates/ralph_api/assets/css/states.css"),
+            include_str!("../../../crates/ralph_api/assets/css/controls.css"),
+            include_str!("../../../crates/ralph_api/assets/css/code.css"),
+            include_str!("../../../crates/ralph_api/assets/css/tree.css"),
+            include_str!("../../../crates/ralph_api/assets/css/responsive.css"),
+        );
         assert!(reasons(HTML, html).is_empty(), "{:?}", reasons(HTML, html));
         assert!(reasons(CSS, css).is_empty(), "{:?}", reasons(CSS, css));
     }

@@ -214,10 +214,10 @@ pub(super) fn trees(very_long_summary: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::assets::APP_CSS;
     use crate::catalogue::page;
 
     const COMMITTED: &str = include_str!("../../fixtures/catalogue.json");
-    const APP_CSS: &str = include_str!("../../assets/app.css");
 
     fn tree_groups() -> Vec<String> {
         let marker = "<div class=\"group\"><h3>r-tree</h3>";

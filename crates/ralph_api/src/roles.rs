@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn tones_are_readable_on_their_tinted_pill_fill() {
-        let css = include_str!("../assets/app.css");
+        let css = crate::assets::APP_CSS;
         let mut report = String::new();
         let mut failed = false;
         for theme in THEMES {
