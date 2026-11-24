@@ -188,8 +188,11 @@ fn is_token_colour_argument(argument: &str) -> bool {
     let words: Vec<&str> = argument.split_whitespace().collect();
     match words.as_slice() {
         [token] => is_token_reference(token),
-        [percent, token] if is_percentage(percent) => is_token_reference(token),
-        [token, percent] if is_percentage(percent) => is_token_reference(token),
+        [first, second] => {
+            let is_amount = |word: &str| is_percentage(word) || is_token_reference(word);
+            (is_percentage(first) && is_token_reference(second))
+                || (is_token_reference(first) && is_amount(second))
+        }
         _ => false,
     }
 }
@@ -523,6 +526,40 @@ mod tests {
         let mut found = lines(CSS, text);
         found.dedup();
         assert_eq!(found, vec![1]);
+    }
+
+    #[test]
+    fn allows_a_token_as_the_mix_percentage() {
+        for mix in [
+            "color-mix(in srgb, var(--r-h) var(--r-head-k), var(--r-ink))",
+            "color-mix(in srgb, var(--r-head-k) var(--r-h), var(--r-ink))",
+            "color-mix(in srgb, var(--r-ink), var(--r-h) var(--r-head-k))",
+        ] {
+            let text = format!("a {{ color: {mix}; }}\n");
+            assert!(lines(CSS, &text).is_empty(), "{mix}");
+        }
+    }
+
+    #[test]
+    fn a_full_line_mix_with_a_token_percentage_is_clean() {
+        let text = "color: color-mix(in srgb, var(--r-heading1) var(--r-head-k), var(--r-ink));\n";
+        assert!(lines(CSS, text).is_empty());
+    }
+
+    #[test]
+    fn refuses_a_non_token_in_a_two_word_mix_argument() {
+        for mix in [
+            "color-mix(in srgb, var(--r-a) var(--foreign), var(--r-b))",
+            "color-mix(in srgb, var(--foreign) var(--r-k), var(--r-b))",
+            "color-mix(in srgb, #fff var(--r-k), var(--r-ink))",
+            "color-mix(in srgb, var(--r-a) red, var(--r-b))",
+            "color-mix(in srgb, red var(--r-k), var(--r-b))",
+        ] {
+            let text = format!("a {{ color: {mix}; }}\n");
+            let mut found = lines(CSS, &text);
+            found.dedup();
+            assert_eq!(found, vec![1], "{mix}");
+        }
     }
 
     #[test]
