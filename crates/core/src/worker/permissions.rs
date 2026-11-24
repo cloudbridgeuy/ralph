@@ -114,8 +114,8 @@ impl From<Classes> for Grants {
 }
 
 pub fn merged_grants(existing: Option<&str>, added: Classes) -> (String, Option<String>) {
-    let _ = (existing, added);
-    (String::new(), None)
+    let (saved, warning) = parse_grants(existing);
+    (json!(saved.union(added.into())).to_string(), warning)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,8 +127,12 @@ pub enum Choice {
 
 impl Choice {
     pub fn from_key(line: &str) -> Option<Choice> {
-        let _ = line;
-        None
+        match line.trim().to_ascii_lowercase().as_str() {
+            "y" => Some(Choice::AllowOnce),
+            "n" => Some(Choice::Deny),
+            "a" => Some(Choice::AllowAlways),
+            _ => None,
+        }
     }
 
     pub fn from_option(option: &str) -> Option<Choice> {
@@ -147,8 +151,12 @@ impl Choice {
 }
 
 pub fn classes_label(classes: Classes) -> &'static str {
-    let _ = classes;
-    ""
+    match (classes.writes, classes.spend) {
+        (true, true) => "writes and spend",
+        (true, false) => "writes",
+        (false, true) => "spend",
+        (false, false) => "",
+    }
 }
 
 pub fn answer_hint(token: &str, missing: Classes) -> String {

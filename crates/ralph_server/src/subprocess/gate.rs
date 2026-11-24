@@ -71,7 +71,7 @@ impl Outcome {
 }
 
 const NO_MATCH: &str = "No matching main chat permission request.";
-const INVALID_OPTION: &str = "Invalid option; use allow_once or deny.";
+const INVALID_OPTION: &str = "Invalid option; use allow_once|deny|allow_always.";
 
 fn apply(state: &mut GateState, index: usize, choice: Choice) -> Outcome {
     let Some(pending) = state.permissions.get_mut(index) else {
@@ -83,6 +83,9 @@ fn apply(state: &mut GateState, index: usize, choice: Choice) -> Outcome {
         other => other.option_id(),
     };
     pending.answer = Some(sent.to_string());
+    if choice == Choice::AllowAlways {
+        state.grants = state.grants.union(classes.into());
+    }
     Outcome::Answered { choice, classes }
 }
 
