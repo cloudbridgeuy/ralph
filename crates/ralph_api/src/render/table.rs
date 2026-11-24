@@ -40,11 +40,22 @@ fn shell(headers: &[&str], numeric: &[bool], body: &str) -> String {
     format!("<r-table><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></r-table>")
 }
 
+#[derive(Clone, Copy)]
+pub enum RowMark {
+    Selected,
+    Open,
+}
+
 pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
+    table_marked(headers, rows, &[])
+}
+
+pub fn table_marked(headers: &[&str], rows: &[Vec<&str>], marks: &[(usize, RowMark)]) -> String {
     let numeric = numeric_columns(headers, rows);
     let body: String = rows
         .iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(index, row)| {
             let padding = headers.len().saturating_sub(row.len());
             let cells: String = row
                 .iter()
@@ -53,7 +64,12 @@ pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
                 .enumerate()
                 .map(|(column, text)| cell("td", text, numeric[column]))
                 .collect();
-            format!("<tr>{cells}</tr>")
+            let mark = match marks.iter().find(|(at, _)| *at == index) {
+                Some((_, RowMark::Selected)) => " aria-selected=\"true\"",
+                Some((_, RowMark::Open)) => " class=\"open\"",
+                None => "",
+            };
+            format!("<tr{mark}>{cells}</tr>")
         })
         .collect();
     shell(headers, &numeric, &body)
@@ -69,7 +85,7 @@ pub fn table_state(headers: &[&str], inner_html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_number, numeric_columns, table, table_state};
+    use super::{is_number, numeric_columns, table, table_marked, table_state, RowMark};
     use crate::render::golden::{assert_golden, hostile_text, long_text};
     use crate::render::{empty, error, spinner};
 
@@ -212,5 +228,26 @@ mod tests {
         let html = table_state(&[], "x");
         assert!(html.contains("colspan=\"1\""), "{html}");
         assert!(html.contains("<tbody><tr class=\"state\">"), "{html}");
+    }
+
+    #[test]
+    fn a_marked_row_is_selected_or_open_and_the_others_are_plain() {
+        assert_golden(
+            "table_marked",
+            &table_marked(
+                &["name"],
+                &[vec!["a"], vec!["b"], vec!["c"]],
+                &[(1, RowMark::Selected), (2, RowMark::Open)],
+            ),
+        );
+    }
+
+    #[test]
+    fn a_mark_past_the_last_row_changes_nothing() {
+        let rows = [vec!["a"]];
+        assert_eq!(
+            table_marked(&["n"], &rows, &[(5, RowMark::Open)]),
+            table(&["n"], &rows)
+        );
     }
 }
