@@ -116,3 +116,90 @@ fn state_lines_stack_as_blocks() {
         assert_declares(&css, selector, "display: block;");
     }
 }
+
+fn function_body(js: &str, name: &str) -> String {
+    let start = js
+        .find(&format!("function {name}("))
+        .unwrap_or_else(|| panic!("no function {name}"));
+    let rest = &js[start..];
+    let end = rest.find("\n}\n").unwrap_or(rest.len());
+    rest[..end].to_string()
+}
+
+#[test]
+fn function_body_reads_one_top_level_function() {
+    let js = "function a() {\n  1;\n}\n\nfunction b() {\n  2;\n}\n";
+    assert_eq!(function_body(js, "a"), "function a() {\n  1;");
+}
+
+#[test]
+fn failure_builds_the_what_why_next_markup_with_a_btn_retry() {
+    let body = function_body(&script(), "failure");
+    assert!(body.contains(r#"class: "btn""#), "{body}");
+    assert!(body.contains(r#"class: "what""#), "{body}");
+    assert!(body.contains(r#"class: "why""#), "{body}");
+    assert!(body.contains(r#"class: "next""#), "{body}");
+    assert!(body.contains(r#"role: "alert""#), "{body}");
+}
+
+#[test]
+fn failure_sets_the_server_message_as_text_only() {
+    let js = script();
+    let body = function_body(&js, "failure");
+    assert!(body.contains("why.textContent ="), "{body}");
+    assert!(!body.contains("innerHTML"), "{body}");
+    for line in js.lines().filter(|line| line.contains("why")) {
+        assert!(!line.contains("innerHTML"), "{line}");
+    }
+}
+
+#[test]
+fn every_failure_call_passes_a_retry() {
+    let js = script();
+    for name in ["show", "openNode", "fillRendered"] {
+        let body = function_body(&js, name);
+        assert!(body.contains("failure(error, "), "{name}");
+        assert!(!body.contains("failure(error)"), "{name}");
+    }
+}
+
+#[test]
+fn node_and_text_retries_run_the_same_loader_again() {
+    let js = script();
+    assert!(function_body(&js, "openNode").contains("openNode(item, ctx, true)"));
+    assert!(function_body(&js, "fillRendered").contains("fillRendered(row, markdown, true)"));
+    assert!(function_body(&js, "show").contains("show(true)"));
+}
+
+#[test]
+fn a_retry_moves_focus_to_a_tabindex_target_or_the_new_retry_button() {
+    let js = script();
+    assert!(function_body(&js, "focusTarget").contains(r#"setAttribute("tabindex", "-1")"#));
+    assert!(function_body(&js, "focusTarget").contains(".focus()"));
+    assert!(function_body(&js, "focusRetry").contains(".focus()"));
+    for name in ["show", "openNode", "fillRendered"] {
+        let body = function_body(&js, name);
+        assert!(body.contains("focusTarget("), "{name}");
+        assert!(body.contains("focusRetry("), "{name}");
+    }
+}
+
+#[test]
+fn a_failed_node_open_keeps_the_item_expanded() {
+    let body = function_body(&script(), "toggleItem");
+    assert!(
+        !body.contains("setExpanded(item, false);\n    return;"),
+        "{body}"
+    );
+    assert!(!body.contains("delete item.dataset.loaded"), "{body}");
+}
+
+#[test]
+fn empty_states_use_one_helper_with_compact_and_full_forms() {
+    let js = script();
+    assert!(!js.contains(r#"el("r-empty", "#));
+    assert!(js.contains(r#"emptyState("summary pending", true)"#));
+    assert!(js.contains(r#"emptyState("no entries in this page", true)"#));
+    assert_eq!(js.matches(r#"emptyState("no entries yet")"#).count(), 2);
+    assert!(function_body(&js, "emptyState").contains(r#"class: "what""#));
+}

@@ -147,15 +147,40 @@ function setRendered(host, html) {
   host.innerHTML = html;
 }
 
-function failure(error, retry) {
-  const status = error && error.status ? error.status + " " : "";
+function emptyState(what, compact) {
+  const box = el("r-empty");
+  if (compact) box.setAttribute("compact", "");
+  return append(box, el("span", what, { class: "what" }));
+}
+
+function failure(error, retry, compact) {
   const message = (error && error.message) || String(error);
-  const box = el("r-error", status + message);
+  const box = el("r-error", null, { role: "alert" });
+  if (compact) box.setAttribute("compact", "");
+  const what = el("span", "Could not load", { class: "what" });
+  if (error && error.status) {
+    const pill = el("r-pill", null, { tone: "bad", shape: "square", variant: "outline" });
+    append(what, append(pill, el("span", String(error.status))));
+  }
+  const why = el("span", null, { class: "why" });
+  why.textContent = message;
+  append(box, what, why);
   if (retry) {
-    box.appendChild(document.createTextNode(" "));
-    box.appendChild(el("button", "retry", { type: "button" })).addEventListener("click", retry);
+    const button = el("button", "Retry", { type: "button", class: "btn" });
+    button.addEventListener("click", retry);
+    append(box, append(el("span", null, { class: "next" }), button));
   }
   return box;
+}
+
+function focusTarget(node) {
+  node.setAttribute("tabindex", "-1");
+  node.focus();
+}
+
+function focusRetry(box) {
+  const button = box.querySelector("button.btn");
+  if (button) button.focus();
 }
 
 function delayedSpinner(host, label) {
@@ -267,13 +292,19 @@ function setExpanded(item, expanded) {
   item.setAttribute("aria-expanded", String(expanded));
 }
 
-async function fillRendered(row, markdown) {
+async function fillRendered(row, markdown, retried) {
   const stop = delayedSpinner(row, "Loading text");
   try {
     setRendered(row, (await renderMarkdown(markdown)).html);
+    if (retried) focusTarget(row);
   } catch (error) {
     row.textContent = "";
-    row.appendChild(failure(error));
+    const box = failure(error, () => {
+      row.textContent = "";
+      fillRendered(row, markdown, true);
+    }, true);
+    row.appendChild(box);
+    if (retried) focusRetry(box);
   }
   stop();
 }
@@ -294,8 +325,13 @@ function zoomRows(zoom) {
   return [{ row: "summary", markdown: zoom.node.summary }, ...children];
 }
 
-async function openNode(item, ctx) {
+function clearRows(group) {
+  group.querySelectorAll(":scope > li").forEach((row) => row.remove());
+}
+
+async function openNode(item, ctx, retried) {
   const group = item.querySelector(':scope > ul[role="group"]');
+  clearRows(group);
   const level = Number(item.getAttribute("aria-level")) + 1;
   const total = Number(item.closest("r-tree").dataset.total);
   const stop = delayedSpinner(group, "Loading entries");
@@ -306,17 +342,20 @@ async function openNode(item, ctx) {
       if (row.row === "summary") {
         const summary = rowItem();
         append(group, summary);
-        if (row.markdown === null) summary.appendChild(el("r-empty", "summary pending"));
+        if (row.markdown === null) summary.appendChild(emptyState("summary pending", true));
         else fillRendered(summary, row.markdown);
       } else append(group, row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child));
     });
-    return true;
+    if (retried) focusTarget(group);
+    history.replaceState(null, "", buildHash({ ...ctx, node: item.dataset.node }));
   } catch (error) {
     stop();
+    clearRows(group);
     const row = rowItem();
     append(group, row);
-    row.appendChild(failure(error));
-    return false;
+    const box = failure(error, () => openNode(item, ctx, true), true);
+    row.appendChild(box);
+    if (retried) focusRetry(box);
   }
 }
 
@@ -325,15 +364,8 @@ async function toggleItem(item, ctx) {
   setExpanded(item, true);
   if (item.dataset.loaded) return;
   item.dataset.loaded = "1";
-  const group = item.querySelector(':scope > ul[role="group"]');
-  const ok = item.dataset.node ? await openNode(item, ctx) : (await openEntry(item), true);
-  if (!ok) {
-    delete item.dataset.loaded;
-    group.querySelectorAll(":scope > li").forEach((row) => row.remove());
-    setExpanded(item, false);
-    return;
-  }
-  if (item.dataset.node) history.replaceState(null, "", buildHash({ ...ctx, node: item.dataset.node }));
+  if (item.dataset.node) await openNode(item, ctx);
+  else await openEntry(item);
 }
 
 async function expandTo(tree, target, ctx) {
@@ -390,7 +422,7 @@ function threadSelect(threads, current) {
 }
 
 function entriesTable(page) {
-  if (page.items.length === 0) return el("r-empty", "no entries in this page");
+  if (page.items.length === 0) return emptyState("no entries in this page", true);
   const head = append(el("tr"), ...["#", "role", "at", "text"].map((name) => el("th", name)));
   const body = el("tbody");
   page.items.forEach((entry) => {
@@ -436,14 +468,14 @@ function drawMemory(main, hashState, data) {
   append(box, el("div"), threadSelect(data.threads, state.thread));
   append(box, kv([["thread", state.thread], ["entries", String(data.roots.entries)]]));
   const empty = data.roots.entries === 0;
-  if (empty) append(box, el("r-empty", "no entries yet"));
+  if (empty) append(box, emptyState("no entries yet"));
   else {
     const { tree, list } = buildTree(data.roots.nodes, ctx, data.roots.entries);
     append(box, tree);
     if (state.node) expandTo(list, state.node, ctx);
   }
   append(box, el("r-rule"), el("span", "recent entries", { class: "title" }));
-  append(box, empty ? el("r-empty", "no entries yet") : entriesTable(data.page), pager(data.page, state));
+  append(box, empty ? emptyState("no entries yet") : entriesTable(data.page), pager(data.page, state));
 }
 
 function markCurrentScreen(route) {
@@ -455,7 +487,7 @@ function markCurrentScreen(route) {
 
 let generation = 0;
 
-async function show() {
+async function show(refocus) {
   const state = parseHash(location.hash);
   const main = document.getElementById("main");
   const mine = ++generation;
@@ -474,12 +506,15 @@ async function show() {
     drawMemory(main, state, data);
     const again = focusKey && main.querySelector('button[data-key="' + focusKey + '"]');
     if (again) again.focus();
+    else if (refocus) focusTarget(main);
   } catch (error) {
     if (mine !== generation) return;
     stop();
-    main.replaceChildren(failure(error, show));
+    const box = failure(error, () => show(true));
+    main.replaceChildren(box);
+    if (refocus) focusRetry(box);
   }
 }
 
-window.addEventListener("hashchange", show);
+window.addEventListener("hashchange", () => show());
 show();
