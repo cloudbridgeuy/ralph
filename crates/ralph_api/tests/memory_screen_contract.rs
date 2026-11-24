@@ -199,8 +199,8 @@ fn the_script_builds_every_class_the_rust_tree_golden_emits() {
     // The memory screen has no leaf rows: every node and entry row can open.
     for name in names.into_iter().filter(|name| name != "label") {
         assert!(
-            body.contains(&format!("\"{name}\"")),
-            "script lacks \"{name}\""
+            body.contains(&format!("class: \"{name}\"")),
+            "script lacks class: \"{name}\""
         );
     }
 }
@@ -218,7 +218,14 @@ fn the_script_draws_the_same_chevron_and_extent_bar_as_the_rust_tree() {
         assert!(TREE_EXTENT.contains(shared), "golden lacks {shared}");
         assert!(body.contains(shared), "script lacks {shared}");
     }
-    assert!(body.contains("function extentSpan(lo, hi, total)"));
+    for fragment in [
+        "function extentSpan(lo, hi, total) {",
+        "if (!(total > 0) || lo >= hi || lo >= total) return null;",
+        "Math.max(((Math.min(hi, total) - lo) * 100) / total, EXTENT_MIN)",
+        "Math.min((lo * 100) / total, 100 - width)",
+    ] {
+        assert!(body.contains(fragment), "script lacks {fragment}");
+    }
     assert!(body.contains("const EXTENT_MIN = 1;"));
     assert!(body.contains("function oneLine(text)"));
     assert!(body.contains("replace(/\\s+/g, \" \")"));
