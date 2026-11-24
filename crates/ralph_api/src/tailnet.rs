@@ -93,11 +93,21 @@ fn self_field(root: &Value, key: &str) -> Option<String> {
     (!trimmed.is_empty()).then_some(trimmed)
 }
 
+fn first_label(fqdn: &str) -> Option<String> {
+    fqdn.split('.')
+        .next()
+        .filter(|label| !label.is_empty())
+        .map(str::to_string)
+}
+
 pub fn parse_status_json(json: &str) -> TailnetNames {
     serde_json::from_str::<Value>(json)
-        .map(|root| TailnetNames {
-            short: self_field(&root, "HostName"),
-            fqdn: self_field(&root, "DNSName"),
+        .map(|root| {
+            let fqdn = self_field(&root, "DNSName");
+            TailnetNames {
+                short: fqdn.as_deref().and_then(first_label),
+                fqdn,
+            }
         })
         .unwrap_or_default()
 }
@@ -268,6 +278,29 @@ mod tests {
         let names = parse_status_json(json);
         assert_eq!(names.short.as_deref(), Some("macbook-pro"));
         assert_eq!(names.fqdn.as_deref(), Some("macbook-pro.tail1234.ts.net"));
+    }
+
+    #[test]
+    fn status_json_short_name_is_the_first_dns_label() {
+        let json = r#"{"Self":{"HostName":"Evil-Host","DNSName":"Laptop.tail1234.ts.net."}}"#;
+        let names = parse_status_json(json);
+        assert_eq!(names.short.as_deref(), Some("laptop"));
+        assert_eq!(names.fqdn.as_deref(), Some("laptop.tail1234.ts.net"));
+    }
+
+    #[test]
+    fn status_json_with_only_host_name_has_no_short_name() {
+        let names = parse_status_json(r#"{"Self":{"HostName":"phone"}}"#);
+        assert_eq!(names, TailnetNames::default());
+        let empty = parse_status_json(r#"{"Self":{"HostName":"phone","DNSName":""}}"#);
+        assert_eq!(empty, TailnetNames::default());
+    }
+
+    #[test]
+    fn status_json_single_label_dns_name_is_both_names() {
+        let names = parse_status_json(r#"{"Self":{"DNSName":"Box."}}"#);
+        assert_eq!(names.short.as_deref(), Some("box"));
+        assert_eq!(names.fqdn.as_deref(), Some("box"));
     }
 
     #[test]

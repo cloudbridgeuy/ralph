@@ -78,7 +78,7 @@ Detection:
   - Tailscale is not installed. The error names both paths.
   - Tailscale is stopped or logged out. The error shows the first stderr line.
   - Tailscale reports no IPv4 address.
-- `tailscale status --json` gives the machine name and the MagicDNS FQDN. If it fails, `ralph web` prints a warning and allows only the IP.
+- `tailscale status --json` gives the MagicDNS FQDN (`Self.DNSName`). The machine name is the first label of that FQDN. `ralph web` does not use `Self.HostName`. If it fails, `ralph web` prints a warning and allows only the IP.
 
 Bind:
 - The servers bind `127.0.0.1` and exactly the reported IP, on the same port. With port 0, the second bind uses the port of the first.
