@@ -71,6 +71,7 @@ fn run_after(mode: PermissionMode, setup: impl FnOnce(&Shared), lines: &[&str]) 
         events: Arc::clone(&events),
         permissions: PermissionQueue::new("p".into(), "w".into(), inbox(), Arc::clone(&events)),
         mode,
+        store: store.to_path_buf(),
         heartbeat: Heartbeat::new(store.join("activity"), store.join("gone")),
         markers: WorkerMarkers::new(store, "w"),
         inbox: inbox(),

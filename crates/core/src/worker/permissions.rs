@@ -1,4 +1,6 @@
-use crate::worker::{ClaudePermission, Report, ReportStatus};
+use crate::worker::{
+    deny_line, permission_response, ClaudePermission, Report, ReportStatus, ALLOW_ONCE,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -245,6 +247,18 @@ pub fn mcptools_gate(grants: Grants, ask: &ClaudePermission) -> GateCall {
             missing if missing == Classes::default() => GateCall::Allow,
             missing => GateCall::Prompt(missing),
         },
+    }
+}
+
+pub fn auto_answer(mode: PermissionMode, grants: Grants, ask: &ClaudePermission) -> Option<String> {
+    let id = &ask.content.request_id;
+    let allow = || Some(permission_response(id, ALLOW_ONCE, &ask.input));
+    match (mcptools_gate(grants, ask), mode) {
+        (GateCall::Allow, _) | (GateCall::Prompt(_) | GateCall::Other, PermissionMode::Yolo) => {
+            allow()
+        }
+        (GateCall::Deny, _) => Some(deny_line(id)),
+        (GateCall::Prompt(_) | GateCall::Other, PermissionMode::Ask) => None,
     }
 }
 
@@ -809,5 +823,33 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(allow["response"]["response"]["behavior"], "allow");
+    }
+    fn behavior(line: Option<String>) -> Option<String> {
+        let answer: serde_json::Value = serde_json::from_str(&line?).unwrap();
+        answer["response"]["response"]["behavior"]
+            .as_str()
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn ask_mode_allows_elevated_asks_whose_classes_are_all_granted() {
+        let writes = ask("mcp__mcptools__execute", json!({"allowWrites": true}));
+        let both = ask(
+            "mcp__mcptools__execute",
+            json!({"allowWrites": true, "allowSpend": true}),
+        );
+        let bash = ask("Bash", json!({"command": "mcptools linear issue update X"}));
+        let mode = PermissionMode::Ask;
+        assert_eq!(
+            behavior(auto_answer(mode, WRITES, &writes)).as_deref(),
+            Some("allow")
+        );
+        assert_eq!(
+            behavior(auto_answer(mode, WRITES, &bash)).as_deref(),
+            Some("allow")
+        );
+        assert_eq!(auto_answer(mode, WRITES, &both), None);
+        assert_eq!(auto_answer(mode, Grants::default(), &writes), None);
+        assert_eq!(auto_answer(mode, SPEND, &writes), None);
     }
 }

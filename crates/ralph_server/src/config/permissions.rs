@@ -82,6 +82,13 @@ pub fn effective_grants(chat: &ChatSection, store_dir: &Path) -> Grants {
     Grants::for_mode(mode).union(saved)
 }
 
+pub fn saved_grants(store_dir: &Path) -> Grants {
+    let text = read_grants_text(&config_root(store_dir).join(GRANTS_FILE));
+    let (saved, warning) = parse_grants(text.as_deref());
+    warning.into_iter().for_each(warn);
+    saved
+}
+
 fn save_grants(store_dir: &Path, classes: Classes) -> Result<PathBuf, String> {
     let path = config_root(store_dir).join(GRANTS_FILE);
     let (json, warning) = merged_grants(read_grants_text(&path).as_deref(), classes);
@@ -105,4 +112,30 @@ pub fn confirm_answer(store_dir: &Path, choice: Choice, classes: Classes) -> Str
         .and_then(|saved| saved.map_err(warn).ok());
     let shown = saved.map(|path| path.display().to_string());
     answer_message(choice, classes, shown.as_deref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_grants_read_only_the_file_and_default_to_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(saved_grants(dir.path()), Grants::default());
+        save_grants(
+            dir.path(),
+            Classes {
+                writes: true,
+                spend: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            saved_grants(dir.path()),
+            Grants {
+                writes: true,
+                spend: false
+            }
+        );
+    }
 }

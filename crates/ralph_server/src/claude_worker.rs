@@ -4,7 +4,7 @@ use crate::chat::skills::read_claude_config;
 use crate::codex_worker::pipes::pipe_lines;
 use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;
-use crate::config::{configured_permission_mode, AppConfig};
+use crate::config::{configured_permission_mode, saved_grants, AppConfig};
 use crate::cursor_owner::{
     now_secs, report_start_warning, request_ids, sweep_owner, take_answer, write_file,
     write_interrupt_result, write_owner_record,
@@ -73,6 +73,7 @@ struct Shared {
     events: Events,
     permissions: PermissionQueue<ClaudeReply>,
     mode: PermissionMode,
+    store: PathBuf,
     heartbeat: Arc<Heartbeat>,
     markers: WorkerMarkers,
     inbox: Inbox,
@@ -151,7 +152,7 @@ impl Shared {
     }
 
     fn ask(&self, ask: ClaudePermission) {
-        match auto_answer(self.mode, &ask) {
+        match auto_answer(self.mode, saved_grants(&self.store), &ask) {
             Some(line) => {
                 self.send(&line).ok();
             }
@@ -503,6 +504,7 @@ impl ClaudeWorker {
                 Arc::clone(&events),
             ),
             mode,
+            store: store.to_path_buf(),
             events,
             heartbeat,
             markers,

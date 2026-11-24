@@ -46,7 +46,7 @@ pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;
 pub use permissions::{
     configured_permission_mode, confirm_answer, effective_grants, resolve_permission_mode,
-    ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
+    saved_grants, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
 };
 pub use usage::{configured_ledger, ledger_path, UsageSection};
 pub use web::{parse_ansi_table, WebSection};
