@@ -437,6 +437,13 @@ mod tests {
     }
 
     #[test]
+    fn info_and_accent_resolve_to_different_colours_in_both_themes() {
+        for theme in THEMES {
+            assert_ne!(role(theme, "info"), role(theme, "accent"), "{theme:?}");
+        }
+    }
+
+    #[test]
     fn headings_are_readable_on_bg() {
         let expected = [
             (Theme::Dark, [11.39, 6.91, 4.54]),
