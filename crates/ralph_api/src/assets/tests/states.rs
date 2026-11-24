@@ -237,3 +237,13 @@ fn a_successful_retry_focuses_a_treeitem_button_not_a_role_none_or_group() {
     assert!(!js.contains(r#"role: "none", tabindex"#));
     assert!(!js.contains(r#"role: "group", tabindex"#));
 }
+
+#[test]
+fn a_node_open_checks_the_generation_before_writing_the_hash() {
+    let body = function_body(&script(), "openNode");
+    assert!(body.contains("const mine = generation;"), "{body}");
+    let guard = body.find("if (mine !== generation) return;");
+    let write = body.find("history.replaceState(");
+    assert!(guard.is_some() && write.is_some(), "{body}");
+    assert!(guard < write, "{body}");
+}

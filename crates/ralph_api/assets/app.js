@@ -342,10 +342,12 @@ async function openNode(item, ctx, retried) {
   clearRows(group);
   const level = Number(item.getAttribute("aria-level")) + 1;
   const total = Number(item.closest("r-tree").dataset.total);
+  const mine = generation;
   const stop = delayedSpinner(group, "Loading entries");
   try {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
     stop();
+    if (mine !== generation) return;
     zoomRows(zoom).forEach((row) => {
       if (row.row === "summary") {
         const summary = rowItem();
