@@ -186,6 +186,11 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         last_cost_usd: Mutex::new(None),
         timing: Mutex::default(),
         seen_len: Mutex::new(None),
+        status: {
+            let monitor = Arc::clone(&monitor);
+            Box::new(move || monitor.status())
+        },
+        stage_mark: Mutex::new(None),
         sink: options.output.sink,
         show_tools: options.output.show_tools,
         terminated: signal::is_terminated,

@@ -1,0 +1,7 @@
+status: 200
+Content-Type: application/json
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+
+{"store":"chat-store","threads":[{"name":"done","parked":true,"merged":true},{"name":"side","parked":false,"merged":false}]}

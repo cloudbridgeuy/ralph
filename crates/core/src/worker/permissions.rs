@@ -23,12 +23,49 @@ pub struct BlockedContent {
 #[derive(Debug, PartialEq, Eq)]
 pub enum McptoolsDecision {
     Read,
-    Elevated,
+    Elevated(Classes),
     Deny,
     Other,
 }
 
+fn is_assignment(token: &str) -> bool {
+    token.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+fn segment_classes(segment: &str) -> Option<Classes> {
+    let mut tokens = segment
+        .split_whitespace()
+        .skip_while(|token| *token == "env" || is_assignment(token));
+    (tokens.next() == Some("mcptools")).then(|| {
+        let spend = tokens.next() == Some("images");
+        Classes {
+            writes: !spend,
+            spend,
+        }
+    })
+}
+
+fn bash_mcptools_classes(command: &str) -> Option<Classes> {
+    command
+        .split(['&', '|', ';', '\n'])
+        .filter_map(segment_classes)
+        .reduce(|a, b| Classes {
+            writes: a.writes || b.writes,
+            spend: a.spend || b.spend,
+        })
+}
+
 pub fn mcptools_decision(ask: &ClaudePermission) -> McptoolsDecision {
+    if ask.content.tool == "Bash" {
+        return ask
+            .input
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .and_then(bash_mcptools_classes)
+            .map_or(McptoolsDecision::Other, McptoolsDecision::Elevated);
+    }
     if !matches!(
         ask.content.tool.as_str(),
         "mcp__mcptools__execute" | "mcp__mcptools__call_tool"
@@ -42,13 +79,159 @@ pub fn mcptools_decision(ask: &ClaudePermission) -> McptoolsDecision {
     {
         return McptoolsDecision::Deny;
     }
-    if flags
-        .iter()
-        .any(|flag| matches!(flag, Some(serde_json::Value::Bool(true))))
-    {
-        McptoolsDecision::Elevated
-    } else {
+    let set =
+        |flag: Option<&serde_json::Value>| matches!(flag, Some(serde_json::Value::Bool(true)));
+    let classes = Classes {
+        writes: set(flags[0]),
+        spend: set(flags[1]),
+    };
+    if classes == Classes::default() {
         McptoolsDecision::Read
+    } else {
+        McptoolsDecision::Elevated(classes)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Classes {
+    pub writes: bool,
+    pub spend: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grants {
+    #[serde(default)]
+    pub writes: bool,
+    #[serde(default)]
+    pub spend: bool,
+}
+
+impl Grants {
+    pub fn for_mode(mode: PermissionMode) -> Grants {
+        let granted = mode == PermissionMode::Yolo;
+        Grants {
+            writes: granted,
+            spend: granted,
+        }
+    }
+
+    fn missing(self, needed: Classes) -> Classes {
+        Classes {
+            writes: needed.writes && !self.writes,
+            spend: needed.spend && !self.spend,
+        }
+    }
+
+    pub fn union(self, other: Grants) -> Grants {
+        Grants {
+            writes: self.writes || other.writes,
+            spend: self.spend || other.spend,
+        }
+    }
+}
+
+pub fn parse_grants(text: Option<&str>) -> (Grants, Option<String>) {
+    match text.map(serde_json::from_str::<Grants>) {
+        None => (Grants::default(), None),
+        Some(Ok(grants)) => (grants, None),
+        Some(Err(e)) => (
+            Grants::default(),
+            Some(format!("unreadable mcptools grants: {e}; no saved grants")),
+        ),
+    }
+}
+
+impl From<Classes> for Grants {
+    fn from(classes: Classes) -> Grants {
+        Grants {
+            writes: classes.writes,
+            spend: classes.spend,
+        }
+    }
+}
+
+pub fn merged_grants(existing: Option<&str>, added: Classes) -> (String, Option<String>) {
+    let (saved, warning) = parse_grants(existing);
+    (json!(saved.union(added.into())).to_string(), warning)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    AllowOnce,
+    Deny,
+    AllowAlways,
+}
+
+impl Choice {
+    pub fn from_key(line: &str) -> Option<Choice> {
+        match line.trim().to_ascii_lowercase().as_str() {
+            "y" => Some(Choice::AllowOnce),
+            "n" => Some(Choice::Deny),
+            "a" => Some(Choice::AllowAlways),
+            _ => None,
+        }
+    }
+
+    pub fn from_option(option: &str) -> Option<Choice> {
+        [Choice::AllowOnce, Choice::Deny, Choice::AllowAlways]
+            .into_iter()
+            .find(|choice| choice.option_id() == option)
+    }
+
+    pub fn option_id(self) -> &'static str {
+        match self {
+            Choice::AllowOnce => "allow_once",
+            Choice::Deny => "deny",
+            Choice::AllowAlways => "allow_always",
+        }
+    }
+}
+
+pub fn classes_label(classes: Classes) -> &'static str {
+    match (classes.writes, classes.spend) {
+        (true, true) => "writes and spend",
+        (true, false) => "writes",
+        (false, true) => "spend",
+        (false, false) => "",
+    }
+}
+
+pub fn answer_hint(token: &str, missing: Classes) -> String {
+    format!(
+        "y allow once \u{b7} n deny \u{b7} a always allow {}\n/answer @chat {token} allow_once|deny|allow_always",
+        classes_label(missing)
+    )
+}
+
+pub fn answer_message(choice: Choice, classes: Classes, saved_to: Option<&str>) -> String {
+    let label = classes_label(classes);
+    match (choice, saved_to) {
+        (Choice::AllowOnce, _) => "Allowed once.".into(),
+        (Choice::Deny, _) => "Denied.".into(),
+        (Choice::AllowAlways, Some(path)) => format!("Always allowing {label}; saved to {path}."),
+        (Choice::AllowAlways, None) => {
+            format!("Always allowing {label} for this session; not saved.")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum GateCall {
+    Allow,
+    Deny,
+    Prompt(Classes),
+    Other,
+}
+
+pub fn mcptools_gate(grants: Grants, ask: &ClaudePermission) -> GateCall {
+    match mcptools_decision(ask) {
+        McptoolsDecision::Other => GateCall::Other,
+        McptoolsDecision::Deny => GateCall::Deny,
+        McptoolsDecision::Read => GateCall::Allow,
+        McptoolsDecision::Elevated(needed) => match grants.missing(needed) {
+            missing if missing == Classes::default() => GateCall::Allow,
+            missing => GateCall::Prompt(missing),
+        },
     }
 }
 
@@ -216,12 +399,18 @@ mod tests {
             (
                 "mcp__mcptools__execute",
                 json!({"allowWrites": true}),
-                Elevated,
+                Elevated(Classes {
+                    writes: true,
+                    spend: false,
+                }),
             ),
             (
                 "mcp__mcptools__call_tool",
                 json!({"allowSpend": true}),
-                Elevated,
+                Elevated(Classes {
+                    writes: false,
+                    spend: true,
+                }),
             ),
             ("mcp__mcptools__execute", json!({"allowSpend": null}), Deny),
             (
@@ -238,6 +427,170 @@ mod tests {
                 "{tool} {input}"
             );
         }
+    }
+
+    fn gate(grants: Grants, tool: &str, input: serde_json::Value) -> GateCall {
+        mcptools_gate(grants, &ask(tool, input))
+    }
+
+    const WRITES: Grants = Grants {
+        writes: true,
+        spend: false,
+    };
+    const SPEND: Grants = Grants {
+        writes: false,
+        spend: true,
+    };
+    const BOTH: Grants = Grants {
+        writes: true,
+        spend: true,
+    };
+
+    #[test]
+    fn gate_prompts_for_each_ungranted_class() {
+        let none = Grants::default();
+        let execute = "mcp__mcptools__execute";
+        assert_eq!(
+            gate(none, execute, json!({"allowWrites": true})),
+            GateCall::Prompt(Classes {
+                writes: true,
+                spend: false
+            })
+        );
+        assert_eq!(
+            gate(none, execute, json!({"allowSpend": true})),
+            GateCall::Prompt(Classes {
+                writes: false,
+                spend: true
+            })
+        );
+        assert_eq!(
+            gate(
+                none,
+                execute,
+                json!({"allowWrites": true, "allowSpend": true})
+            ),
+            GateCall::Prompt(Classes {
+                writes: true,
+                spend: true
+            })
+        );
+    }
+
+    #[test]
+    fn gate_allows_only_when_every_needed_class_is_granted() {
+        let call = "mcp__mcptools__call_tool";
+        let both = json!({"allowWrites": true, "allowSpend": true});
+        assert_eq!(
+            gate(WRITES, call, json!({"allowWrites": true})),
+            GateCall::Allow
+        );
+        assert_eq!(
+            gate(SPEND, call, json!({"allowSpend": true})),
+            GateCall::Allow
+        );
+        assert_eq!(gate(BOTH, call, both.clone()), GateCall::Allow);
+        assert_eq!(
+            gate(WRITES, call, both),
+            GateCall::Prompt(Classes {
+                writes: false,
+                spend: true
+            })
+        );
+        assert_eq!(
+            gate(SPEND, call, json!({"allowWrites": true})),
+            GateCall::Prompt(Classes {
+                writes: true,
+                spend: false
+            })
+        );
+    }
+
+    #[test]
+    fn gate_allows_reads_denies_malformed_and_skips_other_tools() {
+        let execute = "mcp__mcptools__execute";
+        for grants in [Grants::default(), BOTH] {
+            assert_eq!(
+                gate(grants, execute, json!({"code": "read"})),
+                GateCall::Allow
+            );
+            assert_eq!(
+                gate(grants, execute, json!({"allowWrites": "true"})),
+                GateCall::Deny
+            );
+            assert_eq!(
+                gate(grants, execute, json!({"allowSpend": null})),
+                GateCall::Deny
+            );
+            assert_eq!(gate(grants, "Bash", json!({})), GateCall::Other);
+        }
+    }
+
+    #[test]
+    fn bash_mcptools_commands_are_classified_by_segment() {
+        use McptoolsDecision::*;
+        let writes = || {
+            Elevated(Classes {
+                writes: true,
+                spend: false,
+            })
+        };
+        let spend = || {
+            Elevated(Classes {
+                writes: false,
+                spend: true,
+            })
+        };
+        let both = || {
+            Elevated(Classes {
+                writes: true,
+                spend: true,
+            })
+        };
+        for (command, want) in [
+            ("mcptools linear issue update X", writes()),
+            ("FOO=1 mcptools images generate", spend()),
+            ("env A=1 mcptools images generate", spend()),
+            ("cd x && mcptools linear issue get", writes()),
+            (
+                "mcptools images generate | cat; mcptools linear issue get",
+                both(),
+            ),
+            ("mcptools-x run", Other),
+            ("echo mcptools", Other),
+            ("/usr/bin/mcptools linear", Other),
+            ("", Other),
+        ] {
+            assert_eq!(
+                mcptools_decision(&ask("Bash", json!({ "command": command }))),
+                want,
+                "{command}"
+            );
+        }
+        assert_eq!(
+            mcptools_decision(&ask("Bash", json!({ "command": 7 }))),
+            Other
+        );
+    }
+
+    #[test]
+    fn yolo_grants_both_classes_and_ask_grants_none() {
+        assert_eq!(Grants::for_mode(PermissionMode::Yolo), BOTH);
+        assert_eq!(Grants::for_mode(PermissionMode::Ask), Grants::default());
+        assert_eq!(WRITES.union(SPEND), BOTH);
+    }
+
+    #[test]
+    fn grants_parse_missing_valid_and_invalid() {
+        assert_eq!(parse_grants(None), (Grants::default(), None));
+        assert_eq!(
+            parse_grants(Some("{\"writes\":true,\"spend\":false}")),
+            (WRITES, None)
+        );
+        assert_eq!(parse_grants(Some("{\"spend\":true}")), (SPEND, None));
+        let (grants, warning) = parse_grants(Some("not json"));
+        assert_eq!(grants, Grants::default());
+        assert!(warning.is_some());
     }
 
     fn options() -> Vec<PermissionOption> {
@@ -312,5 +665,87 @@ mod tests {
     fn no_option_message_lists_every_option_id() {
         let message = no_option_message(&options());
         assert!(message.contains("allow-once, reject-once"));
+    }
+
+    #[test]
+    fn keys_y_n_a_pick_a_choice_and_anything_else_is_not_an_answer() {
+        for (line, want) in [
+            ("y", Some(Choice::AllowOnce)),
+            (" y ", Some(Choice::AllowOnce)),
+            ("Y", Some(Choice::AllowOnce)),
+            ("n", Some(Choice::Deny)),
+            ("A", Some(Choice::AllowAlways)),
+            ("yes", None),
+            ("", None),
+            ("y please", None),
+        ] {
+            assert_eq!(Choice::from_key(line), want, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn option_ids_round_trip_through_choice() {
+        for choice in [Choice::AllowOnce, Choice::Deny, Choice::AllowAlways] {
+            assert_eq!(Choice::from_option(choice.option_id()), Some(choice));
+        }
+        assert_eq!(Choice::from_option("once"), None);
+    }
+
+    #[test]
+    fn the_hint_names_the_missing_classes_and_keeps_the_fallback_line() {
+        let class = |writes, spend| Classes { writes, spend };
+        for (missing, label) in [
+            (class(true, false), "always allow writes\n"),
+            (class(false, true), "always allow spend\n"),
+            (class(true, true), "always allow writes and spend\n"),
+        ] {
+            let hint = answer_hint("tok", missing);
+            assert!(
+                hint.starts_with("y allow once \u{b7} n deny \u{b7} a "),
+                "{hint}"
+            );
+            assert!(hint.contains(label), "{hint}");
+            assert!(hint.ends_with("/answer @chat tok allow_once|deny|allow_always"));
+        }
+    }
+
+    #[test]
+    fn saved_grants_merge_with_the_new_classes() {
+        let writes = Classes {
+            writes: true,
+            spend: false,
+        };
+        let spend = Classes {
+            writes: false,
+            spend: true,
+        };
+        let merged = |text: Option<&str>, added| {
+            let (json, _) = merged_grants(text, added);
+            parse_grants(Some(&json)).0
+        };
+        assert_eq!(merged(None, writes), WRITES);
+        assert_eq!(merged(Some(r#"{"writes":true}"#), spend), BOTH);
+        assert_eq!(merged(Some(r#"{"spend":true}"#), spend), SPEND);
+        let (json, warning) = merged_grants(Some("not json"), writes);
+        assert_eq!(parse_grants(Some(&json)).0, WRITES);
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn answer_messages_say_what_happened() {
+        let both = Classes {
+            writes: true,
+            spend: true,
+        };
+        assert_eq!(
+            answer_message(Choice::AllowOnce, both, None),
+            "Allowed once."
+        );
+        assert_eq!(answer_message(Choice::Deny, both, None), "Denied.");
+        assert_eq!(
+            answer_message(Choice::AllowAlways, both, Some("/s/g.json")),
+            "Always allowing writes and spend; saved to /s/g.json."
+        );
+        assert!(answer_message(Choice::AllowAlways, both, None).contains("not saved"));
     }
 }

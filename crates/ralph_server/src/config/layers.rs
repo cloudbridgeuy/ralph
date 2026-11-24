@@ -83,8 +83,9 @@ pub fn culprit_path<'a, E: PartialEq>(
         .map_or(fallback, |(path, _)| path)
 }
 
-const SECURITY_KEYS: [&str; 16] = [
+const SECURITY_KEYS: [&str; 18] = [
     "chat.permission_mode",
+    "chat.permissions",
     "chat.mcp_servers",
     "chat.user_settings",
     "chat.prompt_file",
@@ -92,6 +93,7 @@ const SECURITY_KEYS: [&str; 16] = [
     "chat.skills",
     "agy.permissions",
     "codex.permissions",
+    "codex.sandbox",
     "cursor.permissions",
     "claude.permissions",
     "claude.config_dir",
@@ -289,12 +291,24 @@ mod tests {
     }
 
     #[test]
+    fn security_keys_flags_a_store_chat_permissions() {
+        let layer = table("[chat]\npermissions = \"yolo\"\n");
+        assert_eq!(security_keys(&layer), ["chat.permissions"]);
+    }
+
+    #[test]
     fn security_keys_finds_each_listed_key() {
         for key in SECURITY_KEYS {
             let (section, leaf) = key.split_once('.').unwrap();
             let layer = table(&format!("[{section}]\n{leaf} = 1\n"));
             assert_eq!(security_keys(&layer), [key]);
         }
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_codex_sandbox() {
+        let layer = table("[codex]\nsandbox = \"danger-full-access\"\n");
+        assert_eq!(security_keys(&layer), ["codex.sandbox"]);
     }
 
     #[test]

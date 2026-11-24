@@ -1,13 +1,29 @@
 use crate::render::{
-    empty, error, escape, frame, kv, pill, render_markdown, rule, spark_svg, spinner, status,
-    table, Icon, PillShape, Shape, Tone,
+    empty, error, escape, frame, kv, kv_inline, kv_sourced, pill, pill_with, render_markdown, rule,
+    spark_bars_svg, spark_svg, spinner, status, table, table_marked, table_state, Icon, PillShape,
+    PillVariant, RowMark, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
 mod fixture;
+mod tree;
 
-const TONES: [Tone; 5] = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent];
-const ICONS: [Icon; 4] = [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info];
+const TONES: [Tone; 6] = [
+    Tone::Ok,
+    Tone::Bad,
+    Tone::Warn,
+    Tone::Info,
+    Tone::Accent,
+    Tone::Neutral,
+];
+const ICONS: [Icon; 6] = [
+    Icon::Check,
+    Icon::Cross,
+    Icon::Warning,
+    Icon::Info,
+    Icon::Dot,
+    Icon::Pause,
+];
 
 const PROSE_SPARSE: &str = "A short **note** with a [link](https://example.com).";
 const PROSE_DENSE: &str = "# Heading\n\n## Second\n\nText with *emphasis*, ~~strike~~ and `inline code`.\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n\n- [x] done\n- [ ] open\n\n> A quote.\n\n| day | turns |\n|-----|-------|\n| mon | 3 |\n\n[site](https://example.com)\n";
@@ -54,6 +70,18 @@ fn cost_rows(fixture: &Fixture) -> Vec<Vec<String>> {
         .collect()
 }
 
+fn table_marked_html(headers: &[&str], rows: &[Vec<String>]) -> String {
+    let cells: Vec<Vec<&str>> = rows
+        .iter()
+        .map(|row| row.iter().map(String::as_str).collect())
+        .collect();
+    table_marked(
+        headers,
+        &cells,
+        &[(1, RowMark::Selected), (2, RowMark::Open)],
+    )
+}
+
 fn table_html(headers: &[&str], rows: &[Vec<String>]) -> String {
     let cells: Vec<Vec<&str>> = rows
         .iter()
@@ -67,10 +95,15 @@ fn boxes(fixture: &Fixture) -> String {
     group(
         "r-box",
         &[
-            ("empty", frame(Shape::Square, None, "")),
+            ("empty", frame(Shape::Square, None, "", None)),
             (
                 "sparse",
-                frame(Shape::Round, Some(first_title(fixture)), &text("one line")),
+                frame(
+                    Shape::Round,
+                    Some(first_title(fixture)),
+                    &text("one line"),
+                    None,
+                ),
             ),
             (
                 "dense",
@@ -78,13 +111,31 @@ fn boxes(fixture: &Fixture) -> String {
                     Shape::Heavy,
                     Some("Counts"),
                     &kv(&borrowed(&pairs(&fixture.counts))),
+                    None,
+                ),
+            ),
+            (
+                "aside",
+                frame(
+                    Shape::Round,
+                    Some("Usage"),
+                    &text("one line"),
+                    Some(&escape("3 items")),
                 ),
             ),
             (
                 "error",
-                frame(Shape::Square, Some("Failed"), &error("could not load")),
+                frame(
+                    Shape::Square,
+                    Some("Failed"),
+                    &error("could not load"),
+                    None,
+                ),
             ),
-            ("very-long", frame(Shape::Square, Some(long), &text(long))),
+            (
+                "very-long",
+                frame(Shape::Square, Some(long), &text(long), None),
+            ),
         ],
     )
 }
@@ -101,10 +152,18 @@ fn tables(fixture: &Fixture) -> String {
     group(
         "r-table",
         &[
-            ("empty", table_html(&headers, &[])),
+            ("empty", table_state(&headers, &empty("No rows yet"))),
+            ("loading", table_state(&headers, &spinner("Loading rows"))),
             ("sparse", table_html(&headers, &one)),
             ("dense", table_html(&headers, &rows)),
-            ("error", error("could not load rows")),
+            (
+                "selected",
+                table_marked_html(&headers, &rows[..rows.len().min(3)]),
+            ),
+            (
+                "error",
+                table_state(&headers, &error("could not load rows")),
+            ),
             ("very-long", table_html(&headers, &long)),
         ],
     )
@@ -123,8 +182,25 @@ fn kvs(fixture: &Fixture) -> String {
             ("dense", kv(&borrowed(&all))),
             ("error", error("could not load pairs")),
             ("very-long", kv(&[(long, long)])),
+            ("source", kv_sourced(&sourced_rows(&counts))),
+            ("two", kv(&borrowed(&counts))),
+            ("inline", kv_inline(&borrowed(&counts))),
         ],
     )
+}
+
+fn sourced_rows(rows: &[(String, String)]) -> Vec<(&str, &str, &str)> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, (name, value))| {
+            let source = if index % 2 == 0 {
+                "default"
+            } else {
+                "config.toml"
+            };
+            (name.as_str(), value.as_str(), source)
+        })
+        .collect()
 }
 
 fn pills(fixture: &Fixture) -> String {
@@ -152,6 +228,16 @@ fn pills(fixture: &Fixture) -> String {
                 ),
             ),
             ("dense", dense),
+            (
+                "outline",
+                pill_with(
+                    PillVariant::Outline,
+                    Tone::Info,
+                    PillShape::Round,
+                    Some(Icon::Info),
+                    "queued",
+                ),
+            ),
             (
                 "error",
                 pill(Tone::Bad, PillShape::Square, Some(Icon::Cross), "failed"),
@@ -209,7 +295,7 @@ fn errors(fixture: &Fixture) -> String {
 }
 
 fn spinners() -> String {
-    group("r-spinner", &[("sparse", spinner())])
+    group("r-spinner", &[("sparse", spinner("Loading memory"))])
 }
 
 fn sparks(fixture: &Fixture) -> String {
@@ -228,6 +314,10 @@ fn sparks(fixture: &Fixture) -> String {
             ("dense", svg(&costs)),
             ("error", error("could not load the series")),
             ("very-long", svg(&costs.repeat(10))),
+            (
+                "bars",
+                spark_bars_svg(&costs, 160.0, 24.0).unwrap_or_else(|| empty("No cost data")),
+            ),
         ],
     )
 }
@@ -265,6 +355,7 @@ fn theme_body(fixture: &Fixture) -> String {
         rules(),
         tables(fixture),
         kvs(fixture),
+        tree::trees(&fixture.very_long_title),
         pills(fixture),
         statuses(fixture),
         empties(fixture),
@@ -337,8 +428,29 @@ mod tests {
         out
     }
 
+    fn without_aria_labels(html: &str) -> String {
+        let mut out = String::new();
+        let mut rest = html;
+        while let Some(start) = rest.find(" aria-label=\"") {
+            out.push_str(&rest[..start]);
+            let value = &rest[start + " aria-label=\"".len()..];
+            rest = value.find('"').map_or("", |end| &value[end + 1..]);
+        }
+        out.push_str(rest);
+        out
+    }
+
+    #[test]
+    fn aria_label_values_are_dropped_before_the_colour_scan() {
+        assert_eq!(
+            without_aria_labels("<r-box aria-label=\"#abc\" a=\"b\">x</r-box>"),
+            "<r-box a=\"b\">x</r-box>"
+        );
+        assert_eq!(without_aria_labels("<p>plain</p>"), "<p>plain</p>");
+    }
+
     fn colour_hits(html: &str) -> Vec<String> {
-        let html = &markup_only(html);
+        let html = &markup_only(&without_aria_labels(html));
         let mut hits = Vec::new();
         for (index, _) in html.match_indices('#') {
             let run = html[index + 1..]
@@ -364,6 +476,13 @@ mod tests {
             }
         }
         hits
+    }
+
+    #[test]
+    fn the_table_examples_show_a_selected_row_and_an_open_row() {
+        let html = html();
+        assert!(html.contains("<tr aria-selected=\"true\">"));
+        assert!(html.contains("<tr class=\"open\">"));
     }
 
     #[test]

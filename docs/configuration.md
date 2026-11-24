@@ -47,7 +47,7 @@ Chat commands (`ralph chat` and its helper processes) and `ralph thread merge` r
 
 Relative entries in `[chat] skills`, `prompt_file` and `append_prompt_files` resolve from the directory of the file that lists them; `~` and absolute entries stay as written, and `--skill` and `RALPH_CHAT_SKILLS` keep their own rules. `worktree_dir` stays relative to the repo root in both files.
 
-What a store file can change: it can override any key. Ralph warns once per key when a store file sets one of these security-relevant keys: `chat.permission_mode`, `chat.mcp_servers`, `chat.user_settings`, `chat.prompt_file`, `chat.append_prompt_files`, `chat.skills`, `codex.permissions`, `cursor.permissions`, `claude.permissions`, `claude.config_dir`, `chat.editor`, `chat.user_claude_md`, `chat.empty_prompt`, `changes.diff_args` and `usage.ledger`. If the store file fails to parse or validate, ralph warns and names the file, then uses the global file alone. `ralph config show` and `ralph config check` still report that failure as an error.
+What a store file can change: it can override any key. Ralph warns once per key when a store file sets one of these security-relevant keys: `chat.permission_mode`, `chat.permissions`, `chat.mcp_servers`, `chat.user_settings`, `chat.prompt_file`, `chat.append_prompt_files`, `chat.skills`, `codex.permissions`, `codex.sandbox`, `cursor.permissions`, `claude.permissions`, `claude.config_dir`, `chat.editor`, `chat.user_claude_md`, `chat.empty_prompt`, `changes.diff_args` and `usage.ledger`. If the store file fails to parse or validate, ralph warns and names the file, then uses the global file alone. `ralph config show` and `ralph config check` still report that failure as an error.
 
 `ralph config show [--store DIR]` prints the merged config and the source of each value (default, global or store); a store value that hides a global one also shows the global value, as `[store; global = 80]`, and a value whose environment variable is set shows the variable's value, tagged `env NAME`, then every file value it hides. Flags do not apply to it. In a running chat, `/config` prints what that chat resolved at start: the start warnings, the config files, store and other paths in full (a file that does not exist is marked `(missing)`), the set variables, the start flags, and every value tagged default, global, store, env or flag, with each layer it overrides (see [ralph chat](context/ralph-chat.md#config)). `ralph config check --store DIR` checks both files and the merged result (see [CLI reference](cli-reference.md#ralph-config)).
 
@@ -85,7 +85,7 @@ name = "Solarized (dark)"
 
 ### `[nap]` and `[tag]` - Memory models
 
-`[nap]` controls nap summaries and thread merge digests. `[tag]` controls entry tagging. Each accepts `harness` (default `"claude"`; only `"claude"` is supported) and `model` (default `"haiku"` for nap and `"claude-haiku-5-5"` for tag). Model names must be nonempty and cannot start with an option. Settings merge per key between global and invoking store config. Invalid config prevents model calls.
+`[nap]` controls nap summaries and thread merge digests. `[tag]` controls entry tagging. Each accepts `harness` (`"claude"` or `"codex"`, default `"claude"`) and `model` (default `"haiku"` for nap and `"claude-haiku-5-5"` for tag). Model names must be nonempty and cannot start with an option. Codex requires an explicit valid model; inherited Haiku defaults are rejected. Models do not need an entry in the price table. Settings merge per key between global and invoking store config. Invalid config prevents model calls.
 
 ### `[theme]` - Syntax Highlighting
 
@@ -119,13 +119,13 @@ border = "magenta"
 | `code` | `[theme] name` | assistant code theme | Syntax theme for fenced code blocks |
 | `heading1`, `heading2`, `heading3` | `cyan`, `blue`, `magenta` | `green`, `dark_green`, `dark_yellow` | Headings (always bold) |
 | `bold`, `italic` | terminal default | terminal default | Emphasis color |
-| `inline_code` | `yellow` | `dark_cyan` | Inline code text |
+| `inline_code` | `yellow` | `dark_cyan` | Inline code text; no effect on `ralph web` |
 | `inline_code_bg` | ANSI `235` (dark gray) | ANSI `235` (dark gray) | Inline code background |
-| `bullet` | `dark_grey` | `dark_green` | List bullets |
+| `bullet` | `dark_grey` | `dark_green` | List bullets; no effect on `ralph web` |
 | `quote`, `table` | termimad default | termimad default | Quote mark, table borders |
-| `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL |
+| `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL; no effect on `ralph web` |
 | `memory_ref` | `magenta` | `magenta` | `#N` memory references |
-| `border` | `dark_blue` | `dark_blue` | Worker header box border |
+| `border` | `dark_blue` | `dark_blue` | Worker header box border; no effect on `ralph web` |
 | `done`, `blocked`, `waiting` | `dark_green`, `dark_red`, `dark_yellow` | same | Worker status (`failed` uses `blocked`, `check` uses `waiting`) |
 | `pill_ok`, `pill_bad`, `pill_warn`, `pill_info`, `pill_accent` | `dark_green`, `dark_red`, `dark_yellow`, `blue`, `blue` | same | Emphasis pill colours (follow `done`, `blocked`, `waiting`, `link` by default) |
 
@@ -314,6 +314,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mcp_servers` | list of strings | `["mcptools"]` | Servers from `~/.claude.json` to load in chat turns and in claude and claude-tmux workers |
+| `permissions` | `"ask"` or `"yolo"` | `"ask"` | Approval of mcptools `execute` and `call_tool` calls with `allowWrites` or `allowSpend` true. `"ask"` waits for `y`, `n`, `a` or `/answer @chat <token> allow_once\|deny\|allow_always`; `"yolo"` runs them with no prompt. Reads are unchanged. `a` saves the grant to `mcptools-grants.json` in the main store. `--connect` and serve deny elevated calls in `ask`. A wrong value warns and uses `"ask"` ([details](context/ralph-chat.md#write-and-spend-approval)) |
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
 | `prompt_file` | path | unset | Text file that replaces the behaviour rules of the chat system prompt: the reply format, ask-first, verify, cite-history, development-roles and similar rules. The Next step line rule and the tool contract (`help`, `config`), the worker, watch and memory rules, and the forget and logging rules stay. Unset uses the built-in text, which is byte-identical to earlier versions. A file that is empty or only whitespace prints a warning and counts as unset |
 | `append_prompt_files` | list of paths | `[]` | Text files appended, in order, after the system prompt and before the older chat lines |
@@ -384,6 +385,7 @@ A `model` passed to `spawn_worker` wins over this key. A value that is empty or 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `permissions` | `"ask"` or `"yolo"` | `"ask"` | `"yolo"` answers `accept` at once to Codex command, file-change and MCP tool-call approvals when `accept` is offered; `"ask"` waits for the person. Session or persistent grants, amendments and permission-grant requests are never auto-answered. Read when a worker starts; a wrong value warns and uses `"ask"` |
+| `sandbox` | `"read-only"`, `"workspace-write"` or `"danger-full-access"` | unset (Codex's own `config.toml` decides) | Sandbox for Codex workers, sent as `sandbox` on `thread/start` and `thread/resume`. Unset sends no `sandbox`. Any other value, or a value that is not a string, fails worker startup with a `[codex]` message. Read at each start and each resume. Under `workspace-write` ralph also adds the git common directory of the worker's folder to the writable roots, so `git commit` works in a worktree; if git fails, no root is added. `writable_roots` and `network_access` stay in `~/.codex/config.toml`. Independent of `permissions`. Setting it can widen access where `~/.codex/config.toml` says `danger-full-access`; that is intended |
 | `model` | string | unset (Codex's own default) | Model for Codex workers that `spawn_worker` starts without a `model`. A `model` passed to `spawn_worker` wins. Checked against `model/list` at spawn; an unknown model fails the spawn. A blank value or a value with whitespace warns in the spawn result and uses Codex's default. A config that fails to load adds a warning to the spawn result and codex uses its own defaults |
 | `effort` | string | unset (Codex's own setting) | Reasoning effort for Codex workers. Checked against the effective model's `supportedReasoningEfforts` at spawn; an unsupported value fails the spawn and lists the supported ones. There is no `spawn_worker` effort parameter. Read when a worker starts |
 
@@ -405,7 +407,7 @@ Codex setup and limits:
 | `model` | string | unset (claude's own default) | Model name or alias passed as `--model` to Claude workers that `spawn_worker` starts without a `model` |
 | `shell` | `zsh` or `bash` | `zsh` | Login shell that starts Claude workers (`<shell> -lic`) and the spawn preflight checks `claude` in; a wrong value warns and uses `zsh`, and `ralph config check` reports it as an error. A store config can set it per store |
 | `config_dir` | path | unset (claude uses `~/.claude`) | Folder ralph passes as `CLAUDE_CONFIG_DIR` to every `claude` it starts: chat turns, the memory nap, `ralph ask` and Claude workers. Relative paths are read from the config file's folder; `~` expands to the home directory. A store config can set it per store; `ralph ask` has no `--store`, so only the global key applies to it. `ralph config check` notes a folder that does not exist |
-| `permissions` | `"ask"` or `"yolo"` | `"ask"` | `claude` workers only; `claude-tmux` workers use `[chat] permission_mode`. `"ask"` spawns claude with `--permission-mode default`, `"yolo"` with `auto`; the worker's own `report` and `set_status` tools never ask. `"yolo"` allows every `can_use_tool` request at once, for that request only (no `updatedPermissions`); `"ask"` waits for the person, but allow rules in the project or user `.claude/settings.json` (under `config_dir` when set) still skip the prompt, because claude sends no `can_use_tool` for them. Read when a worker spawns; a resumed worker keeps the mode it spawned with; a wrong value warns and uses `"ask"` |
+| `permissions` | `"ask"` or `"yolo"` | `"ask"` | `claude` workers only; `claude-tmux` workers use `[chat] permission_mode`. `"ask"` spawns claude with `--permission-mode default`, `"yolo"` with `auto`; the worker's own `report` and `set_status` tools never ask. `"yolo"` allows every `can_use_tool` request at once, for that request only (no `updatedPermissions`), including mcptools calls with `allowWrites` or `allowSpend`; `"ask"` waits for the person, but allow rules in the project or user `.claude/settings.json` (under `config_dir` when set) still skip the prompt, because claude sends no `can_use_tool` for them. Read when a worker spawns; a resumed worker keeps the mode it spawned with; a wrong value warns and uses `"ask"` |
 
 `config_dir` picks which Claude login and subscription ralph's `claude` processes use. It also moves the files ralph touches in that folder: the `CLAUDE.md` chat excludes, the `projects/` transcripts and `.claude.json` trust entry that closing a worker removes, and the `.claude.json` that `[chat] mcp_servers` imports from, for chat and for claude and claude-tmux workers. With `config_dir` unset, a `CLAUDE_CONFIG_DIR` in ralph's own environment reaches the `claude` it starts, so claude usage rows and worker close follow that folder instead of `~/.claude` (see [Worker leftovers](context/worker-leftovers.md#cleanup-by-worker-kind)). claude does not resolve the value or expand `~`, so ralph reads a relative value from the worktree, claude's cwd. An empty value puts the transcripts in the worktree and keeps `~/.claude.json`. Changing the key in the middle of a chat means `--resume` cannot find the old session. Cursor, codex and opencode workers are not affected.
 
@@ -563,6 +565,7 @@ ansi_dark = [
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `font` | `"Geist Mono", ui-monospace, Menlo, monospace` | CSS `font-family` list |
+| `port` | unset (`0`) | Port for `ralph web` on 127.0.0.1; `0` or unset picks a free port. `--port` overrides it |
 | `ansi_dark` | Windows Terminal Campbell | 16 `#rrggbb` entries in ANSI order 0-15, used with a dark colour scheme |
 | `ansi_light` | Campbell with slots 0 and 7 swapped, and 8 and 15 swapped | 16 `#rrggbb` entries in ANSI order 0-15, used with a light colour scheme |
 
@@ -572,6 +575,7 @@ Rules:
 
 - `font` must not be empty.
 - `font` may use only letters, digits, space, `,`, `-`, `_` and `.`, plus quoted names with balanced `"` or `'` quotes. For example `"Fira Code", monospace`. Any other character is an error.
+- `port` must be an integer from 0 to 65535.
 - Each table must have 16 entries.
 - Each entry must be `#rrggbb`.
 
@@ -579,7 +583,7 @@ Rules:
 
 ## Chat Store
 
-`ralph ask` stores only a usage row, not the prompt or reply. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
+`ralph ask` stores only a usage row, not the prompt or reply. `ralph chat` keeps its store at `./.ralph` in the cwd. The precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `./.ralph`; the old default `~/.ralph/chat` is not read unless you pass it; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
 
 ## Verbose Tools Configuration
 

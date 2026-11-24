@@ -41,6 +41,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(config.theme.warnings())
         .chain(config.changes.warnings())
         .chain(config.mermaid.style.warnings())
+        .chain(chat.permissions_setting().1)
         .chain(chat.worker_quiet_setting().1)
         .chain(chat.reset_limits_setting().1)
         .chain(chat.send_it_setting().1)
@@ -78,6 +79,15 @@ mod tests {
     fn web_section_is_validated() {
         assert!(check("[web]\nansi_dark = [\"#000\"]\n", "c").is_err());
         assert!(check("[web]\nfont = \"Geist Mono, monospace\"\n", "c")
+            .unwrap()
+            .errors
+            .is_empty());
+    }
+
+    #[test]
+    fn web_port_is_validated() {
+        assert!(check("[web]\nport = 65536\n", "c").is_err());
+        assert!(check("[web]\nport = 8080\n", "c")
             .unwrap()
             .errors
             .is_empty());

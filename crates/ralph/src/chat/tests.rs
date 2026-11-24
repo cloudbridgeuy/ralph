@@ -2,17 +2,27 @@ use super::editor::{
     edit_mode, emacs_keybindings, esc_esc, queue_bindings, vi_keybindings, visual_reset,
     IDLE_CTRL_C, OPEN_EDITOR,
 };
-use super::resolve_store;
+use super::inbox::Display;
+use super::{reply_style, resolve_store};
+use crate::highlight::ThemeConfig;
+use crate::markdown::Palette;
+use crate::render::pill_style::PillStyle;
+use crate::render::RenderContext;
+use crate::stream_processor::BlockRenderer;
 use crate::turn_sink::{rule, rule_skin};
+use crate::ui_theme::UiColors;
 use crossterm::event::{Event, KeyEvent};
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_help::{KeyHelp, PROMPT_KEYS, QUEUE_KEYS, VI_KEYS};
+use ralph_core::chunk::ParsedChunk;
+use ralph_core::stream::blocks::OutputBlock;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     EditCommand, EditMode, KeyCode, KeyModifiers, Keybindings, PromptEditMode, PromptViMode,
     ReedlineEvent, ReedlineRawEvent, Signal,
 };
 use std::path::{Path, PathBuf};
+use termimad::crossterm::style::Color;
 use termimad::MadSkin;
 
 #[test]
@@ -156,7 +166,7 @@ fn vi_find_v_still_moves() {
 }
 
 #[test]
-fn store_precedence_is_flag_then_env_then_home() {
+fn store_precedence_is_flag_then_env_then_cwd() {
     let cwd = Path::new("/work");
     let home = Some(Path::new("/home/u"));
     let path = |s: &str| Some(PathBuf::from(s));
@@ -170,7 +180,7 @@ fn store_precedence_is_flag_then_env_then_home() {
     );
     assert_eq!(
         resolve_store(None, None, cwd, home).unwrap(),
-        PathBuf::from("/home/u/.ralph/chat")
+        PathBuf::from("/work/.ralph")
     );
 }
 
@@ -189,14 +199,36 @@ fn relative_store_joins_cwd() {
 }
 
 #[test]
-fn empty_env_store_is_ignored_and_missing_home_errors() {
+fn empty_env_store_is_ignored_and_missing_home_still_resolves() {
     let cwd = Path::new("/work");
     let empty = Some(PathBuf::new());
     assert_eq!(
         resolve_store(None, empty.clone(), cwd, Some(Path::new("/h"))).unwrap(),
-        PathBuf::from("/h/.ralph/chat")
+        PathBuf::from("/work/.ralph")
     );
-    assert!(resolve_store(None, empty, cwd, None).is_err());
+    assert_eq!(
+        resolve_store(None, empty, cwd, None).unwrap(),
+        PathBuf::from("/work/.ralph")
+    );
+}
+
+#[test]
+fn default_store_refuses_the_runtime_dir_under_home() {
+    let home = Some(Path::new("/home/u"));
+    let path = |s: &str| Some(PathBuf::from(s));
+    assert!(resolve_store(None, None, Path::new("/home/u"), home).is_err());
+    assert_eq!(
+        resolve_store(None, None, Path::new("/home/u/p"), home).unwrap(),
+        PathBuf::from("/home/u/p/.ralph")
+    );
+    assert_eq!(
+        resolve_store(path(".ralph"), None, Path::new("/home/u"), home).unwrap(),
+        PathBuf::from("/home/u/.ralph")
+    );
+    assert_eq!(
+        resolve_store(None, path("/home/u/.ralph"), Path::new("/home/u"), home).unwrap(),
+        PathBuf::from("/home/u/.ralph")
+    );
 }
 
 #[test]
@@ -313,4 +345,46 @@ fn idle_signals_map_to_the_close_signals() {
     );
     assert_eq!(idle_signal(&Signal::HostCommand(OPEN_EDITOR.into())), None);
     assert_eq!(idle_signal(&Signal::ExternalBreak(String::new())), None);
+}
+
+fn styled_config(emphasis: bool) -> ThemeConfig {
+    let palette = Palette {
+        bold: Some(Color::Red),
+        inline_code: Some(Color::Green),
+        ..Palette::default()
+    };
+    ThemeConfig::default()
+        .with_theme("Solarized (dark)")
+        .with_markdown_style(palette, emphasis, PillStyle::resolve(true, true, emphasis))
+}
+
+fn reply_text(config: &ThemeConfig, text: &str) -> String {
+    let (highlighter, theme) = reply_style(config);
+    let display = Display {
+        ctx: RenderContext::new(&highlighter, true),
+        theme: &theme,
+        color: true,
+        ui: UiColors::default(),
+    };
+    super::view::render(&display, text)
+}
+
+fn streamed_text(config: &ThemeConfig, text: &str) -> String {
+    BlockRenderer::new(Some(config.clone()), true)
+        .unwrap()
+        .render(&[OutputBlock::text(ParsedChunk::prose(text))])
+}
+
+const SAMPLE: &str = "# Title\n\n**bold** and `code` [[Done]]\n\n- item\n";
+
+#[test]
+fn reprint_matches_the_streamed_reply_theme() {
+    let config = styled_config(false);
+    assert_eq!(reply_text(&config, SAMPLE), streamed_text(&config, SAMPLE));
+}
+
+#[test]
+fn reprint_keeps_emphasis_and_pill_style() {
+    let config = styled_config(true);
+    assert_eq!(reply_text(&config, SAMPLE), streamed_text(&config, SAMPLE));
 }

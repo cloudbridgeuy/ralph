@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-const SOCKET_TOOLS: [&str; 10] = [
+const SOCKET_TOOLS: [&str; 12] = [
     "workers",
     "spawn_worker",
     "reply",
@@ -16,6 +16,8 @@ const SOCKET_TOOLS: [&str; 10] = [
     "schedule",
     "propose_run",
     "step_result",
+    "stage_add",
+    "stage_done",
 ];
 const SOCKET_PREFIX: &str = "chat-";
 const RUNTIME_PARENT: &str = ".ralph";
@@ -91,6 +93,24 @@ pub fn socket_file_pid(key: &StoreKey, file_name: &str) -> Option<u32> {
         .strip_suffix(SOCKET_SUFFIX)?
         .parse()
         .ok()
+}
+
+fn any_socket_file_pid(file_name: &str) -> Option<u32> {
+    let (key, pid) = file_name.strip_suffix(SOCKET_SUFFIX)?.split_once('-')?;
+    let is_key = key.len() == STORE_KEY_HEX_CHARS && key.bytes().all(|b| b.is_ascii_hexdigit());
+    if is_key {
+        pid.parse().ok()
+    } else {
+        None
+    }
+}
+
+pub fn stale_root_sockets(names: &[String], is_alive: impl Fn(u32) -> bool) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| any_socket_file_pid(name).is_some_and(|pid| !is_alive(pid)))
+        .cloned()
+        .collect()
 }
 
 pub fn serve_socket_path(root: &Path, key: &StoreKey) -> PathBuf {
@@ -267,6 +287,8 @@ mod tests {
             "schedule",
             "propose_run",
             "step_result",
+            "stage_add",
+            "stage_done",
         ] {
             assert!(is_socket_tool(name));
         }
@@ -302,6 +324,23 @@ mod tests {
             .unwrap_err()
             .contains("Malformed"));
         assert!(decode_line::<SocketResponse>("{}").is_err());
+    }
+
+    #[test]
+    fn root_sweep_picks_dead_sockets_of_any_store_key() {
+        let key = |store: &str| StoreKey::of(Path::new(store));
+        let name = |store: &str, pid| socket_file_name(&key(store), pid);
+        let names = vec![
+            name("/a", 1),
+            name("/b", 2),
+            name("/b", 3),
+            format!("serve-{}", key("/a").0),
+            "notes.txt".to_string(),
+            "chat-4.sock".to_string(),
+            format!("{}-x.sock", key("/a").0),
+        ];
+        let stale = stale_root_sockets(&names, |pid| pid == 3);
+        assert_eq!(stale, vec![name("/a", 1), name("/b", 2)]);
     }
 
     #[test]

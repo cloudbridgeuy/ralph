@@ -4,7 +4,7 @@ use super::{
     PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal, TurnEnd, Turns,
     VersionGate, SERVER_NAME,
 };
-use crate::chat::{mcptools_ask_settings, MCPTOOLS_SERVER};
+use crate::chat::mcptools_ask_settings;
 use crate::stream::{interrupt_line, result_is_error};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -142,9 +142,12 @@ pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<Strin
     let id = &ask.content.request_id;
     let allow = || Some(permission_response(id, ALLOW_ONCE, &ask.input));
     match (mcptools_decision(ask), mode) {
-        (McptoolsDecision::Read, _) | (McptoolsDecision::Other, PermissionMode::Yolo) => allow(),
+        (McptoolsDecision::Read, _)
+        | (McptoolsDecision::Elevated(_) | McptoolsDecision::Other, PermissionMode::Yolo) => {
+            allow()
+        }
         (McptoolsDecision::Deny, _) => Some(deny_line(id)),
-        (McptoolsDecision::Elevated, _) | (McptoolsDecision::Other, PermissionMode::Ask) => None,
+        (McptoolsDecision::Elevated(_) | McptoolsDecision::Other, PermissionMode::Ask) => None,
     }
 }
 
@@ -252,12 +255,10 @@ pub fn claude_args(options: &ClaudeArgs) -> Vec<String> {
     .map(String::from)
     .into();
     args.push(allowed_tools(copied));
-    if copied.iter().any(|name| name == MCPTOOLS_SERVER) {
-        args.extend([
-            "--settings".to_string(),
-            mcptools_ask_settings().to_string(),
-        ]);
-    }
+    args.extend([
+        "--settings".to_string(),
+        mcptools_ask_settings().to_string(),
+    ]);
     args.push("--add-dir".to_string());
     args.push(attachments.display().to_string());
     if let Some(model) = model {
@@ -681,7 +682,7 @@ mod tests {
         assert!(joined.contains("--permission-mode default --permission-prompt-tool stdio"));
         assert!(!joined.contains("--permission-prompts"));
         assert!(joined.contains(
-            "--mcp-config {} --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
+            "--mcp-config {} --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --settings {\"permissions\":{\"ask\":[\"mcp__mcptools__execute\",\"mcp__mcptools__call_tool\",\"Bash(mcptools:*)\"]}} --add-dir /a --model haiku"
         ));
         assert!(!args.contains(&"--resume".into()));
         assert!(args.contains(&"--strict-mcp-config".into()));
@@ -722,12 +723,12 @@ mod tests {
             copied: &copied,
         });
         assert!(args.join(" ").contains(
-            r#"--mcp-config /s/workers/A.json --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__find_tools,mcp__docs__* --settings {"permissions":{"ask":["mcp__mcptools__execute","mcp__mcptools__call_tool"]}} --add-dir /a"#
+            r#"--mcp-config /s/workers/A.json --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__find_tools,mcp__docs__* --settings {"permissions":{"ask":["mcp__mcptools__execute","mcp__mcptools__call_tool","Bash(mcptools:*)"]}} --add-dir /a"#
         ));
     }
 
     #[test]
-    fn args_without_mcptools_carry_no_settings() {
+    fn args_without_mcptools_still_carry_the_ask_rules() {
         let copied = ["docs".to_string()];
         let args = claude_args(&ClaudeArgs {
             model: None,
@@ -737,8 +738,9 @@ mod tests {
             session: ClaudeSession::New("sid"),
             copied: &copied,
         });
-        assert!(!args.contains(&"--settings".into()));
-        assert!(args.join(" ").contains("mcp__docs__* --add-dir /a"));
+        assert!(args.join(" ").contains(
+            r#"mcp__docs__* --settings {"permissions":{"ask":["mcp__mcptools__execute","mcp__mcptools__call_tool","Bash(mcptools:*)"]}} --add-dir /a"#
+        ));
     }
 
     fn mcptools_ask(tool: &str, input: Value) -> ClaudePermission {
@@ -759,13 +761,13 @@ mod tests {
     }
 
     #[test]
-    fn yolo_leaves_elevated_mcptools_calls_for_the_person() {
+    fn yolo_allows_elevated_mcptools_calls_and_ask_leaves_them_for_the_person() {
         for tool in ["mcp__mcptools__execute", "mcp__mcptools__call_tool"] {
             for flag in ["allowWrites", "allowSpend"] {
                 let ask = mcptools_ask(tool, json!({flag: true}));
                 assert_eq!(
-                    auto_answer(PermissionMode::Yolo, &ask),
-                    None,
+                    behavior(auto_answer(PermissionMode::Yolo, &ask)).as_deref(),
+                    Some("allow"),
                     "{tool} {flag}"
                 );
                 assert_eq!(

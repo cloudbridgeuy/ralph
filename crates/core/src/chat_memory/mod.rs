@@ -20,6 +20,7 @@ mod timing;
 mod tools;
 mod tree;
 mod usage;
+mod view;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -80,6 +81,9 @@ pub use usage::{
     carry_metadata, encode_usage, model_usage_since, reply_entries, subagent_records,
     trigger_entries, usage_record, view_stats, worker_usage_record, writes_usage_row, CallSite,
     LedgerRow, Trigger,
+};
+pub use view::{
+    page, root_view, tree_within, zoom_view, EntryView, NodeView, Page, ZoomChild, ZoomView,
 };
 
 pub const SUMMARY_BYTES: usize = 512;

@@ -1,6 +1,8 @@
 use crate::chat::memory::Store;
 use crate::chat::send_it::SendIt;
+use crate::chat::socket::sweep::sweep_stale;
 use crate::chat::socket::{SocketFiles, SocketPlace};
+use crate::chat::stage;
 use crate::cursor_owner::process_start;
 use crate::schedule_store::ScheduleStore;
 use crate::warn::{warn, warn_if_err};
@@ -13,9 +15,8 @@ use chrono::{Local, Utc};
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{parse_step_result, STEP_RESULT};
 use ralph_core::chat_socket::{
-    chat_files_dir_pid, check_socket_path, decode_line, encode_line, orphan_sidecar_fate,
-    sidecar_pid, socket_fate, socket_file_pid, SocketFacts, SocketFate, SocketOwner, SocketRequest,
-    SocketResponse, StoreKey, MAX_FRAME_BYTES,
+    check_socket_path, decode_line, encode_line, SocketOwner, SocketRequest, SocketResponse,
+    StoreKey, MAX_FRAME_BYTES,
 };
 use ralph_core::schedule_repeat::repeating_cap_refusal;
 use ralph_core::schedule_request::{
@@ -25,7 +26,6 @@ use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command};
 use serde_json::Value;
-use std::collections::BTreeSet;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -232,58 +232,6 @@ impl ChatSocket {
     }
 }
 
-fn entry_names(dir: &Path) -> Vec<String> {
-    fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn sweep_stale(place: &SocketPlace) {
-    let store_entries = entry_names(place.store);
-    let mut active_pids: BTreeSet<u32> = entry_names(place.root)
-        .iter()
-        .filter_map(|name| socket_file_pid(&place.key, name))
-        .collect();
-    active_pids.extend(
-        store_entries
-            .iter()
-            .filter_map(|name| chat_files_dir_pid(name)),
-    );
-    let orphan_pids: BTreeSet<u32> = store_entries
-        .iter()
-        .filter_map(|name| sidecar_pid(name))
-        .filter(|pid| !active_pids.contains(pid))
-        .collect();
-    for (pids, decide) in [
-        (&active_pids, socket_fate as fn(SocketFacts) -> SocketFate),
-        (&orphan_pids, orphan_sidecar_fate),
-    ] {
-        for &pid in pids {
-            let files = SocketFiles::new(place, pid);
-            if decide_fate(&files, pid, decide) == SocketFate::Delete {
-                files.remove();
-            }
-        }
-    }
-}
-
-fn decide_fate(files: &SocketFiles, pid: u32, decide: fn(SocketFacts) -> SocketFate) -> SocketFate {
-    let owner = fs::read_to_string(&files.sidecar)
-        .ok()
-        .and_then(|text| SocketOwner::parse(&text));
-    let start_now = owner.as_ref().and_then(|owner| process_start(owner.pid));
-    decide(SocketFacts {
-        file_pid: pid,
-        owner: owner.as_ref(),
-        owner_start_now: start_now.as_deref(),
-    })
-}
-
 fn handle_connection(stream: &UnixStream, (shared, roster): &(Shared, Roster)) -> io::Result<()> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut line = String::new();
@@ -317,6 +265,9 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
     } = shared;
     if request.tool == WATCH_LIST {
         return Ok(watch_requests::list_text(watches, store.dir(), Utc::now()));
+    }
+    if let Some(result) = stage::call(store, request) {
+        return result;
     }
     let pending = store
         .pending_turn()
@@ -461,7 +412,7 @@ pub fn forward(socket: &Path, request: &SocketRequest) -> Result<SocketResponse,
 mod tests {
     use super::*;
     use ralph_core::chat_send_it::{Limits, VerifyMode};
-    use ralph_core::chat_socket::sidecar_name;
+    use ralph_core::chat_socket::{sidecar_name, socket_file_name};
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
@@ -801,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn bind_sweeps_only_this_stores_sockets() {
+    fn bind_sweeps_other_stores_dead_sockets_but_not_their_files_dirs() {
         let dirs = dirs();
         let other = dirs.store.join("threads/other");
         fs::create_dir_all(&other).unwrap();
@@ -814,7 +765,7 @@ mod tests {
         sweep(&dirs);
         assert!(!mine.socket.exists());
         assert!(!mine.files_dir.exists());
-        assert!(foreign.socket.exists());
+        assert!(!foreign.socket.exists());
         assert!(foreign.files_dir.exists());
     }
 
@@ -898,6 +849,21 @@ mod tests {
             assert!(!gone.socket.exists());
             assert!(!gone.sidecar.exists());
         }
+    }
+
+    #[test]
+    fn bind_removes_dead_sockets_of_other_stores_and_keeps_live_ones() {
+        let dirs = dirs();
+        let parent = std::os::unix::process::parent_id();
+        let other = StoreKey::of(Path::new("/gone/store"));
+        fs::create_dir_all(&dirs.root).unwrap();
+        let dead = dirs.root.join(socket_file_name(&other, 2_000_021));
+        let live = dirs.root.join(socket_file_name(&other, parent));
+        fs::write(&dead, "").unwrap();
+        fs::write(&live, "").unwrap();
+        sweep(&dirs);
+        assert!(!dead.exists());
+        assert_eq!(live.exists(), process_start(parent).is_some());
     }
 
     #[test]

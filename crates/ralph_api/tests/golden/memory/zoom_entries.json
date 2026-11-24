@@ -1,0 +1,26 @@
+{
+  "thread": "main",
+  "node": {
+    "id": "8-9",
+    "lo": 8,
+    "hi": 10,
+    "leaf": false,
+    "summary": "<script>alert(1)</script> \"quoted\" \\ back"
+  },
+  "children": [
+    {
+      "i": 8,
+      "role": "user",
+      "at": "2026-03-01T09:08:00Z",
+      "text": "nul:\u0000:end and line sep: :end and bell \u0007",
+      "kind": "entry"
+    },
+    {
+      "i": 9,
+      "role": "assistant",
+      "at": "2026-03-01T09:09:00Z",
+      "text": "שלום ‮evil‬ مرحبا",
+      "kind": "entry"
+    }
+  ]
+}

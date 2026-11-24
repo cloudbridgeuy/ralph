@@ -533,3 +533,22 @@ fn a_typed_draft_wins_over_a_run_end_line() {
 fn other_suggestions_stay_hidden_after_a_turn_with_no_reply() {
     assert_eq!(end_with(true, false, None, "run the tests"), Next::Nothing);
 }
+
+#[test]
+fn a_gap_replaces_the_suggestion_with_stage_and_the_prefill_never_holds() {
+    use crate::chat_stage::{suggestion_after, Gap};
+    let gap = Gap {
+        unnamed: vec!["s1".to_string()],
+    };
+    let suggestion = suggestion_after(some("/hold GUZ-1"), Some(&gap));
+    assert_eq!(suggestion, some("/stage"));
+    let next = turn_end(TurnEnd {
+        auto_hold: true,
+        replied: true,
+        draft: None,
+        suggestion,
+        status: &status(),
+    });
+    assert_eq!(next, fill("/stage"));
+    assert_eq!(suggestion_after(some("/hold"), None), some("/hold"));
+}

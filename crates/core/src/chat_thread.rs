@@ -358,13 +358,12 @@ pub fn open_launch(spawn: OpenSpawn) -> OpenLaunch {
     match spawn.block.filter(|block| !block.is_empty()) {
         Some(block) => {
             let label = format!("thread {}", spawn.name);
-            let split = [
-                "split", "-b", block, "--label", &label, "-c", spawn.cwd, "--",
-            ];
+            let split = ["split", "-b", block, "--label", &label, "-c", spawn.cwd];
             OpenLaunch::Rex(
                 split
                     .map(str::to_string)
                     .into_iter()
+                    .chain(["--interactive", "--"].map(str::to_string))
                     .chain(command)
                     .collect(),
             )
@@ -833,6 +832,7 @@ mod tests {
                 "thread auth",
                 "-c",
                 "/repo",
+                "--interactive",
                 "--",
                 "/bin/ralph",
                 "chat",
@@ -850,7 +850,7 @@ mod tests {
             panic!("expected rex");
         };
         assert_eq!(
-            argv[8..11],
+            argv[9..12],
             words(&["env", "RALPH_CONFIG_DIR=/cfg", "/bin/ralph"])
         );
     }

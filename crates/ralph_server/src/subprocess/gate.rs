@@ -1,5 +1,10 @@
-use ralph_core::worker::{blocked_notice, permission_response, ClaudePermission};
+use crate::config::confirm_answer;
+use ralph_core::worker::{
+    answer_hint, blocked_notice, permission_response, Choice, Classes, ClaudePermission, Grants,
+    ALLOW_ONCE,
+};
 use std::io::{self, Write};
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,13 +44,49 @@ struct GateState {
     held: Held,
     listening: bool,
     permissions: Vec<PendingPermission>,
+    grants: Grants,
 }
 
 #[derive(Debug)]
 struct PendingPermission {
     token: String,
     ask: ClaudePermission,
+    missing: Classes,
     answer: Option<String>,
+}
+
+#[derive(Debug)]
+pub enum Outcome {
+    Refused(String),
+    Answered { choice: Choice, classes: Classes },
+}
+
+impl Outcome {
+    pub fn report(self, store_dir: &Path) -> String {
+        match self {
+            Outcome::Refused(message) => message,
+            Outcome::Answered { choice, classes } => confirm_answer(store_dir, choice, classes),
+        }
+    }
+}
+
+const NO_MATCH: &str = "No matching main chat permission request.";
+const INVALID_OPTION: &str = "Invalid option; use allow_once|deny|allow_always.";
+
+fn apply(state: &mut GateState, index: usize, choice: Choice) -> Outcome {
+    let Some(pending) = state.permissions.get_mut(index) else {
+        return Outcome::Refused(NO_MATCH.into());
+    };
+    let classes = pending.missing;
+    let sent = match choice {
+        Choice::AllowAlways => ALLOW_ONCE,
+        other => other.option_id(),
+    };
+    pending.answer = Some(sent.to_string());
+    if choice == Choice::AllowAlways {
+        state.grants = state.grants.union(classes.into());
+    }
+    Outcome::Answered { choice, classes }
 }
 
 #[derive(Debug, Default)]
@@ -84,6 +125,19 @@ impl OutputGate {
         OutputGate::default()
     }
 
+    pub fn with_grants(grants: Grants) -> OutputGate {
+        OutputGate {
+            state: Mutex::new(GateState {
+                grants,
+                ..GateState::default()
+            }),
+        }
+    }
+
+    pub(super) fn grants(&self) -> Grants {
+        self.lock().grants
+    }
+
     pub fn listen(&self, active: bool) {
         let mut state = self.lock();
         state.listening = active;
@@ -94,7 +148,7 @@ impl OutputGate {
         }
     }
 
-    pub(super) fn request_permission(&self, ask: ClaudePermission) -> bool {
+    pub(super) fn request_permission(&self, ask: ClaudePermission, missing: Classes) -> bool {
         let mut state = self.lock();
         if !state.listening {
             return false;
@@ -111,21 +165,16 @@ impl OutputGate {
         content.request_id = token.clone();
         content.tool = escaped_json(&content.tool);
         content.summary = escaped_json(&content.summary);
-        let options = ask
-            .content
-            .options
-            .iter()
-            .map(|option| format!("/answer @chat {token} {}", option.option_id))
-            .collect::<Vec<_>>()
-            .join("\n");
         let notice = format!(
-            "\n{}\ninput: {}\n{options}\n",
+            "\n{}\ninput: {}\n{}\n",
             blocked_notice(None, "@chat", Some(&content)),
-            escaped_json(&ask.input)
+            escaped_json(&ask.input),
+            answer_hint(&token, missing)
         );
         state.permissions.push(PendingPermission {
             token,
             ask,
+            missing,
             answer: None,
         });
         if state.paused {
@@ -136,29 +185,26 @@ impl OutputGate {
         true
     }
 
-    pub fn answer_permission(&self, token: &str, option: &str) -> String {
-        let mut state = self.lock();
-        if !state.listening {
-            return "No matching main chat permission request.".into();
-        }
-        let Some(pending) = state
+    pub fn answer_permission(&self, token: &str, option: &str) -> Outcome {
+        let state = &mut *self.lock();
+        let index = state
             .permissions
-            .iter_mut()
-            .find(|p| p.token == token && p.answer.is_none())
-        else {
-            return "No matching main chat permission request.".into();
-        };
-        if !pending
-            .ask
-            .content
-            .options
             .iter()
-            .any(|item| item.option_id == option)
-        {
-            return "Invalid option; use allow_once or deny.".into();
+            .position(|p| state.listening && p.token == token && p.answer.is_none());
+        match (index, Choice::from_option(option)) {
+            (None, _) => Outcome::Refused(NO_MATCH.into()),
+            (Some(_), None) => Outcome::Refused(INVALID_OPTION.into()),
+            (Some(index), Some(choice)) => apply(state, index, choice),
         }
-        pending.answer = Some(option.to_string());
-        "Main chat permission answer recorded.".into()
+    }
+
+    pub fn answer_oldest(&self, choice: Choice) -> Option<Outcome> {
+        let state = &mut *self.lock();
+        let index = state
+            .permissions
+            .iter()
+            .position(|p| state.listening && p.answer.is_none())?;
+        Some(apply(state, index, choice))
     }
 
     pub(super) fn permission_reply(&self, deny: bool) -> Option<String> {
@@ -264,6 +310,15 @@ fn escaped_json(value: &impl serde::Serialize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::worker::{mcptools_gate, GateCall};
+
+    fn refused(outcome: Outcome) -> bool {
+        matches!(outcome, Outcome::Refused(message) if message.contains("No matching"))
+    }
+
+    fn answered(outcome: Outcome) -> bool {
+        matches!(outcome, Outcome::Answered { .. })
+    }
 
     fn ask(id: &str, input: serde_json::Value) -> ClaudePermission {
         let line = serde_json::json!({"type":"control_request","request_id":id,"request":{"subtype":"can_use_tool","tool_name":"mcp__mcptools__execute","input":input}}).to_string();
@@ -279,11 +334,14 @@ mod tests {
     fn permissions_bind_input_once_and_cancel_independently() {
         let gate = OutputGate::new();
         let input = serde_json::json!({"allowWrites":true,"code":"one\n\u{1b}[2J"});
-        assert!(!gate.request_permission(ask("same", input.clone())));
+        assert!(!gate.request_permission(ask("same", input.clone()), Classes::default()));
         gate.listen(true);
         gate.pause();
-        assert!(gate.request_permission(ask("same", input.clone())));
-        assert!(gate.request_permission(ask("other", serde_json::json!({"allowSpend":true}))));
+        assert!(gate.request_permission(ask("same", input.clone()), Classes::default()));
+        assert!(gate.request_permission(
+            ask("other", serde_json::json!({"allowSpend":true})),
+            Classes::default()
+        ));
         let (first, second, notice) = {
             let state = gate.lock();
             (
@@ -295,29 +353,25 @@ mod tests {
         assert!(notice.contains("one\\n\\u001b[2J"));
         assert!(notice.contains(&format!("/answer @chat {first} allow_once")));
         gate.cancel_permission(Some("other"));
-        assert!(gate
-            .answer_permission(&second, "allow_once")
-            .contains("No matching"));
-        assert!(gate
-            .answer_permission(&first, "allow_once")
-            .contains("recorded"));
-        assert!(gate
-            .answer_permission(&first, "allow_once")
-            .contains("No matching"));
+        assert!(refused(gate.answer_permission(&second, "allow_once")));
+        assert!(answered(gate.answer_permission(&first, "allow_once")));
+        assert!(refused(gate.answer_permission(&first, "allow_once")));
         let reply: serde_json::Value =
             serde_json::from_str(&gate.permission_reply(false).unwrap()).unwrap();
         assert_eq!(reply["response"]["response"]["updatedInput"], input);
-        assert!(gate.request_permission(ask("same", serde_json::json!({"allowSpend":true}))));
+        assert!(gate.request_permission(
+            ask("same", serde_json::json!({"allowSpend":true})),
+            Classes::default()
+        ));
         let retry = gate.lock().permissions[0].token.clone();
         assert_ne!(first, retry);
-        assert!(gate
-            .answer_permission(&first, "allow_once")
-            .contains("No matching"));
+        assert!(refused(gate.answer_permission(&first, "allow_once")));
         assert!(gate.retire_duplicate("same"));
-        assert!(gate
-            .answer_permission(&retry, "allow_once")
-            .contains("No matching"));
-        assert!(gate.request_permission(ask("same", serde_json::json!({"allowSpend":true}))));
+        assert!(refused(gate.answer_permission(&retry, "allow_once")));
+        assert!(gate.request_permission(
+            ask("same", serde_json::json!({"allowSpend":true})),
+            Classes::default()
+        ));
         let retry = gate.lock().permissions[0].token.clone();
         gate.answer_permission(&retry, "allow_once");
         gate.listen(false);
@@ -331,7 +385,10 @@ mod tests {
         let gate = OutputGate::new();
         gate.listen(true);
         gate.pause();
-        assert!(gate.request_permission(ask("r", serde_json::json!({"allowWrites":true}))));
+        assert!(gate.request_permission(
+            ask("r", serde_json::json!({"allowWrites":true})),
+            Classes::default()
+        ));
         let token = gate.lock().permissions[0].token.clone();
         gate.answer_permission(&token, "allow_once");
         let reply: serde_json::Value =
@@ -408,5 +465,93 @@ mod tests {
         gate.resume();
         assert!(!gate.is_paused());
         assert!(gate.lock().held.take().is_empty());
+    }
+
+    const WRITES: Classes = Classes {
+        writes: true,
+        spend: false,
+    };
+
+    #[test]
+    fn always_allow_grants_the_classes_for_later_calls() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        let input = serde_json::json!({"allowWrites":true});
+        let first = ask("one", input.clone());
+        assert_eq!(
+            mcptools_gate(gate.grants(), &first),
+            GateCall::Prompt(WRITES)
+        );
+        assert!(gate.request_permission(first, WRITES));
+        let token = gate.lock().permissions[0].token.clone();
+        assert!(matches!(
+            gate.answer_permission(&token, "allow_always"),
+            Outcome::Answered {
+                choice: Choice::AllowAlways,
+                ..
+            }
+        ));
+        assert_eq!(
+            mcptools_gate(gate.grants(), &ask("two", input)),
+            GateCall::Allow
+        );
+        let reply: serde_json::Value =
+            serde_json::from_str(&gate.permission_reply(false).unwrap()).unwrap();
+        assert_eq!(reply["response"]["response"]["behavior"], "allow");
+    }
+
+    #[test]
+    fn allow_once_and_deny_leave_the_grants_alone() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        for key in [Choice::AllowOnce, Choice::Deny] {
+            assert!(
+                gate.request_permission(ask("r", serde_json::json!({"allowWrites":true})), WRITES)
+            );
+            assert!(gate.answer_oldest(key).is_some());
+            gate.permission_reply(false);
+        }
+        assert_eq!(gate.grants(), Grants::default());
+        assert!(gate.answer_oldest(Choice::AllowOnce).is_none());
+    }
+
+    #[test]
+    fn a_key_answers_the_oldest_unanswered_request() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        assert!(gate.request_permission(ask("a", serde_json::json!({"allowWrites":true})), WRITES));
+        assert!(gate.request_permission(
+            ask("b", serde_json::json!({"allowSpend":true})),
+            Classes::default()
+        ));
+        assert!(gate.answer_oldest(Choice::AllowOnce).is_some());
+        assert!(gate.answer_oldest(Choice::Deny).is_some());
+        assert!(gate.answer_oldest(Choice::Deny).is_none());
+        let first: serde_json::Value =
+            serde_json::from_str(&gate.permission_reply(false).unwrap()).unwrap();
+        assert_eq!(first["response"]["response"]["behavior"], "allow");
+    }
+
+    #[test]
+    fn the_notice_carries_the_hint_for_the_missing_classes() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        gate.pause();
+        assert!(gate.request_permission(ask("r", serde_json::json!({"allowWrites":true})), WRITES));
+        let notice = gate.lock().held.chunks[0].text.clone();
+        assert!(notice.contains("a always allow writes\n/answer @chat "));
+        assert!(!notice.contains("allow_once\n"));
+    }
+
+    #[test]
+    fn an_unknown_option_lists_the_valid_ones() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        assert!(gate.request_permission(ask("r", serde_json::json!({"allowWrites":true})), WRITES));
+        let token = gate.lock().permissions[0].token.clone();
+        let Outcome::Refused(message) = gate.answer_permission(&token, "once") else {
+            panic!()
+        };
+        assert!(message.contains("allow_once|deny|allow_always"));
     }
 }

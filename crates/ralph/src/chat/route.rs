@@ -5,6 +5,7 @@ use crate::chat::inbox::{self, Display};
 use crate::chat::nudge;
 use crate::chat::prompt::Columns;
 use crate::chat::rerender;
+use crate::chat::resize::Resize;
 use crate::chat::thread::{self, Memory};
 use crate::chat::thread_cmd::{self, ThreadEnv};
 use crate::chat::view;
@@ -12,15 +13,17 @@ use crate::chat::workers;
 use crate::config::ConfigSnapshot;
 use ralph_core::chat_help::help_with_store;
 use ralph_core::chat_memory::{history_tool_of, CallSource, MemoryCall};
+use ralph_core::chat_stage::{stage_text, StageCommand, STAGE_USAGE};
 use ralph_core::chat_status::Route;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::worker::{TicketKeys, HANDOFF_TIMEOUT};
-use ralph_server::chat::memory::Answer;
+use ralph_server::chat::memory::{Answer, Store};
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::chat::schedule;
+use ralph_server::chat::stage;
 use ralph_server::chat::watch;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::config::ChangesSection;
@@ -38,6 +41,7 @@ pub struct LocalRoute<'a> {
     pub watches: &'a Watches,
     pub schedule: &'a ScheduleStore,
     pub display: &'a Display<'a>,
+    pub reply_display: &'a Display<'a>,
     pub changes: &'a ChangesSection,
     pub prices: &'a BTreeMap<String, PriceOverride>,
     pub tickets: &'a TicketKeys,
@@ -47,6 +51,7 @@ pub struct LocalRoute<'a> {
     pub remote: &'a RemoteStatus,
     pub config: &'a ConfigSnapshot,
     pub columns: Columns,
+    pub resize: &'a Resize,
 }
 
 pub fn run_local(
@@ -63,6 +68,7 @@ pub fn run_local(
         }
         Route::Nudge(command) => nudge::run(command, ctx.monitor),
         Route::ThreadOp { op, .. } => run_thread(op, ctx),
+        Route::Stage(command) => run_stage(command, ctx),
         other => {
             run_shown(other, ctx, out)?;
             return Ok(None);
@@ -71,6 +77,19 @@ pub fn run_local(
     writeln!(out, "{output}")?;
     refresh();
     Ok(Some(output))
+}
+
+fn run_stage(command: StageCommand, ctx: &LocalRoute) -> String {
+    let store = Store::new(ctx.store.to_path_buf());
+    match command {
+        StageCommand::Show => stage::rendered(ctx.store, &ctx.monitor.status(), ctx.thread)
+            .map(|rendered| stage_text(&rendered).to_string()),
+        StageCommand::Add(new) => stage::user_add(&store, new),
+        StageCommand::Done(id) => stage::user_done(&store, &id),
+        StageCommand::Edit { id, text } => stage::user_edit(&store, &id, &text),
+        StageCommand::Usage => Ok(STAGE_USAGE.to_string()),
+    }
+    .unwrap_or_else(|text| text)
 }
 
 fn run_thread(op: Result<ThreadOp, String>, ctx: &LocalRoute) -> String {
@@ -126,7 +145,10 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::Answer(answer) => {
             let message = answer.and_then(|answer| {
                 if answer.worker == "@chat" {
-                    return Ok(ctx.gate.answer_permission(&answer.request, &answer.option));
+                    return Ok(ctx
+                        .gate
+                        .answer_permission(&answer.request, &answer.option)
+                        .report(ctx.store));
                 }
                 ralph_server::workers::answer_permission(
                     ctx.store,
@@ -142,7 +164,7 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::Help => write!(out, "{}", help_with_store((ctx.columns)(), ctx.store))?,
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
-        Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.display),
+        Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.reply_display, ctx.resize),
         Route::History(call) => {
             let text = history_call(ctx.store, &call, CallSource::Slash)
                 .map_or_else(|e| e, |answer| answer.text);
@@ -162,6 +184,7 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         | Route::ReadInbox(_)
         | Route::Hold(_)
         | Route::SendIt(_)
+        | Route::Stage(_)
         | Route::DropInbox(_)
         | Route::Watch(_)
         | Route::Schedule(_)
@@ -243,6 +266,7 @@ mod tests {
             watches: &monitor.watches,
             schedule: &monitor.schedule,
             display: &display,
+            reply_display: &display,
             changes: &config.changes,
             prices: &config.wire.prices,
             tickets: &config.tickets,
@@ -252,6 +276,7 @@ mod tests {
             remote: &remote,
             config: &snapshot,
             columns: || 80,
+            resize: &Resize::default(),
         };
         let mut out = Vec::new();
         let route = route_input(

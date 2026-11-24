@@ -129,6 +129,8 @@ pub enum ServerMsg {
         unread: usize,
         blocked: Vec<String>,
         turns: u64,
+        #[serde(default)]
+        stage: usize,
     },
     Blocked {
         thread: Option<String>,
@@ -317,6 +319,7 @@ pub fn status_frame(status: &Status, turns: u64) -> ServerMsg {
         unread: status.unread,
         blocked,
         turns,
+        stage: status.stage,
     }
 }
 
@@ -431,6 +434,7 @@ mod tests {
                 unread: 1,
                 blocked: vec!["w1".into()],
                 turns: 4,
+                stage: 2,
             },
             ServerMsg::Blocked {
                 thread: Some("side".into()),
@@ -570,8 +574,19 @@ mod tests {
         let line = encode_frame(5, &status_frame(&status, 3));
         assert_eq!(
             line.trim_end(),
-            r#"{"v":2,"id":5,"body":{"type":"status","report":{"state":{"Blocked":"Question"},"msg":"2 worker reports"},"unread":2,"blocked":["a","b"],"turns":3}}"#
+            r#"{"v":2,"id":5,"body":{"type":"status","report":{"state":{"Blocked":"Question"},"msg":"2 worker reports"},"unread":2,"blocked":["a","b"],"turns":3,"stage":0}}"#
         );
+    }
+
+    #[test]
+    fn the_stage_count_survives_a_status_round_trip() {
+        let status = Status {
+            stage: 3,
+            ..Status::default()
+        };
+        let line = encode_frame(1, &status_frame(&status, 0));
+        let decoded = decode_frame::<ServerMsg>(&line).unwrap();
+        assert!(matches!(decoded.body, ServerMsg::Status { stage: 3, .. }));
     }
 
     #[test]

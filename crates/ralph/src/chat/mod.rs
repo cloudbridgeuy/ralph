@@ -19,6 +19,7 @@ mod recap;
 mod refusal;
 mod remote;
 mod rerender;
+mod resize;
 mod route;
 mod schedule;
 pub(crate) use ralph_server::chat::tag_store;
@@ -42,6 +43,7 @@ use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::prompt::ChatPrompt;
+use crate::chat::resize::{Resize, Watch};
 use crate::chat::route::LocalRoute;
 use crate::chat::schedule::approve_proposed;
 use crate::chat::send_it::InboxTurn;
@@ -86,7 +88,7 @@ use session::resolve_store;
 use session::{chat_dir, load_custom_prompt, print_history, store_dir};
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub(crate) use switch::ChatExit;
 
@@ -96,6 +98,14 @@ const PROMPT_ROWS: usize = 256;
 pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
 pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
+
+fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
+    let highlighter = Highlighter::with_config(config.clone()).unwrap_or_else(|e| {
+        warn(format!("Failed to load reply theme: {e}"));
+        Highlighter::new()
+    });
+    (highlighter, MarkdownTheme::from_config(Some(config)))
+}
 
 pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     if let Some(socket) = &args.connect {
@@ -165,6 +175,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 Highlighter::new()
             });
     let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
+    let (reply_highlighter, reply_theme) = reply_style(&theme_config);
     let prompt_files = chat_config.prompt_files(dirs::home_dir().as_deref());
     let (custom_prompt, prompt_warnings) = load_custom_prompt(&prompt_files);
     prompt_warnings.iter().for_each(warn);
@@ -176,7 +187,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     } else {
         ReplyImages::Text
     };
-    let (gate, sink) = prompt::turn_output(&theme_config)?;
+    let resize = Arc::new(Resize::default());
+    let (gate, sink) = prompt::turn_output(
+        &theme_config,
+        Arc::clone(&resize),
+        ralph_server::config::effective_grants(&config.chat, &store_dir),
+    )?;
     let terminal_status = status_enabled(
         chat_config.terminal_status,
         std::io::stdout().is_terminal(),
@@ -262,6 +278,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion, sent_style));
     let printer = ExternalPrinter::new(PROMPT_ROWS);
     let prompt_sink = printer.sender();
+    let resize_sink = printer.sender();
     let mut editor = build_editor(&store_dir, edit_mode, highlighter, Arc::clone(&monitor))?
         .with_submit_highlighter(Box::new(sent_style))
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
@@ -349,6 +366,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color,
         ui: *theme_config.ui(),
     };
+    let reply_display = Display {
+        ctx: RenderContext::new(&reply_highlighter, color)
+            .with_diff(diff_colors)
+            .with_tools(tool_colors),
+        theme: &reply_theme,
+        color,
+        ui: *theme_config.ui(),
+    };
     let remote = RemoteStatus::default();
     let display = inbox_display(color);
     let local_route = LocalRoute {
@@ -357,6 +382,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         watches: &monitor.watches,
         schedule: &monitor.schedule,
         display: &display,
+        reply_display: &reply_display,
         changes: &config.changes,
         prices: &config.wire.prices,
         tickets: &config.tickets,
@@ -366,6 +392,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         remote: &remote,
         config: &config_snapshot,
         columns: prompt::screen_columns,
+        resize: &resize,
     };
     let keys = Keys {
         gate: &turn.gate,
@@ -425,8 +452,26 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         offered: None,
         carried: Vec::new(),
         leaving: None,
+        resize: &resize,
     };
-    lp.run()
+    let resized = Arc::new(AtomicBool::new(false));
+    let _winch = signal::arm_resize(&resized);
+    let done = AtomicBool::new(false);
+    let watch = Watch {
+        resized: &resized,
+        done: &done,
+        at_prompt: &at_prompt,
+        state: &resize,
+        store: &store_dir,
+        display: &reply_display,
+        sink: resize_sink,
+    };
+    std::thread::scope(|scope| {
+        scope.spawn(|| watch.run());
+        let exit = lp.run();
+        done.store(true, Ordering::SeqCst);
+        exit
+    })
 }
 
 #[cfg(test)]

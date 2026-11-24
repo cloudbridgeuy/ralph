@@ -2,7 +2,7 @@
 use ralph_api::{allowed_hosts, bind, cookie_name, serve, ApiConfig, BindPolicy, Token};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
@@ -45,7 +45,12 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn start() -> TestServer {
+        TestServer::start_with_store(|_| {})
+    }
+
+    pub fn start_with_store(prepare: impl FnOnce(&Path)) -> TestServer {
         let store = tempfile::tempdir().unwrap();
+        prepare(store.path());
         let requested = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
         let server = bind(requested, &BindPolicy::loopback()).unwrap();
         let port = server.server_addr().to_ip().unwrap().port();
@@ -89,6 +94,10 @@ impl TestServer {
             done.send(()).ok();
         });
         finished.recv_timeout(limit).is_ok()
+    }
+
+    pub fn store_path(&self) -> &Path {
+        self._store.path()
     }
 
     pub fn token(&self) -> &str {

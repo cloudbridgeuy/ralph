@@ -7,6 +7,8 @@ use crate::chat::queue::{
     decide, draft_with_queue, draft_with_typed, next_batch, unsent, unsent_texts, Decision, Queue,
 };
 use crate::chat::refusal::{refuse_or_exit, restore_prompt};
+use crate::chat::rerender::redraw_text;
+use crate::chat::resize::Resize;
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, Keyboard};
 use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active, InboxTurn};
@@ -76,6 +78,7 @@ pub(super) struct TerminalLoop<'a> {
     pub(super) offered: Option<(String, u64)>,
     pub(super) carried: Vec<String>,
     pub(super) leaving: Option<ChatExit>,
+    pub(super) resize: &'a Resize,
 }
 
 pub(super) fn run_turn(
@@ -118,6 +121,7 @@ impl TerminalLoop<'_> {
         }
         loop {
             warn_if_err(self.editor.sync_history(), "Failed to save chat history");
+            self.redraw_after_resize();
             let typed_at_prompt = self.pending.is_none();
             let submitted = match self.pending.take() {
                 Some(submitted) => Some(submitted),
@@ -240,6 +244,15 @@ impl TerminalLoop<'_> {
         record
             .row(output)
             .and_then(|row| thread_cmd::append_row(self.store, &row))
+    }
+
+    fn redraw_after_resize(&self) {
+        let cols = screen_columns();
+        if self.resize.take_pending() && self.resize.take_redraw(true, cols) {
+            if let Some(text) = redraw_text(self.store_dir, self.local.reply_display, cols) {
+                print!("{text}");
+            }
+        }
     }
 
     fn run_turn(

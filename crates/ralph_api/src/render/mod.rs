@@ -4,7 +4,7 @@ mod error;
 mod escape;
 mod frame;
 #[cfg(test)]
-mod golden;
+pub(crate) mod golden;
 mod kv;
 mod md_event;
 mod md_link;
@@ -15,19 +15,21 @@ mod spark;
 mod spinner;
 mod status;
 mod table;
+mod tree;
 
 pub use empty::empty;
 pub use error::error;
 pub use escape::escape;
 pub use frame::frame;
-pub use kv::kv;
-pub use pill::{pill, Icon, PillShape};
+pub use kv::{kv, kv_inline, kv_sourced};
+pub use pill::{pill, pill_with, Icon, PillShape, PillVariant};
 pub use prose::render_markdown;
 pub use rule::rule;
-pub use spark::spark_svg;
+pub use spark::{spark_bars_svg, spark_svg};
 pub use spinner::spinner;
 pub use status::status;
-pub use table::table;
+pub use table::{table, table_marked, table_state, RowMark};
+pub use tree::{tree, Cells, Extent, Summary, TreeNode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
@@ -36,6 +38,7 @@ pub enum Tone {
     Warn,
     Info,
     Accent,
+    Neutral,
 }
 
 impl Tone {
@@ -46,6 +49,7 @@ impl Tone {
             Tone::Warn => "warn",
             Tone::Info => "info",
             Tone::Accent => "accent",
+            Tone::Neutral => "neutral",
         }
     }
 
@@ -56,6 +60,7 @@ impl Tone {
             Tone::Warn => "Warning",
             Tone::Info => "Info",
             Tone::Accent => "Note",
+            Tone::Neutral => "Neutral",
         }
     }
 }
@@ -83,20 +88,37 @@ mod tests {
 
     #[test]
     fn tone_names_are_the_closed_set() {
-        let names: Vec<&str> = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent]
-            .into_iter()
-            .map(Tone::as_str)
-            .collect();
-        assert_eq!(names, ["ok", "bad", "warn", "info", "accent"]);
+        let names: Vec<&str> = [
+            Tone::Ok,
+            Tone::Bad,
+            Tone::Warn,
+            Tone::Info,
+            Tone::Accent,
+            Tone::Neutral,
+        ]
+        .into_iter()
+        .map(Tone::as_str)
+        .collect();
+        assert_eq!(names, ["ok", "bad", "warn", "info", "accent", "neutral"]);
     }
 
     #[test]
     fn tone_labels_are_words() {
-        let labels: Vec<&str> = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent]
-            .into_iter()
-            .map(Tone::label)
-            .collect();
-        assert_eq!(labels, ["OK", "Error", "Warning", "Info", "Note"]);
+        let labels: Vec<&str> = [
+            Tone::Ok,
+            Tone::Bad,
+            Tone::Warn,
+            Tone::Info,
+            Tone::Accent,
+            Tone::Neutral,
+        ]
+        .into_iter()
+        .map(Tone::label)
+        .collect();
+        assert_eq!(
+            labels,
+            ["OK", "Error", "Warning", "Info", "Note", "Neutral"]
+        );
     }
 
     #[test]

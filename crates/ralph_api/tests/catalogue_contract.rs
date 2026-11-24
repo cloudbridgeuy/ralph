@@ -80,5 +80,7 @@ fn catalogue_policy_matches_the_shell() {
 fn the_shell_nav_reaches_the_catalogue() {
     let server = TestServer::start();
     let shell = get_with_cookie(&server, "/");
-    assert!(shell.body.contains("<a href=\"/catalogue\">catalogue</a>"));
+    assert!(shell.body.contains(
+        "<a href=\"/catalogue\"><span class=\"n\" aria-hidden=\"true\">2</span>catalogue</a>"
+    ));
 }

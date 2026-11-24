@@ -2,6 +2,7 @@ use std::io::Read;
 use std::io::Result as IoResult;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
 
 /// A `Reader` that reads exactly the number of bytes from a sub-reader.
 ///
@@ -59,17 +60,23 @@ where
     }
 }
 
-impl<R> Drop for EqualReader<R>
+const DRAIN_BUDGET: usize = 64 * 1024;
+const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
+
+impl<R> EqualReader<R>
 where
     R: Read,
 {
-    fn drop(&mut self) {
-        let mut remaining_to_read = self.size;
+    fn drain(&mut self, budget: usize, deadline: Duration) {
+        let started = Instant::now();
+        let mut remaining_to_read = self.size.min(budget);
 
-        while remaining_to_read > 0 {
-            let mut buf = vec![0; remaining_to_read];
+        let mut buf = [0u8; 8192];
 
-            match self.reader.read(&mut buf) {
+        while remaining_to_read > 0 && started.elapsed() < deadline {
+            let chunk = remaining_to_read.min(buf.len());
+
+            match self.reader.read(&mut buf[..chunk]) {
                 Err(e) => {
                     self.last_read_signal.send(Err(e)).ok();
                     break;
@@ -83,6 +90,15 @@ where
                 }
             }
         }
+    }
+}
+
+impl<R> Drop for EqualReader<R>
+where
+    R: Read,
+{
+    fn drop(&mut self) {
+        self.drain(DRAIN_BUDGET, DRAIN_DEADLINE);
     }
 }
 
@@ -127,5 +143,101 @@ mod tests {
         let mut string = String::new();
         org_reader.read_to_string(&mut string).unwrap();
         assert_eq!(string, " world");
+    }
+
+    struct RecordingReader {
+        data: std::io::Cursor<Vec<u8>>,
+        largest_request: usize,
+    }
+
+    impl Read for RecordingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.largest_request = self.largest_request.max(buf.len());
+            self.data.read(buf)
+        }
+    }
+
+    #[test]
+    fn drop_drain_requests_bounded_buffers() {
+        let mut inner = RecordingReader {
+            data: std::io::Cursor::new(vec![7u8; 4096]),
+            largest_request: 0,
+        };
+
+        {
+            let (_equal_reader, _) = EqualReader::new(&mut inner, 4usize << 30);
+        }
+
+        assert!(inner.largest_request > 0);
+        assert!(inner.largest_request <= 8192);
+    }
+
+    #[test]
+    fn drop_drain_consumes_remaining_body_and_signals_eof_once() {
+        let mut inner = RecordingReader {
+            data: std::io::Cursor::new(vec![1u8; 20000]),
+            largest_request: 0,
+        };
+
+        let rx = {
+            let (_equal_reader, rx) = EqualReader::new(&mut inner, 20000);
+            rx
+        };
+
+        assert_eq!(inner.data.position(), 20000);
+        assert!(rx.try_recv().is_err());
+    }
+
+    struct EndlessReader {
+        total: usize,
+    }
+
+    impl Read for EndlessReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            buf.fill(9);
+            self.total += buf.len();
+            Ok(buf.len())
+        }
+    }
+
+    struct SlowReader {
+        total: usize,
+    }
+
+    impl Read for SlowReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            buf[0] = 1;
+            self.total += 1;
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn drop_drain_stops_after_the_byte_budget() {
+        let mut inner = EndlessReader { total: 0 };
+
+        {
+            let (_equal_reader, _) = EqualReader::new(&mut inner, 1usize << 30);
+        }
+
+        assert!(inner.total > 0);
+        assert!(inner.total <= 65536);
+    }
+
+    #[test]
+    fn drain_stops_after_the_deadline() {
+        let mut inner = SlowReader { total: 0 };
+        let started = std::time::Instant::now();
+
+        {
+            let (equal_reader, _) = EqualReader::new(&mut inner, 200);
+            let mut equal_reader = std::mem::ManuallyDrop::new(equal_reader);
+            equal_reader.drain(65536, std::time::Duration::from_millis(50));
+        }
+
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(inner.total > 0);
+        assert!(inner.total < 20);
     }
 }

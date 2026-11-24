@@ -45,6 +45,16 @@ pub(super) const MARKERS: [char; 22] = [
     PILL_BODY,
 ];
 
+const CLOSING_MARKERS: [char; 7] = [
+    LABEL_END,
+    URL_END,
+    MEMORY_END,
+    DIFF_END,
+    DIFF_CODE_END,
+    PILL_END,
+    MARK_END,
+];
+
 use super::pill::CAP_LEFT;
 use crate::ansi::{bg, fg};
 use crate::markdown::Palette;
@@ -59,6 +69,10 @@ pub(crate) const COLOR_OFF: &str = "\x1b[39m";
 
 pub fn is_marker(ch: char) -> bool {
     MARKERS.contains(&ch)
+}
+
+pub fn is_closing_marker(ch: char) -> bool {
+    CLOSING_MARKERS.contains(&ch)
 }
 
 pub fn paint_links(rendered: &str, palette: &Palette) -> String {
@@ -202,5 +216,32 @@ mod tests {
         let marked = format!("{LABEL_START}a{LABEL_END} {MARK_DONE}\u{2713}{MARK_END}");
         let painted = paint_links(&marked, &palette);
         assert!(painted.ends_with(&format!("{}\u{2713}{COLOR_OFF}", fg(palette.done))));
+    }
+
+    #[test]
+    fn closing_markers_are_a_subset_of_markers_and_the_rest_open() {
+        assert!(CLOSING_MARKERS.iter().all(|ch| is_marker(*ch)));
+        let opening = [
+            LABEL_START,
+            URL_START,
+            MEMORY_START,
+            ADD_START,
+            DEL_START,
+            PILL_OK,
+            PILL_BAD,
+            PILL_WARN,
+            PILL_INFO,
+            PILL_ACCENT,
+            MARK_DONE,
+            MARK_BAD,
+            MARK_ACCENT,
+            MARK_BORDER,
+            PILL_BODY,
+        ];
+        for ch in MARKERS {
+            assert_eq!(is_closing_marker(ch), !opening.contains(&ch), "{ch:?}");
+        }
+        assert_eq!(CLOSING_MARKERS.len() + opening.len(), MARKERS.len());
+        assert!(!is_closing_marker('a'));
     }
 }

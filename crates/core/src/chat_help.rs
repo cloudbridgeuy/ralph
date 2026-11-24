@@ -20,6 +20,7 @@ pub enum Command {
     Hold,
     Nudge,
     SendIt,
+    Stage,
     Thread,
     Config,
     View,
@@ -33,7 +34,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 19] = [
+    pub const ALL: [Command; 20] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -43,6 +44,7 @@ impl Command {
         Command::Hold,
         Command::Nudge,
         Command::SendIt,
+        Command::Stage,
         Command::Thread,
         Command::Config,
         Command::View,
@@ -66,6 +68,7 @@ impl Command {
             Command::Hold => "/hold",
             Command::Nudge => "/nudge",
             Command::SendIt => "/send-it",
+            Command::Stage => "/stage",
             Command::Thread => "/thread",
             Command::Config => "/config",
             Command::View => "/view",
@@ -219,6 +222,24 @@ impl Command {
                     "fill template <name> with <ticket> and store it as the plan, not approved; only an exact template name counts, other text is instructions; refused while an approved run is active; starts no turn",
                 ),
             ],
+            Command::Stage => &[
+                (
+                    "/stage",
+                    "print the stage the model gets: its open items and the facts (workers, watches, schedule, inbox); starts no turn",
+                ),
+                (
+                    "/stage add <decision|owed|followup> <text>",
+                    "add an item as you; the model sees it in its catch-up; starts no turn",
+                ),
+                (
+                    "/stage done <id>",
+                    "close item <id> (s4); the model sees it in its catch-up; starts no turn",
+                ),
+                (
+                    "/stage edit <id> <text>",
+                    "replace the text of item <id>; the model sees it in its catch-up; starts no turn",
+                ),
+            ],
             Command::Thread => &[
                 (
                     "/thread ls",
@@ -254,7 +275,7 @@ impl Command {
                 ),
                 (
                     "/thread merge <name>",
-                    "squash thread <name> into a digest in main's log (one row, no inbox report) and make the thread read-only, like ralph thread merge; asks y/n first because it makes one paid Haiku call, up to 3 if the digest is refused; runs in the foreground, so the prompt returns when it ends; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it is merged or unknown, and inside a thread's chat (run /thread main first); while a turn runs it waits in the queue",
+                    "squash thread <name> into a digest in main's log (one row, no inbox report) and make the thread read-only, like ralph thread merge; asks y/n first because it makes one paid curator call, up to 3 if the digest is refused; runs in the foreground, so the prompt returns when it ends; main's chat only; refused when the thread's own chat is open, when it has running workers or saved watches or schedules, when it is merged or unknown, and inside a thread's chat (run /thread main first); while a turn runs it waits in the queue",
                 ),
                 (
                     "/thread merge <name> --view",
@@ -434,7 +455,7 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
 ];
 
 /// Status bar segments in the order they are explained.
-pub const SEGMENTS: [Kind; 12] = [
+pub const SEGMENTS: [Kind; 13] = [
     Kind::Mode(Mode::Idle),
     Kind::Hold(Mode::Idle),
     Kind::Queue(Mode::Idle),
@@ -445,6 +466,7 @@ pub const SEGMENTS: [Kind; 12] = [
     Kind::Workers,
     Kind::Watches,
     Kind::Schedule,
+    Kind::Stage,
     Kind::Process(Mode::Idle),
     Kind::Cost(Mode::Idle),
 ];
@@ -479,6 +501,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
             "sched <id> <HH:MM>",
             "armed scheduled tasks: the one task and its time, N scheduled, or SN",
         ),
+        Kind::Stage => ("stage N", "open stage items the model tracks; /stage prints them"),
         Kind::Process(_) => ("process cell", "the live claude process (below)"),
         Kind::Cost(_) => (
             "$4.12 (+0.31)",

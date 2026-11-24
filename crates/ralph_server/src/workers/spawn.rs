@@ -366,7 +366,7 @@ impl Workers {
             }
             HarnessId::ClaudeTmux => {
                 let copied: Vec<String> = servers.keys().cloned().collect();
-                let settings = self.write_settings(id, &markers, *site, &copied)?;
+                let settings = self.write_settings(id, &markers, *site)?;
                 let task_dir = self.write_task(id, task)?;
                 worker_command(&ClaudeWorkerArgs {
                     store: &fs::canonicalize(&self.store_dir)?,
@@ -601,28 +601,24 @@ impl Workers {
         id: &str,
         markers: &WorkerMarkers,
         site: Option<&WorkerSite>,
-        copied: &[String],
     ) -> io::Result<PathBuf> {
         fs::create_dir_all(self.store_dir.join(WORKERS_DIR))?;
         let usage = absolute_from(&usage_path(), &std::env::current_dir()?);
         let path = worker_settings_path(&self.store_dir, id);
         fs::write(
             &path,
-            with_mcptools_asks(
-                claude_worker_settings_with_config(
-                    &self.exe,
-                    markers,
-                    site,
-                    &UsageSink {
-                        store: &self.store_dir,
-                        worker: id,
-                        usage: &usage,
-                        verify: false,
-                    },
-                    Some(&self.written_store),
-                ),
-                copied,
-            )
+            with_mcptools_asks(claude_worker_settings_with_config(
+                &self.exe,
+                markers,
+                site,
+                &UsageSink {
+                    store: &self.store_dir,
+                    worker: id,
+                    usage: &usage,
+                    verify: false,
+                },
+                Some(&self.written_store),
+            ))
             .to_string(),
         )?;
         Ok(path)
@@ -914,10 +910,7 @@ mod tests {
             id: "A".into(),
             worktree: dir.path().join("w"),
         };
-        let copied = ["mcptools".to_string()];
-        let path = workers
-            .write_settings("A", &markers, Some(&site), &copied)
-            .unwrap();
+        let path = workers.write_settings("A", &markers, Some(&site)).unwrap();
         let settings: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
         let command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
             .as_str()
@@ -925,7 +918,11 @@ mod tests {
         assert!(command.contains(&format!("--config-store '{}'", link.display())));
         assert_eq!(
             settings["permissions"]["ask"],
-            serde_json::json!(["mcp__mcptools__execute", "mcp__mcptools__call_tool"])
+            serde_json::json!([
+                "mcp__mcptools__execute",
+                "mcp__mcptools__call_tool",
+                "Bash(mcptools:*)"
+            ])
         );
     }
 

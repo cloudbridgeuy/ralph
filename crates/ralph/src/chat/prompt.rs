@@ -1,5 +1,6 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR};
+use crate::chat::resize::Resize;
 use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::switch::ChatExit;
@@ -16,7 +17,7 @@ use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
 use ralph_core::chat_thread_auto::close_footer;
 use ralph_core::status_queue::QueueCell;
 use ralph_core::turn_event::TurnSink;
-use ralph_core::worker::ATTACHMENTS_DIR;
+use ralph_core::worker::{Grants, ATTACHMENTS_DIR};
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::subprocess::OutputGate;
 use reedline::{
@@ -71,10 +72,13 @@ fn chat_session_info() -> SpinnerSessionInfo {
 
 pub(super) fn turn_output(
     theme: &ThemeConfig,
+    reply_width: Arc<Resize>,
+    grants: Grants,
 ) -> Result<(Arc<OutputGate>, Arc<dyn TurnSink>), ThemeError> {
-    let gate = Arc::new(OutputGate::new());
+    let gate = Arc::new(OutputGate::with_grants(grants));
     let sink = TerminalSink::new(Some(Arc::clone(&gate)), theme, screen_columns)?
-        .with_session(chat_session_info());
+        .with_session(chat_session_info())
+        .with_reply_width(reply_width);
     Ok((gate, Arc::new(sink)))
 }
 

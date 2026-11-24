@@ -15,6 +15,27 @@ pub struct WebSection {
     pub ansi_dark: Vec<String>,
     #[serde(default = "default_ansi_light")]
     pub ansi_light: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_port"
+    )]
+    pub port: Option<u16>,
+}
+
+const PORT_MESSAGE: &str = "[web] port must be an integer from 0 to 65535";
+
+fn deserialize_port<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<toml::Value>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(toml::Value::Integer(n)) => u16::try_from(n)
+            .map(Some)
+            .map_err(|_| serde::de::Error::custom(PORT_MESSAGE)),
+        Some(_) => Err(serde::de::Error::custom(PORT_MESSAGE)),
+    }
 }
 
 fn default_font() -> String {
@@ -38,6 +59,7 @@ impl Default for WebSection {
             font: default_font(),
             ansi_dark: default_ansi_dark(),
             ansi_light: default_ansi_light(),
+            port: None,
         }
     }
 }
@@ -320,5 +342,27 @@ mod tests {
         let global = "[web]\nansi_dark = [\"#000000\"]\n";
         let (count, source) = dark_row_source(global, global);
         assert_eq!((count, source), (1, Source::Global));
+    }
+
+    #[test]
+    fn port_accepts_valid_values_and_zero() {
+        for (text, want) in [("1", 1), ("8080", 8080), ("65535", 65535), ("0", 0)] {
+            let (config, _) =
+                AppConfig::parse_reporting_unknown(&format!("[web]\nport = {text}\n"), "c")
+                    .unwrap();
+            assert_eq!(config.web.port, Some(want));
+        }
+        let (config, _) = AppConfig::parse_reporting_unknown("", "c").unwrap();
+        assert_eq!(config.web.port, None);
+    }
+
+    #[test]
+    fn bad_port_values_are_web_port_errors() {
+        for bad in ["65536", "-1", "\"80\"", "80.5", "true"] {
+            let error = AppConfig::parse_reporting_unknown(&format!("[web]\nport = {bad}\n"), "c")
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("[web] port"), "{bad}: {error}");
+        }
     }
 }

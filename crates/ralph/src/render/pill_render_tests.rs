@@ -481,3 +481,44 @@ fn wrapped_pill_ends_reset_with_no_leaked_background() {
         }
     }
 }
+
+#[test]
+fn an_exact_fit_wrap_paints_the_left_cap_in_the_tone_colour() {
+    let theme = round_on();
+    let tone = crate::ansi::fg(theme.palette.pill_ok);
+    let out = render("foo([[Done]])", 4, &theme, true, false);
+    let line = out
+        .lines()
+        .find(|line| line.contains(CAP_L))
+        .unwrap_or_default();
+    assert!(line.starts_with(&tone), "{out:?}");
+}
+
+#[test]
+fn a_right_cap_wrapped_to_line_two_is_painted_in_the_tone_after_the_body_closes() {
+    let theme = round_on();
+    let tone = crate::ansi::fg(theme.palette.pill_ok);
+    let out = render("foo([[Done]])", 11, &theme, true, false);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out:?}");
+    assert!(
+        lines[0].starts_with(&format!("foo({tone}{CAP_L}{BODY}")),
+        "{out:?}"
+    );
+    assert!(
+        lines[0].contains(&format!("Done{NB}\x1b[22m\x1b[39m\x1b[49m")),
+        "{out:?}"
+    );
+    assert!(lines[1].starts_with(&format!("{tone}{CAP_R}")), "{out:?}");
+    assert!(lines[1].ends_with("\x1b[39m)"), "{out:?}");
+}
+
+#[test]
+fn an_exact_fit_wrap_keeps_the_closing_padding_and_resets_the_style_on_line_one() {
+    let out = render("foo([[Done]])", 11, &round_on(), true, false);
+    let first = out.lines().next().unwrap_or_default();
+    assert!(
+        first.contains(&format!("{NB}Done{NB}\x1b[22m\x1b[39m\x1b[49m")),
+        "{out:?}"
+    );
+}
