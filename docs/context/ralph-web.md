@@ -197,6 +197,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - `--r-selected` is accent 16% in bg.
 - `--r-ok`, `--r-warn` and `--r-info` are ANSI 2, 3 and 6 at `--r-tone-k` in ink. `--r-tone-k` is 100% in dark and 62% in light.
 - `--r-faint` and `--r-line-strong` are for decoration (guides, rules, borders). Do not use them for text. They do not reach 4.5:1: about 2.97 and 2.82 for `--r-faint`, and 2.07 and 2.00 for `--r-line-strong`, on the background in dark and light. `--r-muted` and the heading roles reach AA 4.5:1 text contrast in both themes. `--r-muted` gives 5.16 in dark and 5.37 in light.
+- In the light theme, the roles take the background from ANSI slot 8. They take text and strong text from slot 7. The default light table has `#f2f2f2` in slot 8 and `#0c0c0c` in slot 7. Slot 0 is `#cccccc`. The page background does not use it. A custom `[web] ansi_light` table that changes slot 7 or 8 moves every role, so contrast can drop below AA. Dark uses slot 0 for the background, slot 7 for text and slot 15 for strong text.
 - The slots `inline-code-bg`, `status-base-bg` and `ui-rule` come from roles. `inline-code-bg` and `status-base-bg` use `--r-surface`. `ui-rule` uses `--r-line-strong`.
 
 ## Store
