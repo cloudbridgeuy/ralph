@@ -72,10 +72,20 @@ fn shell(headers: &[&str], numeric: &[bool], body: &str) -> String {
     format!("<r-table><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></r-table>")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RowMark {
     pub selected: bool,
     pub open: bool,
+}
+
+fn row_mark(marks: &[(usize, RowMark)], index: usize) -> RowMark {
+    marks
+        .iter()
+        .filter(|(at, _)| *at == index)
+        .fold(RowMark::default(), |merged, (_, mark)| RowMark {
+            selected: merged.selected || mark.selected,
+            open: merged.open || mark.open,
+        })
 }
 
 fn row_attributes(mark: RowMark) -> String {
@@ -106,10 +116,7 @@ pub fn table_marked(headers: &[&str], rows: &[Vec<&str>], marks: &[(usize, RowMa
                 .enumerate()
                 .map(|(column, text)| cell("td", text, numeric[column]))
                 .collect();
-            let mark = marks
-                .iter()
-                .find(|(at, _)| *at == index)
-                .map_or_else(String::new, |(_, mark)| row_attributes(*mark));
+            let mark = row_attributes(row_mark(marks, index));
             format!("<tr{mark}>{cells}</tr>")
         })
         .collect();
@@ -332,6 +339,18 @@ mod tests {
                 &[(1, SELECTED), (2, OPEN)],
             ),
         );
+    }
+
+    #[test]
+    fn two_marks_on_one_row_are_merged() {
+        let rows = [vec!["a"]];
+        let both = table_marked(&["n"], &rows, &[(0, SELECTED), (0, OPEN)]);
+        assert!(
+            both.contains("<tr class=\"open\" aria-selected=\"true\">"),
+            "{both}"
+        );
+        let same = table_marked(&["n"], &rows, &[(0, OPEN), (0, OPEN)]);
+        assert_eq!(same, table_marked(&["n"], &rows, &[(0, OPEN)]));
     }
 
     #[test]
