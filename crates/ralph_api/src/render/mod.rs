@@ -25,7 +25,7 @@ pub use kv::{kv, kv_inline, kv_sourced};
 pub use pill::{pill, pill_with, Icon, PillShape, PillVariant};
 pub use prose::render_markdown;
 pub use rule::rule;
-pub use spark::spark_svg;
+pub use spark::{spark_bars_svg, spark_svg};
 pub use spinner::spinner;
 pub use status::status;
 pub use table::table;

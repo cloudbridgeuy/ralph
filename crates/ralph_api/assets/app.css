@@ -364,7 +364,9 @@ r-spinner::before {
 }
 
 r-spark {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 1ch;
   font-size: 12px;
   max-width: 100%;
 }
@@ -375,8 +377,39 @@ r-spark .spark {
   height: auto;
 }
 
+r-spark .base {
+  stroke: var(--r-line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 r-spark .line {
   vector-effect: non-scaling-stroke;
+}
+
+r-spark .area {
+  fill: var(--r-ink);
+  fill-opacity: 0.08;
+  stroke: none;
+}
+
+r-spark .last {
+  fill: var(--r-accent);
+  stroke: none;
+}
+
+r-spark .bar {
+  fill: var(--r-muted);
+  stroke: none;
+}
+
+r-spark .bar.hi {
+  fill: var(--r-accent);
+}
+
+r-spark b {
+  color: var(--r-ink-strong);
+  font-weight: 600;
 }
 
 r-prose {

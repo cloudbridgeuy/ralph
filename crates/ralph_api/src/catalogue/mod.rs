@@ -1,6 +1,6 @@
 use crate::render::{
     empty, error, escape, frame, kv, kv_inline, kv_sourced, pill, pill_with, render_markdown, rule,
-    spark_svg, spinner, status, table, Icon, PillShape, PillVariant, Shape, Tone,
+    spark_bars_svg, spark_svg, spinner, status, table, Icon, PillShape, PillVariant, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -270,6 +270,10 @@ fn sparks(fixture: &Fixture) -> String {
             ("dense", svg(&costs)),
             ("error", error("could not load the series")),
             ("very-long", svg(&costs.repeat(10))),
+            (
+                "bars",
+                spark_bars_svg(&costs, 160.0, 24.0).unwrap_or_else(|| empty("No cost data")),
+            ),
         ],
     )
 }

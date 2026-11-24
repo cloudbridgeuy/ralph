@@ -114,6 +114,25 @@ mod tests {
     }
 
     #[test]
+    fn spark_baseline_area_and_last_point_use_existing_roles() {
+        let css = css();
+        assert_declares(&css, "r-spark .base", "stroke: var(--r-line-strong);");
+        assert_declares(&css, "r-spark .area", "fill: var(--r-ink);");
+        assert_declares(&css, "r-spark .area", "fill-opacity: 0.08;");
+        assert_declares(&css, "r-spark .area", "stroke: none;");
+        assert_declares(&css, "r-spark .last", "fill: var(--r-accent);");
+    }
+
+    #[test]
+    fn spark_last_value_is_bold_and_bars_use_muted_with_an_accent_highlight() {
+        let css = css();
+        assert_declares(&css, "r-spark b", "font-weight: 600;");
+        assert_declares(&css, "r-spark b", "color: var(--r-ink-strong);");
+        assert_declares(&css, "r-spark .bar", "fill: var(--r-muted);");
+        assert_declares(&css, "r-spark .bar.hi", "fill: var(--r-accent);");
+    }
+
+    #[test]
     fn the_stylesheet_has_the_three_box_shapes_and_two_pill_shapes() {
         let css = css();
         for selector in [
