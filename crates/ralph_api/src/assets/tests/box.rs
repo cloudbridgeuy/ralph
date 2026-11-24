@@ -64,3 +64,21 @@ fn box_aside_text_is_not_faint() {
     let body = rule_body(&css, "r-box > .aside").unwrap();
     assert!(!body.contains("--r-faint"));
 }
+
+#[test]
+fn heavy_box_has_a_2px_ink_border_and_no_radius() {
+    let css = css();
+    assert_declares(
+        &css,
+        "r-box[shape=\"heavy\"]",
+        "border: 2px solid var(--r-ink);",
+    );
+    assert_declares(&css, "r-box[shape=\"heavy\"]", "border-radius: 0;");
+}
+
+#[test]
+fn round_box_has_a_3px_radius() {
+    let css = css();
+    assert_declares(&css, "r-box[shape=\"round\"]", "border-radius: 3px;");
+    assert!(!css.contains("0.75rem"));
+}

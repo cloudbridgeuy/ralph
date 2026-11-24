@@ -153,11 +153,11 @@ r-box[shape="square"] {
 }
 
 r-box[shape="round"] {
-  border-radius: 0.75rem;
+  border-radius: 3px;
 }
 
 r-box[shape="heavy"] {
-  border-width: 3px;
+  border: 2px solid var(--r-ink);
   border-radius: 0;
 }
 
