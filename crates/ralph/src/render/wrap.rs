@@ -172,7 +172,7 @@ fn hard_cut(text: &str, start: usize, limit: usize) -> usize {
             }
             continue;
         }
-        used += marker_free_width(ch);
+        used += ch.width().unwrap_or(0);
         if used > limit {
             return start + taken_end.unwrap_or(index + ch.len_utf8());
         }
