@@ -819,6 +819,20 @@ mod tests {
     }
 
     #[test]
+    fn a_js_regex_literal_does_not_open_a_comment() {
+        let js = "crates/ralph_api/assets/app.js";
+        for text in [
+            "const re = /\\/\\//; el.style.color = \"#fff\";\n",
+            "const re = /[/*]/; el.style.color = \"#fff\";\n",
+            "x(/a\\/\\/b/); el.style.color = \"#fff\";\n",
+            "  /\\/\\//.test(s); el.style.color = \"#fff\";\n",
+        ] {
+            assert_eq!(lines(js, text), vec![1], "{text}");
+        }
+        assert!(reasons(js, "a = 4 / 2; // el.style.color = \"#fff\";\n").is_empty());
+    }
+
+    #[test]
     fn the_bundled_shell_and_stylesheet_pass() {
         let html = include_str!("../../../crates/ralph_api/assets/index.html");
         let css = include_str!("../../../crates/ralph_api/assets/app.css");

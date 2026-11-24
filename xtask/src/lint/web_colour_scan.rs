@@ -6,6 +6,36 @@ fn starts_url(out: &str, rest: &str) -> bool {
         && out.chars().next_back().is_none_or(|c| !is_ident_char(c))
 }
 
+fn regex_may_start(out: &str) -> bool {
+    let line = &out[out.rfind('\n').map_or(0, |at| at + 1)..];
+    line.trim_end()
+        .chars()
+        .next_back()
+        .is_none_or(|c| "(,=:[!&|?{};".contains(c))
+}
+
+fn regex_len(rest: &str) -> usize {
+    let mut in_class = false;
+    let mut escaped = false;
+    for (at, c) in rest.char_indices().skip(1) {
+        if c == '\n' {
+            return at;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' => escaped = true,
+            '[' => in_class = true,
+            ']' => in_class = false,
+            '/' if !in_class => return at + 1,
+            _ => {}
+        }
+    }
+    rest.len()
+}
+
 pub(super) fn strip_comments(text: &str, line_comments: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
@@ -31,6 +61,10 @@ pub(super) fn strip_comments(text: &str, line_comments: bool) -> String {
         } else if line_comments && rest.starts_with("//") {
             out.push(' ');
             at += rest.find('\n').unwrap_or(rest.len());
+        } else if line_comments && c == '/' && regex_may_start(&out) {
+            let end = regex_len(rest);
+            out.push_str(&rest[..end]);
+            at += end;
         } else if starts_url(&out, rest) {
             let end = 4 + url_end(&rest[4..]).unwrap_or(0);
             out.push_str(&rest[..end]);
@@ -247,5 +281,34 @@ mod tests {
                 (1, "x: \"q;\nb: c", Terminator::Semicolon),
             ]
         );
+    }
+
+    #[test]
+    fn a_regex_literal_is_kept_whole() {
+        for text in [
+            "x = /\\/\\//; y",
+            "x = /[/*]/g; y",
+            "f(/a\\/b/, 1); y",
+            "  /[//]/.test(s); y",
+            "a ? /x/ : /y/; y",
+        ] {
+            assert_eq!(strip_comments(text, true), text);
+        }
+    }
+
+    #[test]
+    fn a_slash_after_a_value_is_division_and_a_comment_still_strips() {
+        assert_eq!(strip_comments("x = a / b; // c", true), "x = a / b;  ");
+        assert_eq!(
+            strip_comments("x = f(a) / 2; // c", true),
+            "x = f(a) / 2;  "
+        );
+        assert_eq!(strip_comments("/\\//; // c", false), "/\\//; // c");
+    }
+
+    #[test]
+    fn a_regex_literal_is_only_special_in_scripts() {
+        assert_eq!(strip_comments("x = /*c*/ 1", true), "x =   1");
+        assert_eq!(strip_comments("x = /a/*c*/", false), "x = /a ");
     }
 }
