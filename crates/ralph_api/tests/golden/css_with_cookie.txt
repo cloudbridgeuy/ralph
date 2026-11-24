@@ -345,7 +345,7 @@ r-prose h6 {
   color: var(--r-h3);
 }
 
-r-prose p {
+p {
   margin: 10px 0;
 }
 

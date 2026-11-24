@@ -588,4 +588,11 @@ mod tests {
         let tree = css.find("\nr-tree button {").unwrap();
         assert!(controls < tree);
     }
+
+    #[test]
+    fn paragraphs_sit_on_the_10px_grid_everywhere() {
+        let css = css();
+        assert_declares(&css, "p", "margin: 10px 0;");
+        assert!(rule_body(&css, "r-prose p").is_none());
+    }
 }
