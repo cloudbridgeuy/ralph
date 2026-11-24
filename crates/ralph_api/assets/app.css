@@ -168,7 +168,6 @@ r-kv div {
 }
 
 r-kv dt {
-  font-size: 12px;
   min-width: 12ch;
   color: var(--r-muted);
   overflow-wrap: anywhere;

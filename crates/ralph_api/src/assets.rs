@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn meta_text_is_12px() {
         let css = css();
-        for selector in ["r-table th", "r-prose th", "r-kv dt", "r-pill", "r-spark"] {
+        for selector in ["r-table th", "r-prose th", "r-pill", "r-spark"] {
             assert_declares(&css, selector, "font-size: 12px;");
         }
     }
@@ -540,5 +540,12 @@ mod tests {
         assert_declares(&css, ".columns", "gap: 20px 2ch;");
         assert_declares(&css, ".bar,\n.nav", "min-height: 30px;");
         assert_declares(&css, ".bar,\n.nav", "align-items: center;");
+    }
+
+    #[test]
+    fn the_kv_key_keeps_the_base_size() {
+        let css = css();
+        let body = rule_body(&css, "r-kv dt").unwrap();
+        assert!(!body.contains("font-size"), "{body}");
     }
 }
