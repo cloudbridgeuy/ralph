@@ -27,6 +27,8 @@
 | Fixture | `crates/ralph_api/fixtures/catalogue.json` | sanitised sample data for the catalogue |
 | Fixture generator | `xtask/src/catalogue/` | `core.rs` is pure; `mod.rs` reads and writes files |
 
+The stylesheet uses a 13px text size on a 20px line, 12px meta text, weights 400, 500 and 600, 24px rows, and gutters in `ch`.
+
 ## Start
 
 Without `--tailscale`, `ralph web` prints one line: `ralph web listening on http://127.0.0.1:<port>/?token=<token>`. It also prints the store path. With `--tailscale` it prints a list of URLs. Open the URL. The server answers 302, sets the cookie and sends the browser to `/`.
