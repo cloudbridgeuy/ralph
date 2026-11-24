@@ -36,6 +36,7 @@ pub mod chat_path;
 pub mod chat_process;
 pub mod chat_recap;
 pub mod chat_rerender;
+pub mod chat_resize;
 pub mod chat_send_it;
 pub mod chat_skills;
 pub mod chat_socket;

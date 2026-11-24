@@ -5,6 +5,7 @@ use crate::chat::inbox::{self, Display};
 use crate::chat::nudge;
 use crate::chat::prompt::Columns;
 use crate::chat::rerender;
+use crate::chat::resize::Resize;
 use crate::chat::thread::{self, Memory};
 use crate::chat::thread_cmd::{self, ThreadEnv};
 use crate::chat::view;
@@ -47,6 +48,7 @@ pub struct LocalRoute<'a> {
     pub remote: &'a RemoteStatus,
     pub config: &'a ConfigSnapshot,
     pub columns: Columns,
+    pub resize: &'a Resize,
 }
 
 pub fn run_local(
@@ -142,7 +144,7 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         Route::Help => write!(out, "{}", help_with_store((ctx.columns)(), ctx.store))?,
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
-        Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.display),
+        Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.display, ctx.resize),
         Route::History(call) => {
             let text = history_call(ctx.store, &call, CallSource::Slash)
                 .map_or_else(|e| e, |answer| answer.text);
@@ -252,6 +254,7 @@ mod tests {
             remote: &remote,
             config: &snapshot,
             columns: || 80,
+            resize: &Resize::default(),
         };
         let mut out = Vec::new();
         let route = route_input(
