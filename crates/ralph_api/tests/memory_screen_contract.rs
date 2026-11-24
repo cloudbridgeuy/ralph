@@ -277,7 +277,15 @@ fn the_entry_text_is_sent_whole_with_no_character_cut() {
     assert!(!body.contains("PREVIEW"));
     assert!(!body.contains("function preview("));
     assert!(!body.contains("slice(0, max"));
-    assert!(body.contains("function firstLine(text)"));
+    let start = body.find("function firstLine(text) {").unwrap();
+    let end = start + body[start..].find("\n}\n").unwrap();
+    let first_line = &body[start..end];
+    assert!(first_line.contains(r".split(/\r?\n/)"), "{first_line}");
+    assert!(
+        first_line.contains(r#".find((part) => part.trim() !== "")"#),
+        "{first_line}"
+    );
+    assert!(first_line.contains("line.trim()"), "{first_line}");
 }
 
 #[test]
