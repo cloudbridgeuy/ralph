@@ -376,16 +376,57 @@ r-pill[variant="outline"] {
 
 r-empty {
   display: block;
+  padding: 10px 0;
   color: var(--r-muted);
   overflow-wrap: anywhere;
 }
 
+r-empty .what {
+  color: var(--r-ink);
+}
+
+r-empty .next {
+  margin-top: 10px;
+  color: var(--r-muted);
+}
+
+r-empty[compact] {
+  padding: 0;
+}
+
 r-error {
   display: block;
-  padding-left: 1ch;
-  border-left: 2px solid currentColor;
-  color: var(--r-bad);
+  padding: 10px 2ch;
+  border: 1px solid var(--r-line-strong);
+  border-left: 2px solid var(--r-bad);
+  background: var(--r-surface);
+  color: var(--r-ink);
   overflow-wrap: anywhere;
+}
+
+r-error .what {
+  color: var(--r-bad);
+  font-weight: 600;
+}
+
+r-error .why {
+  color: var(--r-ink);
+}
+
+r-error .next {
+  margin-top: 10px;
+  color: var(--r-muted);
+}
+
+r-error[compact] {
+  display: flex;
+  gap: 2ch;
+  padding: 0 2ch;
+}
+
+r-error[compact] .next {
+  margin-top: 0;
+  margin-left: auto;
 }
 
 .btn {
