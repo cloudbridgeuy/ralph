@@ -93,3 +93,23 @@ fn font_with_cookie() {
     assert_eq!(reply.body_bytes.len(), 71_212);
     assert!(reply.body_bytes.starts_with(b"wOF2"));
 }
+
+#[test]
+fn css_post() {
+    golden_case("asset_post_css", "POST", "/assets/app.css", &cookie());
+}
+
+#[test]
+fn script_post() {
+    golden_case("asset_post_js", "POST", "/app.js", &cookie());
+}
+
+#[test]
+fn font_post() {
+    golden_case(
+        "asset_post_font",
+        "POST",
+        "/assets/geist-mono.woff2",
+        &cookie(),
+    );
+}
