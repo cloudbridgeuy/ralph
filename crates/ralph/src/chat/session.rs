@@ -45,12 +45,17 @@ pub(super) fn resolve_store(
 }
 
 pub(crate) fn store_dir(flag: Option<PathBuf>) -> io::Result<PathBuf> {
+    let home = dirs::home_dir().map(|home| canonical_or_raw(&home));
     resolve_store(
         flag,
         std::env::var_os(STORE_ENV).map(PathBuf::from),
-        &std::env::current_dir()?,
-        dirs::home_dir().as_deref(),
+        &canonical_or_raw(&std::env::current_dir()?),
+        home.as_deref(),
     )
+}
+
+fn canonical_or_raw(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub(super) fn chat_dir(flag: Option<PathBuf>, thread: Option<&ThreadName>) -> io::Result<PathBuf> {
