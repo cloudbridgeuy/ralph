@@ -94,6 +94,10 @@ const MARKS: [(usize, RowMark); 3] = [
     ),
 ];
 
+fn marked_rows() -> usize {
+    MARKS.iter().map(|(at, _)| at + 1).max().unwrap_or(0)
+}
+
 fn table_marked_html(headers: &[&str], rows: &[Vec<String>]) -> String {
     let cells: Vec<Vec<&str>> = rows
         .iter()
@@ -178,7 +182,7 @@ fn tables(fixture: &Fixture) -> String {
             ("dense", table_html(&headers, &rows)),
             (
                 "selected",
-                table_marked_html(&headers, &rows[..rows.len().min(4)]),
+                table_marked_html(&headers, &rows[..rows.len().min(marked_rows())]),
             ),
             (
                 "error",
@@ -406,7 +410,7 @@ pub(crate) fn page(fixture_json: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::page;
+    use super::{page, MARKS};
 
     const COMMITTED: &str = include_str!("../../fixtures/catalogue.json");
     const TAGS: [&str; 12] = [
@@ -504,6 +508,19 @@ mod tests {
         assert!(html.contains("<tr aria-selected=\"true\">"));
         assert!(html.contains("<tr class=\"open\">"));
         assert!(html.contains("<tr class=\"open\" aria-selected=\"true\">"));
+    }
+
+    #[test]
+    fn the_marked_table_sample_keeps_every_mark() {
+        let html = html();
+        let themes = 2;
+        let selected = MARKS.iter().filter(|(_, mark)| mark.selected).count();
+        let open = MARKS.iter().filter(|(_, mark)| mark.open).count();
+        assert_eq!(
+            html.matches("aria-selected=\"true\"").count(),
+            selected * themes
+        );
+        assert_eq!(html.matches("class=\"open\"").count(), open * themes);
     }
 
     #[test]
