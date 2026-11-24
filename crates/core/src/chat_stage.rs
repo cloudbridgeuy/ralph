@@ -100,6 +100,13 @@ impl StageMark {
     }
 }
 
+pub fn next_mark(mark: Option<&StageMark>, launched: bool, due: bool, rendered: &str) -> StageMark {
+    match mark {
+        Some(held) if !launched && !due => held.skipped(),
+        _ => StageMark::sent(rendered),
+    }
+}
+
 pub fn expire(stage: Stage, log_len: usize) -> (Stage, Vec<Item>) {
     let (gone, items) = stage.items.into_iter().partition(|item| {
         item.kind.expires() && log_len.saturating_sub(item.turn) >= STAGE_EXPIRY_LOG_DISTANCE

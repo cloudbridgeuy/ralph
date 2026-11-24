@@ -4,6 +4,7 @@ use crate::chat::fork::{fork_view, Fork};
 use crate::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use crate::chat::skills::{ensure_runtime_files, RuntimeFiles};
 use crate::chat::socket::serve::SocketHandle;
+use crate::chat::stage;
 use crate::chat::suggestion::SuggestionCell;
 use crate::history_log;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
@@ -32,6 +33,8 @@ use ralph_core::chat_memory::{
 };
 use ralph_core::chat_process::{turn_cost, ResetReason};
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
+use ralph_core::chat_stage::{next_mark, stage_due, stage_text, StageMark};
+use ralph_core::chat_status::Status;
 use ralph_core::chat_suggestion::from_reply;
 use ralph_core::chat_thread::Scope;
 use ralph_core::sanitize::strip_controls;
@@ -116,6 +119,7 @@ impl Drop for PendingTurn<'_> {
 struct TurnInput<'a> {
     sent: &'a str,
     live: &'a str,
+    stage: &'a str,
     cancel: &'a CancelToken,
 }
 
@@ -165,6 +169,8 @@ pub struct Turn {
     pub last_cost_usd: Mutex<Option<f64>>,
     pub timing: Mutex<TurnTiming>,
     pub seen_len: Mutex<Option<usize>>,
+    pub status: Box<dyn Fn() -> Status + Send + Sync>,
+    pub stage_mark: Mutex<Option<StageMark>>,
     pub sink: Arc<dyn TurnSink>,
     pub show_tools: bool,
     pub terminated: fn() -> bool,
@@ -295,6 +301,10 @@ impl Turn {
         } = *request;
         self.store.set_pending_turn(trigger)?;
         let _pending = PendingTurn(&self.store);
+        self.warn_if_err(
+            stage::expire_due(&self.store, &self.store_dir),
+            "Failed to expire stage items",
+        );
         let unseen = self.unseen().unwrap_or_else(|e| {
             self.warn(format!("Failed to read the chat log for the catch-up: {e}"));
             Vec::new()
@@ -309,10 +319,17 @@ impl Turn {
             Trigger::User | Trigger::SendIt => expand_slash_command(message, &self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
-        let live = catch_up_prompt(&unseen, &sent);
+        let rendered = stage::rendered(&self.store_dir, &(self.status)()).unwrap_or_else(|e| {
+            self.warn(format!("Failed to read the stage: {e}"));
+            String::new()
+        });
+        let due = stage_due(locked(&self.stage_mark).as_ref(), &rendered);
+        let live_stage = if due { stage_text(&rendered) } else { "" };
+        let live = catch_up_prompt(&unseen, live_stage, &sent);
         let input = TurnInput {
             sent: &sent,
             live: &live,
+            stage: &rendered,
             cancel,
         };
         self.print_rule();
@@ -361,6 +378,10 @@ impl Turn {
             self.process_turns.load(Ordering::SeqCst),
         );
         self.process_turns.store(process_turns, Ordering::SeqCst);
+        if ran_session {
+            let mut mark = locked(&self.stage_mark);
+            *mark = Some(next_mark(mark.as_ref(), launch.is_some(), due, &rendered));
+        }
         let end = turn_end(&TurnSignals {
             cancelled: cancel.is_cancelled(),
             terminated: (self.terminated)(),
@@ -518,7 +539,7 @@ impl Turn {
         let was_reused = reused.is_some();
         let started = match reused {
             Some(live) => Ok(live),
-            None => self.start(pre_log_len, input.sent, launch),
+            None => self.start(pre_log_len, input, launch),
         };
         let (session, result, ran) = match started {
             Err(e) => (None, Err(e), false),
@@ -541,17 +562,21 @@ impl Turn {
     fn start(
         &self,
         pre_log_len: Option<usize>,
-        sent: &str,
+        input: &TurnInput,
         launch: &mut Option<Launch>,
     ) -> Result<Box<dyn ChatSession>, SubprocessError> {
-        let mut spawned = self.launch(pre_log_len, sent)?;
+        let mut spawned = self.launch(pre_log_len, input)?;
         let live = self.backend.spawn(&spawned.config)?;
         spawned.reset = locked(&self.reset).take();
         *launch = Some(spawned);
         Ok(live)
     }
 
-    fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
+    fn launch(
+        &self,
+        pre_log_len: Option<usize>,
+        input: &TurnInput,
+    ) -> Result<Launch, SubprocessError> {
         let waited_from = Instant::now();
         let loaded = self.store.load_after_nap(NAP_WAIT_LIMIT, || {
             self.sink.emit(TurnEvent::Busy(Wait::Memory));
@@ -572,7 +597,8 @@ impl Turn {
         };
         let first_prompt = turn_prompt(
             &[split.middle.as_slice(), split.tail.as_slice()].concat(),
-            sent,
+            input.stage,
+            input.sent,
         );
         let system = turn_system_prompt(&self.custom_prompt, self.reply_images, &split.older);
         write_system_prompt(&self.system_prompt_file, &system)?;

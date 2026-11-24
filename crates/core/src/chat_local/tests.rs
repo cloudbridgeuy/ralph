@@ -103,14 +103,34 @@ fn records_and_notices_are_known_and_person_text_is_not() {
 #[test]
 fn catch_up_prompt_puts_unseen_rows_before_the_message() {
     assert_eq!(
-        catch_up_prompt(&rows(&["7 user: /send-it off", "Result: gone"]), "next?"),
+        catch_up_prompt(
+            &rows(&["7 user: /send-it off", "Result: gone"]),
+            "",
+            "next?"
+        ),
         "Since your last turn:\n7 user: /send-it off\nResult: gone\n\nNew message:\nnext?"
     );
 }
 
 #[test]
 fn catch_up_prompt_without_rows_is_the_message() {
-    assert_eq!(catch_up_prompt(&[], "next?"), "next?");
+    assert_eq!(catch_up_prompt(&[], "", "next?"), "next?");
+}
+
+#[test]
+fn catch_up_prompt_puts_the_stage_after_the_rows_and_before_the_message() {
+    assert_eq!(
+        catch_up_prompt(&rows(&["7 user: hi"]), "Stage:\ns1 owed x", "next?"),
+        "Since your last turn:\n7 user: hi\n\nStage:\ns1 owed x\n\nNew message:\nnext?"
+    );
+}
+
+#[test]
+fn catch_up_prompt_with_only_a_stage_has_no_since_header() {
+    assert_eq!(
+        catch_up_prompt(&[], "Stage: empty", "next?"),
+        "Stage: empty\n\nNew message:\nnext?"
+    );
 }
 
 fn logged(texts: &[&str]) -> Vec<crate::chat_memory::Entry> {

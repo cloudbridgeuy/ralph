@@ -52,13 +52,16 @@ pub fn is_local_record(text: &str) -> bool {
     command || text.starts_with(NOTICE)
 }
 
-pub fn catch_up_prompt(rows: &[String], message: &str) -> String {
-    match rows {
+pub fn catch_up_prompt(rows: &[String], stage: &str, message: &str) -> String {
+    let rows = (!rows.is_empty()).then(|| format!("Since your last turn:\n{}", rows.join("\n")));
+    let before: Vec<&str> = rows
+        .as_deref()
+        .into_iter()
+        .chain((!stage.is_empty()).then_some(stage))
+        .collect();
+    match before.as_slice() {
         [] => message.to_string(),
-        rows => format!(
-            "Since your last turn:\n{}\n\nNew message:\n{message}",
-            rows.join("\n")
-        ),
+        before => format!("{}\n\nNew message:\n{message}", before.join("\n\n")),
     }
 }
 

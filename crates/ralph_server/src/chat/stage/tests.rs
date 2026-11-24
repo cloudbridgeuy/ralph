@@ -1,0 +1,66 @@
+use super::*;
+use ralph_core::chat_stage::{Item, Kind};
+
+fn item(id: &str, kind: Kind) -> Item {
+    Item {
+        id: id.to_string(),
+        kind,
+        reference: None,
+        text: "check the build".to_string(),
+        created: "2026-01-01T00:00:00Z".to_string(),
+        turn: 0,
+    }
+}
+
+fn log_of(dir: &Path, rows: usize) -> Store {
+    let store = Store::new(dir.to_path_buf());
+    for _ in 0..rows {
+        store.append(Role::User, "hi").unwrap();
+    }
+    store
+}
+
+#[test]
+fn an_expired_item_leaves_the_stage_and_writes_an_audit_row_and_a_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 60);
+    let stage = Stage {
+        items: vec![item("s1", Kind::Followup), item("s2", Kind::Decision)],
+        last: 2,
+    };
+    save(dir.path(), &stage).unwrap();
+    expire_due(&store, dir.path()).unwrap();
+    let kept = load(dir.path()).unwrap();
+    assert_eq!(kept.items, vec![item("s2", Kind::Decision)]);
+    assert_eq!(kept.last, 2);
+    let audit = fs::read_to_string(dir.path().join(AUDIT_FILE)).unwrap();
+    let rows: Vec<AuditRow> = audit
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].actor, rows[0].op), (Actor::Expiry, Op::Expire));
+    assert_eq!(rows[0].item.id, "s1");
+    let (entries, _) = store.load_log_quiet().unwrap();
+    assert_eq!(
+        entries.last().unwrap().text,
+        notice_record("Stage: s1 expired: check the build")
+    );
+}
+
+#[test]
+fn nothing_due_touches_no_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 59);
+    save(
+        dir.path(),
+        &Stage {
+            items: vec![item("s1", Kind::Owed)],
+            last: 1,
+        },
+    )
+    .unwrap();
+    expire_due(&store, dir.path()).unwrap();
+    assert!(!dir.path().join(AUDIT_FILE).exists());
+    assert_eq!(store.log_len().unwrap(), 59);
+}

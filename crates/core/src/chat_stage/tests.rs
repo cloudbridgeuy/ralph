@@ -149,3 +149,18 @@ fn done_needs_an_id() {
     assert_eq!(parse_done(&json!({"id": "s4"})), Ok("s4".to_string()));
     assert!(parse_done(&json!({})).is_err());
 }
+
+#[test]
+fn a_launch_or_a_send_resets_the_mark_and_a_skip_counts_a_turn() {
+    let held = StageMark::sent("Stage:\na");
+    assert_eq!(
+        next_mark(Some(&held), false, false, "Stage:\na").turns_since,
+        1
+    );
+    assert_eq!(
+        next_mark(Some(&held), true, false, "Stage:\nb"),
+        StageMark::sent("Stage:\nb")
+    );
+    assert_eq!(next_mark(Some(&held), false, true, ""), StageMark::sent(""));
+    assert_eq!(next_mark(None, true, true, "x"), StageMark::sent("x"));
+}
