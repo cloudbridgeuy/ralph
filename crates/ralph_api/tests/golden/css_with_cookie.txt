@@ -382,9 +382,7 @@ r-spinner::before {
   border: 1px solid var(--r-line-strong);
   border-top-color: var(--r-accent);
   border-radius: 50%;
-  animation:
-    r-show 1ms linear 200ms both,
-    r-spin 800ms linear infinite;
+  animation: r-spin 800ms linear infinite;
 }
 
 r-spark {
@@ -639,16 +637,6 @@ r-code .t-markup.t-underline {
   text-decoration: underline;
 }
 
-@keyframes r-show {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
 @keyframes r-spin {
   to {
     transform: rotate(360deg);
@@ -663,7 +651,7 @@ r-code .t-markup.t-underline {
     border: 0;
     border-radius: 0;
     color: var(--r-accent);
-    animation: r-show 1ms linear 200ms both;
+    animation: none;
   }
 
   * {

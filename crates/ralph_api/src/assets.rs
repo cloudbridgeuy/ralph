@@ -313,12 +313,15 @@ mod tests {
     }
 
     #[test]
-    fn the_spinner_shows_after_200ms_from_zero_opacity() {
+    fn the_spinner_ring_has_no_css_delay_so_the_script_delay_is_the_only_one() {
         let css = css();
-        assert!(css.contains("r-spinner::before"));
-        assert!(css.contains("200ms both"));
-        assert!(css.contains("@keyframes r-show"));
-        assert!(css.contains("opacity: 0;"));
+        let rule = rule_body(&css, "r-spinner::before").unwrap();
+        assert!(
+            rule.contains("animation: r-spin 800ms linear infinite;"),
+            "{rule}"
+        );
+        assert!(!css.contains("200ms"));
+        assert!(!css.contains("r-show"));
     }
 
     #[test]
@@ -333,19 +336,15 @@ mod tests {
     }
 
     #[test]
-    fn reduced_motion_keeps_the_spinner_show_delay_and_drops_the_spin() {
+    fn reduced_motion_mark_has_no_animation_and_no_delay() {
         let css = css();
         let media = css
             .split("@media (prefers-reduced-motion: reduce)")
             .nth(1)
             .unwrap();
-        let rule = media
-            .split("r-spinner::before")
-            .nth(1)
-            .and_then(|rest| rest.split('}').next())
-            .unwrap();
-        assert!(rule.contains("r-show 1ms linear 200ms both"), "{rule}");
-        assert!(!rule.contains("r-spin"), "{rule}");
+        let rule = rule_body(media, "  r-spinner::before").unwrap();
+        assert!(rule.contains("animation: none;"), "{rule}");
+        assert!(!rule.contains("200ms"), "{rule}");
     }
 
     #[test]
