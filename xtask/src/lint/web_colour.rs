@@ -808,6 +808,17 @@ mod tests {
     }
 
     #[test]
+    fn an_unclosed_url_in_text_does_not_hide_later_lines() {
+        let text = "<p>url(</p>\n<p style=\"color:#fff\">x</p>\n";
+        assert_eq!(lines(HTML, text), vec![2]);
+        let js = "crates/ralph_api/assets/app.js";
+        assert_eq!(
+            lines(js, "a = \"url(\";\nel.style.color = \"#fff\";\n"),
+            vec![2]
+        );
+    }
+
+    #[test]
     fn the_bundled_shell_and_stylesheet_pass() {
         let html = include_str!("../../../crates/ralph_api/assets/index.html");
         let css = include_str!("../../../crates/ralph_api/assets/app.css");

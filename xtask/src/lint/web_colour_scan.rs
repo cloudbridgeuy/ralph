@@ -32,7 +32,7 @@ pub(super) fn strip_comments(text: &str, line_comments: bool) -> String {
             out.push(' ');
             at += rest.find('\n').unwrap_or(rest.len());
         } else if starts_url(&out, rest) {
-            let end = 4 + url_end(&rest[4..]);
+            let end = 4 + url_end(&rest[4..]).unwrap_or(0);
             out.push_str(&rest[..end]);
             at += end;
         } else {
@@ -105,20 +105,15 @@ pub(super) fn statements(text: &str) -> Vec<Statement<'_>> {
     found
 }
 
-pub(super) fn url_end(rest: &str) -> usize {
-    let line_end = rest.find('\n').unwrap_or(rest.len());
-    let body = rest.trim_start();
-    let skipped = rest.len() - body.len();
+pub(super) fn url_end(rest: &str) -> Option<usize> {
+    let line = &rest[..rest.find('\n').unwrap_or(rest.len())];
+    let body = line.trim_start();
+    let skipped = line.len() - body.len();
     let search_from = match body.chars().next().filter(|c| *c == '"' || *c == '\'') {
-        Some(quote) => match body[1..].find(quote) {
-            Some(at) if skipped + at + 1 < line_end => skipped + at + 2,
-            _ => return line_end,
-        },
+        Some(quote) => skipped + body[1..].find(quote)? + 2,
         None => 0,
     };
-    rest[search_from..]
-        .find(')')
-        .map_or(rest.len(), |at| search_from + at + 1)
+    line[search_from..].find(')').map(|at| search_from + at + 1)
 }
 
 pub(super) fn without_urls(line: &str) -> String {
@@ -132,13 +127,16 @@ pub(super) fn without_urls(line: &str) -> String {
             .chars()
             .next_back()
             .is_none_or(|c| !is_ident_char(c));
-        if !boundary {
+        let closed = boundary
+            .then(|| url_end(&line[at + NAME.len()..]))
+            .flatten();
+        let Some(len) = closed else {
             out.push_str(&line[from..at + NAME.len()]);
             from = at + NAME.len();
             continue;
-        }
+        };
         out.push_str(&line[from..at]);
-        let end = at + NAME.len() + url_end(&line[at + NAME.len()..]);
+        let end = at + NAME.len() + len;
         out.extend(line[at..end].chars().filter(|c| *c == '\n'));
         from = end;
     }
@@ -236,7 +234,7 @@ mod tests {
     fn a_url_after_unicode_whitespace_does_not_panic() {
         assert_eq!(without_urls("url(\u{3000}x.svg) b"), " b");
         assert_eq!(without_urls("url(\u{3000}\"x.svg\") b"), " b");
-        assert_eq!(without_urls("url(\u{3000}\"x"), "");
+        assert_eq!(without_urls("url(\u{3000}\"x"), "url(\u{3000}\"x");
         assert_eq!(strip_comments("url(\u{3000}\"x", false), "url(\u{3000}\"x");
     }
 
