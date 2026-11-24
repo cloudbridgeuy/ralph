@@ -29,7 +29,7 @@ fn box_title_sits_in_the_top_border() {
         "white-space: nowrap;",
         "overflow: hidden;",
         "text-overflow: ellipsis;",
-        "max-width: 60%;",
+        "max-width: calc(60% - 2ch);",
         "font-weight: 600;",
         "color: var(--r-ink-strong);",
     ] {
@@ -50,7 +50,7 @@ fn box_aside_sits_in_the_top_border_on_the_right() {
         "white-space: nowrap;",
         "overflow: hidden;",
         "text-overflow: ellipsis;",
-        "max-width: 40%;",
+        "max-width: calc(40% - 2ch);",
         "font-size: 12px;",
         "color: var(--r-muted);",
     ] {
@@ -81,4 +81,13 @@ fn round_box_has_a_3px_radius() {
     let css = css();
     assert_declares(&css, "r-box[shape=\"round\"]", "border-radius: 3px;");
     assert!(!css.contains("0.75rem"));
+}
+
+#[test]
+fn box_title_and_aside_reserve_their_own_offsets_so_they_never_overlap() {
+    let css = css();
+    assert_declares(&css, "r-box > .title", "left: 1ch;");
+    assert_declares(&css, "r-box > .aside", "right: 1ch;");
+    assert_declares(&css, "r-box > .title", "max-width: calc(60% - 2ch);");
+    assert_declares(&css, "r-box > .aside", "max-width: calc(40% - 2ch);");
 }
