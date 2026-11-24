@@ -21,7 +21,7 @@ pub use empty::empty;
 pub use error::error;
 pub use escape::escape;
 pub use frame::frame;
-pub use kv::kv;
+pub use kv::{kv, kv_inline, kv_sourced};
 pub use pill::{pill, pill_with, Icon, PillShape, PillVariant};
 pub use prose::render_markdown;
 pub use rule::rule;

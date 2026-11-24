@@ -169,3 +169,12 @@ fn append_results_are_never_taken_as_the_new_child() {
     assert!(!body.contains("append(group, rowItem()).appendChild("));
     assert!(body.contains("function zoomRows(zoom)"));
 }
+
+#[test]
+fn the_memory_header_kv_uses_the_two_variant_and_the_source_is_optional() {
+    let body = script();
+    assert!(body.contains("function kv(rows, variant)"));
+    assert!(body.contains("String(data.roots.entries)]], \"two\")"));
+    assert!(body.contains("if (source !== undefined)"));
+    assert!(body.contains("source === \"default\" ? \"src\" : \"src set\""));
+}

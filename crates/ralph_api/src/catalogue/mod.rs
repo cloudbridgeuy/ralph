@@ -1,6 +1,6 @@
 use crate::render::{
-    empty, error, escape, frame, kv, pill, pill_with, render_markdown, rule, spark_svg, spinner,
-    status, table, Icon, PillShape, PillVariant, Shape, Tone,
+    empty, error, escape, frame, kv, kv_inline, kv_sourced, pill, pill_with, render_markdown, rule,
+    spark_svg, spinner, status, table, Icon, PillShape, PillVariant, Shape, Tone,
 };
 use fixture::{parse, Fixture};
 
@@ -138,8 +138,25 @@ fn kvs(fixture: &Fixture) -> String {
             ("dense", kv(&borrowed(&all))),
             ("error", error("could not load pairs")),
             ("very-long", kv(&[(long, long)])),
+            ("source", kv_sourced(&sourced_rows(&counts))),
+            ("two", kv(&borrowed(&counts))),
+            ("inline", kv_inline(&borrowed(&counts))),
         ],
     )
+}
+
+fn sourced_rows(rows: &[(String, String)]) -> Vec<(&str, &str, &str)> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, (name, value))| {
+            let source = if index % 2 == 0 {
+                "default"
+            } else {
+                "config.toml"
+            };
+            (name.as_str(), value.as_str(), source)
+        })
+        .collect()
 }
 
 fn pills(fixture: &Fixture) -> String {

@@ -624,6 +624,47 @@ mod tests {
     }
 
     #[test]
+    fn the_kv_has_three_columns_key_value_source() {
+        let css = css();
+        assert_declares(
+            &css,
+            "r-kv dl",
+            "grid-template-columns: max-content minmax(0, 1fr) max-content;",
+        );
+        assert_declares(&css, "r-kv dt", "color: var(--r-muted);");
+        assert_declares(&css, "r-kv dd", "color: var(--r-ink-strong);");
+    }
+
+    #[test]
+    fn the_kv_source_is_12px_right_aligned_muted_and_ink_when_set() {
+        let css = css();
+        assert_declares(&css, "r-kv dd.src", "font-size: 12px;");
+        assert_declares(&css, "r-kv dd.src", "text-align: right;");
+        assert_declares(&css, "r-kv dd.src", "color: var(--r-muted);");
+        assert_declares(&css, "r-kv dd.src.set", "color: var(--r-ink);");
+        assert!(!rule_body(&css, "r-kv dd.src")
+            .unwrap()
+            .contains("--r-faint"));
+    }
+
+    #[test]
+    fn the_kv_two_variant_drops_the_source_column() {
+        let css = css();
+        assert_declares(
+            &css,
+            "r-kv[two] dl",
+            "grid-template-columns: max-content minmax(0, 1fr);",
+        );
+    }
+
+    #[test]
+    fn the_kv_inline_variant_is_one_wrapping_stat_line() {
+        let css = css();
+        assert_declares(&css, "r-kv[inline] dl", "display: flex;");
+        assert_declares(&css, "r-kv[inline] dl", "flex-wrap: wrap;");
+    }
+
+    #[test]
     fn catalogue_state_names_are_12px_and_group_names_keep_the_base() {
         let css = css();
         assert_declares(&css, ".state h4", "font-size: 12px;");
