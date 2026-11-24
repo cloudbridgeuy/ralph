@@ -343,17 +343,20 @@ r-error {
 }
 
 r-spinner {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 1ch;
   vertical-align: middle;
+  color: var(--r-muted);
 }
 
 r-spinner::before {
   content: "";
   display: block;
-  width: 1em;
-  height: 1em;
-  border: 1px solid currentColor;
-  border-top-color: transparent;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--r-line-strong);
+  border-top-color: var(--r-accent);
   border-radius: 50%;
   animation:
     r-show 1ms linear 200ms both,
@@ -597,6 +600,12 @@ r-code .t-markup.t-underline {
 
 @media (prefers-reduced-motion: reduce) {
   r-spinner::before {
+    content: "\2026";
+    width: auto;
+    height: auto;
+    border: 0;
+    border-radius: 0;
+    color: var(--r-accent);
     animation: r-show 1ms linear 200ms both;
   }
 

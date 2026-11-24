@@ -176,6 +176,42 @@ mod tests {
     }
 
     #[test]
+    fn reduced_motion_replaces_the_spinner_ring_with_a_static_mark() {
+        let css = css();
+        let media = css
+            .split("@media (prefers-reduced-motion: reduce)")
+            .nth(1)
+            .unwrap();
+        let rule = rule_body(media, "  r-spinner::before").unwrap();
+        assert!(rule.contains("content: \""), "{rule}");
+        assert!(!rule.contains("content: \"\""), "{rule}");
+        assert!(rule.contains("border: 0"), "{rule}");
+        assert!(rule.contains("var(--r-accent)"), "{rule}");
+    }
+
+    #[test]
+    fn the_spinner_ring_is_12px_in_the_accent_colour() {
+        let css = css();
+        let rule = rule_body(&css, "r-spinner::before").unwrap();
+        assert!(rule.contains("width: 12px;"), "{rule}");
+        assert!(
+            rule.contains("border-top-color: var(--r-accent);"),
+            "{rule}"
+        );
+    }
+
+    #[test]
+    fn the_script_delays_the_spinner_200ms_and_passes_a_label() {
+        let js = include_str!("../assets/app.js");
+        assert!(js.contains("const SPINNER_DELAY_MS = 200;"));
+        assert!(js.contains("function delayedSpinner(host, label)"));
+        assert!(!js.contains("delayedSpinner(row)"));
+        assert!(!js.contains("delayedSpinner(group)"));
+        assert!(!js.contains("delayedSpinner(main)"));
+        assert!(js.contains("delayedSpinner(main, \"Loading memory\")"));
+    }
+
+    #[test]
     fn the_stylesheet_has_the_two_theme_columns_and_a_hidden_text_class() {
         let css = css();
         assert!(css.contains(".columns"));

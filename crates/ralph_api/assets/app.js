@@ -141,8 +141,9 @@ function failure(error, retry) {
   return box;
 }
 
-function delayedSpinner(host) {
-  const spinner = el("r-spinner", null, { role: "status", "aria-label": "loading" });
+function delayedSpinner(host, label) {
+  const spinner = el("r-spinner", null, { role: "status" });
+  spinner.appendChild(el("span", label));
   const timer = setTimeout(() => host.appendChild(spinner), SPINNER_DELAY_MS);
   return () => {
     clearTimeout(timer);
@@ -213,7 +214,7 @@ function setExpanded(item, expanded) {
 }
 
 async function fillRendered(row, markdown) {
-  const stop = delayedSpinner(row);
+  const stop = delayedSpinner(row, "Loading text");
   try {
     setRendered(row, (await renderMarkdown(markdown)).html);
   } catch (error) {
@@ -242,7 +243,7 @@ function zoomRows(zoom) {
 async function openNode(item, ctx) {
   const group = item.querySelector(':scope > ul[role="group"]');
   const level = Number(item.getAttribute("aria-level")) + 1;
-  const stop = delayedSpinner(group);
+  const stop = delayedSpinner(group, "Loading entries");
   try {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
     stop();
@@ -407,7 +408,7 @@ async function show() {
     return;
   }
   main.replaceChildren();
-  const stop = delayedSpinner(main);
+  const stop = delayedSpinner(main, "Loading memory");
   try {
     const data = await loadMemory(state);
     if (mine !== generation) return;

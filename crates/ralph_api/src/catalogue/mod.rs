@@ -251,7 +251,7 @@ fn errors(fixture: &Fixture) -> String {
 }
 
 fn spinners() -> String {
-    group("r-spinner", &[("sparse", spinner())])
+    group("r-spinner", &[("sparse", spinner("Loading memory"))])
 }
 
 fn sparks(fixture: &Fixture) -> String {
