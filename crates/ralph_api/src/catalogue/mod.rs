@@ -7,7 +7,14 @@ use fixture::{parse, Fixture};
 mod fixture;
 mod tree;
 
-const TONES: [Tone; 5] = [Tone::Ok, Tone::Bad, Tone::Warn, Tone::Info, Tone::Accent];
+const TONES: [Tone; 6] = [
+    Tone::Ok,
+    Tone::Bad,
+    Tone::Warn,
+    Tone::Info,
+    Tone::Accent,
+    Tone::Neutral,
+];
 const ICONS: [Icon; 4] = [Icon::Check, Icon::Cross, Icon::Warning, Icon::Info];
 
 const PROSE_SPARSE: &str = "A short **note** with a [link](https://example.com).";

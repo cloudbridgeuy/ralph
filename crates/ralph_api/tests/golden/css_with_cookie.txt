@@ -240,6 +240,11 @@ r-status[tone="accent"] {
   color: var(--r-accent);
 }
 
+r-pill[tone="neutral"],
+r-status[tone="neutral"] {
+  color: var(--r-muted);
+}
+
 r-empty {
   display: block;
   color: var(--r-muted);

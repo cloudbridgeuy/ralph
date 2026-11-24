@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn the_stylesheet_has_a_rule_for_every_tone() {
         let css = css();
-        for tone in ["ok", "bad", "warn", "info", "accent"] {
+        for tone in ["ok", "bad", "warn", "info", "accent", "neutral"] {
             assert!(css.contains(&format!("r-pill[tone=\"{tone}\"]")), "{tone}");
             assert!(
                 css.contains(&format!("r-status[tone=\"{tone}\"]")),
@@ -289,6 +289,17 @@ mod tests {
         assert!(!css.contains("var(--r-h2,"));
         assert!(!css.contains("var(--r-h3,"));
     }
+    #[test]
+    fn the_neutral_tone_is_muted() {
+        let css = css();
+        let body = rule_body(
+            &css,
+            "r-pill[tone=\"neutral\"],\nr-status[tone=\"neutral\"]",
+        )
+        .unwrap();
+        assert!(body.contains("color: var(--r-muted);"), "{body}");
+    }
+
     #[test]
     fn faint_and_line_strong_stay_off_text_colours() {
         let css = css();
