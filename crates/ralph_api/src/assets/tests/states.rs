@@ -257,6 +257,9 @@ fn a_node_open_checks_the_generation_before_writing_the_hash() {
     let write = body.find("history.replaceState(");
     assert!(guard.is_some() && write.is_some(), "{body}");
     assert!(guard < write, "{body}");
+    let rows = body.find("zoomRows(");
+    assert!(rows.is_some(), "{body}");
+    assert!(guard < rows, "{body}");
 }
 
 #[test]
