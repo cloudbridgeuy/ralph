@@ -32,9 +32,9 @@ use ralph_core::worker::{
     cleanup, decode_claude_version, decode_line, deny_line, gone_path, import_servers,
     interrupt_lines, interrupted_end, join_start_warnings, mcptools_decision, permission_response,
     prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
-    start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
-    usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, Classes, ClaudeArgs,
-    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
+    start_steps, stuck_permission_report, turn_end_activity, turn_lost_at_resume, usage_seen_path,
+    uuid_v4, worker_config_path, Action, ActivityState, Classes, ClaudeArgs, ClaudeLine,
+    ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
     McptoolsDecision, PermissionAnswer, PermissionMode, QueuedFacts, QueuedWorker, SessionRecord,
     ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent,
     WorkerMarkers, ALLOW_ALWAYS, ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR, CLAUDE_CLOSE_DIR,
@@ -557,7 +557,7 @@ impl ClaudeWorker {
         let session = match resume {
             Some(record) => Ok(record.session_id.clone()),
             None => {
-                shared.accept(task_prompt(&request.task));
+                shared.accept(request.prompt());
                 ready.recv_timeout(READY_TIMEOUT).unwrap_or_else(|_| {
                     Err(format!(
                         "claude was not ready after {}s",

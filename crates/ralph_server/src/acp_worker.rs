@@ -31,7 +31,7 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, agy_auto_allow_option, auth_method, auto_allow_option,
     cancels_turn, capabilities, decide, describe, encode, gone_path, permission_content,
     probed_version, prompt_failure_report, ready_path, reduce, request_stale, session_error,
-    stop_problem, sweeps_permissions, task_prompt, turn_outcome, AcpAgent, AcpCall, BlockedContent,
+    stop_problem, sweeps_permissions, turn_outcome, AcpAgent, AcpCall, BlockedContent,
     Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
     PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
     Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE,
@@ -784,7 +784,7 @@ impl CursorHost {
                 .map(CursorWorker::Print)
         };
         match started {
-            Ok(worker) => self.adopt(id, worker, self.agy.then(|| task_prompt(&request.task))),
+            Ok(worker) => self.adopt(id, worker, self.agy.then(|| request.prompt())),
             Err(message) => {
                 if self.agy {
                     self.forget(id, true);
@@ -900,6 +900,7 @@ impl CursorHost {
                 AppConfig::load().ok().map(|config| config.changes.enabled),
             ),
             model: record.model.clone(),
+            scheduled: false,
         };
         if self.agy && !recovery::claim_saved(&files, &record) {
             return;

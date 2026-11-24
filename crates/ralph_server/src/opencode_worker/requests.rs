@@ -130,7 +130,7 @@ impl OpencodeHost {
         let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
         heartbeat.clear();
         heartbeat.set_state(ActivityState::Running);
-        let text = task_prompt(&request.task);
+        let text = task_prompt(&request.task, request.scheduled);
         let mut turn = TurnState::default();
         turn.prompted(&text);
         self.sessions().insert(

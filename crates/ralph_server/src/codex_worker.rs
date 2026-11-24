@@ -22,7 +22,7 @@ use ralph_core::worker::{
     decode_version, describe, gone_path, initialize_params, is_unmapped, model_ids,
     model_list_params, next_cursor, prompt_failure_report, ready_path, record_selection, reduce,
     reject_server_request, request_stale, resolve_selection, resolved_request_id, response_body,
-    resume_decision_for, session_saved, task_prompt, thread_resume_params, thread_start_params,
+    resume_decision_for, session_saved, thread_resume_params, thread_start_params,
     turn_end_activity, turn_interrupt_params, turn_start_params, turn_stop, yolo_option, Action,
     ActivityState, ApprovalKind, BlockedContent, Capabilities, CodexCloseStep, HandoffFiles,
     HarnessId, HeadlessState, HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict,
@@ -644,7 +644,7 @@ impl CodexWorker {
             snapshot_turn: None,
         };
         if matches!(launch, Launch::Fresh(_)) {
-            let first = pump.turns.accept(task_prompt(&request.task));
+            let first = pump.turns.accept(request.prompt());
             pump.perform(first)?;
         }
         let closing = Arc::clone(&pump.closing);

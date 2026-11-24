@@ -186,6 +186,7 @@ fn the_session_record_holds_the_session_id_and_spawn_settings() {
         at: 1,
         snapshots: false,
         model: Some("haiku".into()),
+        scheduled: false,
     };
     let record = session_record("sid", &request, Path::new("/store"), PermissionMode::Yolo);
     assert_eq!(record.session_id, "sid");
@@ -204,6 +205,7 @@ fn spawn_request() -> SpawnRequest {
         at: 1,
         snapshots: false,
         model: None,
+        scheduled: false,
     }
 }
 

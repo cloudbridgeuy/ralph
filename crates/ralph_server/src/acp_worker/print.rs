@@ -17,10 +17,10 @@ use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
     exit_outcome, inbox_env, next_chat, once_per_turn_server, print_action_note, print_args,
     print_end_note, print_model, print_spawn_note, print_turn_signals, prompt_failure_report,
-    reduce, task_prompt, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome,
-    HandoffFiles, HarnessId, HeadlessState, ModelUsage, PermissionAnswer, PermissionMode,
-    PrintArgs, PrintEvent, Scope, SessionRecord, SpawnRequest, TurnEnd, Turns, WorkerEvent,
-    WorkerMarkers, CURSOR_AGENT, SERVER_NAME,
+    reduce, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome, HandoffFiles,
+    HarnessId, HeadlessState, ModelUsage, PermissionAnswer, PermissionMode, PrintArgs, PrintEvent,
+    Scope, SessionRecord, SpawnRequest, TurnEnd, Turns, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
+    SERVER_NAME,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -506,7 +506,7 @@ impl PrintWorker {
         });
         if resume.is_none() {
             write_file(&shared.run.session, &shared.run.record.render()).ok();
-            let task = task_prompt(&request.task);
+            let task = request.prompt();
             shared.drive(|turns| turns.accept(task));
         }
         Ok(Self {

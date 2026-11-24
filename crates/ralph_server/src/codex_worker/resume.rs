@@ -69,6 +69,7 @@ impl Resumed<'_> {
                 AppConfig::load().ok().map(|config| config.changes.enabled),
             ),
             model: record.model.clone(),
+            scheduled: false,
         };
         launch(record, request)
             .inspect_err(|message| {
