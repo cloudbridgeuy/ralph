@@ -770,3 +770,18 @@ fn test_cli_web_rejects_bad_port() {
     assert!(Cli::try_parse_from(["ralph", "web", "--port", "70000"]).is_err());
     assert!(Cli::try_parse_from(["ralph", "web", "--port", "x"]).is_err());
 }
+
+#[test]
+fn test_cli_web_tailscale_flag() {
+    let Some(Commands::Web(web)) = Cli::try_parse_from(["ralph", "web", "--tailscale"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected web");
+    };
+    assert!(web.tailscale);
+    let Some(Commands::Web(web)) = Cli::try_parse_from(["ralph", "web"]).unwrap().command else {
+        panic!("expected web");
+    };
+    assert!(!web.tailscale);
+}

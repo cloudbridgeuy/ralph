@@ -821,6 +821,9 @@ pub struct WebArgs {
         help = "Port on 127.0.0.1 (0 picks a free port); overrides [web] port"
     )]
     pub port: Option<u16>,
+
+    #[arg(long, help = "Also listen on the Tailscale IPv4 address")]
+    pub tailscale: bool,
 }
 
 #[derive(clap::Args, Debug)]

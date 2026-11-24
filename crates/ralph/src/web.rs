@@ -1,14 +1,18 @@
 use crate::chat::session::store_dir;
 use crate::cli::WebArgs;
+use crate::web_tailscale::discover;
 use crate::web_tokens::render_tokens;
 use ralph_api::{
     allowed_hosts, bind, bind_hosts, cookie_name, serve, ApiConfig, ApiError, BindPolicy, Token,
 };
+use ralph_api::{tailnet_hosts, TailnetNames};
 use ralph_server::config::{config_path, AppConfig};
 use ralph_server::workers::canonical_store;
 use std::error::Error;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tiny_http::Server;
 
 pub fn run(args: WebArgs) -> Result<(), Box<dyn Error>> {
     let store = store_dir(args.store)?;
@@ -20,11 +24,15 @@ pub fn run(args: WebArgs) -> Result<(), Box<dyn Error>> {
     let tokens_css = render_tokens(&app)?;
     crate::signal::init_serve()?;
     let token = Token::generate()?;
-    let policy = BindPolicy::loopback();
+    let (port, source) = resolve_port(args.port, app.web.port);
+    let tailnet = args.tailscale.then(discover).transpose()?;
+    let policy = match &tailnet {
+        Some(found) => BindPolicy::loopback_and(IpAddr::V4(found.ip))?,
+        None => BindPolicy::loopback(),
+    };
     let ip = policy
         .primary()
         .ok_or("the bind policy allows no address")?;
-    let (port, source) = resolve_port(args.port, app.web.port);
     let server = bind(SocketAddr::new(ip, port), &policy).map_err(|error| match error {
         ApiError::Listen { reason, .. } => port_conflict_message(port, source, &reason).into(),
         other => Box::<dyn Error>::from(other),
@@ -33,13 +41,37 @@ pub fn run(args: WebArgs) -> Result<(), Box<dyn Error>> {
         .server_addr()
         .to_ip()
         .ok_or("the server is not listening on an IP address")?;
-    let config = api_config(store, bound, crate::version::current(), tokens_css);
-    println!(
-        "ralph web listening on {}",
-        listen_url(bound, token.as_str())
-    );
+    let second = match &tailnet {
+        Some(found) => {
+            let addr = SocketAddr::new(IpAddr::V4(found.ip), bound.port());
+            Some(bind(addr, &policy).map_err(|error| match error {
+                ApiError::Listen { reason, .. } => {
+                    port_conflict_message(bound.port(), source, &reason).into()
+                }
+                other => Box::<dyn Error>::from(other),
+            })?)
+        }
+        None => None,
+    };
+    let mut config = api_config(store, bound, crate::version::current(), tokens_css);
+    if let Some(found) = &tailnet {
+        config.allowed_hosts = tailnet_hosts(found.ip, &found.names, bound.port());
+    }
+    match &tailnet {
+        None => println!(
+            "ralph web listening on {}",
+            listen_url(bound, token.as_str())
+        ),
+        Some(found) => {
+            println!("ralph web listening on:");
+            for url in listen_urls(bound, Some((found.ip, &found.names)), token.as_str()) {
+                println!("  {url}");
+            }
+        }
+    }
     println!("store: {}", config.store.display());
-    serve(server, &config, &token, &|| crate::signal::is_terminated())?;
+    let servers = std::iter::once(server).chain(second).collect::<Vec<_>>();
+    serve_all(servers, &config, &token)?;
     Ok(())
 }
 
@@ -79,6 +111,61 @@ fn api_config(store: PathBuf, bound: SocketAddr, version: &str, tokens_css: Stri
 
 fn listen_url(bound: SocketAddr, token: &str) -> String {
     format!("http://{bound}/?token={token}")
+}
+
+fn listen_urls(
+    loopback: SocketAddr,
+    tailnet: Option<(Ipv4Addr, &TailnetNames)>,
+    token: &str,
+) -> Vec<String> {
+    let mut urls = vec![listen_url(loopback, token)];
+    if let Some((ip, names)) = tailnet {
+        urls.push(listen_url(
+            SocketAddr::new(IpAddr::V4(ip), loopback.port()),
+            token,
+        ));
+        if let Some(fqdn) = &names.fqdn {
+            urls.push(format!("http://{fqdn}:{}/?token={token}", loopback.port()));
+        }
+    }
+    urls
+}
+
+fn should_stop(terminated: bool, failed: bool) -> bool {
+    terminated || failed
+}
+
+fn serve_all(servers: Vec<Server>, config: &ApiConfig, token: &Token) -> Result<(), ApiError> {
+    let failed = AtomicBool::new(false);
+    let stop = || {
+        should_stop(
+            crate::signal::is_terminated(),
+            failed.load(Ordering::SeqCst),
+        )
+    };
+    let results = std::thread::scope(|scope| {
+        let handles = servers
+            .into_iter()
+            .map(|server| {
+                scope.spawn(|| {
+                    let result = serve(server, config, token, &stop);
+                    if result.is_err() {
+                        failed.store(true, Ordering::SeqCst);
+                    }
+                    result
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err(ApiError::Recv("a server thread panicked".to_string())))
+            })
+            .collect::<Vec<_>>()
+    });
+    results.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -130,6 +217,69 @@ mod tests {
             listen_url(addr("[::1]:4000"), "abc"),
             "http://[::1]:4000/?token=abc"
         );
+    }
+
+    #[test]
+    fn urls_loopback_only() {
+        assert_eq!(
+            listen_urls(addr("127.0.0.1:4000"), None, "t"),
+            vec!["http://127.0.0.1:4000/?token=t".to_string()]
+        );
+    }
+
+    #[test]
+    fn urls_with_tailnet_ip_only() {
+        let names = TailnetNames::default();
+        assert_eq!(
+            listen_urls(
+                addr("127.0.0.1:4000"),
+                Some((Ipv4Addr::new(100, 64, 0, 1), &names)),
+                "t"
+            ),
+            vec![
+                "http://127.0.0.1:4000/?token=t".to_string(),
+                "http://100.64.0.1:4000/?token=t".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn urls_with_fqdn_skip_short_name() {
+        let names = TailnetNames {
+            short: Some("box".to_string()),
+            fqdn: Some("box.tail.ts.net".to_string()),
+        };
+        let urls = listen_urls(
+            addr("127.0.0.1:4000"),
+            Some((Ipv4Addr::new(100, 64, 0, 1), &names)),
+            "t",
+        );
+        assert_eq!(urls.len(), 3);
+        assert_eq!(urls[2], "http://box.tail.ts.net:4000/?token=t");
+        assert!(urls.iter().all(|url| !url.contains("//box:")));
+        assert!(urls.iter().all(|url| url.ends_with("?token=t")));
+    }
+
+    #[test]
+    fn urls_short_name_alone_is_not_printed() {
+        let names = TailnetNames {
+            short: Some("box".to_string()),
+            fqdn: None,
+        };
+        let urls = listen_urls(
+            addr("127.0.0.1:4000"),
+            Some((Ipv4Addr::new(100, 64, 0, 1), &names)),
+            "t",
+        );
+        assert_eq!(urls.len(), 2);
+    }
+
+    #[test]
+    fn should_stop_on_either_flag() {
+        assert!(!should_stop(false, false));
+        assert!(should_stop(true, false));
+        assert!(should_stop(false, true));
+        assert!(should_stop(true, true));
     }
 
     #[test]

@@ -38,6 +38,7 @@ pub mod stream_processor;
 mod version;
 pub mod warn;
 mod web;
+mod web_tailscale;
 mod web_tokens;
 mod wire;
 
