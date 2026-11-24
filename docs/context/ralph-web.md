@@ -72,7 +72,7 @@ Loopback only is the default. `--tailscale` adds one address; see [Tailscale](#t
 
 Detection:
 - `ralph web` runs `tailscale ip`. It tries `tailscale` on PATH first. Then it tries `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
-- It never guesses the address from 100.64.0.0/10. That range is shared CGNAT space.
+- It never guesses the address from 100.64.0.0/10. That range is shared CGNAT space. The address that `tailscale ip` reports must be in 100.64.0.0/10. Any other address exits with 1 and an error that names the range.
 - It uses the first IPv4 address. It ignores IPv6 and extra addresses.
 - It exits with 1 and no fallback to loopback only when:
   - Tailscale is not installed. The error names both paths.

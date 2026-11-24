@@ -14,6 +14,8 @@ pub enum TailnetError {
     NotRunning(String),
     #[error("tailscale reported no IPv4 address")]
     NoAddress,
+    #[error("tailscale reported {0}, which is not in the Tailscale range 100.64.0.0/10")]
+    OutsideTailnetRange(Ipv4Addr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,12 +69,22 @@ fn usable(ip: &Ipv4Addr) -> bool {
     !(ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast())
 }
 
+pub(crate) fn in_tailnet_range(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 100 && (octets[1] & 0xC0) == 64
+}
+
 pub fn parse_ip_output(stdout: &str) -> Result<Ipv4Addr, TailnetError> {
-    stdout
+    let ip = stdout
         .lines()
         .filter_map(|line| line.trim().parse::<Ipv4Addr>().ok())
         .find(usable)
-        .ok_or(TailnetError::NoAddress)
+        .ok_or(TailnetError::NoAddress)?;
+    if in_tailnet_range(ip) {
+        Ok(ip)
+    } else {
+        Err(TailnetError::OutsideTailnetRange(ip))
+    }
 }
 
 fn self_field(root: &Value, key: &str) -> Option<String> {
@@ -145,6 +157,34 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn ip_outside_the_tailnet_range_is_refused() {
+        for text in ["100.63.255.255", "100.128.0.0", "10.0.0.1", "192.168.1.5"] {
+            let ip: Ipv4Addr = text.parse().unwrap();
+            match parse_ip_output(text) {
+                Err(TailnetError::OutsideTailnetRange(found)) => assert_eq!(found, ip),
+                other => panic!("{text}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn ip_inside_the_tailnet_range_is_accepted() {
+        for text in ["100.64.0.0", "100.100.100.100", "100.127.255.255"] {
+            assert_eq!(
+                parse_ip_output(text).unwrap(),
+                text.parse::<Ipv4Addr>().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn outside_range_error_names_the_range() {
+        let message = parse_ip_output("192.168.1.5").unwrap_err().to_string();
+        assert!(message.contains("192.168.1.5"), "{message}");
+        assert!(message.contains("100.64.0.0/10"), "{message}");
     }
 
     #[test]

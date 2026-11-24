@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use crate::tailnet::TailnetNames;
+use crate::tailnet::{in_tailnet_range, TailnetNames};
 
 const LOCALHOST_NAME: &str = "localhost";
 
@@ -15,6 +15,8 @@ pub enum BindError {
     NotAllowed(SocketAddr),
     #[error("refusing tailnet address {0}: it must be a unicast, specific address")]
     BadTailnetAddress(IpAddr),
+    #[error("refusing tailnet address {0}: it is not in the Tailscale range 100.64.0.0/10")]
+    OutsideTailnetRange(IpAddr),
 }
 
 impl BindPolicy {
@@ -38,6 +40,10 @@ impl BindPolicy {
             || ip == IpAddr::V4(Ipv4Addr::BROADCAST)
         {
             return Err(BindError::BadTailnetAddress(ip));
+        }
+        match ip {
+            IpAddr::V4(v4) if in_tailnet_range(v4) => {}
+            _ => return Err(BindError::OutsideTailnetRange(ip)),
         }
         let mut policy = BindPolicy::loopback();
         policy.allowed.push(ip);
@@ -238,6 +244,26 @@ mod tests {
                 Err(BindError::BadTailnetAddress(ip)),
                 "{text}"
             );
+        }
+    }
+
+    #[test]
+    fn loopback_and_refuses_addresses_outside_the_tailnet_range() {
+        for text in ["100.63.255.255", "100.128.0.0", "10.0.0.1", "192.168.1.5"] {
+            let ip: IpAddr = text.parse().unwrap();
+            assert_eq!(
+                BindPolicy::loopback_and(ip),
+                Err(BindError::OutsideTailnetRange(ip)),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn loopback_and_accepts_the_tailnet_range_edges() {
+        for text in ["100.64.0.0", "100.100.100.100", "100.127.255.255"] {
+            let ip: IpAddr = text.parse().unwrap();
+            assert!(BindPolicy::loopback_and(ip).is_ok(), "{text}");
         }
     }
 
