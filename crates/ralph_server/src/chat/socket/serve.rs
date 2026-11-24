@@ -291,6 +291,7 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
             model,
             ticket,
             phase,
+            ..
         } => workers.spawn(&SpawnArgs {
             id,
             task,
@@ -299,6 +300,7 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
             ticket: ticket.as_deref(),
             scheduled: false,
             phase: *phase,
+            target: command.spawn_target(),
         }),
         Command::Reply {
             id,

@@ -167,6 +167,18 @@ pub enum CloseStep {
     ClearMarkers,
 }
 
+pub fn lane_observations(
+    lane: bool,
+    dirty: Option<bool>,
+    unmerged: Option<usize>,
+) -> (Option<bool>, Option<usize>) {
+    if lane {
+        (None, None)
+    } else {
+        (dirty, unmerged)
+    }
+}
+
 pub fn close_clear_paths(store: &Path, id: &str) -> Vec<PathBuf> {
     let mut paths = marker_paths(store, id).to_vec();
     paths.push(status_path(store, id));
@@ -786,5 +798,26 @@ mod tests {
         assert!(close_plan(&state, true, false)
             .unwrap()
             .contains(&CloseStep::DeleteBranch));
+    }
+
+    #[test]
+    fn a_lane_hides_its_worktree_and_branch_from_the_close_plan() {
+        assert_eq!(lane_observations(true, Some(true), Some(3)), (None, None));
+        assert_eq!(
+            lane_observations(false, Some(true), Some(3)),
+            (Some(true), Some(3))
+        );
+        let mut state = close_state(Owner::Mine(TaggedSession {
+            name: "p-A".into(),
+            store: "/s".into(),
+            id: "A".into(),
+        }));
+        (state.dirty_worktree, state.unmerged_commits) =
+            lane_observations(true, Some(true), Some(3));
+        let steps = close_plan(&state, false, false).unwrap();
+        assert!(steps.iter().all(|step| !matches!(
+            step,
+            CloseStep::RemoveWorktree { .. } | CloseStep::DeleteBranch
+        )));
     }
 }
