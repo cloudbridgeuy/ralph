@@ -427,7 +427,7 @@ mod tests {
         for (block, indent) in scopes {
             for (name, slot) in [("h1", "heading1"), ("h2", "heading2"), ("h3", "heading3")] {
                 let line = format!(
-                    "{indent}--r-{name}: color-mix(in srgb, var(--r-{slot}) var(--r-head-k), var(--r-ink));\n"
+                    "{indent}--r-{name}: color-mix(in srgb, var(--r-{slot}, var(--r-ink)) var(--r-head-k), var(--r-ink));\n"
                 );
                 assert!(block.contains(&line), "missing {line}");
             }

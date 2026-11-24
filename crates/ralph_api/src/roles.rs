@@ -11,6 +11,7 @@ enum Pct {
 
 enum Value {
     Var(&'static str),
+    Heading(&'static str),
     Mix {
         a: &'static str,
         pct: Pct,
@@ -64,14 +65,6 @@ const fn tone(ansi: &'static str) -> Value {
     }
 }
 
-const fn heading(slot: &'static str) -> Value {
-    Value::Mix {
-        a: slot,
-        pct: Pct::Var("head-k"),
-        b: "ink",
-    }
-}
-
 const ROLES: [(&str, Value); 18] = [
     ("bg", Value::Var("bg-src")),
     ("ink", Value::Var("ink-src")),
@@ -95,9 +88,9 @@ const ROLES: [(&str, Value); 18] = [
     ("warn", tone("ansi-3")),
     ("info", tone("ansi-6")),
     ("bad", Value::Var("bad-src")),
-    ("h1", heading("heading1")),
-    ("h2", heading("heading2")),
-    ("h3", heading("heading3")),
+    ("h1", Value::Heading("heading1")),
+    ("h2", Value::Heading("heading2")),
+    ("h3", Value::Heading("heading3")),
 ];
 
 fn picks(theme: Theme) -> &'static Picks {
@@ -110,6 +103,9 @@ fn picks(theme: Theme) -> &'static Picks {
 fn render_value(value: &Value) -> String {
     match value {
         Value::Var(name) => format!("var(--r-{name})"),
+        Value::Heading(slot) => format!(
+            "color-mix(in srgb, var(--r-{slot}, var(--r-ink)) var(--r-head-k), var(--r-ink))"
+        ),
         Value::Mix { a, pct, b } => {
             let pct = match pct {
                 Pct::Lit(n) => format!("{n}%"),
@@ -206,32 +202,46 @@ mod tests {
         }
     }
 
-    fn resolve(theme: Theme, ansi: &[Rgb; 16], name: &str) -> Rgb {
+    fn resolve(theme: Theme, ansi: &[Rgb; 16], name: &str, headings_set: bool) -> Rgb {
         if let Some(n) = name.strip_prefix("ansi-") {
             return ansi[n.parse::<usize>().unwrap()];
         }
-        if let Some(n) = heading_source(name) {
-            return ansi[n];
-        }
         if let Some(target) = pick_target(theme, name) {
-            return resolve(theme, ansi, target);
+            return resolve(theme, ansi, target, headings_set);
         }
         let (_, value) = ROLES.iter().find(|(n, _)| *n == name).unwrap();
         match value {
-            Value::Var(v) => resolve(theme, ansi, v),
+            Value::Var(v) => resolve(theme, ansi, v, headings_set),
+            Value::Heading(slot) => {
+                let ink = resolve(theme, ansi, "ink", headings_set);
+                let head = if headings_set {
+                    ansi[heading_source(slot).unwrap()]
+                } else {
+                    ink
+                };
+                mix(head, picks(theme).head_k, ink)
+            }
             Value::Mix { a, pct, b } => {
                 let pct = match pct {
                     Pct::Lit(n) => *n,
                     Pct::Var("head-k") => picks(theme).head_k,
                     Pct::Var(_) => picks(theme).tone_k,
                 };
-                mix(resolve(theme, ansi, a), pct, resolve(theme, ansi, b))
+                mix(
+                    resolve(theme, ansi, a, headings_set),
+                    pct,
+                    resolve(theme, ansi, b, headings_set),
+                )
             }
         }
     }
 
     fn role(theme: Theme, name: &str) -> Rgb {
-        resolve(theme, &table_for(theme), name)
+        resolve(theme, &table_for(theme), name, true)
+    }
+
+    fn role_without_headings(theme: Theme, name: &str) -> Rgb {
+        resolve(theme, &table_for(theme), name, false)
     }
 
     fn assert_ratio(a: Rgb, b: Rgb, min: f64, what: &str) {
@@ -289,7 +299,7 @@ mod tests {
             let css = role_lines(theme, indent);
             for (name, slot) in [("h1", "heading1"), ("h2", "heading2"), ("h3", "heading3")] {
                 let line = format!(
-                    "{indent}--r-{name}: color-mix(in srgb, var(--r-{slot}) var(--r-head-k), var(--r-ink));\n"
+                    "{indent}--r-{name}: color-mix(in srgb, var(--r-{slot}, var(--r-ink)) var(--r-head-k), var(--r-ink));\n"
                 );
                 assert!(css.contains(&line), "{theme:?} lacks {line}");
             }
@@ -396,6 +406,21 @@ mod tests {
                 let got = contrast(role(theme, name), bg);
                 assert!(got >= 4.5, "{theme:?} {name}: {got:.2}");
                 assert!((got - want).abs() < 0.01, "{theme:?} {name}: {got:.2}");
+            }
+        }
+    }
+
+    #[test]
+    fn unset_heading_slots_fall_back_to_ink() {
+        let expected = [(Theme::Dark, 12.18), (Theme::Light, 17.47)];
+        for (theme, want) in expected {
+            let bg = role(theme, "bg");
+            let ink = role(theme, "ink");
+            for name in ["h1", "h2", "h3"] {
+                let got = role_without_headings(theme, name);
+                assert_eq!(got, ink, "{theme:?} {name}");
+                let ratio = contrast(got, bg);
+                assert!((ratio - want).abs() < 0.01, "{theme:?} {name}: {ratio:.2}");
             }
         }
     }
