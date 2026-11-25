@@ -5,7 +5,7 @@ use crate::chat::memory::{self, Store};
 use crate::chat::monitor::{Monitor, ProcessMemo};
 use crate::chat::port::{SessionPort, TurnCall};
 use crate::chat::schedule::restore_schedule;
-use crate::chat::schedule_worker::alive_worker_ids;
+use crate::chat::schedule_worker::restorable_worker_ids;
 use crate::chat::send_it::{Screen, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
@@ -215,7 +215,7 @@ pub fn serve(
         },
         roster,
     );
-    restore_schedule(&core.schedule, &alive_worker_ids(&core.store_dir));
+    restore_schedule(&core.schedule, &restorable_worker_ids(&core.store_dir));
     handle
 }
 

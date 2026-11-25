@@ -15,9 +15,9 @@ use ralph_core::schedule_command::{
 use ralph_core::watch_request::start_failure_report;
 use std::time::Duration;
 
-pub fn restore_schedule(store: &ScheduleStore, alive_workers: &[String]) {
+pub fn restore_schedule(store: &ScheduleStore, kept_workers: &[String]) {
     let tasks = store.load_all();
-    for task in plan_restore(tasks.clone(), chrono::Utc::now(), alive_workers)
+    for task in plan_restore(tasks.clone(), chrono::Utc::now(), kept_workers)
         .into_iter()
         .filter(|restored| !tasks.contains(restored))
     {

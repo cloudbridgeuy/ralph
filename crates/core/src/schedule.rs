@@ -148,13 +148,13 @@ pub fn due(tasks: &[Task], now: DateTime<Utc>) -> Vec<&Task> {
         .collect()
 }
 
-pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>, alive_workers: &[String]) -> Vec<Task> {
+pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>, kept_workers: &[String]) -> Vec<Task> {
     tasks
         .into_iter()
         .map(|task| match task.status {
             TaskStatus::Running
                 if matches!(task.kind, TaskKind::Worker { .. })
-                    && alive_workers.contains(&worker_id(&task.id)) =>
+                    && kept_workers.contains(&worker_id(&task.id)) =>
             {
                 task
             }

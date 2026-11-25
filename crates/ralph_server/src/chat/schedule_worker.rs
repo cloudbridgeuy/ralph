@@ -1,4 +1,5 @@
 use crate::chat::monitor::{Monitor, POLL};
+use crate::cursor_owner::resumable_ids;
 use crate::warn::warn_if_err;
 use crate::watches::locked;
 use crate::workers::{running_workers, SpawnArgs, Workers};
@@ -31,11 +32,17 @@ impl Drop for Starting {
     }
 }
 
-pub fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
+fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
     running_workers(store_dir)
         .into_iter()
         .map(|worker| worker.id)
         .collect()
+}
+
+pub fn restorable_worker_ids(store_dir: &Path) -> Vec<String> {
+    let mut ids = alive_worker_ids(store_dir);
+    ids.extend(resumable_ids(store_dir));
+    ids
 }
 
 pub fn tick_workers(monitor: &Monitor, starts: &mut Vec<std::thread::JoinHandle<()>>) {
@@ -182,6 +189,8 @@ mod tests {
     use crate::chat::keepalive::Stamp;
     use crate::chat::memory::Store;
     use crate::chat::monitor::ProcessMemo;
+    use crate::chat::schedule::restore_schedule;
+    use crate::cursor_owner::write_file;
     use crate::schedule_store::ScheduleStore;
     use crate::watches::Watches;
     use crate::worker_mcp::Inbox;
@@ -189,6 +198,8 @@ mod tests {
     use ralph_core::chat_process::{FileStamp, UsageTail};
     use ralph_core::chat_status::Status;
     use ralph_core::program_status::Phase;
+    use ralph_core::schedule::TaskKind;
+    use ralph_core::worker::HandoffFiles;
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -236,6 +247,46 @@ mod tests {
             phase: Mutex::new(Phase::Turn),
             hold: Mutex::new(None),
         }
+    }
+
+    fn running_worker(id: &str) -> Task {
+        Task {
+            id: id.to_string(),
+            kind: TaskKind::Worker {
+                brief: "do it".to_string(),
+            },
+            follow_up: None,
+            at: chrono::Utc::now() - chrono::Duration::minutes(5),
+            timeout_secs: None,
+            status: TaskStatus::Running,
+            late: false,
+            deadline: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            repeat: None,
+        }
+    }
+
+    #[test]
+    fn restore_keeps_a_running_worker_with_a_saved_headless_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().join("schedule"));
+        store.save(&running_worker("gone")).unwrap();
+        store.save(&running_worker("saved")).unwrap();
+        let session = HandoffFiles::claude(dir.path(), "sched-saved").session;
+        write_file(&session, "{}").unwrap();
+        restore_schedule(&store, &restorable_worker_ids(dir.path()));
+        let mut rows: Vec<(String, TaskStatus)> = store
+            .load_all()
+            .into_iter()
+            .map(|task| (task.id, task.status))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            rows,
+            [
+                ("gone".to_string(), TaskStatus::Pending),
+                ("saved".to_string(), TaskStatus::Running),
+            ]
+        );
     }
 
     #[test]
