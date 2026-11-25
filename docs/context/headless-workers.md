@@ -321,6 +321,25 @@ A 1 s poll of `activity/<id>` measured the longest silence while a worker was `r
 
 Neither harness sends activity while a tool call runs, so silence equals the tool's run time. The 300 s default stays: it is above every observed silence outside tool calls (132 s at most) by more than 2x, and a tool call longer than 300 s costs one `check` message per episode.
 
+## Worker protocol: `report`, `set_status` and turn end
+
+Workers have two `ralph-worker` tools (`crates/core/src/worker/tools.rs`, `crates/core/src/worker/status.rs`):
+
+- `report(status, text)`: sends a message to the chat inbox and starts a chat turn. Its three statuses are `done` (task finished), `blocked` (the worker cannot go on and only the person can unblock it), and `question` (the worker needs a decision only the person can make). Waiting on the worker's own subagents, checks or builds is not `blocked`: the worker calls `set_status` and keeps waiting in the same turn (`WORKER_PROMPT`, `SCHEDULED_WORKER_PROMPT`, `REPORT_REMINDER` and the `report` tool description).
+- `set_status(text)`: appends a one-sentence progress update (up to 120 characters, no controls or newlines) to `<store>/status/<id>` (`<rfc3339>\n<text>\n` pairs, keeping the last `STATUS_HISTORY = 5` entries). It costs no chat turn, is read by `/workers` and stage worker facts, and never exits a turn.
+
+Turn-end rule: a turn may end without a `report` call only when the harness reports work in flight. Otherwise the harness sends `REPORT_REMINDER` once (offering `report` only, never `set_status` as an exit), and if that turn also ends without a report, writes `unreported/<id>` (and `waiting/<id>`), which `worker_check` turns into a `check` report ("stopped without calling report").
+
+Measured per-harness turn-end behaviour (Q2: non-Claude harnesses rely on prompt text only; any new harness work-in-flight signal is a separate ticket):
+
+| Harness | Work-in-flight turn-end signal | Unreported turn-end path |
+| --- | --- | --- |
+| `claude-tmux` | `Stop` hook payload `background_tasks` non-empty -> `StopDecision::AllowBackground` (`ActivityState::Background`, no reminder, markers untouched; `crates/core/src/worker/hooks.rs`) | First stop blocks once with `REPORT_REMINDER`; second unreported stop (`stop_hook_active: true`) writes `unreported/<id>` |
+| `claude` | None decoded (`crates/core/src/worker/claude.rs` + `codex::turns::Turns`) | `result` without `mcp__ralph-worker__report` triggers one `REPORT_REMINDER` turn, then `unreported/<id>` and `waiting/<id>` |
+| `codex` | None decoded for turn end (`collabAgentToolCall` subagent frames are decoded for usage attribution only; `crates/core/src/worker/codex/turns.rs`) | `turn/completed` without a completed `ralph-worker` `report` call triggers one `REPORT_REMINDER` turn, then `unreported/<id>` and `waiting/<id>` |
+| `cursor` (print and ACP), `agy` (ACP) | None decoded (`crates/core/src/worker/cursor_print.rs`, `crates/core/src/worker/acp/turns.rs`) | Turn end without `reported/<id>` triggers one `REPORT_REMINDER` turn, then `unreported/<id>` and `waiting/<id>` (verified on `agy acp`: ending a turn while a background command is running ends the ACP prompt and triggers `REPORT_REMINDER`) |
+| `opencode` | None decoded (`crates/core/src/worker/opencode_http/turns.rs`) | `session.execution.*` without `reported/<id>` triggers one `REPORT_REMINDER` turn, then `unreported/<id>` and `waiting/<id>` |
+
 ## Worker lifecycle log
 
 Each worker spawn, reply, report and close appends one line to `<store>/analytics/workers.jsonl`. The store is the canonical store path, the same string as `store` in `usage.jsonl` rows. The file holds no cost, tokens or session id; join on `store` and `worker_id` to read them from `usage.jsonl`. Every line is one JSON object written with one `write_all` on an `O_APPEND` file (`outcome_log::append`), with no lock. A reader must skip a torn last line. A write failure only warns and never fails the spawn or close. The pure builders and the encoder are `crates/core/src/worker/outcome_log.rs`. Unknown values are `null`, never `0`.
@@ -343,7 +362,7 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 - `files`, `insertions` and `deletions` come from one `git diff --numstat <base_sha>..<branch>` run at close, before the branch is deleted. `base_sha` is the spawn row value, kept in the spawn record. After a respawn the range covers the whole branch and matches `commit_count`. This is the worker's own committed range, so it still shows the work after the branch merged into the base branch. The diff is two-dot: it compares the `base_sha` tree with the branch tip. If the worker branch was rebased onto a newer base, or the base branch was merged into it, the counts also include every commit that landed on the base in between, so they overcount. Uncommitted and untracked changes are not counted. A binary file counts as one file and 0 lines. All three are `null` when the spawn record or its `base_sha` is missing (a worker spawned by an older release), `base_sha` is not 7 to 40 or 64 hex characters, the branch is gone, or git fails. They are `0` only when the branch has no changed files. The close row of an older release lacks them: read them as `null`. There is no polling: the diff runs once per close.
 - `duration_s` is the close time minus `spawn_at`, the time in the spawn record. Both are `null` when the record is missing or unreadable.
 - `reply` is written after the send succeeds, by `Workers::reply` (`/reply`, `reply_worker`). A nudge writes no row. `harness` is the running harness, `claude` for a tmux worker. `via_permission` is true when the reply answered a permission request, by request id or because the worker awaited one; an interrupt is never a permission answer.
-- `report` is written by the worker MCP server after it posts the report to the inbox. `seq` is the report number in that server process. A report posted by another program (`ralph inbox post`, a thread or version warning) writes no row.
+- `report` is written by the worker MCP server after it posts the report to the inbox. `seq` is the report number in that server process. A report posted by another program (`ralph inbox post`, a thread or version warning) writes no row. `set_status` writes to `<store>/status/<id>`, not to `workers.jsonl`.
 - `text_bytes` is the UTF-8 byte length of the text. The row holds no text. For a report it counts the text as posted, with the attached change summary when there is one.
 - A close that only removes leftover markers writes no row.
 
