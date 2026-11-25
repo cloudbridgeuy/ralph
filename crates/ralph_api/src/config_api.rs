@@ -29,9 +29,34 @@ fn mask_path(word: &str) -> String {
     format!("{lead}{PATH_MARK}{punct}{}", mask_path(tail))
 }
 
+fn redact_quoted(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut inside = false;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (inside, c) {
+            (false, '"') => {
+                inside = true;
+                out.push('"');
+                out.push_str("[redacted]");
+            }
+            (false, other) => out.push(other),
+            (true, '\\') => {
+                chars.next();
+            }
+            (true, '"') => {
+                inside = false;
+                out.push('"');
+            }
+            (true, _) => {}
+        }
+    }
+    out
+}
+
 pub(crate) fn why_text(display: &str) -> String {
     let first = display.lines().next().unwrap_or_default();
-    first
+    redact_quoted(first)
         .split(' ')
         .map(mask_path)
         .collect::<Vec<_>>()
@@ -229,7 +254,43 @@ mod tests {
     #[test]
     fn why_strips_every_path_and_quoted_paths() {
         let why = why_text("a /one/two, b \"/three/four\" c (/five)");
-        assert_eq!(why, "a <path>, b \"<path>\" c (<path>)");
+        assert_eq!(why, "a <path>, b \"[redacted]\" c (<path>)");
+    }
+
+    #[test]
+    fn typed_value_errors_never_quote_the_value() {
+        let (g, s) = setup(None, Some("[web]\nport = \"sk-abc123\"\n"));
+        let response = respond(&g, &s, no_env);
+        assert_eq!(response.status, 422);
+        assert!(
+            !text(&response).contains("sk-abc123"),
+            "{}",
+            text(&response)
+        );
+    }
+
+    #[test]
+    fn parse_errors_never_quote_a_secret_line() {
+        let (g, s) = setup(None, Some("[claude]\nshell = \"sk-abc123\" oops\n"));
+        let response = respond(&g, &s, no_env);
+        assert_eq!(response.status, 422);
+        assert!(
+            !text(&response).contains("sk-abc123"),
+            "{}",
+            text(&response)
+        );
+    }
+
+    #[test]
+    fn why_redacts_quoted_spans() {
+        assert_eq!(
+            why_text("invalid type: string \"sk-abc\", expected u16"),
+            "invalid type: string \"[redacted]\", expected u16"
+        );
+        assert_eq!(
+            why_text("bad \"a\\\"b\" then \"c\""),
+            "bad \"[redacted]\" then \"[redacted]\""
+        );
     }
 
     #[test]
