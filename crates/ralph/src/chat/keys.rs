@@ -17,10 +17,14 @@ use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
+use ralph_core::chat_thread::config_root;
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
-use ralph_core::worker::{blocked_path, oldest_worker_answer, Choice, HANDOFF_TIMEOUT};
+use ralph_core::worker::{
+    blocked_path, key_answer_report, oldest_worker_answer, Choice, GrantsChange, HANDOFF_TIMEOUT,
+};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::Monitor;
+use ralph_server::config::{saved_grants, GRANTS_FILE};
 use ralph_server::subprocess::OutputGate;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::locked;
@@ -81,6 +85,48 @@ pub(super) enum Step {
     ClearDraft,
     OpenEditor,
     Continue,
+}
+
+pub(super) fn answer_oldest_worker(monitor: &Monitor, choice: Choice) -> Option<String> {
+    let store = &monitor.store_dir;
+    let markers: Vec<(String, u128, String)> = monitor
+        .status()
+        .workers
+        .into_iter()
+        .filter_map(|worker| {
+            let path = blocked_path(store, &worker.id);
+            let since = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok()?;
+            let since = since.duration_since(UNIX_EPOCH).ok()?.as_millis();
+            Some((worker.id, since, std::fs::read_to_string(path).ok()?))
+        })
+        .collect();
+    let answer = oldest_worker_answer(
+        markers
+            .iter()
+            .map(|(id, since, marker)| (id.as_str(), *since, marker.as_str())),
+        choice,
+    )?;
+    let before = saved_grants(store);
+    let sent = ralph_server::workers::answer_permission(
+        store,
+        HANDOFF_TIMEOUT,
+        &answer.worker,
+        &answer.request,
+        &answer.option,
+    );
+    let path = config_root(store).join(GRANTS_FILE).display().to_string();
+    Some(key_answer_report(
+        &answer.worker,
+        choice,
+        sent.map_err(|error| error.to_string()),
+        GrantsChange {
+            before,
+            after: saved_grants(store),
+            path: &path,
+        },
+    ))
 }
 
 pub(super) fn exit_for(signal: Signal, buffer: &str) -> Step {
@@ -211,38 +257,6 @@ impl Keys<'_> {
         queue
     }
 
-    fn answer_oldest_worker(&self, choice: Choice) -> Option<String> {
-        let store = &self.monitor.store_dir;
-        let markers: Vec<(String, u128, String)> = self
-            .monitor
-            .status()
-            .workers
-            .into_iter()
-            .filter_map(|worker| {
-                let path = blocked_path(store, &worker.id);
-                let since = std::fs::metadata(&path)
-                    .and_then(|meta| meta.modified())
-                    .ok()?;
-                let since = since.duration_since(UNIX_EPOCH).ok()?.as_millis();
-                Some((worker.id, since, std::fs::read_to_string(path).ok()?))
-            })
-            .collect();
-        let answer = oldest_worker_answer(
-            markers
-                .iter()
-                .map(|(id, since, marker)| (id.as_str(), *since, marker.as_str())),
-            choice,
-        )?;
-        let sent = ralph_server::workers::answer_permission(
-            self.store,
-            HANDOFF_TIMEOUT,
-            &answer.worker,
-            &answer.request,
-            &answer.option,
-        );
-        Some(sent.unwrap_or_else(|error| error.to_string()))
-    }
-
     fn routed(&self, text: &str) -> Route {
         let status = self.monitor.status();
         route_input(
@@ -280,7 +294,7 @@ impl Keys<'_> {
                 self.gate
                     .answer_oldest(choice)
                     .map(|outcome| outcome.report(self.store))
-                    .or_else(|| self.answer_oldest_worker(choice))
+                    .or_else(|| answer_oldest_worker(self.monitor, choice))
             }),
             _ => None,
         };
