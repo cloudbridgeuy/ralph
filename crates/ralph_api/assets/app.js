@@ -73,7 +73,7 @@ function pagerDirection(event, typing) {
 
 function isTyping(target) {
   const tag = target && target.tagName;
-  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || Boolean(target && target.isContentEditable);
+  return tag === "INPUT" || tag === "BUTTON" || tag === "SELECT" || tag === "TEXTAREA" || Boolean(target && target.isContentEditable);
 }
 
 function crumbParts(thread, path) {

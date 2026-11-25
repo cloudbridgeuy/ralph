@@ -306,7 +306,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - The label reads `entries A–B of N`, where N is the size of the node range.
   - An entry row opens in place: it gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`, and a detail row below holds the rendered text. Click, Enter or Space toggles it. Only one row is open at a time.
   - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`.
-  - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `select`, `textarea` and editable fields, and with Ctrl, Meta or Alt.
+  - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `button`, `select`, `textarea` and editable fields (a focused tree row is a `button`), and with Ctrl, Meta or Alt.
 - Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
 - States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node. A slow detail load is dropped if you select another node first.

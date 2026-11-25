@@ -457,7 +457,7 @@ fn an_entry_row_is_keyboard_reachable() {
 }
 
 #[test]
-fn the_pager_binds_bracket_keys_and_ignores_form_fields() {
+fn the_pager_binds_bracket_keys_and_ignores_form_fields_and_buttons() {
     let body = script();
     assert_eq!(
         body.matches(r#"document.addEventListener("keydown""#)
@@ -472,7 +472,7 @@ fn the_pager_binds_bracket_keys_and_ignores_form_fields() {
     assert!(keys.contains(r#"event.key === "[""#));
     assert!(keys.contains(r#"event.key === "]""#));
     let typing = function_body(&body, "function isTyping(");
-    for tag in ["INPUT", "SELECT", "TEXTAREA"] {
+    for tag in ["INPUT", "SELECT", "TEXTAREA", "BUTTON"] {
         assert!(typing.contains(&format!(r#""{tag}""#)));
     }
     assert!(typing.contains("isContentEditable"));
