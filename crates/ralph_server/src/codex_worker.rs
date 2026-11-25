@@ -48,6 +48,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod pipes;
 mod queue;
+mod requests;
 pub(crate) mod resume;
 mod sandbox;
 mod verify;
@@ -268,6 +269,7 @@ struct Pump {
     interrupt_call: Option<u64>,
     permissions: Arc<Permissions>,
     mode: PermissionMode,
+    scheduled: bool,
     selection: Selection,
     pending_record: Option<(PathBuf, SessionRecord)>,
     inbox: Inbox,
@@ -367,34 +369,6 @@ impl Pump {
             actions = self
                 .turns
                 .signal(failed, self.closing.load(Ordering::SeqCst));
-        }
-    }
-
-    fn server_request(&mut self, id: Value, method: &str, params: &Value) -> Result<(), Stop> {
-        let stale = self.turns.is_stale_request(method, params);
-        let Some(approval) = classify(method, params).filter(|_| !stale) else {
-            return self.wire.send_line(&reject_server_request(&id, method));
-        };
-        let auto = Some(self.mode)
-            .filter(|mode| *mode == PermissionMode::Yolo)
-            .and_then(|_| yolo_option(&approval));
-        match auto {
-            Some(option) => {
-                let body = response_body(approval.kind, &option.option_id);
-                self.wire.send_line(&answer_server_request(&id, &body))
-            }
-            None => {
-                let content = BlockedContent {
-                    request_id: id.as_str().map_or_else(|| id.to_string(), str::to_string),
-                    ..approval.content
-                };
-                let reply = CodexReply {
-                    id,
-                    kind: approval.kind,
-                };
-                self.permissions.enqueue(reply, content);
-                Ok(())
-            }
         }
     }
 
@@ -563,7 +537,7 @@ impl CodexWorker {
         let (selection, open, mode) = match &launch {
             Launch::Fresh(_) => {
                 let codex = configured_codex();
-                let sandbox = configured_sandbox(&codex, &request.worktree)?;
+                let sandbox = configured_sandbox(&codex, &request.worktree, request.scheduled)?;
                 let selection = resolve_selection(
                     request.model.as_deref(),
                     codex.model.as_deref(),
@@ -576,7 +550,8 @@ impl CodexWorker {
                 (selection, open, configured_mode())
             }
             Launch::Resume(record) => {
-                let sandbox = configured_sandbox(&configured_codex(), &record.cwd)?;
+                let sandbox =
+                    configured_sandbox(&configured_codex(), &record.cwd, request.scheduled)?;
                 (
                     record_selection(record),
                     (
@@ -622,6 +597,7 @@ impl CodexWorker {
             interrupt_call: None,
             permissions,
             mode,
+            scheduled: request.scheduled,
             selection,
             pending_record,
             inbox: Inbox::new(request.inbox.clone()),

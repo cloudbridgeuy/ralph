@@ -45,12 +45,12 @@ The argv is `/bin/sh -c <isolate> <shell> <flags> <restore> <program> <args...>`
 
 ## Scheduled workers: unattended permissions
 
-A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. The claude host calls them. The other headless hosts do not call them yet; until they do, a scheduled worker there still queues requests for a person.
+A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. The claude and codex hosts call them. The other headless hosts do not call them yet; until they do, a scheduled worker there still queues requests for a person.
 
 | Harness | Rule | Result |
 | --- | --- | --- |
 | claude | `unattended_claude_answer`: allow a read-only mcptools call, deny every other request. `headless_claude_args` forces native mode `auto` and adds `--disallowedTools` for git push, gh pr, gh api, and for mcptools `execute` and `call_tool` when mcptools is copied (the same list as claude-tmux, decision A of GUZ-1786). | deny line on stdio |
-| codex | `unattended` picks the first `reject_once` option (`decline`). `scheduled_sandbox_mode` never goes wider than `workspace-write`: unset or `danger-full-access` becomes `workspace-write`, `read-only` stays. | decline |
+| codex | `unattended` picks the first `reject_once` option (`decline`, or `cancel` when codex offers no `decline`); with none, the host rejects the request. `scheduled_sandbox_mode` never goes wider than `workspace-write`: unset or `danger-full-access` becomes `workspace-write`, `read-only` stays. | decline, cancel or reject |
 | cursor, agy (ACP) | `unattended` picks the first `reject_once` option; with none, the host answers `Cancelled`. | reject or cancel |
 | opencode | `unattended` picks the `reject_once` option (`reject`). | reject |
 

@@ -50,10 +50,13 @@ pub fn headless_claude_args(options: &ClaudeArgs, scheduled: bool) -> Vec<String
     args
 }
 
-pub fn scheduled_sandbox_mode(configured: Option<SandboxMode>) -> SandboxMode {
-    match configured {
-        Some(SandboxMode::ReadOnly) => SandboxMode::ReadOnly,
-        _ => SandboxMode::WorkspaceWrite,
+pub fn scheduled_sandbox_mode(
+    scheduled: bool,
+    configured: Option<SandboxMode>,
+) -> Option<SandboxMode> {
+    match (scheduled, configured) {
+        (false, _) | (true, Some(SandboxMode::ReadOnly)) => configured,
+        (true, _) => Some(SandboxMode::WorkspaceWrite),
     }
 }
 
@@ -661,7 +664,12 @@ mod tests {
             ),
             (Some(SandboxMode::ReadOnly), SandboxMode::ReadOnly),
         ] {
-            assert_eq!(scheduled_sandbox_mode(configured), want, "{configured:?}");
+            assert_eq!(
+                scheduled_sandbox_mode(true, configured),
+                Some(want),
+                "{configured:?}"
+            );
+            assert_eq!(scheduled_sandbox_mode(false, configured), configured);
         }
     }
 }
