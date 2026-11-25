@@ -1,6 +1,6 @@
 # ralph web Command
 
-`ralph web [--store <DIR>] [--port <N>] [--tailscale]` serves a local HTTP API on 127.0.0.1. With `--tailscale` it also serves on the Tailscale IP of the machine (see [Tailscale](#tailscale)). It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `POST /api/render` and `GET /tokens.css`.
+`ralph web [--store <DIR>] [--port <N>] [--tailscale]` serves a local HTTP API on 127.0.0.1. With `--tailscale` it also serves on the Tailscale IP of the machine (see [Tailscale](#tailscale)). It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `GET /api/config`, `POST /api/render` and `GET /tokens.css`.
 
 ## Code Locations
 
@@ -138,9 +138,25 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 The three memory routes read the chat store in `--store` (`thread=main`, the default) or a thread under `threads/<name>`. `thread` is `main` or a valid thread name. Each request reads the files once and never caches them. A thread list is read for each request.
 
 - Exposed: `log.jsonl` entries (role, time, full text), `tree.jsonl` summaries, thread names and their parked and merged flags.
-- Not exposed: `tags.jsonl`, analytics, `history.jsonl`, config, paths.
+- Not exposed: `tags.jsonl`, analytics, `history.jsonl`, paths. Config has its own [route](#config-route-and-screen).
 - The read takes no lock and writes nothing: no `LOCK`, no index, no new directory. It uses `ralph_server::chat::memory::peek`, so a half-written last log line and a tree node past the log are not shown.
 - Code: `crates/ralph_api/src/memory_api.rs` (pure response builders and the thin read), `memory/query.rs` (query parser), `memory/json.rs` (JSON bodies).
+
+## Config route and screen
+
+`GET /api/config` reads the merged `config.toml` (global file, then the store file, then environment overrides) once for each request and writes nothing. It takes no parameters.
+
+| Answer | When |
+|--------|------|
+| 200 `{"store":"<name>","rows":[{"section","key","value","source","redacted"}]}` | the config loads; `store` is the last path component; `source` is `default`, `global`, `store` or `env` |
+| 404 `{"error":"store not found"}` | the store directory is missing |
+| 422 `{"error":"config invalid","why":"<text>"}` | the config has an error; `why` is the first line with every absolute path replaced by `<path>` |
+| 500 `{"error":"config unavailable"}` | the file cannot be read or serialised |
+| other method | 405 with `Allow: GET` |
+
+Redaction: a row has `redacted: true` and no value when its key is on the redact list (shells, editor, file and directory paths, MCP servers, prompts, permission and sandbox keys), or when its key is not on the safe list and the value looks sensitive (a path, a URL, `@`, `key=` or `token=`). The rule is `crates/ralph_server/src/config/redact.rs`. The handler is `crates/ralph_api/src/config_api.rs`.
+
+The shell shows the route as the second tab, `#/config`. It draws one `r-box` for each section, with the row count in the border. Each row is an `r-kv` line with the key, the value and the source as a pill (muted for `default`). A redacted row shows a muted `hidden` mark. No rows give an `r-empty` "No settings". A failed load gives an `r-error` "Config did not load" with the `why` text and a retry button. The contract is `crates/ralph_api/tests/config_screen_contract.rs`.
 
 ## Embedded assets
 
