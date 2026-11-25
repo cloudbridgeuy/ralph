@@ -40,7 +40,7 @@ function clampAfter(after, total, size) {
 }
 
 function memoryCtx(hashState) {
-  return { thread: hashState.thread, after: hashState.after, node: hashState.node };
+  return { thread: hashState.thread };
 }
 
 function olderAfter(after, size, floor) {

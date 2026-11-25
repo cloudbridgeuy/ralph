@@ -136,14 +136,15 @@ fn the_entries_table_opens_on_the_newest_page_unless_the_hash_sets_after() {
 }
 
 #[test]
-fn the_memory_ctx_carries_the_hash_after_never_the_resolved_one() {
+fn the_memory_ctx_carries_only_the_thread() {
     let body = script();
     assert!(body.contains("function memoryCtx(hashState)"));
     assert!(body.contains("const ctx = memoryCtx(hashState);"));
-    assert!(!body.contains("const ctx = { thread: state.thread, after: state.after"));
-    assert!(body.contains(
-        "return { thread: hashState.thread, after: hashState.after, node: hashState.node };"
-    ));
+    assert!(body.contains("return { thread: hashState.thread };"));
+    assert!(!body.contains("after: hashState.after"));
+    assert!(!body.contains("hashState.after, node"));
+    assert!(!body.contains("ctx.after"));
+    assert!(!body.contains("ctx.node"));
 }
 
 #[test]
