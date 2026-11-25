@@ -1,5 +1,6 @@
 use super::*;
 use crate::worker_verify::{step, Checks};
+use ralph_core::worker::ChildSession;
 use ralph_core::worker::{
     cancel_check, permission_check, prompt_check, thread_archive_params,
     verify_thread_start_params, version_detail, PermissionSetup, TurnSummary, VerifiedAgents,
@@ -211,7 +212,7 @@ pub(crate) fn verify(live: Option<&Path>, dir: &Path, checks: &Checks) -> Option
     command
         .args(["app-server", "--listen", "stdio://"])
         .current_dir(dir);
-    let spawned = spawn_piped(command)
+    let spawned = spawn_piped(command, ChildSession::Group)
         .map_err(|error| format!("could not start `{CODEX_COMMAND} app-server`: {error}"));
     let (mut child, stdin, stdout, stderr) = step(checks, "spawn", spawned, |_| {
         format!("`{CODEX_COMMAND} app-server` started")

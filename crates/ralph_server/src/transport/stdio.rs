@@ -1,16 +1,17 @@
 use crate::cursor_owner::{signal_group, TERM_GRACE, TERM_POLL};
-use crate::subprocess::{register_group, unregister_group};
+use crate::subprocess::{register_group, set_session, unregister_group};
+use ralph_core::worker::ChildSession;
 use std::io;
-use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 pub(crate) fn spawn_piped(
     mut command: Command,
+    session: ChildSession,
 ) -> Result<(Child, ChildStdin, ChildStdout, ChildStderr), io::Error> {
+    set_session(&mut command, session);
     let mut child = command
-        .process_group(0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

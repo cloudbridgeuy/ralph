@@ -81,7 +81,7 @@ pub fn current_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-pub fn user_home_dir() -> io::Result<PathBuf> {
+fn passwd_field(field: fn(&libc::passwd) -> *mut libc::c_char) -> io::Result<Vec<u8>> {
     let uid = current_uid();
     let mut pwd = MaybeUninit::<libc::passwd>::uninit();
     let mut buf = vec![0u8; 4096];
@@ -105,23 +105,32 @@ pub fn user_home_dir() -> io::Result<PathBuf> {
         }
         if result.is_null() {
             return Err(io::Error::other(format!(
-                "cannot find home directory for uid {uid}"
+                "cannot find the passwd entry for uid {uid}"
             )));
         }
-        let pw_dir = unsafe { (*result).pw_dir };
-        if pw_dir.is_null() {
-            return Err(io::Error::other(format!(
-                "empty home directory for uid {uid}"
-            )));
+        let text = field(unsafe { &*result });
+        if text.is_null() {
+            return Ok(Vec::new());
         }
-        let bytes = unsafe { CStr::from_ptr(pw_dir).to_bytes() };
-        if bytes.is_empty() {
-            return Err(io::Error::other(format!(
-                "empty home directory for uid {uid}"
-            )));
-        }
-        return Ok(PathBuf::from(OsStr::from_bytes(bytes)));
+        return Ok(unsafe { CStr::from_ptr(text).to_bytes() }.to_vec());
     }
+}
+
+pub fn user_home_dir() -> io::Result<PathBuf> {
+    let home = passwd_field(|entry| entry.pw_dir)?;
+    if home.is_empty() {
+        return Err(io::Error::other(format!(
+            "empty home directory for uid {}",
+            current_uid()
+        )));
+    }
+    Ok(PathBuf::from(OsStr::from_bytes(&home)))
+}
+
+pub fn user_login_shell() -> Option<String> {
+    passwd_field(|entry| entry.pw_shell)
+        .ok()
+        .and_then(|shell| String::from_utf8(shell).ok())
 }
 
 pub fn default_runtime_root() -> io::Result<PathBuf> {

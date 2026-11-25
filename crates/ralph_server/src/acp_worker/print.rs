@@ -5,11 +5,12 @@ use crate::cursor_owner::{claim_owner, report_start_warning, write_file, write_i
 use crate::cursor_sweep::sweep_worker_server;
 use crate::cursor_usage::{record_cursor_usage, CursorTurn};
 use crate::subprocess::unregister_group;
-use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
+use crate::transport::stdio::{stop_child, stop_groups};
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
+use crate::worker_shell::spawn_in_shell;
 use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
@@ -334,7 +335,7 @@ impl Shared {
             .args(args)
             .current_dir(&self.run.worktree)
             .envs([inbox_env(&self.run.store)]);
-        let (mut child, mut stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
+        let (mut child, mut stdin, stdout, stderr) = spawn_in_shell(command).map_err(|e| {
             *locked(&self.proc) = on_release();
             format!("could not start `{} -p`: {e}", CURSOR_AGENT.command)
         })?;
