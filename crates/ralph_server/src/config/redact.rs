@@ -112,9 +112,7 @@ pub fn listing(key: &str) -> Listing {
 }
 
 fn text_is_sensitive(text: &str) -> bool {
-    text.starts_with('/')
-        || text.starts_with('~')
-        || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
+    text.contains(['/', '~']) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
 fn value_is_sensitive(value: &Value) -> bool {
@@ -271,6 +269,22 @@ mod tests {
             assert!(redacts("theme.name", &json!(text), false), "{text}");
         }
         assert!(redacts("web.ansi_dark", &json!(["#fff", "/etc"]), false));
+    }
+
+    #[test]
+    fn safe_keys_redact_paths_anywhere_in_the_value() {
+        for (key, value) in [
+            (
+                "changes.diff_args",
+                json!(["--git-dir=/Users/me/work/.git"]),
+            ),
+            ("chat.name", json!("work in ~/me")),
+            ("web.font", json!("a/b")),
+            ("chat.worker_base", json!("--base=/Users/me")),
+            ("mermaid.style.node", json!(["x", "y=/etc/z"])),
+        ] {
+            assert!(redacts(key, &value, false), "{key}");
+        }
     }
 
     #[test]
