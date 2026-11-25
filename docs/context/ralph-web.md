@@ -301,6 +301,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - A leaf root node is drawn as the entry (`#i role`, time, first line), not as a node. It opens to show the full text.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
   - A block with no summary shows `no summary yet` in its row.
+  - Row fills: the fill is a `::before` on the `li`, placed in grid row 1 across all columns, so it never covers the child group. A hovered row gets `--r-hover` and a selected row gets `--r-selected`, both with a 2px `--r-accent` bar on the left. Selected wins over hover. A row whose child group is hovered is not drawn as hovered. The `::before` has `align-self: stretch`: the grid has `align-items: center`, which gave the empty pseudo-element a height of 0, so the old selected fill did not show.
 - Entries and paging:
   - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
   - The label reads `entries A–B of N`. A and B are absolute 0-based inclusive positions. With no node, N is the entry count. In a node, N is the node range `lo–hi-1`, as in the tree labels, so node 32-63 on its first page reads `entries 32–51 of 32–63`. An empty page reads `entries 0 of N` with the same N.

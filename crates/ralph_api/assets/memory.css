@@ -72,10 +72,19 @@
   color: var(--r-muted);
 }
 
-r-tree li[aria-selected="true"]::before {
+r-tree li[role="treeitem"]::before {
   content: "";
   grid-column: 1 / -1;
   grid-row: 1;
+  align-self: stretch;
+}
+
+r-tree li[role="treeitem"]:not([aria-selected="true"]):hover:not(:has(> ul[role="group"]:hover))::before {
+  background: var(--r-hover);
+  box-shadow: inset 2px 0 0 var(--r-accent);
+}
+
+r-tree li[aria-selected="true"]::before {
   background: var(--r-selected);
   box-shadow: inset 2px 0 0 var(--r-accent);
 }

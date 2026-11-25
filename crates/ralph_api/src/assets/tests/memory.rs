@@ -127,12 +127,47 @@ fn tabs_mark_the_current_thread_with_the_accent_bar() {
     assert_declares(&css, ".tabs", "white-space: nowrap;");
 }
 
+const ROW_BAR: &str = "box-shadow: inset 2px 0 0 var(--r-accent);";
+const ROW_SELECTED: &str = "r-tree li[aria-selected=\"true\"]::before";
+const ROW_HOVER: &str = "r-tree li[role=\"treeitem\"]:not([aria-selected=\"true\"]):hover:not(:has(> ul[role=\"group\"]:hover))::before";
+const ROW_BASE: &str = "r-tree li[role=\"treeitem\"]::before";
+
 #[test]
 fn the_selected_tree_row_has_the_selected_fill_and_accent_bar() {
     let css = memory_css();
-    let selected = "r-tree li[aria-selected=\"true\"]::before";
-    assert_declares(&css, selected, "background: var(--r-selected);");
-    assert_declares(&css, selected, "var(--r-accent)");
+    assert_declares(&css, ROW_SELECTED, "background: var(--r-selected);");
+    assert_declares(&css, ROW_SELECTED, ROW_BAR);
+}
+
+#[test]
+fn a_hovered_tree_row_has_the_hover_fill_and_the_same_accent_bar() {
+    let css = memory_css();
+    assert_declares(&css, ROW_HOVER, "background: var(--r-hover);");
+    assert_declares(&css, ROW_HOVER, ROW_BAR);
+    assert!(!rule_body(&css, ROW_HOVER).unwrap().contains("--r-selected"));
+}
+
+#[test]
+fn the_row_fill_cannot_cover_the_child_group_or_collapse() {
+    let css = memory_css();
+    assert_declares(&css, ROW_BASE, "content: \"\";");
+    assert_declares(&css, ROW_BASE, "grid-column: 1 / -1;");
+    assert_declares(&css, ROW_BASE, "grid-row: 1;");
+    assert_declares(&css, ROW_BASE, "align-self: stretch;");
+    assert!(ROW_HOVER.contains(":not(:has(> ul[role=\"group\"]:hover))"));
+    assert!(ROW_HOVER.contains(":not([aria-selected=\"true\"])"));
+}
+
+#[test]
+fn the_selected_selector_matches_the_attribute_the_script_sets_on_the_row() {
+    let js = script();
+    assert!(ROW_SELECTED.contains("li[aria-selected=\"true\"]"));
+    assert!(js.contains("item.setAttribute(\"aria-selected\", \"true\");"));
+    assert!(js.contains("function markSelected(list, item)"));
+    assert!(js.contains("markSelected(tree, item);"));
+    assert!(js.contains("markSelected(list, item);"));
+    assert!(js.contains("const item = button.parentElement;"));
+    assert!(js.contains("el(\"li\", null, { role: \"treeitem\""));
 }
 
 #[test]
