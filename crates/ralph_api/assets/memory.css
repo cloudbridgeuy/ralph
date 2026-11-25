@@ -68,6 +68,10 @@
   margin: 10px 0;
 }
 
+.none {
+  color: var(--r-muted);
+}
+
 r-tree li[aria-selected="true"]::before {
   content: "";
   grid-column: 1 / -1;

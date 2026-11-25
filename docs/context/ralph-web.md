@@ -141,12 +141,12 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 - Exposed: `log.jsonl` entries (role, time, full text), `tree.jsonl` summaries, thread names and their parked and merged flags.
 - Not exposed: `tags.jsonl`, analytics, `history.jsonl`, config, paths.
 - The read takes no lock and writes nothing: no `LOCK`, no index, no new directory. It uses `ralph_server::chat::memory::peek`, so a half-written last log line and a tree node past the log are not shown.
-- Node fields in `/api/memory`: `id`, `lo`, `hi`, `leaf`, `summary`, `folded` and `stats` `{depth, children, blocks, summarised, pending}`.
+- Node fields in `/api/memory`: `id`, `lo`, `hi`, `leaf`, `summary`, `folded` and `stats` `{depth, children, blocks, summarised}`.
   - `depth` is the log2 of the node size. `children` is 2 for a block and 0 for a leaf.
-  - `blocks` is the node size minus 1. `summarised` counts summaries at or below the node. `pending` is `blocks` minus `summarised`.
-  - `folded` is true when the node has blocks and no summary at or below it. The screen draws it as one pill and does not open it.
+  - `blocks` is the node size minus 1. `summarised` counts summaries at or below the node.
+  - `folded` is true when the node has blocks and no summary at or below it. The screen draws it as one row with the text `no summary yet` and does not open it.
 - A leaf root node (one entry) also has `entry`, in the same shape as an item of `/api/memory/entries`. A block root node has no `entry` key.
-- The root answer has `stats` `{entries, blocks, summarised, pending, last_at}`. It sums the root nodes. `last_at` is the time of the last entry, or `null` with no entries.
+- The root answer has `stats` `{entries, blocks, summarised, last_at}`. It sums the root nodes. `last_at` is the time of the last entry, or `null` with no entries.
 - The zoom answer has `path`: the node ids from the root node down to the zoomed node, in order. It is empty when no root node holds the node.
 - The stats and the path are worked out in `ralph_api` from the tree and the entry count. There is no change in core.
 - Code: `crates/ralph_api/src/memory_api.rs` (pure response builders and the thin read), `memory/query.rs` (query parser), `memory/json.rs` (JSON bodies), `memory/stats.rs` (node and tree stats, `folded`), `memory/path.rs` (zoom path).
@@ -286,21 +286,21 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 - Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
-- Stat line: from the root `stats`, for example `45 entries, 8 blocks, 2 summarised, 6 pending, last entry <time>`.
+- Stat line: from the root `stats`, for example `45 entries, 2 of 8 blocks summarised, last entry <time>`.
 - State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, no `after`) are left out. `hashchange` draws the screen again, so back and forward work.
 - Selection is the hash `node`. A click on a node in the tree selects it, writes the hash with `replaceState` (no history entry, no redraw) and loads the detail pane. Selecting the selected node does nothing. A hash with `node` opens the tree down to that node and selects it. When that row is not drawn, the nearest visible row is selected instead: the folded block that contains the node, or the entry row of a leaf root (`node=44` selects the row `#44`). The detail pane still shows the hash node.
 - With no node selected, the detail pane shows the whole thread. The newest page opens first (`max(0, entries - 20)`, from `defaultAfter`). An `after` in the hash, even `after=0`, overrides this. An `after` at or past the entry count opens the newest page (`clampAfter`).
 - Detail pane, top to bottom:
   - Breadcrumb from `path`: `memory / <thread> / [lo-hi] …`. Each part links to its hash. The last part is plain text with `aria-current="page"`.
-  - Detail head (`r-kv`): range, entries, depth, children and summary (`pending` or `summarised`). Only for a selected node.
-  - The summary, rendered once. A node with no summary shows a `pending` pill (`pending ×N` for a folded node) in place of the text.
+  - Detail head (`r-kv`): range, entries, depth, children and summary (`none` or `summarised`). Only for a selected node.
+  - The summary, rendered once. A node with no summary shows the muted text `no summary yet` (class `none`) in place of the text. There is no count, pill or border.
   - The entries of the node range, 20 rows a page, in an `r-table`. With no node the range is the whole thread.
   - The pager.
 - Tree rows:
-  - A folded block is one row with one `pending ×N` pill. It has no `aria-expanded` and does not open.
+  - A folded block is one row with the `no summary yet` text. It has no `aria-expanded` and does not open.
   - A leaf root node is drawn as the entry (`#i role`, time, first line), not as a node. It opens to show the full text.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
-  - A block with no summary shows the neutral `pending` pill in its row.
+  - A block with no summary shows `no summary yet` in its row.
 - Entries and paging:
   - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
   - The label reads `entries A–B of N`. A and B are absolute 0-based inclusive positions. With no node, N is the entry count. In a node, N is the node range `lo–hi-1`, as in the tree labels, so node 32-63 on its first page reads `entries 32–51 of 32–63`. An empty page reads `entries 0 of N` with the same N.
@@ -327,7 +327,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 - `aria-expanded="false"` hides the child group in CSS. The children stay in the HTML.
 - The button has no default chrome and a `:focus-visible` outline. `/app.js` makes the button toggle the branch.
 - Every label and summary text goes through `escape()`. Long text wraps with `overflow-wrap: anywhere`.
-- The memory screen does not call the Rust renderer. `app.js` builds the same markup, and `tests/memory_screen_contract.rs` reads the `tree_extent` and `tree_pending` goldens and checks that the script builds the same classes, SVG and attributes. It also checks the keyboard selectors `li[role=treeitem] > button` and `:scope > ul[role=group]`.
+- The memory screen does not call the Rust renderer. `app.js` builds the same markup, and `tests/memory_screen_contract.rs` reads the `tree_extent` and `tree_pending` goldens and checks that the script builds the same classes (the script has no `pending` text; the Rust renderer keeps its `Pending` pill for the catalogue), SVG and attributes. It also checks the keyboard selectors `li[role=treeitem] > button` and `:scope > ul[role=group]`.
 - The catalogue shows empty, sparse, dense (4 levels), error, very-long, collapsed, expanded, hostile, pending and focus; the code is in `catalogue/tree.rs`.
 
 ## r-table look

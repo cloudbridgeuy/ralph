@@ -27,7 +27,6 @@ fn node_json(view: &NodeView, tree: &Tree) -> Value {
         children,
         blocks,
         summarised,
-        pending,
     } = stats;
     json!({
         "id": view.node.id(),
@@ -41,7 +40,6 @@ fn node_json(view: &NodeView, tree: &Tree) -> Value {
             "children": children,
             "blocks": blocks,
             "summarised": summarised,
-            "pending": pending,
         },
     })
 }
@@ -85,7 +83,6 @@ pub(crate) fn root_body(
             "entries": stats.entries,
             "blocks": stats.blocks,
             "summarised": stats.summarised,
-            "pending": stats.pending,
             "last_at": stats.last_at,
         },
     })
@@ -220,7 +217,6 @@ mod tests {
                     "entries": 0,
                     "blocks": 0,
                     "summarised": 0,
-                    "pending": 0,
                     "last_at": null,
                 },
             })
@@ -242,7 +238,6 @@ mod tests {
                 "entries": 11,
                 "blocks": 8,
                 "summarised": 3,
-                "pending": 5,
                 "last_at": "2026-03-01T09:10:00Z",
             })
         );
@@ -253,7 +248,6 @@ mod tests {
                 "children": 2,
                 "blocks": 7,
                 "summarised": 2,
-                "pending": 5,
             })
         );
     }

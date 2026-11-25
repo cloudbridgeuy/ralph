@@ -200,3 +200,10 @@ fn entry_rows_have_a_focus_visible_outline() {
         "border-left-color: var(--r-accent);",
     );
 }
+
+#[test]
+fn the_no_summary_text_is_muted_plain_text() {
+    let css = memory_css();
+    assert_declares(&css, ".none", "color: var(--r-muted);");
+    assert!(!rule_body(&css, ".none").unwrap().contains("border"));
+}

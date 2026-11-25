@@ -6,7 +6,6 @@ pub(crate) struct NodeStats {
     pub children: usize,
     pub blocks: usize,
     pub summarised: usize,
-    pub pending: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +13,6 @@ pub(crate) struct TreeStats {
     pub entries: usize,
     pub blocks: usize,
     pub summarised: usize,
-    pub pending: usize,
     pub last_at: Option<String>,
 }
 
@@ -30,7 +28,6 @@ pub(crate) fn node_stats(node: &Node, tree: &Tree) -> NodeStats {
         children: if size >= 2 { 2 } else { 0 },
         blocks,
         summarised,
-        pending: blocks.saturating_sub(summarised),
     }
 }
 
@@ -50,7 +47,6 @@ pub(crate) fn tree_stats(entries: &[Entry], tree: &Tree) -> TreeStats {
         entries: entries.len(),
         blocks,
         summarised,
-        pending: blocks.saturating_sub(summarised),
         last_at: entries.last().map(|entry| entry.at.clone()),
     }
 }
@@ -87,13 +83,12 @@ mod tests {
                 children: 2,
                 blocks: 7,
                 summarised: 2,
-                pending: 5,
             }
         );
     }
 
     #[test]
-    fn a_node_with_no_summary_counts_all_its_blocks_as_pending() {
+    fn a_node_with_no_summary_counts_all_its_blocks_as_unsummarised() {
         assert_eq!(
             node_stats(&node(0, 4), &Tree::new()),
             NodeStats {
@@ -101,7 +96,6 @@ mod tests {
                 children: 2,
                 blocks: 3,
                 summarised: 0,
-                pending: 3,
             }
         );
     }
@@ -115,7 +109,6 @@ mod tests {
                 children: 0,
                 blocks: 0,
                 summarised: 0,
-                pending: 0,
             }
         );
     }
@@ -150,7 +143,6 @@ mod tests {
                 entries: 11,
                 blocks: 8,
                 summarised: 2,
-                pending: 6,
                 last_at: Some("t10".to_string()),
             }
         );
@@ -164,7 +156,6 @@ mod tests {
                 entries: 0,
                 blocks: 0,
                 summarised: 0,
-                pending: 0,
                 last_at: None,
             }
         );

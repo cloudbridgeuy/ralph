@@ -125,15 +125,14 @@ fn root_lists_blocks_with_summaries() {
             "entries": 6,
             "nodes": [
                 {"id": "0-3", "lo": 0, "hi": 4, "leaf": false, "summary": "first four: sync timeout", "folded": false,
-                 "stats": {"depth": 2, "children": 2, "blocks": 3, "summarised": 2, "pending": 1}},
+                 "stats": {"depth": 2, "children": 2, "blocks": 3, "summarised": 2}},
                 {"id": "4-5", "lo": 4, "hi": 6, "leaf": false, "summary": "tail pair \"quoted\"", "folded": false,
-                 "stats": {"depth": 1, "children": 2, "blocks": 1, "summarised": 1, "pending": 0}},
+                 "stats": {"depth": 1, "children": 2, "blocks": 1, "summarised": 1}},
             ],
             "stats": {
                 "entries": 6,
                 "blocks": 4,
                 "summarised": 3,
-                "pending": 1,
                 "last_at": "2026-03-01T09:05:00Z",
             },
         })
@@ -186,7 +185,6 @@ fn zoom_block_matches_core_view() {
                     "children": 2,
                     "blocks": 1,
                     "summarised": usize::from(block.summary.is_some()),
-                    "pending": usize::from(block.summary.is_none()),
                 },
                 "kind": "block",
             }),

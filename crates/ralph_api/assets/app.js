@@ -94,11 +94,7 @@ function crumbParts(thread, path) {
 
 function statLine(stats) {
   const last = stats.last_at ? ", last entry " + stats.last_at : "";
-  return stats.entries + " entries, " + stats.blocks + " blocks, " + stats.summarised + " summarised, " + stats.pending + " pending" + last;
-}
-
-function pendingLabel(node) {
-  return node.folded ? "pending ×" + node.stats.pending : "pending";
+  return stats.entries + " entries, " + stats.summarised + " of " + stats.blocks + " blocks summarised" + last;
 }
 
 function detailPairs(node) {
@@ -108,7 +104,7 @@ function detailPairs(node) {
     ["entries", String(node.hi - node.lo)],
     ["depth", String(node.stats.depth)],
     ["children", String(node.stats.children)],
-    ["summary", node.summary === null ? "pending" : "summarised"],
+    ["summary", node.summary === null ? "none" : "summarised"],
   ];
 }
 
@@ -307,9 +303,13 @@ function pill(text) {
   return append(el("r-pill", null, { tone: "neutral", shape: "square" }), el("span", text));
 }
 
-function summaryCell(summary, pending) {
+function noSummary() {
+  return el("span", "no summary yet", { class: "none" });
+}
+
+function summaryCell(summary) {
   const cell = el("span", null, { class: "sum" });
-  if (summary === null) append(cell, pill(pending));
+  if (summary === null) append(cell, noSummary());
   else if (summary) cell.textContent = oneLine(summary);
   return cell;
 }
@@ -324,7 +324,7 @@ function treeItem(level, key, label, cells, expandable) {
   append(button, el("span", label, { class: "id" }));
   append(item, button);
   append(item, el("span", cells.count === undefined ? null : String(cells.count), { class: "n" }));
-  append(item, extentCell(cells.extent), summaryCell(cells.summary, cells.pending));
+  append(item, extentCell(cells.extent), summaryCell(cells.summary));
   if (expandable) append(item, el("ul", null, { role: "group" }));
   return item;
 }
@@ -334,7 +334,6 @@ function nodeItem(level, node, total) {
     count: node.hi - node.lo,
     extent: { lo: node.lo, hi: node.hi, total },
     summary: node.summary,
-    pending: pendingLabel(node),
   };
   const item = treeItem(level, node.id, rangeLabel(node.lo, node.hi - 1), cells, !node.folded);
   item.dataset.node = node.id;
@@ -606,7 +605,7 @@ async function loadMemory(state) {
 
 function summaryBlock(node) {
   const host = el("div", null, { class: "summary" });
-  if (node.summary === null) append(host, pill(pendingLabel(node)));
+  if (node.summary === null) append(host, noSummary());
   else fillRendered(host, node.summary);
   return host;
 }

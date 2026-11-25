@@ -11,8 +11,7 @@
       "depth": 3,
       "children": 2,
       "blocks": 7,
-      "summarised": 2,
-      "pending": 5
+      "summarised": 2
     }
   },
   "path": [
@@ -30,8 +29,7 @@
         "depth": 2,
         "children": 2,
         "blocks": 3,
-        "summarised": 1,
-        "pending": 2
+        "summarised": 1
       },
       "kind": "block"
     },
@@ -46,8 +44,7 @@
         "depth": 2,
         "children": 2,
         "blocks": 3,
-        "summarised": 0,
-        "pending": 3
+        "summarised": 0
       },
       "kind": "block"
     }

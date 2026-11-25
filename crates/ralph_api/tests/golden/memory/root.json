@@ -13,8 +13,7 @@
         "depth": 3,
         "children": 2,
         "blocks": 7,
-        "summarised": 2,
-        "pending": 5
+        "summarised": 2
       }
     },
     {
@@ -28,8 +27,7 @@
         "depth": 1,
         "children": 2,
         "blocks": 1,
-        "summarised": 1,
-        "pending": 0
+        "summarised": 1
       }
     },
     {
@@ -43,8 +41,7 @@
         "depth": 0,
         "children": 0,
         "blocks": 0,
-        "summarised": 0,
-        "pending": 0
+        "summarised": 0
       },
       "entry": {
         "i": 10,
@@ -58,7 +55,6 @@
     "entries": 11,
     "blocks": 8,
     "summarised": 3,
-    "pending": 5,
     "last_at": "2026-03-01T09:10:00Z"
   }
 }

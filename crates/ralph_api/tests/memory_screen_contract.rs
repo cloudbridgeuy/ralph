@@ -232,14 +232,17 @@ fn the_script_draws_the_same_chevron_and_extent_bar_as_the_rust_tree() {
 }
 
 #[test]
-fn a_pending_node_gets_the_neutral_pill_not_a_sentence_in_its_row() {
+fn a_block_with_no_summary_says_no_summary_yet_in_plain_text() {
     let body = script();
-    assert!(TREE_PENDING
-        .contains("<r-pill tone=\"neutral\" shape=\"square\"><span>pending</span></r-pill>"));
-    assert!(body.contains("\"r-pill\""));
-    assert!(body.contains("tone: \"neutral\""));
-    assert!(body.contains("shape: \"square\""));
-    assert!(!body.contains("node.summary === null ? \"summary pending\""));
+    assert!(!body.contains("pending"));
+    assert!(body.contains(r#"el("span", "no summary yet", { class: "none" })"#));
+    let cell = function_body(&body, "function summaryCell(");
+    assert!(cell.contains("summary === null"));
+    assert!(cell.contains("noSummary()"));
+    assert!(!cell.contains("pill("));
+    let block = function_body(&body, "function summaryBlock(");
+    assert!(block.contains("noSummary()"));
+    assert!(!block.contains("pill("));
 }
 
 #[test]
@@ -348,9 +351,13 @@ fn the_stat_line_replaces_the_kv_box() {
     let body = script();
     assert!(body.contains(r#"el("p", statLine(data.roots.stats), { class: "statline" })"#));
     let stat = function_body(&body, "function statLine(");
-    for field in ["entries", "blocks", "summarised", "pending", "last_at"] {
+    for field in ["entries", "blocks", "summarised", "last_at"] {
         assert!(stat.contains(field), "{field}");
     }
+    assert!(!stat.contains("pending"));
+    assert!(stat.contains(
+        r#"stats.entries + " entries, " + stats.summarised + " of " + stats.blocks + " blocks summarised" + last"#
+    ));
     assert!(!body.contains(r#"kv([["thread""#));
 }
 
@@ -408,11 +415,10 @@ fn a_leaf_root_node_is_drawn_as_the_entry() {
 }
 
 #[test]
-fn a_folded_block_has_a_pending_count_pill_and_no_expansion() {
+fn a_folded_block_has_no_count_pill_and_no_expansion() {
     let body = script();
-    let label = function_body(&body, "function pendingLabel(");
-    assert!(label.contains("node.folded"));
-    assert!(label.contains("\"pending ×\" + node.stats.pending"));
+    assert!(!body.contains("function pendingLabel("));
+    assert!(!body.contains("stats.pending"));
     let item = function_body(&body, "function nodeItem(");
     assert!(item.contains("!node.folded"));
     let tree = function_body(&body, "function treeItem(");
