@@ -112,6 +112,7 @@ struct Opening {
     effort: Option<String>,
     updates: agy_settings::Updates,
     inbox: PathBuf,
+    scheduled: bool,
 }
 
 async fn open_session(
@@ -343,6 +344,7 @@ impl AcpWorker {
         let opened = Arc::new(AtomicBool::new(false));
         let was_opened = Arc::clone(&opened);
         let session_model = request.model.clone();
+        let scheduled = request.scheduled;
         let updates = Arc::new(Mutex::new(None));
         let on_update = Arc::clone(&updates);
         thread::spawn(move || {
@@ -402,6 +404,7 @@ impl AcpWorker {
                             effort,
                             updates,
                             inbox: inbox_path,
+                            scheduled,
                         };
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {

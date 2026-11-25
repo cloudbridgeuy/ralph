@@ -69,7 +69,7 @@ impl Resumed<'_> {
                 AppConfig::load().ok().map(|config| config.changes.enabled),
             ),
             model: record.model.clone(),
-            scheduled: false,
+            scheduled: record.scheduled,
         };
         launch(record, request)
             .inspect_err(|message| {
@@ -109,6 +109,40 @@ impl CodexHost {
                     locked(&self.workers).insert(id.clone(), worker);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn a_resumed_session_keeps_the_scheduled_flag() {
+        for scheduled in [false, true] {
+            let dir = TempDir::new().unwrap();
+            let store = dir.path();
+            let files = HandoffFiles::codex(store, "w");
+            let record = SessionRecord {
+                session_id: "s".into(),
+                cwd: store.to_path_buf(),
+                inbox: store.join("inbox"),
+                store: Some(store.to_path_buf()),
+                model: None,
+                effort: None,
+                permissions: None,
+                scheduled,
+            };
+            write_file(&files.session, &record.render()).unwrap();
+            let resumed = Resumed {
+                agent: "codex",
+                id: "w",
+                store,
+                files: &files,
+            };
+            let flag = resumed.launch(|_, request| Ok(request.scheduled));
+            assert_eq!(flag, Some(scheduled));
         }
     }
 }

@@ -45,6 +45,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         }
     }
 

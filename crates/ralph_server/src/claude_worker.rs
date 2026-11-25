@@ -332,6 +332,7 @@ fn session_record(
         model: request.model.clone(),
         effort: None,
         permissions: Some(mode),
+        scheduled: request.scheduled,
     }
 }
 

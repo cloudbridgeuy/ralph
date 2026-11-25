@@ -102,6 +102,7 @@ fn opening(
         effort: Some("low".to_string()),
         updates,
         inbox: dir.join("inbox"),
+        scheduled: false,
     }
 }
 

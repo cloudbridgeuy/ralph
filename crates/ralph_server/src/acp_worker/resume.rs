@@ -83,7 +83,7 @@ impl CursorHost {
                 AppConfig::load().ok().map(|config| config.changes.enabled),
             ),
             model: record.model.clone(),
-            scheduled: false,
+            scheduled: record.scheduled,
         };
         if self.agy && !recovery::claim_saved(&files, &record) {
             return;

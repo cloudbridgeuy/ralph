@@ -917,6 +917,7 @@ impl CodexHost {
             model: request.model.clone(),
             effort: None,
             permissions: None,
+            scheduled: request.scheduled,
         });
         match self.launch(id, &request, launch) {
             Ok(worker) => self.adopt(id, worker),

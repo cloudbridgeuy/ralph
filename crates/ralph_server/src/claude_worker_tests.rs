@@ -194,6 +194,13 @@ fn the_session_record_holds_the_session_id_and_spawn_settings() {
     assert_eq!(record.store, Some(PathBuf::from("/store")));
     assert_eq!(record.model.as_deref(), Some("haiku"));
     assert_eq!(record.permissions, Some(PermissionMode::Yolo));
+    assert!(!record.scheduled);
+    let scheduled = SpawnRequest {
+        scheduled: true,
+        ..request
+    };
+    let record = session_record("sid", &scheduled, Path::new("/store"), PermissionMode::Yolo);
+    assert!(record.scheduled);
 }
 
 fn spawn_request() -> SpawnRequest {

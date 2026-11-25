@@ -38,6 +38,8 @@ pub struct SessionRecord {
     pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permissions: Option<PermissionMode>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scheduled: bool,
 }
 
 impl SessionRecord {
@@ -180,6 +182,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         }
     }
 
@@ -439,5 +442,17 @@ mod tests {
         assert!(!sessions.closed_holder(&held_by(Some("7@s"))));
         assert!(!sessions.closed_holder(&held_by(Some("9@t#0"))));
         assert!(!sessions.closed_holder(&held_by(None)));
+    }
+
+    #[test]
+    fn the_session_record_keeps_the_scheduled_flag() {
+        let old = record(None);
+        assert!(!old.render().contains("scheduled"));
+        assert!(!SessionRecord::parse(&old.render()).unwrap().scheduled);
+        let scheduled = SessionRecord {
+            scheduled: true,
+            ..old
+        };
+        assert_eq!(SessionRecord::parse(&scheduled.render()), Some(scheduled));
     }
 }
