@@ -34,6 +34,10 @@ pub(crate) fn node_stats(node: &Node, tree: &Tree) -> NodeStats {
     }
 }
 
+pub(crate) fn is_folded(stats: &NodeStats) -> bool {
+    stats.blocks >= 1 && stats.summarised == 0
+}
+
 pub(crate) fn tree_stats(entries: &[Entry], tree: &Tree) -> TreeStats {
     let roots = root_view(entries.len(), tree);
     let (blocks, summarised) = roots
@@ -114,6 +118,26 @@ mod tests {
                 pending: 0,
             }
         );
+    }
+
+    #[test]
+    fn a_block_with_no_summary_below_is_folded() {
+        assert!(is_folded(&node_stats(&node(0, 4), &Tree::new())));
+    }
+
+    #[test]
+    fn a_block_with_one_summary_below_is_not_folded() {
+        assert!(!is_folded(&node_stats(&node(0, 8), &tree(&[node(2, 4)]))));
+    }
+
+    #[test]
+    fn a_block_with_its_own_summary_only_is_not_folded() {
+        assert!(!is_folded(&node_stats(&node(0, 4), &tree(&[node(0, 4)]))));
+    }
+
+    #[test]
+    fn a_size_1_node_is_never_folded() {
+        assert!(!is_folded(&node_stats(&node(5, 6), &Tree::new())));
     }
 
     #[test]

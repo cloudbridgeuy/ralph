@@ -6,6 +6,7 @@
     "hi": 10,
     "leaf": false,
     "summary": "<script>alert(1)</script> \"quoted\" \\ back",
+    "folded": false,
     "stats": {
       "depth": 1,
       "children": 2,

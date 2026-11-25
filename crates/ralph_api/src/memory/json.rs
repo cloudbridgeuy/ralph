@@ -1,6 +1,6 @@
 use super::path::zoom_path;
 use super::query::Scope;
-use super::stats::{node_stats, tree_stats, NodeStats};
+use super::stats::{is_folded, node_stats, tree_stats, NodeStats};
 use ralph_core::chat_memory::{Entry, EntryView, NodeView, Page, Tree, ZoomChild, ZoomView};
 use ralph_server::chat::memory::ThreadInfo;
 use serde_json::{json, Value};
@@ -20,19 +20,22 @@ fn root_node_json(view: &NodeView, entries: &[Entry], tree: &Tree) -> Value {
 }
 
 fn node_json(view: &NodeView, tree: &Tree) -> Value {
+    let stats = node_stats(&view.node, tree);
+    let folded = is_folded(&stats);
     let NodeStats {
         depth,
         children,
         blocks,
         summarised,
         pending,
-    } = node_stats(&view.node, tree);
+    } = stats;
     json!({
         "id": view.node.id(),
         "lo": view.node.lo,
         "hi": view.node.hi,
         "leaf": view.is_leaf,
         "summary": view.summary,
+        "folded": folded,
         "stats": {
             "depth": depth,
             "children": children,

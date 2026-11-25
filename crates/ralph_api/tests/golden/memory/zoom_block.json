@@ -6,6 +6,7 @@
     "hi": 8,
     "leaf": false,
     "summary": "Debugged the nightly sync timeout; pool raised to 8.",
+    "folded": false,
     "stats": {
       "depth": 3,
       "children": 2,
@@ -24,6 +25,7 @@
       "hi": 4,
       "leaf": false,
       "summary": "Sync timeout traced to a pool of 4.",
+      "folded": false,
       "stats": {
         "depth": 2,
         "children": 2,
@@ -39,6 +41,7 @@
       "hi": 8,
       "leaf": false,
       "summary": null,
+      "folded": true,
       "stats": {
         "depth": 2,
         "children": 2,

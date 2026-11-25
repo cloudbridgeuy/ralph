@@ -8,6 +8,7 @@
       "hi": 8,
       "leaf": false,
       "summary": "Debugged the nightly sync timeout; pool raised to 8.",
+      "folded": false,
       "stats": {
         "depth": 3,
         "children": 2,
@@ -22,6 +23,7 @@
       "hi": 10,
       "leaf": false,
       "summary": "<script>alert(1)</script> \"quoted\" \\ back",
+      "folded": false,
       "stats": {
         "depth": 1,
         "children": 2,
@@ -36,6 +38,7 @@
       "hi": 11,
       "leaf": true,
       "summary": null,
+      "folded": false,
       "stats": {
         "depth": 0,
         "children": 0,
