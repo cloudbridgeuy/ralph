@@ -270,3 +270,55 @@ fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
     assert!(body.contains("String(data.roots.entries)]]))"));
     assert!(!body.contains("source"));
 }
+
+#[test]
+fn the_entry_text_is_sent_whole_with_no_character_cut() {
+    let body = script();
+    assert!(!body.contains("PREVIEW"));
+    assert!(!body.contains("function preview("));
+    assert!(!body.contains("slice(0, max"));
+    let start = body.find("function firstLine(text) {").unwrap();
+    let end = start + body[start..].find("\n}\n").unwrap();
+    let first_line = &body[start..end];
+    assert!(first_line.contains(r".split(/\r?\n/)"), "{first_line}");
+    assert!(
+        first_line.contains(r#".find((part) => part.trim() !== "")"#),
+        "{first_line}"
+    );
+    assert!(first_line.contains("line.trim()"), "{first_line}");
+}
+
+#[test]
+fn the_entries_table_text_cell_is_a_clip_cell_holding_the_first_line() {
+    let body = script();
+    assert!(body.contains(r#"el("td", firstLine(entry.text), { class: "clip" })"#));
+}
+
+#[test]
+fn an_empty_page_is_a_state_row_inside_the_table() {
+    let body = script();
+    assert!(body.contains("function stateRow(columns, child)"));
+    assert!(body.contains(r#"el("tr", null, { class: "state" })"#));
+    assert!(body.contains(r#"colspan: String(columns)"#));
+    assert!(!body.contains(r#"return el("r-empty", "no entries in this page")"#));
+}
+
+#[test]
+fn only_the_entries_table_is_stackable() {
+    let body = script();
+    assert!(body.contains(r#"el("r-table", null, { class: "stackable" })"#));
+    assert_eq!(body.matches("stackable").count(), 1);
+}
+
+#[test]
+fn the_entry_number_column_is_a_num_column_in_head_and_body() {
+    let body = script();
+    assert!(body.contains(r##"el("th", name, name === "#" ? { class: "num" } : {})"##));
+    assert!(body.contains(r#"el("td", String(entry.i), { class: "num" })"#));
+}
+
+#[test]
+fn first_line_reads_null_and_undefined_as_empty_text() {
+    let body = script();
+    assert!(body.contains(r#"String(text ?? "")"#));
+}

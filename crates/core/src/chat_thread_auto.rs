@@ -100,6 +100,18 @@ pub fn close_footer(closes: &[PendingClose], width: usize) -> Option<String> {
     Some(truncate_to_width(&line, width))
 }
 
+pub fn fresh_closes(pending: &[PendingClose], shown: &[ThreadName]) -> Vec<PendingClose> {
+    pending
+        .iter()
+        .filter(|close| !shown.contains(&close.name))
+        .cloned()
+        .collect()
+}
+
+pub fn close_names(pending: &[PendingClose]) -> Vec<ThreadName> {
+    pending.iter().map(|close| close.name.clone()).collect()
+}
+
 fn verb(auto: AutoMode) -> &'static str {
     match auto {
         AutoMode::Merge => "merge",
@@ -261,6 +273,54 @@ mod tests {
         assert_eq!(
             close_footer(&closes, 200).unwrap(),
             "2 threads closed \u{b7} auth closed \u{b7} Enter to merge or keep it"
+        );
+    }
+
+    #[test]
+    fn fresh_closes_lists_an_unshown_close_once() {
+        let pending = [pending("auth", AutoMode::Merge)];
+        let fresh = fresh_closes(&pending, &[]);
+        assert_eq!(fresh, pending);
+        assert!(fresh_closes(&pending, &close_names(&fresh)).is_empty());
+    }
+
+    #[test]
+    fn fresh_closes_keeps_only_the_new_names() {
+        let pending = [
+            pending("auth", AutoMode::Merge),
+            pending("db", AutoMode::Drop),
+        ];
+        let shown = [ThreadName::parse("auth").unwrap()];
+        assert_eq!(
+            close_footer(&fresh_closes(&pending, &shown), 200).unwrap(),
+            "db closed \u{b7} Enter to drop or keep it"
+        );
+    }
+
+    #[test]
+    fn fresh_closes_of_two_threads_is_the_counted_footer() {
+        let pending = [
+            pending("auth", AutoMode::Merge),
+            pending("db", AutoMode::Drop),
+        ];
+        assert_eq!(
+            close_footer(&fresh_closes(&pending, &[]), 200).unwrap(),
+            "2 threads closed \u{b7} auth closed \u{b7} Enter to merge or keep it"
+        );
+    }
+
+    #[test]
+    fn a_name_no_longer_pending_is_forgotten_and_announces_again() {
+        let both = [
+            pending("auth", AutoMode::Merge),
+            pending("db", AutoMode::Merge),
+        ];
+        let settled = [pending("db", AutoMode::Merge)];
+        let shown = close_names(&settled);
+        assert_eq!(shown, [ThreadName::parse("db").unwrap()]);
+        assert_eq!(
+            fresh_closes(&both, &shown),
+            [pending("auth", AutoMode::Merge)]
         );
     }
 

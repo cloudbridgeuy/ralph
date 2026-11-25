@@ -218,7 +218,52 @@ r-table td {
 r-table th {
   font-size: 12px;
   font-weight: 500;
+  color: var(--r-muted);
+  white-space: nowrap;
   border-bottom-color: var(--r-line-strong);
+}
+
+r-table th:first-child,
+r-table td:first-child {
+  border-left: 2px solid transparent;
+}
+
+r-table tbody tr:hover > td {
+  background: var(--r-hover);
+}
+
+r-table tbody tr[aria-selected="true"] > td {
+  background: var(--r-selected);
+}
+
+r-table tbody tr[aria-selected="true"] > td:first-child,
+r-table tbody tr.open > td:first-child {
+  border-left-color: var(--r-accent);
+}
+
+r-table tbody tr.open > td {
+  border-bottom-color: transparent;
+}
+
+r-table tbody tr.state > td {
+  padding: 10px 1ch;
+}
+
+r-table tbody tr.state:hover > td {
+  background: none;
+}
+
+r-table .clip {
+  max-width: 0;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+r-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 r-kv {
@@ -836,5 +881,60 @@ r-tree button:focus-visible {
 r-tree r-empty,
 r-tree r-error {
   margin: 0;
+}
+
+@media (max-width: 760px) {
+  r-table.stackable thead {
+    display: none;
+  }
+
+  r-table.stackable table,
+  r-table.stackable tbody {
+    display: block;
+  }
+
+  r-table.stackable tbody tr:not(.state) {
+    display: grid;
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    column-gap: 1ch;
+    padding: 10px 1ch 10px 0;
+    border-bottom: 1px solid var(--r-line);
+    border-left: 2px solid transparent;
+  }
+
+  r-table.stackable tbody tr:not(.state) > td {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  r-table.stackable tbody tr:hover {
+    background: var(--r-hover);
+  }
+
+  r-table.stackable tbody tr.state:hover {
+    background: none;
+  }
+
+  r-table.stackable tbody tr[aria-selected="true"] {
+    background: var(--r-selected);
+    border-left-color: var(--r-accent);
+  }
+
+  r-table.stackable tbody tr.open {
+    border-left-color: var(--r-accent);
+    border-bottom-color: transparent;
+  }
+
+  r-table.stackable td.clip {
+    grid-column: 1 / -1;
+    max-width: none;
+    width: auto;
+    white-space: normal;
+    overflow-wrap: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
 }
 

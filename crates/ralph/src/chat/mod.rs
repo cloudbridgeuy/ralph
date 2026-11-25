@@ -99,6 +99,14 @@ pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
 pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
 
+fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
+    let highlighter = Highlighter::with_config(config.clone()).unwrap_or_else(|e| {
+        warn(format!("Failed to load reply theme: {e}"));
+        Highlighter::new()
+    });
+    (highlighter, MarkdownTheme::from_config(Some(config)))
+}
+
 pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     if let Some(socket) = &args.connect {
         return remote::run(socket);
@@ -167,6 +175,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
                 Highlighter::new()
             });
     let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
+    let (reply_highlighter, reply_theme) = reply_style(&theme_config);
     let prompt_files = chat_config.prompt_files(dirs::home_dir().as_deref());
     let (custom_prompt, prompt_warnings) = load_custom_prompt(&prompt_files);
     prompt_warnings.iter().for_each(warn);
@@ -357,6 +366,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         color,
         ui: *theme_config.ui(),
     };
+    let reply_display = Display {
+        ctx: RenderContext::new(&reply_highlighter, color)
+            .with_diff(diff_colors)
+            .with_tools(tool_colors),
+        theme: &reply_theme,
+        color,
+        ui: *theme_config.ui(),
+    };
     let remote = RemoteStatus::default();
     let display = inbox_display(color);
     let local_route = LocalRoute {
@@ -365,6 +382,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         watches: &monitor.watches,
         schedule: &monitor.schedule,
         display: &display,
+        reply_display: &reply_display,
         changes: &config.changes,
         prices: &config.wire.prices,
         tickets: &config.tickets,
@@ -434,6 +452,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         offered: None,
         carried: Vec::new(),
         leaving: None,
+        announced: Vec::new(),
         resize: &resize,
     };
     let resized = Arc::new(AtomicBool::new(false));
@@ -445,7 +464,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         at_prompt: &at_prompt,
         state: &resize,
         store: &store_dir,
-        display: &display,
+        display: &reply_display,
         sink: resize_sink,
     };
     std::thread::scope(|scope| {
