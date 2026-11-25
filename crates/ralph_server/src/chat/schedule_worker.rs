@@ -5,7 +5,7 @@ use crate::watches::locked;
 use crate::workers::{running_workers, SpawnArgs, Workers};
 use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_resume::{
-    finish_step, resume_failed_text, FinishStep, Liveness, Message, FINISH_TURN_MESSAGE,
+    finish_step, resume_failed_text, ChildState, FinishStep, Message, FINISH_TURN_MESSAGE,
 };
 use ralph_core::schedule_worker::{
     alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
@@ -100,7 +100,7 @@ fn finish_lost_turns(monitor: &Monitor, running: &[String], now: chrono::DateTim
             return false;
         };
         let worker = worker_id(&task.id);
-        let child = Liveness::observed(
+        let child = ChildState::observed(
             running.contains(&worker),
             gone_path(&monitor.store_dir, &worker).exists(),
         );

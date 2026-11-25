@@ -13,17 +13,18 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Liveness {
+pub enum ChildState {
+    NotSeen,
     Alive,
     Exited,
 }
 
-impl Liveness {
-    pub fn observed(held: bool, exit_marked: bool) -> Option<Self> {
+impl ChildState {
+    pub fn observed(held: bool, exit_marked: bool) -> Self {
         match (exit_marked, held) {
-            (true, _) => Some(Self::Exited),
-            (false, true) => Some(Self::Alive),
-            (false, false) => None,
+            (true, _) => Self::Exited,
+            (false, true) => Self::Alive,
+            (false, false) => Self::NotSeen,
         }
     }
 }
@@ -86,14 +87,15 @@ fn is_open_run(task: &Task) -> bool {
     is_worker_task(task) && task.status == TaskStatus::Running
 }
 
-pub fn finish_step(turn: &LostTurn, child: Option<Liveness>, now: DateTime<Utc>) -> FinishStep {
+pub fn finish_step(turn: &LostTurn, child: ChildState, now: DateTime<Utc>) -> FinishStep {
+    let in_grace = now < turn.since + Duration::seconds(STARTUP_GRACE_SECS);
     match (turn.message, child) {
-        (Message::Unsent, Some(Liveness::Alive)) => FinishStep::Send,
-        (Message::Sent, Some(Liveness::Alive)) => FinishStep::Wait,
-        (Message::Unsent, None) if now < turn.since + Duration::seconds(STARTUP_GRACE_SECS) => {
-            FinishStep::Wait
+        (Message::Unsent, ChildState::Alive) => FinishStep::Send,
+        (Message::Sent, ChildState::Alive) => FinishStep::Wait,
+        (Message::Unsent, ChildState::NotSeen) if in_grace => FinishStep::Wait,
+        (Message::Unsent | Message::Sent, ChildState::NotSeen | ChildState::Exited) => {
+            FinishStep::Fail
         }
-        (Message::Unsent | Message::Sent, Some(Liveness::Exited) | None) => FinishStep::Fail,
     }
 }
 
@@ -235,7 +237,7 @@ mod tests {
             FINISH_TURN_MESSAGE,
             "your turn was interrupted by a restart; check what you already did and finish"
         );
-        let alive = Some(Liveness::Alive);
+        let alive = ChildState::Alive;
         assert_eq!(
             finish_step(&turn(Message::Unsent), alive, now),
             FinishStep::Send
@@ -245,7 +247,7 @@ mod tests {
             FinishStep::Wait
         );
         assert_eq!(
-            finish_step(&turn(Message::Sent), None, now),
+            finish_step(&turn(Message::Sent), ChildState::NotSeen, now),
             FinishStep::Fail
         );
     }
@@ -253,19 +255,19 @@ mod tests {
     #[test]
     fn an_exit_outranks_the_hold_on_a_worker() {
         for (held, exit_marked, child) in [
-            (true, true, Some(Liveness::Exited)),
-            (false, true, Some(Liveness::Exited)),
-            (true, false, Some(Liveness::Alive)),
-            (false, false, None),
+            (true, true, ChildState::Exited),
+            (false, true, ChildState::Exited),
+            (true, false, ChildState::Alive),
+            (false, false, ChildState::NotSeen),
         ] {
-            assert_eq!(Liveness::observed(held, exit_marked), child);
+            assert_eq!(ChildState::observed(held, exit_marked), child);
         }
     }
 
     #[test]
     fn a_resumed_child_that_exited_fails_the_turn_at_once() {
         for message in [Message::Unsent, Message::Sent] {
-            let child = Liveness::observed(true, true);
+            let child = ChildState::observed(true, true);
             assert_eq!(
                 finish_step(&turn(message), child, restarted()),
                 FinishStep::Fail
@@ -277,12 +279,13 @@ mod tests {
     fn a_worker_that_does_not_resume_in_time_fails_the_turn() {
         let limit = restarted() + Duration::seconds(STARTUP_GRACE_SECS);
         let early = limit - Duration::seconds(1);
+        let not_seen = ChildState::NotSeen;
         assert_eq!(
-            finish_step(&turn(Message::Unsent), None, early),
+            finish_step(&turn(Message::Unsent), not_seen, early),
             FinishStep::Wait
         );
         assert_eq!(
-            finish_step(&turn(Message::Unsent), None, limit),
+            finish_step(&turn(Message::Unsent), not_seen, limit),
             FinishStep::Fail
         );
     }
