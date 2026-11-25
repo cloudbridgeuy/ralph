@@ -1,6 +1,6 @@
 use super::kind::HarnessId;
 use super::ticket::Tracker;
-use super::tools::ReportStatus;
+use super::ReportStatus;
 use crate::workers_view::Diff;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
