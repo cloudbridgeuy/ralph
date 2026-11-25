@@ -150,6 +150,17 @@ function containsNode(id, target) {
   return id !== target && outer.lo <= inner.lo && inner.hi <= outer.hi;
 }
 
+function treeStep(id, target, expandable) {
+  if (id === target) return "here";
+  if (!containsNode(id, target)) return null;
+  return expandable ? "descend" : "here";
+}
+
+function leafRootKey(target) {
+  const range = idRange(target);
+  return range.lo === range.hi ? "e" + range.lo : null;
+}
+
 function navTarget(key, rows, at) {
   const row = rows[at];
   if (!row) return null;
@@ -409,17 +420,26 @@ function markSelected(list, item) {
   item.setAttribute("aria-selected", "true");
 }
 
+function selectRow(tree, item) {
+  markSelected(tree, item);
+  item.firstElementChild.focus();
+}
+
 async function expandTo(tree, target, ctx) {
   let scope = tree;
   for (let depth = 0; depth < 64; depth += 1) {
     const items = Array.from(scope.querySelectorAll(':scope li[data-node]'));
-    const next = items.find((item) => item.dataset.node === target || containsNode(item.dataset.node, target));
-    if (!next) return;
-    if (next.getAttribute("aria-expanded") === "false") await toggleItem(next, ctx);
-    if (next.dataset.node === target) {
-      markSelected(tree, next);
-      return next.firstElementChild.focus();
+    const stepOf = (item) => treeStep(item.dataset.node, target, item.hasAttribute("aria-expanded"));
+    const next = items.find((item) => stepOf(item) !== null);
+    if (!next) {
+      const key = depth === 0 ? leafRootKey(target) : null;
+      const button = key && tree.querySelector(':scope > ul > li > button[data-key="' + key + '"]');
+      if (button) selectRow(tree, button.parentElement);
+      return;
     }
+    const step = stepOf(next);
+    if (next.getAttribute("aria-expanded") === "false") await toggleItem(next, ctx);
+    if (step === "here") return selectRow(tree, next);
     scope = next;
   }
 }

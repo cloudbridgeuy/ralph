@@ -513,3 +513,23 @@ fn the_pager_buttons_use_btn_and_kbd() {
     assert!(body.contains(r#"pagerButton("older", "[""#));
     assert!(body.contains(r#"pagerButton("newer", "]""#));
 }
+
+#[test]
+fn a_hash_node_selects_the_nearest_visible_row() {
+    let body = script();
+    let step = function_body(&body, "function treeStep(");
+    assert!(step.contains("if (id === target) return \"here\";"));
+    assert!(step.contains("if (!containsNode(id, target)) return null;"));
+    assert!(step.contains("return expandable ? \"descend\" : \"here\";"));
+    let leaf = function_body(&body, "function leafRootKey(");
+    assert!(leaf.contains("idRange(target)"));
+    assert!(leaf.contains("range.lo === range.hi"));
+    assert!(leaf.contains("\"e\" + range.lo"));
+    let expand = function_body(&body, "async function expandTo(");
+    assert!(expand
+        .contains("treeStep(item.dataset.node, target, item.hasAttribute(\"aria-expanded\"))"));
+    assert!(expand.contains("step === \"here\""));
+    assert!(expand.contains("leafRootKey(target)"));
+    assert!(expand.contains(":scope > ul > li > button[data-key="));
+    assert!(!expand.contains("next.dataset.node === target"));
+}
