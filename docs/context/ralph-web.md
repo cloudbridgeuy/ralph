@@ -283,7 +283,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Memory screen
 
-- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
+- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
 - Stat line: from the root `stats`, for example `45 entries, 2 of 8 blocks summarised, last entry <time>`.
@@ -295,10 +295,12 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - Detail head (`r-kv`): range, entries, depth, children and summary (`none` or `summarised`). Only for a selected node.
   - The summary, rendered once. A node with no summary shows the muted text `no summary yet` (class `none`) in place of the text. There is no count, pill or border.
   - The entries of the node range, 20 rows a page, in an `r-table`. With no node the range is the whole thread.
+  - Columns `#`, `role` and `at` stay on one line (`white-space: nowrap` in `memory.css`; `app.css` lets table cells break anywhere, which cut them to one character). The text column takes the rest and ends with an ellipsis. In the stacked layout (760px or narrower) the three cells are the meta line and the text is the second line.
+  - `at` shows `YYYY-MM-DD HH:MM` (UTC, from `compactAt`). The full time is in the `title` of the cell. A value that is not an ISO UTC time is shown as it is.
   - The pager.
 - Tree rows:
   - A folded block is one row with the `no summary yet` text. It has no `aria-expanded` and does not open.
-  - A leaf root node is drawn as the entry (`#i role`, time, first line), not as a node. It opens to show the full text.
+  - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. It opens to show the full text.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
   - A block with no summary shows `no summary yet` in its row.
   - Row fills: the fill is a `::before` on the `li`, placed in grid row 1 across all columns, so it never covers the child group. A hovered row gets `--r-hover` and a selected row gets `--r-selected`, both with a 2px `--r-accent` bar on the left. Selected wins over hover. A row whose child group is hovered is not drawn as hovered. The `::before` has `align-self: stretch`: the grid has `align-items: center`, which gave the empty pseudo-element a height of 0, so the old selected fill did not show.

@@ -242,3 +242,11 @@ fn the_no_summary_text_is_muted_plain_text() {
     assert_declares(&css, ".none", "color: var(--r-muted);");
     assert!(!rule_body(&css, ".none").unwrap().contains("border"));
 }
+
+#[test]
+fn the_entries_table_keeps_every_cell_but_the_text_on_one_line() {
+    let css = memory_css();
+    let cells = "r-table.stackable td:not(.clip)";
+    assert_declares(&css, cells, "white-space: nowrap;");
+    assert_declares(&css, cells, "overflow-wrap: normal;");
+}

@@ -160,3 +160,8 @@ r-table tbody tr[tabindex]:focus-visible {
 r-table tbody tr.full > td:first-child {
   border-left-color: var(--r-accent);
 }
+
+r-table.stackable td:not(.clip) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}

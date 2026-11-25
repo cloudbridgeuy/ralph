@@ -540,3 +540,30 @@ fn a_hash_node_selects_the_nearest_visible_row() {
     assert!(expand.contains(":scope > ul > li > button[data-key="));
     assert!(!expand.contains("next.dataset.node === target"));
 }
+
+#[test]
+fn compact_at_shortens_a_utc_iso_time_and_leaves_anything_else_alone() {
+    let body = script();
+    assert!(body.contains(
+        r#"const AT_SHAPE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?Z$/;"#
+    ));
+    let compact = function_body(&body, "function compactAt(");
+    assert!(compact.contains("AT_SHAPE.exec(String(iso))"));
+    assert!(compact.contains(r#"match ? match[1] + " " + match[2] : iso"#));
+}
+
+#[test]
+fn the_at_cell_shows_the_compact_time_with_the_full_time_in_its_title() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains("el(\"td\", compactAt(entry.at), { title: entry.at })"));
+    assert!(!row.contains("el(\"td\", entry.at)"));
+}
+
+#[test]
+fn a_leaf_tree_row_shows_the_compact_time_then_the_first_line() {
+    let body = script();
+    let item = function_body(&body, "function entryItem(");
+    assert!(item.contains("summary: compactAt(entry.at) + \" \" + firstLine(entry.text)"));
+    assert!(!item.contains("summary: entry.at"));
+}

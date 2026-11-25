@@ -6,6 +6,7 @@ const PAGE_SIZE = 20;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const EXTENT_MIN = 1;
 const SPINNER_DELAY_MS = 200;
+const AT_SHAPE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?Z$/;
 
 function parseHash(hash) {
   const body = hash.replace(/^#/, "");
@@ -123,6 +124,11 @@ function firstLine(text) {
     .split(/\r?\n/)
     .find((part) => part.trim() !== "");
   return line === undefined ? "" : line.trim();
+}
+
+function compactAt(iso) {
+  const match = AT_SHAPE.exec(String(iso));
+  return match ? match[1] + " " + match[2] : iso;
 }
 
 function extentSpan(lo, hi, total) {
@@ -342,7 +348,7 @@ function nodeItem(level, node, total) {
 
 function entryItem(level, entry) {
   const label = "#" + entry.i + " " + entry.role;
-  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + firstLine(entry.text) }, true);
+  const item = treeItem(level, "e" + entry.i, label, { summary: compactAt(entry.at) + " " + firstLine(entry.text) }, true);
   item.dataset.entry = entry.text;
   return item;
 }
@@ -531,7 +537,7 @@ function entryRow(entry, current) {
     row,
     el("td", String(entry.i), { class: "num" }),
     el("td", entry.role),
-    el("td", entry.at),
+    el("td", compactAt(entry.at), { title: entry.at }),
     el("td", firstLine(entry.text), { class: "clip" }),
   );
   row.addEventListener("click", () => toggleEntry(row, entry, current));
