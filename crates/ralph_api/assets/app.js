@@ -59,9 +59,13 @@ function rangeLabel(lo, hi) {
   return "[" + lo + "-" + hi + "]";
 }
 
-function pagerLabel(after, count, total) {
-  if (count === 0) return "entries 0 of " + total;
-  return "entries " + after + "\u2013" + (after + count - 1) + " of " + total;
+function pagerScope(node, lo, hi) {
+  return node ? lo + "\u2013" + (hi - 1) : String(hi - lo);
+}
+
+function pagerLabel(after, count, scope) {
+  if (count === 0) return "entries 0 of " + scope;
+  return "entries " + after + "\u2013" + (after + count - 1) + " of " + scope;
 }
 
 function pagerDirection(event, typing) {
@@ -546,7 +550,7 @@ function pager(page, state, bounds) {
     el("p", null, { class: "pager" }),
     pagerButton("older", "[", older, state),
     pagerButton("newer", "]", newer, state),
-    el("span", pagerLabel(state.after, page.items.length, bounds.hi - bounds.lo)),
+    el("span", pagerLabel(state.after, page.items.length, pagerScope(state.node, bounds.lo, bounds.hi))),
   );
 }
 

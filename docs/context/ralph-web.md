@@ -283,7 +283,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Memory screen
 
-- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
+- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
 - Stat line: from the root `stats`, for example `45 entries, 8 blocks, 2 summarised, 6 pending, last entry <time>`.
@@ -303,7 +303,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - A block with no summary shows the neutral `pending` pill in its row.
 - Entries and paging:
   - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
-  - The label reads `entries A–B of N`, where N is the size of the node range.
+  - The label reads `entries A–B of N`. A and B are absolute 0-based inclusive positions. With no node, N is the entry count. In a node, N is the node range `lo–hi-1`, as in the tree labels, so node 32-63 on its first page reads `entries 32–51 of 32–63`. An empty page reads `entries 0 of N` with the same N.
   - An entry row opens in place: it gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`, and a detail row below holds the rendered text. Click, Enter or Space toggles it. Only one row is open at a time.
   - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`.
   - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `button`, `select`, `textarea` and editable fields (a focused tree row is a `button`), and with Ctrl, Meta or Alt.

@@ -483,15 +483,21 @@ fn the_pager_binds_bracket_keys_and_ignores_form_fields_and_buttons() {
 }
 
 #[test]
-fn the_pager_label_reads_entries_a_to_b_of_n() {
+fn the_pager_label_reads_entries_a_to_b_of_the_scope() {
     let body = script();
     let label = function_body(&body, "function pagerLabel(");
     assert!(
-        label.contains(r#""entries " + after + "\u2013" + (after + count - 1) + " of " + total"#)
+        label.contains(r#""entries " + after + "\u2013" + (after + count - 1) + " of " + scope"#)
     );
-    assert!(label.contains(r#""entries 0 of " + total"#));
+    assert!(label.contains(r#""entries 0 of " + scope"#));
+    assert!(!label.contains("total"));
+    let scope = function_body(&body, "function pagerScope(");
+    assert!(scope.contains("String(hi - lo)"));
+    assert!(scope.contains(r#"lo + "\u2013" + (hi - 1)"#));
     let pager = function_body(&body, "function pager(");
-    assert!(pager.contains("pagerLabel(state.after, page.items.length, bounds.hi - bounds.lo)"));
+    assert!(pager.contains(
+        "pagerLabel(state.after, page.items.length, pagerScope(state.node, bounds.lo, bounds.hi))"
+    ));
 }
 
 #[test]
