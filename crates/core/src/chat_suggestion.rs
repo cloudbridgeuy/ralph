@@ -62,12 +62,26 @@ pub fn driven_fill(buffer: &str, driven: Option<&str>) -> Option<String> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Suggestion {
+    Open(String),
+    PrefillOnly(String),
+}
+
+impl Suggestion {
+    pub fn text(&self) -> &str {
+        match self {
+            Suggestion::Open(text) | Suggestion::PrefillOnly(text) => text,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TurnEnd<'a> {
     pub auto_hold: bool,
     pub replied: bool,
     pub draft: Option<String>,
-    pub suggestion: Option<String>,
+    pub suggestion: Option<Suggestion>,
     pub status: &'a Status,
 }
 
@@ -92,13 +106,19 @@ fn auto_hold_target(suggestion: &str, status: &Status) -> Option<HoldFilter> {
 pub fn turn_end(end: TurnEnd) -> Next {
     let hold = end
         .suggestion
-        .as_deref()
+        .as_ref()
         .filter(|_| end.auto_hold && end.replied && end.draft.is_none())
-        .and_then(|suggestion| auto_hold_target(suggestion, end.status));
+        .and_then(|suggestion| match suggestion {
+            Suggestion::Open(text) => auto_hold_target(text, end.status),
+            Suggestion::PrefillOnly(_) => None,
+        });
     if let Some(filter) = hold {
         return Next::Hold(filter);
     }
-    match prefill(end.replied, end.draft, end.suggestion) {
+    let text = end
+        .suggestion
+        .map(|suggestion| suggestion.text().to_string());
+    match prefill(end.replied, end.draft, text) {
         Some(fill) => Next::Prefill(fill),
         None => Next::Nothing,
     }

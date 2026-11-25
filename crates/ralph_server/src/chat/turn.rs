@@ -35,7 +35,7 @@ use ralph_core::chat_process::{turn_cost, ResetReason};
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::chat_stage::{next_mark, stage_due, stage_text, StageMark};
 use ralph_core::chat_status::Status;
-use ralph_core::chat_suggestion::from_reply;
+use ralph_core::chat_suggestion::{from_reply, Suggestion};
 use ralph_core::chat_thread::Scope;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{extract_response_text, OutputBlock, VerboseToolsConfig};
@@ -163,7 +163,7 @@ pub struct Turn {
     pub recent_history_tokens: usize,
     pub gate: Arc<OutputGate>,
     pub run: String,
-    pub suggestions: SuggestionCell,
+    pub suggestions: SuggestionCell<Suggestion>,
     pub last_turn_end: Stamp,
     pub identity: Arc<Mutex<IterationMetadata>>,
     pub last_cost_usd: Mutex<Option<f64>>,
@@ -491,7 +491,7 @@ impl Turn {
                     stage::check_next_step(&self.store, &(self.status)(), next.clone())
                         .unwrap_or_else(|e| {
                             self.warn(format!("Failed to check the Next step: {e}"));
-                            (next, None)
+                            (next.map(Suggestion::Open), None)
                         });
                 if let Some(notice) = notice {
                     self.warn(notice);

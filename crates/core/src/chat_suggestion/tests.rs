@@ -84,7 +84,7 @@ fn after_a_turn_without_a_reply(stop: StopReason) -> Next {
         auto_hold: true,
         replied: false,
         draft: None,
-        suggestion: run_end_prefill(&SendItNext::Stop(stop)),
+        suggestion: run_end_prefill(&SendItNext::Stop(stop)).map(Suggestion::Open),
         status: &Status::default(),
     })
 }
@@ -239,7 +239,7 @@ fn end_with(auto_hold: bool, replied: bool, draft: Option<&str>, suggestion: &st
         auto_hold,
         replied,
         draft: draft.map(str::to_string),
-        suggestion: some(suggestion),
+        suggestion: Some(Suggestion::Open(suggestion.to_string())),
         status: &status(),
     })
 }
@@ -315,7 +315,7 @@ fn a_bare_hold_prefills_without_targets() {
         auto_hold: true,
         replied: true,
         draft: None,
-        suggestion: some("/hold"),
+        suggestion: Some(Suggestion::Open("/hold".to_string())),
         status: &Status::default(),
     });
     assert_eq!(next, fill("/hold"));
@@ -535,20 +535,20 @@ fn other_suggestions_stay_hidden_after_a_turn_with_no_reply() {
 }
 
 #[test]
-fn a_gap_replaces_the_suggestion_with_stage_and_the_prefill_never_holds() {
+fn a_gap_keeps_the_suggestion_and_the_prefill_never_holds() {
     use crate::chat_stage::{suggestion_after, Gap};
     let gap = Gap {
         unnamed: vec!["s1".to_string()],
     };
-    let suggestion = suggestion_after(some("/hold GUZ-1"), Some(&gap));
-    assert_eq!(suggestion, some("/stage"));
-    let next = turn_end(TurnEnd {
-        auto_hold: true,
-        replied: true,
-        draft: None,
-        suggestion,
-        status: &status(),
-    });
-    assert_eq!(next, fill("/stage"));
-    assert_eq!(suggestion_after(some("/hold"), None), some("/hold"));
+    let after = |gap: Option<&Gap>| {
+        turn_end(TurnEnd {
+            auto_hold: true,
+            replied: true,
+            draft: None,
+            suggestion: suggestion_after(some("/hold"), gap),
+            status: &status(),
+        })
+    };
+    assert_eq!(after(Some(&gap)), fill("/hold"));
+    assert_eq!(after(None), Next::Hold(HoldFilter::Any));
 }

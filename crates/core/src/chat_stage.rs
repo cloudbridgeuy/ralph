@@ -1,4 +1,5 @@
 use crate::chat_status::Status;
+use crate::chat_suggestion::Suggestion;
 use crate::chat_thread::ThreadName;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,7 +9,6 @@ pub const STAGE_REPEAT_TURNS: usize = 5;
 pub const STAGE_ADD: &str = "stage_add";
 pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
-pub const STAGE_COMMAND: &str = "/stage";
 pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
 
 const NEEDS_USER_STATES: [&str; 3] = ["question", "blocked", "permission"];
@@ -221,8 +221,11 @@ impl Gap {
     }
 }
 
-pub fn suggestion_after(suggestion: Option<String>, gap: Option<&Gap>) -> Option<String> {
-    gap.map_or(suggestion, |_| Some(STAGE_COMMAND.to_string()))
+pub fn suggestion_after(suggestion: Option<String>, gap: Option<&Gap>) -> Option<Suggestion> {
+    suggestion.map(|text| match gap {
+        Some(_) => Suggestion::PrefillOnly(text),
+        None => Suggestion::Open(text),
+    })
 }
 
 pub fn pending_decisions(items: &[Item], status: &Status) -> Vec<Pending> {

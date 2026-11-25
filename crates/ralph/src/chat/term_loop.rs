@@ -26,7 +26,7 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_send_it::{Ended, SendItCommand, Trust};
 use ralph_core::chat_status::Route;
 use ralph_core::chat_suggestion::{
-    auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
+    auto_hold_notice, turn_end, Next, Prefill, Suggestion, SuggestionRecord, TurnEnd,
 };
 use ralph_core::chat_switch::{SwitchArgv, SwitchTarget};
 use ralph_core::chat_thread::ThreadName;
@@ -53,7 +53,7 @@ pub(super) struct TerminalLoop<'a> {
     pub(super) prompt: &'a ChatPrompt,
     pub(super) store: &'a Store,
     pub(super) run: &'a str,
-    pub(super) suggestions: &'a SuggestionCell,
+    pub(super) suggestions: &'a SuggestionCell<Suggestion>,
     pub(super) shown: &'a SuggestionCell,
     pub(super) watch_timeout: Duration,
     pub(super) auto_hold: bool,
@@ -532,7 +532,7 @@ impl TerminalLoop<'_> {
             }
             self.suggestions.clear();
             if let Some(line) = driven.prefill {
-                self.suggestions.set(line);
+                self.suggestions.set(Suggestion::Open(line));
             }
         }
         let suggestion = self.suggestions.take();
@@ -567,7 +567,7 @@ impl TerminalLoop<'_> {
                             chrono::Utc::now().to_rfc3339(),
                             self.run,
                             turn_number,
-                            &suggested,
+                            suggested.text(),
                         )),
                         "Failed to record suggestion outcome",
                     );
