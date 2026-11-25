@@ -538,6 +538,7 @@ fn a_hash_node_selects_the_nearest_visible_row() {
     assert!(expand.contains("step === \"here\""));
     assert!(expand.contains("leafRootKey(target)"));
     assert!(expand.contains(":scope > li > button[data-key="));
+    assert!(expand.contains("else if (depth > 0) selectRow(tree, scope);"));
     assert!(!expand.contains("next.dataset.node === target"));
 }
 

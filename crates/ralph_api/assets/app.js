@@ -454,6 +454,7 @@ async function expandTo(tree, target, ctx) {
       const key = depth === 0 ? leafRootKey(target) : null;
       const button = key && tree.querySelector(':scope > li > button[data-key="' + key + '"]');
       if (button) selectRow(tree, button.parentElement);
+      else if (depth > 0) selectRow(tree, scope);
       return;
     }
     const step = stepOf(next);
