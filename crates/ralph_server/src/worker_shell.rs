@@ -1,10 +1,12 @@
 use crate::config::AppConfig;
+use crate::transport::stdio::spawn_piped;
 use crate::warn::warn_once;
 use crate::wire::store::user_login_shell;
 use ralph_core::worker::{resolve_worker_shell, shell_wrapped_argv, LoginShell};
 use std::ffi::OsStr;
+use std::io;
 use std::iter;
-use std::process::Command;
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 pub(crate) fn worker_shell() -> LoginShell {
     let config = AppConfig::load().map_err(|error| error.to_string());
@@ -19,6 +21,13 @@ pub(crate) fn worker_shell() -> LoginShell {
         warn_once("workers-shell", warning);
     }
     shell
+}
+
+pub(crate) fn spawn_in_shell(
+    command: Command,
+) -> io::Result<(Child, ChildStdin, ChildStdout, ChildStderr)> {
+    let shell = worker_shell();
+    spawn_piped(in_shell(&shell, command), shell.session())
 }
 
 pub(crate) fn in_shell(shell: &LoginShell, command: Command) -> Command {

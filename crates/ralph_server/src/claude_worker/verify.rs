@@ -12,6 +12,7 @@ use ralph_core::claude_leftovers::{
     claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
 };
 use ralph_core::stream::user_line;
+use ralph_core::worker::ChildSession;
 use ralph_core::worker::{
     acp_mcp_server, argv_check, cancel_check, claude_args, claude_mcp_config,
     claude_probed_version, claude_verify_spawns, fold_claude_line, init_check, mcp_check,
@@ -339,7 +340,7 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
         let exe = std::env::current_exe()
             .map_err(|error| format!("could not find the ralph executable: {error}"))?;
         let args = verify_args(model, dir, &session, &exe);
-        spawn_piped(claude_command(&args, dir, config))
+        spawn_piped(claude_command(&args, dir, config), ChildSession::Group)
             .map(|spawned| (session, args, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });

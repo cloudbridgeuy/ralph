@@ -27,6 +27,12 @@ impl WorkerShell {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildSession {
+    Group,
+    Detached,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginShell {
     Zsh(String),
@@ -40,6 +46,13 @@ impl LoginShell {
             WorkerShell::Zsh => Self::Zsh(program.to_string()),
             WorkerShell::Bash => Self::Bash(program.to_string()),
             WorkerShell::None => Self::Direct,
+        }
+    }
+
+    pub fn session(&self) -> ChildSession {
+        match self {
+            Self::Zsh(_) | Self::Bash(_) => ChildSession::Detached,
+            Self::Direct => ChildSession::Group,
         }
     }
 
@@ -198,6 +211,13 @@ mod tests {
         let (shell, warning) = resolve_worker_shell(Err("bad toml"), None);
         assert_eq!(shell, LoginShell::Direct);
         assert!(warning.unwrap().contains("passwd"));
+    }
+
+    #[test]
+    fn wrapped_children_leave_the_terminal_and_direct_children_keep_a_group() {
+        assert_eq!(zsh("/bin/zsh").session(), ChildSession::Detached);
+        assert_eq!(bash("bash").session(), ChildSession::Detached);
+        assert_eq!(LoginShell::Direct.session(), ChildSession::Group);
     }
 
     #[test]

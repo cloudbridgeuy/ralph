@@ -2,6 +2,7 @@ use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, request_ids, write_file};
 use crate::opencode_usage::{record_opencode_usage, OpencodeTurn};
 use crate::process_tree::process_table;
+use crate::subprocess::set_session;
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
@@ -31,7 +32,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -80,11 +80,13 @@ impl Server {
             .envs([ralph_core::worker::inbox_env(
                 &fs::canonicalize(store).map_err(|e| e.to_string())?,
             )]);
-        let child = match in_shell(&worker_shell(), command)
+        let shell = worker_shell();
+        let mut command = in_shell(&shell, command);
+        set_session(&mut command, shell.session());
+        let child = match command
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
             .stderr(log)
-            .process_group(0)
             .spawn()
         {
             Ok(child) => child,

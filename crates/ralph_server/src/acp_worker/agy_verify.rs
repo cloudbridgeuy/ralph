@@ -1,6 +1,7 @@
 use super::*;
 use crate::worker_verify::{step, Checks};
 use agent_client_protocol::schema::v1::{CloseSessionRequest, McpServerStdio};
+use ralph_core::worker::ChildSession;
 use ralph_core::worker::{CheckResult, AGY_AGENT};
 use std::sync::atomic::AtomicUsize;
 
@@ -278,8 +279,8 @@ pub(crate) fn verify(
     };
     let mut command = spawn_command(mode);
     command.current_dir(dir);
-    let spawned =
-        spawn_piped(command).map_err(|error| format!("could not start `agy acp`: {error}"));
+    let spawned = spawn_piped(command, ChildSession::Group)
+        .map_err(|error| format!("could not start `agy acp`: {error}"));
     let Some((mut child, stdin, stdout, stderr)) =
         step(checks, "spawn", spawned, |_| "agy acp started".to_string())
     else {

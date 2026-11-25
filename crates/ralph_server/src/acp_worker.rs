@@ -12,7 +12,7 @@ use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
-use crate::worker_shell::{in_shell, worker_shell};
+use crate::worker_shell::spawn_in_shell;
 use crate::workers::headless::{mark_prompt_lost, report_interrupt_gone, HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
     AuthenticateRequest, CancelNotification, CloseSessionRequest, InitializeResponse,
@@ -261,7 +261,7 @@ impl AcpWorker {
         } else {
             None
         };
-        let (child, stdin, stdout, stderr) = spawn_piped(in_shell(&worker_shell(), command))
+        let (child, stdin, stdout, stderr) = spawn_in_shell(command)
             .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
         let log = CappedLog::new(request.inbox.parent(), id);
         drain_stderr(stderr, Arc::clone(&log));

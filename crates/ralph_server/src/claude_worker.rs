@@ -12,11 +12,11 @@ use crate::cursor_owner::{
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::private_file::write_worker_config;
 use crate::process_tree::{snapshot_tree, sweep_tree};
-use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
+use crate::transport::stdio::{stop_child, stop_groups};
 use crate::watches::locked;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
-use crate::worker_shell::{in_shell, worker_shell};
+use crate::worker_shell::spawn_in_shell;
 use crate::worker_usage::{record_session_or_warn, UsageSession, UsageTarget};
 use crate::workers::headless::{
     deliver_to_worker, drain_queued, mark_prompt_lost, queued_owner, report_interrupt_gone,
@@ -477,11 +477,10 @@ impl ClaudeWorker {
         if let Some(dir) = config_dir {
             command.env(CLAUDE_CONFIG_DIR_ENV, dir);
         }
-        let (mut child, stdin, stdout, stderr) = spawn_piped(in_shell(&worker_shell(), command))
-            .map_err(|e| {
-                remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
-                format!("could not start `{CLAUDE_COMMAND}`: {e}")
-            })?;
+        let (mut child, stdin, stdout, stderr) = spawn_in_shell(command).map_err(|e| {
+            remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
+            format!("could not start `{CLAUDE_COMMAND}`: {e}")
+        })?;
         locked(starting).insert(id.to_string(), child.id());
         let log = CappedLog::new(Some(store), id);
         drain_stderr(stderr, Arc::clone(&log));
