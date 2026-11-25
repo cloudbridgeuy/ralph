@@ -1,4 +1,6 @@
-use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
+use ralph_core::inbox::{
+    decode_message, drop_log_line, DecodeError, Entry, Ledger, Position, Selection,
+};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     accept_report, append_status, decode_statuses, encode_statuses, handle_request,
@@ -19,6 +21,24 @@ use crate::worker_changes::WorkerChanges;
 use crate::worker_usage::{record_or_warn, record_verify_or_warn, UsageTarget};
 
 const DROP_LOG: &str = "inbox-drops.jsonl";
+const REJECTED_DIR: &str = "rejected";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadMode {
+    ReadOnly,
+    Repair,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LedgerState {
+    Unchanged,
+    Repaired,
+}
+
+struct LoadedLedger {
+    ledger: Ledger,
+    state: LedgerState,
+}
 
 pub struct Inbox {
     dir: PathBuf,
@@ -114,7 +134,9 @@ impl Inbox {
     fn pending(&self) -> io::Result<Vec<PathBuf>> {
         let mut paths = match fs::read_dir(&self.dir) {
             Ok(entries) => entries
-                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter_map(|e| e.ok())
+                .filter(|e| !e.file_type().is_ok_and(|t| t.is_dir()))
+                .map(|e| e.path())
                 .filter(|p| is_message(p))
                 .collect::<Vec<_>>(),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
@@ -128,12 +150,65 @@ impl Inbox {
         self.dir.with_extension("json")
     }
 
-    fn load_ledger(&self) -> io::Result<Ledger> {
-        match fs::read(self.ledger_path()) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Ledger::default()),
+    fn copy_rejected_ledger(&self, bytes: &[u8]) -> io::Result<PathBuf> {
+        let rejected_dir = self.dir.join(REJECTED_DIR);
+        fs::create_dir_all(&rejected_dir)?;
+        let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%9f");
+        let dest = rejected_dir.join(format!("inbox-{stamp}.json"));
+        fs::write(&dest, bytes)?;
+        Ok(dest)
+    }
+
+    fn load_ledger_with(
+        &self,
+        mode: LoadMode,
+        warn: &mut impl FnMut(String),
+    ) -> io::Result<LoadedLedger> {
+        let path = self.ledger_path();
+        match fs::read(&path) {
+            Ok(bytes) => {
+                let (ledger, skipped) = Ledger::decode(&bytes);
+                if skipped.is_empty() {
+                    return Ok(LoadedLedger {
+                        ledger,
+                        state: LedgerState::Unchanged,
+                    });
+                }
+                let (note, state) = match mode {
+                    LoadMode::Repair => match self.copy_rejected_ledger(&bytes) {
+                        Ok(dest) => (
+                            format!(" (original copied to {})", dest.display()),
+                            LedgerState::Repaired,
+                        ),
+                        Err(err) => (
+                            format!(" (could not copy original to rejected: {err})"),
+                            LedgerState::Unchanged,
+                        ),
+                    },
+                    LoadMode::ReadOnly => (String::new(), LedgerState::Unchanged),
+                };
+                for entry in skipped {
+                    warn(format!(
+                        "skipping malformed inbox ledger {}{note}: {entry}",
+                        path.display()
+                    ));
+                }
+                Ok(LoadedLedger { ledger, state })
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(LoadedLedger {
+                ledger: Ledger::default(),
+                state: LedgerState::Unchanged,
+            }),
             Err(e) => Err(e),
         }
+    }
+
+    fn load_ledger(&self) -> io::Result<Ledger> {
+        Ok(self
+            .load_ledger_with(LoadMode::ReadOnly, &mut |message| {
+                crate::warn::warn(message)
+            })?
+            .ledger)
     }
 
     fn save_ledger(&self, ledger: &Ledger) -> io::Result<()> {
@@ -143,35 +218,77 @@ impl Inbox {
         fs::rename(tmp, path)
     }
 
-    fn sync<T>(&self, act: impl FnOnce(&mut Ledger) -> (T, bool)) -> io::Result<T> {
+    fn reject_message(&self, path: &Path) -> io::Result<PathBuf> {
+        let rejected_dir = self.dir.join(REJECTED_DIR);
+        fs::create_dir_all(&rejected_dir)?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing file name"))?;
+        let dest = rejected_dir.join(name);
+        fs::rename(path, &dest)?;
+        Ok(dest)
+    }
+
+    fn reject_and_warn(&self, path: &Path, reason: &DecodeError, warn: &mut impl FnMut(String)) {
+        match self.reject_message(path) {
+            Ok(dest) => warn(format!(
+                "moved malformed inbox file {} to {}: {reason}",
+                path.display(),
+                dest.display()
+            )),
+            Err(move_err) => warn(format!(
+                "skipping malformed inbox file {} (could not move to rejected: {move_err}): {reason}",
+                path.display()
+            )),
+        }
+    }
+
+    fn sync_with<T>(
+        &self,
+        warn: &mut impl FnMut(String),
+        act: impl FnOnce(&mut Ledger) -> (T, bool),
+    ) -> io::Result<T> {
         let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut ledger = self.load_ledger()?;
+        let LoadedLedger { mut ledger, state } = self.load_ledger_with(LoadMode::Repair, warn)?;
         let pending = self.pending()?;
         let mut arrivals = Vec::new();
-        for path in &pending {
-            match serde_json::from_slice(&fs::read(path)?) {
+        let mut accepted = Vec::new();
+        for path in pending {
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            };
+            match decode_message(&bytes) {
                 Ok(report) => {
                     let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     arrivals.push((name, report));
+                    accepted.push(path);
                 }
-                Err(e) => crate::warn::warn(format!(
-                    "dropping malformed inbox file {}: {e}",
-                    path.display()
-                )),
+                Err(reason) => self.reject_and_warn(&path, &reason, warn),
             }
         }
+        let ingested = !accepted.is_empty();
         ledger.ingest(arrivals);
         let (value, changed) = act(&mut ledger);
-        if !pending.is_empty() || changed {
+        let should_save = match state {
+            LedgerState::Repaired => true,
+            LedgerState::Unchanged => ingested || changed,
+        };
+        if should_save {
             self.save_ledger(&ledger)?;
         }
-        for path in pending {
+        for path in accepted {
             remove_if_present(&path)?;
         }
         Ok(value)
+    }
+
+    fn sync<T>(&self, act: impl FnOnce(&mut Ledger) -> (T, bool)) -> io::Result<T> {
+        self.sync_with(&mut |message| crate::warn::warn(message), act)
     }
 
     pub fn peek(&self) -> io::Result<Vec<Report>> {
@@ -239,7 +356,10 @@ fn append_line(path: &Path, line: &str) -> io::Result<()> {
 }
 
 fn is_message(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| ext == "json")
+    path.parent()
+        .and_then(|parent| parent.file_name())
+        .is_none_or(|name| name != REJECTED_DIR)
+        && path.extension().is_some_and(|ext| ext == "json")
         && path
             .file_name()
             .and_then(|n| n.to_str())
@@ -822,3 +942,7 @@ mod tests {
         assert!(!sent.exists());
     }
 }
+
+#[cfg(test)]
+#[path = "worker_mcp_tests.rs"]
+mod inbox_tests;

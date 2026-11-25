@@ -1,6 +1,7 @@
 //! `/diff` target, argv and shell-word splitting. No I/O.
 
 use crate::changes::{ScopeQuery, TurnWindow};
+use crate::chat_spec::Keyword;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiffPager {
@@ -30,6 +31,50 @@ pub enum DiffArgs {
 pub const UNCLOSED_DIFF_QUOTE: &str = "/diff: unclosed quote";
 pub const WINDOW_USAGE: &str = "/diff: last and ago need a number of 1 or more";
 pub const WORKER_USAGE: &str = "/diff: worker needs a worker id";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffWord {
+    Now,
+    Worker,
+    Last,
+    Ago,
+}
+
+impl Keyword for DiffWord {
+    const ALL: &'static [Self] = &[
+        DiffWord::Now,
+        DiffWord::Worker,
+        DiffWord::Last,
+        DiffWord::Ago,
+    ];
+
+    fn word(self) -> &'static str {
+        match self {
+            DiffWord::Now => "now",
+            DiffWord::Worker => "worker",
+            DiffWord::Last => "last",
+            DiffWord::Ago => "ago",
+        }
+    }
+}
+
+impl DiffWord {
+    pub fn window(self) -> Option<fn(usize) -> TurnWindow> {
+        match self {
+            DiffWord::Last => Some(TurnWindow::Last),
+            DiffWord::Ago => Some(TurnWindow::Ago),
+            DiffWord::Now | DiffWord::Worker => None,
+        }
+    }
+}
+
+pub fn is_worker_id(word: &str) -> bool {
+    !word.starts_with('-')
+        && match DiffWord::parse(word) {
+            Some(DiffWord::Now | DiffWord::Last | DiffWord::Ago) => false,
+            Some(DiffWord::Worker) | None => true,
+        }
+}
 
 /// `git diff` argv. `revs` (snapshot range) come right after `diff`, then
 /// `diff_args` (from config), then `extra` (typed).
@@ -86,12 +131,12 @@ pub fn parse_diff_args(input: &str) -> DiffArgs {
 }
 
 fn parse_target(words: &[String]) -> Result<DiffTarget, &'static str> {
-    match words.first().map(String::as_str) {
-        Some("now") => Ok(DiffTarget::Now(words[1..].to_vec())),
-        Some("worker") => {
+    match words.first().and_then(|word| DiffWord::parse(word)) {
+        Some(DiffWord::Now) => Ok(DiffTarget::Now(words[1..].to_vec())),
+        Some(DiffWord::Worker) => {
             let worker = words
                 .get(1)
-                .filter(|id| !id.starts_with('-') && !matches!(id.as_str(), "last" | "ago" | "now"))
+                .filter(|id| is_worker_id(id))
                 .ok_or(WORKER_USAGE)?;
             let (window, extra) = take_window(&words[2..])?;
             Ok(DiffTarget::Range {
@@ -102,7 +147,7 @@ fn parse_target(words: &[String]) -> Result<DiffTarget, &'static str> {
                 extra,
             })
         }
-        _ => {
+        Some(DiffWord::Last | DiffWord::Ago) | None => {
             let (window, extra) = take_window(words)?;
             Ok(DiffTarget::Range {
                 scope: ScopeQuery::Chat(window.unwrap_or(TurnWindow::Last(1))),
@@ -113,10 +158,12 @@ fn parse_target(words: &[String]) -> Result<DiffTarget, &'static str> {
 }
 
 fn take_window(words: &[String]) -> Result<(Option<TurnWindow>, Vec<String>), &'static str> {
-    let constructor: fn(usize) -> TurnWindow = match words.first().map(String::as_str) {
-        Some("last") => TurnWindow::Last,
-        Some("ago") => TurnWindow::Ago,
-        _ => return Ok((None, words.to_vec())),
+    let constructor = words
+        .first()
+        .and_then(|word| DiffWord::parse(word))
+        .and_then(DiffWord::window);
+    let Some(constructor) = constructor else {
+        return Ok((None, words.to_vec()));
     };
     let count = words
         .get(1)

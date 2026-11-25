@@ -199,13 +199,13 @@ pub fn resolve_opencode_model(
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
 
-End every turn with the report tool: status done when the task is finished, blocked when you cannot go on, or question when you need a decision only the person can make, and a full summary in text. End the summary with an `assumptions:` line naming every decision you made where the task was ambiguous. Write `assumptions: none` when the task was clear. Then stop and wait. The person's answer arrives as your next message. Never send progress updates.
+End every turn with the report tool: status done when the task is finished, blocked when you cannot go on and only the person can unblock you, or question when you need a decision only the person can make, and a full summary in text. End the summary with an `assumptions:` line naming every decision you made where the task was ambiguous. Write `assumptions: none` when the task was clear. Then stop and wait. The person's answer arrives as your next message. Never send progress updates.
 
-Call set_status with one sentence about what you are doing when you start and whenever your current activity changes; it is not a report and costs no turn.
+Call set_status with one sentence about what you are doing when you start and whenever your current activity changes; it is not a report and costs no turn. If you are waiting on your own subagents, checks or builds, call set_status and keep waiting in this turn; that is not blocked.
 
 A reference like [Image #N: <path>] in a message is an image file: read it at that path.";
 
-pub const REPORT_REMINDER: &str = "You stopped without calling report. Call report now with status done, blocked or question and a full summary of what you did or what you need.";
+pub const REPORT_REMINDER: &str = "You stopped without calling report. Call report now with status done, blocked (only when you cannot go on and only the person can unblock you, not while waiting on your own subagents, checks or builds) or question, and a full summary of what you did or what you need.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
@@ -781,6 +781,28 @@ mod tests {
         assert_eq!(
             worktree_path(Path::new("/tmp/wt"), "w1"),
             PathBuf::from("/tmp/wt/w1")
+        );
+    }
+
+    #[test]
+    fn worker_prompt_says_waiting_on_subagents_is_not_blocked() {
+        assert!(
+            WORKER_PROMPT.contains("only the person can unblock you"),
+            "{WORKER_PROMPT}"
+        );
+        assert!(
+            WORKER_PROMPT.contains("subagents, checks or builds")
+                && WORKER_PROMPT.contains("call set_status and keep waiting in this turn")
+                && WORKER_PROMPT.contains("not blocked"),
+            "{WORKER_PROMPT}"
+        );
+        assert!(
+            REPORT_REMINDER.contains("only the person can unblock you"),
+            "{REPORT_REMINDER}"
+        );
+        assert!(
+            !REPORT_REMINDER.contains("set_status"),
+            "reminder must offer report only, never set_status as an exit: {REPORT_REMINDER}"
         );
     }
 }

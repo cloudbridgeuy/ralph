@@ -381,7 +381,7 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
     },
     KeyHelp {
         keys: "Tab, Shift-Tab",
-        effect: "after /hold , complete the word under the cursor from this chat's worker ids, watch:<name> and schedule:<id>; after /view , complete the path from directories and .md or .markdown files; on a word starting with ., .., /, ~ or $HOME, complete the path from the working dir, the root or the home dir; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
+        effect: "complete / command names, subcommands, flags, fixed values, worker ids and thread names; after /hold , complete the word under the cursor from this chat's worker ids, watch:<name> and schedule:<id>; after /view , complete the path from directories and .md or .markdown files; on a word starting with ., .., /, ~ or $HOME, complete the path from the working dir, the root or the home dir; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
     },
     KeyHelp {
         keys: "Up, Down, Ctrl-R",

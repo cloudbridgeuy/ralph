@@ -48,7 +48,7 @@ Switch back in the same terminal, or quit the thread chat.
 Type `/thread switch <name>` to move this chat to another thread in the same terminal. Type `/thread main` to go back to main. The chat quits and a new `ralph chat` starts on the target.
 
 - `/thread switch <name>` takes one thread name; `/thread switch main` is refused. `/thread main` takes no arguments. A bare `/thread <name>` gets the usage refusal. Subcommand words such as `ls` or `drop` are valid thread names: `/thread switch ls` switches to the thread `ls`.
-- Tab after `/thread ` completes the subcommands (`main` only inside a thread). Tab after `/thread switch ` completes the names of threads that are not merged or parked. Other subcommands complete no names.
+- Tab after `/thread ` completes the subcommands (`main` only inside a thread). Tab after `/thread switch ` completes the names of threads that are not merged or parked. In main, Tab also completes those names after `pull`, `park`, `drop` and `merge`. `revive` completes no names. Flags: see [Tab completion](ralph-chat.md#tab-completion).
 - An unknown name creates the thread, like `ralph chat --thread <name>`.
 - The switch is refused when you are already in the target, when the thread is merged or parked, or when the target chat is open elsewhere. Main counts as a target: after `/thread open`, `/thread main` from the thread is refused while main's chat is open.
 - The switch is refused while workers or watches run. The message names them. Stop them first.

@@ -1,3 +1,4 @@
+use crate::chat_spec::Keyword;
 use crate::schedule::{
     escape_controls, format_span, watch_id, Task, TaskKind, TaskStatus, SCHEDULE_ID_PREFIX,
 };
@@ -6,6 +7,23 @@ use chrono::{DateTime, FixedOffset, Utc};
 
 pub const SCHEDULE_USAGE: &str = "Usage: /schedule [list] | cancel <id>. /schedule does not create tasks: the model proposes them and you arm each one at a y/n prompt.";
 const NO_TASKS: &str = "No scheduled tasks.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleSub {
+    List,
+    Cancel,
+}
+
+impl Keyword for ScheduleSub {
+    const ALL: &'static [Self] = &[ScheduleSub::List, ScheduleSub::Cancel];
+
+    fn word(self) -> &'static str {
+        match self {
+            ScheduleSub::List => "list",
+            ScheduleSub::Cancel => "cancel",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScheduleCommand {
@@ -31,13 +49,18 @@ pub enum CancelPlan {
 
 pub fn parse_schedule_args(args: &str) -> ScheduleCommand {
     let words: Vec<&str> = args.split_whitespace().collect();
-    match words.as_slice() {
-        [] | ["list"] => ScheduleCommand::List,
-        ["cancel", id] => match id.strip_prefix(SCHEDULE_ID_PREFIX).unwrap_or(id) {
-            "" => ScheduleCommand::Usage,
-            id => ScheduleCommand::Cancel(id.to_string()),
-        },
-        _ => ScheduleCommand::Usage,
+    let Some((word, rest)) = words.split_first() else {
+        return ScheduleCommand::List;
+    };
+    match (ScheduleSub::parse(word), rest) {
+        (Some(ScheduleSub::List), []) => ScheduleCommand::List,
+        (Some(ScheduleSub::Cancel), [id]) => {
+            match id.strip_prefix(SCHEDULE_ID_PREFIX).unwrap_or(id) {
+                "" => ScheduleCommand::Usage,
+                id => ScheduleCommand::Cancel(id.to_string()),
+            }
+        }
+        (Some(ScheduleSub::List | ScheduleSub::Cancel) | None, _) => ScheduleCommand::Usage,
     }
 }
 
