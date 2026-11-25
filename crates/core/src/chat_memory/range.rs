@@ -1,5 +1,6 @@
 use super::tag::Flags;
 use super::{role_label, Entry, Node, Tree, Window, SUMMARY_BYTES, UNAVAILABLE_MARK};
+use crate::chat_spec::Keyword;
 use crate::mcp::string_arg;
 use serde_json::Value;
 use std::ops::RangeInclusive;
@@ -29,8 +30,12 @@ impl Mode {
             _ => None,
         }
     }
+}
 
-    fn name(self) -> &'static str {
+impl Keyword for Mode {
+    const ALL: &'static [Self] = &[Mode::Raw, Mode::Summary];
+
+    fn word(self) -> &'static str {
         match self {
             Mode::Raw => "raw",
             Mode::Summary => "summary",
@@ -144,9 +149,9 @@ pub fn parse_range(s: &str) -> Result<(usize, usize), String> {
 pub fn parse_read_args(args: &Value) -> Result<RangeRequest, String> {
     let (from, to) = parse_range(string_arg(args, "id")?.trim())?;
     let mode = match args.get("mode").and_then(Value::as_str) {
-        None | Some("raw") => Mode::Raw,
-        Some("summary") => Mode::Summary,
-        Some(other) => return Err(format!("'{other}' is not a mode. Use raw or summary.")),
+        None => Mode::Raw,
+        Some(word) => Mode::parse(word)
+            .ok_or_else(|| format!("'{word}' is not a mode. Use raw or summary."))?,
     };
     let budget = match args.get("budget") {
         None | Some(Value::Null) => DEFAULT_BUDGET,
@@ -236,9 +241,9 @@ fn validate_cursor(cursor: &Cursor, bounds: &CursorBounds) -> Result<(), String>
         return Err(format!(
             "cursor {} was issued in {} mode but this read uses {} mode. Pass mode {}, or restart without a cursor.",
             cursor.encode(),
-            cursor.mode.name(),
-            mode.name(),
-            cursor.mode.name()
+            cursor.mode.word(),
+            mode.word(),
+            cursor.mode.word()
         ));
     }
     if cursor.end > len || cursor.end > limit {

@@ -1,3 +1,4 @@
+use crate::chat_spec::Keyword;
 use crate::watch::{watch_id, WatchKind, WatchSpec};
 use crate::watch_request::WatchRequest;
 use crate::watch_store::SavedWatch;
@@ -6,10 +7,43 @@ use std::time::Duration;
 
 pub const WATCH_USAGE: &str =
     "Usage: /watch start [--persistent] <command> -- <follow-up> | list | stop <id>";
-const PERSISTENT_FLAG: &str = "--persistent";
 const FOLLOW_UP_SEPARATOR: &str = " -- ";
 const NO_TIME_LEFT: &str = "—";
 const NO_WATCHES: &str = "No active watches.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchSub {
+    Start,
+    List,
+    Stop,
+}
+
+impl Keyword for WatchSub {
+    const ALL: &'static [Self] = &[WatchSub::Start, WatchSub::List, WatchSub::Stop];
+
+    fn word(self) -> &'static str {
+        match self {
+            WatchSub::Start => "start",
+            WatchSub::List => "list",
+            WatchSub::Stop => "stop",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchFlag {
+    Persistent,
+}
+
+impl Keyword for WatchFlag {
+    const ALL: &'static [Self] = &[WatchFlag::Persistent];
+
+    fn word(self) -> &'static str {
+        match self {
+            WatchFlag::Persistent => "--persistent",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartWatch {
@@ -84,21 +118,24 @@ pub fn parse_watch_args(args: &str) -> WatchCommand {
     let (word, rest) = args
         .split_once(char::is_whitespace)
         .map_or((args, ""), |(word, rest)| (word, rest.trim()));
-    match word {
-        "start" => parse_start(rest),
-        "list" if rest.is_empty() => WatchCommand::List,
-        "stop" => match rest.split_whitespace().collect::<Vec<_>>().as_slice() {
+    match WatchSub::parse(word) {
+        Some(WatchSub::Start) => parse_start(rest),
+        Some(WatchSub::List) if rest.is_empty() => WatchCommand::List,
+        Some(WatchSub::Stop) => match rest.split_whitespace().collect::<Vec<_>>().as_slice() {
             [id] => WatchCommand::Stop(watch_id(id)),
             _ => WatchCommand::Usage,
         },
-        _ => WatchCommand::Usage,
+        Some(WatchSub::List) | None => WatchCommand::Usage,
     }
 }
 
 fn parse_start(rest: &str) -> WatchCommand {
-    let (persistent, body) = match rest.strip_prefix(PERSISTENT_FLAG) {
-        Some(after) if after.starts_with(char::is_whitespace) => (true, after.trim_start()),
-        _ => (false, rest),
+    let flagged = rest
+        .split_once(char::is_whitespace)
+        .map(|(first, after)| (WatchFlag::parse(first), after.trim_start()));
+    let (persistent, body) = match flagged {
+        Some((Some(WatchFlag::Persistent), after)) => (true, after),
+        Some((None, _)) | None => (false, rest),
     };
     let Some((command, follow_up)) = body.rsplit_once(FOLLOW_UP_SEPARATOR) else {
         return WatchCommand::Usage;

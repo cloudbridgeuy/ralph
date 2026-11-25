@@ -1,5 +1,7 @@
 use crate::chat_thread::ThreadMeta;
 
+pub const THREAD_MODEL_ALIASES: [&str; 3] = ["sonnet", "opus", "haiku"];
+
 pub fn with_model(meta: &ThreadMeta, model: Option<&str>) -> Option<ThreadMeta> {
     model
         .filter(|model| meta.model.as_deref() != Some(*model))
@@ -23,7 +25,7 @@ pub fn validate_thread_model(model: &str) -> Result<(), String> {
     let known_id = model
         .strip_prefix("claude-")
         .is_some_and(|rest| !rest.is_empty());
-    if matches!(model, "sonnet" | "opus" | "haiku")
+    if THREAD_MODEL_ALIASES.contains(&model)
         || (known_id && !model.chars().any(char::is_whitespace))
     {
         Ok(())
