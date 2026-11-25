@@ -1,6 +1,7 @@
 use super::*;
 use crate::chat_help::Command;
 use crate::chat_thread::ThreadName;
+use crate::chat_thread_cmd::{parse_thread_args, ThreadLine};
 
 fn texts(found: Option<SpecCompletion>) -> Vec<String> {
     found.map_or_else(Vec::new, |found| {
@@ -105,4 +106,81 @@ fn subcommands_take_a_space_and_thread_names_do_not() {
     };
     assert_eq!(spaced("/thread sw"), Some((8..10, true)));
     assert_eq!(spaced("/thread switch au"), Some((15..17, false)));
+}
+
+#[test]
+fn open_offers_flags_once_a_name_or_a_dash_is_typed() {
+    let all = ["--auto-drop", "--auto-merge", "--model"];
+    for line in ["/thread open x ", "/thread open x --", "/thread open --"] {
+        assert_eq!(complete(line, None), words(&all), "{line}");
+    }
+}
+
+#[test]
+fn used_and_exclusive_open_flags_are_not_offered() {
+    assert_eq!(
+        complete("/thread open x --auto-merge --", None),
+        words(&["--model"])
+    );
+    assert_eq!(
+        complete("/thread open x --model opus --", None),
+        words(&["--auto-drop", "--auto-merge"])
+    );
+    for line in ["/thread open x y --", "/thread open x --nope --"] {
+        assert_eq!(complete(line, None), None, "{line}");
+    }
+}
+
+#[test]
+fn model_values_are_the_aliases() {
+    assert_eq!(
+        complete("/thread open opus --model ", None),
+        words(&["haiku", "opus", "sonnet"])
+    );
+}
+
+#[test]
+fn merge_pull_park_and_drop_name_open_threads_only_in_main() {
+    let all = ["auth", "side", "sub"];
+    for sub in ["pull", "park", "drop", "merge"] {
+        let line = format!("/thread {sub} ");
+        assert_eq!(complete(&line, None), words(&all), "{line}");
+        assert_eq!(complete(&line, Some("side")), None, "{line}");
+    }
+    assert_eq!(complete("/thread drop auth ", None), None);
+}
+
+#[test]
+fn merge_offers_view_once() {
+    for line in ["/thread merge auth ", "/thread merge --v"] {
+        assert_eq!(complete(line, None), words(&["--view"]), "{line}");
+    }
+    for line in [
+        "/thread merge auth --view ",
+        "/thread merge --rebase auth --",
+    ] {
+        assert_eq!(complete(line, None), None, "{line}");
+    }
+}
+
+#[test]
+fn every_offered_flag_is_accepted_by_the_parser() {
+    for line in [
+        "/thread open x ",
+        "/thread open x --auto-drop ",
+        "/thread open x --model opus ",
+        "/thread merge x ",
+    ] {
+        let offered = complete(line, None).unwrap_or_default();
+        assert!(!offered.is_empty(), "{line}");
+        for flag in offered {
+            let value = if flag == "--model" { " opus" } else { "" };
+            let typed = format!("{line}{flag}{value}");
+            let args = typed.strip_prefix("/thread").unwrap();
+            assert!(
+                matches!(parse_thread_args(args), ThreadLine::Op(Ok(_))),
+                "{typed}"
+            );
+        }
+    }
 }

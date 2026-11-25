@@ -1,7 +1,8 @@
 use crate::chat_help::Command;
 use crate::chat_hold::{word_completion, HoldCompletion};
 use crate::chat_thread::ThreadName;
-use crate::chat_thread_cmd::ThreadSub;
+use crate::chat_thread_cmd::{MergeFlag, OpenFlag, ThreadSub};
+use crate::chat_thread_model::THREAD_MODEL_ALIASES;
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -96,7 +97,7 @@ pub fn spec_completions(
             let command = Command::ALL
                 .into_iter()
                 .find(|command| command.name() == *head)?;
-            command_offers(command, args, facts)
+            command_offers(command, args, partial, facts)
         }
     };
     let targets = offers.keywords.union(&offers.names).cloned().collect();
@@ -115,9 +116,14 @@ pub fn spec_completions(
     })
 }
 
-fn command_offers(command: Command, args: &[&str], facts: &CompletionFacts) -> Offers {
+fn command_offers(
+    command: Command,
+    args: &[&str],
+    partial: &str,
+    facts: &CompletionFacts,
+) -> Offers {
     match command {
-        Command::Thread => thread_offers(args, facts),
+        Command::Thread => thread_offers(args, partial, facts),
         Command::Help
         | Command::Inbox
         | Command::Watch
@@ -140,7 +146,7 @@ fn command_offers(command: Command, args: &[&str], facts: &CompletionFacts) -> O
     }
 }
 
-fn thread_offers(args: &[&str], facts: &CompletionFacts) -> Offers {
+fn thread_offers(args: &[&str], partial: &str, facts: &CompletionFacts) -> Offers {
     let Some((first, rest)) = args.split_first() else {
         let subs = ThreadSub::ALL
             .iter()
@@ -157,18 +163,77 @@ fn thread_offers(args: &[&str], facts: &CompletionFacts) -> Offers {
                 .filter(|name| Some(name.as_str()) != current);
             Offers::names(others.cloned())
         }
+        Some(ThreadSub::Open) => open_offers(rest, partial),
+        Some(ThreadSub::Merge) => merge_offers(rest, partial, facts),
+        Some(ThreadSub::Drop | ThreadSub::Park | ThreadSub::Pull)
+            if rest.is_empty() && facts.current.is_none() =>
+        {
+            Offers::names(facts.threads.iter().cloned())
+        }
         Some(
             ThreadSub::Switch
             | ThreadSub::Drop
             | ThreadSub::Ls
             | ThreadSub::Main
-            | ThreadSub::Merge
-            | ThreadSub::Open
             | ThreadSub::Park
             | ThreadSub::Pull
             | ThreadSub::Revive,
         )
         | None => Offers::default(),
+    }
+}
+
+fn open_offers(args: &[&str], partial: &str) -> Offers {
+    if args.last().and_then(|word| OpenFlag::parse(word)) == Some(OpenFlag::Model) {
+        return Offers::keywords(THREAD_MODEL_ALIASES);
+    }
+    let mut used = Vec::new();
+    let mut names = Vec::new();
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match OpenFlag::parse(word) {
+            Some(flag) => {
+                used.push(flag);
+                match flag {
+                    OpenFlag::Model => {
+                        words.next();
+                    }
+                    OpenFlag::AutoMerge | OpenFlag::AutoDrop => {}
+                }
+            }
+            None => names.push(*word),
+        }
+    }
+    if !takes_flag(&names, partial) {
+        return Offers::default();
+    }
+    let unused = OpenFlag::ALL
+        .iter()
+        .copied()
+        .filter(|flag| !used.iter().any(|used| flag.excludes(*used)));
+    Offers::keywords(unused.map(Keyword::word))
+}
+
+fn merge_offers(args: &[&str], partial: &str, facts: &CompletionFacts) -> Offers {
+    let names: Vec<&str> = args
+        .iter()
+        .copied()
+        .filter(|word| MergeFlag::typed(word).is_none())
+        .collect();
+    let takes_view = names.len() == args.len() && takes_flag(&names, partial);
+    let flags = MergeFlag::ALL.iter().copied().filter(|_| takes_view);
+    let mut offers = Offers::keywords(flags.map(Keyword::word));
+    if names.is_empty() && facts.current.is_none() {
+        offers.names.extend(facts.threads.iter().cloned());
+    }
+    offers
+}
+
+fn takes_flag(names: &[&str], partial: &str) -> bool {
+    match names {
+        [] => partial.starts_with('-'),
+        [name] => !name.starts_with("--"),
+        _ => false,
     }
 }
 

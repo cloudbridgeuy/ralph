@@ -62,6 +62,57 @@ impl Keyword for ThreadSub {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenFlag {
+    AutoMerge,
+    AutoDrop,
+    Model,
+}
+
+impl Keyword for OpenFlag {
+    const ALL: &'static [Self] = &[OpenFlag::AutoMerge, OpenFlag::AutoDrop, OpenFlag::Model];
+
+    fn word(self) -> &'static str {
+        match self {
+            OpenFlag::AutoMerge => "--auto-merge",
+            OpenFlag::AutoDrop => "--auto-drop",
+            OpenFlag::Model => "--model",
+        }
+    }
+}
+
+impl OpenFlag {
+    pub fn excludes(self, other: Self) -> bool {
+        match self {
+            OpenFlag::AutoMerge | OpenFlag::AutoDrop => {
+                matches!(other, OpenFlag::AutoMerge | OpenFlag::AutoDrop)
+            }
+            OpenFlag::Model => other == OpenFlag::Model,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeFlag {
+    View,
+}
+
+impl Keyword for MergeFlag {
+    const ALL: &'static [Self] = &[MergeFlag::View];
+
+    fn word(self) -> &'static str {
+        match self {
+            MergeFlag::View => VIEW_FLAG,
+        }
+    }
+}
+
+impl MergeFlag {
+    pub fn typed(word: &str) -> Option<Self> {
+        Self::parse(word).or_else(|| (word == VIEW_ALIAS).then_some(MergeFlag::View))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadOp {
     Ls,
@@ -135,15 +186,21 @@ fn merge_usage() -> String {
 }
 
 fn parse_merge(words: &[&str]) -> Result<ThreadOp, String> {
-    let (flags, rest): (Vec<&str>, Vec<&str>) = words
+    let flags: Vec<MergeFlag> = words
         .iter()
-        .partition(|word| **word == VIEW_FLAG || **word == VIEW_ALIAS);
+        .filter_map(|word| MergeFlag::typed(word))
+        .collect();
+    let rest: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|word| MergeFlag::typed(word).is_none())
+        .collect();
+    let view = flags.iter().any(|flag| match flag {
+        MergeFlag::View => true,
+    });
     match (flags.len(), rest.as_slice()) {
         (0 | 1, [word]) => ThreadName::parse(word)
-            .map(|name| ThreadOp::Merge {
-                name,
-                view: !flags.is_empty(),
-            })
+            .map(|name| ThreadOp::Merge { name, view })
             .map_err(|e| format!("{e}\n{}", merge_usage())),
         _ => Err(merge_usage()),
     }
@@ -155,26 +212,25 @@ fn parse_open(words: &[&str]) -> Result<ThreadOp, String> {
     let mut names = Vec::new();
     let mut words = words.iter().copied();
     while let Some(word) = words.next() {
-        match word {
-            "--model" => {
+        let mode = match OpenFlag::parse(word) {
+            Some(OpenFlag::Model) => {
                 let value = words.next().ok_or_else(|| OPEN_USAGE.to_string())?;
                 validate_thread_model(value).map_err(|e| format!("{e}\n{OPEN_USAGE}"))?;
                 if model.replace(value.to_string()).is_some() {
                     return Err(OPEN_USAGE.to_string());
                 }
+                continue;
             }
-            "--auto-merge" | "--auto-drop" => {
-                let mode = if word == "--auto-merge" {
-                    AutoMode::Merge
-                } else {
-                    AutoMode::Drop
-                };
-                if auto.replace(mode).is_some() {
-                    return Err(OPEN_USAGE.to_string());
-                }
+            Some(OpenFlag::AutoMerge) => AutoMode::Merge,
+            Some(OpenFlag::AutoDrop) => AutoMode::Drop,
+            None if word.starts_with("--") => return Err(OPEN_USAGE.to_string()),
+            None => {
+                names.push(word);
+                continue;
             }
-            other if other.starts_with("--") => return Err(OPEN_USAGE.to_string()),
-            _ => names.push(word),
+        };
+        if auto.replace(mode).is_some() {
+            return Err(OPEN_USAGE.to_string());
         }
     }
     one_name(&names, OPEN_USAGE).map(|name| ThreadOp::Open(OpenOpts { name, auto, model }))
