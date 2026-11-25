@@ -209,6 +209,21 @@ mod tests {
     }
 
     #[test]
+    fn a_sensitive_segment_redacts_the_whole_key_tail_and_value() {
+        let (g, s) = dirs_with(
+            None,
+            Some("[wire.prices.\"/Users/alice/acme.corp\"]\ninput = 1\n"),
+        );
+        let rows = rows(&g, &s, no_env);
+        let body = serde_json::to_string(&rows).unwrap();
+        assert!(!body.contains("corp"), "{body}");
+        assert!(!body.contains("/Users"), "{body}");
+        let masked = find(&rows, "wire", "[redacted]");
+        assert!(masked.redacted);
+        assert_eq!(masked.value, serde_json::json!("[redacted]"));
+    }
+
+    #[test]
     fn invalid_toml_is_a_parse_error() {
         let (g, s) = dirs_with(Some("[chat\nwrap_width = "), None);
         let result = config_rows(&g.path().join("config.toml"), s.path(), no_env);

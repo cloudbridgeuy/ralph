@@ -115,17 +115,18 @@ fn text_is_sensitive(text: &str) -> bool {
     text.contains(['/', '~']) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
+fn key_is_sensitive(key: &str) -> bool {
+    key.split('.').any(text_is_sensitive)
+}
+
 pub fn mask_key(key: &str) -> String {
-    key.split('.')
-        .map(|segment| {
-            if text_is_sensitive(segment) {
-                REDACTED
-            } else {
-                segment
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(".")
+    if !key_is_sensitive(key) {
+        return key.to_string();
+    }
+    match key.split_once('.') {
+        Some((section, _)) if !text_is_sensitive(section) => format!("{section}.{REDACTED}"),
+        _ => REDACTED.to_string(),
+    }
 }
 
 fn value_is_sensitive(value: &Value) -> bool {
@@ -138,7 +139,7 @@ fn value_is_sensitive(value: &Value) -> bool {
 }
 
 pub fn redacts(key: &str, value: &Value, from_env: bool) -> bool {
-    from_env || listing(key) != Listing::Safe || value_is_sensitive(value)
+    from_env || listing(key) != Listing::Safe || key_is_sensitive(key) || value_is_sensitive(value)
 }
 
 #[cfg(test)]
@@ -301,13 +302,24 @@ mod tests {
     }
 
     #[test]
-    fn mask_key_replaces_only_sensitive_segments() {
+    fn mask_key_collapses_the_tail_when_any_segment_is_sensitive() {
         assert_eq!(mask_key("chat.wrap_width"), "chat.wrap_width");
         assert_eq!(
             mask_key("wire.prices./Users/me/srv.input"),
-            "wire.prices.[redacted].input"
+            "wire.[redacted]"
         );
-        assert_eq!(mask_key("a.b@c.d"), "a.[redacted].d");
+        assert_eq!(
+            mask_key("wire.prices./Users/alice/acme.corp.input"),
+            "wire.[redacted]"
+        );
+        assert_eq!(mask_key("a.b@c.d"), "a.[redacted]");
+        assert_eq!(mask_key("/etc.x"), "[redacted]");
+    }
+
+    #[test]
+    fn sensitive_key_segments_redact_the_value() {
+        assert!(redacts("wire.prices./Users/me/srv.input", &json!(1), false));
+        assert!(!redacts("wire.prices.gpt.input", &json!(1), false));
     }
 
     #[test]
