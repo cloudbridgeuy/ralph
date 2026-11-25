@@ -163,3 +163,40 @@ fn the_bundled_memory_css_uses_only_role_tokens() {
     assert!(!css.contains("hsl"));
     assert!(css.contains("var(--r-"));
 }
+
+#[test]
+fn btn_and_kbd_use_role_tokens_and_a_focus_ring() {
+    let css = memory_css();
+    assert_declares(&css, ".btn", "border: 1px solid var(--r-line-strong);");
+    assert_declares(&css, ".btn", "border-radius: 3px;");
+    assert_declares(&css, ".btn", "padding: 0 1ch;");
+    assert_declares(&css, ".btn:hover", "background: var(--r-hover);");
+    assert_declares(
+        &css,
+        ".btn[aria-disabled=\"true\"]",
+        "color: var(--r-muted);",
+    );
+    assert_declares(
+        &css,
+        ".btn:focus-visible",
+        "outline: 2px solid var(--r-accent);",
+    );
+    assert_declares(&css, ".btn:focus-visible", "outline-offset: 1px;");
+    assert_declares(&css, "kbd", "font-size: 12px;");
+    assert_declares(&css, "kbd", "border: 1px solid var(--r-line-strong);");
+    assert_declares(&css, "kbd", "border-radius: 3px;");
+    assert_declares(&css, "kbd", "color: var(--r-muted);");
+}
+
+#[test]
+fn entry_rows_have_a_focus_visible_outline() {
+    let css = memory_css();
+    let rule = "r-table tbody tr[tabindex]:focus-visible";
+    assert_declares(&css, rule, "outline: 2px solid var(--r-accent);");
+    assert_declares(&css, rule, "outline-offset: -2px;");
+    assert_declares(
+        &css,
+        "r-table tbody tr.full > td:first-child",
+        "border-left-color: var(--r-accent);",
+    );
+}

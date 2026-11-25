@@ -419,3 +419,91 @@ fn a_folded_block_has_a_pending_count_pill_and_no_expansion() {
     assert!(tree.contains(r#"if (expandable) append(item, el("ul", null, { role: "group" }));"#));
     assert!(tree.contains("if (expandable) append(button, chevron());"));
 }
+
+#[test]
+fn an_open_entry_hides_its_clipped_first_line() {
+    let body = script();
+    let toggle = function_body(&body, "function toggleEntry(");
+    assert!(toggle.contains(r#"cell.textContent = "";"#));
+    assert!(toggle.contains("cell.textContent = firstLine(entry.text);"));
+    assert!(toggle.contains("fillRendered("));
+    assert!(toggle.contains("detail.remove();"));
+    assert!(toggle.contains(r#"class: "state full""#));
+    assert!(toggle.contains("colspan: String(ENTRY_COLUMNS.length)"));
+}
+
+#[test]
+fn the_script_sets_aria_selected_and_open_on_entry_rows() {
+    let body = script();
+    let toggle = function_body(&body, "function toggleEntry(");
+    assert!(toggle.contains(r#"row.classList.add("open");"#));
+    assert!(toggle.contains(r#"row.classList.remove("open");"#));
+    assert!(toggle.contains(r#"row.setAttribute("aria-selected", "true");"#));
+    assert!(toggle.contains(r#"row.removeAttribute("aria-selected");"#));
+    assert!(toggle.contains(r#"row.setAttribute("aria-expanded", "true");"#));
+    assert!(toggle.contains(r#"row.setAttribute("aria-expanded", "false");"#));
+}
+
+#[test]
+fn an_entry_row_is_keyboard_reachable() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains(r#"tabindex: "0""#));
+    assert!(row.contains(r#"addEventListener("click""#));
+    assert!(row.contains(r#"addEventListener("keydown""#));
+    assert!(row.contains(r#"event.key === "Enter""#));
+    assert!(row.contains(r#"event.key === " ""#));
+    assert!(row.contains("event.preventDefault();"));
+}
+
+#[test]
+fn the_pager_binds_bracket_keys_and_ignores_form_fields() {
+    let body = script();
+    assert_eq!(
+        body.matches(r#"document.addEventListener("keydown""#)
+            .count(),
+        1
+    );
+    assert!(!body.contains("removeEventListener"));
+    let keys = function_body(&body, "function pagerDirection(");
+    assert!(keys.contains(
+        "event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || typing"
+    ));
+    assert!(keys.contains(r#"event.key === "[""#));
+    assert!(keys.contains(r#"event.key === "]""#));
+    let typing = function_body(&body, "function isTyping(");
+    for tag in ["INPUT", "SELECT", "TEXTAREA"] {
+        assert!(typing.contains(&format!(r#""{tag}""#)));
+    }
+    assert!(typing.contains("isContentEditable"));
+    let handler = function_body(&body, "function onPagerKey(");
+    assert!(handler.contains("isTyping(event.target)"));
+    assert!(handler.contains("location.hash ="));
+    assert!(handler.contains(r#"a[data-pager="#));
+}
+
+#[test]
+fn the_pager_label_reads_entries_a_to_b_of_n() {
+    let body = script();
+    let label = function_body(&body, "function pagerLabel(");
+    assert!(
+        label.contains(r#""entries " + after + "\u2013" + (after + count - 1) + " of " + total"#)
+    );
+    assert!(label.contains(r#""entries 0 of " + total"#));
+    let pager = function_body(&body, "function pager(");
+    assert!(pager.contains("pagerLabel(state.after, page.items.length, bounds.hi - bounds.lo)"));
+}
+
+#[test]
+fn the_pager_buttons_use_btn_and_kbd() {
+    let body = script();
+    let button = function_body(&body, "function pagerButton(");
+    assert!(button.contains(r#"class: "btn""#));
+    assert!(button.contains(r#"el("kbd", key)"#));
+    assert!(button.contains(r#""aria-disabled": "true""#));
+    assert!(button.contains(r#""data-pager": name"#));
+    assert!(!body.contains(r#"el("a", "older""#));
+    assert!(!body.contains(r#"el("a", "newer""#));
+    assert!(body.contains(r#"pagerButton("older", "[""#));
+    assert!(body.contains(r#"pagerButton("newer", "]""#));
+}

@@ -91,3 +91,59 @@ r-tree li > button:focus-visible {
     border-inline-start: 0;
   }
 }
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  margin: 10px 0 0;
+  color: var(--r-muted);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 1ch;
+  padding: 0 1ch;
+  border: 1px solid var(--r-line-strong);
+  border-radius: 3px;
+  color: inherit;
+}
+
+.btn:hover {
+  background: var(--r-hover);
+}
+
+.btn[aria-disabled="true"] {
+  color: var(--r-muted);
+}
+
+.btn[aria-disabled="true"]:hover {
+  background: none;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 1px;
+}
+
+kbd {
+  font-size: 12px;
+  padding: 0 0.5ch;
+  border: 1px solid var(--r-line-strong);
+  border-radius: 3px;
+  color: var(--r-muted);
+}
+
+r-table tbody tr[tabindex] {
+  cursor: pointer;
+}
+
+r-table tbody tr[tabindex]:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: -2px;
+}
+
+r-table tbody tr.full > td:first-child {
+  border-left-color: var(--r-accent);
+}

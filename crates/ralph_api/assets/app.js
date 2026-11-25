@@ -59,6 +59,23 @@ function rangeLabel(lo, hi) {
   return "[" + lo + "-" + hi + "]";
 }
 
+function pagerLabel(after, count, total) {
+  if (count === 0) return "entries 0 of " + total;
+  return "entries " + after + "\u2013" + (after + count - 1) + " of " + total;
+}
+
+function pagerDirection(event, typing) {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || typing) return null;
+  if (event.key === "[") return "older";
+  if (event.key === "]") return "newer";
+  return null;
+}
+
+function isTyping(target) {
+  const tag = target && target.tagName;
+  return tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || Boolean(target && target.isContentEditable);
+}
+
 function crumbParts(thread, path) {
   const parts = [
     { label: "memory", hash: buildHash({ thread: "main" }) },
@@ -462,34 +479,81 @@ function stateRow(columns, child) {
 
 const ENTRY_COLUMNS = ["#", "role", "at", "text"];
 
+function toggleEntry(row, entry, current) {
+  const wasOpen = row.classList.contains("open");
+  if (current.close) current.close();
+  current.close = null;
+  if (wasOpen) return;
+  const cell = row.lastElementChild;
+  const text = el("td", null, { colspan: String(ENTRY_COLUMNS.length) });
+  const detail = append(el("tr", null, { class: "state full" }), text);
+  row.after(detail);
+  fillRendered(text, entry.text);
+  cell.textContent = "";
+  row.classList.add("open");
+  row.setAttribute("aria-selected", "true");
+  row.setAttribute("aria-expanded", "true");
+  current.close = () => {
+    row.classList.remove("open");
+    row.removeAttribute("aria-selected");
+    row.setAttribute("aria-expanded", "false");
+    cell.textContent = firstLine(entry.text);
+    detail.remove();
+  };
+}
+
+function entryRow(entry, current) {
+  const row = el("tr", null, { tabindex: "0", "aria-expanded": "false" });
+  append(
+    row,
+    el("td", String(entry.i), { class: "num" }),
+    el("td", entry.role),
+    el("td", entry.at),
+    el("td", firstLine(entry.text), { class: "clip" }),
+  );
+  row.addEventListener("click", () => toggleEntry(row, entry, current));
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleEntry(row, entry, current);
+    }
+  });
+  return row;
+}
+
 function entriesTable(page) {
   const head = append(el("tr"), ...ENTRY_COLUMNS.map((name) => el("th", name, name === "#" ? { class: "num" } : {})));
   const body = el("tbody");
   if (page.items.length === 0) {
     append(body, stateRow(ENTRY_COLUMNS.length, el("r-empty", "no entries in this page")));
   }
-  page.items.forEach((entry) => {
-    append(
-      body,
-      append(
-        el("tr"),
-        el("td", String(entry.i), { class: "num" }),
-        el("td", entry.role),
-        el("td", entry.at),
-        el("td", firstLine(entry.text), { class: "clip" }),
-      ),
-    );
-  });
+  const current = { close: null };
+  page.items.forEach((entry) => append(body, entryRow(entry, current)));
   return append(el("r-table", null, { class: "stackable" }), append(el("table"), append(el("thead"), head), body));
 }
 
+function pagerButton(name, key, after, state) {
+  const attrs = after === null
+    ? { class: "btn", "aria-disabled": "true", "data-pager": name }
+    : { class: "btn", href: buildHash({ ...state, after }), "data-pager": name };
+  return append(el("a", name + " ", attrs), el("kbd", key));
+}
+
 function pager(page, state, bounds) {
-  const bar = el("p");
   const older = olderAfter(state.after, PAGE_SIZE, bounds.lo);
   const newer = newerAfter(page.next_after, bounds.hi);
-  if (older !== null) append(bar, el("a", "older", { href: buildHash({ ...state, after: older }) }), document.createTextNode(" "));
-  if (newer !== null) append(bar, el("a", "newer", { href: buildHash({ ...state, after: newer }) }));
-  return bar;
+  return append(
+    el("p", null, { class: "pager" }),
+    pagerButton("older", "[", older, state),
+    pagerButton("newer", "]", newer, state),
+    el("span", pagerLabel(state.after, page.items.length, bounds.hi - bounds.lo)),
+  );
+}
+
+function onPagerKey(event) {
+  const direction = pagerDirection(event, isTyping(event.target));
+  const link = direction && document.querySelector('a[data-pager="' + direction + '"][href]');
+  if (link) location.hash = link.getAttribute("href");
 }
 
 async function loadDetail(state, roots) {
@@ -602,4 +666,5 @@ async function show() {
 }
 
 window.addEventListener("hashchange", show);
+document.addEventListener("keydown", onPagerKey);
 show();
