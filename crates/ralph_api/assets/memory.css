@@ -89,6 +89,7 @@ r-tree li[aria-selected="true"]::before {
   box-shadow: inset 2px 0 0 var(--r-accent);
 }
 
+/* Overrides the r-tree button:focus-visible ring in app.css. */
 r-tree li > button:focus-visible {
   outline: 2px solid var(--r-accent);
   outline-offset: -2px;
