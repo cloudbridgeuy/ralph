@@ -1,6 +1,6 @@
 "use strict";
 
-const SCREENS = ["/memory"];
+const SCREENS = ["/memory", "/config"];
 const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -127,7 +127,7 @@ async function api(path, init) {
   }
   if (!response.ok) {
     const message = (data && data.error) || response.statusText || "request failed";
-    throw { status: response.status, message };
+    throw { status: response.status, message, why: data && data.why };
   }
   return data;
 }
@@ -503,6 +503,55 @@ function drawMemory(main, hashState, data) {
   append(box, empty ? emptyState("no entries yet", false, true) : entriesTable(data.page), pager(data.page, state));
 }
 
+async function loadConfig() {
+  const data = await api("/api/config");
+  document.getElementById("store").textContent = data.store;
+  return data;
+}
+
+function configFailure(error, retry) {
+  const box = el("r-error", null, { role: "alert" });
+  const why = el("span", null, { class: "why" });
+  why.textContent = error.why || error.message || String(error);
+  const button = el("button", "Retry", { type: "button", class: "btn" });
+  button.addEventListener("click", retry);
+  append(
+    box,
+    el("span", "Config did not load", { class: "what" }),
+    why,
+    append(el("span", null, { class: "next" }), el("span", "Fix config.toml, then retry "), button),
+  );
+  return box;
+}
+
+function drawConfig(main, data) {
+  if (data.rows.length === 0) {
+    main.replaceChildren(emptyState("No settings"));
+    return;
+  }
+  const sections = new Map();
+  data.rows.forEach((row) => sections.set(row.section, [...(sections.get(row.section) || []), row]));
+  const boxes = [...sections].map(([name, rows]) => {
+    const list = el("dl");
+    rows.forEach((row) => {
+      const tone = row.source === "default" ? "neutral" : "info";
+      const mark = row.redacted
+        ? append(el("r-pill", null, { tone: "neutral", shape: "square", variant: "outline" }), el("span", "hidden"))
+        : el("span", row.value);
+      const source = append(el("r-pill", null, { tone, shape: "square" }), el("span", row.source));
+      append(list, append(el("div"), el("dt", row.key), append(el("dd"), mark, document.createTextNode(" "), source)));
+    });
+    const box = el("r-box", null, { shape: "square" });
+    return append(
+      box,
+      el("span", name, { class: "title" }),
+      el("span", String(rows.length), { class: "aside" }),
+      append(el("r-kv"), list),
+    );
+  });
+  main.replaceChildren(...boxes);
+}
+
 function markCurrentScreen(route) {
   for (const link of document.querySelectorAll("nav a")) {
     if (link.getAttribute("href") === "#" + route) link.setAttribute("aria-current", "page");
@@ -523,19 +572,21 @@ async function show(refocus) {
   }
   markCurrentScreen(state.route);
   main.replaceChildren();
-  const stop = delayedSpinner(main, "Loading memory");
+  const config = state.route === "/config";
+  const stop = delayedSpinner(main, config ? "Loading config" : "Loading memory");
   try {
-    const data = await loadMemory(state);
+    const data = await (config ? loadConfig() : loadMemory(state));
     if (mine !== generation) return;
     stop();
-    drawMemory(main, state, data);
+    if (config) drawConfig(main, data);
+    else drawMemory(main, state, data);
     const again = focusKey && main.querySelector('button[data-key="' + focusKey + '"]');
     if (again) again.focus();
     else if (refocus) focusTarget(main);
   } catch (error) {
     if (mine !== generation) return;
     stop();
-    const box = failure(error, () => show(true));
+    const box = config ? configFailure(error, () => show(true)) : failure(error, () => show(true));
     main.replaceChildren(box);
     if (refocus) focusRetry(box);
   }

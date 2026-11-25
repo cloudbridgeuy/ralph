@@ -268,7 +268,9 @@ fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
     assert!(body.contains("function kv(pairs)"));
     assert!(body.contains("el(\"r-kv\", null, { two: \"\" })"));
     assert!(body.contains("String(data.roots.entries)]]))"));
-    assert!(!body.contains("source"));
+    let start = body.find("function kv(pairs)").unwrap();
+    let end = start + body[start..].find("\n}\n").unwrap();
+    assert!(!body[start..end].contains("source"));
 }
 
 #[test]
