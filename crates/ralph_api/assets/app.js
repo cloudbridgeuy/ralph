@@ -43,12 +43,58 @@ function memoryCtx(hashState) {
   return { thread: hashState.thread, after: hashState.after, node: hashState.node };
 }
 
-function olderAfter(after, size) {
-  return after > 0 ? Math.max(0, after - size) : null;
+function olderAfter(after, size, floor) {
+  return after > floor ? Math.max(floor, after - size) : null;
 }
 
-function newerAfter(nextAfter) {
-  return Number.isInteger(nextAfter) ? nextAfter : null;
+function newerAfter(nextAfter, ceiling) {
+  return Number.isInteger(nextAfter) && nextAfter < ceiling ? nextAfter : null;
+}
+
+function rangeAfter(after, lo, hi) {
+  return Number.isInteger(after) && after >= lo && after < hi ? after : lo;
+}
+
+function rangeLabel(lo, hi) {
+  return "[" + lo + "-" + hi + "]";
+}
+
+function crumbParts(thread, path) {
+  const parts = [
+    { label: "memory", hash: buildHash({ thread: "main" }) },
+    { label: thread, hash: buildHash({ thread }) },
+    ...path.map((id) => {
+      const range = idRange(id);
+      return { label: rangeLabel(range.lo, range.hi), hash: buildHash({ thread, node: id }) };
+    }),
+  ];
+  return parts.map((part, at) => (at === parts.length - 1 ? { label: part.label, hash: null } : part));
+}
+
+function statLine(stats) {
+  const last = stats.last_at ? ", last entry " + stats.last_at : "";
+  return stats.entries + " entries, " + stats.blocks + " blocks, " + stats.summarised + " summarised, " + stats.pending + " pending" + last;
+}
+
+function pendingLabel(node) {
+  return node.folded ? "pending ×" + node.stats.pending : "pending";
+}
+
+function detailPairs(node) {
+  const range = idRange(node.id);
+  return [
+    ["range", rangeLabel(range.lo, range.hi)],
+    ["entries", String(node.hi - node.lo)],
+    ["depth", String(node.stats.depth)],
+    ["children", String(node.stats.children)],
+    ["summary", node.summary === null ? "pending" : "summarised"],
+  ];
+}
+
+function rootRows(nodes) {
+  return nodes.map((node) =>
+    node.leaf && node.entry ? { row: "entry", child: node.entry } : { row: "node", child: node },
+  );
 }
 
 function oneLine(text) {
@@ -225,24 +271,29 @@ function extentCell(extent) {
   );
 }
 
-function summaryCell(summary) {
+function pill(text) {
+  return append(el("r-pill", null, { tone: "neutral", shape: "square" }), el("span", text));
+}
+
+function summaryCell(summary, pending) {
   const cell = el("span", null, { class: "sum" });
-  if (summary === null) {
-    append(cell, append(el("r-pill", null, { tone: "neutral", shape: "square" }), el("span", "pending")));
-  } else if (summary) cell.textContent = oneLine(summary);
+  if (summary === null) append(cell, pill(pending));
+  else if (summary) cell.textContent = oneLine(summary);
   return cell;
 }
 
-function treeItem(level, key, label, cells) {
-  const item = el("li", null, { role: "treeitem", "aria-expanded": "false", "aria-level": String(level) });
+function treeItem(level, key, label, cells, expandable) {
+  const item = el("li", null, { role: "treeitem", "aria-level": String(level) });
+  if (expandable) item.setAttribute("aria-expanded", "false");
   const button = el("button", null, { type: "button", tabindex: "-1" });
   button.dataset.key = key;
   for (let guide = 1; guide < level; guide += 1) append(button, el("span", null, { class: "g" }));
-  append(button, chevron(), el("span", label, { class: "id" }));
+  if (expandable) append(button, chevron());
+  append(button, el("span", label, { class: "id" }));
   append(item, button);
   append(item, el("span", cells.count === undefined ? null : String(cells.count), { class: "n" }));
-  append(item, extentCell(cells.extent), summaryCell(cells.summary));
-  append(item, el("ul", null, { role: "group" }));
+  append(item, extentCell(cells.extent), summaryCell(cells.summary, cells.pending));
+  if (expandable) append(item, el("ul", null, { role: "group" }));
   return item;
 }
 
@@ -251,15 +302,16 @@ function nodeItem(level, node, total) {
     count: node.hi - node.lo,
     extent: { lo: node.lo, hi: node.hi, total },
     summary: node.summary,
+    pending: pendingLabel(node),
   };
-  const item = treeItem(level, node.id, "[" + node.lo + "-" + (node.hi - 1) + "]", cells);
+  const item = treeItem(level, node.id, rangeLabel(node.lo, node.hi - 1), cells, !node.folded);
   item.dataset.node = node.id;
   return item;
 }
 
 function entryItem(level, entry) {
   const label = "#" + entry.i + " " + entry.role;
-  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + firstLine(entry.text) });
+  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + firstLine(entry.text) }, true);
   item.dataset.entry = entry.text;
   return item;
 }
@@ -291,8 +343,11 @@ async function openEntry(item) {
 }
 
 function zoomRows(zoom) {
-  const children = zoom.children.map((child) => ({ row: child.kind === "block" ? "node" : "entry", child }));
-  return [{ row: "summary", markdown: zoom.node.summary }, ...children];
+  return zoom.children.map((child) => ({ row: child.kind === "block" ? "node" : "entry", child }));
+}
+
+function drawRow(level, row, total) {
+  return row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child);
 }
 
 async function openNode(item, ctx) {
@@ -303,14 +358,7 @@ async function openNode(item, ctx) {
   try {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
     stop();
-    zoomRows(zoom).forEach((row) => {
-      if (row.row === "summary") {
-        const summary = rowItem();
-        append(group, summary);
-        if (row.markdown === null) summary.appendChild(el("r-empty", "summary pending"));
-        else fillRendered(summary, row.markdown);
-      } else append(group, row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child));
-    });
+    zoomRows(zoom).forEach((row) => append(group, drawRow(level, row, total)));
     return true;
   } catch (error) {
     stop();
@@ -332,9 +380,12 @@ async function toggleItem(item, ctx) {
     delete item.dataset.loaded;
     group.querySelectorAll(":scope > li").forEach((row) => row.remove());
     setExpanded(item, false);
-    return;
   }
-  if (item.dataset.node) history.replaceState(null, "", buildHash({ ...ctx, node: item.dataset.node }));
+}
+
+function markSelected(list, item) {
+  list.querySelectorAll('li[aria-selected]').forEach((other) => other.removeAttribute("aria-selected"));
+  item.setAttribute("aria-selected", "true");
 }
 
 async function expandTo(tree, target, ctx) {
@@ -343,20 +394,26 @@ async function expandTo(tree, target, ctx) {
     const items = Array.from(scope.querySelectorAll(':scope li[data-node]'));
     const next = items.find((item) => item.dataset.node === target || containsNode(item.dataset.node, target));
     if (!next) return;
-    if (next.getAttribute("aria-expanded") !== "true") await toggleItem(next, ctx);
-    if (next.dataset.node === target) return next.firstElementChild.focus();
+    if (next.getAttribute("aria-expanded") === "false") await toggleItem(next, ctx);
+    if (next.dataset.node === target) {
+      markSelected(tree, next);
+      return next.firstElementChild.focus();
+    }
     scope = next;
   }
 }
 
-function buildTree(roots, ctx, total) {
+function buildTree(roots, ctx, total, onSelect) {
   const tree = el("r-tree", null, { "data-total": String(total) });
   const list = el("ul", null, { role: "tree" });
   append(tree, list);
-  roots.forEach((node) => append(list, nodeItem(1, node, total)));
+  rootRows(roots).forEach((row) => append(list, drawRow(1, row, total)));
   list.addEventListener("click", (event) => {
     const button = event.target.closest('li[role="treeitem"] > button');
-    if (button) toggleItem(button.parentElement, ctx);
+    if (!button) return;
+    const item = button.parentElement;
+    if (item.dataset.node && item.getAttribute("aria-selected") !== "true") onSelect(list, item);
+    if (item.hasAttribute("aria-expanded")) toggleItem(item, ctx);
   });
   list.addEventListener("keydown", (event) => onTreeKey(list, event));
   list.addEventListener("focusin", (event) => {
@@ -373,21 +430,29 @@ function kv(pairs) {
   return append(el("r-kv", null, { two: "" }), list);
 }
 
-function threadSelect(threads, current) {
-  const select = el("select", null, { id: "thread", "aria-label": "thread" });
+function threadTabs(threads, current) {
+  const nav = el("nav", null, { class: "tabs", "aria-label": "threads" });
   const names = ["main", ...threads.map((thread) => thread.name)];
   if (!names.includes(current)) names.push(current);
   names.forEach((name) => {
     const meta = threads.find((thread) => thread.name === name);
-    const note = meta && meta.parked ? " (parked)" : meta && meta.merged ? " (merged)" : "";
-    const option = el("option", name + note, { value: name });
-    append(select, option);
-    option.selected = name === current;
+    const note = meta && meta.parked ? "parked" : meta && meta.merged ? "merged" : "";
+    const attrs = { href: buildHash({ thread: name }), ...(name === current ? { "aria-current": "page" } : {}) };
+    const link = el("a", name, attrs);
+    if (note) append(link, pill(note));
+    append(nav, link);
   });
-  select.addEventListener("change", () => {
-    location.hash = buildHash({ thread: select.value, node: "", after: null });
+  return nav;
+}
+
+function crumbs(parts) {
+  const nav = el("nav", null, { class: "crumbs", "aria-label": "breadcrumb" });
+  parts.forEach((part, at) => {
+    if (at > 0) nav.appendChild(document.createTextNode(" / "));
+    if (part.hash) append(nav, el("a", part.label, { href: part.hash }));
+    else append(nav, el("span", part.label, { "aria-current": "page" }));
   });
-  return append(el("label"), el("span", "thread ", { class: "meta" }), select);
+  return nav;
 }
 
 function stateRow(columns, child) {
@@ -418,13 +483,27 @@ function entriesTable(page) {
   return append(el("r-table", null, { class: "stackable" }), append(el("table"), append(el("thead"), head), body));
 }
 
-function pager(page, state) {
+function pager(page, state, bounds) {
   const bar = el("p");
-  const older = olderAfter(state.after, PAGE_SIZE);
-  const newer = newerAfter(page.next_after);
+  const older = olderAfter(state.after, PAGE_SIZE, bounds.lo);
+  const newer = newerAfter(page.next_after, bounds.hi);
   if (older !== null) append(bar, el("a", "older", { href: buildHash({ ...state, after: older }) }), document.createTextNode(" "));
   if (newer !== null) append(bar, el("a", "newer", { href: buildHash({ ...state, after: newer }) }));
   return bar;
+}
+
+async function loadDetail(state, roots) {
+  if (!state.node) {
+    const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : clampAfter(state.after, roots.entries, PAGE_SIZE);
+    const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
+    return { zoom: null, page, after, lo: 0, hi: roots.entries };
+  }
+  const zoom = await getJson("/api/memory", { thread: state.thread, node: state.node });
+  const { lo, hi } = zoom.node;
+  const after = rangeAfter(state.after, lo, hi);
+  const limit = Math.min(PAGE_SIZE, hi - after);
+  const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit });
+  return { zoom, page, after, lo, hi };
 }
 
 async function loadMemory(state) {
@@ -432,28 +511,59 @@ async function loadMemory(state) {
     getJson("/api/memory/threads", {}),
     getJson("/api/memory", { thread: state.thread }),
   ]);
-  const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : clampAfter(state.after, roots.entries, PAGE_SIZE);
-  const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
+  const detail = await loadDetail(state, roots);
   document.getElementById("store").textContent = threads.store;
-  return { threads: threads.threads, roots, page, after };
+  return { threads: threads.threads, roots, detail };
+}
+
+function summaryBlock(node) {
+  const host = el("div", null, { class: "summary" });
+  if (node.summary === null) append(host, pill(pendingLabel(node)));
+  else fillRendered(host, node.summary);
+  return host;
+}
+
+function drawDetail(pane, state, detail) {
+  const { zoom, page, after, lo, hi } = detail;
+  pane.replaceChildren(crumbs(crumbParts(state.thread, zoom ? zoom.path : [])));
+  if (zoom) append(pane, kv(detailPairs(zoom.node)), summaryBlock(zoom.node));
+  append(pane, entriesTable(page), pager(page, { ...state, after }, { lo, hi }));
+}
+
+let detailGeneration = 0;
+
+async function selectNode(list, item, screen) {
+  markSelected(list, item);
+  const state = { thread: screen.ctx.thread, node: item.dataset.node, after: null };
+  history.replaceState(null, "", buildHash(state));
+  const mine = ++detailGeneration;
+  const stop = delayedSpinner(screen.pane, "Loading detail");
+  try {
+    const detail = await loadDetail(state, screen.roots);
+    if (mine !== detailGeneration) return;
+    stop();
+    drawDetail(screen.pane, state, detail);
+  } catch (error) {
+    if (mine !== detailGeneration) return;
+    stop();
+    screen.pane.replaceChildren(failure(error, () => selectNode(list, item, screen)));
+  }
 }
 
 function drawMemory(main, hashState, data) {
-  const state = { ...hashState, after: data.after };
   const ctx = memoryCtx(hashState);
-  const box = append(el("r-box", null, { shape: "square" }), el("span", "memory", { class: "title" }));
-  main.replaceChildren(box);
-  append(box, el("div"), threadSelect(data.threads, state.thread));
-  append(box, kv([["thread", state.thread], ["entries", String(data.roots.entries)]]));
-  const empty = data.roots.entries === 0;
-  if (empty) append(box, el("r-empty", "no entries yet"));
-  else {
-    const { tree, list } = buildTree(data.roots.nodes, ctx, data.roots.entries);
-    append(box, tree);
-    if (state.node) expandTo(list, state.node, ctx);
+  main.replaceChildren(threadTabs(data.threads, hashState.thread));
+  append(main, el("p", statLine(data.roots.stats), { class: "statline" }));
+  if (data.roots.entries === 0) {
+    append(main, el("r-empty", "no entries yet"));
+    return;
   }
-  append(box, el("r-rule"), el("span", "recent entries", { class: "title" }));
-  append(box, empty ? el("r-empty", "no entries yet") : entriesTable(data.page), pager(data.page, state));
+  const pane = el("div", null, { class: "detail" });
+  const screen = { ctx, pane, roots: data.roots };
+  const { tree, list } = buildTree(data.roots.nodes, ctx, data.roots.entries, (from, item) => selectNode(from, item, screen));
+  append(main, append(el("div", null, { class: "split" }), tree, pane));
+  drawDetail(pane, { thread: hashState.thread, node: hashState.node }, data.detail);
+  if (hashState.node) expandTo(list, hashState.node, ctx);
 }
 
 function markCurrentScreen(route) {

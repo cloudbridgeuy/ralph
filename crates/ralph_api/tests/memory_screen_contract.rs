@@ -196,7 +196,6 @@ fn the_script_builds_every_class_the_rust_tree_golden_emits() {
             "golden lacks {name}"
         );
     }
-    // The memory screen has no leaf rows: every node and entry row can open.
     for name in names.into_iter().filter(|name| name != "label") {
         assert!(
             body.contains(&format!("class: \"{name}\"")),
@@ -267,7 +266,7 @@ fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
     let body = script();
     assert!(body.contains("function kv(pairs)"));
     assert!(body.contains("el(\"r-kv\", null, { two: \"\" })"));
-    assert!(body.contains("String(data.roots.entries)]]))"));
+    assert!(body.contains("kv(detailPairs("));
     assert!(!body.contains("source"));
 }
 
@@ -321,4 +320,102 @@ fn the_entry_number_column_is_a_num_column_in_head_and_body() {
 fn first_line_reads_null_and_undefined_as_empty_text() {
     let body = script();
     assert!(body.contains(r#"String(text ?? "")"#));
+}
+
+fn function_body<'a>(body: &'a str, head: &str) -> &'a str {
+    let start = body.find(head).unwrap_or_else(|| panic!("no {head}"));
+    let end = start + body[start..].find("\n}\n").unwrap();
+    &body[start..end]
+}
+
+#[test]
+fn the_thread_select_is_replaced_by_tabs() {
+    let body = script();
+    assert!(!body.contains("threadSelect"));
+    assert!(!body.contains("\"select\""));
+    assert!(!body.contains("\"option\""));
+    let tabs = function_body(&body, "function threadTabs(");
+    assert!(tabs.contains(r#"el("nav", null, { class: "tabs", "aria-label": "threads" })"#));
+    assert!(tabs.contains(r#""aria-current": "page""#));
+    assert!(tabs.contains("pill(note)"));
+    assert!(tabs.contains("meta.parked"));
+    assert!(tabs.contains("meta.merged"));
+}
+
+#[test]
+fn the_stat_line_replaces_the_kv_box() {
+    let body = script();
+    assert!(body.contains(r#"el("p", statLine(data.roots.stats), { class: "statline" })"#));
+    let stat = function_body(&body, "function statLine(");
+    for field in ["entries", "blocks", "summarised", "pending", "last_at"] {
+        assert!(stat.contains(field), "{field}");
+    }
+    assert!(!body.contains(r#"kv([["thread""#));
+}
+
+#[test]
+fn the_screen_is_a_tree_beside_a_detail_pane() {
+    let body = script();
+    assert!(body.contains(r#"el("div", null, { class: "split" })"#));
+    assert!(body.contains(r#"el("div", null, { class: "detail" })"#));
+    assert!(body.contains(r#""aria-selected", "true""#));
+    assert!(body.contains("history.replaceState(null, \"\", buildHash("));
+    assert_eq!(body.matches("history.replaceState").count(), 1);
+}
+
+#[test]
+fn the_zoom_adds_no_summary_row_to_the_tree_group() {
+    let body = script();
+    let zoom = function_body(&body, "function zoomRows(zoom)");
+    assert!(!zoom.contains("summary"));
+    assert!(zoom.contains("zoom.children.map("));
+    let open = function_body(&body, "async function openNode(");
+    assert!(!open.contains("summary"));
+    assert!(!open.contains("fillRendered"));
+    assert!(!body.contains("row: \"summary\""));
+}
+
+#[test]
+fn the_script_never_writes_summary_pending_into_a_row() {
+    let body = script();
+    assert!(!body.contains("summary pending"));
+    assert!(!body.contains("r-empty\", \"summary"));
+}
+
+#[test]
+fn the_breadcrumb_is_built_from_the_api_path() {
+    let body = script();
+    let parts = function_body(&body, "function crumbParts(");
+    assert!(parts.contains("path.map("));
+    assert!(parts.contains("rangeLabel("));
+    assert!(parts.contains("buildHash("));
+    let crumbs = function_body(&body, "function crumbs(");
+    assert!(crumbs.contains(r#"el("nav", null, { class: "crumbs", "aria-label": "breadcrumb" })"#));
+    assert!(crumbs.contains(r#""aria-current": "page""#));
+    assert!(body.contains("crumbParts(state.thread, zoom ? zoom.path : [])"));
+    assert!(body.contains("function rangeLabel(lo, hi)"));
+    assert!(body.contains(r#""[" + lo + "-" + hi + "]""#));
+}
+
+#[test]
+fn a_leaf_root_node_is_drawn_as_the_entry() {
+    let body = script();
+    let rows = function_body(&body, "function rootRows(");
+    assert!(rows.contains("node.leaf && node.entry"));
+    assert!(rows.contains(r#"row: "entry", child: node.entry"#));
+    assert!(body.contains("rootRows(roots).forEach((row) => append(list, drawRow(1, row, total)))"));
+}
+
+#[test]
+fn a_folded_block_has_a_pending_count_pill_and_no_expansion() {
+    let body = script();
+    let label = function_body(&body, "function pendingLabel(");
+    assert!(label.contains("node.folded"));
+    assert!(label.contains("\"pending ×\" + node.stats.pending"));
+    let item = function_body(&body, "function nodeItem(");
+    assert!(item.contains("!node.folded"));
+    let tree = function_body(&body, "function treeItem(");
+    assert!(tree.contains(r#"if (expandable) item.setAttribute("aria-expanded", "false");"#));
+    assert!(tree.contains(r#"if (expandable) append(item, el("ul", null, { role: "group" }));"#));
+    assert!(tree.contains("if (expandable) append(button, chevron());"));
 }

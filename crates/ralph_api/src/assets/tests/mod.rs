@@ -1,6 +1,7 @@
 use super::*;
 
 mod r#box;
+mod memory;
 mod pill;
 mod primitives;
 mod shell;

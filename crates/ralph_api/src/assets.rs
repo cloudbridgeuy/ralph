@@ -18,6 +18,11 @@ const ASSETS: &[Asset] = &[
         bytes: include_bytes!("../assets/app.css"),
     },
     Asset {
+        path: "/assets/memory.css",
+        content_type: "text/css; charset=utf-8",
+        bytes: include_bytes!("../assets/memory.css"),
+    },
+    Asset {
         path: "/app.js",
         content_type: "text/javascript; charset=utf-8",
         bytes: include_bytes!("../assets/app.js"),

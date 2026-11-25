@@ -429,6 +429,7 @@ mod tests {
 
     const CSS: &str = "crates/ralph_api/assets/app.css";
     const HTML: &str = "crates/ralph_api/assets/index.html";
+    const MEMORY_CSS: &str = "crates/ralph_api/assets/memory.css";
 
     fn reasons(path: &str, text: &str) -> Vec<(usize, String)> {
         find_web_violations(path, text)
@@ -897,9 +898,21 @@ mod tests {
     }
 
     #[test]
-    fn the_bundled_shell_and_stylesheet_pass() {
+    fn a_raw_colour_in_memory_css_is_caught() {
+        let text = ".a {\n  color: #ff0000;\n}\n.b {\n  background: tomato;\n}\n.c {\n  border-color: rgb(1, 2, 3);\n}\n";
+        assert_eq!(lines(MEMORY_CSS, text), vec![2, 5, 8]);
+    }
+
+    #[test]
+    fn the_bundled_shell_and_stylesheets_pass() {
         let html = include_str!("../../../crates/ralph_api/assets/index.html");
         let css = include_str!("../../../crates/ralph_api/assets/app.css");
+        let memory = include_str!("../../../crates/ralph_api/assets/memory.css");
+        assert!(
+            reasons(MEMORY_CSS, memory).is_empty(),
+            "{:?}",
+            reasons(MEMORY_CSS, memory)
+        );
         assert!(reasons(HTML, html).is_empty(), "{:?}", reasons(HTML, html));
         assert!(reasons(CSS, css).is_empty(), "{:?}", reasons(CSS, css));
     }

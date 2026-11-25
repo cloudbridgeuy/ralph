@@ -539,6 +539,7 @@ mod tests {
     fn assets_are_served_with_their_types() {
         for (path, kind) in [
             ("/assets/app.css", "text/css; charset=utf-8"),
+            ("/assets/memory.css", "text/css; charset=utf-8"),
             ("/assets/geist-mono.woff2", "font/woff2"),
         ] {
             let response = route(
@@ -564,7 +565,12 @@ mod tests {
 
     #[test]
     fn post_to_the_shell_or_an_asset_is_405_and_allow_get() {
-        for path in ["/", "/assets/app.css", "/assets/geist-mono.woff2"] {
+        for path in [
+            "/",
+            "/assets/app.css",
+            "/assets/memory.css",
+            "/assets/geist-mono.woff2",
+        ] {
             let response = route(&authed("POST", path), &config(), &token());
             assert_eq!(response.status, 405, "{path}");
             assert!(response.headers.contains(&("Allow", "GET")));
