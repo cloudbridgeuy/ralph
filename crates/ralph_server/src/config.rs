@@ -31,6 +31,7 @@ mod recent_history_tests;
 mod reset_limits_tests;
 #[cfg(test)]
 mod resume_summary_tests;
+mod rows;
 pub mod theme;
 mod usage;
 mod web;
@@ -54,6 +55,7 @@ pub use permissions::{
     save_grants, saved_grants, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
     GRANTS_FILE,
 };
+pub use rows::{config_rows, ConfigRow, RowSource};
 pub use usage::{configured_ledger, ledger_path, UsageSection};
 pub use web::{parse_ansi_table, WebSection};
 pub use wire::WireSection;
