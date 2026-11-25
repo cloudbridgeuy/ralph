@@ -115,6 +115,19 @@ fn text_is_sensitive(text: &str) -> bool {
     text.contains(['/', '~']) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
+pub fn mask_key(key: &str) -> String {
+    key.split('.')
+        .map(|segment| {
+            if text_is_sensitive(segment) {
+                REDACTED
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 fn value_is_sensitive(value: &Value) -> bool {
     match value {
         Value::String(text) => text_is_sensitive(text),
@@ -285,6 +298,16 @@ mod tests {
         ] {
             assert!(redacts(key, &value, false), "{key}");
         }
+    }
+
+    #[test]
+    fn mask_key_replaces_only_sensitive_segments() {
+        assert_eq!(mask_key("chat.wrap_width"), "chat.wrap_width");
+        assert_eq!(
+            mask_key("wire.prices./Users/me/srv.input"),
+            "wire.prices.[redacted].input"
+        );
+        assert_eq!(mask_key("a.b@c.d"), "a.[redacted].d");
     }
 
     #[test]

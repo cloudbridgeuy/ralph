@@ -1,4 +1,4 @@
-use super::redact::{redacts, REDACTED};
+use super::redact::{mask_key, redacts, REDACTED};
 use super::{
     env_settings, leaf_sources, read_layer, winning_override, AppConfig, ConfigError, Row, Setting,
     Source,
@@ -41,7 +41,7 @@ fn source_of(source: Source) -> RowSource {
 }
 
 fn row(full_key: &str, value: serde_json::Value, source: RowSource) -> ConfigRow {
-    let (section, key) = split_key(full_key);
+    let (section, key) = split_key(&mask_key(full_key));
     let redacted = redacts(full_key, &value, source == RowSource::Env);
     ConfigRow {
         section,
@@ -133,6 +133,14 @@ mod tests {
         assert!(find(&rows, "claude", "shell").redacted);
         assert!(find(&rows, "usage", "ledger").redacted);
         assert!(!find(&rows, "chat", "wrap_width").redacted);
+    }
+
+    #[test]
+    fn sensitive_key_names_never_reach_the_serialized_rows() {
+        let (g, s) = dirs_with(Some("[wire.prices.\"/Users/me/srv\"]\ninput = 1\n"), None);
+        let text = serde_json::to_string(&rows(&g, &s, no_env)).unwrap();
+        assert!(!text.contains("/Users"), "{text}");
+        assert!(text.contains("[redacted]"));
     }
 
     #[test]
