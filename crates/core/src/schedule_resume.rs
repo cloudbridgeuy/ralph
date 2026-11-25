@@ -1,6 +1,6 @@
 use crate::schedule::{Task, TaskStatus};
 use crate::schedule_worker::{is_worker_task, worker_deadline, worker_id, STARTUP_GRACE_SECS};
-use crate::worker::{branch_name, SessionRef, Worker, WorkerState};
+use crate::worker::{branch_name, SessionRef, Worker, WorkerId, WorkerState};
 use chrono::{DateTime, Duration, Utc};
 
 pub const FINISH_TURN_MESSAGE: &str =
@@ -50,10 +50,10 @@ fn lost_turn(task: &Task, workers: &[Worker], now: DateTime<Utc>) -> Option<Lost
     if !is_open_run(task) {
         return None;
     }
-    let id = worker_id(&task.id);
+    let id = task.worker().ok()?;
     workers
         .iter()
-        .filter(|worker| worker.id().as_str() == id)
+        .filter(|worker| worker.id() == &id)
         .find_map(|worker| match worker.state() {
             WorkerState::Saved(session) => Some(LostTurn {
                 task: task.id.clone(),
@@ -81,10 +81,10 @@ pub fn finish_step(turn: &LostTurn, running: bool, now: DateTime<Utc>) -> Finish
     }
 }
 
-pub fn has_open_run(tasks: &[Task], worker: &str) -> bool {
+pub fn has_open_run(tasks: &[Task], worker: &WorkerId) -> bool {
     tasks
         .iter()
-        .any(|task| is_open_run(task) && worker_id(&task.id) == worker)
+        .any(|task| is_open_run(task) && task.worker().as_ref() == Ok(worker))
 }
 
 pub fn resume_failed_text(turn: &LostTurn) -> String {
@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     use crate::schedule::TaskKind;
     use crate::schedule_repeat::Repeat;
-    use crate::worker::{HarnessId, WorkerId};
+    use crate::worker::HarnessId;
     use std::path::PathBuf;
 
     const RECORD: &str = "/store/claude-session/sched-a";
@@ -250,11 +250,12 @@ mod tests {
     #[test]
     fn only_a_running_worker_task_is_an_open_run() {
         let running = [task("a", TaskStatus::Running)];
-        assert!(has_open_run(&running, "sched-a"));
-        assert!(!has_open_run(&running, "sched-b"));
-        assert!(!has_open_run(&running, "a"));
-        assert!(!has_open_run(&[task("a", TaskStatus::Pending)], "sched-a"));
-        assert!(!has_open_run(&[], "sched-a"));
+        let other = |text| WorkerId::parse(text).unwrap();
+        assert!(has_open_run(&running, &id()));
+        assert!(!has_open_run(&running, &other("sched-b")));
+        assert!(!has_open_run(&running, &other("a")));
+        assert!(!has_open_run(&[task("a", TaskStatus::Pending)], &id()));
+        assert!(!has_open_run(&[], &id()));
     }
 
     #[test]

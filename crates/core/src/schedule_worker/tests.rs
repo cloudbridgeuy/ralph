@@ -376,6 +376,16 @@ fn only_a_running_record_with_that_id_is_still_running() {
 }
 
 #[test]
+fn a_task_names_its_worker_by_a_parsed_id() {
+    let named = |id| worker(id, "2026-01-01T00:00:00Z", TaskStatus::Running).worker();
+    assert_eq!(named("a"), WorkerId::parse("sched-a"));
+    assert_eq!(
+        named("a b"),
+        Err(WorkerIdError::NotDashed("sched-a b".to_string()))
+    );
+}
+
+#[test]
 fn the_sched_prefix_marks_a_scheduled_worker_id() {
     assert!(is_scheduled_worker_id("sched-a"));
     assert!(!is_scheduled_worker_id("GUZ-1"));

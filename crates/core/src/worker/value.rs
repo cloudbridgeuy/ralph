@@ -1,15 +1,37 @@
 use super::{capabilities, is_dashed_token, Feature, HarnessId, Support};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerId(String);
 
-impl WorkerId {
-    pub fn parse(text: &str) -> Result<Self, String> {
-        if text.is_empty() || !is_dashed_token(text) {
-            return Err(format!(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerIdError {
+    Empty,
+    NotDashed(String),
+}
+
+impl fmt::Display for WorkerIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("Worker id is empty."),
+            Self::NotDashed(text) => write!(
+                f,
                 "Worker id '{text}' may only use letters, digits and dashes."
-            ));
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WorkerIdError {}
+
+impl WorkerId {
+    pub fn parse(text: &str) -> Result<Self, WorkerIdError> {
+        if text.is_empty() {
+            return Err(WorkerIdError::Empty);
+        }
+        if !is_dashed_token(text) {
+            return Err(WorkerIdError::NotDashed(text.to_string()));
         }
         Ok(Self(text.to_string()))
     }
@@ -110,8 +132,10 @@ mod tests {
     fn a_worker_id_is_letters_digits_and_dashes() {
         let parsed = WorkerId::parse("sched-a1");
         assert_eq!(parsed.as_ref().map(WorkerId::as_str), Ok("sched-a1"));
-        for text in ["", "a b", "a/b", ".sched-a", "a_b"] {
-            assert!(WorkerId::parse(text).is_err(), "{text:?}");
+        assert_eq!(WorkerId::parse(""), Err(WorkerIdError::Empty));
+        for text in ["a b", "a/b", ".sched-a", "a_b"] {
+            let refused = WorkerIdError::NotDashed(text.to_string());
+            assert_eq!(WorkerId::parse(text), Err(refused));
         }
     }
 

@@ -3,7 +3,7 @@ use crate::schedule::{
     WORKER_DEFAULT_TIMEOUT_SECS,
 };
 use crate::watch::WATCH_STATUS;
-use crate::worker::{HarnessId, Report, ReportStatus};
+use crate::worker::{HarnessId, Report, ReportStatus, WorkerId, WorkerIdError};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
 use std::time::Duration;
 
@@ -34,6 +34,12 @@ pub struct WorkerTickPlan<'a> {
 
 pub fn worker_id(id: &str) -> String {
     format!("{WORKER_ID_PREFIX}{id}")
+}
+
+impl Task {
+    pub fn worker(&self) -> Result<WorkerId, WorkerIdError> {
+        WorkerId::parse(&worker_id(&self.id))
+    }
 }
 
 pub fn alive_with_starting(alive: &[String], starting: &[String]) -> Vec<String> {

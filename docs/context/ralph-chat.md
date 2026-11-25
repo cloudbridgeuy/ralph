@@ -42,7 +42,7 @@ ralph thread <ls|drop <NAME>|merge <NAME> [--view]|park <NAME>|revive <NAME>|pul
 - `crates/core/src/chat_help.rs`: `/help` text, the `Command` table that `route_input` matches, the key tables and the status bar legend.
 - `crates/core/src/watch_command.rs`: `/watch` argument parsing, watch ids, time-left and list formatting.
 - `crates/core/src/schedule_command.rs`: `/schedule` argument parsing, cancel plan and list formatting.
-- `crates/core/src/schedule_worker.rs`: scheduled worker tick plan (cap, deadline, report and restart decisions), chat report texts. `crates/core/src/schedule_resume.rs`: the lost turn of a restored scheduled run (message, send or fail step, open-run check). `crates/core/src/worker/scheduled.rs` and `worker/guard.rs`: the scheduled prompt, base and no-push guard plan. `crates/core/src/worker/value.rs`: `WorkerId`, `WorkerState` and `Worker`, which schedule restore reads.
+- `crates/core/src/schedule_worker.rs`: scheduled worker tick plan (cap, deadline, report and restart decisions), chat report texts. `crates/core/src/schedule_resume.rs`: the lost turn of a restored scheduled run (message, send or fail step, open-run check). `crates/core/src/worker/scheduled.rs` and `worker/guard.rs`: the scheduled prompt, base and no-push guard plan. `crates/core/src/worker/value.rs`: `WorkerId`, `WorkerIdError`, `WorkerState` and `Worker`, which schedule restore reads.
 - `crates/core/src/diff_command.rs`: `/diff` argv (`git`, `delta`, `hunk`) and shell-word splitting.
 - `crates/ralph/src/chat/diff.rs`: spawns that argv with the terminal inherited.
 - `crates/core/src/chat_recap.rs`: the pure startup recap (`recap`, `next_step`). `crates/ralph/src/chat/recap.rs`: reads the log and the unpushed count and prints it.

@@ -39,7 +39,7 @@ use ralph_core::worker::{
     Classes, ClaudeArgs, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId,
     HeadlessState, Leftover, McptoolsDecision, PermissionAnswer, PermissionMode, QueuedFacts,
     QueuedWorker, SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal,
-    Turns, WorkerEvent, WorkerMarkers, ALLOW_ALWAYS, ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR,
+    Turns, WorkerEvent, WorkerId, WorkerMarkers, ALLOW_ALWAYS, ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR,
     CLAUDE_CLOSE_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_INTERRUPT_DIR, CLAUDE_OWNER_DIR,
     CLAUDE_PROMPT_DIR, CLAUDE_SESSION_DIR, CLAUDE_SPAWN_DIR,
 };
@@ -789,8 +789,9 @@ impl HeadlessHost for ClaudeHost {
         for id in request_ids(&self.store_dir, CLAUDE_SESSION_DIR) {
             let files = self.files(&id);
             let activity = fs::read_to_string(activity_path(&self.store_dir, &id)).ok();
-            let lost = turn_lost_at_resume(activity.as_deref())
-                && !has_open_run(&scheduled_tasks(&self.store_dir), &id);
+            let tasks = scheduled_tasks(&self.store_dir);
+            let finishes = WorkerId::parse(&id).is_ok_and(|worker| has_open_run(&tasks, &worker));
+            let lost = turn_lost_at_resume(activity.as_deref()) && !finishes;
             let resumed = Resumed {
                 agent: HarnessId::Claude.as_str(),
                 id: &id,
@@ -852,7 +853,8 @@ impl HeadlessHost for ClaudeHost {
         let drained: Vec<(String, ClaudeWorker)> = locked(&self.workers).drain().collect();
         let tasks = scheduled_tasks(&self.store_dir);
         for (id, mut worker) in drained {
-            let lost = worker.shared.heartbeat.running() && !has_open_run(&tasks, &id);
+            let finishes = WorkerId::parse(&id).is_ok_and(|worker| has_open_run(&tasks, &worker));
+            let lost = worker.shared.heartbeat.running() && !finishes;
             for step in shutdown_steps(lost) {
                 match step {
                     ShutdownStep::PostLostTurn => worker

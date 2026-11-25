@@ -1,6 +1,5 @@
-use crate::schedule_worker::worker_id;
 use crate::watch::{WatchKind, WatchSpec};
-use crate::worker::{Worker, WorkerState};
+use crate::worker::{Worker, WorkerId, WorkerState};
 use chrono::{
     DateTime, Duration as ChronoDuration, FixedOffset, LocalResult, NaiveTime, SecondsFormat,
     TimeZone, Utc,
@@ -149,10 +148,10 @@ pub fn due(tasks: &[Task], now: DateTime<Utc>) -> Vec<&Task> {
         .collect()
 }
 
-fn outlives_restart(workers: &[Worker], id: &str) -> bool {
+fn outlives_restart(workers: &[Worker], id: &WorkerId) -> bool {
     workers
         .iter()
-        .filter(|worker| worker.id().as_str() == id)
+        .filter(|worker| worker.id() == id)
         .any(|worker| match worker.state() {
             WorkerState::Running | WorkerState::Saved(_) => true,
         })
@@ -164,7 +163,7 @@ pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>, workers: &[Worker]) ->
         .map(|task| match task.status {
             TaskStatus::Running
                 if matches!(task.kind, TaskKind::Worker { .. })
-                    && outlives_restart(workers, &worker_id(&task.id)) =>
+                    && task.worker().is_ok_and(|id| outlives_restart(workers, &id)) =>
             {
                 task
             }
@@ -338,7 +337,7 @@ fn indent_brief(brief: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::{HarnessId, SessionRef, WorkerId};
+    use crate::worker::{HarnessId, SessionRef};
 
     fn utc(text: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(text)
