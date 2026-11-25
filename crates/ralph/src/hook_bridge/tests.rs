@@ -5,6 +5,7 @@ use ralph_server::permission_queue::PermissionQueue;
 use ralph_server::worker_events::Events;
 use ralph_server::worker_mcp::Inbox;
 use std::fs;
+use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -17,7 +18,7 @@ struct Served {
     events: Events,
 }
 
-fn served() -> Served {
+fn served(scheduled: bool) -> Served {
     let dir = tempfile::tempdir().unwrap();
     let socket = HookSocket::bind(&dir.path().join("hook.sock")).unwrap();
     let events = Events::default();
@@ -28,7 +29,7 @@ fn served() -> Served {
         inbox,
         Arc::clone(&events),
     ));
-    socket.serve(Arc::clone(&queue)).unwrap();
+    socket.serve(Arc::clone(&queue), scheduled).unwrap();
     Served {
         dir,
         socket,
@@ -74,7 +75,7 @@ fn answer(served: &Served, request_id: &str) -> Result<(), String> {
 
 #[test]
 fn the_chosen_option_reaches_the_hook() {
-    let served = served();
+    let served = served(false);
     for (tool_use_id, request_id) in [("t1", "p.t1"), ("", "p.hook-1")] {
         let path = served.socket.path().to_path_buf();
         let hook = thread::spawn(move || ask_bridge(&path, &ask(tool_use_id)));
@@ -89,7 +90,7 @@ fn the_chosen_option_reaches_the_hook() {
 
 #[test]
 fn a_hook_that_leaves_settles_its_request_and_a_late_answer_is_stale() {
-    let served = served();
+    let served = served(false);
     let mut hook = UnixStream::connect(served.socket.path()).unwrap();
     hook.write_all(encode_line(&ask("t1")).as_bytes()).unwrap();
     assert_eq!(asked(&served.events), "p.t1");
@@ -115,7 +116,7 @@ fn an_answer_after_the_hook_gave_up_is_refused() {
 
 #[test]
 fn the_socket_is_private_and_removed_on_drop() {
-    let Served { dir, socket, .. } = served();
+    let Served { dir, socket, .. } = served(false);
     let path = socket.path().to_path_buf();
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
@@ -125,4 +126,18 @@ fn the_socket_is_private_and_removed_on_drop() {
         ask_bridge(&dir.path().join("hook.sock"), &ask("t1")),
         HookOutcome::BridgeGone(_)
     ));
+}
+
+#[test]
+fn a_scheduled_hook_ask_is_denied_and_reported_without_asking() {
+    let served = served(true);
+    let mut hook = UnixStream::connect(served.socket.path()).unwrap();
+    hook.write_all(encode_line(&ask("t1")).as_bytes()).unwrap();
+    hook.shutdown(Shutdown::Write).unwrap();
+    let mut reply = String::new();
+    hook.read_to_string(&mut reply).unwrap();
+    assert!(reply.contains(r#""option_id":"deny""#), "{reply}");
+    assert!(served.events.lock().unwrap().is_empty());
+    let reports = fs::read_dir(served.dir.path().join("inbox")).unwrap();
+    assert_eq!(reports.count(), 1);
 }

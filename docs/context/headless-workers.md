@@ -45,18 +45,18 @@ The argv is `/bin/sh -c <isolate> <shell> <flags> <restore> <program> <args...>`
 
 ## Scheduled workers: unattended permissions
 
-A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. The claude and codex hosts call them. The other headless hosts do not call them yet; until they do, a scheduled worker there still queues requests for a person.
+A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. The claude, codex, cursor and agy hosts call them. The opencode host does not call them yet; until they do, a scheduled worker there still queues requests for a person.
 
 | Harness | Rule | Result |
 | --- | --- | --- |
 | claude | `unattended_claude_answer`: allow a read-only mcptools call, deny every other request. `headless_claude_args` forces native mode `auto` and adds `--disallowedTools` for git push, gh pr, gh api, and for mcptools `execute` and `call_tool` when mcptools is copied (the same list as claude-tmux, decision A of GUZ-1786). | deny line on stdio |
 | codex | `unattended` picks the first `reject_once` option (`decline`, or `cancel` when codex offers no `decline`); with none, the host rejects the request. `scheduled_sandbox_mode` never goes wider than `workspace-write`: unset or `danger-full-access` becomes `workspace-write`, `read-only` stays. | decline, cancel or reject |
-| cursor, agy (ACP) | `unattended` picks the first `reject_once` option; with none, the host answers `Cancelled`. | reject or cancel |
+| cursor, agy | `scheduled_permission_mode` runs the worker in `ask` mode whatever is configured. ACP: `unattended_acp` picks the first `reject_once` option (agy allows the report tools by identity only, never by title); with none, the host answers `Cancelled`. Cursor print mode: the hook bridge denies every shell command. | reject, cancel or deny |
 | opencode | `unattended` picks the `reject_once` option (`reject`). | reject |
 
 `unattended` allows only the `ralph-worker` report and set_status tools, by identity. On every denial the host posts a `blocked` report, so the task ends as `Attention` even when the model never reports.
 
-Harnesses that raise few or no requests have little to deny, and no tool deny list: opencode (yolo is always on; only prompts the server raises reach ralph), cursor print mode (only shell commands reach the hook bridge; MCP calls are not gated) and agy under its yolo process flag. For these the push barrier is `guard::apply` (git hooks and refused remote URLs), not a deny list.
+Harnesses that raise few or no requests have little to deny, and no tool deny list: opencode (yolo is always on; only prompts the server raises reach ralph) and cursor print mode (only shell commands reach the hook bridge; MCP calls are not gated, so a scheduled cursor worker runs no shell command while its MCP calls run). For these the push barrier is `guard::apply` (git hooks and refused remote URLs), not a deny list.
 
 ## Adding the next headless harness
 
@@ -70,7 +70,7 @@ The shared trait unifies lifecycle orchestration only; it is not a plugin regist
 
 ### Google Antigravity (`agy`)
 
-`agy` is the executable for the Google Antigravity CLI. Ralph starts `agy acp` in the canonical worker worktree, without additional directories. Its only configured worker MCP server is a per-worker stdio `ralph-worker` server tied to that worker's owner and inbox. It does not grant the agent broad filesystem roots. Ask and yolo use the settings in `[agy]`; yolo is a process flag, not a mutable session permission. ACP permission requests are handled only when the agent raises them.
+`agy` is the executable for the Google Antigravity CLI. Ralph starts `agy acp` in the canonical worker worktree, without additional directories. Its only configured worker MCP server is a per-worker stdio `ralph-worker` server tied to that worker's owner and inbox. It does not grant the agent broad filesystem roots. Ask and yolo use the settings in `[agy]`; yolo is a process flag, not a mutable session permission. A scheduled worker always uses ask. ACP permission requests are handled only when the agent raises them.
 
 Ralph creates or loads an ACP session, verifies its chosen model and thought level, writes the canonical store, inbox and worktree plus session ID, confirmed model, effort and permission mode to `<store>/agy-session/<id>`, then permits turns. A separate `<store>/agy/<id>` owner claim and `<store>/agy-lock/<id>` lock guard adoption. Spawn, errors, answers, prompt queue, interrupt, interrupt results and close use `<store>/agy-spawn/<id>`, `agy-error/<id>`, `agy-answer/<id>`, `agy-prompt/<id>/`, `agy-interrupt/<id>/`, `agy-interrupt-result/<id>/` and `agy-close/<id>` respectively. Turn and pending journals use `<store>/agy-turn/<id>` and `<store>/agy-pending/<id>/`. An interrupted or lost in-flight turn is reported; it is not automatically resent. Resume requires the saved session, original worktree and agent support for `session/load`. Ambiguous or foreign ownership is not reclaimed as this chat's worker.
 
@@ -176,7 +176,7 @@ Cursor hook core (`crates/core/src/worker/cursor_hooks.rs`, pure; GUZ-1495). The
 
 ## Cursor print mode
 
-Every new Cursor worker runs the print-mode host (`crates/ralph_server/src/acp_worker/print.rs`, `PrintWorker`) with `--force`. `[cursor] permissions = "ask"` adds the hook bridge (`PrintHooks`); `"yolo"` has none. A resumed worker uses the path its session record names: a record with `permissions` (`"ask"` or `"yolo"`) resumes in print mode with that mode. ACP (`agent acp`) now only resumes old session records with no `permissions`; no new worker starts it.
+Every new Cursor worker runs the print-mode host (`crates/ralph_server/src/acp_worker/print.rs`, `PrintWorker`) with `--force`. `[cursor] permissions = "ask"` adds the hook bridge (`PrintHooks`); `"yolo"` has none. A scheduled worker always uses `ask`. A resumed worker uses the path its session record names: a record with `permissions` (`"ask"` or `"yolo"`) resumes in print mode with that mode. ACP (`agent acp`) now only resumes old session records with no `permissions`; no new worker starts it.
 
 Print-mode log (GUZ-1540): every print worker, `ask` or `yolo`, appends to `<store>/acp-logs/<id>.log` through one shared `CappedLog` (same cap and rotation as the ACP log). Tags: `stdout` is each stream-json line of an `agent -p` call, `err` its stderr, `turn` ralph's own notes: `spawn call=<n> chat=<id|->`, `start prompt_bytes=<n> reminder=<bool>`, `mark-unreported`, `post-failure <problem>` (from `print_action_note`, one per action `Turns` returned) and `end exit=<outcome> end=<TurnEnd> reported=<bool>` (`print_end_note`). A chain of turns shows as repeated `start` lines; `reminder=true` tells a ralph reminder from a prompt the person sent.
 

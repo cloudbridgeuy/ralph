@@ -30,14 +30,14 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, agy_auto_allow_option, auth_method, auto_allow_option,
     cancels_turn, capabilities, decide, describe, encode, gone_path, permission_content,
-    probed_version, prompt_failure_report, ready_path, reduce, request_stale, session_error,
-    stop_problem, sweeps_permissions, turn_outcome, AcpAgent, AcpCall, BlockedContent,
-    Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
-    PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
-    Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE,
-    CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
-    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
-    CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    probed_version, prompt_failure_report, ready_path, reduce, request_stale,
+    scheduled_permission_mode, session_error, stop_problem, sweeps_permissions, turn_outcome,
+    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessState,
+    HeadlessWorker, Inbound, PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope,
+    SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent,
+    WorkerMarkers, AGY_AGENT, AGY_GATE, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_GATE, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
+    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -215,7 +215,7 @@ impl AcpWorker {
                 );
             }
         }
-        let permission_mode = if agent == AGY_AGENT {
+        let configured_mode = if agent == AGY_AGENT {
             match &launch {
                 Launch::Resume { record, .. } => record.permissions.unwrap_or(PermissionMode::Ask),
                 Launch::Fresh => {
@@ -225,6 +225,7 @@ impl AcpWorker {
         } else {
             cursor_permissions()
         };
+        let permission_mode = scheduled_permission_mode(request.scheduled, configured_mode);
         let effort = if agent == AGY_AGENT {
             match &launch {
                 Launch::Resume { record, .. } => record.effort.clone(),
@@ -272,6 +273,7 @@ impl AcpWorker {
             &markers,
             permission_mode,
             agent == AGY_AGENT,
+            request.scheduled,
             PermissionQueue::new(
                 host_process_token(),
                 id.to_string(),
@@ -784,8 +786,8 @@ impl CursorHost {
             self.launch(id, &request, Launch::Fresh)
                 .map(|worker| CursorWorker::Acp(Box::new(worker)))
         } else {
-            PrintWorker::start(id, &request, &files, None, cursor_permissions())
-                .map(CursorWorker::Print)
+            let mode = scheduled_permission_mode(request.scheduled, cursor_permissions());
+            PrintWorker::start(id, &request, &files, None, mode).map(CursorWorker::Print)
         };
         match started {
             Ok(worker) => self.adopt(id, worker, self.agy.then(|| request.prompt())),

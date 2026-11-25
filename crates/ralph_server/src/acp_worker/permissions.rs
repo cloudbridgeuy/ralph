@@ -1,6 +1,6 @@
 use super::*;
 use crate::permission_queue::PermissionQueue;
-use ralph_core::worker::PermissionOption;
+use ralph_core::worker::{unattended_acp, PermissionOption};
 
 #[derive(Debug, Clone, serde::Serialize, agent_client_protocol::JsonRpcRequest)]
 #[serde(transparent)]
@@ -40,6 +40,14 @@ fn selected_response(command: WorkerCommand) -> Option<RequestPermissionResponse
     }
 }
 
+fn respond_cancelled(responder: Reply) {
+    responder
+        .respond(RequestPermissionResponse::new(
+            RequestPermissionOutcome::Cancelled,
+        ))
+        .ok();
+}
+
 fn respond_selected(responder: Reply, option_id: String) {
     let request_id = responder.id().to_string();
     let answer = PermissionAnswer {
@@ -67,6 +75,7 @@ fn auto_option<'a>(
 pub(super) struct Permissions {
     mode: PermissionMode,
     agy: bool,
+    scheduled: bool,
     queue: PermissionQueue<Reply>,
     pub(super) heartbeat: Arc<Heartbeat>,
 }
@@ -76,11 +85,13 @@ impl Permissions {
         markers: &WorkerMarkers,
         mode: PermissionMode,
         agy: bool,
+        scheduled: bool,
         queue: PermissionQueue<Reply>,
     ) -> Arc<Self> {
         Arc::new(Self {
             mode,
             agy,
+            scheduled,
             queue,
             heartbeat: Heartbeat::new(markers.activity.clone(), markers.gone.clone()),
         })
@@ -92,12 +103,29 @@ impl Permissions {
             request_id: responder.id().to_string(),
             ..request.content(self.agy)
         };
+        if self.scheduled {
+            return self.refuse_unattended(value, &content, responder);
+        }
         let option = auto_option(self.agy, self.mode, value, &content);
         if let Some(option) = option {
             respond_selected(responder, option.option_id.clone());
             return;
         }
         self.queue.enqueue(responder, content);
+    }
+
+    fn refuse_unattended(
+        &self,
+        request: &serde_json::Value,
+        content: &BlockedContent,
+        responder: Reply,
+    ) {
+        let verdict = unattended_acp(self.agy, request, content);
+        self.queue.report_unattended(&verdict, content);
+        match verdict.option_id() {
+            Some(option_id) => respond_selected(responder, option_id.to_string()),
+            None => respond_cancelled(responder),
+        }
     }
 
     pub(super) fn answer(&self, answer: &PermissionAnswer) -> Result<(), String> {
@@ -111,11 +139,7 @@ impl Permissions {
 
     pub(super) fn cancel_all(&self) {
         for responder in self.queue.drain() {
-            responder
-                .respond(RequestPermissionResponse::new(
-                    RequestPermissionOutcome::Cancelled,
-                ))
-                .ok();
+            respond_cancelled(responder);
         }
     }
 }

@@ -1,7 +1,8 @@
 use crate::permission_queue::PermissionQueue;
 use ralph_core::chat_socket::{decode_line, encode_line};
 use ralph_core::worker::{
-    bridge_wait, hook_content, hook_request_id, BridgeAnswer, BridgeAsk, BridgeWait,
+    bridge_wait, hook_content, hook_request_id, unattended, BlockedContent, BridgeAnswer,
+    BridgeAsk, BridgeWait,
 };
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -53,7 +54,7 @@ impl HookSocket {
         &self.path
     }
 
-    pub fn serve(&self, queue: Arc<HookQueue>) -> io::Result<()> {
+    pub fn serve(&self, queue: Arc<HookQueue>, scheduled: bool) -> io::Result<()> {
         let listener = self.listener.try_clone()?;
         let closed = Arc::clone(&self.closed);
         let counter = Arc::new(AtomicU64::new(0));
@@ -65,7 +66,7 @@ impl HookSocket {
                 let Ok(stream) = stream else { continue };
                 let (queue, counter) = (Arc::clone(&queue), Arc::clone(&counter));
                 thread::spawn(move || {
-                    if let Err(e) = answer_connection(&stream, &queue, &counter) {
+                    if let Err(e) = answer_connection(&stream, &queue, &counter, scheduled) {
                         crate::warn::warn(format!("cursor hook bridge: {e}"));
                     }
                 });
@@ -79,14 +80,40 @@ fn answer_connection(
     stream: &UnixStream,
     queue: &HookQueue,
     counter: &AtomicU64,
+    scheduled: bool,
 ) -> io::Result<()> {
     stream.set_read_timeout(Some(ASK_READ_TIMEOUT))?;
     let mut line = String::new();
     BufReader::new(stream.take(LINE_LIMIT_BYTES)).read_line(&mut line)?;
     let request: BridgeAsk = decode_line(&line).map_err(io::Error::other)?;
     let id = hook_request_id(&request.tool_use_id, counter.fetch_add(1, Ordering::SeqCst));
-    let (answer, chosen) = mpsc::channel();
     let content = hook_content(&id, &request);
+    let option = if scheduled {
+        refuse_unattended(queue, &content)
+    } else {
+        ask_person(stream, queue, id, content)
+    };
+    let Some(option_id) = option else {
+        return Ok(());
+    };
+    let mut writer = stream;
+    writer.write_all(encode_line(&BridgeAnswer { option_id }).as_bytes())?;
+    writer.flush()
+}
+
+fn refuse_unattended(queue: &HookQueue, content: &BlockedContent) -> Option<String> {
+    let verdict = unattended(content);
+    queue.report_unattended(&verdict, content);
+    verdict.option_id().map(str::to_string)
+}
+
+fn ask_person(
+    stream: &UnixStream,
+    queue: &HookQueue,
+    id: String,
+    content: BlockedContent,
+) -> Option<String> {
+    let (answer, chosen) = mpsc::channel();
     queue.enqueue(
         HookReply {
             id: id.clone(),
@@ -96,13 +123,10 @@ fn answer_connection(
     );
     let option = wait_for_answer(stream, &chosen);
     drop(chosen);
-    let Some(option_id) = option else {
+    if option.is_none() {
         queue.settle(|reply| reply.id == id);
-        return Ok(());
-    };
-    let mut writer = stream;
-    writer.write_all(encode_line(&BridgeAnswer { option_id }).as_bytes())?;
-    writer.flush()
+    }
+    option
 }
 
 fn wait_for_answer(stream: &UnixStream, chosen: &mpsc::Receiver<String>) -> Option<String> {

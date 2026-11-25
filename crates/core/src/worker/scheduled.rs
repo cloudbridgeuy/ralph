@@ -1,10 +1,12 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    claude_args, deny_line, disallowed_tool_args, mcptools_decision, permission_response,
-    BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision, PermissionMode,
-    PermissionOption, Report, ReportStatus, SandboxMode, ALLOW_ONCE, SERVER_NAME, WORKER_PROMPT,
+    agy_auto_allow_option, claude_args, deny_line, disallowed_tool_args, mcptools_decision,
+    permission_response, BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision,
+    PermissionMode, PermissionOption, Report, ReportStatus, SandboxMode, ALLOW_ONCE, SERVER_NAME,
+    WORKER_PROMPT,
 };
 use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
+use serde_json::Value;
 use std::ffi::OsString;
 
 pub const SCHEDULED_WORKER_PROMPT: &str = "\
@@ -60,6 +62,14 @@ pub fn scheduled_sandbox_mode(
     }
 }
 
+pub fn scheduled_permission_mode(scheduled: bool, configured: PermissionMode) -> PermissionMode {
+    if scheduled {
+        PermissionMode::Ask
+    } else {
+        configured
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unattended<'a> {
     Allow(&'a PermissionOption),
@@ -75,14 +85,30 @@ fn is_worker_tool(content: &BlockedContent) -> bool {
             .any(|name| tool == format!("{SERVER_NAME}-{name}: {name}"))
 }
 
+fn option_of_kind<'a>(content: &'a BlockedContent, kind: &str) -> Option<&'a PermissionOption> {
+    content.options.iter().find(|option| option.kind == kind)
+}
+
+fn refusal(content: &BlockedContent) -> Unattended<'_> {
+    option_of_kind(content, "reject_once").map_or(Unattended::Cancel, Unattended::Deny)
+}
+
 pub fn unattended(content: &BlockedContent) -> Unattended<'_> {
-    let with_kind = |kind: &str| content.options.iter().find(|option| option.kind == kind);
     is_worker_tool(content)
-        .then(|| with_kind(ALLOW_ONCE))
+        .then(|| option_of_kind(content, ALLOW_ONCE))
         .flatten()
-        .map(Unattended::Allow)
-        .or_else(|| with_kind("reject_once").map(Unattended::Deny))
-        .unwrap_or(Unattended::Cancel)
+        .map_or_else(|| refusal(content), Unattended::Allow)
+}
+
+pub fn unattended_acp<'a>(
+    agy: bool,
+    request: &Value,
+    content: &'a BlockedContent,
+) -> Unattended<'a> {
+    if !agy {
+        return unattended(content);
+    }
+    agy_auto_allow_option(request, content).map_or_else(|| refusal(content), Unattended::Allow)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,7 +135,14 @@ pub fn unattended_claude_answer(
     }
 }
 
-impl Unattended<'_> {
+impl<'a> Unattended<'a> {
+    pub fn option_id(&self) -> Option<&'a str> {
+        match self {
+            Self::Allow(option) | Self::Deny(option) => Some(&option.option_id),
+            Self::Cancel => None,
+        }
+    }
+
     pub fn denial_report(
         &self,
         worker: &str,
@@ -579,6 +612,49 @@ mod tests {
         let only_allow = content("bash", vec![option("allow", "allow_once")]);
         assert_eq!(unattended(&only_allow), Unattended::Cancel);
         assert_eq!(unattended(&content("bash", Vec::new())), Unattended::Cancel);
+    }
+
+    #[test]
+    fn a_scheduled_worker_always_asks_whatever_is_configured() {
+        for configured in [PermissionMode::Ask, PermissionMode::Yolo] {
+            assert_eq!(
+                scheduled_permission_mode(true, configured),
+                PermissionMode::Ask
+            );
+            assert_eq!(scheduled_permission_mode(false, configured), configured);
+        }
+    }
+
+    #[test]
+    fn an_unattended_verdict_names_the_option_to_send() {
+        let codex = content("command", codex_options());
+        assert_eq!(unattended(&codex).option_id(), Some("decline"));
+        let server = content(SERVER_NAME, codex_options());
+        assert_eq!(unattended(&server).option_id(), Some("accept"));
+        assert_eq!(Unattended::Cancel.option_id(), None);
+    }
+
+    #[test]
+    fn unattended_agy_allows_report_tools_by_identity_never_by_title() {
+        let options = vec![option("allow", "allow_once"), option("deny", "reject_once")];
+        let spoof = content("ralph-worker-report: report", options.clone());
+        let write = json!({"toolCall": {"name": "write_file"}});
+        assert_eq!(
+            unattended_acp(true, &write, &spoof),
+            Unattended::Deny(&spoof.options[1])
+        );
+        assert_eq!(
+            unattended_acp(false, &write, &spoof),
+            Unattended::Allow(&spoof.options[0])
+        );
+        let report = content("report", options);
+        let identity = json!({"toolCall": {"name": "mcp_ralph-worker_report"}});
+        assert_eq!(
+            unattended_acp(true, &identity, &report),
+            Unattended::Allow(&report.options[0])
+        );
+        let bare = content("ralph-worker-report: report", Vec::new());
+        assert_eq!(unattended_acp(true, &write, &bare), Unattended::Cancel);
     }
 
     #[test]
