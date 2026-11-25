@@ -19,7 +19,7 @@
 | Admit | `crates/ralph_api/src/admit.rs` | pure `admit()` and `MAX_HANDLERS`: the cap rule |
 | Server | `crates/ralph_api/src/server.rs` | `bind()`, `serve()` on tiny_http |
 | Assets | `crates/ralph_api/src/assets.rs` | embedded table: `find()` |
-| Asset files | `crates/ralph_api/assets/` | `index.html`, `app.css`, `fonts/` |
+| Asset files | `crates/ralph_api/assets/` | `index.html`, `app.css`, `memory.css`, `app.js`, `fonts/` |
 | Colour lint | `xtask/src/lint/web_colour.rs` | checks the files in `assets/` |
 | Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
 | Markdown | `crates/ralph_api/src/render/{prose,md_event,md_link,code}.rs` | `render_markdown()`: pulldown-cmark events to HTML inside `<r-prose>`; `code.rs` highlights fenced blocks |
@@ -114,13 +114,14 @@ Risk:
 | `GET /` with a valid `?token=` | 302 to `/` with `Set-Cookie` |
 | `GET /` with the cookie or Bearer token | 200 `text/html` shell, with a `Content-Security-Policy` |
 | `GET /assets/app.css` | 200 `text/css` |
+| `GET /assets/memory.css` | 200 `text/css` |
 | `GET /assets/geist-mono.woff2` | 200 `font/woff2` |
 | other method on `/` or `/assets/*` | 405 with `Allow: GET` |
 | `GET /catalogue` | 200 `text/html` page with the same headers and CSP as the shell |
 | other method on `/catalogue` | 405 with `Allow: GET` |
 | `GET /tokens.css` | 200 `text/css; charset=utf-8` with `Cache-Control: no-store` |
 | other method on `/tokens.css` | 405 with `Allow: GET` |
-| `GET /api/memory` with `?thread=` and `?node=` | 200 root nodes of the memory tree (`{thread, entries, nodes}`), or with `node` one zoom step (`{thread, node, children}`); `after` and `limit` are ignored |
+| `GET /api/memory` with `?thread=` and `?node=` | 200 root nodes of the memory tree (`{thread, entries, nodes, stats}`), or with `node` one zoom step (`{thread, node, path, children}`); every node has `folded` and `stats`; a leaf root node also has `entry`; see [Memory routes](#memory-routes); `after` and `limit` are ignored |
 | `GET /api/memory/entries` with `?thread=`, `?after=` and `?limit=` | 200 `{thread, entries, items, next_after}`; `limit` defaults to 50, is at most 200 and `0` is 400; `next_after` is `null` on the last page; `node` is 400 |
 | `GET /api/memory/threads` | 200 `{store, threads: [{name, parked, merged}]}` sorted by name; `store` is the last component of the store path (`store` when there is none), never the full path, and the shell header shows it with a `read-only` badge; any key other than `token` is 400 |
 | bad `thread`, `node`, `after` or `limit`, an unknown or repeated key, or bad percent-encoding on a memory route | 400 `{"error":"<reason>"}` |
@@ -140,22 +141,33 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 - Exposed: `log.jsonl` entries (role, time, full text), `tree.jsonl` summaries, thread names and their parked and merged flags.
 - Not exposed: `tags.jsonl`, analytics, `history.jsonl`, config, paths.
 - The read takes no lock and writes nothing: no `LOCK`, no index, no new directory. It uses `ralph_server::chat::memory::peek`, so a half-written last log line and a tree node past the log are not shown.
-- Code: `crates/ralph_api/src/memory_api.rs` (pure response builders and the thin read), `memory/query.rs` (query parser), `memory/json.rs` (JSON bodies).
+- Node fields in `/api/memory`: `id`, `lo`, `hi`, `leaf`, `summary`, `folded` and `stats` `{depth, children, blocks, summarised, pending}`.
+  - `depth` is the log2 of the node size. `children` is 2 for a block and 0 for a leaf.
+  - `blocks` is the node size minus 1. `summarised` counts summaries at or below the node. `pending` is `blocks` minus `summarised`.
+  - `folded` is true when the node has blocks and no summary at or below it. The screen draws it as one pill and does not open it.
+- A leaf root node (one entry) also has `entry`, in the same shape as an item of `/api/memory/entries`. A block root node has no `entry` key.
+- The root answer has `stats` `{entries, blocks, summarised, pending, last_at}`. It sums the root nodes. `last_at` is the time of the last entry, or `null` with no entries.
+- The zoom answer has `path`: the node ids from the root node down to the zoomed node, in order. It is empty when no root node holds the node.
+- The stats and the path are worked out in `ralph_api` from the tree and the entry count. There is no change in core.
+- Code: `crates/ralph_api/src/memory_api.rs` (pure response builders and the thin read), `memory/query.rs` (query parser), `memory/json.rs` (JSON bodies), `memory/stats.rs` (node and tree stats, `folded`), `memory/path.rs` (zoom path).
 
 ## Embedded assets
 
 - The files in `crates/ralph_api/assets/` are in the binary through `include_bytes!`. There is no build step.
 - The CSP is `default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Assets also send `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
-- The shell loads one script, `/app.js` (`<script src="/app.js" defer>`, same origin, so the CSP is unchanged: no `'unsafe-inline'`). It has no inline script and no `style=`. Its nav links use `#/name`.
+- The shell loads two style sheets, `app.css` and then `memory.css` (both in `src/assets.rs`), and one script, `/app.js` (`<script src="/app.js" defer>`, same origin, so the CSP is unchanged: no `'unsafe-inline'`). It has no inline script and no `style=`. Its nav links use `#/name`.
 - The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
 - `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.
 - The `[web]` font default starts with `"Geist Mono"`.
 - `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. Thirteen are built: r-box, r-rule, r-table, r-kv, r-tree, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code and r-prose. The fourteenth, r-graph, passes the lint but has no builder yet. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint. It does not scan `url(...)` contents or comments (`/* */`, and `//` in `.js` and `.mjs` only), and it does not read a css id selector such as `#add` as a hex colour. A `color-mix()` may take a `var(--r-*)` token as its percentage. In `.css` files it judges each declaration as one statement, even when it spans lines; HTML `style=` and `<style>` content stay judged line by line.
+- `memory.css` holds the memory screen rules. `app.css` stays at 933 lines and takes no new screen rules. The test `css_files_stay_under_1000_lines` keeps every CSS file under 1,000 lines.
+- `memory.css` classes: `.tabs`, `.crumbs`, `.statline`, `.split`, `.detail`, `.summary`, `.pager`, `.btn` and `kbd`, plus the selected tree row and the focus rings. Read the file for the rules.
+- The colour lint scans every file that `git ls-files` lists under `assets/`. An untracked file is not scanned until `git add`.
 - A body of 32 KB or more goes out with chunked transfer encoding. The test client decodes it.
 
 ## Primitives
 
-The UI has no JavaScript. Each primitive is a hyphenated tag that the server renders as plain HTML. A browser treats an unknown hyphenated tag as an inline element, and `app.css` styles it. The colour lint allows only these tags.
+Each primitive is a hyphenated tag that the server renders as plain HTML. A browser treats an unknown hyphenated tag as an inline element, and `app.css` styles it. The colour lint allows only these tags. The script `app.js` draws the memory screen with the same markup; see [Memory screen](#memory-screen).
 
 | Tag | Builder | Notes |
 |-----|---------|-------|
@@ -271,16 +283,37 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 ## Memory screen
 
-- Route `#/memory`. Other routes keep the placeholder text. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `olderAfter`, `newerAfter`, `navTarget`) sit apart from the DOM code.
-- State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, no `after`) are left out. `hashchange` draws the screen again, so back and forward work. Zooming a node updates `node` with `replaceState`.
-- The screen shows a thread select (`main` and the names from `/api/memory/threads`), thread and entry counts, the root nodes as an `r-tree`, and a `recent entries` table (20 rows) with `older` and `newer` links that change `after`. With no `after` in the hash, the table opens on the newest page (`max(0, entries - 20)`, from `defaultAfter`). An `after` in the hash, even `after=0`, overrides this. An `after` at or past the entry count opens the newest page (`clampAfter`).
-- Zoom: click or Enter on a node button fetches `/api/memory?node=`. It adds the summary, then child blocks or entry rows (`#i role`, time, first line of the text). A node with no summary shows `summary pending` in the zoom summary row only. Its tree row shows the neutral `pending` pill.
-- An entry row opens its full text. Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
+- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
+- Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
+- Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
+- Stat line: from the root `stats`, for example `45 entries, 8 blocks, 2 summarised, 6 pending, last entry <time>`.
+- State is in the hash: `#/memory?thread=<name>&node=<id>&after=<n>`. Defaults (`main`, no node, no `after`) are left out. `hashchange` draws the screen again, so back and forward work.
+- Selection is the hash `node`. A click on a node in the tree selects it, writes the hash with `replaceState` (no history entry, no redraw) and loads the detail pane. Selecting the selected node does nothing. A hash with `node` opens the tree down to that node and selects it.
+- With no node selected, the detail pane shows the whole thread. The newest page opens first (`max(0, entries - 20)`, from `defaultAfter`). An `after` in the hash, even `after=0`, overrides this. An `after` at or past the entry count opens the newest page (`clampAfter`).
+- Detail pane, top to bottom:
+  - Breadcrumb from `path`: `memory / <thread> / [lo-hi] …`. Each part links to its hash. The last part is plain text with `aria-current="page"`.
+  - Detail head (`r-kv`): range, entries, depth, children and summary (`pending` or `summarised`). Only for a selected node.
+  - The summary, rendered once. A node with no summary shows a `pending` pill (`pending ×N` for a folded node) in place of the text.
+  - The entries of the node range, 20 rows a page, in an `r-table`. With no node the range is the whole thread.
+  - The pager.
+- Tree rows:
+  - A folded block is one row with one `pending ×N` pill. It has no `aria-expanded` and does not open.
+  - A leaf root node is drawn as the entry (`#i role`, time, first line), not as a node. It opens to show the full text.
+  - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
+  - A block with no summary shows the neutral `pending` pill in its row.
+- Entries and paging:
+  - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
+  - The label reads `entries A–B of N`, where N is the size of the node range.
+  - An entry row opens in place: it gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`, and a detail row below holds the rendered text. Click, Enter or Space toggles it. Only one row is open at a time.
+  - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`.
+  - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `select`, `textarea` and editable fields, and with Ctrl, Meta or Alt.
+- Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
-- States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node.
-- Keyboard: Tab reaches the select, the links and one tree item (roving tabindex). Up and Down move between visible items. Right expands or goes to the first child. Left collapses or goes to the parent. Home and End go to the first and last item. Enter and Space zoom. Focus returns to the same item after a redraw.
+- States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node. A slow detail load is dropped if you select another node first.
+- Keyboard: Tab reaches the tabs, the breadcrumb links, one tree item (roving tabindex), the entry rows and the pager. Up and Down move between visible tree items. Right expands or goes to the first child. Left collapses or goes to the parent. Home and End go to the first and last item. Enter and Space open or close. Focus returns to the same tree item after a redraw. Links, `.btn`, entry rows and tree buttons show a `:focus-visible` outline.
 - Not shown: `tags.jsonl`, analytics, `history.jsonl`, paths.
-- Contract tests: `tests/memory_screen_contract.rs` (script served like the other assets, one `innerHTML`, no `eval(`, `style.`, `<img`, only primitive tags).
+- Contract tests: `tests/memory_screen_contract.rs` (script served like the other assets, one `innerHTML`, no `eval(`, `style.`, `<img`, only primitive tags) and `src/assets/tests/memory.rs` (`memory.css` is served and linked after `app.css`, the 1,000 line cap, role tokens only, every class the script uses has a rule).
+- No JavaScript runner exists. The script tests are text checks on the source and on the CSS. No test runs the key handling, the focus moves or `replaceState`. Check those by hand in a browser.
 
 ## r-tree markup
 
@@ -301,5 +334,5 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 - The header is muted, 12px and does not wrap. `.num` cells align right with tabular digits. A stray number in a text column does not change that column.
 - `.clip` cuts a cell on one line with a CSS ellipsis on the real column width. `app.js` sends the first line of an entry whole and no longer cuts it at a fixed length.
-- Rows reserve a 2px left bar. Hover fills with `--r-hover` and leaves the text colour alone. `aria-selected="true"` fills with `--r-selected` and shows an accent bar. `.open` shows the accent bar with no fill. These are styles only; the screen sets no row state yet.
+- Rows reserve a 2px left bar. Hover fills with `--r-hover` and leaves the text colour alone. `aria-selected="true"` fills with `--r-selected` and shows an accent bar. `.open` shows the accent bar with no fill. The memory screen sets `aria-selected` and `.open` on an entry row that is open.
 - `.stackable` is opt-in and only the entries table has it. At 760px or narrower it hides the header and turns each row into two lines: `#`, role and time, then the text, clipped at two lines.
