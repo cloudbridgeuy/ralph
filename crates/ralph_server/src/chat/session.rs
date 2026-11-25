@@ -184,6 +184,7 @@ pub fn open_core(parts: CoreParts) -> Monitor {
         known: Mutex::new(known),
         fresh: Mutex::new((Vec::new(), 0)),
         starting: Arc::default(),
+        resuming: Mutex::new(Vec::new()),
         scheduled_reports: Mutex::new(Vec::new()),
         warned: Mutex::new(HashSet::new()),
         unrecorded: Mutex::new(HashSet::new()),
@@ -215,7 +216,7 @@ pub fn serve(
         },
         roster,
     );
-    restore_schedule(&core.schedule, &stored_workers(&core.store_dir));
+    *locked(&core.resuming) = restore_schedule(&core.schedule, &stored_workers(&core.store_dir));
     handle
 }
 

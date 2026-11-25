@@ -12,13 +12,16 @@ use ralph_core::schedule_command::{
     cancel_message, list_tasks, plan_cancel, CancelPlan, CancelStop, ScheduleCommand,
     SCHEDULE_USAGE,
 };
+use ralph_core::schedule_resume::{plan_lost_turns, LostTurn};
 use ralph_core::watch_request::start_failure_report;
 use ralph_core::worker::Worker;
 use std::time::Duration;
 
-pub fn restore_schedule(store: &ScheduleStore, workers: &[Worker]) {
+pub fn restore_schedule(store: &ScheduleStore, workers: &[Worker]) -> Vec<LostTurn> {
     let tasks = store.load_all();
-    for task in plan_restore(tasks.clone(), chrono::Utc::now(), workers)
+    let now = chrono::Utc::now();
+    let (restored, lost) = plan_lost_turns(plan_restore(tasks.clone(), now, workers), workers, now);
+    for task in restored
         .into_iter()
         .filter(|restored| !tasks.contains(restored))
     {
@@ -27,6 +30,7 @@ pub fn restore_schedule(store: &ScheduleStore, workers: &[Worker]) {
             format!("restoring scheduled task {}", task.id),
         );
     }
+    lost
 }
 
 pub fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) {

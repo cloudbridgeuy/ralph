@@ -1,4 +1,6 @@
 use super::*;
+use crate::schedule_store::scheduled_tasks;
+use ralph_core::schedule_resume::has_open_run;
 use ralph_core::worker::{inbox_file_name, prompt_failure_report};
 use std::sync::atomic::AtomicU64;
 
@@ -143,6 +145,9 @@ pub(super) fn recover(store: &Path, id: &str) -> std::io::Result<()> {
     }
     for duplicate in receipts {
         fs::remove_file(duplicate)?;
+    }
+    if has_open_run(&scheduled_tasks(store), id) {
+        return fs::remove_file(report);
     }
     let inbox = store.join(ralph_core::worker::INBOX_DIR);
     fs::create_dir_all(&inbox)?;

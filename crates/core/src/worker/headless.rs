@@ -71,7 +71,7 @@ impl Capabilities {
         use Support::{Full, Partial};
         match (self.harness, feature) {
             (HarnessId::Agy, Spawn | Prompt | Close | Model) => Full,
-            (HarnessId::Agy, Resume) => Partial("session/load required; unfinished work is reported, not resent"),
+            (HarnessId::Agy, Resume) => Partial("session/load required"),
             (HarnessId::Agy, Interrupt) => Partial("outcome unknown after 30 s; not live verified"),
             (HarnessId::Agy, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Agy, PermYolo) => Partial("process flag, not yet stub-verified"),
@@ -115,7 +115,7 @@ impl Capabilities {
                 Partial("outcome unknown if claude ignores the interrupt for 30 s")
             }
             (HarnessId::Claude, Resume) => {
-                Partial("turn in flight reported, not re-sent; same cwd required")
+                Partial("same cwd required")
             }
         }
     }
@@ -396,10 +396,18 @@ mod tests {
                 Feature::Interrupt => Support::Partial(
                     "outcome unknown if claude ignores the interrupt for 30 s",
                 ),
-                Feature::Resume => Support::Partial("turn in flight reported, not re-sent; same cwd required"),
+                Feature::Resume => Support::Partial("same cwd required"),
             };
             assert_eq!(caps.support(feature), expected, "{feature:?}");
         }
+    }
+
+    #[test]
+    fn agy_resume_needs_only_session_load() {
+        assert_eq!(
+            capabilities(HarnessId::Agy).support(Feature::Resume),
+            Support::Partial("session/load required")
+        );
     }
 
     fn command_for(feature: Feature) -> Option<WorkerCommand> {

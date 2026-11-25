@@ -12,6 +12,7 @@ use crate::cursor_owner::{
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::private_file::write_worker_config;
 use crate::process_tree::{snapshot_tree, sweep_tree};
+use crate::schedule_store::scheduled_tasks;
 use crate::transport::stdio::{stop_child, stop_groups};
 use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
@@ -26,6 +27,7 @@ use crate::workers::headless::{
 use ralph_core::claude_leftovers::{
     claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
 };
+use ralph_core::schedule_resume::has_open_run;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_mcp_config, cleanup,
@@ -787,7 +789,8 @@ impl HeadlessHost for ClaudeHost {
         for id in request_ids(&self.store_dir, CLAUDE_SESSION_DIR) {
             let files = self.files(&id);
             let activity = fs::read_to_string(activity_path(&self.store_dir, &id)).ok();
-            let lost = turn_lost_at_resume(activity.as_deref());
+            let lost = turn_lost_at_resume(activity.as_deref())
+                && !has_open_run(&scheduled_tasks(&self.store_dir), &id);
             let resumed = Resumed {
                 agent: HarnessId::Claude.as_str(),
                 id: &id,
@@ -847,8 +850,10 @@ impl HeadlessHost for ClaudeHost {
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let drained: Vec<(String, ClaudeWorker)> = locked(&self.workers).drain().collect();
+        let tasks = scheduled_tasks(&self.store_dir);
         for (id, mut worker) in drained {
-            for step in shutdown_steps(worker.shared.heartbeat.running()) {
+            let lost = worker.shared.heartbeat.running() && !has_open_run(&tasks, &id);
+            for step in shutdown_steps(lost) {
                 match step {
                     ShutdownStep::PostLostTurn => worker
                         .shared
