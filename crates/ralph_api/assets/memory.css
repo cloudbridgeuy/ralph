@@ -165,3 +165,27 @@ r-table.stackable td:not(.clip) {
   white-space: nowrap;
   overflow-wrap: normal;
 }
+
+[data-role="assistant"] {
+  color: var(--r-accent);
+}
+
+[data-role="user"] {
+  color: var(--r-ink);
+}
+
+[data-role="worker"] {
+  color: var(--r-info);
+}
+
+.at {
+  color: var(--r-muted);
+}
+
+r-tree .sum {
+  color: var(--r-ink);
+}
+
+r-tree .extent .span {
+  fill: var(--r-faint);
+}

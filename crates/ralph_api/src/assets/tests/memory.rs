@@ -250,3 +250,46 @@ fn the_entries_table_keeps_every_cell_but_the_text_on_one_line() {
     assert_declares(&css, cells, "white-space: nowrap;");
     assert_declares(&css, cells, "overflow-wrap: normal;");
 }
+
+#[test]
+fn each_role_attribute_maps_to_its_role_token() {
+    let css = memory_css();
+    assert_declares(&css, "[data-role=\"assistant\"]", "color: var(--r-accent);");
+    assert_declares(&css, "[data-role=\"user\"]", "color: var(--r-ink);");
+    assert_declares(&css, "[data-role=\"worker\"]", "color: var(--r-info);");
+    assert_eq!(css.matches("data-role=").count(), 3);
+}
+
+#[test]
+fn times_and_the_extent_bar_are_muted_and_range_labels_stay_bold() {
+    let css = memory_css();
+    assert_declares(&css, ".at", "color: var(--r-muted);");
+    assert_declares(&css, "r-tree .extent .span", "fill: var(--r-faint);");
+    assert_declares(&css, "r-tree .sum", "color: var(--r-ink);");
+    let app = super::css();
+    assert_declares(&app, "r-tree .n", "color: var(--r-muted);");
+    assert_declares(&app, "r-tree .extent .track", "fill: var(--r-line);");
+    assert_declares(&app, "r-tree li > button", "font-weight: 600;");
+    assert_declares(&app, "r-tree .id", "color: var(--r-ink-strong);");
+}
+
+#[test]
+fn every_colour_in_memory_css_is_a_role_token() {
+    let css = memory_css();
+    let colours: Vec<&str> = css
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            ["color:", "background:", "fill:", "stroke:"]
+                .iter()
+                .any(|property| line.starts_with(property))
+        })
+        .collect();
+    assert!(!colours.is_empty());
+    for line in colours {
+        assert!(
+            line.contains("var(--r-") || line.ends_with("none;") || line.ends_with("inherit;"),
+            "{line}"
+        );
+    }
+}

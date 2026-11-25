@@ -556,7 +556,7 @@ fn compact_at_shortens_a_utc_iso_time_and_leaves_anything_else_alone() {
 fn the_at_cell_shows_the_compact_time_with_the_full_time_in_its_title() {
     let body = script();
     let row = function_body(&body, "function entryRow(");
-    assert!(row.contains("el(\"td\", compactAt(entry.at), { title: entry.at })"));
+    assert!(row.contains("el(\"td\", compactAt(entry.at), { class: \"at\", title: entry.at })"));
     assert!(!row.contains("el(\"td\", entry.at)"));
 }
 
@@ -564,6 +564,41 @@ fn the_at_cell_shows_the_compact_time_with_the_full_time_in_its_title() {
 fn a_leaf_tree_row_shows_the_compact_time_then_the_first_line() {
     let body = script();
     let item = function_body(&body, "function entryItem(");
-    assert!(item.contains("summary: compactAt(entry.at) + \" \" + firstLine(entry.text)"));
+    assert!(item.contains("summary: firstLine(entry.text)"));
+    assert!(item.contains("at: entry.at"));
     assert!(!item.contains("summary: entry.at"));
+    let cell = function_body(&body, "function summaryCell(");
+    assert!(cell.contains("compactAt(at)"));
+    assert!(cell.contains("title: at"));
+}
+
+#[test]
+fn only_user_assistant_and_worker_roles_get_a_role_attribute() {
+    let body = script();
+    assert!(body.contains(r#"const ROLES = ["user", "assistant", "worker"];"#));
+    let attrs = function_body(&body, "function roleAttrs(");
+    assert!(attrs.contains(r#"ROLES.includes(role) ? { "data-role": role } : {}"#));
+}
+
+#[test]
+fn the_role_cell_and_the_tree_label_take_the_role_from_the_entry() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains("el(\"td\", entry.role, roleAttrs(entry.role))"));
+    let item = function_body(&body, "function entryItem(");
+    assert!(item.contains("role: entry.role"));
+    assert!(item.contains("\"#\" + entry.i"));
+    let tree = function_body(&body, "function treeItem(");
+    assert!(tree.contains("idLabel(label, cells.role)"));
+    let label = function_body(&body, "function idLabel(");
+    assert!(label.contains("roleAttrs(role)"));
+}
+
+#[test]
+fn the_at_cell_and_the_tree_time_carry_the_at_class() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains(r#"{ class: "at", title: entry.at }"#));
+    let cell = function_body(&body, "function summaryCell(");
+    assert!(cell.contains(r#"{ class: "at", title: at }"#));
 }

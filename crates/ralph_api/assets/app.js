@@ -6,6 +6,7 @@ const PAGE_SIZE = 20;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const EXTENT_MIN = 1;
 const SPINNER_DELAY_MS = 200;
+const ROLES = ["user", "assistant", "worker"];
 const AT_SHAPE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?Z$/;
 
 function parseHash(hash) {
@@ -129,6 +130,10 @@ function firstLine(text) {
 function compactAt(iso) {
   const match = AT_SHAPE.exec(String(iso));
   return match ? match[1] + " " + match[2] : iso;
+}
+
+function roleAttrs(role) {
+  return ROLES.includes(role) ? { "data-role": role } : {};
 }
 
 function extentSpan(lo, hi, total) {
@@ -313,11 +318,20 @@ function noSummary() {
   return el("span", "no summary yet", { class: "none" });
 }
 
-function summaryCell(summary) {
+function summaryCell(summary, at) {
   const cell = el("span", null, { class: "sum" });
+  if (at !== undefined) {
+    append(cell, el("span", compactAt(at), { class: "at", title: at }), document.createTextNode(" "));
+  }
   if (summary === null) append(cell, noSummary());
-  else if (summary) cell.textContent = oneLine(summary);
+  else if (summary) append(cell, document.createTextNode(oneLine(summary)));
   return cell;
+}
+
+function idLabel(label, role) {
+  const id = el("span", label, { class: "id" });
+  if (role !== undefined) append(id, document.createTextNode(" "), el("span", role, roleAttrs(role)));
+  return id;
 }
 
 function treeItem(level, key, label, cells, expandable) {
@@ -327,10 +341,10 @@ function treeItem(level, key, label, cells, expandable) {
   button.dataset.key = key;
   for (let guide = 1; guide < level; guide += 1) append(button, el("span", null, { class: "g" }));
   if (expandable) append(button, chevron());
-  append(button, el("span", label, { class: "id" }));
+  append(button, idLabel(label, cells.role));
   append(item, button);
   append(item, el("span", cells.count === undefined ? null : String(cells.count), { class: "n" }));
-  append(item, extentCell(cells.extent), summaryCell(cells.summary));
+  append(item, extentCell(cells.extent), summaryCell(cells.summary, cells.at));
   if (expandable) append(item, el("ul", null, { role: "group" }));
   return item;
 }
@@ -347,8 +361,8 @@ function nodeItem(level, node, total) {
 }
 
 function entryItem(level, entry) {
-  const label = "#" + entry.i + " " + entry.role;
-  const item = treeItem(level, "e" + entry.i, label, { summary: compactAt(entry.at) + " " + firstLine(entry.text) }, true);
+  const cells = { role: entry.role, at: entry.at, summary: firstLine(entry.text) };
+  const item = treeItem(level, "e" + entry.i, "#" + entry.i, cells, true);
   item.dataset.entry = entry.text;
   return item;
 }
@@ -536,8 +550,8 @@ function entryRow(entry, current) {
   append(
     row,
     el("td", String(entry.i), { class: "num" }),
-    el("td", entry.role),
-    el("td", compactAt(entry.at), { title: entry.at }),
+    el("td", entry.role, roleAttrs(entry.role)),
+    el("td", compactAt(entry.at), { class: "at", title: entry.at }),
     el("td", firstLine(entry.text), { class: "clip" }),
   );
   row.addEventListener("click", () => toggleEntry(row, entry, current));

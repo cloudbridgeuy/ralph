@@ -283,7 +283,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Memory screen
 
-- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
+- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
 - Stat line: from the root `stats`, for example `45 entries, 2 of 8 blocks summarised, last entry <time>`.
@@ -303,6 +303,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. It opens to show the full text.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
   - A block with no summary shows `no summary yet` in its row.
+  - Colours (role tokens only, set in `memory.css`): the role of an entry is in a `data-role` attribute, set only for `user` (`--r-ink`), `assistant` (`--r-accent`) and `worker` (`--r-info`). Other roles get no attribute and keep the inherited colour. It colours the `role` cell and the role in a leaf row (`#44 user`). Times (`.at`, in the table and in leaf rows) are `--r-muted`. Row summary text is `--r-ink`. The extent span is `--r-faint`. The `n` count stays `--r-muted` and range labels stay bold `--r-ink-strong`, both from `app.css`.
   - Row fills: the fill is a `::before` on the `li`, placed in grid row 1 across all columns, so it never covers the child group. A hovered row gets `--r-hover` and a selected row gets `--r-selected`, both with a 2px `--r-accent` bar on the left. Selected wins over hover. A row whose child group is hovered is not drawn as hovered. The `::before` has `align-self: stretch`: the grid has `align-items: center`, which gave the empty pseudo-element a height of 0, so the old selected fill did not show.
 - Entries and paging:
   - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
