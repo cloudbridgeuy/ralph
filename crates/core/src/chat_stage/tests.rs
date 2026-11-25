@@ -63,7 +63,7 @@ fn workers_needing_the_user_get_their_own_line() {
     };
     assert_eq!(
         render(&[], &status, None),
-        "Stage:\nneeds you: w1 question, w3 blocked, w4 permission\nworkers: w2, w5"
+        "Stage:\nneeds you: w1 question, w4 permission\nworkers: w2, w3, w5"
     );
 }
 
@@ -337,6 +337,11 @@ fn a_worker_in_question_named_by_id_is_no_gap() {
 }
 
 #[test]
+fn a_blocked_worker_is_no_pending_decision() {
+    assert!(pending_of(&[], vec![worker("w1", "blocked")]).is_empty());
+}
+
+#[test]
 fn a_hold_is_a_gap_even_when_it_names_the_pending_entry() {
     let pending = pending_of(&[decision("s1", None)], vec![]);
     assert!(next_step_gap(Some("/hold s1"), &pending).is_some());
@@ -346,12 +351,12 @@ fn a_hold_is_a_gap_even_when_it_names_the_pending_entry() {
 fn a_missing_next_step_is_a_gap() {
     let pending = pending_of(
         &[decision("s2", Some("GUZ-1805"))],
-        vec![worker("w1", "blocked")],
+        vec![worker("w1", "question")],
     );
     let gap = next_step_gap(None, &pending).unwrap();
     assert_eq!(
         gap.notice(),
-        "Next step skips pending decision: s2 (GUZ-1805), w1 blocked"
+        "Next step skips pending decision: s2 (GUZ-1805), w1 question"
     );
 }
 

@@ -11,7 +11,7 @@ pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
 pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
 
-const NEEDS_USER_STATES: [&str; 3] = ["question", "blocked", "permission"];
+const NEEDS_USER_STATES: [&str; 2] = ["question", "permission"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
