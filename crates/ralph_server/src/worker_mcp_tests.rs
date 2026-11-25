@@ -11,7 +11,9 @@ fn rejected_files(inbox_dir: &Path) -> Vec<PathBuf> {
 
 fn sync_reports(inbox: &Inbox, warnings: &mut Vec<String>) -> Vec<Report> {
     inbox
-        .sync_with(&mut |w| warnings.push(w), |l| (l.reports(), false))
+        .sync_with(&mut |w| warnings.push(w), |l| {
+            (l.reports(), LedgerChange::Unchanged)
+        })
         .unwrap()
 }
 

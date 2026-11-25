@@ -211,12 +211,7 @@ pub fn report_text(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail) -> Str
 }
 
 pub fn build_report(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail, at: &str) -> Report {
-    Report {
-        worker: spec.id.clone(),
-        at: at.to_string(),
-        status: WATCH_STATUS.to_string(),
-        text: report_text(spec, outcome, tail),
-    }
+    Report::watch(&spec.id, at, report_text(spec, outcome, tail))
 }
 
 #[cfg(test)]

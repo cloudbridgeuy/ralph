@@ -48,12 +48,11 @@ pub fn thread_closed_notice(name: &ThreadName, auto: AutoMode) -> String {
 }
 
 pub fn thread_closed_report(name: &ThreadName, auto: AutoMode, at: &str) -> Report {
-    Report {
-        worker: format!("{THREAD_REPORT_PREFIX}{name}"),
-        at: at.to_string(),
-        status: THREAD_CLOSED_STATUS.to_string(),
-        text: thread_closed_notice(name, auto),
-    }
+    Report::thread_closed(
+        &format!("{THREAD_REPORT_PREFIX}{name}"),
+        at,
+        thread_closed_notice(name, auto),
+    )
 }
 
 pub fn with_auto(meta: &ThreadMeta, auto: Option<AutoMode>) -> Option<ThreadMeta> {

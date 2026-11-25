@@ -1,4 +1,4 @@
-use crate::worker::{Report, ReportStatus, REPORT_REMINDER, WORKER_PROMPT};
+use crate::worker::{Report, REPORT_REMINDER, WORKER_PROMPT};
 use std::collections::VecDeque;
 
 pub fn prompt_entry_name(nanos: u64, pid: u32) -> String {
@@ -201,12 +201,11 @@ pub fn stop_problem(agent: &str, reason: &str) -> String {
 }
 
 pub fn prompt_failure_report(agent: &str, id: &str, at: &str, problem: &str) -> Report {
-    Report {
-        worker: id.to_string(),
-        at: at.to_string(),
-        status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!("The {agent} task prompt failed: {problem}."),
-    }
+    Report::ralph_blocked(
+        id,
+        at,
+        format!("The {agent} task prompt failed: {problem}."),
+    )
 }
 
 pub const REPEAT_REPORT_REFUSAL: &str = "Already reported this turn. End your turn now.";

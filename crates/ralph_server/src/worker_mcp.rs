@@ -35,6 +35,22 @@ enum LedgerState {
     Repaired,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LedgerChange {
+    Changed,
+    Unchanged,
+}
+
+impl LedgerChange {
+    fn from_changed(changed: bool) -> Self {
+        if changed {
+            Self::Changed
+        } else {
+            Self::Unchanged
+        }
+    }
+}
+
 struct LoadedLedger {
     ledger: Ledger,
     state: LedgerState,
@@ -246,7 +262,7 @@ impl Inbox {
     fn sync_with<T>(
         &self,
         warn: &mut impl FnMut(String),
-        act: impl FnOnce(&mut Ledger) -> (T, bool),
+        act: impl FnOnce(&mut Ledger) -> (T, LedgerChange),
     ) -> io::Result<T> {
         let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
         let LoadedLedger { mut ledger, state } = self.load_ledger_with(LoadMode::Repair, warn)?;
@@ -273,10 +289,11 @@ impl Inbox {
         }
         let ingested = !accepted.is_empty();
         ledger.ingest(arrivals);
-        let (value, changed) = act(&mut ledger);
-        let should_save = match state {
-            LedgerState::Repaired => true,
-            LedgerState::Unchanged => ingested || changed,
+        let (value, change) = act(&mut ledger);
+        let should_save = match (state, change) {
+            (LedgerState::Repaired, LedgerChange::Changed | LedgerChange::Unchanged)
+            | (LedgerState::Unchanged, LedgerChange::Changed) => true,
+            (LedgerState::Unchanged, LedgerChange::Unchanged) => ingested,
         };
         if should_save {
             self.save_ledger(&ledger)?;
@@ -287,12 +304,12 @@ impl Inbox {
         Ok(value)
     }
 
-    fn sync<T>(&self, act: impl FnOnce(&mut Ledger) -> (T, bool)) -> io::Result<T> {
+    fn sync<T>(&self, act: impl FnOnce(&mut Ledger) -> (T, LedgerChange)) -> io::Result<T> {
         self.sync_with(&mut |message| crate::warn::warn(message), act)
     }
 
     pub fn peek(&self) -> io::Result<Vec<Report>> {
-        self.sync(|ledger| (ledger.reports(), false))
+        self.sync(|ledger| (ledger.reports(), LedgerChange::Unchanged))
     }
 
     pub fn unread_count(&self) -> io::Result<usize> {
@@ -302,28 +319,28 @@ impl Inbox {
     pub fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
         self.sync(|ledger| {
             let reports = ledger.take(selection);
-            let changed = !reports.is_empty();
-            (reports, changed)
+            let change = LedgerChange::from_changed(!reports.is_empty());
+            (reports, change)
         })
     }
 
     pub fn drain_closes(&self) -> io::Result<Vec<Report>> {
         self.sync(|ledger| {
             let reports = ledger.take_closes();
-            let changed = !reports.is_empty();
-            (reports, changed)
+            let change = LedgerChange::from_changed(!reports.is_empty());
+            (reports, change)
         })
     }
 
     pub fn drop_report(&self, position: Position) -> io::Result<Option<Entry>> {
         let log = self.dir.with_file_name(DROP_LOG);
         self.sync(|ledger| match ledger.get(position).cloned() {
-            None => (Ok(None), false),
+            None => (Ok(None), LedgerChange::Unchanged),
             Some(entry) => match append_line(&log, &drop_log_line(&entry, chrono::Utc::now())) {
-                Err(e) => (Err(e), false),
+                Err(e) => (Err(e), LedgerChange::Unchanged),
                 Ok(()) => {
                     ledger.remove(position);
-                    (Ok(Some(entry)), true)
+                    (Ok(Some(entry)), LedgerChange::Changed)
                 }
             },
         })?
@@ -337,12 +354,13 @@ impl Inbox {
             let logged = dropped
                 .iter()
                 .try_for_each(|entry| append_line(&log, &drop_log_line(entry, now)));
-            (logged.map(|()| dropped.len()), !dropped.is_empty())
+            let change = LedgerChange::from_changed(!dropped.is_empty());
+            (logged.map(|()| dropped.len()), change)
         })?
     }
 
     pub fn ledger(&self) -> io::Result<Ledger> {
-        self.sync(|ledger| (ledger.clone(), false))
+        self.sync(|ledger| (ledger.clone(), LedgerChange::Unchanged))
     }
 }
 
@@ -413,12 +431,12 @@ pub fn run_stdio_server(
                     continue;
                 }
                 seq += 1;
-                let report = Report {
-                    worker: worker.to_string(),
-                    at: chrono::Utc::now().to_rfc3339(),
-                    status: status.as_str().to_string(),
-                    text: changes.map_or(text.clone(), |changes| changes.attach_to(&text)),
-                };
+                let report = Report::from_worker(
+                    worker,
+                    &chrono::Utc::now().to_rfc3339(),
+                    status,
+                    changes.map_or(text.clone(), |changes| changes.attach_to(&text)),
+                );
                 match inbox.post(&report, seq) {
                     Ok(()) => {
                         inbox.log_report(&report, status, seq);

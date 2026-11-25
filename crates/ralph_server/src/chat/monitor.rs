@@ -29,8 +29,7 @@ use ralph_core::worker::{
     vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, READY_DIR,
 };
 use ralph_core::worker_check::{
-    last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, CHECK_STATUS,
-    NUDGE_TEXT,
+    last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, NUDGE_TEXT,
 };
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -252,12 +251,7 @@ impl Monitor {
                     format!("nudging worker {id}"),
                 ),
                 CheckAction::Inbox(id, text) => {
-                    let report = Report {
-                        worker: id.clone(),
-                        at: chrono::Utc::now().to_rfc3339(),
-                        status: CHECK_STATUS.to_string(),
-                        text,
-                    };
+                    let report = Report::check(&id, &chrono::Utc::now().to_rfc3339(), text);
                     warn_if_err(
                         self.inbox.post(&report, 0),
                         format!("posting check for worker {id}"),

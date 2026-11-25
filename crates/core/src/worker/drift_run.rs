@@ -109,16 +109,15 @@ pub fn drift_alert(
     checks: &[String],
     at: &str,
 ) -> Report {
-    Report {
-        worker: format!("drift-{agent}"),
-        at: at.to_string(),
-        status: DRIFT_REPORT_STATUS.to_string(),
-        text: format!(
+    Report::warning(
+        &format!("drift-{agent}"),
+        at,
+        format!(
             "{agent} {new} is installed but failed `ralph worker verify {agent}`. Last verified version: {}. Failing checks: {}. Running {agent} workers keep the old binary until restart.",
             old.unwrap_or("none"),
             checks.join(", ")
         ),
-    }
+    )
 }
 
 pub fn known_fail_warning(agent: &str, version: &str, checks: &[String]) -> String {

@@ -211,12 +211,11 @@ pub fn digest_with(
 }
 
 pub fn merged_report(name: &ThreadName, digest: &str, at: &str) -> Report {
-    Report {
-        worker: format!("{THREAD_REPORT_PREFIX}{name}"),
-        at: at.to_string(),
-        status: MERGED_STATUS.to_string(),
-        text: digest.to_string(),
-    }
+    Report::merged(
+        &format!("{THREAD_REPORT_PREFIX}{name}"),
+        at,
+        digest.to_string(),
+    )
 }
 
 pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<String, String> {
@@ -238,10 +237,11 @@ pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<St
 }
 
 pub fn view_report(name: &ThreadName, block: &str, at: &str) -> Report {
-    Report {
-        status: VIEW_STATUS.to_string(),
-        ..merged_report(name, block, at)
-    }
+    Report::view(
+        &format!("{THREAD_REPORT_PREFIX}{name}"),
+        at,
+        block.to_string(),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

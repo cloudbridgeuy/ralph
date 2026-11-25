@@ -1,4 +1,4 @@
-use crate::worker::{Report, ReportStatus};
+use crate::worker::Report;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -111,18 +111,13 @@ impl OpencodeRecord {
 }
 
 pub fn opencode_failure_report(id: &str, at: &str, problem: &str) -> Report {
-    Report {
-        worker: id.to_string(),
-        at: at.to_string(),
-        status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!("The opencode turn failed: {problem}."),
-    }
+    Report::ralph_blocked(id, at, format!("The opencode turn failed: {problem}."))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::SERVER_STOPPED;
+    use crate::worker::{ReportStatus, SERVER_STOPPED};
 
     #[test]
     fn reconnect_delay_allows_five_attempts_two_seconds_apart() {
