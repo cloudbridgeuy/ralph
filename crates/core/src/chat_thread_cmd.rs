@@ -1,4 +1,5 @@
 use crate::chat_help::Command;
+use crate::chat_spec::Keyword;
 use crate::chat_switch::SwitchTarget;
 use crate::chat_thread::{AutoMode, ThreadName};
 use crate::chat_thread_model::validate_thread_model;
@@ -19,6 +20,47 @@ const OPEN_USAGE: &str =
     "usage: /thread open <name> [--auto-merge | --auto-drop] [--model <model>] opens thread <name> in a new Rex block next to this chat; --auto-merge or --auto-drop (one at most) finishes it on its own; --model <model> (sonnet, opus, haiku or claude-*) sets the model its chat runs on.";
 const DROP_USAGE: &str =
     "usage: /thread drop <name> deletes thread <name> after a y/n; run it in main's chat.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadSub {
+    Drop,
+    Ls,
+    Main,
+    Merge,
+    Open,
+    Park,
+    Pull,
+    Revive,
+    Switch,
+}
+
+impl Keyword for ThreadSub {
+    const ALL: &'static [Self] = &[
+        ThreadSub::Drop,
+        ThreadSub::Ls,
+        ThreadSub::Main,
+        ThreadSub::Merge,
+        ThreadSub::Open,
+        ThreadSub::Park,
+        ThreadSub::Pull,
+        ThreadSub::Revive,
+        ThreadSub::Switch,
+    ];
+
+    fn word(self) -> &'static str {
+        match self {
+            ThreadSub::Drop => "drop",
+            ThreadSub::Ls => "ls",
+            ThreadSub::Main => "main",
+            ThreadSub::Merge => "merge",
+            ThreadSub::Open => "open",
+            ThreadSub::Park => "park",
+            ThreadSub::Pull => "pull",
+            ThreadSub::Revive => "revive",
+            ThreadSub::Switch => "switch",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadOp {
@@ -46,23 +88,26 @@ pub enum ThreadLine {
 
 pub fn parse_thread_args(args: &str) -> ThreadLine {
     let words: Vec<&str> = args.split_whitespace().collect();
-    match words.split_first() {
-        Some((&"ls", [])) => ThreadLine::Op(Ok(ThreadOp::Ls)),
-        Some((&"ls", _)) => ThreadLine::Op(Err(LS_USAGE.to_string())),
-        Some((&"main", [])) => ThreadLine::Switch(Ok(SwitchTarget::Main)),
-        Some((&"main", _)) => ThreadLine::Switch(Err(MAIN_USAGE.to_string())),
-        Some((&"switch", rest)) => {
+    let found = words
+        .split_first()
+        .and_then(|(word, rest)| ThreadSub::parse(word).map(|sub| (sub, rest)));
+    let Some((sub, rest)) = found else {
+        return ThreadLine::Switch(Err(thread_usage()));
+    };
+    match sub {
+        ThreadSub::Ls if rest.is_empty() => ThreadLine::Op(Ok(ThreadOp::Ls)),
+        ThreadSub::Ls => ThreadLine::Op(Err(LS_USAGE.to_string())),
+        ThreadSub::Main if rest.is_empty() => ThreadLine::Switch(Ok(SwitchTarget::Main)),
+        ThreadSub::Main => ThreadLine::Switch(Err(MAIN_USAGE.to_string())),
+        ThreadSub::Switch => {
             ThreadLine::Switch(one_name(rest, SWITCH_USAGE).map(SwitchTarget::Thread))
         }
-        Some((&"open", rest)) => ThreadLine::Op(parse_open(rest)),
-        Some((&"pull", rest)) => ThreadLine::Op(one_name(rest, PULL_USAGE).map(ThreadOp::Pull)),
-        Some((&"park", rest)) => ThreadLine::Op(one_name(rest, PARK_USAGE).map(ThreadOp::Park)),
-        Some((&"revive", rest)) => {
-            ThreadLine::Op(one_name(rest, REVIVE_USAGE).map(ThreadOp::Revive))
-        }
-        Some((&"drop", rest)) => ThreadLine::Op(one_name(rest, DROP_USAGE).map(ThreadOp::Drop)),
-        Some((&"merge", rest)) => ThreadLine::Op(parse_merge(rest)),
-        _ => ThreadLine::Switch(Err(thread_usage())),
+        ThreadSub::Open => ThreadLine::Op(parse_open(rest)),
+        ThreadSub::Pull => ThreadLine::Op(one_name(rest, PULL_USAGE).map(ThreadOp::Pull)),
+        ThreadSub::Park => ThreadLine::Op(one_name(rest, PARK_USAGE).map(ThreadOp::Park)),
+        ThreadSub::Revive => ThreadLine::Op(one_name(rest, REVIVE_USAGE).map(ThreadOp::Revive)),
+        ThreadSub::Drop => ThreadLine::Op(one_name(rest, DROP_USAGE).map(ThreadOp::Drop)),
+        ThreadSub::Merge => ThreadLine::Op(parse_merge(rest)),
     }
 }
 

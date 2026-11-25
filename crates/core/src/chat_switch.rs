@@ -1,12 +1,6 @@
-use crate::chat_hold::{command_args, word_completion, HoldCompletion};
 use crate::chat_thread::{open_check, ThreadMeta, ThreadName};
 use std::ffi::OsString;
 use std::path::PathBuf;
-
-const SWITCH: &str = "switch";
-const SUBCOMMANDS: [&str; 9] = [
-    "drop", "ls", "main", "merge", "open", "park", "pull", "revive", SWITCH,
-];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwitchTarget {
@@ -90,29 +84,6 @@ pub fn switch_argv(opts: &SwitchArgv, target: &SwitchTarget) -> Vec<OsString> {
             .map(|(_, flag)| flag.into()),
     );
     argv
-}
-
-pub fn switch_completions(
-    line: &str,
-    cursor: usize,
-    current: Option<&ThreadName>,
-    threads: &[String],
-) -> Option<HoldCompletion> {
-    let args = command_args(line, cursor, "/thread")?;
-    let targets = match args.trim_start().split_once(char::is_whitespace) {
-        None => SUBCOMMANDS
-            .iter()
-            .filter(|word| current.is_some() || **word != "main")
-            .map(|word| word.to_string())
-            .collect(),
-        Some((SWITCH, rest)) if !rest.trim_start().contains(char::is_whitespace) => threads
-            .iter()
-            .filter(|name| current.is_none_or(|now| now.as_str() != name.as_str()))
-            .cloned()
-            .collect(),
-        Some(_) => return None,
-    };
-    Some(word_completion(args, cursor, targets))
 }
 
 #[cfg(test)]
@@ -304,64 +275,5 @@ mod tests {
                 "--skip-summary",
             ]
         );
-    }
-
-    fn complete(line: &str, current: Option<&str>) -> Option<Vec<String>> {
-        let current = current.map(name);
-        let threads = ["auth", "side", "sub"].map(String::from);
-        switch_completions(line, line.len(), current.as_ref(), &threads).map(|c| c.values)
-    }
-
-    #[test]
-    fn switch_completion_lists_open_threads_without_main_or_the_current_one() {
-        assert_eq!(
-            complete("/thread switch ", Some("side")),
-            Some(vec!["auth".into(), "sub".into()])
-        );
-        assert_eq!(
-            complete("/thread switch s", None),
-            Some(vec!["side".into(), "sub".into()])
-        );
-    }
-
-    #[test]
-    fn subcommand_completion_offers_main_only_inside_a_thread() {
-        assert_eq!(
-            complete("/thread ", Some("side")),
-            Some(
-                ["drop", "ls", "main", "merge", "open", "park", "pull", "revive", "switch"]
-                    .map(String::from)
-                    .to_vec()
-            )
-        );
-        assert_eq!(complete("/thread m", None), Some(vec!["merge".into()]));
-    }
-
-    #[test]
-    fn subcommand_completion_offers_open() {
-        assert_eq!(complete("/thread o", None), Some(vec!["open".into()]));
-        assert!(complete("/thread ", None).is_some_and(|all| all.contains(&"open".to_string())));
-    }
-
-    #[test]
-    fn subcommand_completion_offers_drop_and_revive() {
-        assert_eq!(complete("/thread d", None), Some(vec!["drop".into()]));
-        assert_eq!(complete("/thread r", None), Some(vec!["revive".into()]));
-    }
-
-    #[test]
-    fn completion_stops_after_the_name_and_after_other_subcommands() {
-        assert_eq!(complete("/thread switch auth ", None), None);
-        assert_eq!(complete("/thread park ", None), None);
-        assert_eq!(complete("/thread", None), None);
-        assert_eq!(complete("/main ", None), None);
-        assert_eq!(complete("/thread open ", None), None);
-    }
-
-    #[test]
-    fn thread_completion_span_covers_the_partial_word() {
-        let threads = ["auth".to_string()];
-        let found = switch_completions("/thread switch au", 17, None, &threads).unwrap();
-        assert_eq!(found.span, 15..17);
     }
 }

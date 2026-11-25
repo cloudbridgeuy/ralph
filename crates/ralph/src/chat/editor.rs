@@ -9,8 +9,7 @@ use ralph_core::chat_hold::{hold_completions, HoldCompletion};
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_nudge::nudge_completions;
 use ralph_core::chat_path::{path_completion, path_word, PathRoot, MAX_READ};
-use ralph_core::chat_spec::{spec_completions, SpecCompletion};
-use ralph_core::chat_switch::switch_completions;
+use ralph_core::chat_spec::{spec_completions, CompletionFacts, SpecCompletion};
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::Monitor;
@@ -51,9 +50,8 @@ impl Completer for HoldCompleter {
             .or_else(|| nudge_completions(line, pos, &status))
             .or_else(|| direct_completions(line, pos, &status))
             .or_else(|| view_completions(line, pos))
-            .or_else(|| self.thread_completions(line, pos))
             .map(SpecCompletion::from)
-            .or_else(|| spec_completions(line, pos))
+            .or_else(|| self.keyword_completions(line, pos))
             .or_else(|| path_completions(line, pos).map(SpecCompletion::from))
             .map(|completion| {
                 let span = Span::new(completion.span.start, completion.span.end);
@@ -74,12 +72,16 @@ impl Completer for HoldCompleter {
 }
 
 impl HoldCompleter {
-    fn thread_completions(&self, line: &str, pos: usize) -> Option<HoldCompletion> {
+    fn keyword_completions(&self, line: &str, pos: usize) -> Option<SpecCompletion> {
         let (main, current) = match fork_of(&self.store) {
             Some((main, name)) => (main, Some(name)),
             None => (self.store.clone(), None),
         };
-        switch_completions(line, pos, current.as_ref(), &open_names(&main))
+        let facts = CompletionFacts {
+            current: current.as_ref(),
+            threads: &open_names(&main),
+        };
+        spec_completions(line, pos, &facts)
     }
 }
 
