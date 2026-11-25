@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
-const FIXTURE: &str = include_str!("../fixtures/config.toml");
+const FIXTURE: &str = include_str!("../../ralph_server/fixtures/config.toml");
 
 fn write_config(dir: &Path, text: &str) {
     fs::write(dir.join("config.toml"), text).unwrap();

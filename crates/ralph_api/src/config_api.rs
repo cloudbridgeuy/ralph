@@ -127,7 +127,7 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    const FIXTURE: &str = include_str!("../fixtures/config.toml");
+    const FIXTURE: &str = include_str!("../../ralph_server/fixtures/config.toml");
 
     fn no_env(_: &str) -> Option<String> {
         None
