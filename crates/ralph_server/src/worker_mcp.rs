@@ -23,6 +23,7 @@ use crate::worker_usage::{record_or_warn, record_verify_or_warn, UsageTarget};
 
 const DROP_LOG: &str = "inbox-drops.jsonl";
 const REJECTED_DIR: &str = "rejected";
+const POST_ATTEMPTS: u64 = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadMode {
@@ -79,15 +80,17 @@ impl Inbox {
         fs::create_dir_all(&self.dir)?;
         let mut file = NamedTempFile::new_in(&self.dir)?;
         file.write_all(&serde_json::to_vec(report)?)?;
-        let mut next = seq;
-        loop {
+        for next in seq..seq.saturating_add(POST_ATTEMPTS) {
             match file.persist_noclobber(self.dir.join(inbox_file_name(report, next))) {
                 Ok(_) => return Ok(()),
                 Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists => file = e.file,
                 Err(e) => return Err(e.error),
             }
-            next += 1;
         }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("no free inbox file name after {POST_ATTEMPTS} tries"),
+        ))
     }
 
     fn reported_this_turn(&self, worker: &str) -> bool {

@@ -5,7 +5,7 @@ use crate::process_tree::process_table;
 use crate::subprocess::set_session;
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
-use crate::warn::warn;
+use crate::warn::{warn, warn_if_err};
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
@@ -855,7 +855,10 @@ fn post_prompt(api: &HttpSse, session_id: &str, text: &str) -> Result<(), String
 fn post_problem(target: &Target, problem: &str) {
     let at = chrono::Utc::now().to_rfc3339();
     let report = opencode_failure_report(&target.worker, &at, problem);
-    Inbox::new(target.inbox.clone()).post(&report, 0).ok();
+    warn_if_err(
+        Inbox::new(target.inbox.clone()).post(&report, 0),
+        format!("posting the failure of worker {}", target.worker),
+    );
 }
 
 fn clear_claims(store: &Path) {

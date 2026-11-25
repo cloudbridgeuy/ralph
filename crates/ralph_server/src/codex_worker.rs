@@ -8,7 +8,7 @@ use crate::cursor_owner::{
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
-use crate::warn::{notice, warn};
+use crate::warn::{notice, warn, warn_if_err};
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
@@ -353,7 +353,10 @@ impl Pump {
                     let at = chrono::Utc::now().to_rfc3339();
                     let report =
                         prompt_failure_report(HarnessId::Codex.as_str(), &self.id, &at, &problem);
-                    self.inbox.post(&report, 0).ok();
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting the prompt failure of worker {}", self.id),
+                    );
                 }
             }
         }

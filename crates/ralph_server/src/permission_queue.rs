@@ -94,7 +94,10 @@ impl<R> PermissionQueue<R> {
         let report = permission_alert_report(&self.worker_id, &at, &content);
         queue.push_back(Pending { reply, content });
         self.publish(&queue);
-        self.inbox.post(&report, 0).ok();
+        warn_if_err(
+            self.inbox.post(&report, 0),
+            format!("posting the permission alert of worker {}", self.worker_id),
+        );
     }
 
     pub(crate) fn report_unattended(&self, verdict: &Unattended, content: &BlockedContent) {

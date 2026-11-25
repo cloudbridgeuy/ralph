@@ -248,7 +248,10 @@ impl Shared {
                     let at = chrono::Utc::now().to_rfc3339();
                     let agent = HarnessId::Claude.as_str();
                     let report = prompt_failure_report(agent, &self.id, &at, &problem);
-                    self.inbox.post(&report, 0).ok();
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting the prompt failure of worker {}", self.id),
+                    );
                 }
                 Action::Interrupt(turn_id) => {
                     for line in self.interrupt_sends(&turn_id) {
@@ -286,7 +289,10 @@ impl Shared {
                 ClaudeLine::Malformed => {
                     let at = chrono::Utc::now().to_rfc3339();
                     let report = stuck_permission_report(&self.id, &at);
-                    self.inbox.post(&report, 0).ok();
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting the stuck permission of worker {}", self.id),
+                    );
                 }
                 ClaudeLine::Other => {}
             }

@@ -6,6 +6,7 @@ use crate::cursor_sweep::sweep_worker_server;
 use crate::cursor_usage::{record_cursor_usage, CursorTurn};
 use crate::subprocess::unregister_group;
 use crate::transport::stdio::{stop_child, stop_groups};
+use crate::warn::warn_if_err;
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
@@ -213,9 +214,11 @@ impl Shared {
                 Action::PostFailure(problem) => {
                     let at = chrono::Utc::now().to_rfc3339();
                     let agent = HarnessId::Cursor.as_str();
-                    self.inbox
-                        .post(&prompt_failure_report(agent, &self.id, &at, &problem), 0)
-                        .ok();
+                    warn_if_err(
+                        self.inbox
+                            .post(&prompt_failure_report(agent, &self.id, &at, &problem), 0),
+                        format!("posting the prompt failure of worker {}", self.id),
+                    );
                 }
                 Action::Interrupt(_) => self.interrupt_group(),
                 Action::InterruptResult { entry, outcome } => {
