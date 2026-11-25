@@ -12,6 +12,22 @@ pub enum Message {
     Sent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    Alive,
+    Exited,
+}
+
+impl Liveness {
+    pub fn observed(held: bool, exit_marked: bool) -> Option<Self> {
+        match (exit_marked, held) {
+            (true, _) => Some(Self::Exited),
+            (false, true) => Some(Self::Alive),
+            (false, false) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LostTurn {
     pub task: String,
@@ -70,14 +86,14 @@ fn is_open_run(task: &Task) -> bool {
     is_worker_task(task) && task.status == TaskStatus::Running
 }
 
-pub fn finish_step(turn: &LostTurn, running: bool, now: DateTime<Utc>) -> FinishStep {
-    match (turn.message, running) {
-        (Message::Unsent, true) => FinishStep::Send,
-        (Message::Sent, true) => FinishStep::Wait,
-        (Message::Unsent, false) if now < turn.since + Duration::seconds(STARTUP_GRACE_SECS) => {
+pub fn finish_step(turn: &LostTurn, child: Option<Liveness>, now: DateTime<Utc>) -> FinishStep {
+    match (turn.message, child) {
+        (Message::Unsent, Some(Liveness::Alive)) => FinishStep::Send,
+        (Message::Sent, Some(Liveness::Alive)) => FinishStep::Wait,
+        (Message::Unsent, None) if now < turn.since + Duration::seconds(STARTUP_GRACE_SECS) => {
             FinishStep::Wait
         }
-        (Message::Unsent | Message::Sent, false) => FinishStep::Fail,
+        (Message::Unsent | Message::Sent, Some(Liveness::Exited) | None) => FinishStep::Fail,
     }
 }
 
@@ -219,18 +235,42 @@ mod tests {
             FINISH_TURN_MESSAGE,
             "your turn was interrupted by a restart; check what you already did and finish"
         );
+        let alive = Some(Liveness::Alive);
         assert_eq!(
-            finish_step(&turn(Message::Unsent), true, now),
+            finish_step(&turn(Message::Unsent), alive, now),
             FinishStep::Send
         );
         assert_eq!(
-            finish_step(&turn(Message::Sent), true, now),
+            finish_step(&turn(Message::Sent), alive, now),
             FinishStep::Wait
         );
         assert_eq!(
-            finish_step(&turn(Message::Sent), false, now),
+            finish_step(&turn(Message::Sent), None, now),
             FinishStep::Fail
         );
+    }
+
+    #[test]
+    fn an_exit_outranks_the_hold_on_a_worker() {
+        for (held, exit_marked, child) in [
+            (true, true, Some(Liveness::Exited)),
+            (false, true, Some(Liveness::Exited)),
+            (true, false, Some(Liveness::Alive)),
+            (false, false, None),
+        ] {
+            assert_eq!(Liveness::observed(held, exit_marked), child);
+        }
+    }
+
+    #[test]
+    fn a_resumed_child_that_exited_fails_the_turn_at_once() {
+        for message in [Message::Unsent, Message::Sent] {
+            let child = Liveness::observed(true, true);
+            assert_eq!(
+                finish_step(&turn(message), child, restarted()),
+                FinishStep::Fail
+            );
+        }
     }
 
     #[test]
@@ -238,11 +278,11 @@ mod tests {
         let limit = restarted() + Duration::seconds(STARTUP_GRACE_SECS);
         let early = limit - Duration::seconds(1);
         assert_eq!(
-            finish_step(&turn(Message::Unsent), false, early),
+            finish_step(&turn(Message::Unsent), None, early),
             FinishStep::Wait
         );
         assert_eq!(
-            finish_step(&turn(Message::Unsent), false, limit),
+            finish_step(&turn(Message::Unsent), None, limit),
             FinishStep::Fail
         );
     }

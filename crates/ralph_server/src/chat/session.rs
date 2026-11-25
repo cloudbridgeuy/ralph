@@ -216,7 +216,11 @@ pub fn serve(
         },
         roster,
     );
-    *locked(&core.resuming) = restore_schedule(&core.schedule, &stored_workers(&core.store_dir));
+    *locked(&core.resuming) = restore_schedule(
+        &core.schedule,
+        &core.store_dir,
+        &stored_workers(&core.store_dir),
+    );
     handle
 }
 

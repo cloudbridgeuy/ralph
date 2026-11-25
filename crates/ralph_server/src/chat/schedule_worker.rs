@@ -5,14 +5,14 @@ use crate::watches::locked;
 use crate::workers::{running_workers, SpawnArgs, Workers};
 use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_resume::{
-    finish_step, resume_failed_text, FinishStep, Message, FINISH_TURN_MESSAGE,
+    finish_step, resume_failed_text, FinishStep, Liveness, Message, FINISH_TURN_MESSAGE,
 };
 use ralph_core::schedule_worker::{
     alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
     start_failure_text, timed_out_text, vanished_text, worker_brief, worker_deadline, worker_id,
     WorkerEnd, WorkerFire, SCHEDULED_HARNESS,
 };
-use ralph_core::worker::{TargetRequest, Worker, WorkerId};
+use ralph_core::worker::{gone_path, TargetRequest, Worker, WorkerId};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -100,7 +100,11 @@ fn finish_lost_turns(monitor: &Monitor, running: &[String], now: chrono::DateTim
             return false;
         };
         let worker = worker_id(&task.id);
-        match finish_step(turn, running.contains(&worker), now) {
+        let child = Liveness::observed(
+            running.contains(&worker),
+            gone_path(&monitor.store_dir, &worker).exists(),
+        );
+        match finish_step(turn, child, now) {
             FinishStep::Wait => return true,
             FinishStep::Send => match monitor.workers.nudge(&worker, FINISH_TURN_MESSAGE) {
                 Ok(_) => {
@@ -244,6 +248,9 @@ mod tests {
     use ralph_core::chat_process::{FileStamp, UsageTail};
     use ralph_core::chat_status::Status;
     use ralph_core::program_status::Phase;
+    use ralph_core::schedule::TaskKind;
+    use ralph_core::schedule_resume::LostTurn;
+    use ralph_core::worker::SessionRef;
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -302,5 +309,40 @@ mod tests {
         let _starting = Starting::enter(&first, "task");
         assert_eq!(starting_ids(&first), vec!["task".to_string()]);
         assert!(starting_ids(&second).is_empty());
+    }
+
+    #[test]
+    fn a_resumed_worker_with_an_exit_mark_fails_before_the_grace_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let monitor = monitor(dir.path());
+        let now = chrono::Utc::now();
+        let task = Task {
+            id: "a".to_string(),
+            kind: TaskKind::Worker {
+                brief: "do it".to_string(),
+            },
+            follow_up: None,
+            at: now,
+            timeout_secs: Some(3600),
+            status: TaskStatus::Running,
+            late: false,
+            deadline: None,
+            repeat: None,
+        };
+        monitor.schedule.save(&task).unwrap();
+        locked(&monitor.resuming).push(LostTurn {
+            task: task.id.clone(),
+            since: now,
+            message: Message::Unsent,
+            session: SessionRef::new(dir.path().join("claude-session/sched-a")),
+            limit: None,
+        });
+        let mark = gone_path(dir.path(), "sched-a");
+        std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
+        std::fs::write(mark, "claude exited").unwrap();
+        finish_lost_turns(&monitor, &[], now);
+        assert!(locked(&monitor.resuming).is_empty());
+        let reports = monitor.inbox.peek().unwrap();
+        assert!(reports[0].text.contains("needs you"), "{reports:?}");
     }
 }

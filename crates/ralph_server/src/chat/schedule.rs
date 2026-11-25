@@ -13,11 +13,18 @@ use ralph_core::schedule_command::{
     SCHEDULE_USAGE,
 };
 use ralph_core::schedule_resume::{plan_lost_turns, LostTurn};
+use ralph_core::schedule_worker::worker_id;
 use ralph_core::watch_request::start_failure_report;
-use ralph_core::worker::Worker;
+use ralph_core::worker::{gone_path, Worker};
+use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
-pub fn restore_schedule(store: &ScheduleStore, workers: &[Worker]) -> Vec<LostTurn> {
+pub fn restore_schedule(
+    store: &ScheduleStore,
+    store_dir: &Path,
+    workers: &[Worker],
+) -> Vec<LostTurn> {
     let tasks = store.load_all();
     let now = chrono::Utc::now();
     let (restored, lost) = plan_lost_turns(plan_restore(tasks.clone(), now, workers), workers, now);
@@ -29,6 +36,9 @@ pub fn restore_schedule(store: &ScheduleStore, workers: &[Worker]) -> Vec<LostTu
             store.save(&task),
             format!("restoring scheduled task {}", task.id),
         );
+    }
+    for turn in &lost {
+        fs::remove_file(gone_path(store_dir, &worker_id(&turn.task))).ok();
     }
     lost
 }
@@ -148,8 +158,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use ralph_core::schedule::TaskKind;
+    use ralph_core::worker::{HarnessId, SessionRef, WorkerId};
     use std::io;
-    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -236,7 +246,7 @@ mod tests {
             task.status = status;
             store.save(&task).unwrap();
         }
-        restore_schedule(&store, &[]);
+        restore_schedule(&store, dir.path(), &[]);
         let mut view: Vec<(String, TaskStatus, bool)> = store
             .load_all()
             .into_iter()
@@ -261,6 +271,33 @@ mod tests {
     }
 
     #[test]
+    fn a_restore_drops_the_old_exit_mark_of_a_lost_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().join("schedule"));
+        propose(&store, "a", -1);
+        let mut task = store.load_all().into_iter().next().unwrap();
+        task.kind = TaskKind::Worker {
+            brief: "do it".to_string(),
+        };
+        task.status = TaskStatus::Running;
+        store.save(&task).unwrap();
+        let saved = Worker::saved(
+            WorkerId::parse("sched-a").unwrap(),
+            HarnessId::Claude,
+            SessionRef::new(dir.path().join("claude-session/sched-a")),
+        )
+        .unwrap();
+        let marks = ["sched-a", "sched-b"].map(|id| gone_path(dir.path(), id));
+        for mark in &marks {
+            std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
+            std::fs::write(mark, "claude exited").unwrap();
+        }
+        let lost = restore_schedule(&store, dir.path(), &[saved]);
+        assert_eq!(lost.len(), 1);
+        assert_eq!(marks.map(|mark| mark.exists()), [false, true]);
+    }
+
+    #[test]
     fn a_running_task_survives_a_tick_during_shutdown() {
         let dir = tempfile::tempdir().unwrap();
         let store = ScheduleStore::new(dir.path().join("schedule"));
@@ -278,7 +315,7 @@ mod tests {
             statuses(&store),
             vec![("a".to_string(), TaskStatus::Running)]
         );
-        restore_schedule(&store, &[]);
+        restore_schedule(&store, dir.path(), &[]);
         let restored = store.load_all();
         assert_eq!(restored[0].status, TaskStatus::Pending);
         assert!(restored[0].late);
