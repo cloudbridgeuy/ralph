@@ -49,6 +49,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(chat.editor_setting().1)
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)
         .chain(config.claude.shell_setting().1)
+        .chain(config.workers.shell_setting().1)
         .chain(config.agy.permissions_setting().1)
         .chain(config.agy.selection_errors())
         .chain(hard_errors(&config))
@@ -82,6 +83,15 @@ mod tests {
             .unwrap()
             .errors
             .is_empty());
+    }
+
+    #[test]
+    fn workers_shell_accepts_none_and_rejects_unknown() {
+        assert_eq!(
+            errors("[workers]\nshell = \"fish\"\n"),
+            ["[workers] shell must be \"zsh\", \"bash\", or \"none\""]
+        );
+        assert!(errors("[workers]\nshell = \"none\"\n").is_empty());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use super::*;
 use ralph_core::chat_stage::{Item, Kind, NewItem};
+use ralph_core::chat_suggestion::Suggestion;
 use serde_json::json;
 
 fn item(id: &str, kind: Kind) -> Item {
@@ -206,7 +207,7 @@ fn no_stage_write_can_remove_the_thread_line() {
 }
 
 #[test]
-fn a_next_step_that_skips_a_decision_becomes_stage_and_leaves_a_notice_row() {
+fn a_next_step_that_skips_a_decision_is_kept_and_leaves_a_notice_row() {
     let dir = tempfile::tempdir().unwrap();
     let store = log_of(dir.path(), 0);
     save(
@@ -219,7 +220,10 @@ fn a_next_step_that_skips_a_decision_becomes_stage_and_leaves_a_notice_row() {
     .unwrap();
     let (suggestion, notice) =
         check_next_step(&store, &Status::default(), Some("/hold GUZ-1".to_string())).unwrap();
-    assert_eq!(suggestion.as_deref(), Some("/stage"));
+    assert_eq!(
+        suggestion,
+        Some(Suggestion::PrefillOnly("/hold GUZ-1".to_string()))
+    );
     assert_eq!(
         notice.as_deref(),
         Some("Next step skips pending decision: s1")
@@ -227,5 +231,8 @@ fn a_next_step_that_skips_a_decision_becomes_stage_and_leaves_a_notice_row() {
     assert_eq!(store.log_len().unwrap(), 1);
     let (kept, none) =
         check_next_step(&store, &Status::default(), Some("answer s1".to_string())).unwrap();
-    assert_eq!((kept.as_deref(), none), (Some("answer s1"), None));
+    assert_eq!(
+        (kept, none),
+        (Some(Suggestion::Open("answer s1".to_string())), None)
+    );
 }

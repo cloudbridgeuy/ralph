@@ -1,4 +1,7 @@
-use crate::worker::{ClaudePermission, Report, ReportStatus};
+use crate::chat_answer::AnswerArgs;
+use crate::worker::{
+    deny_line, permission_response, ClaudePermission, Report, ReportStatus, ALLOW_ONCE,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -26,6 +29,19 @@ pub enum McptoolsDecision {
     Elevated(Classes),
     Deny,
     Other,
+}
+
+pub const ALLOW_ALWAYS: &str = "allow_always";
+
+pub fn offer_allow_always(mut ask: ClaudePermission) -> ClaudePermission {
+    if matches!(mcptools_decision(&ask), McptoolsDecision::Elevated(_)) {
+        ask.content.options.push(PermissionOption {
+            option_id: ALLOW_ALWAYS.to_string(),
+            name: "Always allow".to_string(),
+            kind: "allow_always".to_string(),
+        });
+    }
+    ask
 }
 
 fn is_assignment(token: &str) -> bool {
@@ -235,6 +251,18 @@ pub fn mcptools_gate(grants: Grants, ask: &ClaudePermission) -> GateCall {
     }
 }
 
+pub fn auto_answer(mode: PermissionMode, grants: Grants, ask: &ClaudePermission) -> Option<String> {
+    let id = &ask.content.request_id;
+    let allow = || Some(permission_response(id, ALLOW_ONCE, &ask.input));
+    match (mcptools_gate(grants, ask), mode) {
+        (GateCall::Allow, _) | (GateCall::Prompt(_) | GateCall::Other, PermissionMode::Yolo) => {
+            allow()
+        }
+        (GateCall::Deny, _) => Some(deny_line(id)),
+        (GateCall::Prompt(_) | GateCall::Other, PermissionMode::Ask) => None,
+    }
+}
+
 pub fn blocked_notice(
     thread: Option<&str>,
     worker: &str,
@@ -248,10 +276,13 @@ pub fn blocked_notice(
                 .iter()
                 .map(|option| option.option_id.as_str())
                 .collect();
+            let subject = if content.summary == content.tool {
+                content.tool.clone()
+            } else {
+                format!("{} {}", content.tool, content.summary)
+            };
             format!(
-                "{label} blocked: {} {} request {} options {}",
-                content.tool,
-                content.summary,
+                "{label} blocked: {subject} request {} options {}",
                 content.request_id,
                 options.join("|")
             )
@@ -274,6 +305,25 @@ pub fn pending_requests(marker: &str) -> Vec<String> {
         Ok(published) if !published.request_id.is_empty() => vec![published.request_id],
         _ => Vec::new(),
     }
+}
+
+pub fn oldest_worker_answer<'a>(
+    blocked: impl IntoIterator<Item = (&'a str, u128, &'a str)>,
+    choice: Choice,
+) -> Option<AnswerArgs> {
+    let (worker, _, marker) = blocked.into_iter().min_by_key(|(_, since, _)| *since)?;
+    let content = serde_json::from_str::<BlockedContent>(marker).ok()?;
+    let option = choice.option_id();
+    let request = pending_requests(marker).into_iter().next()?;
+    content
+        .options
+        .iter()
+        .any(|offered| offered.option_id == option)
+        .then(|| AnswerArgs {
+            worker: worker.to_string(),
+            request,
+            option: option.to_string(),
+        })
 }
 
 impl BlockedContent {
@@ -747,5 +797,130 @@ mod tests {
             "Always allowing writes and spend; saved to /s/g.json."
         );
         assert!(answer_message(Choice::AllowAlways, both, None).contains("not saved"));
+    }
+
+    #[test]
+    fn blocked_notice_prints_the_tool_once_when_the_summary_is_the_tool() {
+        let content = |summary: &str| BlockedContent {
+            request_id: "r".into(),
+            tool: "mcp__mcptools__execute".into(),
+            summary: summary.into(),
+            options: Vec::new(),
+            pending: Vec::new(),
+        };
+        assert_eq!(
+            blocked_notice(None, "w", Some(&content("mcp__mcptools__execute"))),
+            "w blocked: mcp__mcptools__execute request r options "
+        );
+        assert_eq!(
+            blocked_notice(None, "w", Some(&content("ls"))),
+            "w blocked: mcp__mcptools__execute ls request r options "
+        );
+    }
+
+    #[test]
+    fn only_elevated_mcptools_asks_offer_allow_always_and_it_allows() {
+        let ids = |tool: &str, input: serde_json::Value| -> Vec<String> {
+            offer_allow_always(ask(tool, input))
+                .content
+                .options
+                .iter()
+                .map(|option| option.option_id.clone())
+                .collect()
+        };
+        assert_eq!(
+            ids(
+                "mcp__mcptools__execute",
+                serde_json::json!({"allowWrites": true})
+            ),
+            ["allow_always"]
+        );
+        assert!(ids("Bash", serde_json::json!({"allowWrites": true})).is_empty());
+        let allow: serde_json::Value = serde_json::from_str(&crate::worker::permission_response(
+            "r1",
+            ALLOW_ALWAYS,
+            &serde_json::json!({}),
+        ))
+        .unwrap();
+        assert_eq!(allow["response"]["response"]["behavior"], "allow");
+    }
+    fn behavior(line: Option<String>) -> Option<String> {
+        let answer: serde_json::Value = serde_json::from_str(&line?).unwrap();
+        answer["response"]["response"]["behavior"]
+            .as_str()
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn ask_mode_allows_elevated_asks_whose_classes_are_all_granted() {
+        let writes = ask("mcp__mcptools__execute", json!({"allowWrites": true}));
+        let both = ask(
+            "mcp__mcptools__execute",
+            json!({"allowWrites": true, "allowSpend": true}),
+        );
+        let bash = ask("Bash", json!({"command": "mcptools linear issue update X"}));
+        let mode = PermissionMode::Ask;
+        assert_eq!(
+            behavior(auto_answer(mode, WRITES, &writes)).as_deref(),
+            Some("allow")
+        );
+        assert_eq!(
+            behavior(auto_answer(mode, WRITES, &bash)).as_deref(),
+            Some("allow")
+        );
+        assert_eq!(auto_answer(mode, WRITES, &both), None);
+        assert_eq!(auto_answer(mode, Grants::default(), &writes), None);
+        assert_eq!(auto_answer(mode, SPEND, &writes), None);
+    }
+    fn marker(request: &str, pending: &[&str], options: &[&str]) -> String {
+        BlockedContent {
+            request_id: request.into(),
+            tool: "Bash".into(),
+            summary: String::new(),
+            options: options
+                .iter()
+                .map(|id| PermissionOption {
+                    option_id: (*id).into(),
+                    name: String::new(),
+                    kind: String::new(),
+                })
+                .collect(),
+            pending: pending.iter().map(|id| (*id).into()).collect(),
+        }
+        .render()
+    }
+
+    #[test]
+    fn a_bare_key_answers_the_front_request_of_the_oldest_blocked_worker() {
+        let old = marker(
+            "p.2",
+            &["p.2", "p.3"],
+            &["allow_once", "deny", "allow_always"],
+        );
+        let new = marker("p.9", &[], &["allow_once", "deny"]);
+        let blocked = [("b", 20, new.as_str()), ("a", 10, old.as_str())];
+        let answer = oldest_worker_answer(blocked, Choice::AllowAlways).unwrap();
+        assert_eq!(
+            (
+                answer.worker.as_str(),
+                answer.request.as_str(),
+                answer.option.as_str()
+            ),
+            ("a", "p.2", "allow_always")
+        );
+        assert_eq!(
+            oldest_worker_answer([("a", 1, new.as_str())], Choice::AllowAlways),
+            None
+        );
+        assert_eq!(
+            oldest_worker_answer([("a", 1, "not json")], Choice::Deny),
+            None
+        );
+        assert_eq!(oldest_worker_answer([], Choice::Deny), None);
+        let cursor = marker("p.1", &[], &["allow_once", "reject_once"]);
+        assert_eq!(
+            oldest_worker_answer([("a", 1, cursor.as_str())], Choice::Deny),
+            None
+        );
     }
 }

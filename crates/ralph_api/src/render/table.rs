@@ -7,9 +7,15 @@ fn all_digits(text: &str) -> bool {
 fn grouped_integer(text: &str) -> bool {
     let mut groups = text.split(',');
     let first = groups.next().unwrap_or("");
+    if first.len() > 1 && first.starts_with('0') {
+        return false;
+    }
     let rest: Vec<&str> = groups.collect();
     if rest.is_empty() {
         return all_digits(first);
+    }
+    if first == "0" {
+        return false;
     }
     (1..=3).contains(&first.len())
         && all_digits(first)
@@ -19,8 +25,13 @@ fn grouped_integer(text: &str) -> bool {
 }
 
 fn is_number(text: &str) -> bool {
-    let body = text.strip_prefix(['+', '-']).unwrap_or(text);
+    let signed = text.strip_prefix(['+', '-']);
+    let body = signed.unwrap_or(text);
     let body = body.strip_prefix('$').unwrap_or(body);
+    let body = match signed {
+        Some(_) => body,
+        None => body.strip_prefix(['+', '-']).unwrap_or(body),
+    };
     let body = body.strip_suffix('%').unwrap_or(body);
     let (whole, fraction) = match body.split_once('.') {
         Some((whole, fraction)) => (whole, Some(fraction)),
@@ -61,10 +72,30 @@ fn shell(headers: &[&str], numeric: &[bool], body: &str) -> String {
     format!("<r-table><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></r-table>")
 }
 
-#[derive(Clone, Copy)]
-pub enum RowMark {
-    Selected,
-    Open,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowMark {
+    pub selected: bool,
+    pub open: bool,
+}
+
+fn row_mark(marks: &[(usize, RowMark)], index: usize) -> RowMark {
+    marks
+        .iter()
+        .filter(|(at, _)| *at == index)
+        .fold(RowMark::default(), |merged, (_, mark)| RowMark {
+            selected: merged.selected || mark.selected,
+            open: merged.open || mark.open,
+        })
+}
+
+fn row_attributes(mark: RowMark) -> String {
+    let open = if mark.open { " class=\"open\"" } else { "" };
+    let selected = if mark.selected {
+        " aria-selected=\"true\""
+    } else {
+        ""
+    };
+    format!("{open}{selected}")
 }
 
 pub fn table(headers: &[&str], rows: &[Vec<&str>]) -> String {
@@ -85,11 +116,7 @@ pub fn table_marked(headers: &[&str], rows: &[Vec<&str>], marks: &[(usize, RowMa
                 .enumerate()
                 .map(|(column, text)| cell("td", text, numeric[column]))
                 .collect();
-            let mark = match marks.iter().find(|(at, _)| *at == index) {
-                Some((_, RowMark::Selected)) => " aria-selected=\"true\"",
-                Some((_, RowMark::Open)) => " class=\"open\"",
-                None => "",
-            };
+            let mark = row_attributes(row_mark(marks, index));
             format!("<tr{mark}>{cells}</tr>")
         })
         .collect();
@@ -107,6 +134,15 @@ pub fn table_state(headers: &[&str], inner_html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{is_number, numeric_columns, table, table_marked, table_state, RowMark};
+
+    const SELECTED: RowMark = RowMark {
+        selected: true,
+        open: false,
+    };
+    const OPEN: RowMark = RowMark {
+        selected: false,
+        open: true,
+    };
     use crate::render::golden::{assert_golden, hostile_text, long_text};
     use crate::render::{empty, error, spinner};
 
@@ -195,6 +231,35 @@ mod tests {
     }
 
     #[test]
+    fn a_leading_zero_before_another_digit_is_text() {
+        for text in ["007", "00", "-007", "$01.5"] {
+            assert!(!is_number(text), "{text:?}");
+        }
+        for text in ["0", "0.5", "-0.5", "0.05", "10", "100"] {
+            assert!(is_number(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_zero_group_before_more_groups_is_text() {
+        for text in ["0,123", "0,000", "$0,123.50"] {
+            assert!(!is_number(text), "{text:?}");
+        }
+        for text in ["0", "0.5", "$0.50"] {
+            assert!(is_number(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_currency_mark_and_a_sign_go_in_either_order() {
+        for text in ["$-1,000", "-$1,000", "$1,000", "$+3", "+$3"] {
+            assert!(is_number(text), "{text:?}");
+        }
+        assert!(!is_number("$-$1"));
+        assert!(!is_number("-$-1"));
+    }
+
+    #[test]
     fn a_column_is_numeric_when_every_non_empty_cell_is_a_number() {
         let rows = vec![vec!["a", "1", ""], vec!["b", "2.5", "3"]];
         assert_eq!(
@@ -271,17 +336,42 @@ mod tests {
             &table_marked(
                 &["name"],
                 &[vec!["a"], vec!["b"], vec!["c"]],
-                &[(1, RowMark::Selected), (2, RowMark::Open)],
+                &[(1, SELECTED), (2, OPEN)],
             ),
         );
+    }
+
+    #[test]
+    fn two_marks_on_one_row_are_merged() {
+        let rows = [vec!["a"]];
+        let both = table_marked(&["n"], &rows, &[(0, SELECTED), (0, OPEN)]);
+        assert!(
+            both.contains("<tr class=\"open\" aria-selected=\"true\">"),
+            "{both}"
+        );
+        let same = table_marked(&["n"], &rows, &[(0, OPEN), (0, OPEN)]);
+        assert_eq!(same, table_marked(&["n"], &rows, &[(0, OPEN)]));
     }
 
     #[test]
     fn a_mark_past_the_last_row_changes_nothing() {
         let rows = [vec!["a"]];
         assert_eq!(
-            table_marked(&["n"], &rows, &[(5, RowMark::Open)]),
+            table_marked(&["n"], &rows, &[(5, OPEN)]),
             table(&["n"], &rows)
+        );
+    }
+
+    #[test]
+    fn a_row_marked_both_is_selected_and_open() {
+        let both = RowMark {
+            selected: true,
+            open: true,
+        };
+        let html = table_marked(&["n"], &[vec!["a"]], &[(0, both)]);
+        assert!(
+            html.contains("<tr class=\"open\" aria-selected=\"true\">"),
+            "{html}"
         );
     }
 }

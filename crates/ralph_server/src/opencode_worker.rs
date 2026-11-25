@@ -2,12 +2,14 @@ use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, request_ids, write_file};
 use crate::opencode_usage::{record_opencode_usage, OpencodeTurn};
 use crate::process_tree::process_table;
+use crate::subprocess::set_session;
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
+use crate::worker_shell::{in_shell, worker_shell};
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::Scope;
@@ -30,7 +32,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,16 +73,20 @@ impl Server {
         let log = open_log(store)?;
         let command = opencode_serve_command(port);
         let (program, args) = command.split_first().ok_or("empty opencode command")?;
-        let child = match Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .env(OPENCODE_PASSWORD_ENV, &password)
             .envs([ralph_core::worker::inbox_env(
                 &fs::canonicalize(store).map_err(|e| e.to_string())?,
-            )])
+            )]);
+        let shell = worker_shell();
+        let mut command = in_shell(&shell, command);
+        set_session(&mut command, shell.session());
+        let child = match command
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
             .stderr(log)
-            .process_group(0)
             .spawn()
         {
             Ok(child) => child,

@@ -9,6 +9,7 @@ use ralph_core::chat_stage::{
 };
 use ralph_core::chat_stage::{STAGE_ADD, STAGE_DONE};
 use ralph_core::chat_status::Status;
+use ralph_core::chat_suggestion::Suggestion;
 use ralph_core::chat_thread::ThreadName;
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
@@ -60,7 +61,7 @@ pub fn check_next_step(
     store: &Store,
     status: &Status,
     next: Option<String>,
-) -> Result<(Option<String>, Option<String>), String> {
+) -> Result<(Option<Suggestion>, Option<String>), String> {
     let pending = pending_decisions(&load(store.dir())?.items, status);
     let gap = next_step_gap(next.as_deref(), &pending);
     let notice = gap.as_ref().map(|gap| gap.notice());

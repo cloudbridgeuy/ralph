@@ -17,10 +17,14 @@ use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_local::CommandRecord;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
+use ralph_core::chat_thread::config_root;
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
-use ralph_core::worker::Choice;
+use ralph_core::worker::{
+    blocked_path, key_answer_report, oldest_worker_answer, Choice, GrantsChange, HANDOFF_TIMEOUT,
+};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::Monitor;
+use ralph_server::config::{saved_grants, GRANTS_FILE};
 use ralph_server::subprocess::OutputGate;
 use ralph_server::warn::warn_if_err;
 use ralph_server::watches::locked;
@@ -30,7 +34,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 const SETTLE_LIMIT: Duration = Duration::from_millis(300);
 const SETTLE_STEP: Duration = Duration::from_millis(10);
@@ -81,6 +85,48 @@ pub(super) enum Step {
     ClearDraft,
     OpenEditor,
     Continue,
+}
+
+pub(super) fn answer_oldest_worker(monitor: &Monitor, choice: Choice) -> Option<String> {
+    let store = &monitor.store_dir;
+    let markers: Vec<(String, u128, String)> = monitor
+        .status()
+        .workers
+        .into_iter()
+        .filter_map(|worker| {
+            let path = blocked_path(store, &worker.id);
+            let since = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok()?;
+            let since = since.duration_since(UNIX_EPOCH).ok()?.as_millis();
+            Some((worker.id, since, std::fs::read_to_string(path).ok()?))
+        })
+        .collect();
+    let answer = oldest_worker_answer(
+        markers
+            .iter()
+            .map(|(id, since, marker)| (id.as_str(), *since, marker.as_str())),
+        choice,
+    )?;
+    let before = saved_grants(store);
+    let sent = ralph_server::workers::answer_permission(
+        store,
+        HANDOFF_TIMEOUT,
+        &answer.worker,
+        &answer.request,
+        &answer.option,
+    );
+    let path = config_root(store).join(GRANTS_FILE).display().to_string();
+    Some(key_answer_report(
+        &answer.worker,
+        choice,
+        sent.map_err(|error| error.to_string()),
+        GrantsChange {
+            before,
+            after: saved_grants(store),
+            path: &path,
+        },
+    ))
 }
 
 pub(super) fn exit_for(signal: Signal, buffer: &str) -> Step {
@@ -244,14 +290,17 @@ impl Keys<'_> {
             self.gate.listen(false);
         }
         let answered = match &exit {
-            EditorExit::Submitted(text) => {
-                Choice::from_key(text).and_then(|choice| self.gate.answer_oldest(choice))
-            }
+            EditorExit::Submitted(text) => Choice::from_key(text).and_then(|choice| {
+                self.gate
+                    .answer_oldest(choice)
+                    .map(|outcome| outcome.report(self.store))
+                    .or_else(|| answer_oldest_worker(self.monitor, choice))
+            }),
             _ => None,
         };
         let exit = match (answered, exit) {
-            (Some(outcome), _) => {
-                println!("{}", outcome.report(self.store));
+            (Some(message), _) => {
+                println!("{message}");
                 EditorExit::Submitted(String::new())
             }
             (None, EditorExit::Submitted(text)) => match at_once(self.routed(&text)) {

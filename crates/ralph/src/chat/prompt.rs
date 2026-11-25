@@ -1,5 +1,6 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR};
+use crate::chat::keys::answer_oldest_worker;
 use crate::chat::resize::Resize;
 use crate::chat::sent::SentStyle;
 use crate::chat::statusbar::StatusBar;
@@ -17,7 +18,7 @@ use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
 use ralph_core::chat_thread_auto::close_footer;
 use ralph_core::status_queue::QueueCell;
 use ralph_core::turn_event::TurnSink;
-use ralph_core::worker::{Grants, ATTACHMENTS_DIR};
+use ralph_core::worker::{Choice, Grants, ATTACHMENTS_DIR};
 use ralph_server::chat::monitor::Monitor;
 use ralph_server::subprocess::OutputGate;
 use reedline::{
@@ -228,6 +229,12 @@ pub(super) fn next_route(
         match retry_interrupted(|| editor.read_line(prompt))? {
             Signal::Success(line) => {
                 prompt.notice.take();
+                if let Some(report) = Choice::from_key(&line)
+                    .and_then(|choice| answer_oldest_worker(&prompt.monitor, choice))
+                {
+                    println!("{report}");
+                    continue;
+                }
                 let status = prompt.monitor.status();
                 let route = route_input(
                     &line,

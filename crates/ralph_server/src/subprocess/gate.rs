@@ -331,6 +331,18 @@ mod tests {
     }
 
     #[test]
+    fn the_notice_lists_allow_always_for_elevated_asks() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        gate.pause();
+        let elevated = serde_json::json!({"allowWrites":true});
+        assert!(gate.request_permission(ask("r", elevated), Classes::default()));
+        let notice = gate.lock().held.chunks[0].text.clone();
+        assert!(notice.contains("options allow_once|deny|allow_always"));
+        assert!(!notice.contains("mcp__mcptools__execute mcp__mcptools__execute"));
+    }
+
+    #[test]
     fn permissions_bind_input_once_and_cancel_independently() {
         let gate = OutputGate::new();
         let input = serde_json::json!({"allowWrites":true,"code":"one\n\u{1b}[2J"});

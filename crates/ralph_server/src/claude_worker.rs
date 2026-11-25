@@ -4,7 +4,7 @@ use crate::chat::skills::read_claude_config;
 use crate::codex_worker::pipes::pipe_lines;
 use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;
-use crate::config::{configured_permission_mode, AppConfig};
+use crate::config::{configured_permission_mode, save_grants, saved_grants, AppConfig};
 use crate::cursor_owner::{
     now_secs, report_start_warning, request_ids, sweep_owner, take_answer, write_file,
     write_interrupt_result, write_owner_record,
@@ -12,10 +12,12 @@ use crate::cursor_owner::{
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::private_file::write_worker_config;
 use crate::process_tree::{snapshot_tree, sweep_tree};
-use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
+use crate::transport::stdio::{stop_child, stop_groups};
+use crate::warn::warn;
 use crate::watches::locked;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
+use crate::worker_shell::spawn_in_shell;
 use crate::worker_usage::{record_session_or_warn, UsageSession, UsageTarget};
 use crate::workers::headless::{
     deliver_to_worker, drain_queued, mark_prompt_lost, queued_owner, report_interrupt_gone,
@@ -28,16 +30,16 @@ use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_args, claude_mcp_config,
     cleanup, decode_claude_version, decode_line, deny_line, gone_path, import_servers,
-    interrupt_lines, interrupted_end, join_start_warnings, permission_response,
+    interrupt_lines, interrupted_end, join_start_warnings, mcptools_decision, permission_response,
     prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
     start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
-    usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, ClaudeArgs, ClaudeLine,
-    ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
-    PermissionAnswer, PermissionMode, QueuedFacts, QueuedWorker, SessionRecord, ShutdownStep,
-    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
-    ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR, CLAUDE_CLOSE_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
-    CLAUDE_INTERRUPT_DIR, CLAUDE_OWNER_DIR, CLAUDE_PROMPT_DIR, CLAUDE_SESSION_DIR,
-    CLAUDE_SPAWN_DIR,
+    usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, Classes, ClaudeArgs,
+    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
+    McptoolsDecision, PermissionAnswer, PermissionMode, QueuedFacts, QueuedWorker, SessionRecord,
+    ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent,
+    WorkerMarkers, ALLOW_ALWAYS, ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR, CLAUDE_CLOSE_DIR,
+    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_INTERRUPT_DIR, CLAUDE_OWNER_DIR, CLAUDE_PROMPT_DIR,
+    CLAUDE_SESSION_DIR, CLAUDE_SPAWN_DIR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -64,6 +66,7 @@ type ClaudeStdin = Mutex<Option<Box<dyn Write + Send>>>;
 struct ClaudeReply {
     request_id: String,
     input: Value,
+    classes: Classes,
 }
 
 struct Shared {
@@ -73,6 +76,7 @@ struct Shared {
     events: Events,
     permissions: PermissionQueue<ClaudeReply>,
     mode: PermissionMode,
+    store: PathBuf,
     heartbeat: Arc<Heartbeat>,
     markers: WorkerMarkers,
     inbox: Inbox,
@@ -151,13 +155,18 @@ impl Shared {
     }
 
     fn ask(&self, ask: ClaudePermission) {
-        match auto_answer(self.mode, &ask) {
+        match auto_answer(self.mode, saved_grants(&self.store), &ask) {
             Some(line) => {
                 self.send(&line).ok();
             }
             None => {
+                let classes = match mcptools_decision(&ask) {
+                    McptoolsDecision::Elevated(classes) => classes,
+                    _ => Classes::default(),
+                };
                 let reply = ClaudeReply {
                     request_id: ask.content.request_id.clone(),
+                    classes,
                     input: ask.input,
                 };
                 if let Some(refused) = self.permissions.enqueue_unless_refusing(reply, ask.content)
@@ -173,6 +182,9 @@ impl Shared {
         let (reply, option) = self
             .permissions
             .take_answer(&answer.request_id, &answer.option_id)?;
+        if option.option_id == ALLOW_ALWAYS {
+            save_grants(&self.store, reply.classes).map_err(warn).ok();
+        }
         self.send(&permission_response(
             &reply.request_id,
             &option.option_id,
@@ -476,7 +488,7 @@ impl ClaudeWorker {
         if let Some(dir) = config_dir {
             command.env(CLAUDE_CONFIG_DIR_ENV, dir);
         }
-        let (mut child, stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
+        let (mut child, stdin, stdout, stderr) = spawn_in_shell(command).map_err(|e| {
             remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
             format!("could not start `{CLAUDE_COMMAND}`: {e}")
         })?;
@@ -503,6 +515,7 @@ impl ClaudeWorker {
                 Arc::clone(&events),
             ),
             mode,
+            store: store.to_path_buf(),
             events,
             heartbeat,
             markers,

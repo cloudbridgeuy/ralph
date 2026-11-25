@@ -45,6 +45,7 @@ pub mod wire;
 pub mod worker_changes;
 pub mod worker_events;
 pub mod worker_mcp;
+pub(crate) mod worker_shell;
 pub mod worker_usage;
 pub mod worker_verify;
 pub mod workers;

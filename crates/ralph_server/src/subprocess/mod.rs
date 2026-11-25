@@ -1,3 +1,4 @@
+use ralph_core::worker::ChildSession;
 use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
@@ -63,6 +64,15 @@ pub fn default_sigttou_in(command: &mut Command) {
             }
             Ok(())
         });
+    }
+}
+
+pub fn set_session(command: &mut Command, session: ChildSession) {
+    match session {
+        ChildSession::Group => {
+            command.process_group(0);
+        }
+        ChildSession::Detached => detach_from_terminal(command),
     }
 }
 

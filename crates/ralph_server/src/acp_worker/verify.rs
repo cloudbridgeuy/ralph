@@ -3,6 +3,7 @@ use crate::cursor_sweep::sweep_worker_server;
 use crate::cursor_usage::{record_cursor_verify, CursorTurn};
 use crate::worker_verify::{step, Checks};
 use agent_client_protocol::ByteStreams;
+use ralph_core::worker::ChildSession;
 use ralph_core::worker::{
     cursor_verify_leftovers, cursor_verify_project, decode_print_line, print_args, print_model,
     print_verify, probed_version, stderr_tail, trim_to_last, with_stderr_tail, CheckResult,
@@ -168,7 +169,7 @@ fn exercise(dir: &Path, checks: &Checks) {
     let agent = CURSOR_AGENT;
     let mut command = Command::new(agent.command);
     command.arg("acp").current_dir(dir);
-    let spawned = spawn_piped(command)
+    let spawned = spawn_piped(command, ChildSession::Group)
         .map_err(|error| format!("could not start `{} acp`: {error}", agent.command));
     let Some((mut child, stdin, stdout, stderr)) = step(checks, "spawn", spawned, |_| {
         format!("`{} acp` started", agent.command)
@@ -228,7 +229,7 @@ fn print_lines(dir: &Path, model: &str) -> Result<Vec<String>, String> {
     });
     let mut command = Command::new(CURSOR_AGENT.command);
     command.args(args).current_dir(dir);
-    let (mut child, mut stdin, stdout, stderr) = spawn_piped(command)
+    let (mut child, mut stdin, stdout, stderr) = spawn_piped(command, ChildSession::Group)
         .map_err(|error| format!("could not start `{} -p`: {error}", CURSOR_AGENT.command))?;
     drain_stderr(stderr, CappedLog::new(None, "verify"));
     if let Err(error) = stdin.write_all(REPLY_PROMPT.as_bytes()) {

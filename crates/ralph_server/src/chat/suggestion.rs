@@ -1,15 +1,21 @@
 use ralph_core::chat_suggestion::untouched;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-#[derive(Clone, Default)]
-pub struct SuggestionCell(Arc<Mutex<Option<String>>>);
+#[derive(Clone)]
+pub struct SuggestionCell<T = String>(Arc<Mutex<Option<T>>>);
 
-impl SuggestionCell {
-    fn guard(&self) -> MutexGuard<'_, Option<String>> {
+impl<T> Default for SuggestionCell<T> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
+}
+
+impl<T> SuggestionCell<T> {
+    fn guard(&self) -> MutexGuard<'_, Option<T>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub fn set(&self, suggestion: String) {
+    pub fn set(&self, suggestion: T) {
         *self.guard() = Some(suggestion);
     }
 
@@ -17,10 +23,12 @@ impl SuggestionCell {
         *self.guard() = None;
     }
 
-    pub fn take(&self) -> Option<String> {
+    pub fn take(&self) -> Option<T> {
         self.guard().take()
     }
+}
 
+impl SuggestionCell {
     pub fn latch_untouched(&self, buffer: &str) -> bool {
         let mut slot = self.guard();
         let keep = slot.as_ref().is_some_and(|shown| untouched(shown, buffer));
