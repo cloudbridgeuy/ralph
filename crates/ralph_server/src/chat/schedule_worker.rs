@@ -6,9 +6,9 @@ use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_worker::{
     alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
     start_failure_text, timed_out_text, vanished_text, worker_brief, worker_deadline, worker_id,
-    WorkerEnd, WorkerFire,
+    WorkerEnd, WorkerFire, SCHEDULED_HARNESS,
 };
-use ralph_core::worker::{HarnessId, TargetRequest};
+use ralph_core::worker::TargetRequest;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -147,7 +147,7 @@ fn start_task(
         let args = SpawnArgs {
             id: &worker,
             task: &brief,
-            harness: HarnessId::ClaudeTmux,
+            harness: SCHEDULED_HARNESS,
             model: None,
             ticket: None,
             scheduled: true,

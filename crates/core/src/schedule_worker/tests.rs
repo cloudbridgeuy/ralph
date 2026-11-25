@@ -1,5 +1,10 @@
 use super::*;
 
+#[test]
+fn a_scheduled_worker_runs_on_headless_claude() {
+    assert_eq!(SCHEDULED_HARNESS, HarnessId::Claude);
+}
+
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
         .unwrap()
