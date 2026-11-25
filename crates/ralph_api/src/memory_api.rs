@@ -19,10 +19,10 @@ fn unavailable() -> ApiResponse {
 fn tree_response(query: &MemoryQuery, data: &Peek) -> ApiResponse {
     let Some(node) = query.node else {
         let nodes = root_view(data.entries.len(), &data.tree);
-        return json_ok(root_body(&query.thread, data.entries.len(), &nodes));
+        return json_ok(root_body(&query.thread, &data.entries, &nodes, &data.tree));
     };
     match zoom_view(&data.entries, &data.tree, node) {
-        Ok(view) => json_ok(zoom_body(&query.thread, &view)),
+        Ok(view) => json_ok(zoom_body(&query.thread, &view, &data.tree)),
         Err(_) => not_found(),
     }
 }

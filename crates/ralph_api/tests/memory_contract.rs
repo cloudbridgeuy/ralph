@@ -124,9 +124,18 @@ fn root_lists_blocks_with_summaries() {
             "thread": "main",
             "entries": 6,
             "nodes": [
-                {"id": "0-3", "lo": 0, "hi": 4, "leaf": false, "summary": "first four: sync timeout"},
-                {"id": "4-5", "lo": 4, "hi": 6, "leaf": false, "summary": "tail pair \"quoted\""},
+                {"id": "0-3", "lo": 0, "hi": 4, "leaf": false, "summary": "first four: sync timeout",
+                 "stats": {"depth": 2, "children": 2, "blocks": 3, "summarised": 2, "pending": 1}},
+                {"id": "4-5", "lo": 4, "hi": 6, "leaf": false, "summary": "tail pair \"quoted\"",
+                 "stats": {"depth": 1, "children": 2, "blocks": 1, "summarised": 1, "pending": 0}},
             ],
+            "stats": {
+                "entries": 6,
+                "blocks": 4,
+                "summarised": 3,
+                "pending": 1,
+                "last_at": "2026-03-01T09:05:00Z",
+            },
         })
     );
 }
@@ -171,6 +180,13 @@ fn zoom_block_matches_core_view() {
                 "hi": block.node.hi,
                 "leaf": block.is_leaf,
                 "summary": block.summary,
+                "stats": {
+                    "depth": 1,
+                    "children": 2,
+                    "blocks": 1,
+                    "summarised": usize::from(block.summary.is_some()),
+                    "pending": usize::from(block.summary.is_none()),
+                },
                 "kind": "block",
             }),
             ZoomChild::Entry(item) => {

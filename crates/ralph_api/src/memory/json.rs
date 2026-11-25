@@ -1,16 +1,31 @@
 use super::query::Scope;
-use ralph_core::chat_memory::{EntryView, NodeView, Page, ZoomChild, ZoomView};
+use super::stats::{node_stats, tree_stats, NodeStats};
+use ralph_core::chat_memory::{Entry, EntryView, NodeView, Page, Tree, ZoomChild, ZoomView};
 use ralph_server::chat::memory::ThreadInfo;
 use serde_json::{json, Value};
 use std::path::Path;
 
-fn node_json(view: &NodeView) -> Value {
+fn node_json(view: &NodeView, tree: &Tree) -> Value {
+    let NodeStats {
+        depth,
+        children,
+        blocks,
+        summarised,
+        pending,
+    } = node_stats(&view.node, tree);
     json!({
         "id": view.node.id(),
         "lo": view.node.lo,
         "hi": view.node.hi,
         "leaf": view.is_leaf,
         "summary": view.summary,
+        "stats": {
+            "depth": depth,
+            "children": children,
+            "blocks": blocks,
+            "summarised": summarised,
+            "pending": pending,
+        },
     })
 }
 
@@ -23,10 +38,10 @@ fn entry_json(view: &EntryView) -> Value {
     })
 }
 
-fn child_json(child: &ZoomChild) -> Value {
+fn child_json(child: &ZoomChild, tree: &Tree) -> Value {
     match child {
         ZoomChild::Block(view) => {
-            let mut value = node_json(view);
+            let mut value = node_json(view, tree);
             value["kind"] = json!("block");
             value
         }
@@ -38,15 +53,28 @@ fn child_json(child: &ZoomChild) -> Value {
     }
 }
 
-pub(crate) fn root_body(scope: &Scope, total: usize, nodes: &[NodeView]) -> Value {
+pub(crate) fn root_body(
+    scope: &Scope,
+    entries: &[Entry],
+    nodes: &[NodeView],
+    tree: &Tree,
+) -> Value {
+    let stats = tree_stats(entries, tree);
     json!({
         "thread": scope.label(),
-        "entries": total,
-        "nodes": nodes.iter().map(node_json).collect::<Vec<_>>(),
+        "entries": entries.len(),
+        "nodes": nodes.iter().map(|view| node_json(view, tree)).collect::<Vec<_>>(),
+        "stats": {
+            "entries": stats.entries,
+            "blocks": stats.blocks,
+            "summarised": stats.summarised,
+            "pending": stats.pending,
+            "last_at": stats.last_at,
+        },
     })
 }
 
-pub(crate) fn zoom_body(scope: &Scope, view: &ZoomView) -> Value {
+pub(crate) fn zoom_body(scope: &Scope, view: &ZoomView, tree: &Tree) -> Value {
     let node = NodeView {
         node: view.node,
         summary: view.summary.clone(),
@@ -54,8 +82,8 @@ pub(crate) fn zoom_body(scope: &Scope, view: &ZoomView) -> Value {
     };
     json!({
         "thread": scope.label(),
-        "node": node_json(&node),
-        "children": view.children.iter().map(child_json).collect::<Vec<_>>(),
+        "node": node_json(&node, tree),
+        "children": view.children.iter().map(|child| child_json(child, tree)).collect::<Vec<_>>(),
     })
 }
 
@@ -151,16 +179,64 @@ mod tests {
     #[test]
     fn root_golden() {
         let tree = fixture_tree();
-        let body = root_body(&Scope::Main, 11, &root_view(11, &tree));
+        let body = root_body(
+            &Scope::Main,
+            &fixture_entries(),
+            &root_view(11, &tree),
+            &tree,
+        );
         assert_golden_in("memory", "json", "root", &pretty(&body));
     }
 
     #[test]
     fn root_empty_chat() {
-        let body = root_body(&Scope::Main, 0, &root_view(0, &Tree::new()));
+        let tree = Tree::new();
+        let body = root_body(&Scope::Main, &[], &root_view(0, &tree), &tree);
         assert_eq!(
             body,
-            serde_json::json!({"thread": "main", "entries": 0, "nodes": []})
+            serde_json::json!({
+                "thread": "main",
+                "entries": 0,
+                "nodes": [],
+                "stats": {
+                    "entries": 0,
+                    "blocks": 0,
+                    "summarised": 0,
+                    "pending": 0,
+                    "last_at": null,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn root_body_carries_the_stat_line_fields() {
+        let tree = fixture_tree();
+        let body = root_body(
+            &Scope::Main,
+            &fixture_entries(),
+            &root_view(11, &tree),
+            &tree,
+        );
+        assert_eq!(
+            body["stats"],
+            serde_json::json!({
+                "entries": 11,
+                "blocks": 8,
+                "summarised": 3,
+                "pending": 5,
+                "last_at": "2026-03-01T09:10:00Z",
+            })
+        );
+        assert_eq!(
+            body["nodes"][0]["stats"],
+            serde_json::json!({
+                "depth": 3,
+                "children": 2,
+                "blocks": 7,
+                "summarised": 2,
+                "pending": 5,
+            })
         );
     }
 
@@ -172,7 +248,7 @@ mod tests {
             "memory",
             "json",
             "zoom_block",
-            &pretty(&zoom_body(&plan(), &view)),
+            &pretty(&zoom_body(&plan(), &view, &tree)),
         );
     }
 
@@ -184,7 +260,7 @@ mod tests {
             "memory",
             "json",
             "zoom_entries",
-            &pretty(&zoom_body(&Scope::Main, &view)),
+            &pretty(&zoom_body(&Scope::Main, &view, &tree)),
         );
     }
 
@@ -217,10 +293,10 @@ mod tests {
     #[test]
     fn bodies_carry_no_text_field_besides_entries() {
         let (entries, tree) = (fixture_entries(), fixture_tree());
-        let root = root_body(&Scope::Main, 11, &root_view(11, &tree));
+        let root = root_body(&Scope::Main, &entries, &root_view(11, &tree), &tree);
         assert!(!pretty(&root).contains("\"text\""));
         let view = zoom_view(&entries, &tree, Node::new(0, 8).unwrap()).unwrap();
-        assert!(!pretty(&zoom_body(&Scope::Main, &view)).contains("\"text\""));
+        assert!(!pretty(&zoom_body(&Scope::Main, &view, &tree)).contains("\"text\""));
     }
 
     #[test]

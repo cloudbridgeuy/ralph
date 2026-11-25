@@ -7,21 +7,49 @@
       "lo": 0,
       "hi": 8,
       "leaf": false,
-      "summary": "Debugged the nightly sync timeout; pool raised to 8."
+      "summary": "Debugged the nightly sync timeout; pool raised to 8.",
+      "stats": {
+        "depth": 3,
+        "children": 2,
+        "blocks": 7,
+        "summarised": 2,
+        "pending": 5
+      }
     },
     {
       "id": "8-9",
       "lo": 8,
       "hi": 10,
       "leaf": false,
-      "summary": "<script>alert(1)</script> \"quoted\" \\ back"
+      "summary": "<script>alert(1)</script> \"quoted\" \\ back",
+      "stats": {
+        "depth": 1,
+        "children": 2,
+        "blocks": 1,
+        "summarised": 1,
+        "pending": 0
+      }
     },
     {
       "id": "10",
       "lo": 10,
       "hi": 11,
       "leaf": true,
-      "summary": null
+      "summary": null,
+      "stats": {
+        "depth": 0,
+        "children": 0,
+        "blocks": 0,
+        "summarised": 0,
+        "pending": 0
+      }
     }
-  ]
+  ],
+  "stats": {
+    "entries": 11,
+    "blocks": 8,
+    "summarised": 3,
+    "pending": 5,
+    "last_at": "2026-03-01T09:10:00Z"
+  }
 }

@@ -5,7 +5,14 @@
     "lo": 0,
     "hi": 8,
     "leaf": false,
-    "summary": "Debugged the nightly sync timeout; pool raised to 8."
+    "summary": "Debugged the nightly sync timeout; pool raised to 8.",
+    "stats": {
+      "depth": 3,
+      "children": 2,
+      "blocks": 7,
+      "summarised": 2,
+      "pending": 5
+    }
   },
   "children": [
     {
@@ -14,6 +21,13 @@
       "hi": 4,
       "leaf": false,
       "summary": "Sync timeout traced to a pool of 4.",
+      "stats": {
+        "depth": 2,
+        "children": 2,
+        "blocks": 3,
+        "summarised": 1,
+        "pending": 2
+      },
       "kind": "block"
     },
     {
@@ -22,6 +36,13 @@
       "hi": 8,
       "leaf": false,
       "summary": null,
+      "stats": {
+        "depth": 2,
+        "children": 2,
+        "blocks": 3,
+        "summarised": 0,
+        "pending": 3
+      },
       "kind": "block"
     }
   ]

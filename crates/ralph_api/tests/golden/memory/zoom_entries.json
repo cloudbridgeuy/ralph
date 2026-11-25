@@ -5,7 +5,14 @@
     "lo": 8,
     "hi": 10,
     "leaf": false,
-    "summary": "<script>alert(1)</script> \"quoted\" \\ back"
+    "summary": "<script>alert(1)</script> \"quoted\" \\ back",
+    "stats": {
+      "depth": 1,
+      "children": 2,
+      "blocks": 1,
+      "summarised": 1,
+      "pending": 0
+    }
   },
   "children": [
     {
