@@ -9,6 +9,7 @@ use ralph_core::chat_hold::{hold_completions, HoldCompletion};
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_nudge::nudge_completions;
 use ralph_core::chat_path::{path_completion, path_word, PathRoot, MAX_READ};
+use ralph_core::chat_spec::{spec_completions, SpecCompletion};
 use ralph_core::chat_switch::switch_completions;
 use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use ralph_server::chat::memory::Store;
@@ -51,15 +52,18 @@ impl Completer for HoldCompleter {
             .or_else(|| direct_completions(line, pos, &status))
             .or_else(|| view_completions(line, pos))
             .or_else(|| self.thread_completions(line, pos))
-            .or_else(|| path_completions(line, pos))
+            .map(SpecCompletion::from)
+            .or_else(|| spec_completions(line, pos))
+            .or_else(|| path_completions(line, pos).map(SpecCompletion::from))
             .map(|completion| {
                 let span = Span::new(completion.span.start, completion.span.end);
                 completion
                     .values
                     .into_iter()
                     .map(|value| Suggestion {
-                        value,
+                        value: value.text,
                         span,
+                        append_whitespace: value.append_space,
                         ..Suggestion::default()
                     })
                     .collect()
