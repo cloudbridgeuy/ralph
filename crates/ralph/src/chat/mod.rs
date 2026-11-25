@@ -95,9 +95,9 @@ pub(crate) use switch::ChatExit;
 pub(crate) const STORE_ENV: &str = "RALPH_CHAT_STORE";
 const REX_SESSION_ENV: &str = "REX_SESSION";
 const PROMPT_ROWS: usize = 256;
-pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
-pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
-pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
+pub(crate) use ralph_server::config::{
+    CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, WRAP_WIDTH_ENV,
+};
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
     let highlighter = Highlighter::with_config(config.clone()).unwrap_or_else(|e| {

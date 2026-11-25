@@ -18,6 +18,7 @@ mod claude;
 mod codex;
 mod cursor;
 mod empty_submit;
+mod env;
 #[cfg(test)]
 mod hold_progress_tests;
 mod layers;
@@ -41,6 +42,10 @@ pub use chat_settings::PromptFiles;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
 pub use cursor::CursorSection;
+pub use env::{
+    env_settings, winning_override, Origin, Setting, CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV,
+    RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV, WRAP_WIDTH_ENV,
+};
 pub use layers::{leaf_sources, Row, Source};
 pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;

@@ -45,15 +45,10 @@ use crate::render::pill_style::PillStyle;
 use crate::theme_slots::ResolveColors;
 use crate::tool_theme::ToolColors;
 use crate::ui_theme::UiColors;
+use ralph_server::config::{RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV};
 
 /// Default theme name used when no theme is specified.
 pub const DEFAULT_THEME: &str = "base16-ocean.dark";
-
-/// Environment variable for theme selection.
-pub const RALPH_THEME_ENV: &str = "RALPH_THEME";
-
-/// Environment variable for disabling background colors.
-pub const RALPH_NO_BACKGROUND_ENV: &str = "RALPH_NO_BACKGROUND";
 
 /// Error type for theme operations.
 #[derive(Debug, thiserror::Error)]
