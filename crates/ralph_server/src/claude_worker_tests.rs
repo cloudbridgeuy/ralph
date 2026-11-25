@@ -59,6 +59,15 @@ fn run(mode: PermissionMode, lines: &[&str]) -> Run {
 }
 
 fn run_after(mode: PermissionMode, setup: impl FnOnce(&Shared), lines: &[&str]) -> Run {
+    run_with(mode, false, setup, lines)
+}
+
+fn run_with(
+    mode: PermissionMode,
+    scheduled: bool,
+    setup: impl FnOnce(&Shared),
+    lines: &[&str],
+) -> Run {
     let dir = TempDir::new().unwrap();
     let store = dir.path();
     let sink = Sink::default();
@@ -71,6 +80,7 @@ fn run_after(mode: PermissionMode, setup: impl FnOnce(&Shared), lines: &[&str]) 
         events: Arc::clone(&events),
         permissions: PermissionQueue::new("p".into(), "w".into(), inbox(), Arc::clone(&events)),
         mode,
+        scheduled,
         store: store.to_path_buf(),
         heartbeat: Heartbeat::new(store.join("activity"), store.join("gone")),
         markers: WorkerMarkers::new(store, "w"),
@@ -155,6 +165,33 @@ fn a_read_mcptools_call_is_allowed_without_asking_in_both_modes() {
             run.written()
         );
     }
+}
+
+#[test]
+fn a_scheduled_worker_denies_and_reports_in_both_modes_and_never_queues() {
+    for mode in [PermissionMode::Yolo, PermissionMode::Ask] {
+        let ask = mcptools_ask("w1", r#"{"allowWrites":true}"#);
+        let run = run_with(mode, true, |_| {}, &[&ask]);
+        assert!(run.permission_events().is_empty());
+        assert!(
+            run.written().contains(r#""behavior":"deny""#),
+            "{}",
+            run.written()
+        );
+        let reports = run.reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].worker, "w");
+        assert_eq!(reports[0].status, "blocked");
+        assert!(reports[0].text.contains("mcp__mcptools__execute"));
+    }
+}
+
+#[test]
+fn a_scheduled_worker_reads_through_mcptools_without_a_report() {
+    let ask = mcptools_ask("r1", r#"{"code":"return 1;"}"#);
+    let run = run_with(PermissionMode::Ask, true, |_| {}, &[&ask]);
+    assert!(run.written().contains(r#""behavior":"allow""#));
+    assert!(run.reports().is_empty());
 }
 
 #[test]

@@ -45,16 +45,16 @@ The argv is `/bin/sh -c <isolate> <shell> <flags> <restore> <program> <args...>`
 
 ## Scheduled workers: unattended permissions
 
-A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. The headless hosts do not call them yet; until they do, a scheduled headless worker still queues requests for a person.
+A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. The claude host calls them. The other headless hosts do not call them yet; until they do, a scheduled worker there still queues requests for a person.
 
 | Harness | Rule | Result |
 | --- | --- | --- |
-| claude | `unattended_claude_answer`: allow a read-only mcptools call, deny every other request. `scheduled_claude_mode` forces native mode `auto`; `scheduled_disallowed_args` adds `--disallowedTools` for git push, gh pr, gh api, and for mcptools `execute` and `call_tool` when mcptools is copied (the same list as claude-tmux, decision A of GUZ-1786). | deny line on stdio |
+| claude | `unattended_claude_answer`: allow a read-only mcptools call, deny every other request. `headless_claude_args` forces native mode `auto` and adds `--disallowedTools` for git push, gh pr, gh api, and for mcptools `execute` and `call_tool` when mcptools is copied (the same list as claude-tmux, decision A of GUZ-1786). | deny line on stdio |
 | codex | `unattended` picks the first `reject_once` option (`decline`). `scheduled_sandbox_mode` never goes wider than `workspace-write`: unset or `danger-full-access` becomes `workspace-write`, `read-only` stays. | decline |
 | cursor, agy (ACP) | `unattended` picks the first `reject_once` option; with none, the host answers `Cancelled`. | reject or cancel |
 | opencode | `unattended` picks the `reject_once` option (`reject`). | reject |
 
-`unattended` allows only the `ralph-worker` report and set_status tools, by identity. On every denial the host posts `unattended_denied_report`, a `blocked` report, so the task ends as `Attention` even when the model never reports.
+`unattended` allows only the `ralph-worker` report and set_status tools, by identity. On every denial the host posts a `blocked` report, so the task ends as `Attention` even when the model never reports.
 
 Harnesses that raise few or no requests have little to deny, and no tool deny list: opencode (yolo is always on; only prompts the server raises reach ralph), cursor print mode (only shell commands reach the hook bridge; MCP calls are not gated) and agy under its yolo process flag. For these the push barrier is `guard::apply` (git hooks and refused remote URLs), not a deny list.
 

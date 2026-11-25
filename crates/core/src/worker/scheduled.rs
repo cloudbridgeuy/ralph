@@ -1,8 +1,8 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    deny_line, disallowed_tool_args, mcptools_decision, permission_response, BlockedContent,
-    ClaudePermission, McptoolsDecision, PermissionMode, PermissionOption, Report, ReportStatus,
-    SandboxMode, ALLOW_ONCE, SERVER_NAME, WORKER_PROMPT,
+    claude_args, deny_line, disallowed_tool_args, mcptools_decision, permission_response,
+    BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision, PermissionMode,
+    PermissionOption, Report, ReportStatus, SandboxMode, ALLOW_ONCE, SERVER_NAME, WORKER_PROMPT,
 };
 use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
 use std::ffi::OsString;
@@ -38,12 +38,16 @@ pub fn scheduled_disallowed_args(copied: &[String]) -> Vec<String> {
     args
 }
 
-pub fn scheduled_claude_mode(scheduled: bool, configured: PermissionMode) -> PermissionMode {
-    if scheduled {
-        PermissionMode::Yolo
-    } else {
-        configured
+pub fn headless_claude_args(options: &ClaudeArgs, scheduled: bool) -> Vec<String> {
+    if !scheduled {
+        return claude_args(options);
     }
+    let mut args = claude_args(&ClaudeArgs {
+        mode: PermissionMode::Yolo,
+        ..*options
+    });
+    args.extend(scheduled_disallowed_args(options.copied));
+    args
 }
 
 pub fn scheduled_sandbox_mode(configured: Option<SandboxMode>) -> SandboxMode {
@@ -78,21 +82,51 @@ pub fn unattended(content: &BlockedContent) -> Unattended<'_> {
         .unwrap_or(Unattended::Cancel)
 }
 
-pub fn unattended_claude_answer(ask: &ClaudePermission) -> String {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnattendedAnswer {
+    pub line: String,
+    pub report: Option<Report>,
+}
+
+pub fn unattended_claude_answer(
+    worker: &str,
+    at: &str,
+    ask: &ClaudePermission,
+) -> UnattendedAnswer {
     let id = &ask.content.request_id;
     match mcptools_decision(ask) {
-        McptoolsDecision::Read => permission_response(id, ALLOW_ONCE, &ask.input),
-        _ => deny_line(id),
+        McptoolsDecision::Read => UnattendedAnswer {
+            line: permission_response(id, ALLOW_ONCE, &ask.input),
+            report: None,
+        },
+        _ => UnattendedAnswer {
+            line: deny_line(id),
+            report: Some(denied_report(worker, at, &ask.content)),
+        },
     }
 }
 
-pub fn unattended_denied_report(id: &str, at: &str, content: &BlockedContent) -> Report {
+impl Unattended<'_> {
+    pub fn denial_report(
+        &self,
+        worker: &str,
+        at: &str,
+        content: &BlockedContent,
+    ) -> Option<Report> {
+        match self {
+            Self::Allow(_) => None,
+            Self::Deny(_) | Self::Cancel => Some(denied_report(worker, at, content)),
+        }
+    }
+}
+
+fn denied_report(worker: &str, at: &str, content: &BlockedContent) -> Report {
     Report {
-        worker: id.to_string(),
+        worker: worker.to_string(),
         at: at.to_string(),
         status: ReportStatus::Blocked.as_str().to_string(),
         text: format!(
-            "Scheduled worker {id} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
+            "Scheduled worker {worker} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
             content.tool, content.summary
         ),
     }
@@ -150,8 +184,8 @@ pub fn fetch_timeout_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        claude_args as claude_launch_args, worker_command, worktree_add_args, wt_switch_args,
-        ClaudeArgs, ClaudeSession, ClaudeShell, ClaudeWorkerArgs,
+        worker_command, worktree_add_args, wt_switch_args, ClaudeSession, ClaudeShell,
+        ClaudeWorkerArgs,
     };
     use super::*;
     use serde_json::json;
@@ -478,31 +512,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_scheduled_claude_headless_worker_runs_in_auto_mode_whatever_is_configured() {
-        let mode_of = |mode: PermissionMode| {
-            let args = claude_launch_args(&ClaudeArgs {
-                model: None,
-                mcp_config: "/c.json",
-                attachments: Path::new("/a"),
-                mode,
-                session: ClaudeSession::New("sid"),
-                copied: &[],
-            });
-            mode_after_flag(&args).to_string()
+    fn headless(mode: PermissionMode, scheduled: bool, copied: &[String]) -> Vec<String> {
+        let options = ClaudeArgs {
+            model: None,
+            mcp_config: "/c.json",
+            attachments: Path::new("/a"),
+            mode,
+            session: ClaudeSession::New("sid"),
+            copied,
         };
-        assert_eq!(
-            mode_of(scheduled_claude_mode(true, PermissionMode::Ask)),
-            "auto"
-        );
-        assert_eq!(
-            mode_of(scheduled_claude_mode(true, PermissionMode::Yolo)),
-            "auto"
-        );
-        assert_eq!(
-            mode_of(scheduled_claude_mode(false, PermissionMode::Ask)),
-            "default"
-        );
+        headless_claude_args(&options, scheduled)
+    }
+
+    #[test]
+    fn a_scheduled_claude_headless_worker_runs_in_auto_mode_with_the_deny_list() {
+        let copied = [MCPTOOLS_SERVER.to_string()];
+        for mode in [PermissionMode::Ask, PermissionMode::Yolo] {
+            let args = headless(mode, true, &copied);
+            assert_eq!(mode_after_flag(&args), "auto");
+            let deny = scheduled_disallowed_args(&copied);
+            assert_eq!(args[args.len() - deny.len()..], deny[..]);
+        }
+    }
+
+    #[test]
+    fn an_unscheduled_claude_headless_worker_keeps_its_mode_and_has_no_deny_list() {
+        let args = headless(PermissionMode::Ask, false, &[]);
+        assert_eq!(mode_after_flag(&args), "default");
+        assert!(!args.iter().any(|arg| arg == "--disallowedTools"));
     }
 
     #[test]
@@ -563,14 +600,11 @@ mod tests {
     }
 
     #[test]
-    fn unattended_claude_allows_reads_and_denies_everything_else() {
-        let allowed = |ask: &ClaudePermission| {
-            unattended_claude_answer(ask).contains(r#""behavior":"allow""#)
-        };
-        assert!(allowed(&claude_ask(
-            "mcp__mcptools__execute",
-            json!({"code": "x"})
-        )));
+    fn unattended_claude_allows_reads_and_denies_everything_else_with_a_report() {
+        let answer = |ask: &ClaudePermission| unattended_claude_answer("sched-1", "now", ask);
+        let read = answer(&claude_ask("mcp__mcptools__execute", json!({"code": "x"})));
+        assert!(read.line.contains(r#""behavior":"allow""#), "{}", read.line);
+        assert_eq!(read.report, None);
         for ask in [
             claude_ask("mcp__mcptools__execute", json!({"allowWrites": true})),
             claude_ask("mcp__mcptools__call_tool", json!({"allowSpend": true})),
@@ -578,25 +612,39 @@ mod tests {
             claude_ask("mcp__mcptools__find_tools", json!({})),
             claude_ask("Bash", json!({"command": "ls"})),
         ] {
-            let answer = unattended_claude_answer(&ask);
-            assert!(answer.contains(r#""behavior":"deny""#), "{answer}");
-            assert!(answer.contains(r#""request_id":"r1""#), "{answer}");
+            let denied = answer(&ask);
+            assert!(
+                denied.line.contains(r#""behavior":"deny""#),
+                "{}",
+                denied.line
+            );
+            assert!(
+                denied.line.contains(r#""request_id":"r1""#),
+                "{}",
+                denied.line
+            );
+            let report = denied.report.unwrap();
+            assert_eq!(report.worker, "sched-1");
+            assert!(report.text.contains(&ask.content.tool));
         }
     }
 
     #[test]
-    fn the_denied_report_blocks_the_worker_and_names_the_tool() {
-        let report = unattended_denied_report(
-            "sched-1",
-            "2026-11-24T10:00:00Z",
-            &content("Bash", Vec::new()),
-        );
-        assert_eq!(report.worker, "sched-1");
-        assert_eq!(report.at, "2026-11-24T10:00:00Z");
-        assert_eq!(report.status, ReportStatus::Blocked.as_str());
-        assert!(report.text.contains("Bash"));
-        assert!(report.text.contains("do it"));
-        assert!(report.text.contains("nobody was watching"));
+    fn a_denial_or_cancel_reports_blocked_and_an_allow_reports_nothing() {
+        let bash = content("Bash", codex_options());
+        for verdict in [Unattended::Deny(&bash.options[1]), Unattended::Cancel] {
+            let report = verdict.denial_report("sched-1", "2026-11-24T10:00:00Z", &bash);
+            assert!(report.is_some(), "{verdict:?}");
+            let report = report.unwrap();
+            assert_eq!(report.worker, "sched-1");
+            assert_eq!(report.at, "2026-11-24T10:00:00Z");
+            assert_eq!(report.status, ReportStatus::Blocked.as_str());
+            assert!(report.text.contains("Bash"));
+            assert!(report.text.contains("do it"));
+            assert!(report.text.contains("nobody was watching"));
+        }
+        let allow = Unattended::Allow(&bash.options[0]);
+        assert_eq!(allow.denial_report("sched-1", "now", &bash), None);
     }
 
     #[test]
