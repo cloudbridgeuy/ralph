@@ -8,6 +8,7 @@ use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
 use crate::chat_rerender::parse_rerender_args;
 use crate::chat_send_it::{parse_send_it_args, SendItCommand};
+use crate::chat_spec::Keyword;
 use crate::chat_stage::{parse_stage_args, StageCommand};
 use crate::chat_switch::SwitchTarget;
 use crate::chat_thread_auto::PendingClose;
@@ -133,6 +134,32 @@ pub enum Route {
     Help,
     Config,
     Ignore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InboxSub {
+    Next,
+    List,
+    Peek,
+    Drop,
+}
+
+impl Keyword for InboxSub {
+    const ALL: &'static [Self] = &[
+        InboxSub::Next,
+        InboxSub::List,
+        InboxSub::Peek,
+        InboxSub::Drop,
+    ];
+
+    fn word(self) -> &'static str {
+        match self {
+            InboxSub::Next => "next",
+            InboxSub::List => "list",
+            InboxSub::Peek => "peek",
+            InboxSub::Drop => "drop",
+        }
+    }
 }
 
 fn history_route(tool: HistoryTool, words: &str, cursor: Option<&str>) -> Route {
@@ -323,17 +350,22 @@ fn hold_route(args: &str, line: &str, targets: &BTreeSet<String>) -> Route {
 }
 
 fn inbox_route(args: &str) -> Route {
-    let mut tokens = args.split_whitespace();
-    match (tokens.next(), tokens.next(), tokens.next()) {
-        (None, ..) => Route::ReadInbox(Selection::All),
-        (Some("next"), None, _) => Route::ReadInbox(Selection::Next),
-        (Some("list"), None, _) => Route::ListInbox,
-        (Some("peek"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
-        (Some("drop"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::DropInbox),
-        (Some(n), None, _) => n
+    let words: Vec<&str> = args.split_whitespace().collect();
+    let Some((first, rest)) = words.split_first() else {
+        return Route::ReadInbox(Selection::All);
+    };
+    match (InboxSub::parse(first), rest) {
+        (Some(InboxSub::Next), []) => Route::ReadInbox(Selection::Next),
+        (Some(InboxSub::List), []) => Route::ListInbox,
+        (Some(InboxSub::Peek), [n]) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
+        (Some(InboxSub::Drop), [n]) => n.parse().map_or(Route::InboxUsage, Route::DropInbox),
+        (Some(InboxSub::Next | InboxSub::List | InboxSub::Peek | InboxSub::Drop), _) => {
+            Route::InboxUsage
+        }
+        (None, []) => first
             .parse()
             .map_or(Route::InboxUsage, |p| Route::ReadInbox(Selection::At(p))),
-        _ => Route::InboxUsage,
+        (None, _) => Route::InboxUsage,
     }
 }
 

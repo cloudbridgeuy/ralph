@@ -1,8 +1,13 @@
 use crate::chat_help::Command;
 use crate::chat_hold::{word_completion, HoldCompletion};
+use crate::chat_send_it::SendItSub;
+use crate::chat_stage::{Kind, StageVerb};
+use crate::chat_status::InboxSub;
 use crate::chat_thread::ThreadName;
 use crate::chat_thread_cmd::{MergeFlag, OpenFlag, ThreadSub};
 use crate::chat_thread_model::THREAD_MODEL_ALIASES;
+use crate::schedule_command::ScheduleSub;
+use crate::watch_command::{WatchFlag, WatchSub};
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -124,16 +129,16 @@ fn command_offers(
 ) -> Offers {
     match command {
         Command::Thread => thread_offers(args, partial, facts),
+        Command::Inbox => first_word::<InboxSub>(args),
+        Command::Watch => watch_offers(args),
+        Command::Schedule => first_word::<ScheduleSub>(args),
+        Command::SendIt => first_word::<SendItSub>(args),
+        Command::Stage => stage_offers(args),
         Command::Help
-        | Command::Inbox
-        | Command::Watch
-        | Command::Schedule
         | Command::Diff
         | Command::Workers
         | Command::Hold
         | Command::Nudge
-        | Command::SendIt
-        | Command::Stage
         | Command::Config
         | Command::View
         | Command::Rerender
@@ -143,6 +148,37 @@ fn command_offers(
         | Command::Recall
         | Command::Search
         | Command::Rules => Offers::default(),
+    }
+}
+
+fn every<K: Keyword>() -> Offers {
+    Offers::keywords(K::ALL.iter().copied().map(K::word))
+}
+
+fn first_word<K: Keyword>(args: &[&str]) -> Offers {
+    match args {
+        [] => every::<K>(),
+        _ => Offers::default(),
+    }
+}
+
+fn watch_offers(args: &[&str]) -> Offers {
+    let [word] = args else {
+        return first_word::<WatchSub>(args);
+    };
+    match WatchSub::parse(word) {
+        Some(WatchSub::Start) => every::<WatchFlag>(),
+        Some(WatchSub::List | WatchSub::Stop) | None => Offers::default(),
+    }
+}
+
+fn stage_offers(args: &[&str]) -> Offers {
+    let [word] = args else {
+        return first_word::<StageVerb>(args);
+    };
+    match StageVerb::parse(word) {
+        Some(StageVerb::Add) => every::<Kind>(),
+        Some(StageVerb::Done | StageVerb::Edit) | None => Offers::default(),
     }
 }
 

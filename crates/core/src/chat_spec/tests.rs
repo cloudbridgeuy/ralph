@@ -184,3 +184,36 @@ fn every_offered_flag_is_accepted_by_the_parser() {
         }
     }
 }
+
+#[test]
+fn command_words_are_offered_in_the_first_position() {
+    let cases: [(&str, &[&str]); 7] = [
+        ("/inbox ", &["drop", "list", "next", "peek"]),
+        ("/watch ", &["list", "start", "stop"]),
+        ("/watch start ", &["--persistent"]),
+        ("/schedule ", &["cancel", "list"]),
+        ("/stage ", &["add", "done", "edit"]),
+        ("/stage add ", &["decision", "followup", "owed"]),
+        (
+            "/send-it ",
+            &["edit", "go", "off", "save", "status", "templates"],
+        ),
+    ];
+    for (line, offered) in cases {
+        assert_eq!(complete(line, None), words(offered), "{line}");
+    }
+}
+
+#[test]
+fn ids_and_free_text_are_not_completed() {
+    for line in [
+        "/inbox peek ",
+        "/watch stop ",
+        "/watch start make ",
+        "/schedule cancel ",
+        "/stage done ",
+        "/send-it fix the ",
+    ] {
+        assert_eq!(complete(line, None), None, "{line}");
+    }
+}
