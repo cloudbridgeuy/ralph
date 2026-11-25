@@ -1,5 +1,6 @@
 use crate::schedule_worker::worker_id;
 use crate::watch::{WatchKind, WatchSpec};
+use crate::worker::{Worker, WorkerState};
 use chrono::{
     DateTime, Duration as ChronoDuration, FixedOffset, LocalResult, NaiveTime, SecondsFormat,
     TimeZone, Utc,
@@ -148,13 +149,22 @@ pub fn due(tasks: &[Task], now: DateTime<Utc>) -> Vec<&Task> {
         .collect()
 }
 
-pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>, kept_workers: &[String]) -> Vec<Task> {
+fn outlives_restart(workers: &[Worker], id: &str) -> bool {
+    workers
+        .iter()
+        .filter(|worker| worker.id().as_str() == id)
+        .any(|worker| match worker.state() {
+            WorkerState::Running | WorkerState::Saved(_) => true,
+        })
+}
+
+pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>, workers: &[Worker]) -> Vec<Task> {
     tasks
         .into_iter()
         .map(|task| match task.status {
             TaskStatus::Running
                 if matches!(task.kind, TaskKind::Worker { .. })
-                    && kept_workers.contains(&worker_id(&task.id)) =>
+                    && outlives_restart(workers, &worker_id(&task.id)) =>
             {
                 task
             }
@@ -328,6 +338,7 @@ fn indent_brief(brief: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::{HarnessId, SessionRef, WorkerId};
 
     fn utc(text: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(text)
@@ -607,11 +618,28 @@ mod tests {
         }
     }
 
+    fn alive(id: &str) -> Worker {
+        Worker::running(WorkerId::parse(id).unwrap(), HarnessId::Claude)
+    }
+
+    fn saved(id: &str) -> Worker {
+        let session = SessionRef::new(format!("/store/claude-session/{id}").into());
+        Worker::saved(WorkerId::parse(id).unwrap(), HarnessId::Claude, session).unwrap()
+    }
+
     #[test]
     fn restore_keeps_a_running_worker_whose_harness_is_alive() {
         let now = utc("2026-01-01T10:00:00Z");
         let running = worker_in("a", TaskStatus::Running);
-        let restored = plan_restore(vec![running.clone()], now, &["sched-a".to_string()]);
+        let restored = plan_restore(vec![running.clone()], now, &[alive("sched-a")]);
+        assert_eq!(restored, vec![running]);
+    }
+
+    #[test]
+    fn restore_keeps_a_running_worker_with_a_saved_session() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let running = worker_in("a", TaskStatus::Running);
+        let restored = plan_restore(vec![running.clone()], now, &[saved("sched-a")]);
         assert_eq!(restored, vec![running]);
     }
 
@@ -624,7 +652,7 @@ mod tests {
                 worker_in("b", TaskStatus::Running),
             ],
             now,
-            &["sched-b".to_string()],
+            &[saved("sched-b")],
         );
         assert_eq!(restored[0].status, TaskStatus::Pending);
         assert!(restored[0].late);
@@ -638,7 +666,7 @@ mod tests {
         let restored = plan_restore(
             vec![task("a", "2026-01-01T09:00:00Z", TaskStatus::Running)],
             now,
-            &["sched-a".to_string()],
+            &[alive("sched-a")],
         );
         assert_eq!(restored[0].status, TaskStatus::Pending);
     }
