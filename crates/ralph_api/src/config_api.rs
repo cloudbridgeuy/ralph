@@ -56,11 +56,38 @@ fn redact_quoted(text: &str) -> String {
 
 pub(crate) fn why_text(display: &str) -> String {
     let first = display.lines().next().unwrap_or_default();
-    redact_quoted(first)
-        .split(' ')
-        .map(mask_path)
-        .collect::<Vec<_>>()
-        .join(" ")
+    mask_words(&redact_quoted(first))
+}
+
+fn spaced_path_end(words: &[&str]) -> Option<usize> {
+    let first = words.first()?;
+    let start = first.find(is_path_char)?;
+    let path = &first[start..];
+    if !path.starts_with('/') || path.ends_with([',', ';', ':', '.', ')']) {
+        return None;
+    }
+    words.iter().position(|word| word.ends_with(':'))
+}
+
+fn mask_words(text: &str) -> String {
+    let words: Vec<&str> = text.split(' ').collect();
+    let mut out = Vec::with_capacity(words.len());
+    let mut index = 0;
+    while index < words.len() {
+        match spaced_path_end(&words[index..]) {
+            Some(offset) => {
+                let word = words[index];
+                let lead = &word[..word.find(is_path_char).unwrap_or(0)];
+                out.push(format!("{lead}{PATH_MARK}:"));
+                index += offset + 1;
+            }
+            None => {
+                out.push(mask_path(words[index]));
+                index += 1;
+            }
+        }
+    }
+    out.join(" ")
 }
 
 fn failure(error_value: &ConfigError) -> ApiResponse {
@@ -291,6 +318,15 @@ mod tests {
             why_text("bad \"a\\\"b\" then \"c\""),
             "bad \"[redacted]\" then \"[redacted]\""
         );
+    }
+
+    #[test]
+    fn why_masks_a_path_with_spaces_up_to_the_colon() {
+        let why = why_text(
+            "Failed to read /Users/x/Library/Application Support/ralph/config.toml: bad value",
+        );
+        assert_eq!(why, "Failed to read <path>: bad value");
+        assert!(!why.contains("Support"));
     }
 
     #[test]
