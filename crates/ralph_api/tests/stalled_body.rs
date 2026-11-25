@@ -126,6 +126,8 @@ fn start_limited(read: Duration) -> (u16, String, Arc<AtomicBool>, std::thread::
         version: "0.0.0-test".to_string(),
         tokens_css: String::new(),
         cookie_name: cookie_name(port),
+        global_config: std::env::temp_dir().join("ralph-stalled-global.toml"),
+        env: |_| None,
     };
     let token = Token::generate().unwrap();
     let secret = token.as_str().to_string();

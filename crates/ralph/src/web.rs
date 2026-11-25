@@ -141,6 +141,8 @@ fn api_config(store: PathBuf, bound: SocketAddr, version: &str, tokens_css: Stri
         version: version.to_string(),
         tokens_css,
         cookie_name: cookie_name(bound.port()),
+        global_config: config_path(),
+        env: |name| std::env::var(name).ok(),
     }
 }
 

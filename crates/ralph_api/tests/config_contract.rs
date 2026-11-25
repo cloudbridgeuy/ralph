@@ -54,6 +54,21 @@ fn config_200_shape_and_redaction() {
 }
 
 #[test]
+fn config_global_rows_come_from_the_injected_global_path() {
+    let server =
+        TestServer::start_with_dirs(|_| {}, |dir| write_config(dir, "[chat]\nwrap_width = 70\n"));
+    let value = json_of(&get(&server));
+    let wrap = value["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["section"] == "chat" && row["key"] == "wrap_width")
+        .unwrap();
+    assert_eq!(wrap["source"], "global");
+    assert_eq!(wrap["value"], 70);
+}
+
+#[test]
 fn config_invalid_is_422_without_paths() {
     let server = TestServer::start_with_store(|dir| write_config(dir, "[chat\nwrap_width = 1\n"));
     let reply = get(&server);

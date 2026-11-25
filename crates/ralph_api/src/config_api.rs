@@ -1,5 +1,5 @@
 use crate::route::{error, json_ok, json_response, ApiConfig, ApiRequest, ApiResponse};
-use ralph_server::config::{config_path, config_rows, ConfigError};
+use ralph_server::config::{config_rows, ConfigError};
 use serde_json::json;
 use std::path::Path;
 
@@ -117,9 +117,7 @@ pub(crate) fn config_response(
 }
 
 pub(crate) fn config(_request: &ApiRequest, config: &ApiConfig) -> ApiResponse {
-    config_response(&config_path(), &config.store, |name| {
-        std::env::var(name).ok()
-    })
+    config_response(&config.global_config, &config.store, config.env)
 }
 
 #[cfg(test)]
@@ -327,6 +325,60 @@ mod tests {
         );
         assert_eq!(why, "Failed to read <path>: bad value");
         assert!(!why.contains("Support"));
+    }
+
+    fn text_contains_row(value: &Value, key: &str) -> bool {
+        value["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["key"] == key)
+    }
+
+    fn theme_env(name: &str) -> Option<String> {
+        (name == "RALPH_THEME").then(|| "dracula".to_string())
+    }
+
+    fn handler_config(
+        global: &TempDir,
+        store: &TempDir,
+        env: fn(&str) -> Option<String>,
+    ) -> ApiConfig {
+        ApiConfig {
+            store: store.path().to_path_buf(),
+            allowed_hosts: Vec::new(),
+            version: "0".to_string(),
+            tokens_css: String::new(),
+            cookie_name: "c".to_string(),
+            global_config: global.path().join("config.toml"),
+            env,
+        }
+    }
+
+    fn get_request() -> ApiRequest {
+        ApiRequest {
+            method: "GET".to_string(),
+            path: "/api/config".to_string(),
+            query: String::new(),
+            host: None,
+            authorization: None,
+            cookies: Vec::new(),
+            body: Vec::new(),
+            content_type: None,
+            body_too_large: false,
+        }
+    }
+
+    #[test]
+    fn handler_uses_the_injected_env_and_global_path() {
+        let (g, s) = setup(Some("[chat]\nwrap_width = 70\n"), None);
+        let value = body(&config(&get_request(), &handler_config(&g, &s, theme_env)));
+        assert_eq!(row(&value, "theme", "name")["source"], "env");
+        assert_eq!(row(&value, "theme", "name")["redacted"], true);
+        assert_eq!(row(&value, "chat", "wrap_width")["source"], "global");
+        let (g2, s2) = setup(None, None);
+        let value = body(&config(&get_request(), &handler_config(&g2, &s2, no_env)));
+        assert!(!text_contains_row(&value, "wrap_width"));
     }
 
     #[test]

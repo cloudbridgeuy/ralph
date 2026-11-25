@@ -49,13 +49,15 @@ pub(crate) struct ApiResponse {
     pub set_cookie: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub store: PathBuf,
     pub allowed_hosts: Vec<String>,
     pub version: String,
     pub tokens_css: String,
     pub cookie_name: String,
+    pub global_config: PathBuf,
+    pub env: fn(&str) -> Option<String>,
 }
 
 pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResponse {
@@ -234,6 +236,8 @@ mod tests {
             version: "9.9.9".to_string(),
             tokens_css: ":root {\n  --r-font: x;\n}\n".to_string(),
             cookie_name: "ralph_token_1".to_string(),
+            global_config: PathBuf::from("/secret/global/config.toml"),
+            env: |_| None,
         }
     }
 
