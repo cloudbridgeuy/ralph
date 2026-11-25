@@ -1,4 +1,4 @@
-use crate::render::{empty, escape, pill, PillShape, Tone};
+use crate::render::{empty_compact, escape, pill, PillShape, Tone};
 
 /// A half-open range of entries `lo..hi` inside a thread of `total` entries.
 pub struct Extent {
@@ -129,7 +129,7 @@ fn items(nodes: &[TreeNode], level: usize) -> String {
 
 pub fn tree(nodes: &[TreeNode]) -> String {
     if nodes.is_empty() {
-        return format!("<r-tree>{}</r-tree>", empty("Nothing to show"));
+        return format!("<r-tree>{}</r-tree>", empty_compact("Nothing to show"));
     }
     format!(
         "<r-tree><ul role=\"tree\">{}</ul></r-tree>",

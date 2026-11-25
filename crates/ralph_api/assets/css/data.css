@@ -1,0 +1,159 @@
+r-kv {
+  display: block;
+}
+
+r-kv dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  column-gap: 2ch;
+}
+
+r-kv div {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+}
+
+r-kv dt {
+  min-width: 12ch;
+  color: var(--r-muted);
+  overflow-wrap: anywhere;
+}
+
+r-kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--r-ink-strong);
+}
+
+r-kv dd.src {
+  color: var(--r-muted);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+r-kv dd.src.set {
+  color: var(--r-muted);
+  font-weight: 500;
+}
+
+r-kv[two] dl {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+r-kv[inline] dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1ch;
+}
+
+r-kv[inline] div {
+  display: flex;
+  gap: 1ch;
+  margin-right: 3ch;
+}
+
+r-pill {
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  align-items: center;
+  gap: 0.5ch;
+  max-width: 100%;
+  padding: 0 1ch;
+  border: 1px solid currentColor;
+}
+
+r-pill > span {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+r-pill[shape="square"] {
+  border-radius: 0;
+}
+
+r-pill[shape="round"] {
+  border-radius: 999px;
+}
+
+r-pill .icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+}
+
+r-status {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+r-status .mark {
+  font-weight: 600;
+}
+
+r-pill[tone="ok"] {
+  color: var(--r-ok);
+  background: color-mix(in srgb, var(--r-ok) 8%, var(--r-bg));
+}
+
+r-status[tone="ok"] {
+  color: var(--r-ok);
+}
+
+r-pill[tone="bad"] {
+  color: var(--r-bad);
+  background: color-mix(in srgb, var(--r-bad) 8%, var(--r-bg));
+}
+
+r-status[tone="bad"] {
+  color: var(--r-bad);
+}
+
+r-pill[tone="warn"] {
+  color: var(--r-warn);
+  background: color-mix(in srgb, var(--r-warn) 8%, var(--r-bg));
+}
+
+r-status[tone="warn"] {
+  color: var(--r-warn);
+}
+
+r-pill[tone="info"] {
+  color: var(--r-info);
+  background: color-mix(in srgb, var(--r-info) 8%, var(--r-bg));
+}
+
+r-status[tone="info"] {
+  color: var(--r-info);
+}
+
+r-pill[tone="accent"] {
+  color: var(--r-accent);
+  background: color-mix(in srgb, var(--r-accent) 8%, var(--r-bg));
+}
+
+r-status[tone="accent"] {
+  color: var(--r-accent);
+}
+
+r-pill[tone="neutral"] {
+  color: var(--r-muted);
+  background: color-mix(in srgb, var(--r-muted) 8%, var(--r-bg));
+}
+
+r-status[tone="neutral"] {
+  color: var(--r-muted);
+}
+
+r-pill[variant="outline"] {
+  background: transparent;
+}
+

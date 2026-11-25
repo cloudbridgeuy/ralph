@@ -1,3 +1,4 @@
+use crate::chat_spec::Keyword;
 use crate::chat_status::Status;
 use crate::chat_suggestion::Suggestion;
 use crate::chat_thread::ThreadName;
@@ -21,15 +22,19 @@ pub enum Kind {
     Followup,
 }
 
-impl Kind {
-    fn name(self) -> &'static str {
+impl Keyword for Kind {
+    const ALL: &'static [Self] = &[Kind::Decision, Kind::Owed, Kind::Followup];
+
+    fn word(self) -> &'static str {
         match self {
             Kind::Decision => "decision",
             Kind::Owed => "owed",
             Kind::Followup => "followup",
         }
     }
+}
 
+impl Kind {
     fn expires(self) -> bool {
         self != Kind::Decision
     }
@@ -159,10 +164,10 @@ pub fn render(items: &[Item], status: &Status, thread: Option<&ThreadName>) -> S
         Some(reference) => format!(
             "{} {} {reference}: {}",
             item.id,
-            item.kind.name(),
+            item.kind.word(),
             item.text
         ),
-        None => format!("{} {} {}", item.id, item.kind.name(), item.text),
+        None => format!("{} {} {}", item.id, item.kind.word(), item.text),
     });
     let (needing, other): (Vec<_>, Vec<_>) = status
         .workers
@@ -342,6 +347,25 @@ pub fn edit(stage: Stage, id: &str, text: &str) -> Result<(Stage, Item), String>
     ))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageVerb {
+    Add,
+    Done,
+    Edit,
+}
+
+impl Keyword for StageVerb {
+    const ALL: &'static [Self] = &[StageVerb::Add, StageVerb::Done, StageVerb::Edit];
+
+    fn word(self) -> &'static str {
+        match self {
+            StageVerb::Add => "add",
+            StageVerb::Done => "done",
+            StageVerb::Edit => "edit",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StageCommand {
     Show,
@@ -353,21 +377,21 @@ pub enum StageCommand {
 
 pub fn parse_stage_args(args: &str) -> StageCommand {
     let (verb, rest) = split_word(args);
-    let parsed = match verb {
-        "" => Ok(StageCommand::Show),
-        "add" => {
+    let parsed = match (verb, StageVerb::parse(verb)) {
+        ("", _) => Ok(StageCommand::Show),
+        (_, Some(StageVerb::Add)) => {
             let (kind, text) = split_word(rest);
             parse_add(&json!({"kind": kind, "text": text})).map(StageCommand::Add)
         }
-        "done" => one_word(rest).map(StageCommand::Done),
-        "edit" => {
+        (_, Some(StageVerb::Done)) => one_word(rest).map(StageCommand::Done),
+        (_, Some(StageVerb::Edit)) => {
             let (id, text) = split_word(rest);
             one_line(Some(text), "text").map(|text| StageCommand::Edit {
                 id: id.to_string(),
                 text,
             })
         }
-        _ => Err(String::new()),
+        (_, None) => Err(String::new()),
     };
     parsed.unwrap_or(StageCommand::Usage)
 }
@@ -419,12 +443,10 @@ pub fn stage_done_tool() -> Value {
 }
 
 pub fn parse_add(args: &Value) -> Result<NewItem, String> {
-    let kind = match args["kind"].as_str() {
-        Some("decision") => Kind::Decision,
-        Some("owed") => Kind::Owed,
-        Some("followup") => Kind::Followup,
-        _ => return Err("kind must be decision, owed or followup.".to_string()),
-    };
+    let kind = args["kind"]
+        .as_str()
+        .and_then(Kind::parse)
+        .ok_or_else(|| "kind must be decision, owed or followup.".to_string())?;
     let text = one_line(args["text"].as_str(), "text")?;
     let reference = optional_line(args, "ref")?;
     Ok(NewItem {

@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
-const APP_CSS_CLASSES: [&str; 12] = [
+const APP_CSS_CLASSES: [&str; 18] = [
     "g",
     "chev",
     "id",
@@ -14,11 +14,16 @@ const APP_CSS_CLASSES: [&str; 12] = [
     "num",
     "clip",
     "state",
+    "aside",
+    "title",
+    "what",
+    "why",
+    "next",
+    "btn",
 ];
 
 fn memory_css() -> String {
-    let text = String::from_utf8(bytes_of("/assets/memory.css").to_vec()).unwrap();
-    format!("\n{text}")
+    format!("\n{}", include_str!("../../../assets/css/memory.css"))
 }
 
 fn script_classes(js: &str) -> BTreeSet<String> {
@@ -59,31 +64,47 @@ fn selector_classes_read_selector_lines_only() {
 }
 
 #[test]
-fn memory_css_is_served_and_linked() {
-    let sheet = find("/assets/memory.css").unwrap();
-    assert_eq!(sheet.content_type, "text/css; charset=utf-8");
-    assert!(!memory_css().trim().is_empty());
-    let html = shell();
-    let app = html
-        .find("<link rel=\"stylesheet\" href=\"/assets/app.css\">")
-        .unwrap();
-    let memory = html
-        .find("<link rel=\"stylesheet\" href=\"/assets/memory.css\">")
-        .unwrap();
-    assert!(app < memory);
+fn memory_css_is_in_the_app_sheet_last() {
+    assert!(find("/assets/memory.css").is_none());
+    assert!(!shell().contains("memory.css"));
+    let app = css();
+    let memory = memory_css();
+    let at = app.find(memory.trim_start()).unwrap();
+    assert!(at > app.find("r-tree button:focus-visible").unwrap());
+    assert!(app.ends_with(memory.trim_start()));
 }
 
 #[test]
 fn css_files_stay_under_1000_lines() {
-    let sheets = ["/assets/app.css", "/assets/memory.css"];
-    for path in sheets {
-        let lines = String::from_utf8(bytes_of(path).to_vec())
-            .unwrap()
-            .lines()
-            .count();
-        assert!(lines < 1000, "{path} has {lines} lines");
+    for (name, text) in [
+        ("css/base.css", include_str!("../../../assets/css/base.css")),
+        (
+            "css/table.css",
+            include_str!("../../../assets/css/table.css"),
+        ),
+        ("css/data.css", include_str!("../../../assets/css/data.css")),
+        (
+            "css/states.css",
+            include_str!("../../../assets/css/states.css"),
+        ),
+        (
+            "css/controls.css",
+            include_str!("../../../assets/css/controls.css"),
+        ),
+        ("css/code.css", include_str!("../../../assets/css/code.css")),
+        ("css/tree.css", include_str!("../../../assets/css/tree.css")),
+        (
+            "css/responsive.css",
+            include_str!("../../../assets/css/responsive.css"),
+        ),
+        (
+            "css/memory.css",
+            include_str!("../../../assets/css/memory.css"),
+        ),
+    ] {
+        let lines = text.lines().count();
+        assert!(lines < 1000, "{name} has {lines} lines");
     }
-    assert!(memory_css().lines().count() > 1);
 }
 
 #[test]
@@ -182,7 +203,10 @@ fn every_script_class_has_a_rule_and_every_memory_rule_is_used() {
         .iter()
         .filter(|name| !APP_CSS_CLASSES.contains(&name.as_str()))
     {
-        assert!(ruled.contains(name), "memory.css lacks a rule for .{name}");
+        assert!(
+            ruled.contains(name),
+            "css/memory.css lacks a rule for .{name}"
+        );
     }
     for name in &ruled {
         assert!(used.contains(name), "the script never sets .{name}");
@@ -200,23 +224,29 @@ fn the_bundled_memory_css_uses_only_role_tokens() {
 }
 
 #[test]
-fn btn_and_kbd_use_role_tokens_and_a_focus_ring() {
+fn the_pager_buttons_take_their_look_from_controls_and_memory_adds_layout_and_disabled() {
     let css = memory_css();
-    assert_declares(&css, ".btn", "border: 1px solid var(--r-line-strong);");
-    assert_declares(&css, ".btn", "border-radius: 3px;");
-    assert_declares(&css, ".btn", "padding: 0 1ch;");
-    assert_declares(&css, ".btn:hover", "background: var(--r-hover);");
+    assert!(!css.contains("\n.btn "));
+    assert!(!css.contains("\n.btn:"));
+    let controls = format!("\n{}", include_str!("../../../assets/css/controls.css"));
+    assert!(controls.contains("\n.btn {\n"));
+    assert_declares(&css, ".pager .btn", "display: inline-flex;");
+    assert_declares(&css, ".pager .btn", "align-items: center;");
     assert_declares(
         &css,
-        ".btn[aria-disabled=\"true\"]",
+        ".pager .btn[aria-disabled=\"true\"]",
         "color: var(--r-muted);",
     );
     assert_declares(
         &css,
-        ".btn:focus-visible",
-        "outline: 2px solid var(--r-accent);",
+        ".pager .btn[aria-disabled=\"true\"]",
+        "border-color: var(--r-line);",
     );
-    assert_declares(&css, ".btn:focus-visible", "outline-offset: 1px;");
+}
+
+#[test]
+fn kbd_uses_role_tokens() {
+    let css = memory_css();
     assert_declares(&css, "kbd", "font-size: 12px;");
     assert_declares(&css, "kbd", "border: 1px solid var(--r-line-strong);");
     assert_declares(&css, "kbd", "border-radius: 3px;");

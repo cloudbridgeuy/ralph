@@ -1,6 +1,6 @@
 # ralph web Command
 
-`ralph web [--store <DIR>] [--port <N>] [--tailscale]` serves a local HTTP API on 127.0.0.1. With `--tailscale` it also serves on the Tailscale IP of the machine (see [Tailscale](#tailscale)). It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `POST /api/render` and `GET /tokens.css`.
+`ralph web [--store <DIR>] [--port <N>] [--tailscale]` serves a local HTTP API on 127.0.0.1. With `--tailscale` it also serves on the Tailscale IP of the machine (see [Tailscale](#tailscale)). It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `GET /api/config`, `POST /api/render` and `GET /tokens.css`.
 
 ## Code Locations
 
@@ -19,7 +19,7 @@
 | Admit | `crates/ralph_api/src/admit.rs` | pure `admit()` and `MAX_HANDLERS`: the cap rule |
 | Server | `crates/ralph_api/src/server.rs` | `bind()`, `serve()` on tiny_http |
 | Assets | `crates/ralph_api/src/assets.rs` | embedded table: `find()` |
-| Asset files | `crates/ralph_api/assets/` | `index.html`, `app.css`, `memory.css`, `app.js`, `fonts/` |
+| Asset files | `crates/ralph_api/assets/` | `index.html`, `css/*.css` (including `css/memory.css`), `app.js`, `fonts/` |
 | Colour lint | `xtask/src/lint/web_colour.rs` | checks the files in `assets/` |
 | Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
 | Markdown | `crates/ralph_api/src/render/{prose,md_event,md_link,code}.rs` | `render_markdown()`: pulldown-cmark events to HTML inside `<r-prose>`; `code.rs` highlights fenced blocks |
@@ -113,8 +113,7 @@ Risk:
 | other method on `/api/render` | 405 with `Allow: POST` |
 | `GET /` with a valid `?token=` | 302 to `/` with `Set-Cookie` |
 | `GET /` with the cookie or Bearer token | 200 `text/html` shell, with a `Content-Security-Policy` |
-| `GET /assets/app.css` | 200 `text/css` |
-| `GET /assets/memory.css` | 200 `text/css` |
+| `GET /assets/app.css` | 200 `text/css`; the build joins `assets/css/*.css` in a fixed order |
 | `GET /assets/geist-mono.woff2` | 200 `font/woff2` |
 | other method on `/` or `/assets/*` | 405 with `Allow: GET` |
 | `GET /catalogue` | 200 `text/html` page with the same headers and CSP as the shell |
@@ -139,7 +138,7 @@ Every answer has `Cache-Control: no-store`. Every answer is JSON, except `/token
 The three memory routes read the chat store in `--store` (`thread=main`, the default) or a thread under `threads/<name>`. `thread` is `main` or a valid thread name. Each request reads the files once and never caches them. A thread list is read for each request.
 
 - Exposed: `log.jsonl` entries (role, time, full text), `tree.jsonl` summaries, thread names and their parked and merged flags.
-- Not exposed: `tags.jsonl`, analytics, `history.jsonl`, config, paths.
+- Not exposed: `tags.jsonl`, analytics, `history.jsonl`, paths. Config has its own [route](#config-route-and-screen).
 - The read takes no lock and writes nothing: no `LOCK`, no index, no new directory. It uses `ralph_server::chat::memory::peek`, so a half-written last log line and a tree node past the log are not shown.
 - Node fields in `/api/memory`: `id`, `lo`, `hi`, `leaf`, `summary`, `folded` and `stats` `{depth, children, blocks, summarised}`.
   - `depth` is the log2 of the node size. `children` is 2 for a block and 0 for a leaf.
@@ -151,23 +150,39 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 - The stats and the path are worked out in `ralph_api` from the tree and the entry count. There is no change in core.
 - Code: `crates/ralph_api/src/memory_api.rs` (pure response builders and the thin read), `memory/query.rs` (query parser), `memory/json.rs` (JSON bodies), `memory/stats.rs` (node and tree stats, `folded`), `memory/path.rs` (zoom path).
 
+## Config route and screen
+
+`GET /api/config` reads the merged `config.toml` (global file, then the store file, then environment overrides) once for each request and writes nothing. It takes no parameters.
+
+| Answer | When |
+|--------|------|
+| 200 `{"store":"<name>","rows":[{"section","key","value","source","redacted"}]}` | the config loads; `store` is the last path component; `source` is `default`, `global`, `store` or `env` |
+| 404 `{"error":"store not found"}` | the store directory is missing |
+| 422 `{"error":"config invalid","why":"<text>"}` | the config has an error; `why` is always the fixed text ``config.toml has an error; run `ralph config check` ``, never the error text |
+| 500 `{"error":"config unavailable"}` | the file cannot be read or serialised |
+| other method | 405 with `Allow: GET` |
+
+Redaction: a row has `redacted: true` and no value when its key is on the redact list (shells, editor, file and directory paths, MCP servers, prompts, permission and sandbox keys), or when its key is not on the safe list and the value looks sensitive (a path, a URL, `@`, `key=` or `token=`). The rule is `crates/ralph_server/src/config/redact.rs`. The handler is `crates/ralph_api/src/config_api.rs`.
+
+The shell shows the route as the second tab, `#/config`. It draws one `r-box` for each section, with the row count in the border. Each row is an `r-kv` line with the key, the value and the source as a pill (muted for `default`). A redacted row shows a muted `hidden` mark. No rows give an `r-empty` "No settings". A failed load gives an `r-error` "Config did not load" with the `why` text and a retry button. The contract is `crates/ralph_api/tests/config_screen_contract.rs`.
+
 ## Embedded assets
 
 - The files in `crates/ralph_api/assets/` are in the binary through `include_bytes!`. There is no build step.
 - The CSP is `default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Assets also send `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
-- The shell loads two style sheets, `app.css` and then `memory.css` (both in `src/assets.rs`), and one script, `/app.js` (`<script src="/app.js" defer>`, same origin, so the CSP is unchanged: no `'unsafe-inline'`). It has no inline script and no `style=`. Its nav links use `#/name`.
+- The shell loads one style sheet, `/assets/app.css`, and one script, `/app.js` (`<script src="/app.js" defer>`, same origin, so the CSP is unchanged: no `'unsafe-inline'`). It has no inline script and no `style=`. Its nav links use `#/name`.
 - The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
 - `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.
 - The `[web]` font default starts with `"Geist Mono"`.
 - `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. Thirteen are built: r-box, r-rule, r-table, r-kv, r-tree, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code and r-prose. The fourteenth, r-graph, passes the lint but has no builder yet. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint. It does not scan `url(...)` contents or comments (`/* */`, and `//` in `.js` and `.mjs` only), and it does not read a css id selector such as `#add` as a hex colour. A `color-mix()` may take a `var(--r-*)` token as its percentage. In `.css` files it judges each declaration as one statement, even when it spans lines; HTML `style=` and `<style>` content stay judged line by line.
-- `memory.css` holds the memory screen rules. `app.css` stays at 933 lines and takes no new screen rules. The test `css_files_stay_under_1000_lines` keeps every CSS file under 1,000 lines.
-- `memory.css` classes: `.tabs`, `.crumbs`, `.statline`, `.split`, `.detail`, `.summary`, `.pager`, `.btn` and `kbd`, plus the selected tree row and the focus rings. Read the file for the rules.
+- `css/memory.css` holds the memory screen rules and joins `app.css` after `css/responsive.css`. The test `css_files_stay_under_1000_lines` keeps every CSS file under 1,000 lines.
+- `css/memory.css` classes: `.tabs`, `.crumbs`, `.statline`, `.split`, `.detail`, `.summary`, `.pager` and `kbd`, plus the selected tree row and the focus rings. Read the file for the rules.
 - The colour lint scans every file that `git ls-files` lists under `assets/`. An untracked file is not scanned until `git add`.
 - A body of 32 KB or more goes out with chunked transfer encoding. The test client decodes it.
 
 ## Primitives
 
-Each primitive is a hyphenated tag that the server renders as plain HTML. A browser treats an unknown hyphenated tag as an inline element, and `app.css` styles it. The colour lint allows only these tags. The script `app.js` draws the memory screen with the same markup; see [Memory screen](#memory-screen).
+Each primitive is a hyphenated tag that the server renders as plain HTML. A browser treats an unknown hyphenated tag as an inline element, and the stylesheet styles it. The stylesheet is the files in `crates/ralph_api/assets/css/`, joined in order by `concat!` in `assets.rs` and served as `/assets/app.css`. The colour lint allows only these tags. The script `app.js` draws the memory screen with the same markup; see [Memory screen](#memory-screen).
 
 | Tag | Builder | Notes |
 |-----|---------|-------|
@@ -175,10 +190,10 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 | `r-rule` | `rule()` | `role="separator"` |
 | `r-table` | `table(headers, rows)`, `table_marked(headers, rows, marks)`, `table_state(headers, inner_html)` | `th scope="col"`; a short row is padded to the header count; `table_marked` sets `aria-selected="true"` or `class="open"` on chosen rows (the catalogue's `selected` state uses it); a column whose non-empty cells are all numbers gets `class="num"` on `th` and `td` (right, tabular digits); `table_state` puts one primitive (`r-empty`, `r-spinner` or `r-error`) in a `tr.state` row that spans every column; see [r-table look](#r-table-look) |
 | `r-kv` | `kv(pairs)` | a `dl` of `dt` and `dd` |
-| `r-pill` | `pill(tone, shape, icon, text)`, `pill_with(variant, …)` | shape `square` or `round`; tone fill is 8% of the role over `--r-bg`, which keeps 4.5:1 for every tone in both themes (checked in `roles.rs`); `variant="outline"` has no fill; the fill lives on the tone rules in `app.css`; optional inline SVG icon (check, cross, warning, info, dot, pause) with `aria-hidden`; the text is cut with `…` at 32ch, and text over 32 chars is also in `title` |
+| `r-pill` | `pill(tone, shape, icon, text)`, `pill_with(variant, …)` | shape `square` or `round`; tone fill is 8% of the role over `--r-bg`, which keeps 4.5:1 for every tone in both themes (checked in `roles.rs`); `variant="outline"` has no fill; the fill lives on the tone rules in `assets/css/data.css`; optional inline SVG icon (check, cross, warning, info, dot, pause) with `aria-hidden`; the text is cut with `…` at 32ch, and text over 32 chars is also in `title` |
 | `r-status` | `status(tone, text)` | `role="status"`, `aria-live="polite"`; a word (OK, Error, Warning, Info, Note) shows the tone, so colour is never the only signal |
-| `r-empty` | `empty(text)` | the empty state |
-| `r-error` | `error(text)` | `role="alert"` |
+| `r-empty` | `empty(what)`, `empty_next(what, next)`, `empty_compact(what)` | the empty state; a `span.what` and an optional `span.next`; `compact` drops the padding |
+| `r-error` | `error(what)`, `error_with(&ErrorParts)` | `role="alert"`; a `span.what` with an optional outline bad `r-pill` status code, an optional `span.why` and an optional `span.next`; every text is escaped; `compact` is one flex row with `next` on the right |
 | `r-spinner` | `spinner()` | `role="status"` with visually hidden "Loading" text |
 | `r-spark` | `spark_svg(values, w, h)` | returns `None` for an empty series; the caller renders `r-empty` |
 
@@ -186,9 +201,9 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 - Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent, neutral; `Shape`; `PillShape`; `PillVariant`; `Icon`), never from free text. The one exception is the `r-box` title: it goes into `aria-label`, escaped by `escape()`. `inner_html` of `frame()` must be built from these builders.
 - No builder writes a `style` attribute, because the CSP forbids inline style. No builder writes a raw colour. SVG uses `stroke="currentColor"` and classes.
 - `spark_points()` drops NaN and infinite values. A flat series and a single point draw a mid line. Huge values do not overflow.
-- `render_markdown(&str)` parses with tables, strikethrough and task lists. Its own emitter writes the HTML. Raw HTML is escaped as text, never passed through. Links keep `href` only for `http`, `https`, `mailto` and `#fragment`. An email autolink becomes a `mailto:` link. The check trims control characters and whitespace at both ends, drops control characters inside, writes each inner whitespace character as `%20`, and ignores case. A space inside the scheme gives no `href`. Other links keep their text without `href`. Links get `rel="noreferrer noopener"`. An image is never `<img>`: its alt text goes in a `<span>`. Tags nested deeper than 64 levels render as plain text. NUL bytes become U+FFFD. A table becomes `<table tabindex="0">`. A fenced or indented code block becomes `<r-code data-lang="rust"><pre tabindex="0"><code>…</code></pre></r-code>`. `highlight()` in `code.rs` uses the `two_face::syntax::extra_newlines()` set (built once in `prose.rs`) and the syntect `ClassedHTMLGenerator` with class prefix `t-`. There is no generated theme CSS; `app.css` maps the `t-*` scope classes to `--r-*` slots. `data-lang` is the first word of the info string, lower-cased, and must match `[a-z0-9+#-]{1,32}`; otherwise the attribute is dropped. An unknown language, no language, a block over 64 KiB, or a block with a line over 4 KiB, gives plain escaped text inside `r-code`. The `[theme]` syntax theme does not apply on the web.
+- `render_markdown(&str)` parses with tables, strikethrough and task lists. Its own emitter writes the HTML. Raw HTML is escaped as text, never passed through. Links keep `href` only for `http`, `https`, `mailto` and `#fragment`. An email autolink becomes a `mailto:` link. The check trims control characters and whitespace at both ends, drops control characters inside, writes each inner whitespace character as `%20`, and ignores case. A space inside the scheme gives no `href`. Other links keep their text without `href`. Links get `rel="noreferrer noopener"`. An image is never `<img>`: its alt text goes in a `<span>`. Tags nested deeper than 64 levels render as plain text. NUL bytes become U+FFFD. A table becomes `<table tabindex="0">`. A fenced or indented code block becomes `<r-code data-lang="rust"><pre tabindex="0"><code>…</code></pre></r-code>`. `highlight()` in `code.rs` uses the `two_face::syntax::extra_newlines()` set (built once in `prose.rs`) and the syntect `ClassedHTMLGenerator` with class prefix `t-`. There is no generated theme CSS; `assets/css/code.css` maps the `t-*` scope classes to `--r-*` slots. `data-lang` is the first word of the info string, lower-cased, and must match `[a-z0-9+#-]{1,32}`; otherwise the attribute is dropped. An unknown language, no language, a block over 64 KiB, or a block with a line over 4 KiB, gives plain escaped text inside `r-code`. The `[theme]` syntax theme does not apply on the web.
 - Goldens are in `crates/ralph_api/tests/golden/render/<primitive>_<state>.html`. Unit tests in `render/` compare them. The states are empty, sparse, dense, error and very-long where they apply, plus hostile text for escaping.
-- `app.css` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use role colours for everything except the `t-*` scope rules. Those rules use `--r-ansi-N` slots. Rows and inner rules use `--r-line`. Boxes, headers and code use `--r-line-strong`. The heavy box is the one deliberate exception. It uses a 2px `--r-ink` border for emphasis. Accent is only for focus (a 2px outline), links and the accent tone. The info tone and the accent tone differ. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
+- `assets/css/` holds the primitive styles, including `r-prose`, `r-code` and the `t-*` scope rules. They use role colours for everything except the `t-*` scope rules. Those rules use `--r-ansi-N` slots. Rows and inner rules use `--r-line`. Boxes, headers and code use `--r-line-strong`. The heavy box is the one deliberate exception. It uses a 2px `--r-ink` border for emphasis. Accent is only for focus (a 2px outline), links and the accent tone. The info tone and the accent tone differ. Code stays on one line and scrolls sideways inside `pre`. Both `pre` and a prose `table` carry `tabindex="0"`, so the keyboard can scroll them, and both show a `:focus-visible` outline. The spinner fades in after 200 ms from opacity 0, so a short load shows no spinner. `prefers-reduced-motion` turns its animation off.
 
 ## Catalogue
 
@@ -283,7 +298,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Memory screen
 
-- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `memory.css`.
+- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `css/memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
 - Stat line: from the root `stats`, for example `45 entries, 2 of 8 blocks summarised, last entry <time>`.
@@ -295,7 +310,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - Detail head (`r-kv`): range, entries, depth, children and summary (`none` or `summarised`). Only for a selected node.
   - The summary, rendered once. A node with no summary shows the muted text `no summary yet` (class `none`) in place of the text. There is no count, pill or border.
   - The entries of the node range, 20 rows a page, in an `r-table`. With no node the range is the whole thread.
-  - Columns `#`, `role` and `at` stay on one line (`white-space: nowrap` in `memory.css`; `app.css` lets table cells break anywhere, which cut them to one character). The text column takes the rest and ends with an ellipsis. In the stacked layout (760px or narrower) the three cells are the meta line and the text is the second line.
+  - Columns `#`, `role` and `at` stay on one line (`white-space: nowrap` in `css/memory.css`; the base table rules let table cells break anywhere, which cut them to one character). The text column takes the rest and ends with an ellipsis. In the stacked layout (760px or narrower) the three cells are the meta line and the text is the second line.
   - `at` shows `YYYY-MM-DD HH:MM` (UTC, from `compactAt`). The full time is in the `title` of the cell. A value that is not an ISO UTC time is shown as it is.
   - The pager.
 - Tree rows:
@@ -303,25 +318,25 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. It opens to show the full text.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
   - A block with no summary shows `no summary yet` in its row.
-  - Colours (role tokens only, set in `memory.css`): the role of an entry is in a `data-role` attribute, set only for `user` (`--r-ink`), `assistant` (`--r-accent`) and `worker` (`--r-info`). Other roles get no attribute and keep the inherited colour. It colours the `role` cell and the role in a leaf row (`#44 user`). Times (`.at`, in the table and in leaf rows) are `--r-muted`. Row summary text is `--r-ink`. The extent span is `--r-faint`. The `n` count stays `--r-muted` and range labels stay bold `--r-ink-strong`, both from `app.css`.
+  - Colours (role tokens only, set in `css/memory.css`): the role of an entry is in a `data-role` attribute, set only for `user` (`--r-ink`), `assistant` (`--r-accent`) and `worker` (`--r-info`). Other roles get no attribute and keep the inherited colour. It colours the `role` cell and the role in a leaf row (`#44 user`). Times (`.at`, in the table and in leaf rows) are `--r-muted`. Row summary text is `--r-ink`. The extent span is `--r-faint`. The `n` count stays `--r-muted` and range labels stay bold `--r-ink-strong`, both from `css/tree.css`.
   - Row fills: the fill is a `::before` on the `li`, placed in grid row 1 across all columns, so it never covers the child group. A hovered row gets `--r-hover` and a selected row gets `--r-selected`, both with a 2px `--r-accent` bar on the left. Selected wins over hover. A row whose child group is hovered is not drawn as hovered. The `::before` has `align-self: stretch`: the grid has `align-items: center`, which gave the empty pseudo-element a height of 0, so the old selected fill did not show.
 - Entries and paging:
   - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
   - The label reads `entries A–B of N`. A and B are absolute 0-based inclusive positions. With no node, N is the entry count. In a node, N is the node range `lo–hi-1`, as in the tree labels, so node 32-63 on its first page reads `entries 32–51 of 32–63`. An empty page reads `entries 0 of N` with the same N.
   - An entry row opens in place: it gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`, and a detail row below holds the rendered text. Click, Enter or Space toggles it. Only one row is open at a time.
-  - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`.
+  - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`. The `.btn` look comes from `css/controls.css`; `css/memory.css` only lays the links out and mutes a disabled one.
   - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `button`, `select`, `textarea` and editable fields (a focused tree row is a `button`), and with Ctrl, Meta or Alt.
 - Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
-- States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status, server message and a retry button), and 404 for an unknown thread or node. A slow detail load is dropped if you select another node first.
+- States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status code, server message as text and a `.btn` Retry button; the retry runs the same load again and moves focus to the new content or the new Retry button), and 404 for an unknown thread or node. A slow detail load is dropped if you select another node first.
 - Keyboard: Tab reaches the tabs, the breadcrumb links, one tree item (roving tabindex), the entry rows and the pager. Up and Down move between visible tree items. Right expands or goes to the first child. Left collapses or goes to the parent. Home and End go to the first and last item. Enter and Space open or close. Focus returns to the same tree item after a redraw. Links, `.btn`, entry rows and tree buttons show a `:focus-visible` outline.
 - Not shown: `tags.jsonl`, analytics, `history.jsonl`, paths.
-- Contract tests: `tests/memory_screen_contract.rs` (script served like the other assets, one `innerHTML`, no `eval(`, `style.`, `<img`, only primitive tags) and `src/assets/tests/memory.rs` (`memory.css` is served and linked after `app.css`, the 1,000 line cap, role tokens only, every class the script uses has a rule).
+- Contract tests: `tests/memory_screen_contract.rs` (script served like the other assets, one `innerHTML`, no `eval(`, `style.`, `<img`, only primitive tags) and `src/assets/tests/memory.rs` (`css/memory.css` is the last file in `app.css`, the 1,000 line cap, role tokens only, every class the script uses has a rule).
 - No JavaScript runner exists. The script tests are text checks on the source and on the CSS. No test runs the key handling, the focus moves or `replaceState`. Check those by hand in a browser.
 
 ## r-tree markup
 
-- `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty>…</r-empty></r-tree>`.
+- `tree(&[TreeNode])` in `render/tree.rs` builds `<r-tree><ul role="tree">…</ul></r-tree>`. No nodes gives `<r-tree><r-empty compact>…</r-empty></r-tree>`.
 - A `Branch` is `<li role="treeitem" aria-expanded aria-level><button type="button">guides, chevron, <span class="id">label</span></button>cells<ul role="group">…</ul></li>`. A `Leaf` has `<span class="label">` with the same parts and no button. A `Row` is `<li role="none">` and holds a ready `r-error` or `r-empty`.
 - Cells come from `Cells { count, extent, summary }`. They follow the label as `<span class="n">`, the extent bar and `<span class="sum">`. Each row is a CSS grid: `24ch 7ch 9ch 1fr`. The count column fits six digits. The nested `ul` spans all columns on row 2. The label column is fixed, so a deep label can clip.
 - Only native tags go inside `r-tree`, plus inline `svg`, `path`, `rect` and `r-pill`. The depth comes from `.g` guide spans, one per level below the first. `aria-level` starts at 1.

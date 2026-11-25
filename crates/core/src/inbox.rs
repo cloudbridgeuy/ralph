@@ -41,15 +41,59 @@ pub struct Entry {
     pub report: Report,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(from = "StoredLedger")]
-pub struct Ledger {
-    entries: Vec<Entry>,
+#[derive(Debug)]
+pub enum DecodeError {
+    NotJson(serde_json::Error),
+    MissingEntries,
+    EntriesNotArray,
+    BadEntry(serde_json::Error),
+    BadMessage(serde_json::Error),
 }
 
-#[derive(Deserialize)]
-struct StoredLedger {
-    entries: Vec<StoredEntry>,
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotJson(error) => write!(f, "not valid JSON: {error}"),
+            Self::MissingEntries => write!(f, "missing `entries` array"),
+            Self::EntriesNotArray => write!(f, "`entries` is not an array"),
+            Self::BadEntry(error) => write!(f, "malformed ledger entry: {error}"),
+            Self::BadMessage(error) => write!(f, "malformed message: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NotJson(error) | Self::BadEntry(error) | Self::BadMessage(error) => Some(error),
+            Self::MissingEntries | Self::EntriesNotArray => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Skipped {
+    pub index: Option<usize>,
+    pub source: Option<String>,
+    pub reason: DecodeError,
+}
+
+impl fmt::Display for Skipped {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.index, self.source.as_deref()) {
+            (Some(index), Some(source)) => {
+                write!(f, "entry #{} ({source}): {}", index + 1, self.reason)
+            }
+            (Some(index), None) => write!(f, "entry #{}: {}", index + 1, self.reason),
+            (None, Some(source)) => write!(f, "{source}: {}", self.reason),
+            (None, None) => write!(f, "{}", self.reason),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Ledger {
+    entries: Vec<Entry>,
 }
 
 #[derive(Deserialize)]
@@ -60,23 +104,88 @@ struct StoredEntry {
     report: Report,
 }
 
-impl From<StoredLedger> for Ledger {
-    fn from(stored: StoredLedger) -> Self {
-        Self {
-            entries: stored
-                .entries
-                .into_iter()
-                .filter(|e| !e.read)
-                .map(|e| Entry {
-                    source: e.source,
-                    report: e.report,
-                })
-                .collect(),
-        }
-    }
+pub fn decode_message(bytes: &[u8]) -> Result<Report, DecodeError> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(DecodeError::NotJson)?;
+    serde_json::from_value(value).map_err(DecodeError::BadMessage)
 }
 
 impl Ledger {
+    pub fn decode(bytes: &[u8]) -> (Self, Vec<Skipped>) {
+        let value: serde_json::Value = match serde_json::from_slice(bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                return (
+                    Self::default(),
+                    vec![Skipped {
+                        index: None,
+                        source: None,
+                        reason: DecodeError::NotJson(error),
+                    }],
+                );
+            }
+        };
+        let items = match value {
+            serde_json::Value::Object(mut map) => match map.remove("entries") {
+                Some(serde_json::Value::Array(items)) => items,
+                Some(_) => {
+                    return (
+                        Self::default(),
+                        vec![Skipped {
+                            index: None,
+                            source: None,
+                            reason: DecodeError::EntriesNotArray,
+                        }],
+                    );
+                }
+                None => {
+                    return (
+                        Self::default(),
+                        vec![Skipped {
+                            index: None,
+                            source: None,
+                            reason: DecodeError::MissingEntries,
+                        }],
+                    );
+                }
+            },
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_)
+            | serde_json::Value::Array(_) => {
+                return (
+                    Self::default(),
+                    vec![Skipped {
+                        index: None,
+                        source: None,
+                        reason: DecodeError::MissingEntries,
+                    }],
+                );
+            }
+        };
+        let mut entries = Vec::new();
+        let mut skipped = Vec::new();
+        for (index, raw) in items.into_iter().enumerate() {
+            let source = raw
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            match serde_json::from_value::<StoredEntry>(raw) {
+                Ok(entry) if entry.read => {}
+                Ok(entry) => entries.push(Entry {
+                    source: entry.source,
+                    report: entry.report,
+                }),
+                Err(error) => skipped.push(Skipped {
+                    index: Some(index),
+                    source,
+                    reason: DecodeError::BadEntry(error),
+                }),
+            }
+        }
+        (Self { entries }, skipped)
+    }
+
     pub fn ingest(&mut self, arrivals: Vec<(String, Report)>) {
         for (source, report) in arrivals {
             if self.entries.iter().any(|e| e.source == source) {
@@ -400,7 +509,8 @@ mod tests {
                 {"id": 3, "source": "c", "report": report("c")},
             ],
         });
-        let ledger: Ledger = serde_json::from_value(old).unwrap();
+        let (ledger, skipped) = Ledger::decode(&serde_json::to_vec(&old).unwrap());
+        assert!(skipped.is_empty());
         assert_eq!(sources(&ledger), ["b", "c"]);
     }
 
@@ -416,7 +526,9 @@ mod tests {
         };
         assert_eq!(sorted_keys(&value), ["entries"]);
         assert_eq!(sorted_keys(&value["entries"][0]), ["report", "source"]);
-        assert_eq!(serde_json::from_value::<Ledger>(value).unwrap(), ledger);
+        let (decoded, skipped) = Ledger::decode(&serde_json::to_vec(&value).unwrap());
+        assert!(skipped.is_empty());
+        assert_eq!(decoded, ledger);
     }
 
     #[test]
@@ -478,5 +590,116 @@ mod tests {
         only.ingest(vec![("c".to_string(), closed)]);
         let (_, rest) = split_close_reports(only.take(Selection::All));
         assert!(unread_turn(Selection::All, &rest).is_err());
+    }
+
+    #[test]
+    fn ledger_with_one_malformed_entry_keeps_the_good_entries() {
+        let report =
+            |t: &str| serde_json::json!({"worker": "A", "at": "t", "status": "done", "text": t});
+        let raw = serde_json::json!({
+            "entries": [
+                {"source": "a", "report": report("a")},
+                {"source": "bad", "report": {"worker": "A"}},
+                {"source": "b", "report": report("b")},
+            ],
+        });
+        let bytes = serde_json::to_vec(&raw).unwrap();
+        let (ledger, skipped) = Ledger::decode(&bytes);
+        assert_eq!(sources(&ledger), ["a", "b"]);
+        assert_eq!(skipped.len(), 1);
+    }
+
+    #[test]
+    fn decode_reports_each_skipped_entry() {
+        let report =
+            |t: &str| serde_json::json!({"worker": "A", "at": "t", "status": "done", "text": t});
+        let raw = serde_json::json!({
+            "entries": [
+                {"source": "bad1", "report": {"worker": "A"}},
+                {"source": "good", "report": report("ok")},
+                42,
+            ],
+        });
+        let bytes = serde_json::to_vec(&raw).unwrap();
+        let (ledger, skipped) = Ledger::decode(&bytes);
+        assert_eq!(sources(&ledger), ["good"]);
+        assert_eq!(skipped.len(), 2);
+        assert_eq!(skipped[0].index, Some(0));
+        assert_eq!(skipped[0].source.as_deref(), Some("bad1"));
+        assert!(match &skipped[0].reason {
+            DecodeError::BadEntry(_) => true,
+            DecodeError::NotJson(_)
+            | DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadMessage(_) => false,
+        });
+        assert!(skipped[0].to_string().contains("bad1"));
+        assert_eq!(skipped[1].index, Some(2));
+        assert_eq!(skipped[1].source, None);
+        assert!(match &skipped[1].reason {
+            DecodeError::BadEntry(_) => true,
+            DecodeError::NotJson(_)
+            | DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadMessage(_) => false,
+        });
+
+        let (empty, bad_file) = Ledger::decode(b"not json");
+        assert!(empty.entries().is_empty());
+        assert_eq!(bad_file.len(), 1);
+        assert_eq!(bad_file[0].index, None);
+        assert_eq!(bad_file[0].source, None);
+        assert!(match &bad_file[0].reason {
+            DecodeError::NotJson(_) => true,
+            DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadEntry(_)
+            | DecodeError::BadMessage(_) => false,
+        });
+
+        let (missing_entries, bad_shape) = Ledger::decode(b"{}");
+        assert!(missing_entries.entries().is_empty());
+        assert_eq!(bad_shape.len(), 1);
+        assert_eq!(bad_shape[0].index, None);
+        assert!(match &bad_shape[0].reason {
+            DecodeError::MissingEntries => true,
+            DecodeError::NotJson(_)
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadEntry(_)
+            | DecodeError::BadMessage(_) => false,
+        });
+
+        let (wrong_entries, not_array) = Ledger::decode(br#"{"entries": 42}"#);
+        assert!(wrong_entries.entries().is_empty());
+        assert_eq!(not_array.len(), 1);
+        assert_eq!(not_array[0].index, None);
+        assert!(match &not_array[0].reason {
+            DecodeError::EntriesNotArray => true,
+            DecodeError::NotJson(_)
+            | DecodeError::MissingEntries
+            | DecodeError::BadEntry(_)
+            | DecodeError::BadMessage(_) => false,
+        });
+    }
+
+    #[test]
+    fn decode_message_decodes_valid_report_and_rejects_malformed() {
+        let report = arrival("a").1;
+        let bytes = serde_json::to_vec(&report).unwrap();
+        assert_eq!(decode_message(&bytes).unwrap(), report);
+        assert!(match decode_message(b"not json").unwrap_err() {
+            DecodeError::NotJson(_) => true,
+            DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadEntry(_)
+            | DecodeError::BadMessage(_) => false,
+        });
+        assert!(match decode_message(br#"{"worker":"A"}"#).unwrap_err() {
+            DecodeError::BadMessage(_) => true,
+            DecodeError::NotJson(_)
+            | DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadEntry(_) => false,
+        });
     }
 }

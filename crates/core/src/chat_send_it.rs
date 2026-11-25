@@ -1,4 +1,5 @@
 use crate::chat_help::{wrap, Command};
+use crate::chat_spec::Keyword;
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{
@@ -368,6 +369,38 @@ pub fn plan_warnings(plan: &RunPlan) -> Vec<String> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendItSub {
+    Edit,
+    Go,
+    Status,
+    Off,
+    Templates,
+    Save,
+}
+
+impl Keyword for SendItSub {
+    const ALL: &'static [Self] = &[
+        SendItSub::Edit,
+        SendItSub::Go,
+        SendItSub::Status,
+        SendItSub::Off,
+        SendItSub::Templates,
+        SendItSub::Save,
+    ];
+
+    fn word(self) -> &'static str {
+        match self {
+            SendItSub::Edit => "edit",
+            SendItSub::Go => "go",
+            SendItSub::Status => "status",
+            SendItSub::Off => "off",
+            SendItSub::Templates => "templates",
+            SendItSub::Save => "save",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendItCommand {
     Usage,
@@ -384,23 +417,33 @@ pub enum SendItCommand {
 }
 
 pub fn parse_send_it_args(args: &str) -> SendItCommand {
-    match args.trim() {
-        "" => SendItCommand::Usage,
-        "edit" => SendItCommand::Edit,
-        "go" => SendItCommand::Go,
-        "status" => SendItCommand::Status,
-        "off" => SendItCommand::Off,
-        "templates" => SendItCommand::Templates,
-        text => {
-            let words: Vec<&str> = text.split_whitespace().collect();
-            match words.as_slice() {
-                ["save", name] | ["save", name, _] => SendItCommand::Save {
-                    name: name.to_string(),
-                    ticket: words.get(2).map(|ticket| ticket.to_string()),
-                },
-                _ => SendItCommand::Propose(text.to_string()),
-            }
-        }
+    let text = args.trim();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let Some((word, rest)) = words.split_first() else {
+        return SendItCommand::Usage;
+    };
+    match (SendItSub::parse(word), rest) {
+        (Some(SendItSub::Edit), []) => SendItCommand::Edit,
+        (Some(SendItSub::Go), []) => SendItCommand::Go,
+        (Some(SendItSub::Status), []) => SendItCommand::Status,
+        (Some(SendItSub::Off), []) => SendItCommand::Off,
+        (Some(SendItSub::Templates), []) => SendItCommand::Templates,
+        (Some(SendItSub::Save), [name] | [name, _]) => SendItCommand::Save {
+            name: name.to_string(),
+            ticket: rest.get(1).map(|ticket| ticket.to_string()),
+        },
+        (
+            Some(
+                SendItSub::Edit
+                | SendItSub::Go
+                | SendItSub::Status
+                | SendItSub::Off
+                | SendItSub::Templates
+                | SendItSub::Save,
+            )
+            | None,
+            _,
+        ) => SendItCommand::Propose(text.to_string()),
     }
 }
 

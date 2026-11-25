@@ -40,6 +40,7 @@ pub mod chat_resize;
 pub mod chat_send_it;
 pub mod chat_skills;
 pub mod chat_socket;
+pub mod chat_spec;
 pub mod chat_stage;
 pub mod chat_status;
 pub mod chat_suggestion;

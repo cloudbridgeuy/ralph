@@ -427,9 +427,9 @@ pub async fn run_web_colour_check(global: &crate::Global) -> super::error::Resul
 mod tests {
     use super::*;
 
-    const CSS: &str = "crates/ralph_api/assets/app.css";
+    const CSS: &str = "crates/ralph_api/assets/css/base.css";
     const HTML: &str = "crates/ralph_api/assets/index.html";
-    const MEMORY_CSS: &str = "crates/ralph_api/assets/memory.css";
+    const MEMORY_CSS: &str = "crates/ralph_api/assets/css/memory.css";
 
     fn reasons(path: &str, text: &str) -> Vec<(usize, String)> {
         find_web_violations(path, text)
@@ -906,8 +906,18 @@ mod tests {
     #[test]
     fn the_bundled_shell_and_stylesheets_pass() {
         let html = include_str!("../../../crates/ralph_api/assets/index.html");
-        let css = include_str!("../../../crates/ralph_api/assets/app.css");
-        let memory = include_str!("../../../crates/ralph_api/assets/memory.css");
+        let css = concat!(
+            include_str!("../../../crates/ralph_api/assets/css/base.css"),
+            include_str!("../../../crates/ralph_api/assets/css/table.css"),
+            include_str!("../../../crates/ralph_api/assets/css/data.css"),
+            include_str!("../../../crates/ralph_api/assets/css/states.css"),
+            include_str!("../../../crates/ralph_api/assets/css/controls.css"),
+            include_str!("../../../crates/ralph_api/assets/css/code.css"),
+            include_str!("../../../crates/ralph_api/assets/css/tree.css"),
+            include_str!("../../../crates/ralph_api/assets/css/responsive.css"),
+            include_str!("../../../crates/ralph_api/assets/css/memory.css"),
+        );
+        let memory = include_str!("../../../crates/ralph_api/assets/css/memory.css");
         assert!(
             reasons(MEMORY_CSS, memory).is_empty(),
             "{:?}",

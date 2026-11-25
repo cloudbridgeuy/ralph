@@ -2,6 +2,7 @@ mod addr;
 mod admit;
 mod assets;
 mod catalogue;
+mod config_api;
 mod memory;
 mod memory_api;
 pub(crate) mod render;

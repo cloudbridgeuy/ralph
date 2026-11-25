@@ -1,13 +1,24 @@
 use super::*;
 use crate::chat_hold::HoldFilter;
+use crate::chat_memory::Mode as ReadMode;
 use crate::chat_process::SessionCost;
+use crate::chat_send_it::SendItSub;
+use crate::chat_spec::Keyword;
+use crate::chat_stage::{Kind as StageKind, StageVerb};
 use crate::chat_status::{
     route_input, EmptySubmit, Route, ScheduleState, Status, WatchState, WorkerState,
 };
-use crate::chat_thread_cmd::VIEW_FLAG;
+use crate::chat_status::{HistoryFlag, InboxSub, WorkersSub};
+use crate::chat_thread_cmd::{MergeFlag, OpenFlag, ThreadSub, VIEW_FLAG};
+use crate::chat_thread_model::THREAD_MODEL_ALIASES;
+use crate::diff_command::DiffWord;
+use crate::schedule_command::ScheduleSub;
 use crate::status_mode::mode;
 use crate::status_queue::QueueCell;
 use crate::status_segments::{segments, Context};
+use crate::watch_command::{WatchFlag, WatchSub};
+use crate::worker_costs::views::View;
+use crate::worker_costs::window::Window;
 use std::collections::BTreeSet;
 use std::mem::discriminant;
 
@@ -552,5 +563,54 @@ fn the_schedule_help_explains_repeating_tasks() {
         "/schedule creates nothing",
     ] {
         assert!(flat.contains(part), "{part}: {flat}");
+    }
+}
+
+fn listed<K: Keyword>() -> Vec<&'static str> {
+    K::ALL.iter().copied().map(K::word).collect()
+}
+
+fn keywords(command: Command) -> Vec<&'static str> {
+    match command {
+        Command::Inbox => listed::<InboxSub>(),
+        Command::Watch => [listed::<WatchSub>(), listed::<WatchFlag>()].concat(),
+        Command::Schedule => listed::<ScheduleSub>(),
+        Command::Diff => listed::<DiffWord>(),
+        Command::Workers => [listed::<WorkersSub>(), listed::<View>(), listed::<Window>()].concat(),
+        Command::SendIt => listed::<SendItSub>(),
+        Command::Stage => [listed::<StageVerb>(), listed::<StageKind>()].concat(),
+        Command::Thread => [
+            listed::<ThreadSub>(),
+            listed::<OpenFlag>(),
+            listed::<MergeFlag>(),
+            THREAD_MODEL_ALIASES.to_vec(),
+        ]
+        .concat(),
+        Command::Read => [listed::<ReadMode>(), listed::<HistoryFlag>()].concat(),
+        Command::Search | Command::Rules => listed::<HistoryFlag>(),
+        Command::Help
+        | Command::Hold
+        | Command::Nudge
+        | Command::Config
+        | Command::View
+        | Command::Rerender
+        | Command::Answer
+        | Command::Zoom
+        | Command::Recall => Vec::new(),
+    }
+}
+
+#[test]
+fn every_keyword_is_in_its_command_usage_rows() {
+    for command in Command::ALL {
+        let rows: Vec<&str> = command
+            .usage()
+            .iter()
+            .flat_map(|(form, effect)| [form, effect])
+            .flat_map(|text| text.split(|c: char| !c.is_alphanumeric() && c != '-'))
+            .collect();
+        for keyword in keywords(command) {
+            assert!(rows.contains(&keyword), "{} {keyword}", command.name());
+        }
     }
 }

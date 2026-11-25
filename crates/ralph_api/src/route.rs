@@ -1,5 +1,6 @@
 use crate::assets::{self, Asset, SHELL_PATH};
 use crate::catalogue;
+use crate::config_api;
 use crate::memory_api;
 use crate::render_api::{reject_oversize, render};
 use crate::token::{extract_tokens, Token};
@@ -8,6 +9,7 @@ use std::path::PathBuf;
 const HEALTH_PATH: &str = "/api/health";
 const TOKENS_PATH: &str = "/tokens.css";
 const RENDER_PATH: &str = "/api/render";
+const CONFIG_PATH: &str = "/api/config";
 const MEMORY_PATH: &str = "/api/memory";
 const ENTRIES_PATH: &str = "/api/memory/entries";
 const THREADS_PATH: &str = "/api/memory/threads";
@@ -47,13 +49,15 @@ pub(crate) struct ApiResponse {
     pub set_cookie: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub store: PathBuf,
     pub allowed_hosts: Vec<String>,
     pub version: String,
     pub tokens_css: String,
     pub cookie_name: String,
+    pub global_config: PathBuf,
+    pub env: fn(&str) -> Option<String>,
 }
 
 pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> ApiResponse {
@@ -78,6 +82,8 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (MEMORY_PATH, "GET") => memory_api::memory(request, config),
         (ENTRIES_PATH, "GET") => memory_api::entries(request, config),
         (THREADS_PATH, "GET") => memory_api::threads(request, config),
+        (CONFIG_PATH, "GET") => config_api::config(request, config),
+        (CONFIG_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (MEMORY_PATH | ENTRIES_PATH | THREADS_PATH, _) => {
             with_header(error(405, "method not allowed"), ("Allow", "GET"))
         }
@@ -197,7 +203,7 @@ pub(crate) fn json_ok(body: serde_json::Value) -> ApiResponse {
     }
 }
 
-fn json_response(status: u16, body: serde_json::Value) -> ApiResponse {
+pub(crate) fn json_response(status: u16, body: serde_json::Value) -> ApiResponse {
     ApiResponse {
         status,
         content_type: JSON,
@@ -230,6 +236,8 @@ mod tests {
             version: "9.9.9".to_string(),
             tokens_css: ":root {\n  --r-font: x;\n}\n".to_string(),
             cookie_name: "ralph_token_1".to_string(),
+            global_config: PathBuf::from("/secret/global/config.toml"),
+            env: |_| None,
         }
     }
 
@@ -539,7 +547,6 @@ mod tests {
     fn assets_are_served_with_their_types() {
         for (path, kind) in [
             ("/assets/app.css", "text/css; charset=utf-8"),
-            ("/assets/memory.css", "text/css; charset=utf-8"),
             ("/assets/geist-mono.woff2", "font/woff2"),
         ] {
             let response = route(
@@ -565,12 +572,7 @@ mod tests {
 
     #[test]
     fn post_to_the_shell_or_an_asset_is_405_and_allow_get() {
-        for path in [
-            "/",
-            "/assets/app.css",
-            "/assets/memory.css",
-            "/assets/geist-mono.woff2",
-        ] {
+        for path in ["/", "/assets/app.css", "/assets/geist-mono.woff2"] {
             let response = route(&authed("POST", path), &config(), &token());
             assert_eq!(response.status, 405, "{path}");
             assert!(response.headers.contains(&("Allow", "GET")));

@@ -6,6 +6,18 @@ pub(crate) struct Asset {
 
 pub(crate) const SHELL_PATH: &str = "/";
 
+pub(crate) const APP_CSS: &str = concat!(
+    include_str!("../assets/css/base.css"),
+    include_str!("../assets/css/table.css"),
+    include_str!("../assets/css/data.css"),
+    include_str!("../assets/css/states.css"),
+    include_str!("../assets/css/controls.css"),
+    include_str!("../assets/css/code.css"),
+    include_str!("../assets/css/tree.css"),
+    include_str!("../assets/css/responsive.css"),
+    include_str!("../assets/css/memory.css"),
+);
+
 const ASSETS: &[Asset] = &[
     Asset {
         path: SHELL_PATH,
@@ -15,12 +27,7 @@ const ASSETS: &[Asset] = &[
     Asset {
         path: "/assets/app.css",
         content_type: "text/css; charset=utf-8",
-        bytes: include_bytes!("../assets/app.css"),
-    },
-    Asset {
-        path: "/assets/memory.css",
-        content_type: "text/css; charset=utf-8",
-        bytes: include_bytes!("../assets/memory.css"),
+        bytes: APP_CSS.as_bytes(),
     },
     Asset {
         path: "/app.js",

@@ -18,6 +18,7 @@ mod claude;
 mod codex;
 mod cursor;
 mod empty_submit;
+mod env;
 #[cfg(test)]
 mod hold_progress_tests;
 mod layers;
@@ -26,10 +27,12 @@ mod opencode;
 mod permissions;
 #[cfg(test)]
 mod recent_history_tests;
+mod redact;
 #[cfg(test)]
 mod reset_limits_tests;
 #[cfg(test)]
 mod resume_summary_tests;
+mod rows;
 pub mod theme;
 mod usage;
 mod web;
@@ -41,6 +44,10 @@ pub use chat_settings::PromptFiles;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
 pub use cursor::CursorSection;
+pub use env::{
+    env_settings, winning_override, Origin, Setting, CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV,
+    RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV, WRAP_WIDTH_ENV,
+};
 pub use layers::{leaf_sources, Row, Source};
 pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;
@@ -49,6 +56,7 @@ pub use permissions::{
     save_grants, saved_grants, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
     GRANTS_FILE,
 };
+pub use rows::{config_rows, ConfigRow, RowSource};
 pub use usage::{configured_ledger, ledger_path, UsageSection};
 pub use web::{parse_ansi_table, WebSection};
 pub use wire::WireSection;

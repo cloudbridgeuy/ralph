@@ -1,6 +1,6 @@
 "use strict";
 
-const SCREENS = ["/memory"];
+const SCREENS = ["/memory", "/config"];
 const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -212,7 +212,7 @@ async function api(path, init) {
   }
   if (!response.ok) {
     const message = (data && data.error) || response.statusText || "request failed";
-    throw { status: response.status, message };
+    throw { status: response.status, message, why: data && data.why };
   }
   return data;
 }
@@ -233,15 +233,44 @@ function setRendered(host, html) {
   host.innerHTML = html;
 }
 
-function failure(error, retry) {
-  const status = error && error.status ? error.status + " " : "";
+function emptyState(what, compact) {
+  const box = el("r-empty", null, { role: "status" });
+  if (compact) box.setAttribute("compact", "");
+  return append(box, el("span", what, { class: "what" }));
+}
+
+function failure(error, retry, compact) {
   const message = (error && error.message) || String(error);
-  const box = el("r-error", status + message);
+  const box = el("r-error", null, { role: "alert" });
+  if (compact) box.setAttribute("compact", "");
+  const what = el("span", "Could not load", { class: "what" });
+  if (error && error.status) {
+    const pill = el("r-pill", null, { tone: "bad", shape: "square", variant: "outline" });
+    append(what, append(pill, el("span", String(error.status))));
+  }
+  const why = el("span", null, { class: "why" });
+  why.textContent = message;
+  append(box, what, why);
   if (retry) {
-    box.appendChild(document.createTextNode(" "));
-    box.appendChild(el("button", "retry", { type: "button" })).addEventListener("click", retry);
+    const button = el("button", "Retry", { type: "button", class: "btn" });
+    button.addEventListener("click", retry);
+    append(box, append(el("span", null, { class: "next" }), button));
   }
   return box;
+}
+
+function focusTarget(node) {
+  node.setAttribute("tabindex", "-1");
+  node.focus();
+}
+
+function parentButton(node) {
+  return node.closest('[role="treeitem"]').querySelector(":scope > button");
+}
+
+function focusRetry(box) {
+  const button = box.querySelector("button.btn");
+  if (button) button.focus();
 }
 
 function delayedSpinner(host, label) {
@@ -277,7 +306,8 @@ function setActive(tree, button) {
 }
 
 function onTreeKey(tree, event) {
-  const button = event.target.closest('li[role="treeitem"] > button');
+  const inItem = event.target.closest('[role="treeitem"]');
+  const button = event.target.closest('li[role="treeitem"] > button') || (inItem && parentButton(event.target));
   if (!button) return;
   const items = visibleRows(tree);
   const at = items.indexOf(button.parentElement);
@@ -371,13 +401,23 @@ function setExpanded(item, expanded) {
   item.setAttribute("aria-expanded", String(expanded));
 }
 
-async function fillRendered(row, markdown) {
+async function fillRendered(row, markdown, retried) {
   const stop = delayedSpinner(row, "Loading text");
   try {
     setRendered(row, (await renderMarkdown(markdown)).html);
+    if (retried) {
+      const prose = row.firstElementChild;
+      if (prose) focusTarget(prose);
+      else parentButton(row).focus();
+    }
   } catch (error) {
     row.textContent = "";
-    row.appendChild(failure(error));
+    const box = failure(error, () => {
+      row.textContent = "";
+      fillRendered(row, markdown, true);
+    }, true);
+    row.appendChild(box);
+    if (retried) focusRetry(box);
   }
   stop();
 }
@@ -401,22 +441,34 @@ function drawRow(level, row, total) {
   return row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child);
 }
 
-async function openNode(item, ctx) {
+function clearRows(group) {
+  group.querySelectorAll(":scope > li").forEach((row) => row.remove());
+}
+
+async function openNode(item, ctx, retried) {
   const group = item.querySelector(':scope > ul[role="group"]');
+  clearRows(group);
   const level = Number(item.getAttribute("aria-level")) + 1;
   const total = Number(item.closest("r-tree").dataset.total);
+  const mine = generation;
   const stop = delayedSpinner(group, "Loading entries");
   try {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
     stop();
+    if (mine !== generation) return;
     zoomRows(zoom).forEach((row) => append(group, drawRow(level, row, total)));
-    return true;
+    if (retried) {
+      const first = group.querySelector(':scope > li[role="treeitem"] > button');
+      (first || parentButton(item)).focus();
+    }
   } catch (error) {
     stop();
+    clearRows(group);
     const row = rowItem();
     append(group, row);
-    row.appendChild(failure(error));
-    return false;
+    const box = failure(error, () => openNode(item, ctx, true), true);
+    row.appendChild(box);
+    if (retried) focusRetry(box);
   }
 }
 
@@ -425,13 +477,8 @@ async function toggleItem(item, ctx) {
   setExpanded(item, true);
   if (item.dataset.loaded) return;
   item.dataset.loaded = "1";
-  const group = item.querySelector(':scope > ul[role="group"]');
-  const ok = item.dataset.node ? await openNode(item, ctx) : (await openEntry(item), true);
-  if (!ok) {
-    delete item.dataset.loaded;
-    group.querySelectorAll(":scope > li").forEach((row) => row.remove());
-    setExpanded(item, false);
-  }
+  if (item.dataset.node) await openNode(item, ctx);
+  else await openEntry(item);
 }
 
 function markSelected(list, item) {
@@ -569,7 +616,7 @@ function entriesTable(page) {
   const head = append(el("tr"), ...ENTRY_COLUMNS.map((name) => el("th", name, name === "#" ? { class: "num" } : {})));
   const body = el("tbody");
   if (page.items.length === 0) {
-    append(body, stateRow(ENTRY_COLUMNS.length, el("r-empty", "no entries in this page")));
+    append(body, stateRow(ENTRY_COLUMNS.length, emptyState("no entries in this page", true)));
   }
   const current = { close: null };
   page.items.forEach((entry) => append(body, entryRow(entry, current)));
@@ -663,7 +710,7 @@ function drawMemory(main, hashState, data) {
   main.replaceChildren(threadTabs(data.threads, hashState.thread));
   append(main, el("p", statLine(data.roots.stats), { class: "statline" }));
   if (data.roots.entries === 0) {
-    append(main, el("r-empty", "no entries yet"));
+    append(main, emptyState("no entries yet"));
     return;
   }
   const pane = el("div", null, { class: "detail" });
@@ -672,6 +719,55 @@ function drawMemory(main, hashState, data) {
   append(main, append(el("div", null, { class: "split" }), tree, pane));
   drawDetail(pane, { thread: hashState.thread, node: hashState.node }, data.detail);
   if (hashState.node) expandTo(list, hashState.node, ctx);
+}
+
+async function loadConfig() {
+  const data = await api("/api/config");
+  document.getElementById("store").textContent = data.store;
+  return data;
+}
+
+function configFailure(error, retry) {
+  const box = el("r-error", null, { role: "alert" });
+  const why = el("span", null, { class: "why" });
+  why.textContent = error.why || error.message || String(error);
+  const button = el("button", "Retry", { type: "button", class: "btn" });
+  button.addEventListener("click", retry);
+  append(
+    box,
+    el("span", "Config did not load", { class: "what" }),
+    why,
+    append(el("span", null, { class: "next" }), el("span", "Fix config.toml, then retry "), button),
+  );
+  return box;
+}
+
+function drawConfig(main, data) {
+  if (data.rows.length === 0) {
+    main.replaceChildren(emptyState("No settings"));
+    return;
+  }
+  const sections = new Map();
+  data.rows.forEach((row) => sections.set(row.section, [...(sections.get(row.section) || []), row]));
+  const boxes = [...sections].map(([name, rows]) => {
+    const list = el("dl");
+    rows.forEach((row) => {
+      const tone = row.source === "default" ? "neutral" : "info";
+      const mark = row.redacted
+        ? append(el("r-pill", null, { tone: "neutral", shape: "square", variant: "outline" }), el("span", "hidden"))
+        : el("span", row.value);
+      const source = append(el("r-pill", null, { tone, shape: "square" }), el("span", row.source));
+      append(list, append(el("div"), el("dt", row.key), append(el("dd"), mark, document.createTextNode(" "), source)));
+    });
+    const box = el("r-box", null, { shape: "square" });
+    return append(
+      box,
+      el("span", name, { class: "title" }),
+      el("span", String(rows.length), { class: "aside" }),
+      append(el("r-kv"), list),
+    );
+  });
+  main.replaceChildren(...boxes);
 }
 
 function markCurrentScreen(route) {
@@ -683,7 +779,7 @@ function markCurrentScreen(route) {
 
 let generation = 0;
 
-async function show() {
+async function show(refocus) {
   const state = parseHash(location.hash);
   const main = document.getElementById("main");
   const mine = ++generation;
@@ -694,21 +790,26 @@ async function show() {
   }
   markCurrentScreen(state.route);
   main.replaceChildren();
-  const stop = delayedSpinner(main, "Loading memory");
+  const config = state.route === "/config";
+  const stop = delayedSpinner(main, config ? "Loading config" : "Loading memory");
   try {
-    const data = await loadMemory(state);
+    const data = await (config ? loadConfig() : loadMemory(state));
     if (mine !== generation) return;
     stop();
-    drawMemory(main, state, data);
+    if (config) drawConfig(main, data);
+    else drawMemory(main, state, data);
     const again = focusKey && main.querySelector('button[data-key="' + focusKey + '"]');
     if (again) again.focus();
+    else if (refocus) focusTarget(main);
   } catch (error) {
     if (mine !== generation) return;
     stop();
-    main.replaceChildren(failure(error, show));
+    const box = config ? configFailure(error, () => show(true)) : failure(error, () => show(true));
+    main.replaceChildren(box);
+    if (refocus) focusRetry(box);
   }
 }
 
-window.addEventListener("hashchange", show);
+window.addEventListener("hashchange", () => show());
 document.addEventListener("keydown", onPagerKey);
 show();

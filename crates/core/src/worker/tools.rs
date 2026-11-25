@@ -48,11 +48,11 @@ pub fn tool_definitions() -> Value {
     json!([
         {
             "name": "report",
-            "description": "Send a message to the person who dispatched you. Call it at the end of every turn: when you finish, get blocked, or need a decision. Then stop and wait for their answer. Each report costs a full chat turn, so never send progress updates.",
+            "description": "Send a message to the person who dispatched you. Call it at the end of every turn: when you finish, get blocked because only the person can unblock you, or need a decision. Then stop and wait for their answer. Each report costs a full chat turn, so never send progress updates; while waiting on your own subagents, checks or builds, call set_status and keep waiting in this turn.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "enum": ReportStatus::ALL.map(ReportStatus::as_str), "description": "done: task finished. blocked: you cannot go on. question: you need a decision."},
+                    "status": {"type": "string", "enum": ReportStatus::ALL.map(ReportStatus::as_str), "description": "done: task finished. blocked: you cannot go on and only the person can unblock you (not waiting on your own subagents, checks or builds). question: you need a decision only the person can make."},
                     "text": {"type": "string", "description": "Full summary: what you did and what you found, or what blocks you, or what you need decided."}
                 },
                 "required": ["status", "text"]
@@ -187,5 +187,29 @@ mod tests {
             };
             assert_eq!(v["result"]["isError"], true);
         }
+    }
+
+    #[test]
+    fn report_tool_description_defines_blocked_as_needs_person() {
+        let defs = tool_definitions();
+        let report = &defs[0];
+        let description = report["description"].as_str().unwrap();
+        let status_desc = report["inputSchema"]["properties"]["status"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            description.contains("only the person can unblock you"),
+            "{description}"
+        );
+        assert!(
+            description.contains("subagents, checks or builds")
+                && description.contains("set_status"),
+            "{description}"
+        );
+        assert!(
+            status_desc.contains("only the person can unblock you")
+                && status_desc.contains("subagents, checks or builds"),
+            "{status_desc}"
+        );
     }
 }

@@ -1,0 +1,117 @@
+r-code {
+  display: block;
+  margin: 20px 0 10px;
+}
+
+r-code pre {
+  margin: 0;
+  font: inherit;
+  padding: 10px 2ch;
+  overflow-x: auto;
+  border: 1px solid var(--r-line-strong);
+  background: var(--r-surface);
+  color: var(--r-ink);
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+r-code pre:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+}
+
+r-code code {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: inherit;
+}
+
+r-code .t-comment {
+  color: var(--r-muted);
+  font-style: italic;
+}
+
+r-code .t-string {
+  color: var(--r-ansi-2);
+}
+
+r-code .t-keyword {
+  color: var(--r-ansi-5);
+  font-weight: 600;
+}
+
+r-code .t-constant {
+  color: var(--r-ansi-3);
+}
+
+r-code .t-entity {
+  color: var(--r-ansi-4);
+}
+
+r-code .t-storage {
+  color: var(--r-ansi-5);
+  font-weight: 600;
+}
+
+r-code .t-support {
+  color: var(--r-ansi-6);
+}
+
+r-code .t-variable {
+  color: var(--r-ansi-7);
+}
+
+r-code .t-punctuation {
+  color: var(--r-ansi-7);
+}
+
+r-code .t-markup {
+  color: var(--r-ansi-6);
+}
+
+r-code .t-markup.t-bold {
+  font-weight: 600;
+}
+
+r-code .t-markup.t-italic {
+  font-style: italic;
+}
+
+r-code .t-markup.t-underline {
+  text-decoration: underline;
+}
+
+@keyframes r-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  r-spinner::before {
+    content: "\2026";
+    width: auto;
+    height: auto;
+    border: 0;
+    border-radius: 0;
+    color: var(--r-accent);
+    animation: none;
+  }
+
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+r-prose table:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 2px;
+}
+

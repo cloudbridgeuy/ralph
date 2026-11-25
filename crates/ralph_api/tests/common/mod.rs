@@ -41,6 +41,7 @@ pub struct TestServer {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     _store: tempfile::TempDir,
+    _global: tempfile::TempDir,
 }
 
 impl TestServer {
@@ -49,8 +50,17 @@ impl TestServer {
     }
 
     pub fn start_with_store(prepare: impl FnOnce(&Path)) -> TestServer {
+        TestServer::start_with_dirs(prepare, |_| {})
+    }
+
+    pub fn start_with_dirs(
+        prepare_store: impl FnOnce(&Path),
+        prepare_global: impl FnOnce(&Path),
+    ) -> TestServer {
         let store = tempfile::tempdir().unwrap();
-        prepare(store.path());
+        prepare_store(store.path());
+        let global = tempfile::tempdir().unwrap();
+        prepare_global(global.path());
         let requested = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
         let server = bind(requested, &BindPolicy::loopback()).unwrap();
         let port = server.server_addr().to_ip().unwrap().port();
@@ -60,6 +70,8 @@ impl TestServer {
             version: VERSION.to_string(),
             tokens_css: TOKENS_CSS.to_string(),
             cookie_name: cookie_name(port),
+            global_config: global.path().join("config.toml"),
+            env: |_| None,
         };
         let token = Token::generate().unwrap();
         let secret = token.as_str().to_string();
@@ -74,6 +86,7 @@ impl TestServer {
             stop,
             thread: Some(thread),
             _store: store,
+            _global: global,
         }
     }
 
