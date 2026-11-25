@@ -27,6 +27,7 @@ mod opencode;
 mod permissions;
 #[cfg(test)]
 mod recent_history_tests;
+mod redact;
 #[cfg(test)]
 mod reset_limits_tests;
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use super::redact::{redacts, REDACTED};
 use super::{
     env_settings, leaf_sources, read_layer, winning_override, AppConfig, ConfigError, Row, Setting,
     Source,
@@ -39,14 +40,19 @@ fn source_of(source: Source) -> RowSource {
     }
 }
 
-fn row(key: &str, value: serde_json::Value, source: RowSource) -> ConfigRow {
-    let (section, key) = split_key(key);
+fn row(full_key: &str, value: serde_json::Value, source: RowSource) -> ConfigRow {
+    let (section, key) = split_key(full_key);
+    let redacted = redacts(full_key, &value, source == RowSource::Env);
     ConfigRow {
         section,
         key,
-        value,
+        value: if redacted {
+            serde_json::Value::String(REDACTED.to_string())
+        } else {
+            value
+        },
         source,
-        redacted: false,
+        redacted,
     }
 }
 
@@ -54,7 +60,7 @@ fn json(value: &toml::Value) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
 }
 
-pub fn build_rows(layered: &[Row], overrides: &[Setting]) -> Vec<ConfigRow> {
+fn build_rows(layered: &[Row], overrides: &[Setting]) -> Vec<ConfigRow> {
     let from_layers = layered
         .iter()
         .map(|layer| match winning_override(overrides, &layer.key) {
@@ -115,6 +121,21 @@ mod tests {
     }
 
     #[test]
+    fn secrets_never_reach_the_serialized_rows() {
+        let (g, s) = dirs_with(Some(FIXTURE), None);
+        let rows = rows(&g, &s, |name| {
+            (name == "RALPH_THEME").then(|| "sk-secret".to_string())
+        });
+        let text = serde_json::to_string(&rows).unwrap();
+        for secret in ["abc123", "/Users", "sk-secret"] {
+            assert!(!text.contains(secret), "{secret}");
+        }
+        assert!(find(&rows, "claude", "shell").redacted);
+        assert!(find(&rows, "usage", "ledger").redacted);
+        assert!(!find(&rows, "chat", "wrap_width").redacted);
+    }
+
+    #[test]
     fn missing_files_give_defaults_only() {
         let (g, s) = dirs_with(None, None);
         let rows = rows(&g, &s, no_env);
@@ -153,7 +174,7 @@ mod tests {
         });
         let wrap = find(&rows, "chat", "wrap_width");
         assert_eq!(wrap.source, RowSource::Env);
-        assert_eq!(wrap.value, serde_json::json!("72"));
+        assert!(wrap.redacted);
     }
 
     #[test]
