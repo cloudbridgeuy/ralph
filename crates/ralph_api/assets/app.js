@@ -452,7 +452,7 @@ async function expandTo(tree, target, ctx) {
     const next = items.find((item) => stepOf(item) !== null);
     if (!next) {
       const key = depth === 0 ? leafRootKey(target) : null;
-      const button = key && tree.querySelector(':scope > ul > li > button[data-key="' + key + '"]');
+      const button = key && tree.querySelector(':scope > li > button[data-key="' + key + '"]');
       if (button) selectRow(tree, button.parentElement);
       return;
     }

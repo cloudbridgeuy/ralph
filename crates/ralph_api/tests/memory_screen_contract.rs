@@ -537,7 +537,7 @@ fn a_hash_node_selects_the_nearest_visible_row() {
         .contains("treeStep(item.dataset.node, target, item.hasAttribute(\"aria-expanded\"))"));
     assert!(expand.contains("step === \"here\""));
     assert!(expand.contains("leafRootKey(target)"));
-    assert!(expand.contains(":scope > ul > li > button[data-key="));
+    assert!(expand.contains(":scope > li > button[data-key="));
     assert!(!expand.contains("next.dataset.node === target"));
 }
 
