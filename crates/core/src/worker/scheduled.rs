@@ -1,13 +1,15 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    agy_auto_allow_option, claude_args, deny_line, disallowed_tool_args, mcptools_decision,
+    agy_auto_allow_option, claude_args, control_response, disallowed_tool_args, mcptools_decision,
     permission_response, BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision,
     PermissionMode, PermissionOption, Report, ReportStatus, SandboxMode, ALLOW_ONCE, SERVER_NAME,
     WORKER_PROMPT,
 };
 use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::ffi::OsString;
+
+pub const UNATTENDED_REFUSAL: &str = "the request was refused because this worker runs unattended";
 
 pub const SCHEDULED_WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. The task was scheduled and nobody is watching it run. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
@@ -129,10 +131,17 @@ pub fn unattended_claude_answer(
             report: None,
         },
         _ => UnattendedAnswer {
-            line: deny_line(id),
+            line: unattended_claude_deny(id),
             report: Some(denied_report(worker, at, &ask.content)),
         },
     }
+}
+
+fn unattended_claude_deny(request_id: &str) -> String {
+    let message = format!(
+        "ralph denied this tool call: {UNATTENDED_REFUSAL}. Do not retry it; say in your report what you needed it for."
+    );
+    control_response(request_id, &json!({"behavior": "deny", "message": message}))
 }
 
 impl<'a> Unattended<'a> {
@@ -224,7 +233,6 @@ mod tests {
         ClaudeWorkerArgs,
     };
     use super::*;
-    use serde_json::json;
     use std::path::Path;
 
     fn claude_args() -> ClaudeWorkerArgs<'static> {
@@ -702,6 +710,12 @@ mod tests {
                 "{}",
                 denied.line
             );
+            assert!(
+                denied.line.contains("this worker runs unattended"),
+                "{}",
+                denied.line
+            );
+            assert!(!denied.line.contains("person"), "{}", denied.line);
             let report = denied.report.unwrap();
             assert_eq!(report.worker, "sched-1");
             assert!(report.text.contains(&ask.content.tool));

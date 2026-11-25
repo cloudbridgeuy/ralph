@@ -210,6 +210,10 @@ fn every_other_outcome_is_an_explicit_deny() {
     let outcomes = [
         (HookOutcome::Answered("deny".into()), "the person denied"),
         (HookOutcome::Answered("other".into()), "the person denied"),
+        (
+            HookOutcome::RefusedUnattended,
+            "this worker runs unattended",
+        ),
         (HookOutcome::TimedOut, "no answer within 120 s"),
         (HookOutcome::BridgeGone("no socket".into()), "no socket"),
         (HookOutcome::BadInput("bad json".into()), "bad json"),
@@ -238,12 +242,27 @@ fn the_request_id_is_the_tool_use_id_or_a_counter() {
 
 #[test]
 fn an_answer_line_is_the_chosen_option() {
-    let line = crate::chat_socket::encode_line(&BridgeAnswer {
+    let line = crate::chat_socket::encode_line(&BridgeAnswer::Chosen {
         option_id: ALLOW_ONCE.to_string(),
     });
     assert_eq!(
         read_outcome(Ok(line)),
         HookOutcome::Answered(ALLOW_ONCE.to_string())
+    );
+}
+
+#[test]
+fn an_unattended_verdict_crosses_the_bridge_as_its_own_answer() {
+    let denied = hook_options();
+    for verdict in [Unattended::Deny(&denied[1]), Unattended::Cancel] {
+        let line = crate::chat_socket::encode_line(&BridgeAnswer::from(verdict));
+        assert_eq!(read_outcome(Ok(line)), HookOutcome::RefusedUnattended);
+    }
+    assert_eq!(
+        BridgeAnswer::from(Unattended::Allow(&denied[0])),
+        BridgeAnswer::Chosen {
+            option_id: ALLOW_ONCE.to_string()
+        }
     );
 }
 

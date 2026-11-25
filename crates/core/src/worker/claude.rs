@@ -122,6 +122,10 @@ pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> 
     } else {
         json!({"behavior": "deny", "message": "The person denied this tool call."})
     };
+    control_response(request_id, &decision)
+}
+
+pub(super) fn control_response(request_id: &str, decision: &Value) -> String {
     json!({"type": "control_response", "response": {"subtype": "success", "request_id": request_id, "response": decision}})
         .to_string()
 }

@@ -136,8 +136,19 @@ fn a_scheduled_hook_ask_is_denied_and_reported_without_asking() {
     hook.shutdown(Shutdown::Write).unwrap();
     let mut reply = String::new();
     hook.read_to_string(&mut reply).unwrap();
-    assert!(reply.contains(r#""option_id":"deny""#), "{reply}");
+    assert!(
+        reply.contains(r#""answer":"refused_unattended""#),
+        "{reply}"
+    );
     assert!(served.events.lock().unwrap().is_empty());
     let reports = fs::read_dir(served.dir.path().join("inbox")).unwrap();
     assert_eq!(reports.count(), 1);
+}
+
+#[test]
+fn a_scheduled_hook_deny_says_the_worker_runs_unattended() {
+    let served = served(true);
+    let shown = hook_output(&ask_bridge(served.socket.path(), &ask("t1")));
+    assert!(shown.contains("this worker runs unattended"), "{shown}");
+    assert!(!shown.contains("the person"), "{shown}");
 }

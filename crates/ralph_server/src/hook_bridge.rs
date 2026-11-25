@@ -88,23 +88,23 @@ fn answer_connection(
     let request: BridgeAsk = decode_line(&line).map_err(io::Error::other)?;
     let id = hook_request_id(&request.tool_use_id, counter.fetch_add(1, Ordering::SeqCst));
     let content = hook_content(&id, &request);
-    let option = if scheduled {
-        refuse_unattended(queue, &content)
+    let answer = if scheduled {
+        Some(refuse_unattended(queue, &content))
     } else {
-        ask_person(stream, queue, id, content)
+        ask_person(stream, queue, id, content).map(|option_id| BridgeAnswer::Chosen { option_id })
     };
-    let Some(option_id) = option else {
+    let Some(answer) = answer else {
         return Ok(());
     };
     let mut writer = stream;
-    writer.write_all(encode_line(&BridgeAnswer { option_id }).as_bytes())?;
+    writer.write_all(encode_line(&answer).as_bytes())?;
     writer.flush()
 }
 
-fn refuse_unattended(queue: &HookQueue, content: &BlockedContent) -> Option<String> {
+fn refuse_unattended(queue: &HookQueue, content: &BlockedContent) -> BridgeAnswer {
     let verdict = unattended(content);
     queue.report_unattended(&verdict, content);
-    verdict.option_id().map(str::to_string)
+    verdict.into()
 }
 
 fn ask_person(
