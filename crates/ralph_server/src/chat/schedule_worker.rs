@@ -8,7 +8,7 @@ use ralph_core::schedule_worker::{
     start_failure_text, timed_out_text, vanished_text, worker_brief, worker_deadline, worker_id,
     WorkerEnd, WorkerFire,
 };
-use ralph_core::worker::HarnessId;
+use ralph_core::worker::{HarnessId, TargetRequest};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -152,6 +152,7 @@ fn start_task(
             ticket: None,
             scheduled: true,
             phase: None,
+            target: TargetRequest::default(),
         };
         let spawned = workers.spawn(&args);
         let wanted = is_still_running(&store.load_all(), &task.id);

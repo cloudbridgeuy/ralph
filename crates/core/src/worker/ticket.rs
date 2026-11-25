@@ -1,4 +1,5 @@
 use super::kind::HarnessId;
+use super::target::{qualified_project_slug, SpawnTarget};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -87,6 +88,10 @@ pub struct SpawnRecord {
         skip_serializing_if = "Option::is_none"
     )]
     pub harness: Option<HarnessId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<String>,
 }
 
 fn lenient_harness<'de, D: Deserializer<'de>>(
@@ -109,7 +114,34 @@ impl SpawnRecord {
             at,
             base_sha,
             harness: Some(harness),
+            repo: None,
+            lane: None,
         }
+    }
+
+    pub fn with_target(self, target: &SpawnTarget) -> Self {
+        match target {
+            SpawnTarget::Cwd { .. } => self,
+            SpawnTarget::Repo { repo } => Self {
+                repo: Some(repo.to_string_lossy().into_owned()),
+                ..self
+            },
+            SpawnTarget::Lane { repo, worktree, .. } => Self {
+                repo: Some(repo.to_string_lossy().into_owned()),
+                lane: Some(worktree.to_string_lossy().into_owned()),
+                ..self
+            },
+        }
+    }
+
+    pub fn recorded_repo(&self) -> Option<(PathBuf, String)> {
+        let repo = PathBuf::from(self.repo.as_deref()?);
+        let slug = qualified_project_slug(&repo);
+        Some((repo, slug))
+    }
+
+    pub fn is_lane(&self) -> bool {
+        self.lane.is_some()
     }
 
     pub fn ticket(&self) -> Option<Ticket> {
@@ -282,7 +314,9 @@ mod tests {
                 tracker: None,
                 at: 0,
                 base_sha: None,
-                harness: None
+                harness: None,
+                repo: None,
+                lane: None
             })
         );
         assert_eq!(
@@ -349,5 +383,60 @@ mod tests {
         let parsed: TicketKeys = serde_json::from_str(r#"{"jira":["KODA"]}"#).unwrap();
         assert_eq!(parsed.jira, ["KODA"]);
         assert!(parsed.linear.is_empty());
+    }
+
+    fn plain_record() -> SpawnRecord {
+        SpawnRecord::new(None, None, HarnessId::Claude, 5)
+    }
+
+    #[test]
+    fn a_cwd_target_leaves_the_record_without_a_repo() {
+        let record = plain_record().with_target(&SpawnTarget::Cwd {
+            repo: PathBuf::from("/p/r"),
+        });
+        assert_eq!(record, plain_record());
+        assert_eq!(record.recorded_repo(), None);
+        assert!(!record.is_lane());
+    }
+
+    #[test]
+    fn a_repo_target_records_the_repo_and_its_qualified_slug() {
+        let record = plain_record().with_target(&SpawnTarget::Repo {
+            repo: PathBuf::from("/p/a/vntana-model-ops"),
+        });
+        assert_eq!(record.repo.as_deref(), Some("/p/a/vntana-model-ops"));
+        assert_eq!(
+            record.recorded_repo(),
+            Some((
+                PathBuf::from("/p/a/vntana-model-ops"),
+                "vntana-model-ops-0ca42700".to_string()
+            ))
+        );
+        assert!(!record.is_lane());
+    }
+
+    #[test]
+    fn a_lane_target_records_the_repo_and_the_lane_path() {
+        let record = plain_record().with_target(&SpawnTarget::Lane {
+            repo: PathBuf::from("/p/r"),
+            worktree: PathBuf::from("/p/r/.worktrees/feat"),
+            branch: Some("feat".into()),
+        });
+        assert_eq!(record.repo.as_deref(), Some("/p/r"));
+        assert_eq!(record.lane.as_deref(), Some("/p/r/.worktrees/feat"));
+        assert!(record.is_lane());
+    }
+
+    #[test]
+    fn a_target_record_round_trips_and_old_records_have_no_target() {
+        let record = plain_record().with_target(&SpawnTarget::Lane {
+            repo: PathBuf::from("/p/r"),
+            worktree: PathBuf::from("/p/r/.worktrees/feat"),
+            branch: None,
+        });
+        let raw = encode_spawn_record(&record).unwrap();
+        assert_eq!(decode_spawn_record(&raw), Some(record));
+        let old = decode_spawn_record(r#"{"at":5,"harness":"claude"}"#).unwrap();
+        assert_eq!((old.repo, old.lane), (None, None));
     }
 }

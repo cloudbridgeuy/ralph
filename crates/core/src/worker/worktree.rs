@@ -1,8 +1,8 @@
 use super::WORKTREE_DIR;
 use std::path::{Path, PathBuf};
 
-const BRANCH_PREFIX: &str = "branch refs/heads/";
-const WORKTREE_PREFIX: &str = "worktree ";
+pub(super) const BRANCH_PREFIX: &str = "branch refs/heads/";
+pub(super) const WORKTREE_PREFIX: &str = "worktree ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeDir {

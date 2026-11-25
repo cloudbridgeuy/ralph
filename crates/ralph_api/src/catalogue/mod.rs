@@ -70,16 +70,40 @@ fn cost_rows(fixture: &Fixture) -> Vec<Vec<String>> {
         .collect()
 }
 
+const MARKS: [(usize, RowMark); 3] = [
+    (
+        1,
+        RowMark {
+            selected: true,
+            open: false,
+        },
+    ),
+    (
+        2,
+        RowMark {
+            selected: false,
+            open: true,
+        },
+    ),
+    (
+        3,
+        RowMark {
+            selected: true,
+            open: true,
+        },
+    ),
+];
+
+fn marked_rows() -> usize {
+    MARKS.iter().map(|(at, _)| at + 1).max().unwrap_or(0)
+}
+
 fn table_marked_html(headers: &[&str], rows: &[Vec<String>]) -> String {
     let cells: Vec<Vec<&str>> = rows
         .iter()
         .map(|row| row.iter().map(String::as_str).collect())
         .collect();
-    table_marked(
-        headers,
-        &cells,
-        &[(1, RowMark::Selected), (2, RowMark::Open)],
-    )
+    table_marked(headers, &cells, &MARKS)
 }
 
 fn table_html(headers: &[&str], rows: &[Vec<String>]) -> String {
@@ -158,7 +182,7 @@ fn tables(fixture: &Fixture) -> String {
             ("dense", table_html(&headers, &rows)),
             (
                 "selected",
-                table_marked_html(&headers, &rows[..rows.len().min(3)]),
+                table_marked_html(&headers, &rows[..rows.len().min(marked_rows())]),
             ),
             (
                 "error",
@@ -386,7 +410,7 @@ pub(crate) fn page(fixture_json: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::page;
+    use super::{page, MARKS};
 
     const COMMITTED: &str = include_str!("../../fixtures/catalogue.json");
     const TAGS: [&str; 12] = [
@@ -483,6 +507,27 @@ mod tests {
         let html = html();
         assert!(html.contains("<tr aria-selected=\"true\">"));
         assert!(html.contains("<tr class=\"open\">"));
+        assert!(html.contains("<tr class=\"open\" aria-selected=\"true\">"));
+    }
+
+    fn table_groups(html: &str) -> Vec<&str> {
+        html.split("<h3>r-table</h3>")
+            .skip(1)
+            .map(|rest| rest.split("<div class=\"group\">").next().unwrap_or(rest))
+            .collect()
+    }
+
+    #[test]
+    fn the_marked_table_sample_keeps_every_mark() {
+        let html = html();
+        let groups = table_groups(&html);
+        assert_eq!(groups.len(), html.matches("<section data-theme=").count());
+        let selected = MARKS.iter().filter(|(_, mark)| mark.selected).count();
+        let open = MARKS.iter().filter(|(_, mark)| mark.open).count();
+        for group in groups {
+            assert_eq!(group.matches("aria-selected=\"true\"").count(), selected);
+            assert_eq!(group.matches("class=\"open\"").count(), open);
+        }
     }
 
     #[test]
