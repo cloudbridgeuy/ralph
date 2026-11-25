@@ -46,9 +46,11 @@ fn paths_and_prose_are_left_to_other_completers() {
 fn complete(line: &str, current: Option<&str>) -> Option<Vec<String>> {
     let current = current.map(|name| ThreadName::parse(name).unwrap());
     let threads = ["auth", "side", "sub"].map(String::from);
+    let workers = ["w1", "w2"].map(String::from);
     let facts = CompletionFacts {
         current: current.as_ref(),
         threads: &threads,
+        workers: &workers,
     };
     let found = spec_completions(line, line.len(), &facts);
     found.map(|found| texts(Some(found)))
@@ -98,8 +100,8 @@ fn subcommands_take_a_space_and_thread_names_do_not() {
     let spaced = |line: &str| {
         let threads = ["auth".to_string()];
         let facts = CompletionFacts {
-            current: None,
             threads: &threads,
+            ..CompletionFacts::default()
         };
         spec_completions(line, line.len(), &facts)
             .map(|found| (found.span, found.values[0].append_space))
@@ -216,4 +218,36 @@ fn ids_and_free_text_are_not_completed() {
     ] {
         assert_eq!(complete(line, None), None, "{line}");
     }
+}
+
+#[test]
+fn diff_offers_its_words_then_worker_ids_then_windows() {
+    assert_eq!(
+        complete("/diff ", None),
+        words(&["ago", "last", "now", "worker"])
+    );
+    assert_eq!(complete("/diff worker ", None), words(&["w1", "w2"]));
+    assert_eq!(complete("/diff worker w1 ", None), words(&["ago", "last"]));
+    for line in ["/diff now ", "/diff worker last ", "/diff ./sr"] {
+        assert_eq!(complete(line, None), None, "{line}");
+    }
+}
+
+#[test]
+fn workers_offers_ids_and_the_costs_words() {
+    let views_and_windows = ["7d", "all", "harness", "model", "role", "ticket", "today"];
+    assert_eq!(complete("/workers ", None), words(&["costs", "w1", "w2"]));
+    assert_eq!(complete("/workers costs ", None), words(&views_and_windows));
+    assert_eq!(
+        complete("/workers costs role ", None),
+        words(&["7d", "all", "today"])
+    );
+    assert_eq!(complete("/workers costs today ", None), None);
+    assert_eq!(complete("/workers w1 ", None), None);
+}
+
+#[test]
+fn answer_completes_only_the_worker() {
+    assert_eq!(complete("/answer w", None), words(&["w1", "w2"]));
+    assert_eq!(complete("/answer w1 ", None), None);
 }

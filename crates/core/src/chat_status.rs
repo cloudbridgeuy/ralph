@@ -322,15 +322,32 @@ fn split_cursor(args: &str) -> (&str, Option<&str>) {
 
 pub(crate) const WORKER_COSTS: &str = "costs";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkersSub {
+    Costs,
+}
+
+impl Keyword for WorkersSub {
+    const ALL: &'static [Self] = &[WorkersSub::Costs];
+
+    fn word(self) -> &'static str {
+        match self {
+            WorkersSub::Costs => WORKER_COSTS,
+        }
+    }
+}
+
 fn workers_route(args: &str, line: &str) -> Route {
     let words: Vec<&str> = args.split_whitespace().collect();
-    match words.as_slice() {
-        [] => Route::Workers(None),
-        [WORKER_COSTS, rest @ ..] => {
+    let Some((first, rest)) = words.split_first() else {
+        return Route::Workers(None);
+    };
+    match WorkersSub::parse(first) {
+        Some(WorkersSub::Costs) => {
             parse_costs_args(rest).map_or_else(|| Route::Send(line.to_string()), Route::WorkerCosts)
         }
-        [id] => Route::Workers(Some(scheduled_worker_id(id))),
-        _ => Route::Send(line.to_string()),
+        None if rest.is_empty() => Route::Workers(Some(scheduled_worker_id(first))),
+        None => Route::Send(line.to_string()),
     }
 }
 

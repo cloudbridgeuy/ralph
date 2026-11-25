@@ -2,12 +2,15 @@ use crate::chat_help::Command;
 use crate::chat_hold::{word_completion, HoldCompletion};
 use crate::chat_send_it::SendItSub;
 use crate::chat_stage::{Kind, StageVerb};
-use crate::chat_status::InboxSub;
+use crate::chat_status::{InboxSub, WorkersSub};
 use crate::chat_thread::ThreadName;
 use crate::chat_thread_cmd::{MergeFlag, OpenFlag, ThreadSub};
 use crate::chat_thread_model::THREAD_MODEL_ALIASES;
+use crate::diff_command::{is_worker_id, DiffWord};
 use crate::schedule_command::ScheduleSub;
 use crate::watch_command::{WatchFlag, WatchSub};
+use crate::worker_costs::views::View;
+use crate::worker_costs::window::Window;
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -56,6 +59,7 @@ impl From<HoldCompletion> for SpecCompletion {
 pub struct CompletionFacts<'a> {
     pub current: Option<&'a ThreadName>,
     pub threads: &'a [String],
+    pub workers: &'a [String],
 }
 
 #[derive(Default)]
@@ -134,9 +138,10 @@ fn command_offers(
         Command::Schedule => first_word::<ScheduleSub>(args),
         Command::SendIt => first_word::<SendItSub>(args),
         Command::Stage => stage_offers(args),
+        Command::Diff => diff_offers(args, facts),
+        Command::Workers => workers_offers(args, facts),
+        Command::Answer if args.is_empty() => Offers::names(facts.workers.iter().cloned()),
         Command::Help
-        | Command::Diff
-        | Command::Workers
         | Command::Hold
         | Command::Nudge
         | Command::Config
@@ -179,6 +184,49 @@ fn stage_offers(args: &[&str]) -> Offers {
     match StageVerb::parse(word) {
         Some(StageVerb::Add) => every::<Kind>(),
         Some(StageVerb::Done | StageVerb::Edit) | None => Offers::default(),
+    }
+}
+
+fn diff_offers(args: &[&str], facts: &CompletionFacts) -> Offers {
+    let Some((first, rest)) = args.split_first() else {
+        return every::<DiffWord>();
+    };
+    match (DiffWord::parse(first), rest) {
+        (Some(DiffWord::Worker), []) => Offers::names(facts.workers.iter().cloned()),
+        (Some(DiffWord::Worker), [id]) if is_worker_id(id) => {
+            let windows = DiffWord::ALL
+                .iter()
+                .copied()
+                .filter(|word| word.window().is_some());
+            Offers::keywords(windows.map(Keyword::word))
+        }
+        (Some(DiffWord::Worker | DiffWord::Now | DiffWord::Last | DiffWord::Ago) | None, _) => {
+            Offers::default()
+        }
+    }
+}
+
+fn workers_offers(args: &[&str], facts: &CompletionFacts) -> Offers {
+    let Some((first, rest)) = args.split_first() else {
+        let mut offers = every::<WorkersSub>();
+        offers.names.extend(facts.workers.iter().cloned());
+        return offers;
+    };
+    match WorkersSub::parse(first) {
+        Some(WorkersSub::Costs) => costs_offers(rest),
+        None => Offers::default(),
+    }
+}
+
+fn costs_offers(args: &[&str]) -> Offers {
+    match args {
+        [] => {
+            let mut offers = every::<View>();
+            offers.keywords.extend(every::<Window>().keywords);
+            offers
+        }
+        [view] if View::parse(view).is_some() => every::<Window>(),
+        _ => Offers::default(),
     }
 }
 
