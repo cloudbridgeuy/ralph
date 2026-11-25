@@ -1,17 +1,20 @@
-use super::{post_prompt, record_usage, OpencodeHost, Session, Target};
+use super::{post_problem, post_prompt, record_usage, OpencodeHost, Session, Target};
 use crate::cursor_owner::{now_secs, take_answer, write_file, write_interrupt_result};
+use crate::permission_queue::post_denial;
 use crate::warn::warn;
 use crate::worker_events::Events;
+use crate::worker_mcp::Inbox;
 use crate::workers::headless::{
     deliver_to_worker, drain_queued, mark_prompt_lost, report_interrupt_gone, Heartbeat,
 };
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     create_session_body, keeps_interrupt_request, opencode_session_id, request_stale, task_prompt,
-    ActivityState, HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord, OpencodeSpawn,
-    OpencodeTurnUsage, PermissionAnswer, QueuedFacts, QueuedOwner, QueuedWorker, TurnState,
-    WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR,
-    OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
+    unattended, ActivityState, BlockedContent, HandoffFiles, HeadlessState, HeadlessWorker,
+    OpencodeRecord, OpencodeSpawn, OpencodeTurnUsage, PermissionAnswer, PermissionDecision,
+    QueuedFacts, QueuedOwner, QueuedWorker, TurnState, WorkerCommand, WorkerEvent, WorkerMarkers,
+    OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR,
+    OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
 };
 use std::fs;
 use std::path::Path;
@@ -57,6 +60,41 @@ impl OpencodeHost {
         }
         for id in entry_ids(&self.store_dir, OPENCODE_SPAWN_DIR) {
             self.spawn(&id);
+        }
+    }
+
+    pub(super) fn send(&self, session_id: &str, target: &Target, text: &str) {
+        let result = self
+            .worker(&target.worker, session_id)
+            .send(WorkerCommand::Prompt(text.to_string()));
+        if let Err(message) = result {
+            if let Some(session) = self.sessions().get_mut(session_id) {
+                session.turn.in_flight = false;
+            }
+            post_problem(target, &format!("could not send the prompt: {message}"));
+        }
+    }
+
+    pub(super) fn refuse(&self, session_id: &str, target: &Target, content: &BlockedContent) {
+        let verdict = unattended(content);
+        post_denial(
+            &Inbox::new(target.inbox.clone()),
+            &target.worker,
+            &verdict,
+            content,
+        );
+        let answer = PermissionAnswer {
+            request_id: content.request_id.clone(),
+            option_id: verdict
+                .option_id()
+                .unwrap_or(PermissionDecision::Reject.wire())
+                .to_string(),
+        };
+        let result = self
+            .worker(&target.worker, session_id)
+            .send(WorkerCommand::AnswerPermission(answer));
+        if let Err(message) = result {
+            post_problem(target, &format!("could not deny the request: {message}"));
         }
     }
 
@@ -123,6 +161,7 @@ impl OpencodeHost {
             cwd: request.worktree.clone(),
             model: request.model.clone(),
             inbox: request.inbox.clone(),
+            scheduled: request.scheduled,
         };
         write_file(&files.session, &record.render())
             .map_err(|e| format!("could not write the opencode session record: {e}"))?;
@@ -145,6 +184,7 @@ impl OpencodeHost {
                         id: id.to_string(),
                         worktree: request.worktree.clone(),
                     }),
+                    scheduled: request.scheduled,
                 },
                 turn,
                 verified: true,
@@ -335,6 +375,7 @@ impl OpencodeHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::worker::Effect;
 
     #[test]
     fn a_session_gone_at_send_with_no_reported_outcome_is_an_error() {
@@ -410,5 +451,37 @@ mod tests {
                 .as_deref(),
             Some("gone")
         );
+    }
+
+    #[test]
+    fn a_refusal_posts_the_denial_before_it_replies() {
+        let store = tempfile::tempdir().unwrap();
+        let inbox = store.path().join("inbox");
+        let host = OpencodeHost::new(store.path().to_path_buf());
+        let target = Target {
+            worker: "GUZ-1".to_string(),
+            markers: WorkerMarkers::new(store.path(), "GUZ-1"),
+            inbox: inbox.clone(),
+            site: None,
+            scheduled: true,
+        };
+        let content = BlockedContent {
+            request_id: "per_one".to_string(),
+            tool: "shell".to_string(),
+            summary: "git push".to_string(),
+            options: Vec::new(),
+            pending: Vec::new(),
+        };
+        host.run("ses_one", &target, vec![Effect::Refuse(content)]);
+        let reports: String = fs::read_dir(&inbox)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter_map(|entry| fs::read_to_string(entry.path()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(reports.contains("was denied a permission request on shell"));
+        assert!(reports.contains("The opencode turn failed"));
     }
 }

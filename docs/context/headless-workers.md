@@ -45,7 +45,7 @@ The argv is `/bin/sh -c <isolate> <shell> <flags> <restore> <program> <args...>`
 
 ## Scheduled workers: unattended permissions
 
-A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. The claude, codex, cursor and agy hosts call them. The opencode host does not call them yet; until they do, a scheduled worker there still queues requests for a person.
+A scheduled worker runs with nobody watching, so a permission request is never queued for a person. The pure rules live in `crates/core/src/worker/scheduled.rs`; they take no `[<harness>] permissions` setting, so yolo never widens them. The session record keeps the scheduled flag, so a resumed worker stays scheduled. Every headless host calls them.
 
 | Harness | Rule | Result |
 | --- | --- | --- |

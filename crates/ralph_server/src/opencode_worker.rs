@@ -22,7 +22,7 @@ use ralph_core::worker::{
     turn_result, ActivityState, ApiData, Effect, HandoffFiles, HeadlessState, HeadlessWorker,
     OpencodeModelUsage, OpencodeRecord, OpencodeTurnUsage, PermissionAsked, RecordFate,
     ServerEvent, ServerRecord, ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate,
-    TurnFacts, TurnState, WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR,
+    TurnFacts, TurnState, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR,
     OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
     SILENCE_TIMEOUT,
 };
@@ -304,6 +304,7 @@ struct Target {
     markers: WorkerMarkers,
     inbox: PathBuf,
     site: Option<WorkerSite>,
+    scheduled: bool,
 }
 
 struct Session {
@@ -387,6 +388,7 @@ fn load_sessions(store: &Path, snapshots: bool) -> HashMap<String, Session> {
                     worker: id,
                     inbox: record.inbox,
                     site,
+                    scheduled: record.scheduled,
                 },
                 turn: TurnState::default(),
                 verified: false,
@@ -523,6 +525,7 @@ impl OpencodeHost {
                 let facts = TurnFacts {
                     reported: session.target.markers.reported.exists(),
                     closing: self.closed(),
+                    scheduled: session.target.scheduled,
                 };
                 let effects = advance(&mut session.turn, update, facts);
                 let rows = if ended {
@@ -579,6 +582,7 @@ impl OpencodeHost {
                     push_event(&worker.events, WorkerEvent::PermissionAsked(content));
                 }
                 Effect::Publish(None) => push_event(&worker.events, WorkerEvent::PermissionSettled),
+                Effect::Refuse(content) => self.refuse(session_id, target, &content),
                 Effect::ClearReported => {
                     fs::remove_file(&markers.reported).ok();
                 }
@@ -599,18 +603,6 @@ impl OpencodeHost {
         }
         self.apply_events(&target.worker, session_id);
         turn_id
-    }
-
-    fn send(&self, session_id: &str, target: &Target, text: &str) {
-        let result = self
-            .worker(&target.worker, session_id)
-            .send(WorkerCommand::Prompt(text.to_string()));
-        if let Err(message) = result {
-            if let Some(session) = self.sessions().get_mut(session_id) {
-                session.turn.in_flight = false;
-            }
-            post_problem(target, &format!("could not send the prompt: {message}"));
-        }
     }
 
     fn route(&self, event: &ServerEvent) {
@@ -900,6 +892,7 @@ mod tests {
             cwd: PathBuf::from("/w"),
             model: "github-copilot/claude-haiku-4.5".to_string(),
             inbox: PathBuf::from(inbox),
+            scheduled: false,
         }
         .render()
     }

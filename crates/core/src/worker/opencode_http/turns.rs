@@ -57,6 +57,7 @@ pub struct TurnState {
 pub struct TurnFacts {
     pub reported: bool,
     pub closing: bool,
+    pub scheduled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +65,7 @@ pub enum Effect {
     Ready,
     ClearWaiting,
     Publish(Option<BlockedContent>),
+    Refuse(BlockedContent),
     Send(String),
     ClearReported,
     Unreported,
@@ -169,13 +171,16 @@ pub fn advance(state: &mut TurnState, update: SessionUpdate, facts: TurnFacts) -
             if state.blocked.iter().any(|known| known.id == asked.id) {
                 return Vec::new();
             }
+            let refusal = facts
+                .scheduled
+                .then(|| Effect::Refuse(opencode_blocked_content(&asked)));
             state.blocked.push_back(asked);
-            vec![Effect::Publish(state.front())]
+            vec![refusal.unwrap_or_else(|| Effect::Publish(state.front()))]
         }
         SessionUpdate::Unblocked { request_id } => {
             let before = state.blocked.len();
             state.blocked.retain(|known| known.id != request_id);
-            if state.blocked.len() == before {
+            if facts.scheduled || state.blocked.len() == before {
                 Vec::new()
             } else {
                 vec![Effect::Publish(state.front())]
@@ -236,7 +241,33 @@ mod tests {
         TurnFacts {
             reported: false,
             closing: false,
+            scheduled: false,
         }
+    }
+
+    fn unattended() -> TurnFacts {
+        TurnFacts {
+            scheduled: true,
+            ..facts()
+        }
+    }
+
+    #[test]
+    fn a_scheduled_worker_refuses_each_request_once_and_publishes_nothing() {
+        let mut state = TurnState::default();
+        assert_eq!(
+            advance(&mut state, SessionUpdate::Blocked(asked()), unattended()),
+            vec![Effect::Refuse(opencode_blocked_content(&asked()))]
+        );
+        assert_eq!(
+            advance(&mut state, SessionUpdate::Blocked(asked()), unattended()),
+            Vec::new()
+        );
+        let unblocked = SessionUpdate::Unblocked {
+            request_id: PERMISSION_ID.to_string(),
+        };
+        assert_eq!(advance(&mut state, unblocked, unattended()), Vec::new());
+        assert!(state.blocked.is_empty());
     }
 
     fn ended(state: &mut TurnState, end: TurnEnd, facts: TurnFacts) -> Vec<Effect> {
@@ -372,6 +403,7 @@ mod tests {
         let reported = TurnFacts {
             reported: true,
             closing: false,
+            scheduled: false,
         };
         assert_eq!(
             ended(&mut state, TurnEnd::Succeeded, reported),
@@ -387,6 +419,7 @@ mod tests {
         let reported = TurnFacts {
             reported: true,
             closing: false,
+            scheduled: false,
         };
         // A finished worker emits only its marker update. No server-lost or
         // shutdown effect is available from the worker turn state machine.
@@ -403,6 +436,7 @@ mod tests {
         let closing = TurnFacts {
             reported: false,
             closing: true,
+            scheduled: false,
         };
         assert_eq!(ended(&mut state, TurnEnd::Succeeded, closing), Vec::new());
         assert_eq!(

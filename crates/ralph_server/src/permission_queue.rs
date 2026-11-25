@@ -22,6 +22,21 @@ pub(crate) fn host_process_token() -> String {
     )
 }
 
+pub(crate) fn post_denial(
+    inbox: &Inbox,
+    worker: &str,
+    verdict: &Unattended,
+    content: &BlockedContent,
+) {
+    let at = chrono::Utc::now().to_rfc3339();
+    if let Some(report) = verdict.denial_report(worker, &at, content) {
+        warn_if_err(
+            inbox.post(&report, 0),
+            format!("posting the denial of worker {worker}"),
+        );
+    }
+}
+
 pub struct PermissionQueue<R> {
     process: String,
     events: Events,
@@ -83,13 +98,7 @@ impl<R> PermissionQueue<R> {
     }
 
     pub(crate) fn report_unattended(&self, verdict: &Unattended, content: &BlockedContent) {
-        let at = chrono::Utc::now().to_rfc3339();
-        if let Some(report) = verdict.denial_report(&self.worker_id, &at, content) {
-            warn_if_err(
-                self.inbox.post(&report, 0),
-                format!("posting the denial of worker {}", self.worker_id),
-            );
-        }
+        post_denial(&self.inbox, &self.worker_id, verdict, content);
     }
 
     pub(crate) fn enqueue(&self, reply: R, content: BlockedContent) {
