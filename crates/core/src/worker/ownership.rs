@@ -192,6 +192,22 @@ pub fn session_survived_kill(kill_ok: bool, listed: Option<bool>) -> bool {
     listed.unwrap_or(!kill_ok)
 }
 
+pub fn stop_step(kind: HarnessId, owner: &Owner) -> Option<CloseStep> {
+    match kind {
+        HarnessId::Agy => Some(CloseStep::TerminateAgy),
+        HarnessId::Cursor => Some(CloseStep::TerminateCursor),
+        HarnessId::Opencode => Some(CloseStep::RemoveOpencodeSession),
+        HarnessId::Codex => Some(CloseStep::TerminateCodex),
+        HarnessId::Claude => Some(CloseStep::TerminateClaude),
+        HarnessId::ClaudeTmux => match owner {
+            Owner::Mine(session) | Owner::Foreign(session) => {
+                Some(CloseStep::KillSession(session.name.clone()))
+            }
+            Owner::Missing => None,
+        },
+    }
+}
+
 pub fn close_plan(
     state: &CloseState,
     abandon: bool,
@@ -233,18 +249,7 @@ pub fn close_plan(
     if state.opencode && state.kind != HarnessId::Opencode {
         steps.push(CloseStep::RemoveOpencodeSession);
     }
-    match state.kind {
-        HarnessId::Agy => steps.push(CloseStep::TerminateAgy),
-        HarnessId::Cursor => steps.push(CloseStep::TerminateCursor),
-        HarnessId::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
-        HarnessId::Codex => steps.push(CloseStep::TerminateCodex),
-        HarnessId::Claude => steps.push(CloseStep::TerminateClaude),
-        HarnessId::ClaudeTmux => {
-            if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
-                steps.push(CloseStep::KillSession(session.name.clone()));
-            }
-        }
-    }
+    steps.extend(stop_step(state.kind, &state.owner));
     if let Some(dirty) = state.dirty_worktree {
         steps.push(CloseStep::RemoveWorktree { force: dirty });
     }
@@ -456,6 +461,25 @@ mod tests {
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateClaude);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
+    }
+
+    #[test]
+    fn stopping_a_worker_ends_the_process_its_harness_runs_in() {
+        let owner = Owner::Mine(tagged("ralph-p-A", "/s"));
+        for (kind, step) in [
+            (HarnessId::Claude, CloseStep::TerminateClaude),
+            (HarnessId::Codex, CloseStep::TerminateCodex),
+            (HarnessId::Cursor, CloseStep::TerminateCursor),
+            (HarnessId::Agy, CloseStep::TerminateAgy),
+            (HarnessId::Opencode, CloseStep::RemoveOpencodeSession),
+            (
+                HarnessId::ClaudeTmux,
+                CloseStep::KillSession("ralph-p-A".into()),
+            ),
+        ] {
+            assert_eq!(stop_step(kind, &owner), Some(step), "{kind:?}");
+        }
+        assert_eq!(stop_step(HarnessId::ClaudeTmux, &Owner::Missing), None);
     }
 
     #[test]

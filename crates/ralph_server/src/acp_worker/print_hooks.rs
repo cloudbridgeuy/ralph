@@ -53,7 +53,7 @@ impl PrintHooks {
             Arc::clone(events),
         ));
         socket
-            .serve(Arc::clone(&queue))
+            .serve(Arc::clone(&queue), request.scheduled)
             .map_err(|e| e.to_string())?;
         let hooks_file = request.worktree.join(CURSOR_HOOKS_FILE);
         let existing = fs::read_to_string(&hooks_file).ok();

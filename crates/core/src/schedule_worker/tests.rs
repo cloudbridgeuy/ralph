@@ -1,5 +1,10 @@
 use super::*;
 
+#[test]
+fn a_scheduled_worker_runs_on_headless_claude() {
+    assert_eq!(SCHEDULED_HARNESS, HarnessId::Claude);
+}
+
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
         .unwrap()
@@ -368,6 +373,16 @@ fn only_a_running_record_with_that_id_is_still_running() {
     assert!(!is_still_running(&tasks, "b"));
     assert!(!is_still_running(&tasks, "c"));
     assert!(!is_still_running(&[], "a"));
+}
+
+#[test]
+fn a_task_names_its_worker_by_a_parsed_id() {
+    let named = |id| worker(id, "2026-01-01T00:00:00Z", TaskStatus::Running).worker();
+    assert_eq!(named("a"), WorkerId::parse("sched-a"));
+    assert_eq!(
+        named("a b"),
+        Err(WorkerIdError::NotDashed("sched-a b".to_string()))
+    );
 }
 
 #[test]

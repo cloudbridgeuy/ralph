@@ -451,6 +451,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         }
     }
 
@@ -532,6 +533,7 @@ mod tests {
             model: Some("m".into()),
             effort: Some("low".into()),
             permissions: None,
+            scheduled: false,
         };
         let params = thread_resume_params(&record, &server, &Sandbox::default());
         let mut expected = thread_start_params(

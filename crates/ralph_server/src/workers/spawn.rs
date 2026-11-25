@@ -520,6 +520,7 @@ impl Workers {
             at: now_secs(),
             snapshots: launch.site.is_some(),
             model: launch.model.map(str::to_string),
+            scheduled: launch.scheduled,
         };
         let text = serde_json::to_string(&request).map_err(io::Error::other)?;
         if harness == "agy" {
@@ -550,6 +551,7 @@ impl Workers {
             task: launch.task.to_string(),
             at: now_secs(),
             snapshots: launch.site.is_some(),
+            scheduled: launch.scheduled,
         };
         write_file(&files.spawn, &request.render())?;
         let ready = WorkerMarkers::new(&self.store_dir, id).ready;

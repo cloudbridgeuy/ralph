@@ -30,14 +30,14 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, agy_auto_allow_option, auth_method, auto_allow_option,
     cancels_turn, capabilities, decide, describe, encode, gone_path, permission_content,
-    probed_version, prompt_failure_report, ready_path, reduce, request_stale, session_error,
-    stop_problem, sweeps_permissions, task_prompt, turn_outcome, AcpAgent, AcpCall, BlockedContent,
-    Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
-    PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
-    Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, AGY_AGENT, AGY_GATE,
-    CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE, CURSOR_INTERRUPT_DIR,
-    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
-    CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    probed_version, prompt_failure_report, ready_path, reduce, request_stale,
+    scheduled_permission_mode, session_error, stop_problem, sweeps_permissions, turn_outcome,
+    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessState,
+    HeadlessWorker, Inbound, PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope,
+    SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent,
+    WorkerMarkers, AGY_AGENT, AGY_GATE, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_GATE, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
+    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -61,6 +61,7 @@ mod print;
 mod print_hooks;
 mod queued;
 pub(crate) mod recovery;
+mod resume;
 pub(crate) mod transport;
 mod turns;
 mod verify;
@@ -111,6 +112,7 @@ struct Opening {
     effort: Option<String>,
     updates: agy_settings::Updates,
     inbox: PathBuf,
+    scheduled: bool,
 }
 
 async fn open_session(
@@ -213,7 +215,7 @@ impl AcpWorker {
                 );
             }
         }
-        let permission_mode = if agent == AGY_AGENT {
+        let configured_mode = if agent == AGY_AGENT {
             match &launch {
                 Launch::Resume { record, .. } => record.permissions.unwrap_or(PermissionMode::Ask),
                 Launch::Fresh => {
@@ -223,6 +225,7 @@ impl AcpWorker {
         } else {
             cursor_permissions()
         };
+        let permission_mode = scheduled_permission_mode(request.scheduled, configured_mode);
         let effort = if agent == AGY_AGENT {
             match &launch {
                 Launch::Resume { record, .. } => record.effort.clone(),
@@ -270,6 +273,7 @@ impl AcpWorker {
             &markers,
             permission_mode,
             agent == AGY_AGENT,
+            request.scheduled,
             PermissionQueue::new(
                 host_process_token(),
                 id.to_string(),
@@ -342,6 +346,7 @@ impl AcpWorker {
         let opened = Arc::new(AtomicBool::new(false));
         let was_opened = Arc::clone(&opened);
         let session_model = request.model.clone();
+        let scheduled = request.scheduled;
         let updates = Arc::new(Mutex::new(None));
         let on_update = Arc::clone(&updates);
         thread::spawn(move || {
@@ -401,6 +406,7 @@ impl AcpWorker {
                             effort,
                             updates,
                             inbox: inbox_path,
+                            scheduled,
                         };
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
@@ -780,11 +786,11 @@ impl CursorHost {
             self.launch(id, &request, Launch::Fresh)
                 .map(|worker| CursorWorker::Acp(Box::new(worker)))
         } else {
-            PrintWorker::start(id, &request, &files, None, cursor_permissions())
-                .map(CursorWorker::Print)
+            let mode = scheduled_permission_mode(request.scheduled, cursor_permissions());
+            PrintWorker::start(id, &request, &files, None, mode).map(CursorWorker::Print)
         };
         match started {
-            Ok(worker) => self.adopt(id, worker, self.agy.then(|| task_prompt(&request.task))),
+            Ok(worker) => self.adopt(id, worker, self.agy.then(|| request.prompt())),
             Err(message) => {
                 if self.agy {
                     self.forget(id, true);
@@ -818,131 +824,6 @@ impl CursorHost {
         started
     }
 
-    fn resume_all(&self) {
-        for id in request_ids(&self.store_dir, self.dir(CURSOR_SESSION_DIR, "agy-session")) {
-            self.resume(&id);
-        }
-    }
-
-    fn resume(&self, id: &str) {
-        let files = self.files(id);
-        if files.owner.exists() && !self.agy {
-            warn(format!(
-                "{} session {id} not resumed: a running chat owns it",
-                CURSOR_AGENT.name
-            ));
-            return;
-        }
-        let Some(record) = fs::read_to_string(&files.session)
-            .ok()
-            .and_then(|text| SessionRecord::parse(&text))
-        else {
-            warn(format!(
-                "{} session {id} not resumed: its record is unreadable",
-                CURSOR_AGENT.name
-            ));
-            return;
-        };
-        if let Resume::Skip(message) = recovery::resume(
-            if self.agy { &AGY_AGENT } else { &CURSOR_AGENT },
-            id,
-            &record,
-            &self.store_dir,
-            true,
-        ) {
-            warn(message);
-            return;
-        }
-        if self.agy {
-            let Ok(_lock) = recovery::lock(&files.owner) else {
-                return;
-            };
-            if files.owner.exists() && !crate::cursor_owner::reclaim_agy(&files.owner) {
-                return;
-            }
-            if let Err(error) = journal::recover(&self.store_dir, id) {
-                warn(format!(
-                    "agy session {id} not resumed: could not report unfinished work: {error}"
-                ));
-                return;
-            }
-        }
-        let Ok(exe) = std::env::current_exe() else {
-            warn(format!(
-                "{} session {id} not resumed: could not find the ralph executable",
-                CURSOR_AGENT.name
-            ));
-            return;
-        };
-        if !record.cwd.is_dir() {
-            let message = format!(
-                "{} session {id} not resumed: its worktree {} is gone",
-                if self.agy {
-                    AGY_AGENT.name
-                } else {
-                    CURSOR_AGENT.name
-                },
-                record.cwd.display()
-            );
-            warn(message.clone());
-            if self.agy {
-                write_file(&files.error, &message).ok();
-            }
-            return;
-        }
-        let request = SpawnRequest {
-            worktree: record.cwd.clone(),
-            exe,
-            inbox: record.inbox.clone(),
-            task: String::new(),
-            at: now_secs(),
-            snapshots: snapshots_enabled(
-                AppConfig::load().ok().map(|config| config.changes.enabled),
-            ),
-            model: record.model.clone(),
-        };
-        if self.agy && !recovery::claim_saved(&files, &record) {
-            return;
-        }
-        let started = if !self.agy && record.permissions.is_some() {
-            let Some(mode) = record.permissions else {
-                return;
-            };
-            PrintWorker::start(id, &request, &files, Some(&record), mode).map(CursorWorker::Print)
-        } else {
-            let launch = Launch::Resume {
-                record,
-                store: self.store_dir.clone(),
-            };
-            self.launch(id, &request, launch)
-                .map(|worker| CursorWorker::Acp(Box::new(worker)))
-        };
-        match started {
-            Ok(worker) => self.adopt_resumed(id, worker),
-            Err(message) => {
-                if self.agy {
-                    recovery::remove_owned(&files.owner);
-                }
-                warn(message.clone());
-                write_file(&files.error, &message).ok();
-            }
-        }
-    }
-
-    fn adopt_resumed(&self, id: &str, worker: CursorWorker) {
-        let ready = ready_path(&self.store_dir, id);
-        if !self.closed.load(Ordering::SeqCst) && write_file(&ready, "").is_ok() {
-            self.workers().insert(id.to_string(), worker);
-        } else {
-            drop(worker);
-            if self.agy {
-                self.forget(id, false);
-            }
-            if !self.agy {
-                fs::remove_file(ready).ok();
-            }
-        }
-    }
     fn adopt(&self, id: &str, mut worker: CursorWorker, task: Option<String>) {
         let files = self.files(id);
         let claimed = !self.closed.load(Ordering::SeqCst)

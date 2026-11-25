@@ -140,7 +140,7 @@ pub enum PermissionDecision {
 }
 
 impl PermissionDecision {
-    fn wire(self) -> &'static str {
+    pub fn wire(self) -> &'static str {
         match self {
             Self::Once => "once",
             Self::Always => "always",

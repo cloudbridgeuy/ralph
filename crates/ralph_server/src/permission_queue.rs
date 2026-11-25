@@ -1,8 +1,9 @@
+use crate::warn::warn_if_err;
 use crate::worker_events::{push_event, Events};
 use crate::worker_mcp::Inbox;
 use ralph_core::worker::{
     match_option, no_option_message, pending_position, permission_alert_report, process_request_id,
-    BlockedContent, PermissionOption, WorkerEvent,
+    BlockedContent, PermissionOption, Unattended, WorkerEvent,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +20,21 @@ pub(crate) fn host_process_token() -> String {
         std::process::id(),
         chrono::Utc::now().timestamp_millis()
     )
+}
+
+pub(crate) fn post_denial(
+    inbox: &Inbox,
+    worker: &str,
+    verdict: &Unattended,
+    content: &BlockedContent,
+) {
+    let at = chrono::Utc::now().to_rfc3339();
+    if let Some(report) = verdict.denial_report(worker, &at, content) {
+        warn_if_err(
+            inbox.post(&report, 0),
+            format!("posting the denial of worker {worker}"),
+        );
+    }
 }
 
 pub struct PermissionQueue<R> {
@@ -78,7 +94,14 @@ impl<R> PermissionQueue<R> {
         let report = permission_alert_report(&self.worker_id, &at, &content);
         queue.push_back(Pending { reply, content });
         self.publish(&queue);
-        self.inbox.post(&report, 0).ok();
+        warn_if_err(
+            self.inbox.post(&report, 0),
+            format!("posting the permission alert of worker {}", self.worker_id),
+        );
+    }
+
+    pub(crate) fn report_unattended(&self, verdict: &Unattended, content: &BlockedContent) {
+        post_denial(&self.inbox, &self.worker_id, verdict, content);
     }
 
     pub(crate) fn enqueue(&self, reply: R, content: BlockedContent) {
@@ -181,6 +204,29 @@ mod tests {
 
     fn queue(dir: &TempDir) -> (PermissionQueue<u32>, Events) {
         queue_for("p", dir)
+    }
+
+    #[test]
+    fn an_unattended_denial_posts_one_blocked_report_and_queues_nothing() {
+        let dir = TempDir::new().unwrap();
+        let (queue, events) = queue(&dir);
+        let content = content("r1", &["allow"]);
+        let reports = || {
+            std::fs::read_dir(dir.path().join("inbox-p"))
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        queue.report_unattended(&Unattended::Allow(&content.options[0]), &content);
+        assert!(reports().is_empty());
+        queue.report_unattended(&Unattended::Cancel, &content);
+        assert_eq!(reports().len(), 1);
+        assert!(reports()[0].contains("blocked"));
+        assert!(events.lock().unwrap().is_empty());
     }
 
     fn published(events: &Events) -> String {

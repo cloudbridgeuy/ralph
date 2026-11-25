@@ -14,6 +14,7 @@ use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
+use tempfile::NamedTempFile;
 
 use crate::cursor_owner::{now_secs, write_file};
 use crate::outcome_log;
@@ -22,6 +23,7 @@ use crate::worker_usage::{record_or_warn, record_verify_or_warn, UsageTarget};
 
 const DROP_LOG: &str = "inbox-drops.jsonl";
 const REJECTED_DIR: &str = "rejected";
+const POST_ATTEMPTS: u64 = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadMode {
@@ -76,10 +78,19 @@ impl Inbox {
 
     pub fn post(&self, report: &Report, seq: u64) -> io::Result<()> {
         fs::create_dir_all(&self.dir)?;
-        let name = inbox_file_name(report, seq);
-        let tmp = self.dir.join(format!(".{name}"));
-        fs::write(&tmp, serde_json::to_vec(report)?)?;
-        fs::rename(tmp, self.dir.join(name))
+        let mut file = NamedTempFile::new_in(&self.dir)?;
+        file.write_all(&serde_json::to_vec(report)?)?;
+        for next in seq..seq.saturating_add(POST_ATTEMPTS) {
+            match file.persist_noclobber(self.dir.join(inbox_file_name(report, next))) {
+                Ok(_) => return Ok(()),
+                Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists => file = e.file,
+                Err(e) => return Err(e.error),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("no free inbox file name after {POST_ATTEMPTS} tries"),
+        ))
     }
 
     fn reported_this_turn(&self, worker: &str) -> bool {
@@ -919,6 +930,39 @@ mod tests {
         let value: Value =
             serde_json::from_slice(&fs::read(dir.path().join("inbox.json")).unwrap()).unwrap();
         assert_eq!(value["entries"].as_array().unwrap().len(), 1);
+    }
+
+    fn same_name_report(text: &str) -> Report {
+        Report {
+            worker: "schedule:a".to_string(),
+            at: "2026-01-01T00:00:00Z".to_string(),
+            status: "blocked".to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    fn queued_texts(inbox: &Inbox) -> Vec<String> {
+        inbox.peek().unwrap().into_iter().map(|r| r.text).collect()
+    }
+
+    #[test]
+    fn two_posts_with_one_file_name_both_reach_the_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        inbox.post(&same_name_report("one"), 0).unwrap();
+        inbox.post(&same_name_report("two"), 0).unwrap();
+        assert_eq!(queued_texts(&inbox), ["one", "two"]);
+        assert_eq!(fs::read_dir(dir.path().join("inbox")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_post_that_reuses_a_queued_file_name_reaches_the_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        inbox.post(&same_name_report("one"), 0).unwrap();
+        assert_eq!(queued_texts(&inbox), ["one"]);
+        inbox.post(&same_name_report("two"), 0).unwrap();
+        assert_eq!(queued_texts(&inbox), ["one", "two"]);
     }
 
     #[test]

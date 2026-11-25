@@ -4,9 +4,10 @@ use crate::warn::warn;
 use ralph_core::chat_memory::instance_id;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
-    owned_by, sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord,
-    SessionRegistry, Sweep, AGY_OWNER_DIR, CLAUDE_OWNER_DIR, CLAUDE_SESSION_DIR, CODEX_OWNER_DIR,
-    CODEX_SESSION_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR, OPENCODE_SESSION_DIR,
+    owned_by, sweep_decision, HandoffFiles, HarnessId, InterruptOutcome, OwnerFacts, OwnerRecord,
+    SessionRef, SessionRegistry, Sweep, Worker, WorkerId, AGY_OWNER_DIR, CLAUDE_OWNER_DIR,
+    CLAUDE_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    OPENCODE_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -179,14 +180,35 @@ pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
     ids
 }
 
+const SESSION_DIRS: [(HarnessId, &str); 5] = [
+    (HarnessId::Cursor, CURSOR_SESSION_DIR),
+    (HarnessId::Codex, CODEX_SESSION_DIR),
+    (HarnessId::Claude, CLAUDE_SESSION_DIR),
+    (HarnessId::Agy, "agy-session"),
+    (HarnessId::Opencode, OPENCODE_SESSION_DIR),
+];
+
 pub fn resumable_ids(store_dir: &Path) -> Vec<String> {
-    let mut ids = request_ids(store_dir, CURSOR_SESSION_DIR);
-    ids.extend(request_ids(store_dir, CODEX_SESSION_DIR));
-    ids.extend(request_ids(store_dir, CLAUDE_SESSION_DIR));
-    ids.extend(request_ids(store_dir, "agy-session"));
-    ids.extend(request_ids(store_dir, OPENCODE_SESSION_DIR));
+    let mut ids: Vec<String> = SESSION_DIRS
+        .iter()
+        .flat_map(|(_, dir)| request_ids(store_dir, dir))
+        .collect();
     ids.sort();
     ids
+}
+
+pub fn saved_workers(store_dir: &Path) -> Vec<Worker> {
+    SESSION_DIRS
+        .iter()
+        .flat_map(|(harness, dir)| {
+            request_ids(store_dir, dir)
+                .into_iter()
+                .filter_map(move |name| {
+                    let session = SessionRef::new(store_dir.join(dir).join(&name));
+                    Worker::saved(WorkerId::parse(&name).ok()?, *harness, session).ok()
+                })
+        })
+        .collect()
 }
 
 fn owner_facts(owner: &Path) -> Option<(Option<OwnerRecord>, OwnerFacts)> {

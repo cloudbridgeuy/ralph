@@ -12,7 +12,7 @@ use ralph_core::worker::{
     close_clear_paths, close_handoff, close_remove_paths, delivery_line, describe, interrupt_reply,
     legacy_base_unset_warning, lost_marker_name, opencode_close_handoff, parse_interrupt_result,
     prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path, session_name,
-    session_owner, session_survived_kill, tagged_sessions, uptake, via_permission,
+    session_owner, session_survived_kill, stop_step, tagged_sessions, uptake, via_permission,
     worktree_for_branch, worktree_path, ActivityMark, Base, CloseStep, Feature, Handoff,
     HandoffFiles, HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep,
     TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_OWNER_DIR, REPLY_CONFIRM,
@@ -298,20 +298,24 @@ impl Workers {
 
     pub fn stop_harness(&self, id: &str) -> io::Result<String> {
         let (repo, project) = locate_repo(self.spawn_record(id).as_ref())?;
-        match self.owner(&project, id) {
-            Owner::Mine(session) => {
-                self.close_step(&CloseStep::KillSession(session.name), &repo, &repo, id)?;
-                Ok(format!(
-                    "Stopped worker {id}: kept its worktree and branch {}.",
-                    branch_name(id)
-                ))
-            }
-            Owner::Missing => Ok(format!("Worker {id} is not running.")),
-            Owner::Foreign(session) => Err(io::Error::other(format!(
+        let owner = self.owner(&project, id);
+        if let Owner::Foreign(session) = &owner {
+            return Err(io::Error::other(format!(
                 "worker {id} belongs to another chat (store {})",
                 session.store
-            ))),
+            )));
         }
+        let kind = self
+            .headless_files(id)
+            .map_or(HarnessId::ClaudeTmux, |(kind, _)| kind);
+        let Some(step) = stop_step(kind, &owner) else {
+            return Ok(format!("Worker {id} is not running."));
+        };
+        self.close_step(&step, &repo, &repo, id)?;
+        Ok(format!(
+            "Stopped worker {id}: kept its worktree and branch {}.",
+            branch_name(id)
+        ))
     }
 
     fn close_step(

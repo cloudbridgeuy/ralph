@@ -301,7 +301,10 @@ fn turn_end<T>(result: &Result<T, agent_client_protocol::Error>, interrupted: bo
 fn post_prompt_failure(turns: &Turns, problem: &str) {
     let at = chrono::Utc::now().to_rfc3339();
     let report = prompt_failure_report(turns.agent.name, &turns.worker_id, &at, problem);
-    turns.inbox.post(&report, 0).ok();
+    crate::warn::warn_if_err(
+        turns.inbox.post(&report, 0),
+        format!("posting the prompt failure of worker {}", turns.worker_id),
+    );
 }
 
 fn receipt_outcome(

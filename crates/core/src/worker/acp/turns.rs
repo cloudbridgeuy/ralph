@@ -1,12 +1,12 @@
-use crate::worker::{Report, ReportStatus, REPORT_REMINDER, WORKER_PROMPT};
+use crate::worker::{worker_prompt, Report, ReportStatus, REPORT_REMINDER};
 use std::collections::VecDeque;
 
 pub fn prompt_entry_name(nanos: u64, pid: u32) -> String {
     format!("{nanos:020}-{pid}")
 }
 
-pub fn task_prompt(task: &str) -> String {
-    format!("{WORKER_PROMPT}\n\n{task}")
+pub fn task_prompt(task: &str, scheduled: bool) -> String {
+    format!("{}\n\n{task}", worker_prompt(scheduled))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,6 +225,7 @@ pub fn accept_report(owner_required: bool, owner_exists: bool) -> bool {
 mod tests {
     use super::super::CURSOR_AGENT;
     use super::*;
+    use crate::worker::{SCHEDULED_WORKER_PROMPT, WORKER_PROMPT};
 
     #[test]
     fn only_a_flagged_server_refuses_a_repeat_report() {
@@ -269,9 +270,17 @@ mod tests {
 
     #[test]
     fn task_prompt_is_the_worker_rules_then_the_task() {
-        let prompt = task_prompt("do it");
+        let prompt = task_prompt("do it", false);
         assert!(prompt.starts_with(WORKER_PROMPT));
         assert!(prompt.ends_with("\n\ndo it"));
+    }
+
+    #[test]
+    fn scheduled_task_prompt_is_the_scheduled_rules_then_the_task() {
+        let prompt = task_prompt("do it", true);
+        assert!(prompt.starts_with(SCHEDULED_WORKER_PROMPT));
+        assert!(prompt.ends_with("\n\ndo it"));
+        assert!(!prompt.contains(WORKER_PROMPT));
     }
 
     #[test]
