@@ -162,6 +162,21 @@ impl Keyword for InboxSub {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryFlag {
+    Cursor,
+}
+
+impl Keyword for HistoryFlag {
+    const ALL: &'static [Self] = &[HistoryFlag::Cursor];
+
+    fn word(self) -> &'static str {
+        match self {
+            HistoryFlag::Cursor => "--cursor",
+        }
+    }
+}
+
 fn history_route(tool: HistoryTool, words: &str, cursor: Option<&str>) -> Route {
     match history_tool(tool.name(), words, cursor, None) {
         Ok(call) => Route::History(call),
@@ -312,11 +327,11 @@ fn split_cursor(args: &str) -> (&str, Option<&str>) {
     let Some((head, cursor)) = args.rsplit_once(char::is_whitespace) else {
         return (args, None);
     };
-    match head.trim_end().strip_suffix("--cursor") {
-        Some(words) if words.is_empty() || words.ends_with(char::is_whitespace) => {
-            (words, Some(cursor))
-        }
-        _ => (args, None),
+    let head = head.trim_end();
+    let flag = head.rsplit(char::is_whitespace).next().unwrap_or_default();
+    match HistoryFlag::parse(flag) {
+        Some(HistoryFlag::Cursor) => (&head[..head.len() - flag.len()], Some(cursor)),
+        None => (args, None),
     }
 }
 

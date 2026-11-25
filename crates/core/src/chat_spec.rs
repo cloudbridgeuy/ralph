@@ -1,8 +1,9 @@
 use crate::chat_help::Command;
 use crate::chat_hold::{word_completion, HoldCompletion};
+use crate::chat_memory::Mode;
 use crate::chat_send_it::SendItSub;
 use crate::chat_stage::{Kind, StageVerb};
-use crate::chat_status::{InboxSub, WorkersSub};
+use crate::chat_status::{HistoryFlag, InboxSub, WorkersSub};
 use crate::chat_thread::ThreadName;
 use crate::chat_thread_cmd::{MergeFlag, OpenFlag, ThreadSub};
 use crate::chat_thread_model::THREAD_MODEL_ALIASES;
@@ -141,6 +142,9 @@ fn command_offers(
         Command::Diff => diff_offers(args, facts),
         Command::Workers => workers_offers(args, facts),
         Command::Answer if args.is_empty() => Offers::names(facts.workers.iter().cloned()),
+        Command::Read => read_offers(args),
+        Command::Search if !args.is_empty() => cursor_offers(args),
+        Command::Rules if args.is_empty() => every::<HistoryFlag>(),
         Command::Help
         | Command::Hold
         | Command::Nudge
@@ -148,7 +152,6 @@ fn command_offers(
         | Command::View
         | Command::Rerender
         | Command::Answer
-        | Command::Read
         | Command::Zoom
         | Command::Recall
         | Command::Search
@@ -227,6 +230,26 @@ fn costs_offers(args: &[&str]) -> Offers {
         }
         [view] if View::parse(view).is_some() => every::<Window>(),
         _ => Offers::default(),
+    }
+}
+
+fn read_offers(args: &[&str]) -> Offers {
+    match args {
+        [id] if HistoryFlag::parse(id).is_none() => {
+            let mut offers = every::<Mode>();
+            offers.keywords.extend(every::<HistoryFlag>().keywords);
+            offers
+        }
+        [_, mode] if Mode::parse(mode).is_some() => cursor_offers(args),
+        _ => Offers::default(),
+    }
+}
+
+fn cursor_offers(args: &[&str]) -> Offers {
+    if args.iter().any(|word| HistoryFlag::parse(word).is_some()) {
+        Offers::default()
+    } else {
+        every::<HistoryFlag>()
     }
 }
 

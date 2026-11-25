@@ -251,3 +251,30 @@ fn answer_completes_only_the_worker() {
     assert_eq!(complete("/answer w", None), words(&["w1", "w2"]));
     assert_eq!(complete("/answer w1 ", None), None);
 }
+
+#[test]
+fn read_offers_modes_and_the_cursor_flag_after_an_id() {
+    assert_eq!(
+        complete("/read 4-9 ", None),
+        words(&["--cursor", "raw", "summary"])
+    );
+    assert_eq!(complete("/read 4-9 raw ", None), words(&["--cursor"]));
+    for line in ["/read ", "/read --", "/read 4 --cursor ", "/read 4 raw x "] {
+        assert_eq!(complete(line, None), None, "{line}");
+    }
+}
+
+#[test]
+fn search_and_rules_offer_the_cursor_flag_where_it_parses() {
+    for line in ["/search retry ", "/search a b --", "/rules ", "/rules --c"] {
+        assert_eq!(complete(line, None), words(&["--cursor"]), "{line}");
+    }
+    for line in [
+        "/search ",
+        "/search a --cursor c ",
+        "/rules x ",
+        "/recall a ",
+    ] {
+        assert_eq!(complete(line, None), None, "{line}");
+    }
+}
