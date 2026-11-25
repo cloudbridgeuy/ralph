@@ -150,7 +150,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 |--------|------|
 | 200 `{"store":"<name>","rows":[{"section","key","value","source","redacted"}]}` | the config loads; `store` is the last path component; `source` is `default`, `global`, `store` or `env` |
 | 404 `{"error":"store not found"}` | the store directory is missing |
-| 422 `{"error":"config invalid","why":"<text>"}` | the config has an error; `why` is the first line with every absolute path replaced by `<path>` |
+| 422 `{"error":"config invalid","why":"<text>"}` | the config has an error; `why` is always the fixed text ``config.toml has an error; run `ralph config check` ``, never the error text |
 | 500 `{"error":"config unavailable"}` | the file cannot be read or serialised |
 | other method | 405 with `Allow: GET` |
 

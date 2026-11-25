@@ -3,8 +3,6 @@ use ralph_server::config::{config_rows, ConfigError};
 use serde_json::json;
 use std::path::Path;
 
-const PATH_MARK: &str = "<path>";
-
 fn store_name(store: &Path) -> String {
     store.file_name().map_or_else(
         || "store".to_string(),
@@ -12,92 +10,16 @@ fn store_name(store: &Path) -> String {
     )
 }
 
-fn is_path_char(c: char) -> bool {
-    !c.is_whitespace() && !matches!(c, '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '<' | '>')
-}
-
-fn mask_path(word: &str) -> String {
-    let start = word.find(|c: char| is_path_char(c)).unwrap_or(word.len());
-    let (lead, rest) = word.split_at(start);
-    if !rest.starts_with('/') {
-        return word.to_string();
-    }
-    let end = rest.find(|c: char| !is_path_char(c)).unwrap_or(rest.len());
-    let (path, tail) = rest.split_at(end);
-    let trimmed = path.trim_end_matches([',', ';', ':', '.']);
-    let punct = &path[trimmed.len()..];
-    format!("{lead}{PATH_MARK}{punct}{}", mask_path(tail))
-}
-
-fn redact_quoted(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut inside = false;
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        match (inside, c) {
-            (false, '"') => {
-                inside = true;
-                out.push('"');
-                out.push_str("[redacted]");
-            }
-            (false, other) => out.push(other),
-            (true, '\\') => {
-                chars.next();
-            }
-            (true, '"') => {
-                inside = false;
-                out.push('"');
-            }
-            (true, _) => {}
-        }
-    }
-    out
-}
-
-pub(crate) fn why_text(display: &str) -> String {
-    let first = display.lines().next().unwrap_or_default();
-    mask_words(&redact_quoted(first))
-}
-
-fn spaced_path_end(words: &[&str]) -> Option<usize> {
-    let first = words.first()?;
-    let start = first.find(is_path_char)?;
-    let path = &first[start..];
-    if !path.starts_with('/') || path.ends_with([',', ';', ':', '.', ')']) {
-        return None;
-    }
-    words.iter().position(|word| word.ends_with(':'))
-}
-
-fn mask_words(text: &str) -> String {
-    let words: Vec<&str> = text.split(' ').collect();
-    let mut out = Vec::with_capacity(words.len());
-    let mut index = 0;
-    while index < words.len() {
-        match spaced_path_end(&words[index..]) {
-            Some(offset) => {
-                let word = words[index];
-                let lead = &word[..word.find(is_path_char).unwrap_or(0)];
-                out.push(format!("{lead}{PATH_MARK}:"));
-                index += offset + 1;
-            }
-            None => {
-                out.push(mask_path(words[index]));
-                index += 1;
-            }
-        }
-    }
-    out.join(" ")
-}
+const CONFIG_INVALID_WHY: &str = "config.toml has an error; run `ralph config check`";
 
 fn failure(error_value: &ConfigError) -> ApiResponse {
     match error_value {
         ConfigError::ReadConfig { .. } | ConfigError::SerializeConfig(_) => {
             error(500, "config unavailable")
         }
-        other => json_response(
+        _ => json_response(
             422,
-            json!({"error": "config invalid", "why": why_text(&other.to_string())}),
+            json!({"error": "config invalid", "why": CONFIG_INVALID_WHY}),
         ),
     }
 }
@@ -250,7 +172,7 @@ mod tests {
         let all = text(&response);
         assert!(!all.contains(s.path().to_str().unwrap()));
         assert!(!all.contains("abc123"));
-        assert!(!value["why"].as_str().unwrap().is_empty());
+        assert_eq!(value["why"], CONFIG_INVALID_WHY);
     }
 
     #[test]
@@ -271,15 +193,17 @@ mod tests {
     }
 
     #[test]
-    fn why_strips_absolute_paths() {
-        let why = why_text("Failed to read at /Users/x/.ralph/config.toml: bad value");
-        assert_eq!(why, "Failed to read at <path>: bad value");
-    }
-
-    #[test]
-    fn why_strips_every_path_and_quoted_paths() {
-        let why = why_text("a /one/two, b \"/three/four\" c (/five)");
-        assert_eq!(why, "a <path>, b \"[redacted]\" c (<path>)");
+    fn a_quoted_price_name_with_a_space_never_reaches_the_why() {
+        let (g, s) = setup(
+            None,
+            Some("[wire.prices.\"/Users/me/My Srv\"]\ninput = -1\n"),
+        );
+        let response = respond(&g, &s, no_env);
+        assert_eq!(response.status, 422);
+        let all = text(&response);
+        assert!(!all.contains("Srv"), "{all}");
+        assert!(!all.contains("/Users"), "{all}");
+        assert_eq!(body(&response)["why"], CONFIG_INVALID_WHY);
     }
 
     #[test]
@@ -292,6 +216,7 @@ mod tests {
             "{}",
             text(&response)
         );
+        assert_eq!(body(&response)["why"], CONFIG_INVALID_WHY);
     }
 
     #[test]
@@ -304,27 +229,7 @@ mod tests {
             "{}",
             text(&response)
         );
-    }
-
-    #[test]
-    fn why_redacts_quoted_spans() {
-        assert_eq!(
-            why_text("invalid type: string \"sk-abc\", expected u16"),
-            "invalid type: string \"[redacted]\", expected u16"
-        );
-        assert_eq!(
-            why_text("bad \"a\\\"b\" then \"c\""),
-            "bad \"[redacted]\" then \"[redacted]\""
-        );
-    }
-
-    #[test]
-    fn why_masks_a_path_with_spaces_up_to_the_colon() {
-        let why = why_text(
-            "Failed to read /Users/x/Library/Application Support/ralph/config.toml: bad value",
-        );
-        assert_eq!(why, "Failed to read <path>: bad value");
-        assert!(!why.contains("Support"));
+        assert_eq!(body(&response)["why"], CONFIG_INVALID_WHY);
     }
 
     fn text_contains_row(value: &Value, key: &str) -> bool {
@@ -379,17 +284,5 @@ mod tests {
         let (g2, s2) = setup(None, None);
         let value = body(&config(&get_request(), &handler_config(&g2, &s2, no_env)));
         assert!(!text_contains_row(&value, "wrap_width"));
-    }
-
-    #[test]
-    fn why_keeps_first_line_only() {
-        let why = why_text("parse error at line 1\n  |\n1 | token = abc123");
-        assert_eq!(why, "parse error at line 1");
-    }
-
-    #[test]
-    fn why_keeps_text_without_paths() {
-        assert_eq!(why_text("port must be 1-65535"), "port must be 1-65535");
-        assert_eq!(why_text("a and/or b"), "a and/or b");
     }
 }
