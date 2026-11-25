@@ -1,5 +1,6 @@
 use crate::assets::{self, Asset, SHELL_PATH};
 use crate::catalogue;
+use crate::config_api;
 use crate::memory_api;
 use crate::render_api::{reject_oversize, render};
 use crate::token::{extract_tokens, Token};
@@ -8,6 +9,7 @@ use std::path::PathBuf;
 const HEALTH_PATH: &str = "/api/health";
 const TOKENS_PATH: &str = "/tokens.css";
 const RENDER_PATH: &str = "/api/render";
+const CONFIG_PATH: &str = "/api/config";
 const MEMORY_PATH: &str = "/api/memory";
 const ENTRIES_PATH: &str = "/api/memory/entries";
 const THREADS_PATH: &str = "/api/memory/threads";
@@ -78,6 +80,8 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (MEMORY_PATH, "GET") => memory_api::memory(request, config),
         (ENTRIES_PATH, "GET") => memory_api::entries(request, config),
         (THREADS_PATH, "GET") => memory_api::threads(request, config),
+        (CONFIG_PATH, "GET") => config_api::config(request, config),
+        (CONFIG_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (MEMORY_PATH | ENTRIES_PATH | THREADS_PATH, _) => {
             with_header(error(405, "method not allowed"), ("Allow", "GET"))
         }
@@ -197,7 +201,7 @@ pub(crate) fn json_ok(body: serde_json::Value) -> ApiResponse {
     }
 }
 
-fn json_response(status: u16, body: serde_json::Value) -> ApiResponse {
+pub(crate) fn json_response(status: u16, body: serde_json::Value) -> ApiResponse {
     ApiResponse {
         status,
         content_type: JSON,
