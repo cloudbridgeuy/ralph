@@ -292,8 +292,12 @@ mod tests {
             None,
             Some("[wire.prices.\"/Users/alice/acme.corp\"]\ninput = 1\n"),
         );
-        let body = text(&respond(&g, &s, no_env));
-        assert!(!body.contains("corp"), "{body}");
-        assert!(!body.contains("/Users"), "{body}");
+        let response = respond(&g, &s, no_env);
+        let raw = text(&response);
+        assert!(!raw.contains("corp"), "{raw}");
+        assert!(!raw.contains("/Users"), "{raw}");
+        let masked = row(&body(&response), "wire", "[redacted-1]").clone();
+        assert_eq!(masked["redacted"], true, "{raw}");
+        assert_eq!(masked["value"], "[redacted]", "{raw}");
     }
 }

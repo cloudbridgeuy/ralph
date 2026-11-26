@@ -77,6 +77,15 @@ fn config_dotted_sensitive_price_key_is_absent_from_the_http_body() {
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert!(!reply.body.contains("corp"), "{}", reply.body);
     assert!(!reply.body.contains("/Users"), "{}", reply.body);
+    let masked = json_of(&reply)["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["section"] == "wire" && row["key"] == "[redacted-1]")
+        .cloned()
+        .expect(&reply.body);
+    assert_eq!(masked["redacted"], true, "{}", reply.body);
+    assert_eq!(masked["value"], "[redacted]", "{}", reply.body);
 }
 
 #[test]
