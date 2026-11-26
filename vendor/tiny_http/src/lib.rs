@@ -126,97 +126,56 @@ mod test;
 mod util;
 
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+const ACCEPT_MAX_CONSECUTIVE_FAILURES: u32 = 100;
 
-fn accept_error_is_transient(e: &IoError) -> bool {
-    accept_error_needs_backoff(e) || e.kind() == IoErrorKind::ConnectionAborted
+#[derive(Debug, PartialEq)]
+enum AcceptAction {
+    Retry,
+    Stop,
 }
 
-#[cfg(unix)]
-fn accept_error_needs_backoff(e: &IoError) -> bool {
-    matches!(
-        e.raw_os_error(),
-        Some(libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::ENOBUFS)
-    )
-}
-
-#[cfg(not(unix))]
-fn accept_error_needs_backoff(_: &IoError) -> bool {
-    false
+fn accept_error_action(consecutive_failures: u32) -> AcceptAction {
+    if consecutive_failures >= ACCEPT_MAX_CONSECUTIVE_FAILURES {
+        AcceptAction::Stop
+    } else {
+        AcceptAction::Retry
+    }
 }
 
 #[cfg(test)]
 mod accept_error_test {
-    use super::{accept_error_is_transient, accept_error_needs_backoff};
-    use std::io::{Error, ErrorKind};
+    use super::{accept_error_action, AcceptAction, ACCEPT_MAX_CONSECUTIVE_FAILURES};
 
-    #[cfg(unix)]
     #[test]
-    fn descriptor_exhaustion_is_transient() {
-        assert!(accept_error_is_transient(&Error::from_raw_os_error(
-            libc::EMFILE
-        )));
-        assert!(accept_error_is_transient(&Error::from_raw_os_error(
-            libc::ENFILE
-        )));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn memory_exhaustion_is_transient_and_backs_off() {
-        let e = Error::from_raw_os_error(libc::ENOMEM);
-        assert!(accept_error_is_transient(&e));
-        assert!(accept_error_needs_backoff(&e));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn buffer_exhaustion_is_transient_and_backs_off() {
-        let e = Error::from_raw_os_error(libc::ENOBUFS);
-        assert!(accept_error_is_transient(&e));
-        assert!(accept_error_needs_backoff(&e));
+    fn first_failure_retries() {
+        assert_eq!(accept_error_action(1), AcceptAction::Retry);
     }
 
     #[test]
-    fn connection_aborted_is_transient() {
-        assert!(accept_error_is_transient(&Error::from(
-            ErrorKind::ConnectionAborted
-        )));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn only_descriptor_exhaustion_needs_backoff() {
-        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(
-            libc::EMFILE
-        )));
-        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(
-            libc::ENFILE
-        )));
-        assert!(!accept_error_needs_backoff(&Error::from(
-            ErrorKind::ConnectionAborted
-        )));
-        assert!(!accept_error_needs_backoff(&Error::from_raw_os_error(
-            libc::EINVAL
-        )));
+    fn failure_before_the_limit_retries() {
+        assert_eq!(
+            accept_error_action(ACCEPT_MAX_CONSECUTIVE_FAILURES - 1),
+            AcceptAction::Retry
+        );
     }
 
     #[test]
-    fn other_errors_are_not_transient() {
-        for kind in [
-            ErrorKind::InvalidInput,
-            ErrorKind::BrokenPipe,
-            ErrorKind::ConnectionReset,
-        ] {
-            assert!(!accept_error_is_transient(&Error::from(kind)));
-        }
+    fn failure_at_the_limit_stops() {
+        assert_eq!(
+            accept_error_action(ACCEPT_MAX_CONSECUTIVE_FAILURES),
+            AcceptAction::Stop
+        );
     }
 
-    #[cfg(unix)]
     #[test]
-    fn invalid_argument_is_not_transient() {
-        assert!(!accept_error_is_transient(&Error::from_raw_os_error(
-            libc::EINVAL
-        )));
+    fn the_limit_is_one_hundred() {
+        assert_eq!(accept_error_action(99), AcceptAction::Retry);
+        assert_eq!(accept_error_action(100), AcceptAction::Stop);
+    }
+
+    #[test]
+    fn failure_past_the_limit_stops() {
+        assert_eq!(accept_error_action(101), AcceptAction::Stop);
     }
 }
 
@@ -393,10 +352,15 @@ impl Server {
             let tasks_pool = util::TaskPool::new();
 
             log::debug!("Running accept thread");
+            let mut consecutive_failures = 0u32;
             while !inside_close_trigger.load(Relaxed) {
                 let new_client = match server.accept(timeouts) {
-                    Ok(None) => continue,
+                    Ok(None) => {
+                        consecutive_failures = 0;
+                        continue;
+                    }
                     Ok(Some((sock, _))) => {
+                        consecutive_failures = 0;
                         use util::RefinedTcpStream;
                         let split = match ssl {
                             None => RefinedTcpStream::new(sock),
@@ -426,14 +390,17 @@ impl Server {
                             }
                         }
                     }
-                    Err(e) if accept_error_is_transient(&e) => {
-                        log::warn!("Transient accept error, retrying: {}", e);
-                        if accept_error_needs_backoff(&e) {
-                            thread::sleep(ACCEPT_BACKOFF);
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        match accept_error_action(consecutive_failures) {
+                            AcceptAction::Retry => {
+                                log::warn!("Accept error, retrying: {}", e);
+                                thread::sleep(ACCEPT_BACKOFF);
+                                continue;
+                            }
+                            AcceptAction::Stop => Err(e),
                         }
-                        continue;
                     }
-                    Err(e) => Err(e),
                 };
 
                 match new_client {

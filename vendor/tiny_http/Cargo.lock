@@ -265,7 +265,6 @@ dependencies = [
  "chunked_transfer",
  "fdlimit",
  "httpdate",
- "libc",
  "log",
  "openssl",
  "rustc-serialize",
