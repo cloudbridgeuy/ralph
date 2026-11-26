@@ -3,7 +3,7 @@ use ralph_server::config::{config_rows, ConfigError};
 use serde_json::json;
 use std::path::Path;
 
-fn store_name(store: &Path) -> String {
+pub(crate) fn store_name(store: &Path) -> String {
     store.file_name().map_or_else(
         || "store".to_string(),
         |name| name.to_string_lossy().into_owned(),
