@@ -25,7 +25,7 @@ impl Default for Progress {
 }
 
 pub struct Seen<'a> {
-    pub last: &'a HashMap<String, String>,
+    pub last: &'a HashMap<String, ReportKind>,
     pub running: &'a [String],
 }
 
@@ -320,7 +320,9 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
     };
     match &step.criterion {
         Criterion::WorkerDone { worker, .. } => match seen.last.get(worker) {
-            Some(status) if status == "done" => done_reported(plan, progress, &step.criterion),
+            Some(ReportKind::Worker(ReportStatus::Done)) => {
+                done_reported(plan, progress, &step.criterion)
+            }
             known if known.is_some() || seen.running.contains(worker) => {
                 (progress, Next::Hold(worker.clone()))
             }

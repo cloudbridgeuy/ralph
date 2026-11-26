@@ -125,7 +125,7 @@ fn row(
         .workers
         .into_iter()
         .find(|state| state.id == worker.id)
-        .map(|state| state.state);
+        .map(|state| state.state.to_string());
     let report = report_of(&facts.reports, &worker.id);
     let tree = facts
         .porcelain
@@ -189,7 +189,7 @@ pub(super) fn tool_report(
                 states
                     .iter()
                     .find(|state| state.id == worker.id)
-                    .map(|state| state.state.clone())
+                    .map(|state| state.state.to_string())
             };
             cheap_row(dir, worker, state, report_of(&reports, &worker.id))
         })
@@ -420,6 +420,8 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
+    use ralph_core::chat_status::WorkerActivity;
+    use ralph_core::worker::{ReportKind, ReportStatus};
     use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote, TONE_MARKERS};
     use unicode_width::UnicodeWidthStr;
 
@@ -619,7 +621,7 @@ mod tests {
         ];
         let states = [WorkerState {
             id: "A".into(),
-            state: "done".into(),
+            state: WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done)),
         }];
         assert_eq!(
             tool_report(&store, &running, &states, Some(&[]), now()),
@@ -634,7 +636,7 @@ mod tests {
         let running = [RunningWorker::headless("A", HarnessId::Claude)];
         let states = [WorkerState {
             id: "A".into(),
-            state: "done".into(),
+            state: WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done)),
         }];
         let unread = [Report::from_worker(
             "A",

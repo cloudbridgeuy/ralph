@@ -1,5 +1,7 @@
 use crate::chat_memory::{Entry, Role};
-use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportStatus, Startup};
+use crate::worker::{
+    startup_state, ActivityState, HarnessId, Report, ReportKind, ReportStatus, Startup,
+};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -68,13 +70,14 @@ pub fn logged_reports(entries: &[Entry]) -> HashMap<String, String> {
     reports
 }
 
-pub fn logged_states(entries: &[Entry]) -> HashMap<String, String> {
+pub fn logged_states(entries: &[Entry]) -> HashMap<String, ReportKind> {
     entries
         .iter()
         .filter(|entry| entry.role == Role::Worker)
         .flat_map(|entry| entry.text.lines().filter_map(message_header))
-        .filter(|(_, status)| is_report_status(status))
-        .map(|(id, status)| (id.to_string(), status.to_string()))
+        .filter_map(|(id, status)| Some((id, ReportKind::parse(status)?)))
+        .filter(|(_, kind)| kind.worker_status().is_some())
+        .map(|(id, kind)| (id.to_string(), kind))
         .collect()
 }
 
@@ -794,8 +797,8 @@ mod tests {
             worker_entry("t2", "[worker w1 · done]\nz\n\n[worker w3 · check]\nstuck"),
         ];
         let states = logged_states(&entries);
-        assert_eq!(states.get("w1").map(String::as_str), Some("done"));
-        assert_eq!(states.get("w2").map(String::as_str), Some("done"));
+        assert_eq!(states.get("w1").map(|kind| kind.as_str()), Some("done"));
+        assert_eq!(states.get("w2").map(|kind| kind.as_str()), Some("done"));
         assert!(!states.contains_key("w3"));
     }
 

@@ -373,7 +373,7 @@ pub fn decode_frame<B: DeserializeOwned>(line: &str) -> Result<Envelope<B>, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::chat_status::WorkerState;
+    use ralph_core::chat_status::{WorkerActivity, WorkerState};
     use ralph_core::program_status::{Kind, State};
     use ralph_core::turn_event::Wait;
     use ralph_core::worker::ReportKind;
@@ -569,10 +569,10 @@ mod tests {
         }
     }
 
-    fn worker(id: &str, state: &str) -> WorkerState {
+    fn worker(id: &str, state: WorkerActivity) -> WorkerState {
         WorkerState {
             id: id.into(),
-            state: state.into(),
+            state,
         }
     }
 
@@ -581,9 +581,9 @@ mod tests {
         let status = Status {
             unread: 2,
             workers: vec![
-                worker("b", "permission"),
-                worker("c", "running"),
-                worker("a", "permission"),
+                worker("b", WorkerActivity::Permission),
+                worker("c", WorkerActivity::Running),
+                worker("a", WorkerActivity::Permission),
             ],
             ..Status::default()
         };
