@@ -62,6 +62,18 @@ fn state_and_tone(facts: &WorkerFacts) -> (&'static str, WebTone) {
     }
 }
 
+/// A ticket key is shown only with the shape `^[A-Z][A-Z0-9]*-[0-9]+$`.
+/// Any other text in the spawn record is dropped, not masked.
+pub fn ticket_shape(key: &str) -> Option<&str> {
+    let (project, number) = key.split_once('-')?;
+    let mut letters = project.chars();
+    let valid = letters.next().is_some_and(|c| c.is_ascii_uppercase())
+        && letters.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        && !number.is_empty()
+        && number.chars().all(|c| c.is_ascii_digit());
+    valid.then_some(key)
+}
+
 pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
     let mut sorted: Vec<&WorkerFacts> = facts.iter().collect();
     sorted.sort_by(|a, b| a.id.cmp(&b.id));
@@ -78,7 +90,11 @@ pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
                     .blocked
                     .as_deref()
                     .map_or(0, |marker| pending_requests(marker).len()),
-                ticket: worker.ticket.clone(),
+                ticket: worker
+                    .ticket
+                    .as_deref()
+                    .and_then(ticket_shape)
+                    .map(str::to_string),
                 last_report_status: worker.last_report.as_ref().map(|r| r.status.clone()),
                 last_report_at: worker.last_report.as_ref().map(|r| r.at.clone()),
             }
@@ -90,6 +106,26 @@ pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
 mod tests {
     use super::*;
     use crate::worker::ActivityState;
+
+    #[test]
+    fn only_ticket_shaped_keys_pass() {
+        for ok in ["GUZ-1", "GUZ-1748", "A-0", "AB2-30"] {
+            assert_eq!(ticket_shape(ok), Some(ok), "{ok}");
+        }
+        for bad in [
+            "sk-live-0123456789abcdef",
+            "guz-1",
+            "GUZ-",
+            "-1",
+            "GUZ-1-2",
+            "GUZ-12a",
+            "2GUZ-1",
+            "GUZ-1\n",
+            "",
+        ] {
+            assert_eq!(ticket_shape(bad), None, "{bad}");
+        }
+    }
 
     fn facts(id: &str) -> WorkerFacts {
         WorkerFacts {

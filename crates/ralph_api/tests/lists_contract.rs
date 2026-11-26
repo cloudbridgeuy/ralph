@@ -554,3 +554,34 @@ fn workers_body_matches_the_golden_and_leaks_nothing() {
         &reply.redacting(&[(name.as_str(), "store")]),
     );
 }
+
+#[test]
+fn workers_ticket_without_a_ticket_shape_is_null() {
+    let server = TestServer::start_with_store(|store| {
+        for (id, ticket) in [("secret", "sk-live-0123456789abcdef"), ("real", "GUZ-1748")] {
+            owner(store, CLAUDE_OWNER_DIR, id);
+            let record = SpawnRecord {
+                ticket: Some(ticket.to_string()),
+                ..SpawnRecord::default()
+            };
+            touch(
+                &spawn_record_path(store, id),
+                &encode_spawn_record(&record).unwrap(),
+            );
+        }
+    });
+    let reply = get_workers(&server);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let rows = json_of(&reply)["rows"].clone();
+    let ticket_of = |id: &str| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap()["ticket"]
+            .clone()
+    };
+    assert_eq!(ticket_of("secret"), Value::Null);
+    assert_eq!(ticket_of("real"), "GUZ-1748");
+    assert!(!reply.body.contains("sk-live"), "{}", reply.body);
+}
