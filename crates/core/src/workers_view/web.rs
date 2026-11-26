@@ -1,5 +1,5 @@
 use super::ReportLine;
-use crate::worker::{pending_requests, ActivityState};
+use crate::worker::{pending_requests, ActivityState, ReportKind};
 use crate::worker_costs::window::instant;
 use chrono::SecondsFormat;
 use serde::Serialize;
@@ -36,7 +36,7 @@ pub struct WorkerWebRow {
     pub tone: WebTone,
     pub pending_count: usize,
     pub ticket: Option<String>,
-    pub last_report_status: Option<String>,
+    pub last_report_status: Option<ReportKind>,
     pub last_report_at: Option<String>,
 }
 
@@ -109,10 +109,7 @@ pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
                     .as_deref()
                     .and_then(ticket_shape)
                     .map(str::to_string),
-                last_report_status: worker
-                    .last_report
-                    .as_ref()
-                    .map(|r| r.status.as_str().to_string()),
+                last_report_status: worker.last_report.as_ref().map(|r| r.status),
                 last_report_at: worker
                     .last_report
                     .as_ref()
@@ -161,6 +158,16 @@ mod tests {
             });
             worker_state_rows(&[worker])[0].last_report_at.clone()
         };
+        let mut worker = facts("w");
+        worker.last_report = Some(ReportLine {
+            status: ReportKind::Check,
+            at: String::new(),
+            text: String::new(),
+        });
+        assert_eq!(
+            worker_state_rows(&[worker])[0].last_report_status,
+            Some(ReportKind::Check)
+        );
         let canonical = Some("2026-03-01T09:00:00Z".to_string());
         assert_eq!(at("2026-03-01T09:00:00Z"), canonical);
         assert_eq!(at("2026-03-01T10:00:00+01:00"), canonical);
