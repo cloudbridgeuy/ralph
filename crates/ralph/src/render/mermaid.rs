@@ -1,3 +1,4 @@
+mod gantt;
 mod git;
 mod journey;
 mod lines;
@@ -38,6 +39,7 @@ pub enum DiagramKind {
     Mindmap,
     Quadrant,
     XyChart,
+    Gantt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +62,7 @@ pub enum Refusal {
     TooManyNodes,
     TooDeep,
     TooManyPoints,
+    TooLongTask,
 }
 
 fn kind_of(header: &str) -> Option<DiagramKind> {
@@ -82,6 +85,7 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "mindmap" => Some(DiagramKind::Mindmap),
         "quadrantChart" => Some(DiagramKind::Quadrant),
         "xychart" | "xychart-beta" => Some(DiagramKind::XyChart),
+        "gantt" => Some(DiagramKind::Gantt),
         _ => None,
     }
 }
@@ -183,6 +187,7 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
             xychart::check_header(header)?;
             check_typed(source, xychart::check)?;
         }
+        DiagramKind::Gantt => check_typed(source, gantt::check)?,
         DiagramKind::GitGraph => {
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);
