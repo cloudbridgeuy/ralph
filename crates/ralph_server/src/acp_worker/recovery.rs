@@ -341,7 +341,7 @@ mod tests {
             agent: AGY_AGENT,
             launch: Launch::Fresh,
             cwd: cwd.clone(),
-            server,
+            servers: vec![server],
             worker_id: "A".into(),
             model: None,
             effort: None,

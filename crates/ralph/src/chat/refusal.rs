@@ -11,7 +11,7 @@ pub(super) fn refuse_or_exit(
     let buffer = editor.current_buffer_contents().to_string();
     match refusal_action(signal::is_terminated(), line, &carried, &buffer) {
         Refusal::Save(lost) => {
-            let saved = save_unsent(editor, &lost);
+            let saved = save_unsent(editor.history_mut(), &lost);
             print_exit_notice(lost.len(), saved);
             editor.sync_history()?;
             Ok(true)

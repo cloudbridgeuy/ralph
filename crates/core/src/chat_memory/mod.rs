@@ -52,8 +52,9 @@ pub use log::{
 };
 pub use lookup::{recall_found, zoom};
 pub use nap::{
-    check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
-    nap_system, retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
+    agy_nap_reply, check_summary, commit_decision, fallback_summary, nap_source, nap_step,
+    nap_summary, nap_system, retry_prompt, AgyNapError, Commit, NapStep, FALLBACK_MARK,
+    MAX_NAP_ATTEMPTS,
 };
 pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search_found, SearchRequest};

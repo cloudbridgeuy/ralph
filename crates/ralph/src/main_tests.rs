@@ -242,3 +242,60 @@ fn malformed_codex_tag_payload_aborts_before_entry_failures() {
         assert!(memory_tag_reply(&run, false, false).is_ok());
     }
 }
+
+#[test]
+fn curator_rows_agy_has_harness_agy_and_no_cost() {
+    let rows = CuratorRows {
+        kind: ralph_core::chat_memory::CallSite::Nap,
+        run: Some("run-1".into()),
+        store: "/store".into(),
+        at: "t".into(),
+        codex_model: None,
+    };
+    let raw = ralph_core::worker::AgyUsage {
+        total: 120,
+        input: 100,
+        output: 20,
+        read: None,
+        write: None,
+        thought: None,
+    };
+    let built = agy_curator_rows(&rows, "gemini-3-flash", &raw).unwrap();
+    let value = serde_json::to_value(&built[0]).unwrap();
+    assert_eq!(value["harness"], "agy");
+    assert_eq!(value["model"], "gemini-3-flash");
+    assert_eq!(value["input_tokens"], 100);
+    assert_eq!(value["run"], "run-1");
+    assert!(value["cost_usd"].is_null());
+}
+
+#[test]
+fn agy_curator_rows_skip_empty_usage() {
+    let rows = CuratorRows {
+        kind: ralph_core::chat_memory::CallSite::Nap,
+        run: None,
+        store: "/store".into(),
+        at: "t".into(),
+        codex_model: None,
+    };
+    let raw = ralph_core::worker::AgyUsage {
+        total: 0,
+        input: 0,
+        output: 0,
+        read: None,
+        write: None,
+        thought: None,
+    };
+    assert!(agy_curator_rows(&rows, "m", &raw).unwrap().is_empty());
+}
+
+#[test]
+fn curator_error_marks_only_a_timeout_as_timed_out() {
+    let timeout = std::time::Duration::from_secs(9);
+    let timed_out = curator_error(ralph_server::OneShotError::TimedOut(timeout));
+    assert!(timed_out.timed_out);
+    assert_eq!(timed_out.message, "agy timed out after 9s");
+    let failed = curator_error(ralph_server::OneShotError::Failed("boom".into()));
+    assert!(!failed.timed_out);
+    assert_eq!(failed.message, "boom");
+}

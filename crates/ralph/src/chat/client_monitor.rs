@@ -123,6 +123,7 @@ pub(super) fn watch_input(
     session: Arc<Mutex<Option<Box<dyn ChatSession>>>>,
     exit: ExitCleanup,
     term: Arc<TermStatus>,
+    save_draft: impl FnOnce() + Send + 'static,
 ) {
     let started_on_terminal = io::stdin().is_terminal();
     std::thread::spawn(move || loop {
@@ -133,6 +134,7 @@ pub(super) fn watch_input(
             stdin_hung_up: stdin_hung_up(),
             at_prompt: at_prompt.load(Ordering::SeqCst),
         }) {
+            save_draft();
             drop_session(&session);
             term.clear();
             exit.run();

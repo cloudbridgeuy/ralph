@@ -478,7 +478,7 @@ fn execute_chat_tag(args: ChatTagArgs) -> Result<(), Box<dyn std::error::Error>>
     )?;
     let pass = store.run_pass(&config.tag.model, &now, &mut |batch| {
         let run = run_memory_command(&command, batch, &curator).map_err(|e| e.message)?;
-        memory_tag_reply(&run, command.codex_model.is_some(), signal::is_terminated())
+        memory_tag_reply(&run, command.is_codex(), signal::is_terminated())
     })?;
     if let chat::tag_store::Pass::Done(report) = pass {
         if report.failed > 0 {
@@ -571,9 +571,24 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
 
 struct MemoryCommand {
     command: String,
-    codex_model: Option<String>,
+    harness: ralph_core::chat_backend::MemoryHarness,
+    model: String,
     instructions: String,
-    _workdir: Option<tempfile::TempDir>,
+    workdir: Option<tempfile::TempDir>,
+}
+
+impl MemoryCommand {
+    fn is_codex(&self) -> bool {
+        self.harness == ralph_core::chat_backend::MemoryHarness::Codex
+    }
+
+    fn prompt(&self, prompt: &str) -> String {
+        if self.harness.inlines_instructions() && !self.instructions.is_empty() {
+            format!("{}\n\n{}", self.instructions, prompt)
+        } else {
+            prompt.to_string()
+        }
+    }
 }
 
 fn memory_command(
@@ -582,21 +597,22 @@ fn memory_command(
     instructions: &str,
     claude: impl FnOnce() -> String,
 ) -> std::io::Result<MemoryCommand> {
-    let codex = harness == "codex";
-    let workdir = if codex {
-        Some(tempfile::tempdir()?)
-    } else {
-        None
-    };
-    let command = match workdir.as_ref() {
-        Some(dir) => invoke::build_codex_memory_command(model, dir.path()),
-        None => claude(),
+    use ralph_core::chat_backend::MemoryHarness;
+    let harness = MemoryHarness::parse(harness).unwrap_or(MemoryHarness::Claude);
+    let workdir = (harness != MemoryHarness::Claude)
+        .then(tempfile::tempdir)
+        .transpose()?;
+    let command = match (harness, workdir.as_ref()) {
+        (MemoryHarness::Codex, Some(dir)) => invoke::build_codex_memory_command(model, dir.path()),
+        (MemoryHarness::Claude, _) => claude(),
+        _ => String::new(),
     };
     Ok(MemoryCommand {
         command,
-        codex_model: codex.then(|| model.to_string()),
+        harness,
+        model: model.to_string(),
         instructions: instructions.to_string(),
-        _workdir: workdir,
+        workdir,
     })
 }
 
@@ -639,6 +655,23 @@ fn run_curator_with_command(
     curator: &Curator,
     command: &MemoryCommand,
 ) -> Result<String, ralph_core::chat_memory::CuratorError> {
+    if command.harness == ralph_core::chat_backend::MemoryHarness::Agy {
+        return backoff::retry_on_outage(
+            "chat memory curator",
+            || match run_agy_curator(prompt, curator, command) {
+                Ok(summary) => backoff::Attempt::Done(Ok(summary)),
+                Err(error) => {
+                    let failure = backoff::FailureText {
+                        timed_out: false,
+                        exit_code: 1,
+                        text: error.message.clone(),
+                    };
+                    backoff::Attempt::Failed(Err(error), failure)
+                }
+            },
+            |delay| backoff::wait_unless(signal::is_terminated, delay),
+        );
+    }
     let run = run_memory_command(command, prompt, curator)?;
     ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref()).map_err(|message| {
         ralph_core::chat_memory::CuratorError {
@@ -647,6 +680,80 @@ fn run_curator_with_command(
             exit: Some(run.code),
         }
     })
+}
+
+fn agy_curator_rows(
+    rows: &CuratorRows,
+    model: &str,
+    raw: &ralph_core::worker::AgyUsage,
+) -> Result<Vec<ralph_core::chat_memory::LedgerRow>, &'static str> {
+    let Some(usage) = ralph_core::worker::agy_turn_usage(raw)? else {
+        return Ok(Vec::new());
+    };
+    let usage = ralph_core::worker::ModelUsage {
+        model: model.to_string(),
+        usage,
+        long_prompt: false,
+    };
+    Ok(vec![ralph_core::chat_memory::worker_usage_record(
+        rows.kind.clone(),
+        rows.at.clone(),
+        None,
+        "agy",
+        &usage,
+    )
+    .with_run(rows.run.clone())
+    .with_store(Some(rows.store.clone()))])
+}
+
+fn curator_error(error: ralph_server::OneShotError) -> ralph_core::chat_memory::CuratorError {
+    ralph_core::chat_memory::CuratorError {
+        timed_out: matches!(error, ralph_server::OneShotError::TimedOut(_)),
+        message: error.to_string(),
+        exit: None,
+    }
+}
+
+fn run_agy_curator(
+    prompt: &str,
+    curator: &Curator,
+    command: &MemoryCommand,
+) -> Result<String, ralph_core::chat_memory::CuratorError> {
+    let failed = |message: String| ralph_core::chat_memory::CuratorError {
+        message,
+        timed_out: false,
+        exit: None,
+    };
+    let cwd = command
+        .workdir
+        .as_ref()
+        .ok_or_else(|| failed("agy nap has no scratch directory".into()))?;
+    let shot = ralph_server::run_agy_one_shot(&ralph_server::OneShotRequest {
+        cwd: cwd.path(),
+        prompt: &command.prompt(prompt),
+        model: Some(&command.model),
+        effort: None,
+        timeout: std::time::Duration::from_secs(curator.timeout),
+    })
+    .map_err(curator_error)?;
+    if let Some(raw) = &shot.usage {
+        let rows = CuratorRows {
+            kind: curator.kind.clone(),
+            run: curator.run.clone(),
+            store: ralph_server::workers::usage_store(curator.store),
+            at: chrono::Utc::now().to_rfc3339(),
+            codex_model: None,
+        };
+        match agy_curator_rows(&rows, &shot.model, raw) {
+            Ok(rows) => warn_if_err(
+                ralph_server::ledger::record_all(&ralph_server::chat::memory::usage_path(), rows),
+                "Failed to record chat usage",
+            ),
+            Err(error) => ralph_server::warn::warn(format!("Failed to record chat usage: {error}")),
+        }
+    }
+    ralph_core::chat_memory::agy_nap_reply(&shot.text, &shot.tool_calls)
+        .map_err(|error| failed(error.to_string()))
 }
 
 struct MemoryRun {
@@ -661,13 +768,7 @@ fn run_memory_command(
     curator: &Curator,
 ) -> Result<MemoryRun, ralph_core::chat_memory::CuratorError> {
     let theme_config = highlight::ThemeConfig::from_config_and_env().without_emphasis();
-    let stdin = invoke::prompt_stdin(&if command.codex_model.is_some()
-        && !command.instructions.is_empty()
-    {
-        format!("{}\n\n{}", command.instructions, prompt)
-    } else {
-        prompt.to_string()
-    });
+    let stdin = invoke::prompt_stdin(&command.prompt(prompt));
     let outcome = backoff::retry_on_outage(
         "chat memory curator",
         || {
@@ -687,7 +788,7 @@ fn run_memory_command(
                                 interrupt: None,
                                 stdin: Some(stdin.clone()),
                             },
-                            command.codex_model.is_some(),
+                            command.is_codex(),
                         )
                     }),
             )
@@ -700,7 +801,7 @@ fn run_memory_command(
             run: curator.run.clone(),
             store: ralph_server::workers::usage_store(curator.store),
             at: chrono::Utc::now().to_rfc3339(),
-            codex_model: command.codex_model.clone(),
+            codex_model: command.is_codex().then(|| command.model.clone()),
         };
         warn_if_err(
             ralph_server::ledger::record_all(
@@ -716,7 +817,7 @@ fn run_memory_command(
         exit: e.partial_result().map(|partial| partial.exit_code),
         message: e.to_string(),
     })?;
-    if command.codex_model.is_some() && result.exit_code != 0 {
+    if command.is_codex() && result.exit_code != 0 {
         return Err(ralph_core::chat_memory::CuratorError {
             message: if result.stderr.is_empty() {
                 format!("codex exited with status {}", result.exit_code)
