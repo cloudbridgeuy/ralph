@@ -117,6 +117,30 @@ fn config_windows_and_variable_path_keys_are_absent_from_the_http_body() {
 }
 
 #[test]
+fn config_bare_secrets_in_tight_fields_are_absent_from_the_http_body() {
+    for (config, leak) in [
+        ("[mermaid.style.colors]\nx = \"ghp_SECRET\"\n", "ghp_SECRET"),
+        (
+            "[mermaid.style.config]\nnote = \"correct horse staple\"\n",
+            "horse",
+        ),
+        ("[tickets]\nlinear = [\"my secret ticket\"]\n", "secret"),
+        ("[wire.prices.\"hunter2 secret\"]\ninput = 1\n", "hunter2"),
+    ] {
+        let server = TestServer::start_with_store(|dir| write_config(dir, config));
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert!(!reply.body.contains(leak), "{config}: {}", reply.body);
+        let hidden = json_of(&reply)["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+        assert!(hidden, "{config}: {}", reply.body);
+    }
+}
+
+#[test]
 fn config_invalid_is_422_without_paths() {
     let server = TestServer::start_with_store(|dir| write_config(dir, "[chat\nwrap_width = 1\n"));
     let reply = get(&server);

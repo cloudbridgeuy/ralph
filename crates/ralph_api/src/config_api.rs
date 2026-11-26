@@ -327,4 +327,28 @@ mod tests {
         let value = body(&respond(&g, &s, no_env));
         assert_eq!(row(&value, "wire", "prices.x:1.input")["redacted"], false);
     }
+
+    #[test]
+    fn bare_secrets_in_tight_fields_never_reach_the_body() {
+        for (config, leak) in [
+            ("[mermaid.style.colors]\nx = \"ghp_SECRET\"\n", "ghp_SECRET"),
+            (
+                "[mermaid.style.config]\nnote = \"correct horse staple\"\n",
+                "horse",
+            ),
+            ("[tickets]\nlinear = [\"my secret ticket\"]\n", "secret"),
+            ("[wire.prices.\"hunter2 secret\"]\ninput = 1\n", "hunter2"),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let hidden = body(&response)["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+            assert!(hidden, "{config}: {raw}");
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use super::redact_shapes::text_has_path_shape;
+use super::redact_shapes::{key_class, key_shape_ok, text_has_path_shape, value_shape_ok};
 use serde_json::Value;
 
 pub const REDACTED: &str = "[redacted]";
@@ -117,7 +117,7 @@ fn text_is_sensitive(text: &str) -> bool {
 }
 
 fn key_is_sensitive(key: &str) -> bool {
-    key.split('.').any(text_is_sensitive)
+    key.split('.').any(text_is_sensitive) || !key_shape_ok(key)
 }
 
 pub fn mask_key(key: &str) -> String {
@@ -142,7 +142,11 @@ fn value_is_sensitive(value: &Value) -> bool {
 }
 
 pub fn redacts(key: &str, value: &Value, from_env: bool) -> bool {
-    from_env || listing(key) != Listing::Safe || key_is_sensitive(key) || value_is_sensitive(value)
+    from_env
+        || listing(key) != Listing::Safe
+        || key_is_sensitive(key)
+        || value_is_sensitive(value)
+        || !value_shape_ok(key_class(key), value)
 }
 
 #[cfg(test)]
@@ -357,10 +361,120 @@ mod tests {
     #[test]
     fn colon_and_percent_without_a_path_shape_stay_visible() {
         assert!(!redacts("wire.prices.x:1.input", &json!(1), false));
-        assert!(!redacts("theme.name", &json!("x:1"), false));
-        assert!(!redacts("theme.name", &json!("C:foo"), false));
+        assert!(!redacts("chat.name", &json!("x:1"), false));
+        assert!(!redacts("chat.name", &json!("C:foo"), false));
         assert!(!redacts("theme.name", &json!("tokyo-night"), false));
         assert!(!redacts("chat.wrap_width", &json!(96), false));
+    }
+
+    #[test]
+    fn tight_colour_fields_redact_anything_that_is_not_a_colour() {
+        for (key, value) in [
+            ("mermaid.style.colors.x", json!("ghp_SECRET")),
+            ("mermaid.style.colors.x", json!("hunter2 is the password")),
+            ("mermaid.style.background", json!("ghp_SECRET")),
+            ("mermaid.style.series", json!(["#fff", "ghp_SECRET"])),
+            ("theme.status.base_bg", json!("ghp_SECRET")),
+            ("theme.diff.add_fg", json!("rgb(1, 2, ghp)")),
+            ("web.ansi_dark", json!(["#000000", "ghp_SECRET"])),
+            ("web.ansi_light", json!(["#12345"])),
+            ("mermaid.style.palette", json!("a b c")),
+            ("mermaid.style.curve", json!("ghp_SECRET")),
+            ("theme.name", json!("ghp_SECRET")),
+        ] {
+            assert!(redacts(key, &value, false), "{key} {value}");
+        }
+    }
+
+    #[test]
+    fn colours_names_and_numbers_stay_visible() {
+        for (key, value) in [
+            ("mermaid.style.colors.accent", json!("#ff00aa")),
+            ("mermaid.style.colors.bg", json!("#FFF")),
+            ("mermaid.style.colors.bg", json!("#ff00aa80")),
+            ("theme.status.mode_idle_bg", json!("dark_green")),
+            ("theme.status.store_fg", json!("reset")),
+            ("theme.status.base_bg", json!("rgba(1, 2, 3, 0.5)")),
+            ("theme.diff.add_fg", json!("hsl(10, 50%, 50%)")),
+            ("theme.input.suggestion", json!("236")),
+            ("theme.name", json!("tokyo-night")),
+            ("theme.name", json!("Solarized (dark)")),
+            ("theme.name", json!("base16-ocean.dark")),
+            ("theme.no_background", json!(true)),
+            ("mermaid.style.series", json!(["#fff", "#000000"])),
+            ("mermaid.style.palette", json!("code")),
+            ("mermaid.style.curve", json!("linear")),
+            ("mermaid.style.font_size", json!(12.5)),
+            ("web.ansi_dark", json!(["#0c0c0c", "#c50f1f"])),
+            ("chat.wrap_width", json!(96)),
+        ] {
+            assert!(!redacts(key, &value, false), "{key} {value}");
+        }
+    }
+
+    #[test]
+    fn closed_enum_fields_redact_unknown_words() {
+        assert!(!redacts("workers.view", &json!("table"), false));
+        assert!(!redacts("workers.view", &json!("list"), false));
+        assert!(!redacts("workers.pr_provider", &json!("github"), false));
+        assert!(!redacts("workers.pr_provider", &json!("none"), false));
+        assert!(redacts("workers.view", &json!("ghp_SECRET"), false));
+        assert!(redacts("workers.view", &json!("grid"), false));
+        assert!(redacts("workers.pr_provider", &json!("gitlab"), false));
+    }
+
+    #[test]
+    fn mermaid_config_keeps_numbers_bools_colours_and_short_words() {
+        assert!(!redacts(
+            "mermaid.style.config",
+            &json!({"theme": "dark", "flowchart": {"nodeSpacing": 30, "curve": "basis", "htmlLabels": true, "c": "#ff00aa"}}),
+            false
+        ));
+    }
+
+    #[test]
+    fn mermaid_config_redacts_other_strings_at_any_depth() {
+        for value in [
+            json!({"note": "correct horse battery staple"}),
+            json!({"a": {"b": {"c": "ghp_SECRET"}}}),
+            json!({"a": ["ok", "hunter2 secret"]}),
+            json!({"a": "averyveryverylongwordthatisnotshort"}),
+        ] {
+            assert!(redacts("mermaid.style.config", &value, false), "{value}");
+        }
+    }
+
+    #[test]
+    fn price_keys_must_be_model_names() {
+        for key in [
+            "wire.prices.claude-haiku-5-5.input",
+            "wire.prices.gpt-4.1.output",
+            "wire.prices.x:1.input",
+            "wire.prices.claude-opus-4-1-20250805.cache_read",
+        ] {
+            assert!(!redacts(key, &json!(1), false), "{key}");
+        }
+        for key in [
+            "wire.prices.hunter2 secret.input",
+            "wire.prices.a b.input",
+            "wire.prices.\"quoted\".input",
+            &format!("wire.prices.{}.input", "a".repeat(65)),
+        ] {
+            assert!(redacts(key, &json!(1), false), "{key}");
+            assert_eq!(mask_key(key), "wire.[redacted]", "{key}");
+        }
+    }
+
+    #[test]
+    fn ticket_keys_follow_the_ident_grammar() {
+        assert!(!redacts("tickets.linear", &json!(["GUZ", "VP20"]), false));
+        assert!(!redacts("tickets.jira", &json!(["KODA"]), false));
+        assert!(redacts(
+            "tickets.linear",
+            &json!(["my secret ticket"]),
+            false
+        ));
+        assert!(redacts("tickets.jira", &json!(["a".repeat(65)]), false));
     }
 
     #[test]
