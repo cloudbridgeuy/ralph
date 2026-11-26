@@ -175,10 +175,12 @@ r-table.stackable td:not(.clip) {
   color: var(--r-muted);
 }
 
+/* Overrides the r-tree .sum colour in css/tree.css. */
 r-tree .sum {
   color: var(--r-ink);
 }
 
+/* Overrides the r-tree .extent .span fill in css/tree.css. */
 r-tree .extent .span {
   fill: var(--r-faint);
 }
