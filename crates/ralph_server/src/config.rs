@@ -14,6 +14,7 @@ use toml::Table;
 
 mod agy;
 mod changes;
+mod chat_harness;
 mod chat_settings;
 mod claude;
 mod codex;
@@ -41,6 +42,7 @@ mod wire;
 mod workers;
 pub use agy::AgySection;
 pub use changes::ChangesSection;
+pub use chat_harness::{claude_model_args, ignored_extras, ChatAgySection, ChatClaudeSection};
 pub use chat_settings::PromptFiles;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
@@ -320,6 +322,12 @@ pub struct AskSection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSection {
+    #[serde(default = "chat_harness::default_chat_harness")]
+    pub harness: String,
+    #[serde(default)]
+    pub claude: ChatClaudeSection,
+    #[serde(default)]
+    pub agy: ChatAgySection,
     #[serde(default = "default_mcp_servers")]
     pub mcp_servers: Vec<String>,
     #[serde(default)]
@@ -434,6 +442,9 @@ fn default_mcp_servers() -> Vec<String> {
 impl Default for ChatSection {
     fn default() -> Self {
         Self {
+            harness: chat_harness::default_chat_harness(),
+            claude: ChatClaudeSection::default(),
+            agy: ChatAgySection::default(),
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
             prompt_file: None,
@@ -654,6 +665,12 @@ impl AppConfig {
     }
 
     fn check_values(&self, path: &str) -> Result<(), ConfigError> {
+        if let Some(message) = chat_harness::harness_error(&self.chat) {
+            return Err(ConfigError::InvalidMemory {
+                path: path.to_string(),
+                message,
+            });
+        }
         for (name, harness, model) in [
             ("nap", &self.nap.harness, &self.nap.model),
             ("tag", &self.tag.harness, &self.tag.model),

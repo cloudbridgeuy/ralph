@@ -154,6 +154,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         args.recent_history_tokens,
     )?;
     let config = &settings.loaded.config;
+    let model_args = ralph_server::config::claude_model_args(&config.chat, model_args);
     let tuning = &settings.tuning;
     let cwd = settings.cwd.clone();
     let wrap_cap = resolve_wrap_width(
