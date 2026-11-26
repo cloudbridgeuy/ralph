@@ -1665,6 +1665,7 @@ dependencies = [
 name = "ralph_api"
 version = "0.4.0"
 dependencies = [
+ "chrono",
  "pulldown-cmark",
  "ralph_core",
  "ralph_server",

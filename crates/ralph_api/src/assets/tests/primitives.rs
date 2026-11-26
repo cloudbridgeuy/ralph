@@ -136,7 +136,9 @@ fn the_script_delays_the_spinner_200ms_and_passes_a_label() {
     assert!(!js.contains("delayedSpinner(row)"));
     assert!(!js.contains("delayedSpinner(group)"));
     assert!(!js.contains("delayedSpinner(main)"));
-    assert!(js.contains("delayedSpinner(main, config ? \"Loading config\" : \"Loading memory\")"));
+    assert!(js.contains(
+        "delayedSpinner(main, list ? \"Loading \" + list.name.toLowerCase() : config ? \"Loading config\" : \"Loading memory\")"
+    ));
 }
 
 #[test]

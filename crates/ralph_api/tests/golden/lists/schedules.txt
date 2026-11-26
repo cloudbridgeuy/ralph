@@ -1,0 +1,7 @@
+status: 200
+Content-Type: application/json
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+
+{"store":"store","rows":[{"id":"review","kind":"worker","status":"running","at":"2026-03-01T01:00:00Z","late":true,"deadline":"2026-03-01T03:00:00Z","timeout_secs":7200,"repeat":null,"has_follow_up":true},{"id":"nightly","kind":"command","status":"pending","at":"2026-03-01T02:00:00Z","late":false,"deadline":null,"timeout_secs":null,"repeat":"daily 02:00","has_follow_up":true},{"id":"probe","kind":"command","status":"proposed","at":"2026-03-02T09:30:00Z","late":false,"deadline":null,"timeout_secs":null,"repeat":null,"has_follow_up":true}]}

@@ -135,6 +135,18 @@ pub fn repeat_label(repeat: &Repeat) -> String {
     }
 }
 
+/// The repeat label for a web row. A `daily` value read from a file is free
+/// text, so it is shown only when it parses as `HH:MM`, and it is shown in
+/// that canonical form. Otherwise there is no label.
+pub fn repeat_row_label(repeat: &Repeat) -> Option<String> {
+    match repeat {
+        Repeat::Every { .. } => Some(repeat_label(repeat)),
+        Repeat::Daily { daily } => {
+            parse_daily_time(daily).map(|time| format!("daily {}", time.format(DAILY_FORMAT)))
+        }
+    }
+}
+
 pub fn repeat_notice(task: &Task) -> Option<String> {
     task.repeat.as_ref().map(|repeat| {
         format!(
@@ -229,6 +241,23 @@ pub fn open_branch_decision(task: &Task, branch_open: bool) -> OpenBranch {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_row_label_shows_a_valid_time_and_drops_free_text() {
+        let daily = |text: &str| Repeat::Daily {
+            daily: text.to_string(),
+        };
+        assert_eq!(
+            repeat_row_label(&daily("02:00")),
+            Some("daily 02:00".to_string())
+        );
+        assert_eq!(repeat_row_label(&daily("sk-live-0123456789abcdef")), None);
+        assert_eq!(repeat_row_label(&daily("")), None);
+        assert_eq!(
+            repeat_row_label(&Repeat::Every { every_secs: 21600 }),
+            Some("every 6h".to_string())
+        );
+    }
+
     use super::*;
     use chrono::{
         Duration as ChronoDuration, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,

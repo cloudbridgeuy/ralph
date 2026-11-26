@@ -27,6 +27,32 @@ impl WatchStore {
     }
 
     pub fn load_all(&self) -> Vec<SavedWatch> {
+        self.record_paths()
+            .into_iter()
+            .filter_map(|path| load(&path))
+            .collect()
+    }
+
+    /// Reads every readable record and never writes: a corrupt file is
+    /// skipped with a warning and stays on disk. A symlink is never followed.
+    pub fn read_all(&self) -> Vec<SavedWatch> {
+        self.record_paths()
+            .into_iter()
+            .filter(|path| fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()))
+            .filter_map(|path| match decode(&path) {
+                Ok(saved) => Some(saved),
+                Err(e) => {
+                    warn(format!(
+                        "skipping unreadable saved watch {}: {e}",
+                        path.display()
+                    ));
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn record_paths(&self) -> Vec<PathBuf> {
         let entries = match fs::read_dir(&self.dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Vec::new(),
@@ -38,7 +64,6 @@ impl WatchStore {
         entries
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .filter(|path| is_record(path))
-            .filter_map(|path| load(&path))
             .collect()
     }
 }
@@ -50,11 +75,14 @@ fn is_record(path: &Path) -> bool {
             .is_some_and(|name| !name.to_string_lossy().starts_with('.'))
 }
 
-fn load(path: &Path) -> Option<SavedWatch> {
-    let parsed = fs::read(path)
+fn decode(path: &Path) -> Result<SavedWatch, String> {
+    fs::read(path)
         .map_err(|e| e.to_string())
-        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()));
-    match parsed {
+        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+}
+
+fn load(path: &Path) -> Option<SavedWatch> {
+    match decode(path) {
         Ok(saved) => Some(saved),
         Err(e) => {
             warn(format!(
@@ -129,11 +157,43 @@ mod tests {
     }
 
     #[test]
+    fn read_all_skips_corrupt_records_and_keeps_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = WatchStore::new(dir.path().to_path_buf());
+        let record = saved("ok");
+        store.save(&record).unwrap();
+        let bad = dir.path().join("bad.json");
+        fs::write(&bad, "{nope").unwrap();
+        fs::write(dir.path().join(".partial.json"), "{").unwrap();
+        assert_eq!(store.read_all(), vec![record]);
+        assert!(bad.exists());
+        assert!(WatchStore::new(dir.path().join("none"))
+            .read_all()
+            .is_empty());
+    }
+
+    #[test]
     fn temporary_files_are_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let store = WatchStore::new(dir.path().to_path_buf());
         fs::write(dir.path().join(".partial.json"), "{").unwrap();
         assert!(store.load_all().is_empty());
         assert!(dir.path().join(".partial.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_all_does_not_follow_a_symlinked_record() {
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("outside.json");
+        fs::write(&target, serde_json::to_vec(&saved("linked")).unwrap()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = WatchStore::new(dir.path().to_path_buf());
+        let record = saved("real");
+        store.save(&record).unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("link.json")).unwrap();
+        assert_eq!(store.read_all(), vec![record]);
+        assert!(dir.path().join("link.json").exists());
+        assert_eq!(store.load_all().len(), 2);
     }
 }
