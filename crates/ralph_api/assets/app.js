@@ -687,7 +687,7 @@ function drawDetail(pane, state, detail) {
 
 let detailGeneration = 0;
 
-async function selectNode(list, item, screen) {
+async function selectNode(list, item, screen, retried) {
   markSelected(list, item);
   const state = { thread: screen.ctx.thread, node: item.dataset.node, after: null };
   history.replaceState(null, "", buildHash(state));
@@ -698,10 +698,13 @@ async function selectNode(list, item, screen) {
     if (mine !== detailGeneration) return;
     stop();
     drawDetail(screen.pane, state, detail);
+    if (retried) focusTarget(screen.pane);
   } catch (error) {
     if (mine !== detailGeneration) return;
     stop();
-    screen.pane.replaceChildren(failure(error, () => selectNode(list, item, screen)));
+    const box = failure(error, () => selectNode(list, item, screen, true));
+    screen.pane.replaceChildren(box);
+    if (retried) focusRetry(box);
   }
 }
 

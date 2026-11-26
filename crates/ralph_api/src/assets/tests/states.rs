@@ -177,10 +177,10 @@ fn a_retry_moves_focus_to_a_tabindex_target_or_the_new_retry_button() {
     assert!(function_body(&js, "focusTarget").contains(r#"setAttribute("tabindex", "-1")"#));
     assert!(function_body(&js, "focusTarget").contains(".focus()"));
     assert!(function_body(&js, "focusRetry").contains(".focus()"));
-    for name in ["show", "fillRendered"] {
+    for name in ["show", "fillRendered", "selectNode"] {
         assert!(function_body(&js, name).contains("focusTarget("), "{name}");
     }
-    for name in ["show", "openNode", "fillRendered"] {
+    for name in ["show", "openNode", "fillRendered", "selectNode"] {
         assert!(function_body(&js, name).contains("focusRetry("), "{name}");
     }
 }
