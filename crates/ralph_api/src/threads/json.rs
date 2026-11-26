@@ -307,6 +307,8 @@ mod tests {
 
     const CURVE: &str = "M4 -1V8Q4 12 8 12";
     const TRUNK: &str = "M4 -1V25";
+    const HEAD: &str = "M4 12V25";
+    const BRANCH: &str = "class=\"ln plain h\"";
 
     #[test]
     fn the_last_row_ends_the_trunk_at_the_curve() {
@@ -391,8 +393,9 @@ mod tests {
         let body = threads_body("chat", &empty(), now());
         assert_eq!(rows(&body).len(), 1);
         assert_eq!(svg_of(&body, 0), graph_svg(&lane_cells(Lane::Head, true)));
+        assert!(svg_of(&body, 0).contains(HEAD));
+        assert!(!svg_of(&body, 0).contains(BRANCH));
         assert!(!svg_of(&body, 0).contains('Q'));
-        assert!(!svg_of(&body, 0).contains(TRUNK));
     }
 
     #[test]
