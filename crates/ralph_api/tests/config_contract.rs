@@ -69,6 +69,17 @@ fn config_global_rows_come_from_the_injected_global_path() {
 }
 
 #[test]
+fn config_dotted_sensitive_price_key_is_absent_from_the_http_body() {
+    let server = TestServer::start_with_store(|dir| {
+        write_config(dir, "[wire.prices.\"/Users/alice/acme.corp\"]\ninput = 1\n")
+    });
+    let reply = get(&server);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!reply.body.contains("corp"), "{}", reply.body);
+    assert!(!reply.body.contains("/Users"), "{}", reply.body);
+}
+
+#[test]
 fn config_invalid_is_422_without_paths() {
     let server = TestServer::start_with_store(|dir| write_config(dir, "[chat\nwrap_width = 1\n"));
     let reply = get(&server);
