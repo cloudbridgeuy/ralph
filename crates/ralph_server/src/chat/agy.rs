@@ -278,3 +278,181 @@ impl ChatSession for AgySession {
         self.live = None;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_client_protocol::schema::v1::McpServer;
+    use ralph_core::chat_tools::{chat_tool_policy, tool_verdict, ToolVerdict};
+    use ralph_core::retry::{classify, FailureInput, FailureKind};
+    use ralph_core::turn_event::{TurnEvent, TurnSink};
+    use ralph_core::worker::{claude_tool_name, StopReason};
+    use std::path::Path;
+
+    struct Quiet;
+
+    impl TurnSink for Quiet {
+        fn emit(&self, _event: TurnEvent) {}
+    }
+
+    fn stdio(server: &McpServer) -> (&str, &Path, &[String], Vec<(&str, &str)>) {
+        let McpServer::Stdio(stdio) = server else {
+            panic!("not stdio")
+        };
+        (
+            &stdio.name,
+            &stdio.command,
+            &stdio.args,
+            stdio
+                .env
+                .iter()
+                .map(|var| (var.name.as_str(), var.value.as_str()))
+                .collect(),
+        )
+    }
+
+    fn verdict(policy: &ToolPolicy, acp_name: &str) -> ToolVerdict {
+        tool_verdict(policy, &claude_tool_name(acp_name))
+    }
+
+    fn replied(text: &str) -> StreamingSubprocessResult {
+        let config = SpinnerSubprocessConfig {
+            command: String::new(),
+            timeout_secs: None,
+            verbose_tools: VerboseToolsConfig::new(),
+            show_tools: false,
+            terminated: || false,
+            sink: Arc::new(Quiet),
+            gate: None,
+            interrupt: None,
+            stdin: None,
+        };
+        let mut pump = Pump::start(&config, Display::Silent);
+        for event in agy_stream_events(&AgyEvent::Update(
+            &json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}),
+        )) {
+            pump.event(event);
+        }
+        for event in agy_stream_events(&AgyEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: None,
+        }) {
+            pump.event(event);
+        }
+        settled(pump.finish_events(0))
+    }
+
+    fn outcome_kind(message: &str) -> FailureKind {
+        classify(&FailureInput {
+            timed_out: false,
+            exit_code: 1,
+            text: message,
+        })
+    }
+
+    #[test]
+    fn opening_prompt_puts_the_system_before_the_prompt() {
+        let text = opening_prompt("rules", "hello");
+        assert!(text.starts_with("rules"));
+        assert!(text.ends_with("hello"));
+        assert!(text.find("rules") < text.find("hello"));
+    }
+
+    #[test]
+    fn the_system_goes_out_once_on_the_first_turn_only() {
+        let mut opening = Some("rules".to_string());
+        let first = next_prompt(&mut opening, "one");
+        let second = next_prompt(&mut opening, "two");
+        assert!(first.contains("rules") && first.contains("one"));
+        assert_eq!(second, "two");
+    }
+
+    #[test]
+    fn chat_mcp_keeps_its_store_and_socket_args_and_an_empty_env() {
+        let config = json!({"mcpServers": {"ralph-chat": {
+            "command": "/bin/ralph",
+            "args": ["chat-mcp", "--store", "/s", "--socket", "/k"]
+        }}});
+        let servers = acp_servers(&config).unwrap();
+        let (name, command, args, env) = stdio(&servers[0]);
+        assert_eq!(name, "ralph-chat");
+        assert_eq!(command, Path::new("/bin/ralph"));
+        assert_eq!(args, ["chat-mcp", "--store", "/s", "--socket", "/k"]);
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn an_imported_server_keeps_its_own_env_and_remote_ones_are_skipped() {
+        let config = json!({"mcpServers": {
+            "linear": {"command": "npx", "args": ["linear"], "env": {"TOKEN": "t"}},
+            "web": {"type": "http", "url": "https://x"}
+        }});
+        let servers = acp_servers(&config).unwrap();
+        assert_eq!(servers.len(), 1);
+        let (name, _, _, env) = stdio(&servers[0]);
+        assert_eq!(name, "linear");
+        assert_eq!(env, [("TOKEN", "t")]);
+    }
+
+    #[test]
+    fn a_chat_server_tool_is_allowed_and_run_command_asks() {
+        let policy = chat_tool_policy(["ralph-chat"]);
+        assert_eq!(
+            verdict(&policy, "mcp_ralph-chat_report"),
+            ToolVerdict::Allow
+        );
+        assert_eq!(verdict(&policy, "run_command"), ToolVerdict::Ask);
+    }
+
+    #[test]
+    fn a_server_name_with_an_underscore_splits_at_the_first_one() {
+        let policy = chat_tool_policy(["my_server"]);
+        assert_eq!(verdict(&policy, "mcp_my_server_tool"), ToolVerdict::Ask);
+        let policy = chat_tool_policy(["my"]);
+        assert_eq!(verdict(&policy, "mcp_my_server_tool"), ToolVerdict::Allow);
+    }
+
+    #[test]
+    fn a_quota_notice_fails_without_a_retry() {
+        let message = notice_failure("\n⚠ Individual quota reached. Resets in 1h0m0s.\n").unwrap();
+        assert_eq!(message, "agy quota reached; resets in 1h0m0s");
+        assert_eq!(outcome_kind(&message), FailureKind::Refusal);
+    }
+
+    #[test]
+    fn an_api_error_notice_is_an_outage_to_retry() {
+        let message = notice_failure("⚠ API error (attempt 1): timed out").unwrap();
+        assert_eq!(outcome_kind(&message), FailureKind::Outage);
+    }
+
+    #[test]
+    fn an_auth_or_unknown_notice_fails_without_a_retry() {
+        let message = notice_failure("⚠ Authentication required").unwrap();
+        assert_eq!(message, "agy replied with a warning notice");
+        assert_eq!(outcome_kind(&message), FailureKind::Refusal);
+        assert_eq!(notice_failure("plain reply"), None);
+    }
+
+    #[test]
+    fn a_finished_turn_exits_zero_with_no_cost() {
+        let done = replied("hi");
+        assert_eq!(done.exit_code, 0);
+        assert_eq!(done.stderr, "");
+        assert_eq!(done.stream_result.costs.cost_usd, None);
+    }
+
+    #[test]
+    fn a_notice_reply_becomes_a_failed_run() {
+        let done = replied("⚠ Individual quota reached.");
+        assert_eq!(done.exit_code, 1);
+        assert_eq!(done.stderr, "agy quota reached");
+    }
+
+    #[test]
+    fn cancel_sends_once_then_waits_then_kills_after_the_grace() {
+        assert_eq!(cancel_step(false, None), CancelStep::Idle);
+        assert_eq!(cancel_step(true, None), CancelStep::Send);
+        assert_eq!(cancel_step(true, Some(Duration::ZERO)), CancelStep::Wait);
+        assert_eq!(cancel_step(true, Some(CANCEL_GRACE)), CancelStep::Kill);
+    }
+}
