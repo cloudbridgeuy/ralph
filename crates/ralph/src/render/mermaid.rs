@@ -1,10 +1,13 @@
 mod git;
 mod journey;
 mod lines;
+mod mindmap;
+mod packet;
 mod pie;
 mod sankey;
 #[cfg(test)]
 mod testing;
+mod timeline;
 
 use lines::{body_lines, statements, Statement};
 use ralph_server::config::MermaidSection;
@@ -28,6 +31,9 @@ pub enum DiagramKind {
     Pie,
     Journey,
     Sankey,
+    Packet,
+    Timeline,
+    Mindmap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +51,10 @@ pub enum Refusal {
     TooManySlices,
     TooManyTasks,
     TooManyFlows,
+    TooManyBits,
+    TooManyEntries,
+    TooManyNodes,
+    TooDeep,
 }
 
 fn kind_of(header: &str) -> Option<DiagramKind> {
@@ -62,6 +72,9 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "pie" => Some(DiagramKind::Pie),
         "journey" => Some(DiagramKind::Journey),
         "sankey" | "sankey-beta" => Some(DiagramKind::Sankey),
+        "packet" | "packet-beta" => Some(DiagramKind::Packet),
+        "timeline" => Some(DiagramKind::Timeline),
+        "mindmap" => Some(DiagramKind::Mindmap),
         _ => None,
     }
 }
@@ -155,6 +168,9 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
         DiagramKind::Pie => check_typed(source, pie::check)?,
         DiagramKind::Journey => check_typed(source, journey::check)?,
         DiagramKind::Sankey => check_typed(source, sankey::check)?,
+        DiagramKind::Packet => check_typed(source, packet::check)?,
+        DiagramKind::Timeline => check_typed(source, timeline::check)?,
+        DiagramKind::Mindmap => check_typed(source, mindmap::check)?,
         DiagramKind::GitGraph => {
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);

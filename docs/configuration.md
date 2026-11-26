@@ -463,11 +463,11 @@ A `0` for `cache_secs` or `lookup_timeout_ms`, or an unknown `pr_provider` or `v
 
 ### `[mermaid]` - Diagram Rendering
 
-In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, stateDiagram-v2, gitGraph, pie, journey, and sankey/sankey-beta. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
+In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, stateDiagram-v2, gitGraph, pie, journey, sankey/sankey-beta, packet/packet-beta, timeline, and mindmap. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
 
 mermaid-text can drop a transition label on an edge into a composite state. In a gitGraph it refuses `merge` with `id:`, `tag:` or `type:` and a later `checkout` of a branch declared with `order:`, and it never truncates the branch-name row, so long names make the output too wide; each case shows the source. mermaid-text ignores `switch` and would draw later commits on the wrong branch, so ralph also shows the source for a gitGraph that uses it; `checkout` draws.
 
-For pie, journey, and sankey, ralph shows the source when it meets a line it does not know. A pie body holds only quoted slices, so put the title on the `pie` line. A sankey with a doubled quote (`""`) shows the source, because mermaid-text draws the escape as written.
+For pie, journey, sankey, packet, timeline, and mindmap, ralph shows the source when it meets a line it does not know. A pie body holds only quoted slices, so put the title on the `pie` line. A sankey with a doubled quote (`""`) shows the source, because mermaid-text draws the escape as written. mermaid-text drops some lines without an error, so these also show the source: a packet `+N` field, a timeline period without `:` or a continuation line that starts with `:`, and a second mindmap root. A mindmap with `:::` classes or an `::icon(` after node text shows the source too; an `::icon(` line of its own draws without the icon.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -478,7 +478,7 @@ For pie, journey, and sankey, ralph shows the source when it meets a line it doe
 | `max_class_relations` | `400` | Refuse a classDiagram with more relation tokens (provisional: dense graphs among few classes can exceed the timeout well below 400; the timeout still bounds them) |
 | `picture_timeout_ms` | `3000` | Kill a `/view` picture child after this many milliseconds; the block then draws as text |
 
-Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements; gitGraph up to 16 KB, 200 commits (`commit`, `merge` and `cherry-pick` lines), and 20 branches including `main`; pie, journey, and sankey up to 16 KB with 512 bytes per line (after trailing `%%` comments are removed); pie up to 30 slices; journey up to 100 tasks; sankey up to 100 flows. A config that fails to load prints a warning and uses these defaults.
+Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements; gitGraph up to 16 KB, 200 commits (`commit`, `merge` and `cherry-pick` lines), and 20 branches including `main`; pie, journey, sankey, packet, timeline, and mindmap up to 16 KB with 512 bytes per line (after trailing `%%` comments are removed); pie up to 30 slices; journey up to 100 tasks; sankey up to 100 flows; packet up to bit 1023; timeline up to 100 periods and 300 events; mindmap up to 200 nodes and 12 levels. A config that fails to load prints a warning and uses these defaults.
 
 ### `[mermaid.style]` - Diagram pictures
 
