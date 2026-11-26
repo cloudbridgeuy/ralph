@@ -6,6 +6,7 @@ mod mindmap;
 mod packet;
 mod pie;
 mod quadrant;
+mod requirement;
 mod sankey;
 #[cfg(test)]
 mod testing;
@@ -40,6 +41,7 @@ pub enum DiagramKind {
     Quadrant,
     XyChart,
     Gantt,
+    Requirement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +65,7 @@ pub enum Refusal {
     TooDeep,
     TooManyPoints,
     TooLongTask,
+    TooManyBlocks,
 }
 
 fn kind_of(header: &str) -> Option<DiagramKind> {
@@ -86,6 +89,7 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "quadrantChart" => Some(DiagramKind::Quadrant),
         "xychart" | "xychart-beta" => Some(DiagramKind::XyChart),
         "gantt" => Some(DiagramKind::Gantt),
+        "requirementDiagram" => Some(DiagramKind::Requirement),
         _ => None,
     }
 }
@@ -188,6 +192,7 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
             check_typed(source, xychart::check)?;
         }
         DiagramKind::Gantt => check_typed(source, gantt::check)?,
+        DiagramKind::Requirement => check_typed(source, requirement::check)?,
         DiagramKind::GitGraph => {
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);
