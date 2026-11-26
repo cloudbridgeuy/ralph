@@ -341,6 +341,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 - Tree rows:
   - A folded block is one row with the `no summary yet` text. It has no `aria-expanded` and does not open.
   - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. It opens to show the full text.
+  - Any entry row in the entries table of the detail pane opens in place. A click, Enter or Space opens it. The full text goes through `POST /api/render` and shows in a new row under the entry. Only one entry is open at a time: opening another entry, or the same entry again, closes the open one. While the entry is open, the text cell of its row is empty. On close, the cell shows the first line again.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
   - A block with no summary shows `no summary yet` in its row.
   - Colours (role tokens only, set in `css/memory.css`): the role of an entry is in a `data-role` attribute, set only for `user` (`--r-ink`), `assistant` (`--r-accent`) and `worker` (`--r-info`). Other roles get no attribute and keep the inherited colour. It colours the `role` cell and the role in a leaf row (`#44 user`). Times (`.at`, in the table and in leaf rows) are `--r-muted`. Row summary text is `--r-ink`. The extent span is `--r-faint`. The `n` count stays `--r-muted` and range labels stay bold `--r-ink-strong`, both from `css/tree.css`.
