@@ -7,6 +7,7 @@ use ralph_server::chat::check::CheckState;
 use ralph_server::chat::keepalive::Stamp;
 use ralph_server::chat::monitor::{Monitor, ProcessMemo};
 use ralph_server::schedule_store::ScheduleStore;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 

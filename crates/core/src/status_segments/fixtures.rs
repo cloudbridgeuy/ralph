@@ -1,6 +1,7 @@
 use super::*;
 use crate::chat_process::{Cache, Ctx, ProcessCell, SessionCost};
-use crate::chat_status::{ScheduleState, WatchState, WorkerState};
+use crate::chat_status::{ScheduleState, WatchState, WorkerActivity, WorkerState};
+use crate::worker::{ReportKind, ReportStatus};
 
 pub(super) fn status() -> Status {
     Status {
@@ -9,11 +10,11 @@ pub(super) fn status() -> Status {
         workers: vec![
             WorkerState {
                 id: "GUZ-416".into(),
-                state: "running".into(),
+                state: WorkerActivity::Running,
             },
             WorkerState {
                 id: "GUZ-417".into(),
-                state: "question".into(),
+                state: WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Question)),
             },
         ],
         watches: Vec::new(),

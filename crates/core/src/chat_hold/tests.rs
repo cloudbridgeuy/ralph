@@ -1,6 +1,6 @@
 use super::*;
-use crate::chat_status::{ScheduleState, Status, WatchState, WorkerState};
-use crate::worker::{Report, ReportStatus};
+use crate::chat_status::{ScheduleState, Status, WatchState, WorkerActivity, WorkerState};
+use crate::worker::{Report, ReportKind, ReportStatus};
 
 fn entry(worker: &str) -> Entry {
     Entry {
@@ -185,7 +185,7 @@ fn status(workers: &[&str], watches: &[&str], schedule: &[&str]) -> Status {
             .iter()
             .map(|id| WorkerState {
                 id: id.to_string(),
-                state: "running".to_string(),
+                state: WorkerActivity::Running,
             })
             .collect(),
         watches: watches
@@ -340,8 +340,8 @@ fn completion_ignores_a_cursor_inside_a_character() {
 #[test]
 fn targets_are_every_listed_worker_watches_and_schedules() {
     let mut status = status(&["GUZ-1", "GUZ-2", "GUZ-3"], &["watch:ci"], &["nightly"]);
-    status.workers[1].state = "done".to_string();
-    status.workers[2].state = "idle".to_string();
+    status.workers[1].state = WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done));
+    status.workers[2].state = WorkerActivity::Idle;
     let targets: Vec<String> = hold_targets(&status).into_iter().collect();
     assert_eq!(
         targets,
@@ -352,8 +352,8 @@ fn targets_are_every_listed_worker_watches_and_schedules() {
 #[test]
 fn completion_offers_idle_and_done_workers() {
     let mut status = status(&["w1", "w2"], &[], &[]);
-    status.workers[0].state = "idle".to_string();
-    status.workers[1].state = "done".to_string();
+    status.workers[0].state = WorkerActivity::Idle;
+    status.workers[1].state = WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done));
     assert_eq!(values("/hold ", &status), ["w1", "w2"]);
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::chat_status::{route_input, EmptySubmit, Route, WorkerState};
+use crate::chat_status::{route_input, EmptySubmit, Route, WorkerActivity, WorkerState};
 use std::collections::BTreeSet;
 
 fn route(line: &str) -> Route {
@@ -23,7 +23,7 @@ fn status() -> Status {
             .iter()
             .map(|id| WorkerState {
                 id: id.to_string(),
-                state: "running".to_string(),
+                state: WorkerActivity::Running,
             })
             .collect(),
         ..Status::default()

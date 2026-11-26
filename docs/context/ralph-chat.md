@@ -279,7 +279,7 @@ A local command that changes state the model reasons about appends one `user` en
 The stage is a short list of open items. The chat sends it with the user turn, never in the system prompt, so the cached prefix does not move. In the turn text it goes after the catch-up rows and before `New message:` (`turn_texts`). It is not written to `log.jsonl`. Code: `ralph_core::chat_stage` (pure), `ralph_server/src/chat/stage.rs` (files and lock), `turn.rs` (send and check).
 
 - Model items: `decision`, `owed` or `followup`, each with an id `s<N>`, an optional `ref` and a text. Rendered as `s1 owed <ref>: <text>`.
-- Code facts, from the live status, not stored: `needs you` (workers in `question` or `permission`), `workers` (all other workers, `blocked` included), `watches` by id, `schedule`, and `inbox: N unread`. A line with no entries is left out.
+- Code facts, from the live status, not stored: `needs you` (workers whose `chat_status::WorkerActivity::attention` is `NeedsUser`: a `blocked` or `question` report, or `permission`), `workers` (all other workers), `watches` by id, `schedule`, and `inbox: N unread`. A line with no entries is left out.
 - Send rule: main sends the stage when its text changed, or after 5 turns without a send, and always on a fresh `claude` process. An empty stage sends nothing, except one `Stage: empty` when the stage was just emptied. A thread sends its stage every turn.
 - A thread stage opens with a fixed line, `thread <name>: unresolved, end with /thread merge or drop`. It is not an item: no id, no tool or `/stage` command reaches it, and it goes when the thread is merged or dropped. A thread stage starts with no items; its facts are the thread's own.
 - Expiry: at each turn start, `followup` and `owed` items 60 log rows old (about 30 turns) expire. A `decision` never expires. Each expiry writes an audit row and a `Stage: <id> expired: <text>` notice row in the log.
@@ -290,7 +290,7 @@ The stage is a short list of open items. The chat sends it with the user turn, n
 
 ### Next-step check
 
-After a reply is stored, `check_next_step` compares the reply's `Next step:` line with the pending decisions: each `decision` item, and each worker that needs you. A `blocked` worker does not count. The thread line never counts.
+After a reply is stored, `check_next_step` compares the reply's `Next step:` line with the pending decisions: each `decision` item, and each worker that needs you (`blocked`, `question` or `permission`). The thread line never counts.
 
 - Gap: the step is missing, is a `/hold`, or names none of them. A name is the item id, its `ref`, or the worker id, matched as a whole token.
 - Effect: a notice prints and a `Next step skips pending decision: <labels>` row is logged. The suggestion stays as the model wrote it. On a gap, a `/hold` suggestion is pre-filled and does not start a hold.

@@ -1,7 +1,7 @@
 use super::*;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
-use crate::worker::Report;
+use crate::worker::{Report, ReportKind};
 use signing::*;
 
 mod block;
@@ -265,9 +265,9 @@ fn at(step: usize) -> Progress {
 }
 
 fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Ticked> {
-    let last: HashMap<String, String> = known
+    let last: HashMap<String, ReportKind> = known
         .iter()
-        .map(|(id, status)| (id.to_string(), status.to_string()))
+        .map(|(id, status)| (id.to_string(), ReportKind::parse(status).unwrap()))
         .collect();
     let running: Vec<String> = running.iter().map(ToString::to_string).collect();
     start_run(
