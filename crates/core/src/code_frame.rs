@@ -76,42 +76,77 @@ pub fn surface(tones: ThemeTones, backdrop: Backdrop) -> Surface {
 pub enum Label<'a> {
     Bare,
     Language(&'a str),
+    File {
+        path: &'a str,
+        kind: &'a str,
+        ink: &'a str,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Keep {
+    Start,
+    End,
 }
 
 pub fn rule_line(label: &Label<'_>, cols: Columns) -> String {
     let cols = usize::from(cols.0);
     let head = match label {
         Label::Bare => String::new(),
-        Label::Language(name) => heading(name, cols),
+        Label::Language(name) => heading(name, cols, Keep::Start),
+        Label::File { path, kind, .. } => heading(&format!("{path} · {kind}"), cols, Keep::End),
     };
     let rest = cols.saturating_sub(head.width());
     head + &RULE.repeat(rest)
 }
 
-fn heading(name: &str, cols: usize) -> String {
+fn heading(title: &str, cols: usize, keep: Keep) -> String {
     let room = cols.saturating_sub(LEAD.width() + 1);
     if room == 0 {
         String::new()
-    } else if name.width() <= room {
-        format!("{LEAD}{name} ")
+    } else if title.width() <= room {
+        format!("{LEAD}{title} ")
     } else {
-        format!("{LEAD}{}… ", truncate_to_width(name, room - 1))
+        match keep {
+            Keep::Start => format!("{LEAD}{}… ", truncate_to_width(title, room - 1)),
+            Keep::End => format!("{LEAD}…{} ", end_to_width(title, room - 1)),
+        }
     }
+}
+
+fn end_to_width(text: &str, width: usize) -> &str {
+    let mut used = 0;
+    let start = text
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| {
+            used += c.width().unwrap_or(0);
+            used <= width
+        })
+        .last()
+        .map_or(text.len(), |(at, _)| at);
+    &text[start..]
 }
 
 pub fn frame_block(label: &Label<'_>, body: &str, surface: Surface, cols: Columns) -> String {
     let open = rule_line(label, cols);
+    let ink = match label {
+        Label::File { ink, .. } => Some(*ink),
+        Label::Bare | Label::Language(_) => None,
+    };
     match surface {
         Surface::Open => {
             let rows = body_rows(body, open_row);
             let close = rule_line(&Label::Bare, cols);
-            format!("{DIM}{open}{RESET}\n{rows}{DIM}{close}{RESET}\n")
+            let ink = ink.unwrap_or(DIM);
+            format!("{ink}{open}{RESET}\n{rows}{DIM}{close}{RESET}\n")
         }
         Surface::Shaded { fill, rule } => {
             let rows = body_rows(body, |content| shaded_row(content, fill, cols));
             let pad = shaded_row("", fill, cols);
             let rule = truecolor_foreground(rule.r, rule.g, rule.b);
-            format!("{rule}{open}{RESET}\n{pad}{rows}{pad}")
+            let ink = ink.unwrap_or(&rule);
+            format!("{ink}{open}{RESET}\n{pad}{rows}{pad}")
         }
     }
 }
@@ -241,6 +276,38 @@ mod tests {
         }
         let line = rule_line(&Label::Language(LONG), Columns(12));
         assert_eq!(line, "── averyve… ");
+    }
+
+    fn file(path: &str) -> Label<'_> {
+        Label::File {
+            path,
+            kind: "diff",
+            ink: "<ink>",
+        }
+    }
+
+    #[test]
+    fn rule_line_carries_file_and_kind() {
+        let line = rule_line(&file("src/a.rs"), Columns(24));
+        assert_eq!(line, "── src/a.rs · diff ─────");
+    }
+
+    #[test]
+    fn rule_line_keeps_the_end_of_a_long_path() {
+        let line = rule_line(&file("some/very/long/path/a.rs"), Columns(20));
+        assert_eq!(line, "── …ath/a.rs · diff ");
+        for cols in 0..40 {
+            let line = rule_line(&file("some/very/日本/path/a.rs"), Columns(cols));
+            assert_eq!(line.width(), usize::from(cols), "{line:?}");
+        }
+    }
+
+    #[test]
+    fn file_rule_uses_its_own_ink_in_both_looks() {
+        for surface in [SHADED, Surface::Open] {
+            let out = frame_block(&file("a"), "x", surface, Columns(12));
+            assert!(out.starts_with("<ink>── a · diff"), "{out:?}");
+        }
     }
 
     #[test]

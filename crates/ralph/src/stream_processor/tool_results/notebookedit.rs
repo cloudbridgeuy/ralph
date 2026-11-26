@@ -9,11 +9,11 @@
 //! 3. Generate a unified diff between before and after
 //! 4. Display with syntax highlighting based on cell type
 
-use crate::diff_highlight::highlight_with_basic_colors;
-
 use crate::ansi::RESET;
+use crate::render::code_frame::framed_diff;
 use crate::render::NotebookEditParams;
 use crate::render::RenderContext;
+use ralph_core::code_frame::Label;
 
 /// Maximum lines to show in a diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
@@ -35,19 +35,14 @@ pub fn format_notebook_result(ctx: &RenderContext, params: &NotebookEditParams) 
     }
 }
 
-/// Format diff output with optional highlighting and truncation.
-///
-/// This is the common formatting logic for NotebookEdit tool diffs.
 fn format_diff_output(
     ctx: &RenderContext,
     params: &NotebookEditParams,
     diff_content: &str,
 ) -> String {
-    // Count lines for potential truncation
     let lines: Vec<&str> = diff_content.lines().collect();
     let line_count = lines.len();
 
-    // Truncate if too long
     let (display_content, truncated) = if line_count > MAX_DIFF_LINES {
         let truncated_lines: String = lines[..MAX_DIFF_LINES].join("\n");
         (truncated_lines, true)
@@ -55,17 +50,14 @@ fn format_diff_output(
         (diff_content.to_string(), false)
     };
 
-    // Build cell display string
     let cell_display = format!("{}:{}", params.notebook_path, params.cell_identifier);
 
-    // Determine cell type indicator
     let cell_type_indicator = match params.cell_type {
         Some("code") => " (code)",
         Some("markdown") => " (markdown)",
         _ => "",
     };
 
-    // Determine edit mode indicator
     let edit_mode_indicator = match params.edit_mode {
         "insert" => " (new cell)",
         "delete" => " (deleted)",
@@ -73,40 +65,21 @@ fn format_diff_output(
     };
 
     if ctx.terminal {
-        // Highlight the diff
-        let highlighted_diff = highlight_with_basic_colors(&display_content, &ctx.diff);
-
-        // Build output with header
-        let mut output = String::new();
-
-        // Cell path header with box drawing and indicators
-        if !edit_mode_indicator.is_empty() {
-            output.push_str(&format!(
-                "{name}\u{2500}\u{2500} {}{}{}{}{name} \u{2500}\u{2500}{RESET}\n",
-                cell_display,
-                cell_type_indicator,
-                ctx.tools.accent_fg(),
-                edit_mode_indicator,
-                name = ctx.tools.name_fg()
-            ));
+        let title = format!("{cell_display}{cell_type_indicator}{edit_mode_indicator}");
+        let ink = ctx.tools.name_fg();
+        let head = Label::File {
+            path: &title,
+            kind: "diff",
+            ink: &ink,
+        };
+        let frame = framed_diff(ctx, &head, &display_content);
+        let mut output = if edit_mode_indicator.is_empty() {
+            frame
         } else {
-            output.push_str(&format!(
-                "{}\u{2500}\u{2500} {}{} \u{2500}\u{2500}{RESET}\n",
-                ctx.tools.name_fg(),
-                cell_display,
-                cell_type_indicator
-            ));
-        }
+            let accented = format!("{}{edit_mode_indicator}{ink}", ctx.tools.accent_fg());
+            frame.replacen(edit_mode_indicator, &accented, 1)
+        };
 
-        // The highlighted diff content wrapped in diff fences
-        output.push_str("```diff\n");
-        output.push_str(&highlighted_diff);
-        if !highlighted_diff.ends_with('\n') {
-            output.push('\n');
-        }
-        output.push_str("```\n");
-
-        // Truncation indicator
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{RESET}\n",
@@ -117,10 +90,8 @@ fn format_diff_output(
 
         output
     } else {
-        // Plain text format
         let mut output = String::new();
 
-        // Simple header with indicators
         if !edit_mode_indicator.is_empty() {
             output.push_str(&format!(
                 "-- {}{}{} --\n",
@@ -130,7 +101,6 @@ fn format_diff_output(
             output.push_str(&format!("-- {}{} --\n", cell_display, cell_type_indicator));
         }
 
-        // Plain diff content
         output.push_str("```diff\n");
         output.push_str(&display_content);
         if !display_content.ends_with('\n') {
@@ -138,7 +108,6 @@ fn format_diff_output(
         }
         output.push_str("```\n");
 
-        // Truncation indicator
         if truncated {
             output.push_str(&format!("... {} more lines\n", line_count - MAX_DIFF_LINES));
         }
@@ -281,6 +250,20 @@ mod tests {
             "+x\n-y\n@@ -1 @@"
         )
         .contains('\x1b'));
+    }
+
+    #[test]
+    fn notebook_result_rule_carries_cell() {
+        let processor = StreamProcessor::with_highlighting(true);
+        let mut inserted = snapshot();
+        inserted.edit_mode = "insert".to_string();
+        let out = format_diff_output(&processor.render_context(), &params(&inserted), "+x");
+        let plain = crate::frame::strip_ansi(&out);
+        assert!(
+            plain.starts_with("── n.ipynb:0 (new cell) · diff ─"),
+            "{plain:?}"
+        );
+        assert!(!plain.contains("```"), "{plain:?}");
     }
 
     #[test]

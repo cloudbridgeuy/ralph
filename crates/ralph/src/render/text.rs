@@ -3,7 +3,6 @@
 //! This module provides unified rendering for text blocks (prose, code, diff)
 //! used by the stream processor during live execution.
 
-use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use ralph_core::code_frame::Label;
 use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
@@ -11,7 +10,7 @@ use ralph_core::shell_format::{format_fence, is_shell_fence};
 
 use ralph_core::stream::blocks::ImageFile;
 
-use super::code_frame::framed;
+use super::code_frame::{framed, framed_diff};
 use super::image::{disk_image, render_with_markers, ImageBounds};
 use super::link::mark_links;
 use super::marker::paint_links;
@@ -245,26 +244,12 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
     }
 }
 
-/// Render a fenced diff block with +/- coloring.
-///
-/// Renders diff blocks with visible fences.
-///
-/// # Arguments
-///
-/// * `ctx` - Render context with highlighter and terminal flag
-/// * `content` - The diff content to render
-///
-/// # Returns
-///
-/// The rendered diff block with opening and closing fences.
 pub fn render_diff_block(ctx: &RenderContext<'_>, content: &str) -> String {
-    let highlighted_content = if ctx.terminal {
-        highlight_with_basic_colors(content, &ctx.diff)
+    if ctx.terminal {
+        framed_diff(ctx, &Label::Language("diff"), content)
     } else {
-        content.to_string()
-    };
-
-    format!("```diff\n{}\n```", highlighted_content)
+        format!("```diff\n{content}\n```")
+    }
 }
 
 fn render_directive_block(
@@ -605,7 +590,7 @@ changed in worker GUZ-628 during turn 6
         };
 
         let result = render_text_block(&ctx, &chunk, Some(&skin));
-        assert!(result.contains("```diff"));
+        assert!(result.contains("── diff "));
         // Should contain ANSI codes for diff coloring
         assert!(result.contains("\x1b["));
     }
@@ -749,13 +734,13 @@ changed in worker GUZ-628 during turn 6
             ctx.images = None;
             let fence = render_code_block(&ctx, "a && b && c", Some("bash"));
             let tool = crate::render::render_bash_invocation(&ctx, "a && b && c");
-            let shown = if terminal {
-                framed_body(&fence)
+            if terminal {
+                let (_, framed) = tool.split_once('\n').unwrap();
+                assert_eq!(framed_body(&fence), framed_body(framed));
             } else {
                 assert!(fence.starts_with("```bash\n"), "{fence:?}");
-                fence_body(&fence).to_string()
-            };
-            assert_eq!(shown, strip_ansi(bash_tool_body(&tool)), "{terminal}");
+                assert_eq!(fence_body(&fence), bash_tool_body(&tool));
+            }
         }
     }
 

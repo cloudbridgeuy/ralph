@@ -1,13 +1,9 @@
-//! Bash tool invocation rendering.
-
+use ralph_core::code_frame::Label;
 use ralph_core::shell_format::format_command;
 
+use crate::render::code_frame::{framed, without_line_end};
 use crate::render::tool_renderers::context::{ansi, RenderContext};
 
-/// Render a Bash tool invocation.
-///
-/// Short single-line commands show inline. Long single-line commands are pretty-printed via
-/// `ralph_core::shell_format::format_command`. Multi-line results are wrapped in code blocks.
 pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
     let formatted = format_command(command, ctx.width);
     let command = formatted.as_deref().unwrap_or(command);
@@ -18,13 +14,10 @@ pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
         output.push_str(&format!("{}▶ Bash{}\n", ctx.tools.name_fg(), ansi::RESET));
 
         if is_multiline {
-            output.push_str("```sh\n");
-            let highlighted = ctx.highlighter.highlight(command, Some("sh"));
-            output.push_str(&highlighted);
-            if !highlighted.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("```\n");
+            let highlighted = ctx
+                .highlighter
+                .highlight_foreground(without_line_end(command), Some("sh"));
+            output.push_str(&framed(ctx, &Label::Language("sh"), &highlighted));
         } else {
             output.push_str("  ");
             let highlighted = ctx.highlighter.highlight(command, Some("sh"));

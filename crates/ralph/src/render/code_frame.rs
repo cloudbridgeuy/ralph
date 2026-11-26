@@ -1,10 +1,20 @@
 use ralph_core::code_frame::{frame_block, Columns, Label};
 
 use super::RenderContext;
+use crate::diff_highlight::highlight_with_basic_colors;
 
 pub(crate) fn framed(ctx: &RenderContext<'_>, label: &Label<'_>, body: &str) -> String {
     let cols = Columns(u16::try_from(ctx.width).unwrap_or(u16::MAX));
     frame_block(label, body, ctx.highlighter.surface(), cols)
+}
+
+pub(crate) fn framed_diff(ctx: &RenderContext<'_>, label: &Label<'_>, diff: &str) -> String {
+    let coloured = highlight_with_basic_colors(diff, &ctx.diff);
+    framed(ctx, label, without_line_end(&coloured))
+}
+
+pub(crate) fn without_line_end(text: &str) -> &str {
+    text.strip_suffix('\n').unwrap_or(text)
 }
 
 #[cfg(test)]
@@ -13,8 +23,8 @@ mod tests {
     use crate::frame::strip_ansi;
     use crate::highlight::{Highlighter, ThemeConfig};
     use crate::markdown::MarkdownTheme;
-    use crate::render::text::{render_code_block, render_markdown};
-    use crate::render::{RenderContext, Viewport};
+    use crate::render::text::{render_code_block, render_diff_block, render_markdown};
+    use crate::render::{render_bash_invocation, RenderContext, Viewport};
 
     fn highlighter() -> Highlighter {
         Highlighter::with_config(ThemeConfig::default()).unwrap()
@@ -111,6 +121,38 @@ mod tests {
             strip_ansi(&out),
             "── rust ──\n  \n  a\n  \n\n── sh ────\n  \n  b\n  \n\n"
         );
+    }
+
+    #[test]
+    fn terminal_diff_has_no_fence_or_extra_row() {
+        let highlighter = highlighter();
+        let out = render_diff_block(&terminal(&highlighter, 12), "+a\n-b");
+        assert_eq!(strip_ansi(&out), "── diff ────\n  \n  +a\n  -b\n  \n");
+    }
+
+    #[test]
+    fn every_diff_character_sits_on_the_fill() {
+        let highlighter = highlighter();
+        let out = render_diff_block(&terminal(&highlighter, 30), "@@ -1 +1 @@\n-a\n+b\n c");
+        let fill = truecolor_background(55, 60, 71);
+        assert_eq!(unfilled_characters(&out, &fill), "", "{out:?}");
+    }
+
+    #[test]
+    fn multiline_bash_call_is_framed() {
+        let highlighter = highlighter();
+        let out = render_bash_invocation(&terminal(&highlighter, 20), "a\nb\n");
+        assert_eq!(
+            strip_ansi(&out),
+            "▶ Bash\n── sh ──────────────\n  \n  a\n  b\n  \n"
+        );
+    }
+
+    #[test]
+    fn single_line_terminal_bash_has_no_frame() {
+        let highlighter = highlighter();
+        let out = render_bash_invocation(&terminal(&highlighter, 20), "pwd");
+        assert_eq!(strip_ansi(&out), "▶ Bash\n  pwd\n");
     }
 
     #[test]
