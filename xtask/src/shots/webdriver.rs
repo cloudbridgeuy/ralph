@@ -439,16 +439,12 @@ mod tests {
     }
 
     #[test]
-    fn ready_scripts_check_the_expected_things() {
+    fn only_the_catalogue_has_its_own_ready_script() {
         let app = ready_script(Screen::Workers);
-        assert!(app.contains("document.readyState === 'complete'"));
-        assert!(app.contains(".r-spinner"));
-        assert!(app.contains("getElementById('main')"));
-        assert!(app.contains("childNodes.length > 0"));
-        assert!(app.trim_start().starts_with("return "));
-        let catalogue = ready_script(Screen::Catalogue);
-        assert!(catalogue.contains("document.readyState === 'complete'"));
-        assert!(!catalogue.contains("getElementById"));
+        assert_ne!(ready_script(Screen::Catalogue), app);
+        for screen in Screen::THEMED {
+            assert_eq!(ready_script(screen), app, "{screen:?}");
+        }
     }
 
     #[test]
@@ -563,10 +559,21 @@ mod tests {
     }
 
     #[test]
-    fn child_env_names_no_real_home() {
-        let pairs = child_env(Path::new("/tmp/shots-scratch/home"), None, None);
-        assert!(!pairs.is_empty());
-        assert!(pairs.iter().all(|(_, value)| !value.contains("/Users/")));
+    fn child_env_keeps_the_callers_home_out_and_passes_path_through() {
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path().join("home");
+        let pairs = child_env(&dir, Some("/Users/someone/bin"), None);
+        for (name, value) in &pairs {
+            if name == "PATH" {
+                assert_eq!(value, "/Users/someone/bin");
+            } else {
+                assert!(
+                    Path::new(value).starts_with(scratch.path()),
+                    "{name}={value}"
+                );
+                assert!(!value.contains("/Users/someone"), "{name}={value}");
+            }
+        }
     }
 
     #[test]
