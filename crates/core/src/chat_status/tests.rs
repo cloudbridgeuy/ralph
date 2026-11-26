@@ -77,6 +77,8 @@ fn read_only_routes_and_non_merge_thread_ops_run_mid_turn() {
         "/inbox bogus a b",
         "/workers",
         "/workers w1",
+        "/stage",
+        "/stage raw",
         "/help",
         "/watch list",
         "/watch",

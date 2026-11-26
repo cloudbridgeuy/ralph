@@ -59,6 +59,7 @@ fn read_only_commands_and_messages_are_not_recorded() {
         "/config",
         "/diff",
         "/stage",
+        "/stage raw",
         "/stage add",
         "/stage wipe",
         "@GUZ-1 hi",

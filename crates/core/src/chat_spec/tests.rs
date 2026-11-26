@@ -194,7 +194,7 @@ fn command_words_are_offered_in_the_first_position() {
         ("/watch ", &["list", "start", "stop"]),
         ("/watch start ", &["--persistent"]),
         ("/schedule ", &["cancel", "list"]),
-        ("/stage ", &["add", "done", "edit"]),
+        ("/stage ", &["add", "done", "edit", "raw"]),
         ("/stage add ", &["decision", "followup", "owed"]),
         (
             "/send-it ",
@@ -214,6 +214,7 @@ fn ids_and_free_text_are_not_completed() {
         "/watch start make ",
         "/schedule cancel ",
         "/stage done ",
+        "/stage raw ",
         "/send-it fix the ",
     ] {
         assert_eq!(complete(line, None), None, "{line}");
