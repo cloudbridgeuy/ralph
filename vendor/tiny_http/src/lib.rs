@@ -133,7 +133,10 @@ fn accept_error_is_transient(e: &IoError) -> bool {
 
 #[cfg(unix)]
 fn accept_error_needs_backoff(e: &IoError) -> bool {
-    matches!(e.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
+    matches!(
+        e.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::ENOBUFS)
+    )
 }
 
 #[cfg(not(unix))]
@@ -155,6 +158,22 @@ mod accept_error_test {
         assert!(accept_error_is_transient(&Error::from_raw_os_error(
             libc::ENFILE
         )));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn memory_exhaustion_is_transient_and_backs_off() {
+        let e = Error::from_raw_os_error(libc::ENOMEM);
+        assert!(accept_error_is_transient(&e));
+        assert!(accept_error_needs_backoff(&e));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn buffer_exhaustion_is_transient_and_backs_off() {
+        let e = Error::from_raw_os_error(libc::ENOBUFS);
+        assert!(accept_error_is_transient(&e));
+        assert!(accept_error_needs_backoff(&e));
     }
 
     #[test]
