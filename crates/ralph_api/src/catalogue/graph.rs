@@ -25,7 +25,8 @@ fn svg(lanes: &[Lane]) -> String {
     }
     lanes
         .iter()
-        .map(|lane| graph_svg(&lane_cells(*lane)))
+        .enumerate()
+        .map(|(index, lane)| graph_svg(&lane_cells(*lane, index + 1 == lanes.len())))
         .collect()
 }
 
