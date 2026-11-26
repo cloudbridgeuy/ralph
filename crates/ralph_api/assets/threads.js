@@ -345,12 +345,12 @@ async function showThreads(main, mine, refocus) {
 function onThreadsKey(event) {
   if (parseHash(location.hash).route !== THREADS_ROUTE) return;
   if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
-  if (isTyping(event.target) || event.target.closest("a")) return;
-  if (event.key === "r") {
+  if (event.key === "r" && (!isTyping(event.target) || event.target.closest("r-error"))) {
     const retry = document.querySelector("main > r-error button.btn");
     if (retry) retry.click();
     return;
   }
+  if (isTyping(event.target) || event.target.closest("a")) return;
   const rows = Array.from(document.querySelectorAll("r-table.threads tbody tr[data-name]"));
   const at = rows.findIndex((row) => row.getAttribute("aria-selected") === "true");
   if (event.key === "Enter" || event.key === " ") {

@@ -362,6 +362,19 @@ fn enter_and_space_act_on_the_focused_row_and_enter_falls_back_to_the_selected_r
 }
 
 #[test]
+fn r_retries_even_while_focus_is_on_the_retry_button_and_other_keys_still_skip_buttons() {
+    let keys = function_body(THREADS_JS, "function onThreadsKey(");
+    let retry = keys.find("event.key === \"r\"").unwrap();
+    let typing = keys.find("isTyping(event.target)").unwrap();
+    assert!(retry < typing);
+    assert!(keys.contains(
+        "event.key === \"r\" && (!isTyping(event.target) || event.target.closest(\"r-error\"))"
+    ));
+    assert!(keys.contains("if (isTyping(event.target) || event.target.closest(\"a\")) return;"));
+    assert_eq!(keys.matches("isTyping(event.target)").count(), 2);
+}
+
+#[test]
 fn the_keyboard_moves_only_over_selectable_rows_and_ignores_modifiers_and_other_keys() {
     let keys = function_body(THREADS_JS, "function onThreadsKey(");
     assert!(
