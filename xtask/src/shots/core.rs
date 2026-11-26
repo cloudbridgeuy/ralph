@@ -16,6 +16,10 @@ pub enum ShotError {
     NothingSelected,
     #[error("`{0}` is not a UTF-8 file name")]
     NonUtf8Name(String),
+    #[error("--all and shot names cannot be combined")]
+    AllWithNames,
+    #[error("`{0}` has a zero-size image")]
+    EmptyImage(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -421,11 +425,21 @@ pub fn render_report(classification: &Classification) -> String {
     )
 }
 
+pub fn require_image_size(name: &str, width: u32, height: u32) -> Result<(), ShotError> {
+    if width == 0 || height == 0 {
+        return Err(ShotError::EmptyImage(name.to_string()));
+    }
+    Ok(())
+}
+
 pub fn select_approvals(
     names: &[String],
     all: bool,
     current_names: &[String],
 ) -> Result<Vec<String>, ShotError> {
+    if all && !names.is_empty() {
+        return Err(ShotError::AllWithNames);
+    }
     let current = sorted_set(current_names);
     if all {
         return Ok(current.into_iter().cloned().collect());
@@ -804,6 +818,27 @@ mod tests {
         assert!(report.contains("## Missing (1)"));
         assert!(report.contains("- gone.png"));
         assert!(report.contains("## Unchanged (2)"));
+    }
+
+    #[test]
+    fn all_with_names_is_an_error() {
+        assert_eq!(
+            select_approvals(&names(&["a.png"]), true, &names(&["a.png"])),
+            Err(ShotError::AllWithNames)
+        );
+    }
+
+    #[test]
+    fn a_zero_size_image_is_refused() {
+        assert_eq!(require_image_size("a.png", 4, 3), Ok(()));
+        assert_eq!(
+            require_image_size("a.png", 0, 3),
+            Err(ShotError::EmptyImage("a.png".to_string()))
+        );
+        assert_eq!(
+            require_image_size("a.png", 4, 0),
+            Err(ShotError::EmptyImage("a.png".to_string()))
+        );
     }
 
     #[test]

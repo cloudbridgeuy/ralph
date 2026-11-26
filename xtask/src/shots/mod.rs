@@ -285,6 +285,10 @@ fn check(args: CheckArgs) -> Result<(), BoxError> {
 fn approve(args: ApproveArgs) -> Result<(), BoxError> {
     let current_names = png_names(&args.current)?;
     let approved = core::select_approvals(&args.names, args.all, &current_names)?;
+    for name in &approved {
+        let image = read_png(&args.current.join(name))?;
+        core::require_image_size(name, image.width, image.height)?;
+    }
     fs::create_dir_all(&args.baseline)?;
     for name in &approved {
         fs::copy(args.current.join(name), args.baseline.join(name))?;
