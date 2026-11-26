@@ -282,10 +282,13 @@ mod tests {
             .unwrap()
             .to_path_buf();
         symlink(outside.path(), &spawn_dir).unwrap();
+        let blocked_dir = blocked_path(root, "real").parent().unwrap().to_path_buf();
+        symlink(outside.path(), &blocked_dir).unwrap();
         let facts = worker_facts(root);
         let ids: Vec<&str> = facts.iter().map(|facts| facts.id.as_str()).collect();
         assert_eq!(ids, ["real"], "{facts:?}");
         assert!(find(&facts, "real").ticket.is_none());
+        assert!(find(&facts, "real").blocked.is_none());
     }
 
     #[cfg(unix)]
