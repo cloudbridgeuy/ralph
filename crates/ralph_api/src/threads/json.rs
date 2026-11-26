@@ -330,6 +330,71 @@ mod tests {
         assert!(svg_of(&body, 5).contains(CURVE));
     }
 
+    fn demo_snapshot() -> ThreadsSnapshot {
+        let mut snapshot = fixture();
+        snapshot.rows.insert(
+            1,
+            row("auth-rework", ThreadState::Open, 1, "2026-01-02T00:00:00Z"),
+        );
+        snapshot.tombstones = vec![tomb("a-idea"), tomb("b-idea")];
+        snapshot
+    }
+
+    #[test]
+    fn exactly_one_row_curves_and_it_is_the_last_in_the_demo_shape() {
+        let body = threads_body("chat", &demo_snapshot(), now());
+        let count = rows(&body).len();
+        assert_eq!(count, 7);
+        let curved: Vec<usize> = (0..count)
+            .filter(|index| svg_of(&body, *index).contains('Q'))
+            .collect();
+        assert_eq!(curved, [count - 1]);
+        for index in 1..count - 1 {
+            assert!(svg_of(&body, index).contains(TRUNK), "row {index}");
+            assert!(svg_of(&body, index).contains("M4 12H8"), "row {index}");
+        }
+        assert!(!svg_of(&body, 0).contains('Q'));
+    }
+
+    #[test]
+    fn without_dropped_rows_the_last_open_row_ends_the_trunk() {
+        let mut snapshot = fixture();
+        snapshot.tombstones = vec![];
+        snapshot.rows.truncate(1);
+        snapshot
+            .rows
+            .push(row("tail", ThreadState::Open, 1, "2026-01-02T00:00:00Z"));
+        let body = threads_body("chat", &snapshot, now());
+        assert_eq!(rows(&body).len(), 3);
+        assert!(svg_of(&body, 1).contains(TRUNK));
+        assert!(!svg_of(&body, 1).contains('Q'));
+        assert!(svg_of(&body, 2).contains(CURVE));
+        assert!(!svg_of(&body, 2).contains(TRUNK));
+    }
+
+    #[test]
+    fn a_single_thread_under_the_head_is_the_last_row() {
+        let mut snapshot = empty();
+        snapshot.rows.push(row(
+            "only",
+            ThreadState::Parked("2026-01-03T00:00:00Z".to_string()),
+            1,
+            "2026-01-02T00:00:00Z",
+        ));
+        let body = threads_body("chat", &snapshot, now());
+        assert!(!svg_of(&body, 0).contains('Q'));
+        assert!(svg_of(&body, 1).contains(CURVE));
+    }
+
+    #[test]
+    fn a_head_alone_keeps_its_plain_dot() {
+        let body = threads_body("chat", &empty(), now());
+        assert_eq!(rows(&body).len(), 1);
+        assert_eq!(svg_of(&body, 0), graph_svg(&lane_cells(Lane::Head, true)));
+        assert!(!svg_of(&body, 0).contains('Q'));
+        assert!(!svg_of(&body, 0).contains(TRUNK));
+    }
+
     #[test]
     fn no_row_carries_a_cells_key() {
         let body = threads_body("chat", &fixture(), now());
