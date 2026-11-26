@@ -77,8 +77,9 @@ impl Marionette {
             }
         };
         stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
+        stream.set_write_timeout(Some(REPLY_TIMEOUT))?;
         let mut client = Marionette { stream, next_id: 0 };
-        client.read_message()?;
+        webdriver::validate_hello(&client.read_message()?)?;
         client.call("WebDriver:NewSession", &webdriver::new_session_body())?;
         client.navigate("about:blank")?;
         Ok(client)
@@ -91,6 +92,9 @@ impl Marionette {
             self.stream.read_exact(&mut byte)?;
             if byte[0] == b':' {
                 break;
+            }
+            if prefix.len() >= webdriver::MAX_LENGTH_DIGITS {
+                return Err(webdriver::WebdriverError::BadFrameLength(prefix).into());
             }
             prefix.push(char::from(byte[0]));
         }

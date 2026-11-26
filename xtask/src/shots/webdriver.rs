@@ -21,6 +21,8 @@ pub enum WebdriverError {
     BadListeningLine(String),
     #[error("bad marionette frame length: {0}")]
     BadFrameLength(String),
+    #[error("bad marionette hello: {0}")]
+    BadHello(String),
     #[error("unexpected marionette reply: {0}")]
     BadReply(String),
     #[error("marionette command failed: {0}")]
@@ -143,10 +145,29 @@ pub fn command_frame(id: u32, name: &str, params: &Value) -> String {
     format!("{}:{message}", message.len())
 }
 
+pub const MAX_LENGTH_DIGITS: usize = 9;
+pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+
 pub fn parse_length(prefix: &str) -> Result<usize, WebdriverError> {
-    prefix
-        .parse()
-        .map_err(|_| WebdriverError::BadFrameLength(prefix.to_string()))
+    let bad = || WebdriverError::BadFrameLength(prefix.chars().take(20).collect());
+    if prefix.is_empty()
+        || prefix.len() > MAX_LENGTH_DIGITS
+        || !prefix.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(bad());
+    }
+    match prefix.parse() {
+        Ok(length) if length <= MAX_FRAME_BYTES => Ok(length),
+        _ => Err(bad()),
+    }
+}
+
+pub fn validate_hello(hello: &Value) -> Result<(), WebdriverError> {
+    if hello["applicationType"] == "gecko" && hello["marionetteProtocol"] == 3 {
+        Ok(())
+    } else {
+        Err(WebdriverError::BadHello(hello.to_string()))
+    }
 }
 
 pub fn command_result(message: &Value, id: u32) -> Result<Value, WebdriverError> {
@@ -341,6 +362,54 @@ mod tests {
         );
         assert!(parse_length("x").is_err());
         assert!(parse_length("").is_err());
+    }
+
+    #[test]
+    fn lengths_up_to_the_cap_parse() {
+        assert_eq!(parse_length("0").unwrap(), 0);
+        assert_eq!(parse_length("2600000").unwrap(), 2_600_000);
+        assert_eq!(
+            parse_length(&MAX_FRAME_BYTES.to_string()).unwrap(),
+            MAX_FRAME_BYTES
+        );
+    }
+
+    #[test]
+    fn huge_lengths_are_rejected() {
+        assert!(parse_length(&(MAX_FRAME_BYTES + 1).to_string()).is_err());
+        assert!(parse_length("999999999").is_err());
+        assert!(parse_length("1000000000").is_err());
+        assert!(parse_length(&"9".repeat(40)).is_err());
+    }
+
+    #[test]
+    fn non_digit_lengths_are_rejected() {
+        for prefix in ["+5", "-5", "5 ", " 5", "0x10", "1e3", "٣"] {
+            assert!(parse_length(prefix).is_err(), "{prefix}");
+        }
+    }
+
+    #[test]
+    fn the_real_hello_is_accepted() {
+        let hello = json!({"applicationType": "gecko", "marionetteProtocol": 3});
+        assert_eq!(validate_hello(&hello), Ok(()));
+    }
+
+    #[test]
+    fn bad_hellos_are_rejected() {
+        for hello in [
+            json!({}),
+            json!([]),
+            json!({"applicationType": "gecko", "marionetteProtocol": 2}),
+            json!({"applicationType": "gecko"}),
+            json!({"applicationType": "chrome", "marionetteProtocol": 3}),
+            json!({"applicationType": "gecko", "marionetteProtocol": "3"}),
+        ] {
+            assert!(
+                matches!(validate_hello(&hello), Err(WebdriverError::BadHello(_))),
+                "{hello}"
+            );
+        }
     }
 
     #[test]
