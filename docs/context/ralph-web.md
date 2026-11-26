@@ -179,7 +179,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 
 | Answer | When |
 |--------|------|
-| 200 `{"store":"<name>","rows":[{"section","key","value","source","redacted"}]}` | the config loads; `store` is the last path component; `source` is `default`, `global`, `store` or `env` |
+| 200 `{"store":"<name>","rows":[{"section","key","value","source","redacted"}]}` | the config loads; `store` is the last path component only, not a path, with no parent directory; it is intended (the shell header shows it, GUZ-1816) and the token gates it, as for the other routes; `source` is `default`, `global`, `store` or `env` |
 | 404 `{"error":"store not found"}` | the store directory is missing |
 | 422 `{"error":"config invalid","why":"<text>"}` | the config has an error; `why` is always the fixed text ``config.toml has an error; run `ralph config check` ``, never the error text |
 | 500 `{"error":"config unavailable"}` | the file cannot be read or serialised |
