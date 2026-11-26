@@ -128,11 +128,17 @@ mod util;
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
 fn accept_error_is_transient(e: &IoError) -> bool {
-    matches!(e.raw_os_error(), Some(23 | 24)) || e.kind() == IoErrorKind::ConnectionAborted
+    accept_error_needs_backoff(e) || e.kind() == IoErrorKind::ConnectionAborted
 }
 
+#[cfg(unix)]
 fn accept_error_needs_backoff(e: &IoError) -> bool {
-    matches!(e.raw_os_error(), Some(23 | 24))
+    matches!(e.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
+}
+
+#[cfg(not(unix))]
+fn accept_error_needs_backoff(_: &IoError) -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -140,10 +146,15 @@ mod accept_error_test {
     use super::{accept_error_is_transient, accept_error_needs_backoff};
     use std::io::{Error, ErrorKind};
 
+    #[cfg(unix)]
     #[test]
     fn descriptor_exhaustion_is_transient() {
-        assert!(accept_error_is_transient(&Error::from_raw_os_error(24)));
-        assert!(accept_error_is_transient(&Error::from_raw_os_error(23)));
+        assert!(accept_error_is_transient(&Error::from_raw_os_error(
+            libc::EMFILE
+        )));
+        assert!(accept_error_is_transient(&Error::from_raw_os_error(
+            libc::ENFILE
+        )));
     }
 
     #[test]
@@ -153,14 +164,21 @@ mod accept_error_test {
         )));
     }
 
+    #[cfg(unix)]
     #[test]
     fn only_descriptor_exhaustion_needs_backoff() {
-        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(24)));
-        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(23)));
+        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(
+            libc::EMFILE
+        )));
+        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(
+            libc::ENFILE
+        )));
         assert!(!accept_error_needs_backoff(&Error::from(
             ErrorKind::ConnectionAborted
         )));
-        assert!(!accept_error_needs_backoff(&Error::from_raw_os_error(22)));
+        assert!(!accept_error_needs_backoff(&Error::from_raw_os_error(
+            libc::EINVAL
+        )));
     }
 
     #[test]
@@ -172,7 +190,14 @@ mod accept_error_test {
         ] {
             assert!(!accept_error_is_transient(&Error::from(kind)));
         }
-        assert!(!accept_error_is_transient(&Error::from_raw_os_error(22)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_argument_is_not_transient() {
+        assert!(!accept_error_is_transient(&Error::from_raw_os_error(
+            libc::EINVAL
+        )));
     }
 }
 

@@ -2449,6 +2449,7 @@ dependencies = [
  "ascii",
  "chunked_transfer",
  "httpdate",
+ "libc",
  "log",
 ]
 

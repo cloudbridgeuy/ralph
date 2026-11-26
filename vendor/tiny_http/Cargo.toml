@@ -59,6 +59,9 @@ optional = true
 version = "1"
 optional = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies.fdlimit]
 version = "0.1"
 
