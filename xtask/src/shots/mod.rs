@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 mod browser;
 mod core;
 mod mask;
+mod report;
 mod seed;
 mod seed_spec;
 mod webdriver;
@@ -207,16 +208,16 @@ fn compare_selected(args: CompareArgs, selected: Option<&[core::Shot]>) -> Resul
     }
     let mut measures = BTreeMap::new();
     let mut diffs = BTreeMap::new();
-    for name in core::common_names(&baseline_names, &current_names) {
+    for name in report::common_names(&baseline_names, &current_names) {
         let baseline = read_png(&args.baseline.join(&name))?;
         let current = read_png(&args.current.join(&name))?;
         let result = core::diff_images(&baseline, &current, args.tolerance);
-        measures.insert(name.clone(), core::measure(&result));
+        measures.insert(name.clone(), report::measure(&result));
         if let core::DiffResult::Compared { diff, .. } = result {
             diffs.insert(name, diff);
         }
     }
-    let classification = core::classify(&baseline_names, &current_names, &measures);
+    let classification = report::classify(&baseline_names, &current_names, &measures);
     let diff_dir = args.out.join("diff");
     fs::create_dir_all(&diff_dir)?;
     let changed_names: Vec<String> = classification
@@ -232,10 +233,10 @@ fn compare_selected(args: CompareArgs, selected: Option<&[core::Shot]>) -> Resul
             write_png(&diff_dir.join(name), diff)?;
         }
     }
-    let report = core::render_report(&classification);
+    let report = report::render_report(&classification);
     fs::write(args.out.join("report.md"), &report)?;
     print!("{report}");
-    if core::is_clean(&classification) {
+    if report::is_clean(&classification) {
         Ok(())
     } else {
         Err("shots are not clean".into())
@@ -284,10 +285,10 @@ fn check(args: CheckArgs) -> Result<(), BoxError> {
 
 fn approve(args: ApproveArgs) -> Result<(), BoxError> {
     let current_names = png_names(&args.current)?;
-    let approved = core::select_approvals(&args.names, args.all, &current_names)?;
+    let approved = report::select_approvals(&args.names, args.all, &current_names)?;
     for name in &approved {
         let image = read_png(&args.current.join(name))?;
-        core::require_image_size(name, image.width, image.height)?;
+        report::require_image_size(name, image.width, image.height)?;
     }
     fs::create_dir_all(&args.baseline)?;
     for name in &approved {
