@@ -1,9 +1,10 @@
 use super::*;
+use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::program_status::{Report, State};
 use ralph_core::stream::blocks::{
     OutputBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
-use ralph_core::worker::{BlockedContent, PermissionOption};
+use ralph_core::worker::{BlockedContent, PermissionOption, Report as WorkerReport, ReportStatus};
 
 fn event() -> TurnEvent {
     TurnEvent::Warning("hi".into())
@@ -68,9 +69,47 @@ fn inbox_push_displays_the_session_report_as_a_notice() {
         let step = decode_frame::<ServerMsg>(&frame.to_string()).map(|frame| on_frame(frame.body));
         assert_eq!(
             step,
-            Ok(Step::Notice(format!(
-                "{label}/w1 done (3 unread): tests passed"
-            )))
+            Ok(plain(&format!("{label}/w1 done (3 unread): tests passed")))
+        );
+    }
+}
+
+fn plain(line: &str) -> Step {
+    Step::Push(Push {
+        line: line.into(),
+        needs_user: None,
+    })
+}
+
+fn inbox_step(status: &str) -> Result<Step, String> {
+    let frame = serde_json::json!({"v": VERSION, "id": 0, "body": {
+        "type": "inbox", "thread": null, "unread": 1,
+        "report": {"worker": "w1", "status": status, "at": "now", "text": "hi"}
+    }});
+    decode_frame::<ServerMsg>(&frame.to_string()).map(|frame| on_frame(frame.body))
+}
+
+#[test]
+fn an_inbox_push_that_needs_the_user_carries_the_report_to_alert_on() {
+    for status in [ReportStatus::Blocked, ReportStatus::Question] {
+        let name = status.as_str();
+        assert_eq!(
+            inbox_step(name),
+            Ok(Step::Push(Push {
+                line: format!("main/w1 {name} (1 unread): hi"),
+                needs_user: Some(WorkerReport::from_worker("w1", "now", status, "hi".into())),
+            }))
+        );
+    }
+}
+
+#[test]
+fn an_inbox_push_that_informs_or_has_an_unknown_status_is_a_plain_notice() {
+    for status in ["done", "check", "report", "failed", "from-the-future"] {
+        assert_eq!(
+            inbox_step(status),
+            Ok(plain(&format!("main/w1 {status} (1 unread): hi"))),
+            "{status}"
         );
     }
 }
@@ -133,14 +172,14 @@ fn a_blocked_push_becomes_a_notice() {
     });
     assert_eq!(
         raised,
-        Step::Notice("side/w1 blocked: Bash ls request r1 options a|b".into())
+        plain("side/w1 blocked: Bash ls request r1 options a|b")
     );
     let settled = on_frame(ServerMsg::Blocked {
         thread: None,
         worker: "w1".into(),
         content: None,
     });
-    assert_eq!(settled, Step::Notice("w1 permission settled".into()));
+    assert_eq!(settled, plain("w1 permission settled"));
 }
 
 #[test]
@@ -244,6 +283,12 @@ fn pair_session(timeout: Duration) -> (RemoteSession, UnixStream) {
         attached: RefCell::new(None),
         sink: Box::new(NoopSink),
         stdout_is_tty: false,
+        alert: AlertConfig {
+            sound: false,
+            notification: false,
+            unknown_focus: UnknownFocus::Silent,
+            terminal_status: false,
+        },
     };
     (session, server)
 }

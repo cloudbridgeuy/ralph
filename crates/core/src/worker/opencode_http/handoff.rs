@@ -24,6 +24,8 @@ pub struct OpencodeSpawn {
     pub task: String,
     pub at: u64,
     pub snapshots: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scheduled: bool,
 }
 
 impl OpencodeSpawn {
@@ -177,9 +179,19 @@ mod tests {
             task: "do \"it\"\nnow".to_string(),
             at: 7,
             snapshots: true,
+            scheduled: true,
         };
         assert_eq!(OpencodeSpawn::parse(&request.render()), Some(request));
         assert_eq!(OpencodeSpawn::parse("nope"), None);
+    }
+
+    #[test]
+    fn spawn_request_without_scheduled_parses_as_unscheduled() {
+        let bare =
+            r#"{"worktree":"/w","inbox":"/i","model":"m","task":"t","at":7,"snapshots":false}"#;
+        let request = OpencodeSpawn::parse(bare).unwrap();
+        assert!(!request.scheduled);
+        assert!(!request.render().contains("scheduled"));
     }
 
     #[test]

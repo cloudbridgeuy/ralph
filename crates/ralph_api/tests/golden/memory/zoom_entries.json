@@ -5,8 +5,18 @@
     "lo": 8,
     "hi": 10,
     "leaf": false,
-    "summary": "<script>alert(1)</script> \"quoted\" \\ back"
+    "summary": "<script>alert(1)</script> \"quoted\" \\ back",
+    "folded": false,
+    "stats": {
+      "depth": 1,
+      "children": 2,
+      "blocks": 1,
+      "summarised": 1
+    }
   },
+  "path": [
+    "8-9"
+  ],
   "children": [
     {
       "i": 8,

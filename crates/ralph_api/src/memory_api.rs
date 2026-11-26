@@ -19,10 +19,15 @@ fn unavailable() -> ApiResponse {
 fn tree_response(query: &MemoryQuery, data: &Peek) -> ApiResponse {
     let Some(node) = query.node else {
         let nodes = root_view(data.entries.len(), &data.tree);
-        return json_ok(root_body(&query.thread, data.entries.len(), &nodes));
+        return json_ok(root_body(&query.thread, &data.entries, &nodes, &data.tree));
     };
     match zoom_view(&data.entries, &data.tree, node) {
-        Ok(view) => json_ok(zoom_body(&query.thread, &view)),
+        Ok(view) => json_ok(zoom_body(
+            &query.thread,
+            &view,
+            data.entries.len(),
+            &data.tree,
+        )),
         Err(_) => not_found(),
     }
 }
@@ -137,6 +142,27 @@ mod tests {
         let response = tree_response(&query(Some("0-1")), &data(3));
         assert_eq!(response.status, 200);
         assert_eq!(body(&response)["children"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn zoom_path_lists_ancestors_from_the_root() {
+        let response = tree_response(&query(Some("0-1")), &data(45));
+        assert_eq!(
+            body(&response)["path"],
+            serde_json::json!(["0-31", "0-15", "0-7", "0-3", "0-1"])
+        );
+    }
+
+    #[test]
+    fn zoom_path_of_a_root_node_is_just_itself() {
+        let response = tree_response(&query(Some("0-31")), &data(45));
+        assert_eq!(body(&response)["path"], serde_json::json!(["0-31"]));
+    }
+
+    #[test]
+    fn unknown_node_is_still_404() {
+        let response = tree_response(&query(Some("32-63")), &data(45));
+        assert_eq!(response.status, 404);
     }
 
     #[test]

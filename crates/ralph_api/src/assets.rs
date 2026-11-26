@@ -15,6 +15,7 @@ pub(crate) const APP_CSS: &str = concat!(
     include_str!("../assets/css/code.css"),
     include_str!("../assets/css/tree.css"),
     include_str!("../assets/css/responsive.css"),
+    include_str!("../assets/css/memory.css"),
 );
 
 const ASSETS: &[Asset] = &[

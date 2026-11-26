@@ -65,7 +65,6 @@ mod tests {
     use super::*;
     use crate::cli::{HistoryArgs, HistoryTool};
     use ralph_core::chat_thread::AutoMode;
-    use ralph_core::chat_thread_auto::THREAD_CLOSED_STATUS;
     use ralph_core::worker::Report;
     use std::fs;
 
@@ -115,7 +114,7 @@ mod tests {
         assert!(closed(main.path(), "side"));
         let reports = posted(main.path());
         assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].status, THREAD_CLOSED_STATUS);
+        assert_eq!(reports[0].status.as_str(), "thread-closed");
         assert_eq!(
             reports[0].text,
             "side closed \u{b7} Enter to merge or keep it"

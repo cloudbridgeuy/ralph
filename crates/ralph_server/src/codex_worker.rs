@@ -8,7 +8,7 @@ use crate::cursor_owner::{
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
-use crate::warn::{notice, warn};
+use crate::warn::{notice, warn, warn_if_err};
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
@@ -22,7 +22,7 @@ use ralph_core::worker::{
     decode_version, describe, gone_path, initialize_params, is_unmapped, model_ids,
     model_list_params, next_cursor, prompt_failure_report, ready_path, record_selection, reduce,
     reject_server_request, request_stale, resolve_selection, resolved_request_id, response_body,
-    resume_decision_for, session_saved, task_prompt, thread_resume_params, thread_start_params,
+    resume_decision_for, session_saved, thread_resume_params, thread_start_params,
     turn_end_activity, turn_interrupt_params, turn_start_params, turn_stop, yolo_option, Action,
     ActivityState, ApprovalKind, BlockedContent, Capabilities, CodexCloseStep, HandoffFiles,
     HarnessId, HeadlessState, HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict,
@@ -48,6 +48,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod pipes;
 mod queue;
+mod requests;
 pub(crate) mod resume;
 mod sandbox;
 mod verify;
@@ -268,6 +269,7 @@ struct Pump {
     interrupt_call: Option<u64>,
     permissions: Arc<Permissions>,
     mode: PermissionMode,
+    scheduled: bool,
     selection: Selection,
     pending_record: Option<(PathBuf, SessionRecord)>,
     inbox: Inbox,
@@ -351,7 +353,10 @@ impl Pump {
                     let at = chrono::Utc::now().to_rfc3339();
                     let report =
                         prompt_failure_report(HarnessId::Codex.as_str(), &self.id, &at, &problem);
-                    self.inbox.post(&report, 0).ok();
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting the prompt failure of worker {}", self.id),
+                    );
                 }
             }
         }
@@ -367,34 +372,6 @@ impl Pump {
             actions = self
                 .turns
                 .signal(failed, self.closing.load(Ordering::SeqCst));
-        }
-    }
-
-    fn server_request(&mut self, id: Value, method: &str, params: &Value) -> Result<(), Stop> {
-        let stale = self.turns.is_stale_request(method, params);
-        let Some(approval) = classify(method, params).filter(|_| !stale) else {
-            return self.wire.send_line(&reject_server_request(&id, method));
-        };
-        let auto = Some(self.mode)
-            .filter(|mode| *mode == PermissionMode::Yolo)
-            .and_then(|_| yolo_option(&approval));
-        match auto {
-            Some(option) => {
-                let body = response_body(approval.kind, &option.option_id);
-                self.wire.send_line(&answer_server_request(&id, &body))
-            }
-            None => {
-                let content = BlockedContent {
-                    request_id: id.as_str().map_or_else(|| id.to_string(), str::to_string),
-                    ..approval.content
-                };
-                let reply = CodexReply {
-                    id,
-                    kind: approval.kind,
-                };
-                self.permissions.enqueue(reply, content);
-                Ok(())
-            }
         }
     }
 
@@ -563,7 +540,7 @@ impl CodexWorker {
         let (selection, open, mode) = match &launch {
             Launch::Fresh(_) => {
                 let codex = configured_codex();
-                let sandbox = configured_sandbox(&codex, &request.worktree)?;
+                let sandbox = configured_sandbox(&codex, &request.worktree, request.scheduled)?;
                 let selection = resolve_selection(
                     request.model.as_deref(),
                     codex.model.as_deref(),
@@ -576,7 +553,8 @@ impl CodexWorker {
                 (selection, open, configured_mode())
             }
             Launch::Resume(record) => {
-                let sandbox = configured_sandbox(&configured_codex(), &record.cwd)?;
+                let sandbox =
+                    configured_sandbox(&configured_codex(), &record.cwd, request.scheduled)?;
                 (
                     record_selection(record),
                     (
@@ -622,6 +600,7 @@ impl CodexWorker {
             interrupt_call: None,
             permissions,
             mode,
+            scheduled: request.scheduled,
             selection,
             pending_record,
             inbox: Inbox::new(request.inbox.clone()),
@@ -644,7 +623,7 @@ impl CodexWorker {
             snapshot_turn: None,
         };
         if matches!(launch, Launch::Fresh(_)) {
-            let first = pump.turns.accept(task_prompt(&request.task));
+            let first = pump.turns.accept(request.prompt());
             pump.perform(first)?;
         }
         let closing = Arc::clone(&pump.closing);
@@ -917,6 +896,7 @@ impl CodexHost {
             model: request.model.clone(),
             effort: None,
             permissions: None,
+            scheduled: request.scheduled,
         });
         match self.launch(id, &request, launch) {
             Ok(worker) => self.adopt(id, worker),

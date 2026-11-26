@@ -123,14 +123,15 @@ pub fn osc9(body: &str, in_tmux: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::ReportStatus;
 
     fn report(worker: &str, status: &str) -> Report {
-        Report {
-            worker: worker.into(),
-            at: "2026-10-12T00:00:00Z".into(),
-            status: status.into(),
-            text: "summary".into(),
-        }
+        Report::from_worker(
+            worker,
+            "2026-10-12T00:00:00Z",
+            ReportStatus::parse(status).unwrap(),
+            "summary".into(),
+        )
     }
 
     fn config(unknown_focus: UnknownFocus) -> AlertConfig {

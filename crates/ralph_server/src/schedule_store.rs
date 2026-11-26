@@ -1,9 +1,14 @@
 use crate::warn::{warn, warn_if_err};
 use ralph_core::schedule::Task;
+use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::file_name;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+pub fn scheduled_tasks(store_dir: &Path) -> Vec<Task> {
+    ScheduleStore::new(store_dir.join(SCHEDULE_DIR)).load_all()
+}
 
 #[derive(Debug, Clone)]
 pub struct ScheduleStore {

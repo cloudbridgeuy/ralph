@@ -22,6 +22,7 @@ use ralph_core::chat_thread_auto::split_close_reports;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::fresh_reports;
 use ralph_core::program_status::{self, report_for, Phase};
+use ralph_core::schedule_resume::LostTurn;
 use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
@@ -29,8 +30,7 @@ use ralph_core::worker::{
     vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, READY_DIR,
 };
 use ralph_core::worker_check::{
-    last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, CHECK_STATUS,
-    NUDGE_TEXT,
+    last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, NUDGE_TEXT,
 };
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -84,6 +84,7 @@ pub struct Monitor {
     pub known: Mutex<Vec<Report>>,
     pub fresh: Mutex<(Vec<Report>, usize)>,
     pub starting: Arc<Mutex<Vec<String>>>,
+    pub resuming: Mutex<Vec<LostTurn>>,
     pub scheduled_reports: Mutex<Vec<Report>>,
     pub warned: Mutex<HashSet<String>>,
     pub unrecorded: Mutex<HashSet<String>>,
@@ -252,12 +253,7 @@ impl Monitor {
                     format!("nudging worker {id}"),
                 ),
                 CheckAction::Inbox(id, text) => {
-                    let report = Report {
-                        worker: id.clone(),
-                        at: chrono::Utc::now().to_rfc3339(),
-                        status: CHECK_STATUS.to_string(),
-                        text,
-                    };
+                    let report = Report::check(&id, &chrono::Utc::now().to_rfc3339(), text);
                     warn_if_err(
                         self.inbox.post(&report, 0),
                         format!("posting check for worker {id}"),

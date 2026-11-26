@@ -36,6 +36,7 @@ mod outcome_log;
 mod ownership;
 mod permissions;
 mod process_tree;
+mod report;
 mod rollback;
 mod scheduled;
 mod shell;
@@ -48,6 +49,7 @@ mod tools;
 mod transcript_usage;
 mod turn_activity;
 mod turn_gate;
+mod value;
 mod verify;
 mod version_gate;
 mod worktree;
@@ -86,6 +88,7 @@ pub use outcome_log::*;
 pub use ownership::*;
 pub use permissions::*;
 pub use process_tree::*;
+pub use report::*;
 pub use rollback::*;
 pub use scheduled::*;
 pub use shell::*;
@@ -98,6 +101,7 @@ pub use tools::*;
 pub use transcript_usage::*;
 pub use turn_activity::*;
 pub use turn_gate::*;
+pub use value::*;
 pub use verify::*;
 pub use version_gate::*;
 pub use worktree::*;
@@ -211,8 +215,55 @@ pub const REPORT_REMINDER: &str = "You stopped without calling report. Call repo
 pub struct Report {
     pub worker: String,
     pub at: String,
-    pub status: String,
+    pub status: ReportKind,
     pub text: String,
+}
+
+impl Report {
+    fn with_kind(worker: &str, at: &str, status: ReportKind, text: String) -> Self {
+        Self {
+            worker: worker.to_string(),
+            at: at.to_string(),
+            status,
+            text,
+        }
+    }
+
+    pub fn from_worker(worker: &str, at: &str, status: ReportStatus, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::Worker(status), text)
+    }
+
+    pub fn ralph_blocked(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::Worker(ReportStatus::Blocked), text)
+    }
+
+    pub fn check(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::Check, text)
+    }
+
+    pub fn warning(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::Warning, text)
+    }
+
+    pub fn watch(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::Watch, text)
+    }
+
+    pub fn merged(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::Merged, text)
+    }
+
+    pub fn view(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::View, text)
+    }
+
+    pub fn thread_closed(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::ThreadClosed, text)
+    }
+
+    pub fn external(worker: &str, at: &str, text: String) -> Self {
+        Self::with_kind(worker, at, ReportKind::External, text)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -537,12 +588,12 @@ mod tests {
     }
 
     fn report(worker: &str, status: &str, text: &str) -> Report {
-        Report {
-            worker: worker.into(),
-            at: "2026-10-09T15:30:01.5+00:00".into(),
-            status: status.into(),
-            text: text.into(),
-        }
+        Report::with_kind(
+            worker,
+            "2026-10-09T15:30:01.5+00:00",
+            ReportKind::parse(status).unwrap(),
+            text.into(),
+        )
     }
 
     #[test]

@@ -457,12 +457,12 @@ fn the_next_tick_takes_the_answered_workers_once() {
         driving: go(&send_it, Some(&hash), true).1.unwrap().driving,
         watched: None,
     };
-    let flagged = [ralph_core::worker::Report {
-        worker: "E1".to_string(),
-        at: "2026-01-01T00:00:00Z".to_string(),
-        status: "question".to_string(),
-        text: "q".to_string(),
-    }];
+    let flagged = [ralph_core::worker::Report::from_worker(
+        "E1",
+        "2026-01-01T00:00:00Z",
+        ralph_core::worker::ReportStatus::Question,
+        "q".to_string(),
+    )];
     let with_question = || Ended {
         drained: &flagged,
         ..ended()

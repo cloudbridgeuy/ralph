@@ -471,18 +471,13 @@ fn workers_come_from_prefixed_sessions_with_last_known_state() {
     let ids: Vec<&str> = workers.iter().map(|worker| worker.id.as_str()).collect();
     assert_eq!(ids, vec!["GUZ-1", "GUZ-2"]);
     let reports = [
-        Report {
-            worker: "GUZ-2".into(),
-            at: "a".into(),
-            status: "question".into(),
-            text: "x".into(),
-        },
-        Report {
-            worker: "GUZ-2".into(),
-            at: "b".into(),
-            status: "done".into(),
-            text: "y".into(),
-        },
+        Report::from_worker(
+            "GUZ-2",
+            "a",
+            crate::worker::ReportStatus::Question,
+            "x".into(),
+        ),
+        Report::from_worker("GUZ-2", "b", crate::worker::ReportStatus::Done, "y".into()),
     ];
     let states = worker_states(
         &workers,

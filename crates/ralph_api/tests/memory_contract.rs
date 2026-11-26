@@ -124,9 +124,17 @@ fn root_lists_blocks_with_summaries() {
             "thread": "main",
             "entries": 6,
             "nodes": [
-                {"id": "0-3", "lo": 0, "hi": 4, "leaf": false, "summary": "first four: sync timeout"},
-                {"id": "4-5", "lo": 4, "hi": 6, "leaf": false, "summary": "tail pair \"quoted\""},
+                {"id": "0-3", "lo": 0, "hi": 4, "leaf": false, "summary": "first four: sync timeout", "folded": false,
+                 "stats": {"depth": 2, "children": 2, "blocks": 3, "summarised": 2}},
+                {"id": "4-5", "lo": 4, "hi": 6, "leaf": false, "summary": "tail pair \"quoted\"", "folded": false,
+                 "stats": {"depth": 1, "children": 2, "blocks": 1, "summarised": 1}},
             ],
+            "stats": {
+                "entries": 6,
+                "blocks": 4,
+                "summarised": 3,
+                "last_at": "2026-03-01T09:05:00Z",
+            },
         })
     );
 }
@@ -171,6 +179,13 @@ fn zoom_block_matches_core_view() {
                 "hi": block.node.hi,
                 "leaf": block.is_leaf,
                 "summary": block.summary,
+                "folded": block.summary.is_none(),
+                "stats": {
+                    "depth": 1,
+                    "children": 2,
+                    "blocks": 1,
+                    "summarised": usize::from(block.summary.is_some()),
+                },
                 "kind": "block",
             }),
             ZoomChild::Entry(item) => {
@@ -185,6 +200,7 @@ fn zoom_block_matches_core_view() {
     let body = json_of(&reply);
     assert_eq!(body["children"], Value::Array(expected));
     assert_eq!(body["node"]["summary"], "first four: sync timeout");
+    assert_eq!(body["node"]["folded"], false);
 }
 
 #[test]

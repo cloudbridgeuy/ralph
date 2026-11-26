@@ -6,6 +6,8 @@ const PAGE_SIZE = 20;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const EXTENT_MIN = 1;
 const SPINNER_DELAY_MS = 200;
+const ROLES = ["user", "assistant", "worker"];
+const AT_SHAPE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?Z$/;
 
 function parseHash(hash) {
   const body = hash.replace(/^#/, "");
@@ -40,15 +42,78 @@ function clampAfter(after, total, size) {
 }
 
 function memoryCtx(hashState) {
-  return { thread: hashState.thread, after: hashState.after, node: hashState.node };
+  return { thread: hashState.thread };
 }
 
-function olderAfter(after, size) {
-  return after > 0 ? Math.max(0, after - size) : null;
+function olderAfter(after, size, floor) {
+  return after > floor ? Math.max(floor, after - size) : null;
 }
 
-function newerAfter(nextAfter) {
-  return Number.isInteger(nextAfter) ? nextAfter : null;
+function newerAfter(nextAfter, ceiling) {
+  return Number.isInteger(nextAfter) && nextAfter < ceiling ? nextAfter : null;
+}
+
+function rangeAfter(after, lo, hi) {
+  return Number.isInteger(after) && after >= lo && after < hi ? after : lo;
+}
+
+function rangeLabel(lo, hi) {
+  return "[" + lo + "-" + hi + "]";
+}
+
+function pagerScope(node, lo, hi) {
+  return node ? lo + "\u2013" + (hi - 1) : String(hi - lo);
+}
+
+function pagerLabel(after, count, scope) {
+  if (count === 0) return "entries 0 of " + scope;
+  return "entries " + after + "\u2013" + (after + count - 1) + " of " + scope;
+}
+
+function pagerDirection(event, typing) {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || typing) return null;
+  if (event.key === "[") return "older";
+  if (event.key === "]") return "newer";
+  return null;
+}
+
+function isTyping(target) {
+  const tag = target && target.tagName;
+  return tag === "INPUT" || tag === "BUTTON" || tag === "SELECT" || tag === "TEXTAREA" || Boolean(target && target.isContentEditable);
+}
+
+function crumbParts(thread, path) {
+  const parts = [
+    { label: "memory", hash: buildHash({ thread: "main" }) },
+    { label: thread, hash: buildHash({ thread }) },
+    ...path.map((id) => {
+      const range = idRange(id);
+      return { label: rangeLabel(range.lo, range.hi), hash: buildHash({ thread, node: id }) };
+    }),
+  ];
+  return parts.map((part, at) => (at === parts.length - 1 ? { label: part.label, hash: null } : part));
+}
+
+function statLine(stats) {
+  const last = stats.last_at ? ", last entry " + stats.last_at : "";
+  return stats.entries + " entries, " + stats.summarised + " of " + stats.blocks + " blocks summarised" + last;
+}
+
+function detailPairs(node) {
+  const range = idRange(node.id);
+  return [
+    ["range", rangeLabel(range.lo, range.hi)],
+    ["entries", String(node.hi - node.lo)],
+    ["depth", String(node.stats.depth)],
+    ["children", String(node.stats.children)],
+    ["summary", node.summary === null ? "none" : "summarised"],
+  ];
+}
+
+function rootRows(nodes) {
+  return nodes.map((node) =>
+    node.leaf && node.entry ? { row: "entry", child: node.entry } : { row: "node", child: node },
+  );
 }
 
 function oneLine(text) {
@@ -60,6 +125,15 @@ function firstLine(text) {
     .split(/\r?\n/)
     .find((part) => part.trim() !== "");
   return line === undefined ? "" : line.trim();
+}
+
+function compactAt(iso) {
+  const match = AT_SHAPE.exec(String(iso));
+  return match ? match[1] + " " + match[2] : iso;
+}
+
+function roleAttrs(role) {
+  return ROLES.includes(role) ? { "data-role": role } : {};
 }
 
 function extentSpan(lo, hi, total) {
@@ -81,6 +155,17 @@ function containsNode(id, target) {
   const outer = idRange(id);
   const inner = idRange(target);
   return id !== target && outer.lo <= inner.lo && inner.hi <= outer.hi;
+}
+
+function treeStep(id, target, expandable) {
+  if (id === target) return "here";
+  if (!containsNode(id, target)) return null;
+  return expandable ? "descend" : "here";
+}
+
+function leafRootKey(target) {
+  const range = idRange(target);
+  return range.lo === range.hi ? "e" + range.lo : null;
 }
 
 function navTarget(key, rows, at) {
@@ -148,9 +233,8 @@ function setRendered(host, html) {
   host.innerHTML = html;
 }
 
-function emptyState(what, compact, quiet) {
+function emptyState(what, compact) {
   const box = el("r-empty", null, { role: "status" });
-  if (quiet) box.removeAttribute("role");
   if (compact) box.setAttribute("compact", "");
   return append(box, el("span", what, { class: "what" }));
 }
@@ -256,24 +340,42 @@ function extentCell(extent) {
   );
 }
 
-function summaryCell(summary) {
+function pill(text) {
+  return append(el("r-pill", null, { tone: "neutral", shape: "square" }), el("span", text));
+}
+
+function noSummary() {
+  return el("span", "no summary yet", { class: "none" });
+}
+
+function summaryCell(summary, at) {
   const cell = el("span", null, { class: "sum" });
-  if (summary === null) {
-    append(cell, append(el("r-pill", null, { tone: "neutral", shape: "square" }), el("span", "pending")));
-  } else if (summary) cell.textContent = oneLine(summary);
+  if (at !== undefined) {
+    append(cell, el("span", compactAt(at), { class: "at", title: at }), document.createTextNode(" "));
+  }
+  if (summary === null) append(cell, noSummary());
+  else if (summary) append(cell, document.createTextNode(oneLine(summary)));
   return cell;
 }
 
-function treeItem(level, key, label, cells) {
-  const item = el("li", null, { role: "treeitem", "aria-expanded": "false", "aria-level": String(level) });
+function idLabel(label, role) {
+  const id = el("span", label, { class: "id" });
+  if (role !== undefined) append(id, document.createTextNode(" "), el("span", role, roleAttrs(role)));
+  return id;
+}
+
+function treeItem(level, key, label, cells, expandable) {
+  const item = el("li", null, { role: "treeitem", "aria-level": String(level) });
+  if (expandable) item.setAttribute("aria-expanded", "false");
   const button = el("button", null, { type: "button", tabindex: "-1" });
   button.dataset.key = key;
   for (let guide = 1; guide < level; guide += 1) append(button, el("span", null, { class: "g" }));
-  append(button, chevron(), el("span", label, { class: "id" }));
+  if (expandable) append(button, chevron());
+  append(button, idLabel(label, cells.role));
   append(item, button);
   append(item, el("span", cells.count === undefined ? null : String(cells.count), { class: "n" }));
-  append(item, extentCell(cells.extent), summaryCell(cells.summary));
-  append(item, el("ul", null, { role: "group" }));
+  append(item, extentCell(cells.extent), summaryCell(cells.summary, cells.at));
+  if (expandable) append(item, el("ul", null, { role: "group" }));
   return item;
 }
 
@@ -283,14 +385,14 @@ function nodeItem(level, node, total) {
     extent: { lo: node.lo, hi: node.hi, total },
     summary: node.summary,
   };
-  const item = treeItem(level, node.id, "[" + node.lo + "-" + (node.hi - 1) + "]", cells);
+  const item = treeItem(level, node.id, rangeLabel(node.lo, node.hi - 1), cells, !node.folded);
   item.dataset.node = node.id;
   return item;
 }
 
 function entryItem(level, entry) {
-  const label = "#" + entry.i + " " + entry.role;
-  const item = treeItem(level, "e" + entry.i, label, { summary: entry.at + " " + firstLine(entry.text) });
+  const cells = { role: entry.role, at: entry.at, summary: firstLine(entry.text) };
+  const item = treeItem(level, "e" + entry.i, "#" + entry.i, cells, true);
   item.dataset.entry = entry.text;
   return item;
 }
@@ -332,8 +434,11 @@ async function openEntry(item) {
 }
 
 function zoomRows(zoom) {
-  const children = zoom.children.map((child) => ({ row: child.kind === "block" ? "node" : "entry", child }));
-  return [{ row: "summary", markdown: zoom.node.summary }, ...children];
+  return zoom.children.map((child) => ({ row: child.kind === "block" ? "node" : "entry", child }));
+}
+
+function drawRow(level, row, total) {
+  return row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child);
 }
 
 function clearRows(group) {
@@ -351,19 +456,11 @@ async function openNode(item, ctx, retried) {
     const zoom = await getJson("/api/memory", { thread: ctx.thread, node: item.dataset.node });
     stop();
     if (mine !== generation) return;
-    zoomRows(zoom).forEach((row) => {
-      if (row.row === "summary") {
-        const summary = rowItem();
-        append(group, summary);
-        if (row.markdown === null) summary.appendChild(emptyState("summary pending", true));
-        else fillRendered(summary, row.markdown);
-      } else append(group, row.row === "node" ? nodeItem(level, row.child, total) : entryItem(level, row.child));
-    });
+    zoomRows(zoom).forEach((row) => append(group, drawRow(level, row, total)));
     if (retried) {
       const first = group.querySelector(':scope > li[role="treeitem"] > button');
       (first || parentButton(item)).focus();
     }
-    history.replaceState(null, "", buildHash({ ...ctx, node: item.dataset.node }));
   } catch (error) {
     stop();
     clearRows(group);
@@ -384,26 +481,47 @@ async function toggleItem(item, ctx) {
   else await openEntry(item);
 }
 
+function markSelected(list, item) {
+  list.querySelectorAll('li[aria-selected]').forEach((other) => other.removeAttribute("aria-selected"));
+  item.setAttribute("aria-selected", "true");
+}
+
+function selectRow(tree, item) {
+  markSelected(tree, item);
+  item.firstElementChild.focus();
+}
+
 async function expandTo(tree, target, ctx) {
   let scope = tree;
   for (let depth = 0; depth < 64; depth += 1) {
     const items = Array.from(scope.querySelectorAll(':scope li[data-node]'));
-    const next = items.find((item) => item.dataset.node === target || containsNode(item.dataset.node, target));
-    if (!next) return;
-    if (next.getAttribute("aria-expanded") !== "true") await toggleItem(next, ctx);
-    if (next.dataset.node === target) return next.firstElementChild.focus();
+    const stepOf = (item) => treeStep(item.dataset.node, target, item.hasAttribute("aria-expanded"));
+    const next = items.find((item) => stepOf(item) !== null);
+    if (!next) {
+      const key = depth === 0 ? leafRootKey(target) : null;
+      const button = key && tree.querySelector(':scope > li > button[data-key="' + key + '"]');
+      if (button) selectRow(tree, button.parentElement);
+      else if (depth > 0) selectRow(tree, scope);
+      return;
+    }
+    const step = stepOf(next);
+    if (next.getAttribute("aria-expanded") === "false") await toggleItem(next, ctx);
+    if (step === "here") return selectRow(tree, next);
     scope = next;
   }
 }
 
-function buildTree(roots, ctx, total) {
+function buildTree(roots, ctx, total, onSelect) {
   const tree = el("r-tree", null, { "data-total": String(total) });
   const list = el("ul", null, { role: "tree" });
   append(tree, list);
-  roots.forEach((node) => append(list, nodeItem(1, node, total)));
+  rootRows(roots).forEach((row) => append(list, drawRow(1, row, total)));
   list.addEventListener("click", (event) => {
     const button = event.target.closest('li[role="treeitem"] > button');
-    if (button) toggleItem(button.parentElement, ctx);
+    if (!button) return;
+    const item = button.parentElement;
+    if (item.dataset.node && item.getAttribute("aria-selected") !== "true") onSelect(list, item);
+    if (item.hasAttribute("aria-expanded")) toggleItem(item, ctx);
   });
   list.addEventListener("keydown", (event) => onTreeKey(list, event));
   list.addEventListener("focusin", (event) => {
@@ -420,21 +538,29 @@ function kv(pairs) {
   return append(el("r-kv", null, { two: "" }), list);
 }
 
-function threadSelect(threads, current) {
-  const select = el("select", null, { id: "thread", "aria-label": "thread" });
+function threadTabs(threads, current) {
+  const nav = el("nav", null, { class: "tabs", "aria-label": "threads" });
   const names = ["main", ...threads.map((thread) => thread.name)];
   if (!names.includes(current)) names.push(current);
   names.forEach((name) => {
     const meta = threads.find((thread) => thread.name === name);
-    const note = meta && meta.parked ? " (parked)" : meta && meta.merged ? " (merged)" : "";
-    const option = el("option", name + note, { value: name });
-    append(select, option);
-    option.selected = name === current;
+    const note = meta && meta.parked ? "parked" : meta && meta.merged ? "merged" : "";
+    const attrs = { href: buildHash({ thread: name }), ...(name === current ? { "aria-current": "page" } : {}) };
+    const link = el("a", name, attrs);
+    if (note) append(link, pill(note));
+    append(nav, link);
   });
-  select.addEventListener("change", () => {
-    location.hash = buildHash({ thread: select.value, node: "", after: null });
+  return nav;
+}
+
+function crumbs(parts) {
+  const nav = el("nav", null, { class: "crumbs", "aria-label": "breadcrumb" });
+  parts.forEach((part, at) => {
+    if (at > 0) nav.appendChild(document.createTextNode(" / "));
+    if (part.hash) append(nav, el("a", part.label, { href: part.hash }));
+    else append(nav, el("span", part.label, { "aria-current": "page" }));
   });
-  return append(el("label"), el("span", "thread ", { class: "meta" }), select);
+  return nav;
 }
 
 function stateRow(columns, child) {
@@ -444,34 +570,95 @@ function stateRow(columns, child) {
 
 const ENTRY_COLUMNS = ["#", "role", "at", "text"];
 
+function toggleEntry(row, entry, current) {
+  const wasOpen = row.classList.contains("open");
+  if (current.close) current.close();
+  current.close = null;
+  if (wasOpen) return;
+  const cell = row.lastElementChild;
+  const text = el("td", null, { colspan: String(ENTRY_COLUMNS.length) });
+  const detail = append(el("tr", null, { class: "state full" }), text);
+  row.after(detail);
+  fillRendered(text, entry.text);
+  cell.textContent = "";
+  row.classList.add("open");
+  row.setAttribute("aria-selected", "true");
+  row.setAttribute("aria-expanded", "true");
+  current.close = () => {
+    row.classList.remove("open");
+    row.removeAttribute("aria-selected");
+    row.setAttribute("aria-expanded", "false");
+    cell.textContent = firstLine(entry.text);
+    detail.remove();
+  };
+}
+
+function entryRow(entry, current) {
+  const row = el("tr", null, { tabindex: "0", "aria-expanded": "false" });
+  append(
+    row,
+    el("td", String(entry.i), { class: "num" }),
+    el("td", entry.role, roleAttrs(entry.role)),
+    el("td", compactAt(entry.at), { class: "at", title: entry.at }),
+    el("td", firstLine(entry.text), { class: "clip" }),
+  );
+  row.addEventListener("click", () => toggleEntry(row, entry, current));
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleEntry(row, entry, current);
+    }
+  });
+  return row;
+}
+
 function entriesTable(page) {
   const head = append(el("tr"), ...ENTRY_COLUMNS.map((name) => el("th", name, name === "#" ? { class: "num" } : {})));
   const body = el("tbody");
   if (page.items.length === 0) {
     append(body, stateRow(ENTRY_COLUMNS.length, emptyState("no entries in this page", true)));
   }
-  page.items.forEach((entry) => {
-    append(
-      body,
-      append(
-        el("tr"),
-        el("td", String(entry.i), { class: "num" }),
-        el("td", entry.role),
-        el("td", entry.at),
-        el("td", firstLine(entry.text), { class: "clip" }),
-      ),
-    );
-  });
+  const current = { close: null };
+  page.items.forEach((entry) => append(body, entryRow(entry, current)));
   return append(el("r-table", null, { class: "stackable" }), append(el("table"), append(el("thead"), head), body));
 }
 
-function pager(page, state) {
-  const bar = el("p");
-  const older = olderAfter(state.after, PAGE_SIZE);
-  const newer = newerAfter(page.next_after);
-  if (older !== null) append(bar, el("a", "older", { href: buildHash({ ...state, after: older }) }), document.createTextNode(" "));
-  if (newer !== null) append(bar, el("a", "newer", { href: buildHash({ ...state, after: newer }) }));
-  return bar;
+function pagerButton(name, key, after, state) {
+  const attrs = after === null
+    ? { class: "btn", "aria-disabled": "true", "data-pager": name }
+    : { class: "btn", href: buildHash({ ...state, after }), "data-pager": name };
+  return append(el("a", name + " ", attrs), el("kbd", key));
+}
+
+function pager(page, state, bounds) {
+  const older = olderAfter(state.after, PAGE_SIZE, bounds.lo);
+  const newer = newerAfter(page.next_after, bounds.hi);
+  return append(
+    el("p", null, { class: "pager" }),
+    pagerButton("older", "[", older, state),
+    pagerButton("newer", "]", newer, state),
+    el("span", pagerLabel(state.after, page.items.length, pagerScope(state.node, bounds.lo, bounds.hi))),
+  );
+}
+
+function onPagerKey(event) {
+  const direction = pagerDirection(event, isTyping(event.target));
+  const link = direction && document.querySelector('a[data-pager="' + direction + '"][href]');
+  if (link) location.hash = link.getAttribute("href");
+}
+
+async function loadDetail(state, roots) {
+  if (!state.node) {
+    const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : clampAfter(state.after, roots.entries, PAGE_SIZE);
+    const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
+    return { zoom: null, page, after, lo: 0, hi: roots.entries };
+  }
+  const zoom = await getJson("/api/memory", { thread: state.thread, node: state.node });
+  const { lo, hi } = zoom.node;
+  const after = rangeAfter(state.after, lo, hi);
+  const limit = Math.min(PAGE_SIZE, hi - after);
+  const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit });
+  return { zoom, page, after, lo, hi };
 }
 
 async function loadMemory(state) {
@@ -479,28 +666,62 @@ async function loadMemory(state) {
     getJson("/api/memory/threads", {}),
     getJson("/api/memory", { thread: state.thread }),
   ]);
-  const after = state.after === null ? defaultAfter(roots.entries, PAGE_SIZE) : clampAfter(state.after, roots.entries, PAGE_SIZE);
-  const page = await getJson("/api/memory/entries", { thread: state.thread, after, limit: PAGE_SIZE });
+  const detail = await loadDetail(state, roots);
   document.getElementById("store").textContent = threads.store;
-  return { threads: threads.threads, roots, page, after };
+  return { threads: threads.threads, roots, detail };
+}
+
+function summaryBlock(node) {
+  const host = el("div", null, { class: "summary" });
+  if (node.summary === null) append(host, noSummary());
+  else fillRendered(host, node.summary);
+  return host;
+}
+
+function drawDetail(pane, state, detail) {
+  const { zoom, page, after, lo, hi } = detail;
+  pane.replaceChildren(crumbs(crumbParts(state.thread, zoom ? zoom.path : [])));
+  if (zoom) append(pane, kv(detailPairs(zoom.node)), summaryBlock(zoom.node));
+  append(pane, entriesTable(page), pager(page, { ...state, after }, { lo, hi }));
+}
+
+let detailGeneration = 0;
+
+async function selectNode(list, item, screen, retried) {
+  markSelected(list, item);
+  const state = { thread: screen.ctx.thread, node: item.dataset.node, after: null };
+  history.replaceState(null, "", buildHash(state));
+  const mine = ++detailGeneration;
+  const stop = delayedSpinner(screen.pane, "Loading detail");
+  try {
+    const detail = await loadDetail(state, screen.roots);
+    if (mine !== detailGeneration) return;
+    stop();
+    drawDetail(screen.pane, state, detail);
+    if (retried) focusTarget(screen.pane);
+  } catch (error) {
+    if (mine !== detailGeneration) return;
+    stop();
+    const box = failure(error, () => selectNode(list, item, screen, true));
+    screen.pane.replaceChildren(box);
+    if (retried) focusRetry(box);
+  }
 }
 
 function drawMemory(main, hashState, data) {
-  const state = { ...hashState, after: data.after };
   const ctx = memoryCtx(hashState);
-  const box = append(el("r-box", null, { shape: "square" }), el("span", "memory", { class: "title" }));
-  main.replaceChildren(box);
-  append(box, el("div"), threadSelect(data.threads, state.thread));
-  append(box, kv([["thread", state.thread], ["entries", String(data.roots.entries)]]));
-  const empty = data.roots.entries === 0;
-  if (empty) append(box, emptyState("no entries yet"));
-  else {
-    const { tree, list } = buildTree(data.roots.nodes, ctx, data.roots.entries);
-    append(box, tree);
-    if (state.node) expandTo(list, state.node, ctx);
+  main.replaceChildren(threadTabs(data.threads, hashState.thread));
+  append(main, el("p", statLine(data.roots.stats), { class: "statline" }));
+  if (data.roots.entries === 0) {
+    append(main, emptyState("no entries yet"));
+    return;
   }
-  append(box, el("r-rule"), el("span", "recent entries", { class: "title" }));
-  append(box, empty ? emptyState("no entries yet", false, true) : entriesTable(data.page), pager(data.page, state));
+  const pane = el("div", null, { class: "detail" });
+  const screen = { ctx, pane, roots: data.roots };
+  const { tree, list } = buildTree(data.roots.nodes, ctx, data.roots.entries, (from, item) => selectNode(from, item, screen));
+  append(main, append(el("div", null, { class: "split" }), tree, pane));
+  drawDetail(pane, { thread: hashState.thread, node: hashState.node }, data.detail);
+  if (hashState.node) expandTo(list, hashState.node, ctx);
 }
 
 async function loadConfig() {
@@ -681,4 +902,5 @@ async function show(refocus) {
 }
 
 window.addEventListener("hashchange", () => show());
+document.addEventListener("keydown", onPagerKey);
 show();

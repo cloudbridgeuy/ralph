@@ -177,10 +177,10 @@ fn a_retry_moves_focus_to_a_tabindex_target_or_the_new_retry_button() {
     assert!(function_body(&js, "focusTarget").contains(r#"setAttribute("tabindex", "-1")"#));
     assert!(function_body(&js, "focusTarget").contains(".focus()"));
     assert!(function_body(&js, "focusRetry").contains(".focus()"));
-    for name in ["show", "fillRendered"] {
+    for name in ["show", "fillRendered", "selectNode"] {
         assert!(function_body(&js, name).contains("focusTarget("), "{name}");
     }
-    for name in ["show", "openNode", "fillRendered"] {
+    for name in ["show", "openNode", "fillRendered", "selectNode"] {
         assert!(function_body(&js, name).contains("focusRetry("), "{name}");
     }
 }
@@ -199,15 +199,9 @@ fn a_failed_node_open_keeps_the_item_expanded() {
 fn empty_states_use_one_helper_with_compact_and_full_forms() {
     let js = script();
     assert_eq!(js.matches(r#"el("r-empty""#).count(), 1);
-    assert!(js.contains(r#"emptyState("summary pending", true)"#));
     assert!(js.contains(r#"emptyState("no entries in this page", true)"#));
     assert_eq!(js.matches(r#"emptyState("no entries yet")"#).count(), 1);
-    assert_eq!(
-        js.matches(r#"emptyState("no entries yet", false, true)"#)
-            .count(),
-        1
-    );
-    assert!(function_body(&js, "emptyState").contains(r#"if (quiet) box.removeAttribute("role");"#));
+    assert!(!function_body(&js, "emptyState").contains("quiet"));
     assert!(function_body(&js, "emptyState").contains(r#"class: "what""#));
 }
 
@@ -256,16 +250,14 @@ fn tree_keys_fall_back_to_the_parent_button_when_the_target_is_not_a_tree_button
 }
 
 #[test]
-fn a_node_open_checks_the_generation_before_writing_the_hash() {
+fn a_node_open_checks_the_generation_before_drawing_rows_and_leaves_the_hash_alone() {
     let body = function_body(&script(), "openNode");
     assert!(body.contains("const mine = generation;"), "{body}");
     let guard = body.find("if (mine !== generation) return;");
-    let write = body.find("history.replaceState(");
-    assert!(guard.is_some() && write.is_some(), "{body}");
-    assert!(guard < write, "{body}");
     let rows = body.find("zoomRows(");
-    assert!(rows.is_some(), "{body}");
+    assert!(guard.is_some() && rows.is_some(), "{body}");
     assert!(guard < rows, "{body}");
+    assert!(!body.contains("history.replaceState("), "{body}");
 }
 
 #[test]

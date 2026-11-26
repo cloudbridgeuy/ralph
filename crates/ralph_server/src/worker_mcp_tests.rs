@@ -11,7 +11,9 @@ fn rejected_files(inbox_dir: &Path) -> Vec<PathBuf> {
 
 fn sync_reports(inbox: &Inbox, warnings: &mut Vec<String>) -> Vec<Report> {
     inbox
-        .sync_with(&mut |w| warnings.push(w), |l| (l.reports(), false))
+        .sync_with(&mut |w| warnings.push(w), |l| {
+            (l.reports(), LedgerChange::Unchanged)
+        })
         .unwrap()
 }
 
@@ -21,12 +23,12 @@ fn malformed_message_file_is_skipped_and_others_delivered() {
     let inbox_dir = dir.path().join("inbox");
     let inbox = Inbox::new(inbox_dir.clone());
     let post = |text: &str, seq| {
-        let report = Report {
-            worker: "A".to_string(),
-            at: format!("2026-01-01T00:00:0{seq}Z"),
-            status: "done".to_string(),
-            text: text.to_string(),
-        };
+        let report = Report::from_worker(
+            "A",
+            &format!("2026-01-01T00:00:0{seq}Z"),
+            ReportStatus::Done,
+            text.to_string(),
+        );
         inbox.post(&report, seq).unwrap();
     };
     post("first", 1);
@@ -143,4 +145,38 @@ fn read_only_load_warns_without_copying_or_rewriting_corrupt_ledger() {
     assert_eq!(warnings.len(), 1);
     assert!(!inbox_dir.join(REJECTED_DIR).exists());
     assert_eq!(fs::read_to_string(&ledger_path).unwrap(), "not json at all");
+}
+
+fn post_past_taken_names(taken: u64) -> (io::Result<()>, usize) {
+    let dir = tempfile::tempdir().unwrap();
+    let inbox_dir = dir.path().join("inbox");
+    fs::create_dir_all(&inbox_dir).unwrap();
+    let report = Report::from_worker(
+        "A",
+        "2026-01-01T00:00:00Z",
+        ReportStatus::Done,
+        "late".to_string(),
+    );
+    for seq in 0..taken {
+        fs::write(inbox_dir.join(inbox_file_name(&report, seq)), "").unwrap();
+    }
+    let result = Inbox::new(inbox_dir.clone()).post(&report, 0);
+    (result, fs::read_dir(&inbox_dir).unwrap().count())
+}
+
+#[test]
+fn post_takes_the_last_of_a_thousand_names() {
+    let (result, files) = post_past_taken_names(999);
+    assert!(result.is_ok());
+    assert_eq!(files, 1000);
+}
+
+#[test]
+fn post_gives_up_after_a_thousand_taken_names() {
+    let (result, files) = post_past_taken_names(1000);
+    assert_eq!(
+        result.map_err(|e| e.kind()),
+        Err(io::ErrorKind::AlreadyExists)
+    );
+    assert_eq!(files, 1000);
 }

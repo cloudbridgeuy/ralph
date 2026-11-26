@@ -1,0 +1,186 @@
+.tabs {
+  display: flex;
+  gap: 2ch;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--r-line);
+}
+
+.tabs a {
+  flex: none;
+  color: var(--r-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--r-ink-strong);
+  font-weight: 600;
+  border-bottom-color: var(--r-accent);
+}
+
+.tabs r-pill {
+  margin-inline-start: 1ch;
+}
+
+.tabs a:focus-visible,
+.crumbs a:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: 1px;
+}
+
+.statline {
+  margin: 0 0 10px;
+  color: var(--r-muted);
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(58ch, 40%) 1fr;
+  gap: 3ch;
+  align-items: start;
+}
+
+.split > * {
+  min-width: 0;
+}
+
+.split > r-tree {
+  overflow-x: auto;
+}
+
+.detail {
+  padding-inline-start: 2ch;
+  border-inline-start: 1px solid var(--r-line);
+}
+
+.crumbs {
+  margin-bottom: 10px;
+  color: var(--r-muted);
+  overflow-wrap: anywhere;
+}
+
+.crumbs [aria-current="page"] {
+  color: var(--r-ink-strong);
+}
+
+.summary {
+  margin: 10px 0;
+}
+
+.none {
+  color: var(--r-muted);
+}
+
+r-tree li[role="treeitem"]::before {
+  content: "";
+  grid-column: 1 / -1;
+  grid-row: 1;
+  align-self: stretch;
+}
+
+r-tree li[role="treeitem"]:not([aria-selected="true"]):hover:not(:has(> ul[role="group"]:hover))::before {
+  background: var(--r-hover);
+  box-shadow: inset 2px 0 0 var(--r-accent);
+}
+
+r-tree li[aria-selected="true"]::before {
+  background: var(--r-selected);
+  box-shadow: inset 2px 0 0 var(--r-accent);
+}
+
+/* Overrides the r-tree button:focus-visible ring in css/tree.css. */
+r-tree li > button:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: -2px;
+}
+
+@media (max-width: 760px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+
+  .detail {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 1ch;
+  margin: 10px 0 0;
+  color: var(--r-muted);
+}
+
+.pager .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 1ch;
+}
+
+.pager .btn[aria-disabled="true"] {
+  color: var(--r-muted);
+  border-color: var(--r-line);
+  cursor: default;
+}
+
+.pager .btn[aria-disabled="true"]:hover {
+  background: var(--r-bg);
+  color: var(--r-muted);
+  border-color: var(--r-line);
+  cursor: default;
+}
+
+kbd {
+  font-size: 12px;
+  padding: 0 0.5ch;
+  border: 1px solid var(--r-line-strong);
+  border-radius: 3px;
+  color: var(--r-muted);
+}
+
+r-table tbody tr[tabindex] {
+  cursor: pointer;
+}
+
+r-table tbody tr[tabindex]:focus-visible {
+  outline: 2px solid var(--r-accent);
+  outline-offset: -2px;
+}
+
+r-table tbody tr.full > td:first-child {
+  border-left-color: var(--r-accent);
+}
+
+r-table.stackable td:not(.clip) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+[data-role="assistant"] {
+  color: var(--r-accent);
+}
+
+[data-role="user"] {
+  color: var(--r-ink);
+}
+
+[data-role="worker"] {
+  color: var(--r-info);
+}
+
+.at {
+  color: var(--r-muted);
+}
+
+/* Overrides the r-tree .sum colour in css/tree.css. */
+r-tree .sum {
+  color: var(--r-ink);
+}
+
+/* Overrides the r-tree .extent .span fill in css/tree.css. */
+r-tree .extent .span {
+  fill: var(--r-faint);
+}

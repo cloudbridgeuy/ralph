@@ -1,33 +1,7 @@
-use super::{parse_status, status_tool, SERVER_NAME};
+use super::{parse_status, status_tool, ReportStatus, SERVER_NAME};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::sanitize::strip_controls;
 use serde_json::{json, Value};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReportStatus {
-    Done,
-    Blocked,
-    Question,
-}
-
-impl ReportStatus {
-    pub const ALL: [ReportStatus; 3] = [Self::Done, Self::Blocked, Self::Question];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Done => "done",
-            Self::Blocked => "blocked",
-            Self::Question => "question",
-        }
-    }
-
-    fn parse(status: &str) -> Result<Self, String> {
-        Self::ALL
-            .into_iter()
-            .find(|known| known.as_str() == status)
-            .ok_or_else(|| format!("Status '{status}' must be done, blocked or question."))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
@@ -64,11 +38,16 @@ pub fn tool_definitions() -> Value {
 
 fn parse_call(id: Value, name: &str, args: &Value) -> Result<Outcome, String> {
     match name {
-        "report" => Ok(Outcome::Report {
-            id,
-            status: ReportStatus::parse(&string_arg(args, "status")?)?,
-            text: strip_controls(&string_arg(args, "text")?).into_owned(),
-        }),
+        "report" => {
+            let raw = string_arg(args, "status")?;
+            let status = ReportStatus::parse(&raw)
+                .ok_or_else(|| format!("Status '{raw}' must be done, blocked or question."))?;
+            Ok(Outcome::Report {
+                id,
+                status,
+                text: strip_controls(&string_arg(args, "text")?).into_owned(),
+            })
+        }
         "set_status" => Ok(Outcome::Status {
             id,
             text: parse_status(args)?,
@@ -128,7 +107,7 @@ mod tests {
             json!(["done", "blocked", "question"])
         );
         for status in ReportStatus::ALL {
-            assert_eq!(ReportStatus::parse(status.as_str()), Ok(status));
+            assert_eq!(ReportStatus::parse(status.as_str()), Some(status));
         }
         let request = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": "report", "arguments": {"status": "ok", "text": "hello"}}});

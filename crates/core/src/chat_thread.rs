@@ -10,8 +10,6 @@ pub const THREAD_FILE: &str = "thread.json";
 pub const MAIN_PREFIX_LINES: usize = 100;
 pub const MAX_NAME_CHARS: usize = 32;
 pub const THREAD_REPORT_PREFIX: &str = "thread:";
-pub const MERGED_STATUS: &str = "merged";
-pub const VIEW_STATUS: &str = "view";
 pub const VIEW_BLOCK_LINES: usize = 100;
 pub const MAX_VIEW_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_DIGEST_BYTES: usize = 2048;
@@ -211,12 +209,11 @@ pub fn digest_with(
 }
 
 pub fn merged_report(name: &ThreadName, digest: &str, at: &str) -> Report {
-    Report {
-        worker: format!("{THREAD_REPORT_PREFIX}{name}"),
-        at: at.to_string(),
-        status: MERGED_STATUS.to_string(),
-        text: digest.to_string(),
-    }
+    Report::merged(
+        &format!("{THREAD_REPORT_PREFIX}{name}"),
+        at,
+        digest.to_string(),
+    )
 }
 
 pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<String, String> {
@@ -238,10 +235,11 @@ pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<St
 }
 
 pub fn view_report(name: &ThreadName, block: &str, at: &str) -> Report {
-    Report {
-        status: VIEW_STATUS.to_string(),
-        ..merged_report(name, block, at)
-    }
+    Report::view(
+        &format!("{THREAD_REPORT_PREFIX}{name}"),
+        at,
+        block.to_string(),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -720,14 +718,14 @@ mod tests {
     fn a_merged_report_reads_as_a_thread_message() {
         let report = merged_report(&name("auth"), "Picked x. #auth:0", "2026-11-03T10:00:00Z");
         assert_eq!(report.worker, "thread:auth");
-        assert_eq!(report.status, "merged");
+        assert_eq!(report.status.as_str(), "merged");
         assert_eq!(report.at, "2026-11-03T10:00:00Z");
-        let worker = Report {
-            worker: "GUZ-1".to_string(),
-            at: "t".to_string(),
-            status: "done".to_string(),
-            text: "ok".to_string(),
-        };
+        let worker = Report::from_worker(
+            "GUZ-1",
+            "t",
+            crate::worker::ReportStatus::Done,
+            "ok".to_string(),
+        );
         assert_eq!(
             crate::worker::chat_message(&[report, worker]),
             "[thread auth · merged]\nPicked x. #auth:0\n\n[worker GUZ-1 · done]\nok"

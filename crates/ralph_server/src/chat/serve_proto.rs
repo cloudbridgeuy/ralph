@@ -108,6 +108,25 @@ pub enum ClientMsg {
     Shutdown,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireReport {
+    pub worker: String,
+    pub at: String,
+    pub status: String,
+    pub text: String,
+}
+
+impl From<InboxReport> for WireReport {
+    fn from(report: InboxReport) -> Self {
+        Self {
+            worker: report.worker,
+            at: report.at,
+            status: report.status.as_str().to_string(),
+            text: report.text,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
@@ -139,12 +158,13 @@ pub enum ServerMsg {
     },
     Inbox {
         thread: Option<String>,
-        report: InboxReport,
+        report: WireReport,
         unread: usize,
     },
 }
 
 pub fn inbox_frame(key: &SessionKey, report: InboxReport, unread: usize) -> ServerMsg {
+    let report = WireReport::from(report);
     let bytes = report.worker.len() + report.status.len() + report.at.len() + report.text.len();
     let thread = match key {
         SessionKey::Main => None,
@@ -162,12 +182,7 @@ pub fn inbox_frame(key: &SessionKey, report: InboxReport, unread: usize) -> Serv
     }
     if let ServerMsg::Inbox { report, .. } = &mut frame {
         const MAX_FIELD_BYTES: usize = MAX_FRAME_BYTES / 32;
-        for field in [
-            &mut report.worker,
-            &mut report.at,
-            &mut report.status,
-            &mut report.text,
-        ] {
+        for field in [&mut report.worker, &mut report.at, &mut report.text] {
             if field.len() > MAX_FIELD_BYTES {
                 field.truncate(field.floor_char_boundary(MAX_FIELD_BYTES - '…'.len_utf8()));
                 field.push('…');
@@ -361,6 +376,7 @@ mod tests {
     use ralph_core::chat_status::WorkerState;
     use ralph_core::program_status::{Kind, State};
     use ralph_core::turn_event::Wait;
+    use ralph_core::worker::ReportKind;
 
     fn bash_result(content: String) -> OutputBlock {
         OutputBlock::tool_result(
@@ -732,26 +748,48 @@ mod tests {
     }
 
     #[test]
+    fn a_wire_report_keeps_every_field_and_writes_the_status_string() {
+        for kind in ReportKind::ALL {
+            let report = InboxReport {
+                worker: "w1".into(),
+                at: "now".into(),
+                status: kind,
+                text: "body".into(),
+            };
+            assert_eq!(
+                WireReport::from(report),
+                WireReport {
+                    worker: "w1".into(),
+                    at: "now".into(),
+                    status: kind.as_str().into(),
+                    text: "body".into(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn an_inbox_frame_with_an_unknown_status_decodes() {
+        let line = r#"{"v":2,"id":0,"body":{"type":"inbox","thread":null,"unread":1,"report":{"worker":"w1","at":"now","status":"from-the-future","text":"hi"}}}"#;
+        let body = decode_frame::<ServerMsg>(line).unwrap().body;
+        assert!(matches!(
+            body,
+            ServerMsg::Inbox { report, .. } if report.status == "from-the-future"
+        ));
+    }
+
+    #[test]
     fn inbox_push_preserves_large_reports_that_fit_in_one_frame() {
-        let report = InboxReport {
-            worker: "w".into(),
-            at: "now".into(),
-            status: "done".into(),
-            text: "a".repeat(MAX_FRAME_BYTES / 2),
-        };
-        let frame = inbox_frame(&SessionKey::Main, report.clone(), 1);
-        assert!(matches!(frame, ServerMsg::Inbox { report: received, .. } if received == report));
+        let report = InboxReport::external("w", "now", "a".repeat(MAX_FRAME_BYTES / 2));
+        let sent = WireReport::from(report.clone());
+        let frame = inbox_frame(&SessionKey::Main, report, 1);
+        assert!(matches!(frame, ServerMsg::Inbox { report: received, .. } if received == sent));
     }
 
     #[test]
     fn inbox_push_stays_within_the_frame_limit_for_escaped_and_multibyte_text() {
         let field = "\u{0000}".repeat(MAX_FRAME_BYTES / 5);
-        let report = InboxReport {
-            worker: field.clone(),
-            at: field.clone(),
-            status: field,
-            text: "🦀".repeat(MAX_FRAME_BYTES / 4),
-        };
+        let report = InboxReport::external(&field, &field, "🦀".repeat(MAX_FRAME_BYTES / 4));
         let line = encode_frame(0, &inbox_frame(&SessionKey::Main, report, 1));
         assert!(line.len() <= MAX_FRAME_BYTES);
         let body = decode_frame::<ServerMsg>(&line).unwrap().body;

@@ -12,8 +12,9 @@ use crate::cursor_owner::{
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::private_file::write_worker_config;
 use crate::process_tree::{snapshot_tree, sweep_tree};
+use crate::schedule_store::scheduled_tasks;
 use crate::transport::stdio::{stop_child, stop_groups};
-use crate::warn::warn;
+use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
 use crate::worker_events::{apply_effect, push_event, Events};
 use crate::worker_mcp::Inbox;
@@ -26,20 +27,21 @@ use crate::workers::headless::{
 use ralph_core::claude_leftovers::{
     claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
 };
+use ralph_core::schedule_resume::has_open_run;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_args, claude_mcp_config,
-    cleanup, decode_claude_version, decode_line, deny_line, gone_path, import_servers,
+    acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_mcp_config, cleanup,
+    decode_claude_version, decode_line, deny_line, gone_path, headless_claude_args, import_servers,
     interrupt_lines, interrupted_end, join_start_warnings, mcptools_decision, permission_response,
     prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
-    start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
-    usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, Classes, ClaudeArgs,
-    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
-    McptoolsDecision, PermissionAnswer, PermissionMode, QueuedFacts, QueuedWorker, SessionRecord,
-    ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent,
-    WorkerMarkers, ALLOW_ALWAYS, ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR, CLAUDE_CLOSE_DIR,
-    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_INTERRUPT_DIR, CLAUDE_OWNER_DIR, CLAUDE_PROMPT_DIR,
-    CLAUDE_SESSION_DIR, CLAUDE_SPAWN_DIR,
+    start_steps, stuck_permission_report, turn_end_activity, turn_lost_at_resume,
+    unattended_claude_answer, usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState,
+    Classes, ClaudeArgs, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId,
+    HeadlessState, Leftover, McptoolsDecision, PermissionAnswer, PermissionMode, QueuedFacts,
+    QueuedWorker, SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal,
+    Turns, WorkerEvent, WorkerId, WorkerMarkers, ALLOW_ALWAYS, ATTACHMENTS_DIR, CLAUDE_ANSWER_DIR,
+    CLAUDE_CLOSE_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_INTERRUPT_DIR, CLAUDE_OWNER_DIR,
+    CLAUDE_PROMPT_DIR, CLAUDE_SESSION_DIR, CLAUDE_SPAWN_DIR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -76,6 +78,7 @@ struct Shared {
     events: Events,
     permissions: PermissionQueue<ClaudeReply>,
     mode: PermissionMode,
+    scheduled: bool,
     store: PathBuf,
     heartbeat: Arc<Heartbeat>,
     markers: WorkerMarkers,
@@ -154,7 +157,22 @@ impl Shared {
             .map_err(|e| format!("could not write to claude: {e}"))
     }
 
+    fn ask_unattended(&self, ask: &ClaudePermission) {
+        let at = chrono::Utc::now().to_rfc3339();
+        let answer = unattended_claude_answer(&self.id, &at, ask);
+        if let Some(report) = answer.report {
+            warn_if_err(
+                self.inbox.post(&report, 0),
+                format!("posting the denial of worker {}", self.id),
+            );
+        }
+        self.send(&answer.line).ok();
+    }
+
     fn ask(&self, ask: ClaudePermission) {
+        if self.scheduled {
+            return self.ask_unattended(&ask);
+        }
         match auto_answer(self.mode, saved_grants(&self.store), &ask) {
             Some(line) => {
                 self.send(&line).ok();
@@ -230,7 +248,10 @@ impl Shared {
                     let at = chrono::Utc::now().to_rfc3339();
                     let agent = HarnessId::Claude.as_str();
                     let report = prompt_failure_report(agent, &self.id, &at, &problem);
-                    self.inbox.post(&report, 0).ok();
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting the prompt failure of worker {}", self.id),
+                    );
                 }
                 Action::Interrupt(turn_id) => {
                     for line in self.interrupt_sends(&turn_id) {
@@ -268,7 +289,10 @@ impl Shared {
                 ClaudeLine::Malformed => {
                     let at = chrono::Utc::now().to_rfc3339();
                     let report = stuck_permission_report(&self.id, &at);
-                    self.inbox.post(&report, 0).ok();
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting the stuck permission of worker {}", self.id),
+                    );
                 }
                 ClaudeLine::Other => {}
             }
@@ -332,6 +356,7 @@ fn session_record(
         model: request.model.clone(),
         effort: None,
         permissions: Some(mode),
+        scheduled: request.scheduled,
     }
 }
 
@@ -460,14 +485,15 @@ impl ClaudeWorker {
         let expected_session = match session {
             ClaudeSession::New(id) | ClaudeSession::Resume(id) => id.to_string(),
         };
-        let args = claude_args(&ClaudeArgs {
+        let options = ClaudeArgs {
             model: request.model.as_deref(),
             mcp_config: &mcp_path.to_string_lossy(),
             attachments: &attachments,
             mode,
             session,
             copied: &copied,
-        });
+        };
+        let args = headless_claude_args(&options, request.scheduled);
         let paths = StartPaths {
             files,
             config: &mcp_path,
@@ -515,6 +541,7 @@ impl ClaudeWorker {
                 Arc::clone(&events),
             ),
             mode,
+            scheduled: request.scheduled,
             store: store.to_path_buf(),
             events,
             heartbeat,
@@ -557,7 +584,7 @@ impl ClaudeWorker {
         let session = match resume {
             Some(record) => Ok(record.session_id.clone()),
             None => {
-                shared.accept(task_prompt(&request.task));
+                shared.accept(request.prompt());
                 ready.recv_timeout(READY_TIMEOUT).unwrap_or_else(|_| {
                     Err(format!(
                         "claude was not ready after {}s",
@@ -768,7 +795,9 @@ impl HeadlessHost for ClaudeHost {
         for id in request_ids(&self.store_dir, CLAUDE_SESSION_DIR) {
             let files = self.files(&id);
             let activity = fs::read_to_string(activity_path(&self.store_dir, &id)).ok();
-            let lost = turn_lost_at_resume(activity.as_deref());
+            let tasks = scheduled_tasks(&self.store_dir);
+            let finishes = WorkerId::parse(&id).is_ok_and(|worker| has_open_run(&tasks, &worker));
+            let lost = turn_lost_at_resume(activity.as_deref()) && !finishes;
             let resumed = Resumed {
                 agent: HarnessId::Claude.as_str(),
                 id: &id,
@@ -828,8 +857,11 @@ impl HeadlessHost for ClaudeHost {
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let drained: Vec<(String, ClaudeWorker)> = locked(&self.workers).drain().collect();
+        let tasks = scheduled_tasks(&self.store_dir);
         for (id, mut worker) in drained {
-            for step in shutdown_steps(worker.shared.heartbeat.running()) {
+            let finishes = WorkerId::parse(&id).is_ok_and(|worker| has_open_run(&tasks, &worker));
+            let lost = worker.shared.heartbeat.running() && !finishes;
+            for step in shutdown_steps(lost) {
                 match step {
                     ShutdownStep::PostLostTurn => worker
                         .shared

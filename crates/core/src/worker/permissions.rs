@@ -1,7 +1,5 @@
 use crate::chat_answer::AnswerArgs;
-use crate::worker::{
-    deny_line, permission_response, ClaudePermission, Report, ReportStatus, ALLOW_ONCE,
-};
+use crate::worker::{deny_line, permission_response, ClaudePermission, Report, ALLOW_ONCE};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -405,18 +403,17 @@ pub fn permission_alert_report(id: &str, at: &str, content: &BlockedContent) -> 
         .iter()
         .map(|option| option.option_id.as_str())
         .collect();
-    Report {
-        worker: id.to_string(),
-        at: at.to_string(),
-        status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!(
+    Report::ralph_blocked(
+        id,
+        at,
+        format!(
             "Worker {id} is waiting for a permission answer on {}: {}. Answer it with reply, request {} and one optionId: {}.",
             content.tool,
             content.summary,
             content.request_id,
             ids.join(", ")
         ),
-    }
+    )
 }
 
 #[cfg(test)]

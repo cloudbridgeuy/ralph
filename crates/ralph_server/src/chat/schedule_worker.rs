@@ -1,14 +1,18 @@
 use crate::chat::monitor::{Monitor, POLL};
+use crate::cursor_owner::saved_workers;
 use crate::warn::warn_if_err;
 use crate::watches::locked;
 use crate::workers::{running_workers, SpawnArgs, Workers};
 use ralph_core::schedule::{Task, TaskStatus};
+use ralph_core::schedule_resume::{
+    finish_step, resume_failed_text, ChildState, FinishStep, Message, FINISH_TURN_MESSAGE,
+};
 use ralph_core::schedule_worker::{
     alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
     start_failure_text, timed_out_text, vanished_text, worker_brief, worker_deadline, worker_id,
-    WorkerEnd, WorkerFire,
+    WorkerEnd, WorkerFire, SCHEDULED_HARNESS,
 };
-use ralph_core::worker::{HarnessId, TargetRequest};
+use ralph_core::worker::{gone_path, TargetRequest, Worker, WorkerId};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -31,10 +35,21 @@ impl Drop for Starting {
     }
 }
 
-pub fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
+fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
     running_workers(store_dir)
         .into_iter()
         .map(|worker| worker.id)
+        .collect()
+}
+
+pub fn stored_workers(store_dir: &Path) -> Vec<Worker> {
+    running_workers(store_dir)
+        .into_iter()
+        .filter_map(|worker| {
+            let id = WorkerId::parse(&worker.id).ok()?;
+            Some(Worker::running(id, worker.kind))
+        })
+        .chain(saved_workers(store_dir))
         .collect()
 }
 
@@ -47,25 +62,69 @@ pub fn tick_workers(monitor: &Monitor, starts: &mut Vec<std::thread::JoinHandle<
     let any_running = tasks
         .iter()
         .any(|task| is_worker_task(task) && task.status == TaskStatus::Running);
-    let alive = if any_running {
-        alive_with_starting(
-            &alive_worker_ids(&monitor.store_dir),
-            &starting_ids(monitor),
-        )
+    let running = if any_running {
+        alive_worker_ids(&monitor.store_dir)
     } else {
         Vec::new()
     };
+    let held = [starting_ids(monitor), resuming_ids(monitor)].concat();
+    let alive = alive_with_starting(&running, &held);
     let reports = locked(&monitor.scheduled_reports).clone();
     let now = chrono::Utc::now();
     let plan = plan_worker_tick(&tasks, &reports, &alive, now, POLL);
     for (task, end) in &plan.ended {
         end_task(monitor, task, end, now);
     }
+    finish_lost_turns(monitor, &running, now);
     for fire in plan.fire {
         if let Some(start) = start_task(monitor, fire, now) {
             starts.push(start);
         }
     }
+}
+
+fn resuming_ids(monitor: &Monitor) -> Vec<String> {
+    locked(&monitor.resuming)
+        .iter()
+        .map(|turn| turn.task.clone())
+        .collect()
+}
+
+fn finish_lost_turns(monitor: &Monitor, running: &[String], now: chrono::DateTime<chrono::Utc>) {
+    let tasks = monitor.schedule.load_all();
+    locked(&monitor.resuming).retain_mut(|turn| {
+        let Some(task) = tasks
+            .iter()
+            .find(|task| task.id == turn.task && task.status == TaskStatus::Running)
+        else {
+            return false;
+        };
+        let worker = worker_id(&task.id);
+        let child = ChildState::observed(
+            running.contains(&worker),
+            gone_path(&monitor.store_dir, &worker).exists(),
+        );
+        match finish_step(turn, child, now) {
+            FinishStep::Wait => return true,
+            FinishStep::Send => match monitor.workers.nudge(&worker, FINISH_TURN_MESSAGE) {
+                Ok(_) => {
+                    turn.message = Message::Sent;
+                    return true;
+                }
+                Err(error) => crate::warn::warn(format!("resuming worker {worker}: {error}")),
+            },
+            FinishStep::Fail => {}
+        }
+        post_report(monitor, task, resume_failed_text(turn), now);
+        crate::schedule_rearm::finish_worker(
+            &monitor.schedule,
+            &monitor.inbox,
+            task,
+            &WorkerEnd::Attention,
+            now,
+        );
+        false
+    });
 }
 
 fn post_report(monitor: &Monitor, task: &Task, text: String, now: chrono::DateTime<chrono::Utc>) {
@@ -147,7 +206,7 @@ fn start_task(
         let args = SpawnArgs {
             id: &worker,
             task: &brief,
-            harness: HarnessId::ClaudeTmux,
+            harness: SCHEDULED_HARNESS,
             model: None,
             ticket: None,
             scheduled: true,
@@ -189,6 +248,9 @@ mod tests {
     use ralph_core::chat_process::{FileStamp, UsageTail};
     use ralph_core::chat_status::Status;
     use ralph_core::program_status::Phase;
+    use ralph_core::schedule::TaskKind;
+    use ralph_core::schedule_resume::LostTurn;
+    use ralph_core::worker::SessionRef;
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -220,6 +282,7 @@ mod tests {
             known: Mutex::new(Vec::new()),
             fresh: Mutex::new((Vec::new(), 0)),
             starting: Arc::default(),
+            resuming: Mutex::new(Vec::new()),
             scheduled_reports: Mutex::new(Vec::new()),
             warned: Mutex::new(HashSet::new()),
             unrecorded: Mutex::new(HashSet::new()),
@@ -246,5 +309,40 @@ mod tests {
         let _starting = Starting::enter(&first, "task");
         assert_eq!(starting_ids(&first), vec!["task".to_string()]);
         assert!(starting_ids(&second).is_empty());
+    }
+
+    #[test]
+    fn a_resumed_worker_with_an_exit_mark_fails_before_the_grace_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let monitor = monitor(dir.path());
+        let now = chrono::Utc::now();
+        let task = Task {
+            id: "a".to_string(),
+            kind: TaskKind::Worker {
+                brief: "do it".to_string(),
+            },
+            follow_up: None,
+            at: now,
+            timeout_secs: Some(3600),
+            status: TaskStatus::Running,
+            late: false,
+            deadline: None,
+            repeat: None,
+        };
+        monitor.schedule.save(&task).unwrap();
+        locked(&monitor.resuming).push(LostTurn {
+            task: task.id.clone(),
+            since: now,
+            message: Message::Unsent,
+            session: SessionRef::new(dir.path().join("claude-session/sched-a")),
+            limit: None,
+        });
+        let mark = gone_path(dir.path(), "sched-a");
+        std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
+        std::fs::write(mark, "claude exited").unwrap();
+        finish_lost_turns(&monitor, &[], now);
+        assert!(locked(&monitor.resuming).is_empty());
+        let reports = monitor.inbox.peek().unwrap();
+        assert!(reports[0].text.contains("needs you"), "{reports:?}");
     }
 }

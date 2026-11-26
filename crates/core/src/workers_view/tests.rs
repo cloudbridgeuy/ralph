@@ -74,12 +74,7 @@ fn non_report_statuses_and_other_roles_are_ignored() {
         entry(Role::Worker, "2026-01-01T00:10:00Z", text),
         entry(Role::User, "2026-01-01T00:11:00Z", "[worker A · done]\nx"),
     ];
-    let unread = [Report {
-        worker: "A".into(),
-        at: "2026-01-01T00:12:00Z".into(),
-        status: "check".into(),
-        text: "quiet".into(),
-    }];
+    let unread = [Report::check("A", "2026-01-01T00:12:00Z", "quiet".into())];
     assert!(group_reports(&entries, &unread).is_empty());
 }
 
@@ -97,12 +92,12 @@ fn unread_reports_sort_with_logged_ones_by_time() {
         "2026-01-01T00:30:00Z",
         "[worker A · done]\nold",
     )];
-    let unread = [Report {
-        worker: "A".into(),
-        at: "2026-01-01T00:40:00Z".into(),
-        status: "blocked".into(),
-        text: "new".into(),
-    }];
+    let unread = [Report::from_worker(
+        "A",
+        "2026-01-01T00:40:00Z",
+        crate::worker::ReportStatus::Blocked,
+        "new".into(),
+    )];
     let statuses: Vec<_> = group_reports(&entries, &unread)["A"]
         .iter()
         .map(|r| r.status.clone())

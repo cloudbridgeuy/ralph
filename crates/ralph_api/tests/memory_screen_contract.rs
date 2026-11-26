@@ -136,14 +136,15 @@ fn the_entries_table_opens_on_the_newest_page_unless_the_hash_sets_after() {
 }
 
 #[test]
-fn the_memory_ctx_carries_the_hash_after_never_the_resolved_one() {
+fn the_memory_ctx_carries_only_the_thread() {
     let body = script();
     assert!(body.contains("function memoryCtx(hashState)"));
     assert!(body.contains("const ctx = memoryCtx(hashState);"));
-    assert!(!body.contains("const ctx = { thread: state.thread, after: state.after"));
-    assert!(body.contains(
-        "return { thread: hashState.thread, after: hashState.after, node: hashState.node };"
-    ));
+    assert!(body.contains("return { thread: hashState.thread };"));
+    assert!(!body.contains("after: hashState.after"));
+    assert!(!body.contains("hashState.after, node"));
+    assert!(!body.contains("ctx.after"));
+    assert!(!body.contains("ctx.node"));
 }
 
 #[test]
@@ -196,7 +197,6 @@ fn the_script_builds_every_class_the_rust_tree_golden_emits() {
             "golden lacks {name}"
         );
     }
-    // The memory screen has no leaf rows: every node and entry row can open.
     for name in names.into_iter().filter(|name| name != "label") {
         assert!(
             body.contains(&format!("class: \"{name}\"")),
@@ -232,14 +232,17 @@ fn the_script_draws_the_same_chevron_and_extent_bar_as_the_rust_tree() {
 }
 
 #[test]
-fn a_pending_node_gets_the_neutral_pill_not_a_sentence_in_its_row() {
+fn a_block_with_no_summary_says_no_summary_yet_in_plain_text() {
     let body = script();
-    assert!(TREE_PENDING
-        .contains("<r-pill tone=\"neutral\" shape=\"square\"><span>pending</span></r-pill>"));
-    assert!(body.contains("\"r-pill\""));
-    assert!(body.contains("tone: \"neutral\""));
-    assert!(body.contains("shape: \"square\""));
-    assert!(!body.contains("node.summary === null ? \"summary pending\""));
+    assert!(!body.contains("pending"));
+    assert!(body.contains(r#"el("span", "no summary yet", { class: "none" })"#));
+    let cell = function_body(&body, "function summaryCell(");
+    assert!(cell.contains("summary === null"));
+    assert!(cell.contains("noSummary()"));
+    assert!(!cell.contains("pill("));
+    let block = function_body(&body, "function summaryBlock(");
+    assert!(block.contains("noSummary()"));
+    assert!(!block.contains("pill("));
 }
 
 #[test]
@@ -267,7 +270,7 @@ fn the_memory_header_kv_always_uses_the_two_variant_without_a_source() {
     let body = script();
     assert!(body.contains("function kv(pairs)"));
     assert!(body.contains("el(\"r-kv\", null, { two: \"\" })"));
-    assert!(body.contains("String(data.roots.entries)]]))"));
+    assert!(body.contains("kv(detailPairs("));
     let start = body.find("function kv(pairs)").unwrap();
     let end = start + body[start..].find("\n}\n").unwrap();
     assert!(!body[start..end].contains("source"));
@@ -323,4 +326,282 @@ fn the_entry_number_column_is_a_num_column_in_head_and_body() {
 fn first_line_reads_null_and_undefined_as_empty_text() {
     let body = script();
     assert!(body.contains(r#"String(text ?? "")"#));
+}
+
+fn function_body<'a>(body: &'a str, head: &str) -> &'a str {
+    let start = body.find(head).unwrap_or_else(|| panic!("no {head}"));
+    let end = start + body[start..].find("\n}\n").unwrap();
+    &body[start..end]
+}
+
+#[test]
+fn the_thread_select_is_replaced_by_tabs() {
+    let body = script();
+    assert!(!body.contains("threadSelect"));
+    assert!(!body.contains("\"select\""));
+    assert!(!body.contains("\"option\""));
+    let tabs = function_body(&body, "function threadTabs(");
+    assert!(tabs.contains(r#"el("nav", null, { class: "tabs", "aria-label": "threads" })"#));
+    assert!(tabs.contains(r#""aria-current": "page""#));
+    assert!(tabs.contains("pill(note)"));
+    assert!(tabs.contains("meta.parked"));
+    assert!(tabs.contains("meta.merged"));
+}
+
+#[test]
+fn the_stat_line_replaces_the_kv_box() {
+    let body = script();
+    assert!(body.contains(r#"el("p", statLine(data.roots.stats), { class: "statline" })"#));
+    let stat = function_body(&body, "function statLine(");
+    for field in ["entries", "blocks", "summarised", "last_at"] {
+        assert!(stat.contains(field), "{field}");
+    }
+    assert!(!stat.contains("pending"));
+    assert!(stat.contains(
+        r#"stats.entries + " entries, " + stats.summarised + " of " + stats.blocks + " blocks summarised" + last"#
+    ));
+    assert!(!body.contains(r#"kv([["thread""#));
+}
+
+#[test]
+fn the_screen_is_a_tree_beside_a_detail_pane() {
+    let body = script();
+    assert!(body.contains(r#"el("div", null, { class: "split" })"#));
+    assert!(body.contains(r#"el("div", null, { class: "detail" })"#));
+    assert!(body.contains(r#""aria-selected", "true""#));
+    assert!(body.contains("history.replaceState(null, \"\", buildHash("));
+    assert_eq!(body.matches("history.replaceState").count(), 1);
+}
+
+#[test]
+fn the_zoom_adds_no_summary_row_to_the_tree_group() {
+    let body = script();
+    let zoom = function_body(&body, "function zoomRows(zoom)");
+    assert!(!zoom.contains("summary"));
+    assert!(zoom.contains("zoom.children.map("));
+    let open = function_body(&body, "async function openNode(");
+    assert!(!open.contains("summary"));
+    assert!(!open.contains("fillRendered"));
+    assert!(!body.contains("row: \"summary\""));
+}
+
+#[test]
+fn the_script_never_writes_summary_pending_into_a_row() {
+    let body = script();
+    assert!(!body.contains("summary pending"));
+    assert!(!body.contains("r-empty\", \"summary"));
+}
+
+#[test]
+fn the_breadcrumb_is_built_from_the_api_path() {
+    let body = script();
+    let parts = function_body(&body, "function crumbParts(");
+    assert!(parts.contains("path.map("));
+    assert!(parts.contains("rangeLabel("));
+    assert!(parts.contains("buildHash("));
+    let crumbs = function_body(&body, "function crumbs(");
+    assert!(crumbs.contains(r#"el("nav", null, { class: "crumbs", "aria-label": "breadcrumb" })"#));
+    assert!(crumbs.contains(r#""aria-current": "page""#));
+    assert!(body.contains("crumbParts(state.thread, zoom ? zoom.path : [])"));
+    assert!(body.contains("function rangeLabel(lo, hi)"));
+    assert!(body.contains(r#""[" + lo + "-" + hi + "]""#));
+}
+
+#[test]
+fn a_leaf_root_node_is_drawn_as_the_entry() {
+    let body = script();
+    let rows = function_body(&body, "function rootRows(");
+    assert!(rows.contains("node.leaf && node.entry"));
+    assert!(rows.contains(r#"row: "entry", child: node.entry"#));
+    assert!(body.contains("rootRows(roots).forEach((row) => append(list, drawRow(1, row, total)))"));
+}
+
+#[test]
+fn a_folded_block_has_no_count_pill_and_no_expansion() {
+    let body = script();
+    assert!(!body.contains("function pendingLabel("));
+    assert!(!body.contains("stats.pending"));
+    let item = function_body(&body, "function nodeItem(");
+    assert!(item.contains("!node.folded"));
+    let tree = function_body(&body, "function treeItem(");
+    assert!(tree.contains(r#"if (expandable) item.setAttribute("aria-expanded", "false");"#));
+    assert!(tree.contains(r#"if (expandable) append(item, el("ul", null, { role: "group" }));"#));
+    assert!(tree.contains("if (expandable) append(button, chevron());"));
+}
+
+#[test]
+fn an_open_entry_hides_its_clipped_first_line() {
+    let body = script();
+    let toggle = function_body(&body, "function toggleEntry(");
+    assert!(toggle.contains(r#"cell.textContent = "";"#));
+    assert!(toggle.contains("cell.textContent = firstLine(entry.text);"));
+    assert!(toggle.contains("fillRendered("));
+    assert!(toggle.contains("detail.remove();"));
+    assert!(toggle.contains(r#"class: "state full""#));
+    assert!(toggle.contains("colspan: String(ENTRY_COLUMNS.length)"));
+}
+
+#[test]
+fn the_script_sets_aria_selected_and_open_on_entry_rows() {
+    let body = script();
+    let toggle = function_body(&body, "function toggleEntry(");
+    assert!(toggle.contains(r#"row.classList.add("open");"#));
+    assert!(toggle.contains(r#"row.classList.remove("open");"#));
+    assert!(toggle.contains(r#"row.setAttribute("aria-selected", "true");"#));
+    assert!(toggle.contains(r#"row.removeAttribute("aria-selected");"#));
+    assert!(toggle.contains(r#"row.setAttribute("aria-expanded", "true");"#));
+    assert!(toggle.contains(r#"row.setAttribute("aria-expanded", "false");"#));
+}
+
+#[test]
+fn an_entry_row_is_keyboard_reachable() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains(r#"tabindex: "0""#));
+    assert!(row.contains(r#"addEventListener("click""#));
+    assert!(row.contains(r#"addEventListener("keydown""#));
+    assert!(row.contains(r#"event.key === "Enter""#));
+    assert!(row.contains(r#"event.key === " ""#));
+    assert!(row.contains("event.preventDefault();"));
+}
+
+#[test]
+fn the_pager_binds_bracket_keys_and_ignores_form_fields_and_buttons() {
+    let body = script();
+    assert_eq!(
+        body.matches(r#"document.addEventListener("keydown""#)
+            .count(),
+        1
+    );
+    assert!(!body.contains("removeEventListener"));
+    let keys = function_body(&body, "function pagerDirection(");
+    assert!(keys.contains(
+        "event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || typing"
+    ));
+    assert!(keys.contains(r#"event.key === "[""#));
+    assert!(keys.contains(r#"event.key === "]""#));
+    let typing = function_body(&body, "function isTyping(");
+    for tag in ["INPUT", "SELECT", "TEXTAREA", "BUTTON"] {
+        assert!(typing.contains(&format!(r#""{tag}""#)));
+    }
+    assert!(typing.contains("isContentEditable"));
+    let handler = function_body(&body, "function onPagerKey(");
+    assert!(handler.contains("isTyping(event.target)"));
+    assert!(handler.contains("location.hash ="));
+    assert!(handler.contains(r#"a[data-pager="#));
+}
+
+#[test]
+fn the_pager_label_reads_entries_a_to_b_of_the_scope() {
+    let body = script();
+    let label = function_body(&body, "function pagerLabel(");
+    assert!(
+        label.contains(r#""entries " + after + "\u2013" + (after + count - 1) + " of " + scope"#)
+    );
+    assert!(label.contains(r#""entries 0 of " + scope"#));
+    assert!(!label.contains("total"));
+    let scope = function_body(&body, "function pagerScope(");
+    assert!(scope.contains("String(hi - lo)"));
+    assert!(scope.contains(r#"lo + "\u2013" + (hi - 1)"#));
+    let pager = function_body(&body, "function pager(");
+    assert!(pager.contains(
+        "pagerLabel(state.after, page.items.length, pagerScope(state.node, bounds.lo, bounds.hi))"
+    ));
+}
+
+#[test]
+fn the_pager_buttons_use_btn_and_kbd() {
+    let body = script();
+    let button = function_body(&body, "function pagerButton(");
+    assert!(button.contains(r#"class: "btn""#));
+    assert!(button.contains(r#"el("kbd", key)"#));
+    assert!(button.contains(r#""aria-disabled": "true""#));
+    assert!(button.contains(r#""data-pager": name"#));
+    assert!(!body.contains(r#"el("a", "older""#));
+    assert!(!body.contains(r#"el("a", "newer""#));
+    assert!(body.contains(r#"pagerButton("older", "[""#));
+    assert!(body.contains(r#"pagerButton("newer", "]""#));
+}
+
+#[test]
+fn a_hash_node_selects_the_nearest_visible_row() {
+    let body = script();
+    let step = function_body(&body, "function treeStep(");
+    assert!(step.contains("if (id === target) return \"here\";"));
+    assert!(step.contains("if (!containsNode(id, target)) return null;"));
+    assert!(step.contains("return expandable ? \"descend\" : \"here\";"));
+    let leaf = function_body(&body, "function leafRootKey(");
+    assert!(leaf.contains("idRange(target)"));
+    assert!(leaf.contains("range.lo === range.hi"));
+    assert!(leaf.contains("\"e\" + range.lo"));
+    let expand = function_body(&body, "async function expandTo(");
+    assert!(expand
+        .contains("treeStep(item.dataset.node, target, item.hasAttribute(\"aria-expanded\"))"));
+    assert!(expand.contains("step === \"here\""));
+    assert!(expand.contains("leafRootKey(target)"));
+    assert!(expand.contains(":scope > li > button[data-key="));
+    assert!(expand.contains("else if (depth > 0) selectRow(tree, scope);"));
+    assert!(!expand.contains("next.dataset.node === target"));
+}
+
+#[test]
+fn compact_at_shortens_a_utc_iso_time_and_leaves_anything_else_alone() {
+    let body = script();
+    assert!(body.contains(
+        r#"const AT_SHAPE = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?Z$/;"#
+    ));
+    let compact = function_body(&body, "function compactAt(");
+    assert!(compact.contains("AT_SHAPE.exec(String(iso))"));
+    assert!(compact.contains(r#"match ? match[1] + " " + match[2] : iso"#));
+}
+
+#[test]
+fn the_at_cell_shows_the_compact_time_with_the_full_time_in_its_title() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains("el(\"td\", compactAt(entry.at), { class: \"at\", title: entry.at })"));
+    assert!(!row.contains("el(\"td\", entry.at)"));
+}
+
+#[test]
+fn a_leaf_tree_row_shows_the_compact_time_then_the_first_line() {
+    let body = script();
+    let item = function_body(&body, "function entryItem(");
+    assert!(item.contains("summary: firstLine(entry.text)"));
+    assert!(item.contains("at: entry.at"));
+    assert!(!item.contains("summary: entry.at"));
+    let cell = function_body(&body, "function summaryCell(");
+    assert!(cell.contains("compactAt(at)"));
+    assert!(cell.contains("title: at"));
+}
+
+#[test]
+fn only_user_assistant_and_worker_roles_get_a_role_attribute() {
+    let body = script();
+    assert!(body.contains(r#"const ROLES = ["user", "assistant", "worker"];"#));
+    let attrs = function_body(&body, "function roleAttrs(");
+    assert!(attrs.contains(r#"ROLES.includes(role) ? { "data-role": role } : {}"#));
+}
+
+#[test]
+fn the_role_cell_and_the_tree_label_take_the_role_from_the_entry() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains("el(\"td\", entry.role, roleAttrs(entry.role))"));
+    let item = function_body(&body, "function entryItem(");
+    assert!(item.contains("role: entry.role"));
+    assert!(item.contains("\"#\" + entry.i"));
+    let tree = function_body(&body, "function treeItem(");
+    assert!(tree.contains("idLabel(label, cells.role)"));
+    let label = function_body(&body, "function idLabel(");
+    assert!(label.contains("roleAttrs(role)"));
+}
+
+#[test]
+fn the_at_cell_and_the_tree_time_carry_the_at_class() {
+    let body = script();
+    let row = function_body(&body, "function entryRow(");
+    assert!(row.contains(r#"{ class: "at", title: entry.at }"#));
+    let cell = function_body(&body, "function summaryCell(");
+    assert!(cell.contains(r#"{ class: "at", title: at }"#));
 }

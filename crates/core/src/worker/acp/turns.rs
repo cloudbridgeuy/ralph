@@ -1,12 +1,12 @@
-use crate::worker::{Report, ReportStatus, REPORT_REMINDER, WORKER_PROMPT};
+use crate::worker::{worker_prompt, Report, REPORT_REMINDER};
 use std::collections::VecDeque;
 
 pub fn prompt_entry_name(nanos: u64, pid: u32) -> String {
     format!("{nanos:020}-{pid}")
 }
 
-pub fn task_prompt(task: &str) -> String {
-    format!("{WORKER_PROMPT}\n\n{task}")
+pub fn task_prompt(task: &str, scheduled: bool) -> String {
+    format!("{}\n\n{task}", worker_prompt(scheduled))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,12 +201,11 @@ pub fn stop_problem(agent: &str, reason: &str) -> String {
 }
 
 pub fn prompt_failure_report(agent: &str, id: &str, at: &str, problem: &str) -> Report {
-    Report {
-        worker: id.to_string(),
-        at: at.to_string(),
-        status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!("The {agent} task prompt failed: {problem}."),
-    }
+    Report::ralph_blocked(
+        id,
+        at,
+        format!("The {agent} task prompt failed: {problem}."),
+    )
 }
 
 pub const REPEAT_REPORT_REFUSAL: &str = "Already reported this turn. End your turn now.";
@@ -225,6 +224,7 @@ pub fn accept_report(owner_required: bool, owner_exists: bool) -> bool {
 mod tests {
     use super::super::CURSOR_AGENT;
     use super::*;
+    use crate::worker::{SCHEDULED_WORKER_PROMPT, WORKER_PROMPT};
 
     #[test]
     fn only_a_flagged_server_refuses_a_repeat_report() {
@@ -269,9 +269,17 @@ mod tests {
 
     #[test]
     fn task_prompt_is_the_worker_rules_then_the_task() {
-        let prompt = task_prompt("do it");
+        let prompt = task_prompt("do it", false);
         assert!(prompt.starts_with(WORKER_PROMPT));
         assert!(prompt.ends_with("\n\ndo it"));
+    }
+
+    #[test]
+    fn scheduled_task_prompt_is_the_scheduled_rules_then_the_task() {
+        let prompt = task_prompt("do it", true);
+        assert!(prompt.starts_with(SCHEDULED_WORKER_PROMPT));
+        assert!(prompt.ends_with("\n\ndo it"));
+        assert!(!prompt.contains(WORKER_PROMPT));
     }
 
     #[test]
@@ -466,7 +474,7 @@ mod tests {
     fn prompt_failure_report_blocks_the_worker() {
         let report = prompt_failure_report(CURSOR_AGENT.name, "A", "2026-01-01T00:00:00Z", "boom");
         assert_eq!(report.worker, "A");
-        assert_eq!(report.status, "blocked");
+        assert_eq!(report.status.as_str(), "blocked");
         assert!(report.text.contains("boom"));
     }
 

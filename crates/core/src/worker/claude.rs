@@ -1,8 +1,7 @@
 use super::acp::REPORT_TOOL;
 use super::{
     allowed_tools, offer_allow_always, Action, ActivityMark, BlockedContent, PermissionMode,
-    PermissionOption, Report, ReportStatus, ThreadSignal, TurnEnd, Turns, VersionGate,
-    ALLOW_ALWAYS, SERVER_NAME,
+    PermissionOption, Report, ThreadSignal, TurnEnd, Turns, VersionGate, ALLOW_ALWAYS, SERVER_NAME,
 };
 use crate::chat::mcptools_ask_settings;
 use crate::stream::{interrupt_line, result_is_error};
@@ -49,12 +48,11 @@ pub struct ClaudePermission {
 }
 
 pub fn stuck_permission_report(id: &str, at: &str) -> Report {
-    Report {
-        worker: id.to_string(),
-        at: at.to_string(),
-        status: ReportStatus::Blocked.as_str().to_string(),
-        text: "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it.".to_string(),
-    }
+    Report::ralph_blocked(
+        id,
+        at,
+        "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it.".to_string(),
+    )
 }
 
 pub fn decode_line(line: &str) -> ClaudeLine {
@@ -122,6 +120,10 @@ pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> 
     } else {
         json!({"behavior": "deny", "message": "The person denied this tool call."})
     };
+    control_response(request_id, &decision)
+}
+
+pub(super) fn control_response(request_id: &str, decision: &Value) -> String {
     json!({"type": "control_response", "response": {"subtype": "success", "request_id": request_id, "response": decision}})
         .to_string()
 }
@@ -944,7 +946,7 @@ mod tests {
     fn a_stuck_permission_report_blocks_the_worker_with_the_close_hint() {
         let report = stuck_permission_report("A", "2026-01-01T00:00:00Z");
         assert_eq!(report.worker, "A");
-        assert_eq!(report.status, "blocked");
+        assert_eq!(report.status.as_str(), "blocked");
         assert_eq!(
             report.text,
             "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."

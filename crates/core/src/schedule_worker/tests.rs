@@ -1,5 +1,10 @@
 use super::*;
 
+#[test]
+fn a_scheduled_worker_runs_on_headless_claude() {
+    assert_eq!(SCHEDULED_HARNESS, HarnessId::Claude);
+}
+
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
         .unwrap()
@@ -30,11 +35,17 @@ fn running(id: &str, started: &str) -> Task {
 }
 
 fn report(worker: &str, at: &str, status: &str) -> Report {
-    Report {
-        worker: worker.to_string(),
-        at: at.to_string(),
-        status: status.to_string(),
-        text: "t".to_string(),
+    match crate::worker::ReportKind::parse(status).unwrap() {
+        crate::worker::ReportKind::Worker(s) => Report::from_worker(worker, at, s, "t".to_string()),
+        crate::worker::ReportKind::Check => Report::check(worker, at, "t".to_string()),
+        crate::worker::ReportKind::Warning => Report::warning(worker, at, "t".to_string()),
+        crate::worker::ReportKind::Watch => Report::watch(worker, at, "t".to_string()),
+        crate::worker::ReportKind::Merged => Report::merged(worker, at, "t".to_string()),
+        crate::worker::ReportKind::View => Report::view(worker, at, "t".to_string()),
+        crate::worker::ReportKind::ThreadClosed => {
+            Report::thread_closed(worker, at, "t".to_string())
+        }
+        crate::worker::ReportKind::External => Report::external(worker, at, "t".to_string()),
     }
 }
 
@@ -299,7 +310,7 @@ fn command_tasks_are_left_to_the_watch_path() {
 fn chat_reports_keep_the_schedule_tag() {
     let report = chat_report("a", "text".to_string(), "2026-01-01T10:00:00Z");
     assert_eq!(report.worker, "schedule:a");
-    assert_eq!(report.status, WATCH_STATUS);
+    assert_eq!(report.status.as_str(), "watch");
     assert_eq!(report.text, "text");
 }
 
@@ -368,6 +379,16 @@ fn only_a_running_record_with_that_id_is_still_running() {
     assert!(!is_still_running(&tasks, "b"));
     assert!(!is_still_running(&tasks, "c"));
     assert!(!is_still_running(&[], "a"));
+}
+
+#[test]
+fn a_task_names_its_worker_by_a_parsed_id() {
+    let named = |id| worker(id, "2026-01-01T00:00:00Z", TaskStatus::Running).worker();
+    assert_eq!(named("a"), WorkerId::parse("sched-a"));
+    assert_eq!(
+        named("a b"),
+        Err(WorkerIdError::NotDashed("sched-a b".to_string()))
+    );
 }
 
 #[test]

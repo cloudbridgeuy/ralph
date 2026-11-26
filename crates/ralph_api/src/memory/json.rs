@@ -1,16 +1,46 @@
+use super::path::zoom_path;
 use super::query::Scope;
-use ralph_core::chat_memory::{EntryView, NodeView, Page, ZoomChild, ZoomView};
+use super::stats::{is_folded, node_stats, tree_stats, NodeStats};
+use ralph_core::chat_memory::{Entry, EntryView, NodeView, Page, Tree, ZoomChild, ZoomView};
 use ralph_server::chat::memory::ThreadInfo;
 use serde_json::{json, Value};
 use std::path::Path;
 
-fn node_json(view: &NodeView) -> Value {
+fn root_node_json(view: &NodeView, entries: &[Entry], tree: &Tree) -> Value {
+    let mut value = node_json(view, tree);
+    if let Some(entry) = view.is_leaf.then(|| entries.get(view.node.lo)).flatten() {
+        value["entry"] = entry_json(&EntryView {
+            i: view.node.lo,
+            role: entry.role,
+            at: entry.at.clone(),
+            text: entry.text.clone(),
+        });
+    }
+    value
+}
+
+fn node_json(view: &NodeView, tree: &Tree) -> Value {
+    let stats = node_stats(&view.node, tree);
+    let folded = is_folded(&stats);
+    let NodeStats {
+        depth,
+        children,
+        blocks,
+        summarised,
+    } = stats;
     json!({
         "id": view.node.id(),
         "lo": view.node.lo,
         "hi": view.node.hi,
         "leaf": view.is_leaf,
         "summary": view.summary,
+        "folded": folded,
+        "stats": {
+            "depth": depth,
+            "children": children,
+            "blocks": blocks,
+            "summarised": summarised,
+        },
     })
 }
 
@@ -23,10 +53,10 @@ fn entry_json(view: &EntryView) -> Value {
     })
 }
 
-fn child_json(child: &ZoomChild) -> Value {
+fn child_json(child: &ZoomChild, tree: &Tree) -> Value {
     match child {
         ZoomChild::Block(view) => {
-            let mut value = node_json(view);
+            let mut value = node_json(view, tree);
             value["kind"] = json!("block");
             value
         }
@@ -38,15 +68,27 @@ fn child_json(child: &ZoomChild) -> Value {
     }
 }
 
-pub(crate) fn root_body(scope: &Scope, total: usize, nodes: &[NodeView]) -> Value {
+pub(crate) fn root_body(
+    scope: &Scope,
+    entries: &[Entry],
+    nodes: &[NodeView],
+    tree: &Tree,
+) -> Value {
+    let stats = tree_stats(entries, tree);
     json!({
         "thread": scope.label(),
-        "entries": total,
-        "nodes": nodes.iter().map(node_json).collect::<Vec<_>>(),
+        "entries": entries.len(),
+        "nodes": nodes.iter().map(|view| root_node_json(view, entries, tree)).collect::<Vec<_>>(),
+        "stats": {
+            "entries": stats.entries,
+            "blocks": stats.blocks,
+            "summarised": stats.summarised,
+            "last_at": stats.last_at,
+        },
     })
 }
 
-pub(crate) fn zoom_body(scope: &Scope, view: &ZoomView) -> Value {
+pub(crate) fn zoom_body(scope: &Scope, view: &ZoomView, total: usize, tree: &Tree) -> Value {
     let node = NodeView {
         node: view.node,
         summary: view.summary.clone(),
@@ -54,8 +96,9 @@ pub(crate) fn zoom_body(scope: &Scope, view: &ZoomView) -> Value {
     };
     json!({
         "thread": scope.label(),
-        "node": node_json(&node),
-        "children": view.children.iter().map(child_json).collect::<Vec<_>>(),
+        "node": node_json(&node, tree),
+        "path": zoom_path(total, &view.node),
+        "children": view.children.iter().map(|child| child_json(child, tree)).collect::<Vec<_>>(),
     })
 }
 
@@ -151,16 +194,101 @@ mod tests {
     #[test]
     fn root_golden() {
         let tree = fixture_tree();
-        let body = root_body(&Scope::Main, 11, &root_view(11, &tree));
+        let body = root_body(
+            &Scope::Main,
+            &fixture_entries(),
+            &root_view(11, &tree),
+            &tree,
+        );
         assert_golden_in("memory", "json", "root", &pretty(&body));
     }
 
     #[test]
     fn root_empty_chat() {
-        let body = root_body(&Scope::Main, 0, &root_view(0, &Tree::new()));
+        let tree = Tree::new();
+        let body = root_body(&Scope::Main, &[], &root_view(0, &tree), &tree);
         assert_eq!(
             body,
-            serde_json::json!({"thread": "main", "entries": 0, "nodes": []})
+            serde_json::json!({
+                "thread": "main",
+                "entries": 0,
+                "nodes": [],
+                "stats": {
+                    "entries": 0,
+                    "blocks": 0,
+                    "summarised": 0,
+                    "last_at": null,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn root_body_carries_the_stat_line_fields() {
+        let tree = fixture_tree();
+        let body = root_body(
+            &Scope::Main,
+            &fixture_entries(),
+            &root_view(11, &tree),
+            &tree,
+        );
+        assert_eq!(
+            body["stats"],
+            serde_json::json!({
+                "entries": 11,
+                "blocks": 8,
+                "summarised": 3,
+                "last_at": "2026-03-01T09:10:00Z",
+            })
+        );
+        assert_eq!(
+            body["nodes"][0]["stats"],
+            serde_json::json!({
+                "depth": 3,
+                "children": 2,
+                "blocks": 7,
+                "summarised": 2,
+            })
+        );
+    }
+
+    fn forty_five_entries() -> Vec<Entry> {
+        (0..45)
+            .map(|i| entry(Role::User, i % 60, &format!("entry {i}")))
+            .collect()
+    }
+
+    #[test]
+    fn a_leaf_root_node_carries_its_entry() {
+        let (entries, tree) = (forty_five_entries(), Tree::new());
+        let body = root_body(&Scope::Main, &entries, &root_view(45, &tree), &tree);
+        let last = body["nodes"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(last["leaf"], true);
+        assert_eq!(last["entry"]["i"], 44);
+        assert_eq!(last["entry"]["role"], "user");
+        assert_eq!(last["entry"]["text"], "entry 44");
+        assert_eq!(last["entry"]["at"], "2026-03-01T09:44:00Z");
+    }
+
+    #[test]
+    fn a_block_root_node_has_no_entry_key() {
+        let (entries, tree) = (forty_five_entries(), Tree::new());
+        let body = root_body(&Scope::Main, &entries, &root_view(45, &tree), &tree);
+        let nodes = body["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 4);
+        for block in &nodes[..3] {
+            assert!(block.get("entry").is_none());
+        }
+    }
+
+    #[test]
+    fn zoom_body_carries_the_path() {
+        let (entries, tree) = (forty_five_entries(), Tree::new());
+        let view = zoom_view(&entries, &tree, Node::new(0, 2).unwrap()).unwrap();
+        let body = zoom_body(&Scope::Main, &view, 45, &tree);
+        assert_eq!(
+            body["path"],
+            serde_json::json!(["0-31", "0-15", "0-7", "0-3", "0-1"])
         );
     }
 
@@ -172,7 +300,7 @@ mod tests {
             "memory",
             "json",
             "zoom_block",
-            &pretty(&zoom_body(&plan(), &view)),
+            &pretty(&zoom_body(&plan(), &view, entries.len(), &tree)),
         );
     }
 
@@ -184,7 +312,7 @@ mod tests {
             "memory",
             "json",
             "zoom_entries",
-            &pretty(&zoom_body(&Scope::Main, &view)),
+            &pretty(&zoom_body(&Scope::Main, &view, entries.len(), &tree)),
         );
     }
 
@@ -217,10 +345,12 @@ mod tests {
     #[test]
     fn bodies_carry_no_text_field_besides_entries() {
         let (entries, tree) = (fixture_entries(), fixture_tree());
-        let root = root_body(&Scope::Main, 11, &root_view(11, &tree));
+        let root = root_body(&Scope::Main, &entries[..8], &root_view(8, &tree), &tree);
         assert!(!pretty(&root).contains("\"text\""));
         let view = zoom_view(&entries, &tree, Node::new(0, 8).unwrap()).unwrap();
-        assert!(!pretty(&zoom_body(&Scope::Main, &view)).contains("\"text\""));
+        assert!(
+            !pretty(&zoom_body(&Scope::Main, &view, entries.len(), &tree)).contains("\"text\"")
+        );
     }
 
     #[test]
