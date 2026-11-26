@@ -53,6 +53,8 @@ The same drain stops after 64 KiB drained or 2 s since it started, checked betwe
 
 Local patch in `vendor/tiny_http`: the `EqualReader` read and drain counters use `saturating_sub`, so a reader that returns more bytes than asked cannot underflow (GUZ-1851).
 
+Local patch in `vendor/tiny_http`: `Timeouts.header` sets a total deadline for the request line and headers. The clock starts at the first request-line byte of each request. A read past the deadline fails with `TimedOut`, so the client gets 408 and a close. `None` keeps the old behaviour (GUZ-1851).
+
 ## Two-Crate Architecture (Functional Core - Imperative Shell)
 
 Separate pure logic from I/O operations using two crates:

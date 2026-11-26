@@ -6,6 +6,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read};
 
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 
 use crate::common::{HTTPVersion, Method};
 use crate::util::RefinedTcpStream;
@@ -34,6 +35,9 @@ pub struct ClientConnection {
 
     // true if the connection goes through SSL
     secure: bool,
+
+    header_limit: Option<Duration>,
+    header_started: Option<Instant>,
 }
 
 /// Error that can happen when reading a request.
@@ -51,6 +55,7 @@ impl ClientConnection {
     pub fn new(
         write_socket: RefinedTcpStream,
         mut read_socket: RefinedTcpStream,
+        header_limit: Option<Duration>,
     ) -> ClientConnection {
         let remote_addr = read_socket.peer_addr();
         let secure = read_socket.secure();
@@ -65,6 +70,8 @@ impl ClientConnection {
             next_header_source: first_header,
             no_more_requests: false,
             secure,
+            header_limit,
+            header_started: None,
         }
     }
 
@@ -95,6 +102,12 @@ impl ClientConnection {
                     .map_err(|_| IoError::new(ErrorKind::InvalidInput, "Header is not in ASCII"));
             }
 
+            let now = Instant::now();
+            let started = *self.header_started.get_or_insert(now);
+            if header_expired(Some(started), self.header_limit, now) {
+                return Err(IoError::new(ErrorKind::TimedOut, "Header read deadline"));
+            }
+
             prev_byte_was_cr = byte == b'\r';
 
             buf.push(byte);
@@ -104,6 +117,7 @@ impl ClientConnection {
     /// Reads a request from the stream.
     /// Blocks until the header has been read.
     fn read(&mut self) -> Result<Request, ReadError> {
+        self.header_started = None;
         let (method, path, version, headers) = {
             // reading the request line
             let (method, path, version) = {
@@ -265,6 +279,13 @@ impl Iterator for ClientConnection {
     }
 }
 
+fn header_expired(started: Option<Instant>, limit: Option<Duration>, now: Instant) -> bool {
+    match (started, limit) {
+        (Some(started), Some(limit)) => now.saturating_duration_since(started) >= limit,
+        _ => false,
+    }
+}
+
 /// Parses a "HTTP/1.1" string.
 fn parse_http_version(version: &str) -> Result<HTTPVersion, ReadError> {
     let (major, minor) = match version {
@@ -295,6 +316,65 @@ fn parse_request_line(line: &str) -> Result<(Method, String, HTTPVersion), ReadE
 
 #[cfg(test)]
 mod test {
+    use super::{header_expired, ClientConnection};
+    use crate::connection::Connection;
+    use crate::util::RefinedTcpStream;
+    use std::io::{ErrorKind, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::{Duration, Instant};
+
+    fn connection_with_pending(bytes: &[u8], limit: Option<Duration>) -> ClientConnection {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.write_all(bytes).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let (read, write) = RefinedTcpStream::new(Connection::from(server));
+        ClientConnection::new(write, read, limit)
+    }
+
+    #[test]
+    fn zero_header_limit_times_out_after_the_first_byte() {
+        let mut conn = connection_with_pending(
+            b"GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+            Some(Duration::ZERO),
+        );
+        let err = conn.read_next_line().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn missing_header_limit_reads_the_line() {
+        let mut conn = connection_with_pending(b"GET / HTTP/1.1\r\n", None);
+        assert_eq!(conn.read_next_line().unwrap().as_str(), "GET / HTTP/1.1");
+    }
+
+    #[test]
+    fn header_expired_is_false_before_the_first_byte() {
+        let now = Instant::now();
+        assert!(!header_expired(None, Some(Duration::ZERO), now));
+    }
+
+    #[test]
+    fn header_expired_is_false_without_a_limit() {
+        let now = Instant::now();
+        assert!(!header_expired(Some(now), None, now + Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn header_expired_is_false_below_the_limit() {
+        let start = Instant::now();
+        let now = start + Duration::from_secs(9);
+        assert!(!header_expired(Some(start), Some(Duration::from_secs(10)), now));
+    }
+
+    #[test]
+    fn header_expired_is_true_at_and_above_the_limit() {
+        let start = Instant::now();
+        let limit = Some(Duration::from_secs(10));
+        assert!(header_expired(Some(start), limit, start + Duration::from_secs(10)));
+        assert!(header_expired(Some(start), limit, start + Duration::from_secs(11)));
+    }
+
     #[test]
     fn test_parse_request_line() {
         let (method, path, ver) = super::parse_request_line("GET /hello HTTP/1.1").unwrap();

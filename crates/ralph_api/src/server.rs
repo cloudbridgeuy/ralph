@@ -29,6 +29,7 @@ pub enum ApiError {
 pub struct Limits {
     pub read: Duration,
     pub write: Duration,
+    pub header: Duration,
 }
 
 impl Default for Limits {
@@ -36,6 +37,7 @@ impl Default for Limits {
         Limits {
             read: Duration::from_secs(10),
             write: Duration::from_secs(10),
+            header: Duration::from_secs(10),
         }
     }
 }
@@ -44,6 +46,7 @@ fn timeouts_for(limits: &Limits) -> Timeouts {
     Timeouts {
         read: Some(limits.read),
         write: Some(limits.write),
+        header: Some(limits.header),
     }
 }
 
@@ -220,10 +223,12 @@ mod tests {
         let limits = Limits {
             read: Duration::from_millis(1234),
             write: Duration::from_millis(2345),
+            header: Duration::from_millis(3456),
         };
         let timeouts = timeouts_for(&limits);
         assert_eq!(timeouts.read, Some(limits.read));
         assert_eq!(timeouts.write, Some(limits.write));
+        assert_eq!(timeouts.header, Some(limits.header));
     }
 
     #[test]

@@ -117,6 +117,7 @@ fn start_limited(read: Duration) -> (u16, String, Arc<AtomicBool>, std::thread::
     let limits = Limits {
         read,
         write: Duration::from_secs(10),
+        header: Duration::from_secs(10),
     };
     let server = bind_with_limits(requested, &BindPolicy::loopback(), &limits).unwrap();
     let port = server.server_addr().to_ip().unwrap().port();
