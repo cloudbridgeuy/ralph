@@ -106,12 +106,12 @@ mod tests {
         Lane::Dropped,
     ];
 
-    fn svg(lane: Lane) -> String {
-        graph_svg(&lane_cells(lane))
+    fn svg(lane: Lane, last: bool) -> String {
+        graph_svg(&lane_cells(lane, last))
     }
 
-    fn inner(lane: Lane) -> String {
-        let svg = svg(lane);
+    fn inner(lane: Lane, last: bool) -> String {
+        let svg = svg(lane, last);
         svg.strip_prefix(OPEN)
             .and_then(|rest| rest.strip_suffix(CLOSE))
             .unwrap()
@@ -120,21 +120,25 @@ mod tests {
 
     #[test]
     fn graph_svg_golden() {
-        let rows: String = ALL.iter().map(|lane| svg(*lane)).collect();
+        let rows: String = ALL
+            .iter()
+            .enumerate()
+            .map(|(index, lane)| svg(*lane, index + 1 == ALL.len()))
+            .collect();
         assert_golden("graph", &rows);
     }
 
     #[test]
     fn each_kind_matches_the_mockup_paths() {
         assert_eq!(
-            inner(Lane::Head),
+            inner(Lane::Head, false),
             concat!(
                 "<path class=\"ln plain\" d=\"M4 12V25\"/>",
                 "<circle class=\"nd plain full\" cx=\"4\" cy=\"12\" r=\"3.25\"/>"
             )
         );
         assert_eq!(
-            inner(Lane::Open),
+            inner(Lane::Open, false),
             concat!(
                 "<path class=\"ln plain\" d=\"M4 -1V25\"/>",
                 "<path class=\"ln plain h\" d=\"M4 12H8\"/>",
@@ -143,7 +147,7 @@ mod tests {
             )
         );
         assert_eq!(
-            inner(Lane::Parked),
+            inner(Lane::Parked, false),
             concat!(
                 "<path class=\"ln plain\" d=\"M4 -1V25\"/>",
                 "<path class=\"ln plain h\" d=\"M4 12H8\"/>",
@@ -152,7 +156,7 @@ mod tests {
             )
         );
         assert_eq!(
-            inner(Lane::Merged),
+            inner(Lane::Merged, false),
             concat!(
                 "<path class=\"ln plain\" d=\"M4 -1V25\"/>",
                 "<path class=\"ln plain h\" d=\"M4 12H8\"/>",
@@ -162,9 +166,10 @@ mod tests {
             )
         );
         assert_eq!(
-            inner(Lane::Dropped),
+            inner(Lane::Dropped, false),
             concat!(
-                "<path class=\"ln plain\" d=\"M4 -1V8Q4 12 8 12\"/>",
+                "<path class=\"ln plain\" d=\"M4 -1V25\"/>",
+                "<path class=\"ln plain h\" d=\"M4 12H8\"/>",
                 "<path class=\"ln bad h\" d=\"M8 12H16\"/>",
                 "<path class=\"ln bad\" d=\"M17 9L23 15M23 9L17 15\"/>"
             )
@@ -172,9 +177,29 @@ mod tests {
     }
 
     #[test]
+    fn the_last_row_stops_the_trunk_at_the_curve() {
+        assert_eq!(
+            inner(Lane::Dropped, true),
+            concat!(
+                "<path class=\"ln plain\" d=\"M4 -1V8Q4 12 8 12\"/>",
+                "<path class=\"ln bad h\" d=\"M8 12H16\"/>",
+                "<path class=\"ln bad\" d=\"M17 9L23 15M23 9L17 15\"/>"
+            )
+        );
+        assert_eq!(
+            inner(Lane::Open, true),
+            concat!(
+                "<path class=\"ln plain\" d=\"M4 -1V8Q4 12 8 12\"/>",
+                "<path class=\"ln plain h\" d=\"M8 12H16\"/>",
+                "<circle class=\"nd plain\" cx=\"20\" cy=\"12\" r=\"3.25\"/>"
+            )
+        );
+    }
+
+    #[test]
     fn every_row_is_one_svg_in_one_graph_element() {
         for lane in ALL {
-            let svg = svg(lane);
+            let svg = svg(lane, false);
             assert!(svg.starts_with(OPEN), "{lane:?}");
             assert!(svg.ends_with(CLOSE), "{lane:?}");
             assert_eq!(svg.matches("<svg").count(), 1);
@@ -184,7 +209,7 @@ mod tests {
     #[test]
     fn no_colour_literal_or_inline_style_appears() {
         for lane in ALL {
-            let svg = svg(lane);
+            let svg = svg(lane, true);
             for literal in ["#", "rgb", "hsl", "style=", "stroke=", "fill=", "url("] {
                 assert!(!svg.contains(literal), "{lane:?} {literal}");
             }

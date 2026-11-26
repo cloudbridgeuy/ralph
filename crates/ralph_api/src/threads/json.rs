@@ -30,7 +30,7 @@ fn created_text(created: &str) -> String {
         .unwrap_or_else(|_| created.to_string())
 }
 
-fn thread_row(row: &ThreadRow, now: DateTime<Utc>) -> Value {
+fn thread_row(row: &ThreadRow, now: DateTime<Utc>, last: bool) -> Value {
     json!({
         "kind": "thread",
         "name": row.name,
@@ -42,12 +42,12 @@ fn thread_row(row: &ThreadRow, now: DateTime<Utc>) -> Value {
         "messages": row.messages,
         "workers": row.workers,
         "unread": row.unread,
-        "svg": lane_svg(state_lane(&row.state)),
+        "svg": lane_svg(state_lane(&row.state), last),
     })
 }
 
-fn lane_svg(lane: Lane) -> String {
-    graph_svg(&lane_cells(lane))
+fn lane_svg(lane: Lane, last: bool) -> String {
+    graph_svg(&lane_cells(lane, last))
 }
 
 fn state_lane(state: &ThreadState) -> Lane {
@@ -58,7 +58,7 @@ fn state_lane(state: &ThreadState) -> Lane {
     }
 }
 
-fn head_row(messages: usize) -> Value {
+fn head_row(messages: usize, last: bool) -> Value {
     json!({
         "kind": "head",
         "name": "main",
@@ -70,11 +70,11 @@ fn head_row(messages: usize) -> Value {
         "messages": messages,
         "workers": null,
         "unread": null,
-        "svg": lane_svg(Lane::Head),
+        "svg": lane_svg(Lane::Head, last),
     })
 }
 
-fn dropped_row(tombstone: &Tombstone) -> Value {
+fn dropped_row(tombstone: &Tombstone, last: bool) -> Value {
     json!({
         "kind": "dropped",
         "name": tombstone.name,
@@ -86,7 +86,7 @@ fn dropped_row(tombstone: &Tombstone) -> Value {
         "messages": null,
         "workers": null,
         "unread": null,
-        "svg": lane_svg(Lane::Dropped),
+        "svg": lane_svg(Lane::Dropped, last),
     })
 }
 
@@ -97,13 +97,21 @@ fn dropped_in_name_order(tombstones: &[Tombstone]) -> Vec<&Tombstone> {
 }
 
 pub(crate) fn threads_body(store: &str, snapshot: &ThreadsSnapshot, now: DateTime<Utc>) -> Value {
-    let rows: Vec<Value> = std::iter::once(head_row(snapshot.head_messages))
-        .chain(snapshot.rows.iter().map(|row| thread_row(row, now)))
-        .chain(
-            dropped_in_name_order(&snapshot.tombstones)
-                .into_iter()
-                .map(dropped_row),
-        )
+    let dropped = dropped_in_name_order(&snapshot.tombstones);
+    let total = 1 + snapshot.rows.len() + dropped.len();
+    let is_last = |index: usize| index + 1 == total;
+    let threads = snapshot
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| thread_row(row, now, is_last(index + 1)));
+    let tombstones = dropped
+        .into_iter()
+        .enumerate()
+        .map(|(index, tombstone)| dropped_row(tombstone, is_last(1 + snapshot.rows.len() + index)));
+    let rows: Vec<Value> = std::iter::once(head_row(snapshot.head_messages, is_last(0)))
+        .chain(threads)
+        .chain(tombstones)
         .collect();
     json!({"store": store, "rows": rows})
 }
@@ -277,11 +285,117 @@ mod tests {
             Lane::Dropped,
         ];
         assert_eq!(rows(&body).len(), lanes.len());
-        for (row, lane) in rows(&body).iter().zip(lanes) {
-            let expected = graph_svg(&lane_cells(lane));
+        for (index, (row, lane)) in rows(&body).iter().zip(lanes).enumerate() {
+            let expected = graph_svg(&lane_cells(lane, index + 1 == lanes.len()));
             assert_eq!(row["svg"], expected.as_str(), "{}", row["name"]);
             assert!(expected.starts_with("<r-graph><svg"));
         }
+    }
+
+    fn tomb(name: &str) -> Tombstone {
+        Tombstone {
+            name: name.to_string(),
+            base: 2,
+            created: "2025-12-30T00:00:00Z".to_string(),
+            dropped_at: "2026-01-06T00:00:00Z".to_string(),
+        }
+    }
+
+    fn svg_of(body: &Value, index: usize) -> &str {
+        rows(body)[index]["svg"].as_str().unwrap()
+    }
+
+    const CURVE: &str = "M4 -1V8Q4 12 8 12";
+    const TRUNK: &str = "M4 -1V25";
+    const HEAD: &str = "M4 12V25";
+    const BRANCH: &str = "class=\"ln plain h\"";
+
+    #[test]
+    fn the_last_row_ends_the_trunk_at_the_curve() {
+        let mut snapshot = fixture();
+        snapshot.tombstones = vec![];
+        let body = threads_body("chat", &snapshot, now());
+        let last = rows(&body).len() - 1;
+        assert!(svg_of(&body, last).contains(CURVE));
+        assert!(!svg_of(&body, last).contains(TRUNK));
+    }
+
+    #[test]
+    fn a_dropped_row_that_is_not_last_continues_the_trunk() {
+        let mut snapshot = fixture();
+        snapshot.tombstones = vec![tomb("a-idea"), tomb("b-idea")];
+        let body = threads_body("chat", &snapshot, now());
+        let first_dropped = svg_of(&body, 4);
+        assert!(first_dropped.contains(TRUNK));
+        assert!(first_dropped.contains("M4 12H8"));
+        assert!(!first_dropped.contains('Q'));
+        assert!(svg_of(&body, 5).contains(CURVE));
+    }
+
+    fn demo_snapshot() -> ThreadsSnapshot {
+        let mut snapshot = fixture();
+        snapshot.rows.insert(
+            1,
+            row("auth-rework", ThreadState::Open, 1, "2026-01-02T00:00:00Z"),
+        );
+        snapshot.tombstones = vec![tomb("a-idea"), tomb("b-idea")];
+        snapshot
+    }
+
+    #[test]
+    fn exactly_one_row_curves_and_it_is_the_last_in_the_demo_shape() {
+        let body = threads_body("chat", &demo_snapshot(), now());
+        let count = rows(&body).len();
+        assert_eq!(count, 7);
+        let curved: Vec<usize> = (0..count)
+            .filter(|index| svg_of(&body, *index).contains('Q'))
+            .collect();
+        assert_eq!(curved, [count - 1]);
+        for index in 1..count - 1 {
+            assert!(svg_of(&body, index).contains(TRUNK), "row {index}");
+            assert!(svg_of(&body, index).contains("M4 12H8"), "row {index}");
+        }
+        assert!(!svg_of(&body, 0).contains('Q'));
+    }
+
+    #[test]
+    fn without_dropped_rows_the_last_open_row_ends_the_trunk() {
+        let mut snapshot = fixture();
+        snapshot.tombstones = vec![];
+        snapshot.rows.truncate(1);
+        snapshot
+            .rows
+            .push(row("tail", ThreadState::Open, 1, "2026-01-02T00:00:00Z"));
+        let body = threads_body("chat", &snapshot, now());
+        assert_eq!(rows(&body).len(), 3);
+        assert!(svg_of(&body, 1).contains(TRUNK));
+        assert!(!svg_of(&body, 1).contains('Q'));
+        assert!(svg_of(&body, 2).contains(CURVE));
+        assert!(!svg_of(&body, 2).contains(TRUNK));
+    }
+
+    #[test]
+    fn a_single_thread_under_the_head_is_the_last_row() {
+        let mut snapshot = empty();
+        snapshot.rows.push(row(
+            "only",
+            ThreadState::Parked("2026-01-03T00:00:00Z".to_string()),
+            1,
+            "2026-01-02T00:00:00Z",
+        ));
+        let body = threads_body("chat", &snapshot, now());
+        assert!(!svg_of(&body, 0).contains('Q'));
+        assert!(svg_of(&body, 1).contains(CURVE));
+    }
+
+    #[test]
+    fn a_head_alone_keeps_its_plain_dot() {
+        let body = threads_body("chat", &empty(), now());
+        assert_eq!(rows(&body).len(), 1);
+        assert_eq!(svg_of(&body, 0), graph_svg(&lane_cells(Lane::Head, true)));
+        assert!(svg_of(&body, 0).contains(HEAD));
+        assert!(!svg_of(&body, 0).contains(BRANCH));
+        assert!(!svg_of(&body, 0).contains('Q'));
     }
 
     #[test]

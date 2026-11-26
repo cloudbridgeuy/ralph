@@ -84,7 +84,7 @@ pub fn culprit_path<'a, E: PartialEq>(
 }
 
 const SECURITY_KEYS: [&str; 18] = [
-    "chat.permission_mode",
+    "chat.claude.permission_mode",
     "chat.permissions",
     "chat.mcp_servers",
     "chat.user_settings",
@@ -103,6 +103,15 @@ const SECURITY_KEYS: [&str; 18] = [
     "changes.diff_args",
     "usage.ledger",
 ];
+
+pub fn removed_permission_mode(layer: &Table) -> Option<&'static str> {
+    ["ask", "chat"].into_iter().find(|section| {
+        layer
+            .get(*section)
+            .and_then(Value::as_table)
+            .is_some_and(|table| table.contains_key("permission_mode"))
+    })
+}
 
 pub fn security_keys(layer: &Table) -> Vec<&'static str> {
     SECURITY_KEYS

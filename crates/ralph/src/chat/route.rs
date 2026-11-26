@@ -224,6 +224,7 @@ mod tests {
     use ralph_core::chat_stage::view::{stage_view, StageInput, StageView};
     use ralph_core::chat_stage::{Item, Kind};
     use ralph_core::chat_status::Status;
+    use ralph_core::worker::ClaudeMode;
     use serde_json::{json, Value};
 
     fn owed_view() -> StageView {
@@ -303,7 +304,7 @@ mod tests {
             workers: Workers::new(
                 dir.path().to_path_buf(),
                 "ralph".into(),
-                String::new(),
+                ClaudeMode::Auto,
                 None,
             ),
             live: Arc::new(AtomicBool::new(false)),

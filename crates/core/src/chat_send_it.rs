@@ -5,7 +5,7 @@ use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{
     describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT, OUTPUT_HEADER,
 };
-use crate::worker::{hex_encode, HarnessId, Report};
+use crate::worker::{hex_encode, HarnessId, Report, WorkerId};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -63,7 +63,7 @@ impl std::str::FromStr for VerifyMode {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Criterion {
     WorkerDone {
-        worker: String,
+        worker: WorkerId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify: Option<String>,
     },

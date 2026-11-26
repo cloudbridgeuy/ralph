@@ -26,6 +26,7 @@ pub(crate) use ralph_server::chat::tag_store;
 mod send_it;
 mod sent;
 pub(crate) mod session;
+mod stash;
 mod statusbar;
 mod suggestion;
 mod switch;
@@ -47,6 +48,7 @@ use crate::chat::resize::{Resize, Watch};
 use crate::chat::route::LocalRoute;
 use crate::chat::schedule::approve_proposed;
 use crate::chat::send_it::InboxTurn;
+use crate::chat::stash::DraftStash;
 use crate::chat::statusbar::{BarContext, StatusBar};
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::chat::switch::chat_exit;
@@ -280,11 +282,15 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
     let headless = watch_headless(monitor.store_dir.clone());
+    let stash = DraftStash::default();
+    let exit_stash = stash.clone();
+    let exit_store = store_dir.clone();
     watch_input(
         Arc::clone(&at_prompt),
         Arc::clone(&turn.session),
         ExitCleanup::new(monitor.watches.clone(), &headless, guard.0.clone()),
         Arc::clone(&term),
+        move || exit_stash.save_before_hard_exit(&exit_store),
     );
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion, sent_style));
@@ -459,6 +465,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         inbox_display: &inbox_display,
         local: &local_route,
         editor,
+        stash,
         pending: None,
         sending: None,
         offered: None,

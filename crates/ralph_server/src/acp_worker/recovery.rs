@@ -341,7 +341,7 @@ mod tests {
             agent: AGY_AGENT,
             launch: Launch::Fresh,
             cwd: cwd.clone(),
-            server,
+            servers: vec![server],
             worker_id: "A".into(),
             model: None,
             effort: None,
@@ -412,8 +412,8 @@ mod tests {
         write_file(&files.session, &record.render())?;
         let report = ralph_core::worker::prompt_failure_report(
             "agy",
-            "A",
-            "2026-01-01T00:00:00Z",
+            &ralph_core::worker::WorkerId::parse("A").unwrap(),
+            "2026-01-01T00:00:00Z".parse().unwrap(),
             "unfinished",
         );
         write_file(

@@ -229,14 +229,17 @@ fn emitted_graph_class_sets() -> Vec<Vec<String>> {
     use crate::render::graph_svg;
     use crate::threads::cells::{lane_cells, Lane};
     let mut sets: Vec<Vec<String>> = Vec::new();
-    for lane in [
+    for (lane, last) in [
         Lane::Head,
         Lane::Open,
         Lane::Parked,
         Lane::Merged,
         Lane::Dropped,
-    ] {
-        let svg = graph_svg(&lane_cells(lane));
+    ]
+    .into_iter()
+    .flat_map(|lane| [(lane, false), (lane, true)])
+    {
+        let svg = graph_svg(&lane_cells(lane, last));
         for chunk in svg.split("class=\"").skip(1) {
             let classes = chunk.split('"').next().unwrap();
             let set: Vec<String> = classes.split(' ').map(str::to_string).collect();

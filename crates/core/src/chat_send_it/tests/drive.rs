@@ -453,7 +453,7 @@ fn only_a_run_waiting_on_a_generated_check_watch_awaits_a_check() {
 
 fn watch_report(id: &str, text: &str) -> Report {
     Report {
-        worker: id.to_string(),
+        from: crate::worker::Sender::parse(id).unwrap(),
         text: text.to_string(),
         ..report("watch")
     }

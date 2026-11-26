@@ -168,7 +168,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 - `kind` is `head`, `thread` or `dropped`. `state` is `head`, `open`, `parked`, `merged` or `dropped`. `age` is the time since the park or merge, and `null` for the other states.
 - The head row has `messages` (the length of the main log) and nulls for `age`, `base`, `created`, `active`, `workers` and `unread`. A dropped row has only `name`, `kind` and `state` and `svg`; the other fields are null.
 - A thread row has `base` (the fork point), `created` (in UTC as `YYYY-MM-DDTHH:MM:SSZ`; a stored value that does not parse is sent as it is), `active` (the time since the last write to its log, or `null`), `messages`, `workers` (running workers) and `unread` (unread inbox reports). The values come from the same readers as `ralph thread ls`: `Store::log_len`, the mtime of `log.jsonl`, `running_workers_in` and `Inbox::unread_count`. `thread_rows` takes one tmux listing for each request and passes it to `running_workers_in` for each thread, with the store of that thread, so the request runs `tmux` once. `running_workers` still serves the other callers: it takes its own listing and calls `running_workers_in`. The code is a second copy of that read in `ralph_server::chat::memory::thread_rows`, and both sort with `sort_rows`.
-- `svg` is one three-cell lane for each row, drawn on the server as an [r-graph](#primitives).
+- `svg` is one three-cell lane for each row, drawn on the server as an [r-graph](#primitives). Column 0 is `├` on every row except the last. The last row has `╰`, which ends the trunk at the curve. The head row keeps `●`. A dropped row is `├─✕` unless it is the last row.
 - Read: the thread folders, the length and mtime of each log, `threads/dropped.jsonl`, the worker and inbox counts. Not read: costs, `history.jsonl`, `tags.jsonl`, paths.
 - Each request reads the store again. There is no cache and no lock, and nothing is written.
 - Code: `crates/ralph_api/src/threads_api.rs` (the thin read), `threads/json.rs` (the body), `threads/cells.rs` (the lanes), `render/graph.rs` (the SVG).
@@ -342,7 +342,8 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - The pager.
 - Tree rows:
   - A folded block is one row with the `no summary yet` text. It has no `aria-expanded` and does not open.
-  - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. It opens to show the full text.
+  - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. In the tree, it opens to show the full text. The entries table in the detail pane has its own in-place rows, described under `Entries and paging`.
+  - Any entry row in the entries table of the detail pane opens in place. See `Entries and paging`.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
   - A block with no summary shows `no summary yet` in its row.
   - Colours (role tokens only, set in `css/memory.css`): the role of an entry is in a `data-role` attribute, set only for `user` (`--r-ink`), `assistant` (`--r-accent`) and `worker` (`--r-info`). Other roles get no attribute and keep the inherited colour. It colours the `role` cell and the role in a leaf row (`#44 user`). Times (`.at`, in the table and in leaf rows) are `--r-muted`. Row summary text is `--r-ink`. The extent span is `--r-faint`. The `n` count stays `--r-muted` and range labels stay bold `--r-ink-strong`, both from `css/tree.css`.
@@ -350,7 +351,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 - Entries and paging:
   - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
   - The label reads `entries A–B of N`. A and B are absolute 0-based inclusive positions. With no node, N is the entry count. In a node, N is the node range `lo–hi-1`, as in the tree labels, so node 32-63 on its first page reads `entries 32–51 of 32–63`. An empty page reads `entries 0 of N` with the same N.
-  - An entry row opens in place: it gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`, and a detail row below holds the rendered text. Click, Enter or Space toggles it. Only one row is open at a time.
+  - An entry row opens in place. A click, Enter or Space toggles it. An open row gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`. A closed row has `aria-expanded="false"`, no `aria-selected` and no `open` class. A detail row below the open row holds the full text, which goes through `POST /api/render`. Only one row is open at a time. A click on the open row closes it. A click on another row closes the open one and opens the new one. While a row is open, its text cell is empty. On close, the cell shows the first line again.
   - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`. The `.btn` look comes from `css/controls.css`; `css/memory.css` only lays the links out and mutes a disabled one, hover included.
   - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `button`, `select`, `textarea` and editable fields (a focused tree row is a `button`), and with Ctrl, Meta or Alt.
 - Summary and entry text go to `POST /api/render`. The returned `r-prose` HTML goes through `setRendered`, the only `innerHTML` in the scripts. All other text uses `textContent`.

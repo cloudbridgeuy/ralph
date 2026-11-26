@@ -2,6 +2,7 @@ use crate::chat::prompt::screen_columns;
 use crate::chat::thread_cmd::{merge_line, record_cli_merge};
 use crate::cli::{ThreadArgs, ThreadCommand, MERGE_TIMEOUT_SECS};
 use crate::{run_curator, Curator};
+use chrono::{DateTime, Utc};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallSite, Entry, Tree};
 pub use ralph_core::chat_thread::config_root;
@@ -155,7 +156,7 @@ fn merge_with(
     main: &Path,
     name: &ThreadName,
     running: &[String],
-    report: impl FnOnce(&ThreadMeta, &[Entry], &Tree, &str) -> Result<Report, String>,
+    report: impl FnOnce(&ThreadMeta, &[Entry], &Tree, DateTime<Utc>) -> Result<Report, String>,
 ) -> Result<String, String> {
     let dir = thread_dir(main, name);
     let meta = known_meta(&dir, name)?;
@@ -164,11 +165,11 @@ fn merge_with(
     let _claim = claim_closed(&dir, name)?;
     let failed = |e: io::Error| format!("could not merge thread {name}: {e}");
     let (entries, tree) = Store::new(dir.clone()).load().map_err(failed)?;
-    let at = chrono::Utc::now().to_rfc3339();
-    let report = report(&meta, &entries, &tree, &at)?;
+    let now = Utc::now();
+    let report = report(&meta, &entries, &tree, now)?;
     let merged = ThreadMeta {
         merged: Some(Merged {
-            at,
+            at: now.to_rfc3339(),
             digest: report.text.clone(),
             landed: None,
         }),
@@ -508,7 +509,7 @@ mod tests {
         )
         .unwrap();
         let global = root.path().join("global.toml");
-        let loaded = load_for_chat(&global, &config_root(&dir).join("config.toml"));
+        let loaded = load_for_chat(&global, &config_root(&dir).join("config.toml")).unwrap();
         assert_eq!(loaded.config.chat.recent_history_tokens, Some(1234));
     }
 
@@ -823,7 +824,9 @@ mod tests {
         let (_root, main, dir) = forked();
         let auth = name("auth");
         let inbox = Inbox::new(dir.join(INBOX_DIR));
-        inbox.post(&merged_report(&auth, "a", "t1"), 0).unwrap();
+        inbox
+            .post(&merged_report(&auth, "a", chrono::DateTime::UNIX_EPOCH), 0)
+            .unwrap();
         let files = || fs::read_dir(dir.join(INBOX_DIR)).unwrap().count();
         let counts = |workers| {
             let listed = rows(&main, &|_| workers).unwrap();
@@ -833,7 +836,9 @@ mod tests {
         assert_eq!(files(), 1);
         assert!(!dir.join("inbox.json").exists());
         assert_eq!(inbox.peek().unwrap().len(), 1);
-        inbox.post(&merged_report(&auth, "b", "t2"), 1).unwrap();
+        inbox
+            .post(&merged_report(&auth, "b", chrono::DateTime::UNIX_EPOCH), 1)
+            .unwrap();
         assert_eq!(counts(1), (1, 2));
         assert_eq!(inbox.drain(Selection::All).unwrap().len(), 2);
         assert_eq!(counts(0), (0, 0));

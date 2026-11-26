@@ -4,7 +4,7 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
     EXIT_CODE_KILLED,
 };
-use super::{default_sigttou_in, kill_process_group};
+use super::{default_sigttou_in, kill_process_group, Invocation};
 use crate::disk_files::DiskFiles;
 use ralph_core::cancel::CancelToken;
 use ralph_core::stream::blocks::StreamCollector;
@@ -13,7 +13,7 @@ use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone)]
 pub struct SpinnerSubprocessConfig {
-    pub command: String,
+    pub command: Invocation,
     pub timeout_secs: Option<u64>,
     pub verbose_tools: VerboseToolsConfig,
     pub show_tools: bool,
@@ -55,17 +55,17 @@ pub fn invoke_subprocess_silent(
     run_subprocess_with_spinner(config, Display::Silent, codex)
 }
 
-pub(super) fn spawn_piped(command_text: &str, stdin: Stdio) -> io::Result<Child> {
-    let mut command = Command::new("sh");
+pub(super) fn spawn_piped(invocation: &Invocation, stdin: Stdio) -> io::Result<Child> {
+    let mut command = invocation.command();
     command
-        .arg("-c")
-        .arg(command_text)
         .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
     default_sigttou_in(&mut command);
-    command.spawn()
+    command
+        .spawn()
+        .map_err(|error| invocation.spawn_error(error))
 }
 
 pub(super) struct Readers {
@@ -429,7 +429,11 @@ mod tests {
 
     fn config(sink: &Arc<Recording>) -> SpinnerSubprocessConfig {
         SpinnerSubprocessConfig {
-            command: String::new(),
+            command: Invocation {
+                program: "true",
+                args: Vec::new(),
+                env: Vec::new(),
+            },
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),
             show_tools: false,

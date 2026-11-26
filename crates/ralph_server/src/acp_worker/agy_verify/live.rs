@@ -24,7 +24,7 @@ fn shell_prompt(target: &Path) -> String {
 
 fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
     if delivered
-        && matches!(reports, [entry] if entry.worker == ID && entry.status.as_str() == "done" && entry.text == TEXT)
+        && matches!(reports, [entry] if entry.from.to_string() == ID && entry.status.as_str() == "done" && entry.text == TEXT)
     {
         Ok("one expected report delivered".to_string())
     } else {
@@ -222,8 +222,11 @@ fn prepare(
         .map_err(|error| format!("could not create verify worktree: {error}"))?;
     let mut opening = opening(dir, "unused", mode, updates);
     opening.cwd = worktree;
-    opening.server = serde_json::from_value(acp_mcp_server(&exe, ID, &opening.inbox, &owner, None))
-        .map_err(|error| format!("could not configure worker MCP: {error}"))?;
+    opening.servers =
+        vec![
+            serde_json::from_value(acp_mcp_server(&exe, ID, &opening.inbox, &owner, None))
+                .map_err(|error| format!("could not configure worker MCP: {error}"))?,
+        ];
     Ok(opening)
 }
 
@@ -413,28 +416,32 @@ mod tests {
 
     #[test]
     fn report_requires_one_exact_delivery() {
-        let entry =
-            Report::from_worker(ID, "t", ralph_core::worker::ReportStatus::Done, TEXT.into());
+        let entry = Report::from_worker(
+            &ralph_core::worker::WorkerId::parse(ID).unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
+            ralph_core::worker::ReportStatus::Done,
+            TEXT.into(),
+        );
         assert!(report(std::slice::from_ref(&entry), true).is_ok());
         assert!(report(&[], true).is_err());
         assert!(report(std::slice::from_ref(&entry), false).is_err());
         assert!(report(&[entry.clone(), entry.clone()], true).is_err());
         for bad in [
             Report::from_worker(
-                "other",
-                "t",
+                &ralph_core::worker::WorkerId::parse("other").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
                 ralph_core::worker::ReportStatus::Done,
                 TEXT.into(),
             ),
             Report::from_worker(
-                ID,
-                "t",
+                &ralph_core::worker::WorkerId::parse(ID).unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
                 ralph_core::worker::ReportStatus::Blocked,
                 TEXT.into(),
             ),
             Report::from_worker(
-                ID,
-                "t",
+                &ralph_core::worker::WorkerId::parse(ID).unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
                 ralph_core::worker::ReportStatus::Done,
                 "wrong".into(),
             ),

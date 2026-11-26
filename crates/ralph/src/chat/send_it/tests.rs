@@ -1,11 +1,11 @@
 use super::*;
-use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
 use ralph_core::chat_send_it::{
     plan_hash, write_run, Action, Awaiting, Limits, Refusal, Seen, StepResult, Trust, VerifyMode,
 };
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
+use ralph_core::{chat_local::notice_record, worker::ClaudeMode};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::send_it::{Screen, NOT_PROPOSED, NO_RUN};
 use ralph_server::chat::session::{Emit, Event};
@@ -406,7 +406,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     let (send_it, active) = judging(dir.path());
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
-        workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+        workers: Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None),
         send_it: send_it.clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
@@ -457,8 +457,8 @@ fn the_next_tick_takes_the_answered_workers_once() {
         watched: None,
     };
     let flagged = [ralph_core::worker::Report::from_worker(
-        "E1",
-        "2026-01-01T00:00:00Z",
+        &ralph_core::worker::WorkerId::parse("E1").unwrap(),
+        "2026-01-01T00:00:00Z".parse().unwrap(),
         ralph_core::worker::ReportStatus::Question,
         "q".to_string(),
     )];
@@ -500,7 +500,7 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
     let dir = tempfile::tempdir().unwrap();
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
-        workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+        workers: Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None),
         send_it: quiet(dir.path()),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
@@ -542,7 +542,7 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
     let dir = tempfile::tempdir().unwrap();
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
-        workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+        workers: Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None),
         send_it: quiet(dir.path()),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
@@ -677,7 +677,7 @@ fn go_on_a_stopped_worker_step_skips_it_once_the_worker_reported_done() {
     go(&send_it, Some(&hash), true);
     send_it.release(&hash, Some(1)).unwrap();
     let done = ralph_core::worker::ReportKind::parse("done").unwrap();
-    let last = [("GUZ-1".to_string(), done)].into();
+    let last = [(ralph_core::worker::WorkerId::parse("GUZ-1").unwrap(), done)].into();
     let seen = Seen {
         last: &last,
         running: &[],

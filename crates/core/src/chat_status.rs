@@ -23,6 +23,7 @@ use crate::watch_command::{format_left, parse_watch_args, time_left, WatchComman
 use crate::watch_store::SavedWatch;
 use crate::worker::{
     opencode_session_id, same_store, tagged_sessions, Attention, HarnessId, Report, ReportKind,
+    WorkerId,
 };
 use crate::worker_costs::args::{parse_costs_args, CostsArgs};
 use serde::{Deserialize, Serialize};
@@ -522,16 +523,16 @@ fn ready_is_covered(
         || resumable.iter().any(|session| session == id)
 }
 
-pub fn latest_states(reports: &[Report]) -> HashMap<String, ReportKind> {
+pub fn latest_states(reports: &[Report]) -> HashMap<WorkerId, ReportKind> {
     reports
         .iter()
-        .map(|r| (r.worker.clone(), r.status))
+        .filter_map(|r| r.from.worker().map(|id| (id.clone(), r.status)))
         .collect()
 }
 
 pub fn worker_states(
     workers: &[RunningWorker],
-    seen: &HashMap<String, ReportKind>,
+    seen: &HashMap<WorkerId, ReportKind>,
     sent: &HashSet<String>,
     active: Option<&HashSet<String>>,
     blocked: &HashSet<String>,
@@ -543,7 +544,7 @@ pub fn worker_states(
             state: worker_state(
                 worker,
                 blocked.contains(&worker.id),
-                seen.get(&worker.id)
+                seen.get(worker.id.as_str())
                     .copied()
                     .filter(|status| !superseded(*status, sent.contains(&worker.id))),
                 active,
@@ -630,3 +631,5 @@ mod rerender_tests;
 mod tests;
 #[cfg(test)]
 mod thread_route_tests;
+#[cfg(test)]
+mod worker_state_tests;

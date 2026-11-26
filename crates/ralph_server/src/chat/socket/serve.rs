@@ -415,11 +415,12 @@ mod tests {
     use super::*;
     use ralph_core::chat_send_it::{Limits, VerifyMode};
     use ralph_core::chat_socket::{sidecar_name, socket_file_name};
+    use ralph_core::worker::ClaudeMode;
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
     fn workers() -> Workers {
-        Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None)
+        Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None)
     }
 
     fn shared(dir: &Path) -> Shared {

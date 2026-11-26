@@ -1,6 +1,7 @@
 use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::markdown::Palette;
 use ralph_core::worker::{ReportKind, ReportStatus};
+use termimad::crossterm::style::Color;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const FRAME_WIDTH: usize = 4;
@@ -59,8 +60,8 @@ fn truncate_to_width(text: &str, max: usize) -> String {
     out
 }
 
-fn status_color(status: ReportKind, palette: &Palette) -> String {
-    fg(match status {
+fn status_color(status: ReportKind, palette: &Palette) -> Option<Color> {
+    match status {
         ReportKind::Worker(ReportStatus::Done) => palette.done,
         ReportKind::Worker(ReportStatus::Blocked) => palette.blocked,
         ReportKind::Check => palette.waiting,
@@ -71,7 +72,7 @@ fn status_color(status: ReportKind, palette: &Palette) -> String {
         | ReportKind::View
         | ReportKind::ThreadClosed
         | ReportKind::External => None,
-    })
+    }
 }
 
 pub fn worker_header(
@@ -86,7 +87,7 @@ pub fn worker_header(
     let fixed = format!("{STATUS_DOT} worker  · {status}").width();
     let room = terminal_width.saturating_sub(FRAME_WIDTH + fixed);
     let worker = truncate_to_width(worker, room);
-    let tint = status_color(status, palette);
+    let tint = fg(status_color(status, palette));
     let row = format!(
         "{tint}{STATUS_DOT}{RESET} {DIM}worker{RESET} {BOLD}{worker}{RESET} {DIM}·{RESET} {BOLD}{tint}{status}{RESET}"
     );
@@ -96,8 +97,7 @@ pub fn worker_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ansi::{BLUE, GREEN, RED, YELLOW};
-    use termimad::crossterm::style::Color;
+    use crate::ansi::{BLUE, GREEN, RED};
 
     const DONE: ReportKind = ReportKind::Worker(ReportStatus::Done);
     const BLOCKED: ReportKind = ReportKind::Worker(ReportStatus::Blocked);
@@ -127,16 +127,16 @@ mod tests {
         let palette = Palette::default();
         for kind in ReportKind::ALL {
             let expected = match kind {
-                ReportKind::Worker(ReportStatus::Done) => GREEN,
-                ReportKind::Worker(ReportStatus::Blocked) => RED,
-                ReportKind::Check => YELLOW,
+                ReportKind::Worker(ReportStatus::Done) => Some(Color::DarkGreen),
+                ReportKind::Worker(ReportStatus::Blocked) => Some(Color::DarkRed),
+                ReportKind::Check => Some(Color::DarkYellow),
                 ReportKind::Worker(ReportStatus::Question)
                 | ReportKind::Warning
                 | ReportKind::Watch
                 | ReportKind::Merged
                 | ReportKind::View
                 | ReportKind::ThreadClosed
-                | ReportKind::External => "",
+                | ReportKind::External => None,
             };
             assert_eq!(status_color(kind, &palette), expected, "{kind}");
         }

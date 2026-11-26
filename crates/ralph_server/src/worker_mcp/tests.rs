@@ -93,8 +93,8 @@ fn drop_worker_removes_its_queued_reports_and_logs_each() {
     let inbox = Inbox::new(dir.path().join("inbox"));
     for (worker, seq) in [("A", 1), ("B", 1), ("A", 2)] {
         let report = Report::from_worker(
-            worker,
-            &format!("2026-11-10T13:00:0{seq}Z"),
+            &WorkerId::parse(worker).unwrap(),
+            format!("2026-11-10T13:00:0{seq}Z").parse().unwrap(),
             ReportStatus::Done,
             "t".to_string(),
         );
@@ -105,7 +105,7 @@ fn drop_worker_removes_its_queued_reports_and_logs_each() {
         .peek()
         .unwrap()
         .into_iter()
-        .map(|r| r.worker)
+        .map(|r| r.from.to_string())
         .collect();
     assert_eq!(left, ["B"]);
     let log = fs::read_to_string(dir.path().join(DROP_LOG)).unwrap();
@@ -190,7 +190,7 @@ fn report_lands_in_inbox_and_drains_once() {
     assert_eq!(inbox.peek().unwrap().len(), 1);
     let reports = inbox.drain(Selection::All).unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].worker, "GUZ-1");
+    assert_eq!(reports[0].from.to_string(), "GUZ-1");
     assert_eq!(reports[0].text, "hello");
     assert!(inbox.peek().unwrap().is_empty());
 }
@@ -361,8 +361,8 @@ fn drain_some_takes_only_that_position() {
     let inbox = Inbox::new(dir.path().join("inbox"));
     for (seq, text) in [(1, "one"), (2, "two")] {
         let report = Report::from_worker(
-            "A",
-            &format!("2026-01-01T00:00:0{seq}Z"),
+            &WorkerId::parse("A").unwrap(),
+            format!("2026-01-01T00:00:0{seq}Z").parse().unwrap(),
             ReportStatus::Done,
             text.to_string(),
         );
@@ -379,8 +379,8 @@ fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
     let inbox = Inbox::new(dir.path().join("inbox"));
     let post = |text: &str, seq| {
         let report = Report::from_worker(
-            "A",
-            &format!("2026-01-01T00:00:0{seq}Z"),
+            &WorkerId::parse("A").unwrap(),
+            format!("2026-01-01T00:00:0{seq}Z").parse().unwrap(),
             ReportStatus::Done,
             text.to_string(),
         );
@@ -401,7 +401,12 @@ fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
 }
 
 fn same_name_report(text: &str) -> Report {
-    Report::ralph_blocked("schedule:a", "2026-01-01T00:00:00Z", text.to_string())
+    Report {
+        from: ralph_core::worker::Sender::parse("schedule:a").unwrap(),
+        at: "2026-01-01T00:00:00Z".parse().unwrap(),
+        status: ralph_core::worker::ReportKind::Worker(ReportStatus::Blocked),
+        text: text.to_string(),
+    }
 }
 
 fn queued_texts(inbox: &Inbox) -> Vec<String> {

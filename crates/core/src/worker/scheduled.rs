@@ -1,10 +1,12 @@
 use super::acp::REPORT_TOOL;
 use super::{
     agy_auto_allow_option, claude_args, control_response, disallowed_tool_args, mcptools_decision,
-    permission_response, BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision,
-    PermissionMode, PermissionOption, Report, SandboxMode, ALLOW_ONCE, SERVER_NAME, WORKER_PROMPT,
+    permission_response, BlockedContent, ClaudeArgs, ClaudeMode, ClaudePermission,
+    McptoolsDecision, PermissionMode, PermissionOption, Report, SandboxMode, WorkerId, ALLOW_ONCE,
+    SERVER_NAME, WORKER_PROMPT,
 };
 use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::ffi::OsString;
 
@@ -29,7 +31,7 @@ pub fn worker_prompt(scheduled: bool) -> &'static str {
     }
 }
 
-pub const SCHEDULED_PERMISSION_MODE: &str = "auto";
+pub const SCHEDULED_PERMISSION_MODE: ClaudeMode = ClaudeMode::Auto;
 
 const WORKER_TOOLS: [&str; 2] = [REPORT_TOOL, "set_status"];
 
@@ -90,7 +92,7 @@ fn option_of_kind<'a>(content: &'a BlockedContent, kind: &str) -> Option<&'a Per
     content.options.iter().find(|option| option.kind == kind)
 }
 
-fn refusal(content: &BlockedContent) -> Unattended<'_> {
+pub fn refusal(content: &BlockedContent) -> Unattended<'_> {
     option_of_kind(content, "reject_once").map_or(Unattended::Cancel, Unattended::Deny)
 }
 
@@ -119,8 +121,8 @@ pub struct UnattendedAnswer {
 }
 
 pub fn unattended_claude_answer(
-    worker: &str,
-    at: &str,
+    worker: &WorkerId,
+    at: DateTime<Utc>,
     ask: &ClaudePermission,
 ) -> UnattendedAnswer {
     let id = &ask.content.request_id;
@@ -153,8 +155,8 @@ impl<'a> Unattended<'a> {
 
     pub fn denial_report(
         &self,
-        worker: &str,
-        at: &str,
+        worker: &WorkerId,
+        at: DateTime<Utc>,
         content: &BlockedContent,
     ) -> Option<Report> {
         match self {
@@ -164,12 +166,13 @@ impl<'a> Unattended<'a> {
     }
 }
 
-fn denied_report(worker: &str, at: &str, content: &BlockedContent) -> Report {
+fn denied_report(worker: &WorkerId, at: DateTime<Utc>, content: &BlockedContent) -> Report {
     Report::ralph_blocked(
         worker,
         at,
         format!(
-            "Scheduled worker {worker} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
+            "Scheduled worker {} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
+            worker.as_str(),
             content.tool, content.summary
         ),
     )
@@ -239,7 +242,7 @@ mod tests {
             store: Path::new("/s"),
             mcp_config: Path::new("/s/workers/A.json"),
             settings: Path::new("/s/workers/A.settings.json"),
-            permission_mode: "auto",
+            permission_mode: ClaudeMode::Auto,
             attachments: Path::new("/s/attachments"),
             task_dir: Path::new("/s/workers/A.task"),
             model: None,
@@ -402,7 +405,7 @@ mod tests {
     #[test]
     fn a_scheduled_worker_forces_auto_mode_whatever_the_chat_uses() {
         let chat = ClaudeWorkerArgs {
-            permission_mode: "bypassPermissions",
+            permission_mode: ClaudeMode::BypassPermissions,
             ..claude_args()
         };
         let scheduled = ClaudeWorkerArgs {
@@ -468,7 +471,7 @@ mod tests {
     #[test]
     fn an_unscheduled_worker_keeps_the_chat_mode() {
         let chat = ClaudeWorkerArgs {
-            permission_mode: "acceptEdits",
+            permission_mode: ClaudeMode::AcceptEdits,
             ..claude_args()
         };
         assert_eq!(mode_after_flag(&worker_command(&chat)), "acceptEdits");
@@ -687,7 +690,13 @@ mod tests {
 
     #[test]
     fn unattended_claude_allows_reads_and_denies_everything_else_with_a_report() {
-        let answer = |ask: &ClaudePermission| unattended_claude_answer("sched-1", "now", ask);
+        let answer = |ask: &ClaudePermission| {
+            unattended_claude_answer(
+                &WorkerId::parse("sched-1").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                ask,
+            )
+        };
         let read = answer(&claude_ask("mcp__mcptools__execute", json!({"code": "x"})));
         assert!(read.line.contains(r#""behavior":"allow""#), "{}", read.line);
         assert_eq!(read.report, None);
@@ -716,7 +725,7 @@ mod tests {
             );
             assert!(!denied.line.contains("person"), "{}", denied.line);
             let report = denied.report.unwrap();
-            assert_eq!(report.worker, "sched-1");
+            assert_eq!(report.from.to_string(), "sched-1");
             assert!(report.text.contains(&ask.content.tool));
         }
     }
@@ -725,18 +734,34 @@ mod tests {
     fn a_denial_or_cancel_reports_blocked_and_an_allow_reports_nothing() {
         let bash = content("Bash", codex_options());
         for verdict in [Unattended::Deny(&bash.options[1]), Unattended::Cancel] {
-            let report = verdict.denial_report("sched-1", "2026-11-24T10:00:00Z", &bash);
+            let report = verdict.denial_report(
+                &WorkerId::parse("sched-1").unwrap(),
+                "2026-11-24T10:00:00Z".parse().unwrap(),
+                &bash,
+            );
             assert!(report.is_some(), "{verdict:?}");
             let report = report.unwrap();
-            assert_eq!(report.worker, "sched-1");
-            assert_eq!(report.at, "2026-11-24T10:00:00Z");
+            assert_eq!(report.from.to_string(), "sched-1");
+            assert_eq!(
+                report.at,
+                "2026-11-24T10:00:00Z"
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .unwrap()
+            );
             assert_eq!(report.status, ReportKind::Worker(ReportStatus::Blocked));
             assert!(report.text.contains("Bash"));
             assert!(report.text.contains("do it"));
             assert!(report.text.contains("nobody was watching"));
         }
         let allow = Unattended::Allow(&bash.options[0]);
-        assert_eq!(allow.denial_report("sched-1", "now", &bash), None);
+        assert_eq!(
+            allow.denial_report(
+                &WorkerId::parse("sched-1").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                &bash
+            ),
+            None
+        );
     }
 
     #[test]

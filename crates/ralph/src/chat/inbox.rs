@@ -71,7 +71,7 @@ fn render_report(report: &Report, display: &Display, width: usize) -> String {
     format!(
         "{}\n{}",
         worker_header(
-            &report.worker,
+            &report.from.to_string(),
             report.status,
             width,
             display.color.then_some(&display.theme.palette)
@@ -87,8 +87,8 @@ mod tests {
 
     fn report(worker: &str) -> Report {
         Report::from_worker(
-            worker,
-            "2026-11-17T00:00:00Z",
+            &ralph_core::worker::WorkerId::parse(worker).unwrap(),
+            "2026-11-17T00:00:00Z".parse().unwrap(),
             ralph_core::worker::ReportStatus::Done,
             format!("{worker} finished"),
         )

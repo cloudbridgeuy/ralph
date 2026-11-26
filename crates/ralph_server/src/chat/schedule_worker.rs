@@ -128,9 +128,11 @@ fn finish_lost_turns(monitor: &Monitor, running: &[String], now: chrono::DateTim
 }
 
 fn post_report(monitor: &Monitor, task: &Task, text: String, now: chrono::DateTime<chrono::Utc>) {
-    let report = chat_report(&task.id, text, &now.to_rfc3339());
+    let report = chat_report(&task.id, text, now);
     warn_if_err(
-        monitor.inbox.post(&report, 0),
+        report
+            .map_err(std::io::Error::other)
+            .and_then(|report| monitor.inbox.post(&report, 0)),
         format!("posting schedule {}", task.id),
     );
 }
@@ -223,9 +225,11 @@ fn start_task(
             (Err(_), false) | (Ok(_), true) => {}
             (Err(error), true) => {
                 let text = start_failure_text(&task.id, &error.to_string());
-                let report = chat_report(&task.id, text, &now.to_rfc3339());
+                let report = chat_report(&task.id, text, now);
                 warn_if_err(
-                    inbox.post(&report, 0),
+                    report
+                        .map_err(std::io::Error::other)
+                        .and_then(|report| inbox.post(&report, 0)),
                     format!("posting schedule {}", task.id),
                 );
                 store.remove(&task.id);
@@ -250,7 +254,7 @@ mod tests {
     use ralph_core::program_status::Phase;
     use ralph_core::schedule::TaskKind;
     use ralph_core::schedule_resume::LostTurn;
-    use ralph_core::worker::SessionRef;
+    use ralph_core::worker::{ClaudeMode, SessionRef};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -274,7 +278,7 @@ mod tests {
             workers: Workers::new(
                 dir.to_path_buf(),
                 PathBuf::from("ralph"),
-                String::new(),
+                ClaudeMode::Auto,
                 None,
             ),
             check: Mutex::new(CheckState::seeded(&store)),
