@@ -22,3 +22,4 @@ ralph_core = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 ureq = { workspace = true, features = ["rustls"] }
+png = { workspace = true }

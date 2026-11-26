@@ -41,6 +41,7 @@ flate2 = "1"
 futures = "0.3"
 gif = { version = "0.14", default-features = false, features = ["std"] }
 image-webp = "0.2"
+png = "0.18"
 zune-core = "0.5"
 zune-jpeg = "0.5"
 
