@@ -133,7 +133,9 @@ fn value_is_sensitive(value: &Value) -> bool {
     match value {
         Value::String(text) => text_is_sensitive(text),
         Value::Array(items) => items.iter().any(value_is_sensitive),
-        Value::Object(map) => map.values().any(value_is_sensitive),
+        Value::Object(map) => map
+            .iter()
+            .any(|(key, value)| text_is_sensitive(key) || value_is_sensitive(value)),
         _ => false,
     }
 }
@@ -321,6 +323,12 @@ mod tests {
     fn sensitive_key_segments_redact_the_value() {
         assert!(redacts("wire.prices./Users/me/srv.input", &json!(1), false));
         assert!(!redacts("wire.prices.gpt.input", &json!(1), false));
+    }
+
+    #[test]
+    fn an_object_key_inside_an_array_is_sensitive() {
+        assert!(redacts("web.font", &json!([{"/Users/x": 1}]), false));
+        assert!(redacts("web.font", &json!([{"a": {"~/y": 1}}]), false));
     }
 
     #[test]

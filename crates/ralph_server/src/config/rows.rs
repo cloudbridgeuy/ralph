@@ -224,6 +224,18 @@ mod tests {
     }
 
     #[test]
+    fn an_array_of_tables_with_a_path_key_is_redacted_in_rows() {
+        let effective: Table = "[web]\nfont = [{\"/Users/x\" = 1}]\n".parse().unwrap();
+        let empty = Table::new();
+        let layered = leaf_sources(&effective, &empty, &empty);
+        let rows = build_rows(&layered, &[]);
+        let font = find(&rows, "web", "font");
+        assert!(font.redacted);
+        let body = serde_json::to_string(&rows).unwrap();
+        assert!(!body.contains("/Users"), "{body}");
+    }
+
+    #[test]
     fn invalid_toml_is_a_parse_error() {
         let (g, s) = dirs_with(Some("[chat\nwrap_width = "), None);
         let result = config_rows(&g.path().join("config.toml"), s.path(), no_env);
