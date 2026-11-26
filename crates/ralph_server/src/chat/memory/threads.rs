@@ -15,23 +15,19 @@ use std::path::Path;
 pub struct ThreadsSnapshot {
     pub rows: Vec<ThreadRow>,
     pub head_messages: usize,
-    pub live: Vec<(String, ThreadMeta)>,
     pub tombstones: Vec<Tombstone>,
 }
 
 pub fn thread_rows(store: &Path) -> io::Result<ThreadsSnapshot> {
     let head_messages = Store::new(store.to_path_buf()).log_len()?;
     let mut rows = Vec::new();
-    let mut live = Vec::new();
     for (name, meta) in live_threads(store)? {
         rows.push(row_of(store, &name, &meta)?);
-        live.push((name.to_string(), meta));
     }
     sort_rows(&mut rows);
     Ok(ThreadsSnapshot {
         rows,
         head_messages,
-        live,
         tombstones: tombstones(store),
     })
 }

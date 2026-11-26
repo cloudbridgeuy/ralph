@@ -61,14 +61,14 @@ pub fn lanes_from(threads: &[(String, ThreadMeta)], tombstones: &[Tombstone]) ->
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tone {
+enum Tone {
     Plain,
     Green,
     Yellow,
     Red,
 }
 
-pub type Cell = (char, Tone);
+type Cell = (char, Tone);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
@@ -255,7 +255,7 @@ fn lane_glyph(
     }
 }
 
-fn row_cells(r: usize, row: Row, lanes: &[&Lane], spans: &[Span]) -> Vec<Cell> {
+fn graph_cells(r: usize, row: Row, lanes: &[&Lane], spans: &[Span]) -> Vec<Cell> {
     let mut graph = vec![(' ', Tone::Plain); 2 * (lanes.len() + 1)];
     if matches!(row, Row::Trunk(_)) {
         graph[0] = ('●', Tone::Plain);
@@ -316,33 +316,10 @@ fn painted(line: &[Cell], color: bool) -> String {
     out
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RowKind {
-    Trunk { id: usize, head: bool },
-    Tip { name: String, end: LaneEnd },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GraphRow {
-    pub cells: Vec<Cell>,
-    pub label_start: usize,
-    pub kind: RowKind,
-}
-
-fn kind_of(head: Option<usize>, row: Row, lanes: &[&Lane]) -> RowKind {
-    match row {
-        Row::Tip(i) => RowKind::Tip {
-            name: lanes[i].name.clone(),
-            end: lanes[i].end.clone(),
-        },
-        Row::Trunk(id) => RowKind::Trunk {
-            id,
-            head: head == Some(id),
-        },
+pub fn graph_lines(head: Option<usize>, lanes: &[Lane], opts: &GraphOpts) -> Vec<String> {
+    if head.is_none() && lanes.is_empty() {
+        return vec!["●".to_string()];
     }
-}
-
-fn build_rows(head: Option<usize>, lanes: &[Lane], width: usize) -> Vec<GraphRow> {
     let lanes = ordered(lanes);
     let rows = rows_of(head, &lanes);
     let spans: Vec<Span> = lanes
@@ -351,41 +328,15 @@ fn build_rows(head: Option<usize>, lanes: &[Lane], width: usize) -> Vec<GraphRow
         .map(|(i, lane)| span_of(i, lane, &rows))
         .collect();
     let graph_width = 2 * (lanes.len() + 1) + 1;
-    let budget = width.saturating_sub(graph_width);
+    let budget = opts.width.saturating_sub(graph_width);
     rows.iter()
         .enumerate()
         .map(|(r, &row)| {
-            let mut line = row_cells(r, row, &lanes, &spans);
+            let mut line = graph_cells(r, row, &lanes, &spans);
             line.push((' ', Tone::Plain));
-            let label_start = line.len();
             line.extend(label_of(head, row, &lanes, budget));
-            GraphRow {
-                cells: clipped(line, width),
-                label_start,
-                kind: kind_of(head, row, &lanes),
-            }
+            painted(&clipped(line, opts.width), opts.color)
         })
-        .collect()
-}
-
-pub fn graph_cells(head: Option<usize>, lanes: &[Lane]) -> Vec<GraphRow> {
-    if head.is_none() && lanes.is_empty() {
-        return vec![GraphRow {
-            cells: vec![('●', Tone::Plain)],
-            label_start: 1,
-            kind: RowKind::Trunk { id: 0, head: false },
-        }];
-    }
-    build_rows(head, lanes, usize::MAX)
-}
-
-pub fn graph_lines(head: Option<usize>, lanes: &[Lane], opts: &GraphOpts) -> Vec<String> {
-    if head.is_none() && lanes.is_empty() {
-        return vec!["●".to_string()];
-    }
-    build_rows(head, lanes, opts.width)
-        .iter()
-        .map(|row| painted(&row.cells, opts.color))
         .collect()
 }
 
@@ -418,32 +369,6 @@ mod tests {
             lane("c", 4, LaneEnd::Dropped),
             lane("d", 4, LaneEnd::Open),
         ]
-    }
-
-    #[test]
-    fn graph_cells_text_equals_plain_graph_lines() {
-        let lanes = [
-            lane("alpha", 3, LaneEnd::Merged { landed: Some(5) }),
-            lane("beta", 3, LaneEnd::Parked),
-            lane("gamma", 4, LaneEnd::Dropped),
-            lane("delta", 4, LaneEnd::Open),
-        ];
-        let rows = graph_cells(Some(6), &lanes);
-        let text: Vec<String> = rows
-            .iter()
-            .map(|row| row.cells.iter().map(|(c, _)| *c).collect())
-            .collect();
-        assert_eq!(text, graph_lines(Some(6), &lanes, &plain(usize::MAX)));
-        assert_eq!(rows.len(), 8);
-        assert_eq!(
-            rows[0].kind,
-            RowKind::Tip {
-                name: "gamma".to_string(),
-                end: LaneEnd::Dropped
-            }
-        );
-        assert_eq!(rows[3].kind, RowKind::Trunk { id: 6, head: true });
-        assert_eq!(rows[0].cells[8], ('✕', Tone::Red));
     }
 
     #[test]

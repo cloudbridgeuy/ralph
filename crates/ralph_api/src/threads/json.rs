@@ -105,24 +105,11 @@ pub(crate) fn threads_body(store: &str, snapshot: &ThreadsSnapshot, now: DateTim
 mod tests {
     use super::*;
     use crate::render::golden::assert_golden_in;
-    use ralph_core::chat_thread::{Merged, Parked, ThreadMeta};
 
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-01-07T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc)
-    }
-
-    fn meta(base: usize, created: &str) -> ThreadMeta {
-        ThreadMeta {
-            base,
-            created: created.to_string(),
-            merged: None,
-            parked: None,
-            auto: None,
-            model: None,
-            closed: false,
-        }
     }
 
     fn row(name: &str, state: ThreadState, base: usize, created: &str) -> ThreadRow {
@@ -145,16 +132,6 @@ mod tests {
         open.unread = 3;
         let parked_at = "2026-01-03T00:00:00Z";
         let merged_at = "2026-01-05T00:00:00Z";
-        let mut parked = meta(1, "2026-01-01T00:00:00Z");
-        parked.parked = Some(Parked {
-            at: parked_at.to_string(),
-        });
-        let mut merged = meta(3, "2026-01-04T00:00:00Z");
-        merged.merged = Some(Merged {
-            at: merged_at.to_string(),
-            digest: "done".to_string(),
-            landed: Some(4),
-        });
         ThreadsSnapshot {
             rows: vec![
                 open,
@@ -172,11 +149,6 @@ mod tests {
                 ),
             ],
             head_messages: 4,
-            live: vec![
-                ("lint-sweep".to_string(), meta(2, "2026-01-02T00:00:00Z")),
-                ("docs-pass".to_string(), parked),
-                ("cache-fix".to_string(), merged),
-            ],
             tombstones: vec![Tombstone {
                 name: "old-idea".to_string(),
                 base: 2,
@@ -190,7 +162,6 @@ mod tests {
         ThreadsSnapshot {
             rows: vec![],
             head_messages: 0,
-            live: vec![],
             tombstones: vec![],
         }
     }

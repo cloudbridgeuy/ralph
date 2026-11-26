@@ -90,13 +90,6 @@ fn rendered(snapshot: &ThreadsSnapshot) -> String {
             row.unread
         ));
     }
-    let mut live: Vec<String> = snapshot
-        .live
-        .iter()
-        .map(|(name, meta)| format!("live {name} base={}\n", meta.base))
-        .collect();
-    live.sort();
-    out.extend(live);
     for tombstone in &snapshot.tombstones {
         out.push_str(&format!(
             "tombstone {} base={} created={} dropped_at={}\n",
@@ -131,6 +124,5 @@ fn a_store_with_no_threads_gives_an_empty_snapshot() {
     let snapshot = thread_rows(&root.path().join("missing")).unwrap();
     assert_eq!(snapshot.head_messages, 0);
     assert!(snapshot.rows.is_empty());
-    assert!(snapshot.live.is_empty());
     assert!(snapshot.tombstones.is_empty());
 }
