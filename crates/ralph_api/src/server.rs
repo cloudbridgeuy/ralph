@@ -1,11 +1,14 @@
 use crate::addr::{check_bind, BindError, BindPolicy};
-use crate::admit::{admit, Admission, MAX_HANDLERS};
+use crate::admit::{
+    admit, counted_peer, counts_toward_peer_cap, Admission, PeerCounts, PeerGuard, MAX_HANDLERS,
+    MAX_REJECTED_PER_PEER,
+};
 use crate::render_api::{plan_body, read_outcome, BodyPlan};
 use crate::route::{accepts_body, overloaded, route, ApiConfig, ApiRequest, ApiResponse};
 use crate::token::Token;
 use ralph_server::warn::{warn, warn_if_err};
 use std::io::{Cursor, Read};
-use std::net::{SocketAddr, TcpListener};
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -77,27 +80,61 @@ pub fn serve(
 ) -> Result<(), ApiError> {
     let shared = Arc::new((config.clone(), token.clone()));
     let active = Arc::new(AtomicUsize::new(0));
+    let peers = Arc::new(PeerCounts::default());
     while !stop() {
         let received = server
             .recv_timeout(POLL)
             .map_err(|error| ApiError::Recv(error.to_string()))?;
         let Some(request) = received else { continue };
         match admit(active.load(Ordering::SeqCst), MAX_HANDLERS) {
-            Admission::Accept => spawn_handler(request, &shared, &active),
-            Admission::Reject => run_off_loop(request, |request| respond(request, overloaded())),
+            Admission::Accept => spawn_handler(request, &shared, &active, &peers),
+            Admission::Reject => {
+                let guard = peer_of(&request).map(|ip| PeerCounts::enter(&peers, ip).0);
+                run_off_loop(request, move |request| {
+                    respond_then(request, overloaded(), move || drop(guard));
+                });
+            }
         }
     }
     Ok(())
 }
 
-fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Arc<AtomicUsize>) {
+fn peer_of(request: &Request) -> Option<IpAddr> {
+    counted_peer(request.remote_addr().map(SocketAddr::ip))
+}
+
+fn limit_rejected(
+    response: ApiResponse,
+    peer: Option<IpAddr>,
+    peers: &Arc<PeerCounts>,
+) -> (ApiResponse, Option<PeerGuard>) {
+    let Some(ip) = peer.filter(|_| counts_toward_peer_cap(response.status)) else {
+        return (response, None);
+    };
+    let (guard, previous) = PeerCounts::enter(peers, ip);
+    match admit(previous, MAX_REJECTED_PER_PEER) {
+        Admission::Accept => (response, Some(guard)),
+        Admission::Reject => (overloaded(), Some(guard)),
+    }
+}
+
+fn spawn_handler(
+    request: Request,
+    shared: &Arc<(ApiConfig, Token)>,
+    active: &Arc<AtomicUsize>,
+    peers: &Arc<PeerCounts>,
+) {
     let slot = Slot::acquire(active);
     let shared = Arc::clone(shared);
+    let peers = Arc::clone(peers);
+    let peer = peer_of(&request);
     run_off_loop(request, move |request| {
         let (config, token) = &*shared;
         let mut request = request;
         let response = route(&to_api_request(&mut request, config, token), config, token);
+        let (response, guard) = limit_rejected(response, peer, &peers);
         respond_then(request, response, move || drop(slot));
+        drop(guard);
     });
 }
 
@@ -135,10 +172,6 @@ impl Drop for Slot {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
     }
-}
-
-fn respond(request: Request, response: ApiResponse) {
-    respond_then(request, response, || {});
 }
 
 fn respond_then(request: Request, response: ApiResponse, after_write: impl FnOnce()) {
@@ -219,6 +252,48 @@ fn to_http_response(response: ApiResponse) -> Response<Cursor<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::{error, json_ok};
+    use serde_json::json;
+
+    fn peer() -> Option<IpAddr> {
+        Some(IpAddr::from([100, 64, 0, 9]))
+    }
+
+    #[test]
+    fn limit_rejected_replaces_the_third_rejection_with_busy() {
+        let peers = Arc::new(PeerCounts::default());
+        let mut guards = Vec::new();
+        for _ in 0..MAX_REJECTED_PER_PEER {
+            let (response, guard) = limit_rejected(error(401, "unauthorized"), peer(), &peers);
+            assert_eq!(response.status, 401);
+            guards.push(guard);
+        }
+        let (response, guard) = limit_rejected(error(403, "forbidden host"), peer(), &peers);
+        assert_eq!(response.status, 503);
+        assert!(guard.is_some());
+    }
+
+    #[test]
+    fn limit_rejected_never_counts_or_limits_accepted_responses() {
+        let peers = Arc::new(PeerCounts::default());
+        let held: Vec<_> = (0..MAX_REJECTED_PER_PEER)
+            .map(|_| limit_rejected(error(401, "unauthorized"), peer(), &peers))
+            .collect();
+        let (response, guard) = limit_rejected(json_ok(json!({})), peer(), &peers);
+        assert_eq!(response.status, 200);
+        assert!(guard.is_none());
+        drop(held);
+    }
+
+    #[test]
+    fn limit_rejected_ignores_exempt_peers() {
+        let peers = Arc::new(PeerCounts::default());
+        for _ in 0..5 {
+            let (response, guard) = limit_rejected(error(401, "unauthorized"), None, &peers);
+            assert_eq!(response.status, 401);
+            assert!(guard.is_none());
+        }
+    }
     use std::io::Read;
 
     #[test]
