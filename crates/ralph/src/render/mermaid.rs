@@ -1,7 +1,12 @@
 mod git;
+mod journey;
 mod lines;
+mod pie;
+mod sankey;
+#[cfg(test)]
+mod testing;
 
-use lines::body_lines;
+use lines::{body_lines, statements, Statement};
 use ralph_server::config::MermaidSection;
 use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
@@ -20,6 +25,9 @@ pub enum DiagramKind {
     Class,
     State,
     GitGraph,
+    Pie,
+    Journey,
+    Sankey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +41,10 @@ pub enum Refusal {
     TooManyStatements,
     TooManyCommits,
     TooManyBranches,
+    LineTooLong,
+    TooManySlices,
+    TooManyTasks,
+    TooManyFlows,
 }
 
 fn kind_of(header: &str) -> Option<DiagramKind> {
@@ -47,6 +59,9 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "classDiagram" => Some(DiagramKind::Class),
         "stateDiagram" | "stateDiagram-v2" => Some(DiagramKind::State),
         "gitGraph" => Some(DiagramKind::GitGraph),
+        "pie" => Some(DiagramKind::Pie),
+        "journey" => Some(DiagramKind::Journey),
+        "sankey" | "sankey-beta" => Some(DiagramKind::Sankey),
         _ => None,
     }
 }
@@ -94,6 +109,16 @@ fn statement_count(source: &str) -> usize {
     body_lines(source).count().saturating_sub(1)
 }
 
+fn check_typed(
+    source: &str,
+    check: fn(&[Statement<'_>]) -> Result<(), Refusal>,
+) -> Result<(), Refusal> {
+    if source.len() > SMALL_SOURCE_BYTES {
+        return Err(Refusal::TooLarge);
+    }
+    check(&statements(source)?)
+}
+
 pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<DiagramKind, Refusal> {
     if source.len() > limits.max_input_bytes {
         return Err(Refusal::TooLarge);
@@ -127,6 +152,9 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
                 return Err(Refusal::TooManyParticipants);
             }
         }
+        DiagramKind::Pie => check_typed(source, pie::check)?,
+        DiagramKind::Journey => check_typed(source, journey::check)?,
+        DiagramKind::Sankey => check_typed(source, sankey::check)?,
         DiagramKind::GitGraph => {
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);
@@ -208,7 +236,11 @@ mod tests {
     fn unsupported_and_empty_refused() {
         let l = limits();
         assert_eq!(
-            mermaid_precheck("gantt\n  title T", &l),
+            mermaid_precheck("block\n  a", &l),
+            Err(Refusal::Unsupported)
+        );
+        assert_eq!(
+            mermaid_precheck("architecture-beta\n  service a(server)[A]", &l),
             Err(Refusal::Unsupported)
         );
         assert_eq!(mermaid_precheck("%% only\n\n", &l), Err(Refusal::Empty));
