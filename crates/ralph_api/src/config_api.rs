@@ -351,4 +351,41 @@ mod tests {
             assert!(hidden, "{config}: {raw}");
         }
     }
+
+    #[test]
+    fn opaque_secrets_in_loose_fields_never_reach_the_body() {
+        for (config, leak) in [
+            ("[claude]\nmodel = \"ghp_SECRET\"\n", "ghp_SECRET"),
+            ("[chat]\nname = \"Bearer abc123\"\n", "abc123"),
+            ("[chat]\nname = \"xo\x78b-123-abc\"\n", "xoxb"),
+            (
+                "[web]\nfont = \"aGVsbG8gd29ybGQgc2VjcmV0MTI1\"\n",
+                "aGVsbG8",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let hidden = body(&response)["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+            assert!(hidden, "{config}: {raw}");
+        }
+    }
+
+    #[test]
+    fn a_dated_model_name_stays_visible_in_the_body() {
+        let (g, s) = setup(
+            None,
+            Some("[claude]\nmodel = \"claude-opus-4-1-20250805\"\n"),
+        );
+        let value = body(&respond(&g, &s, no_env));
+        assert_eq!(
+            row(&value, "claude", "model")["value"],
+            "claude-opus-4-1-20250805"
+        );
+    }
 }

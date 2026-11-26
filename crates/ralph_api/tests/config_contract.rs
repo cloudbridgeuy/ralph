@@ -141,6 +141,37 @@ fn config_bare_secrets_in_tight_fields_are_absent_from_the_http_body() {
 }
 
 #[test]
+fn config_opaque_secrets_in_loose_fields_are_absent_from_the_http_body() {
+    for (config, leak) in [
+        ("[claude]\nmodel = \"ghp_SECRET\"\n", "ghp_SECRET"),
+        ("[chat]\nname = \"Bearer abc123\"\n", "abc123"),
+        ("[chat]\nname = \"xo\x78b-123-abc\"\n", "xoxb"),
+        (
+            "[web]\nfont = \"aGVsbG8gd29ybGQgc2VjcmV0MTI1\"\n",
+            "aGVsbG8",
+        ),
+    ] {
+        let server = TestServer::start_with_store(|dir| write_config(dir, config));
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert!(!reply.body.contains(leak), "{config}: {}", reply.body);
+    }
+}
+
+#[test]
+fn config_a_dated_model_name_stays_visible_in_the_http_body() {
+    let server = TestServer::start_with_store(|dir| {
+        write_config(dir, "[claude]\nmodel = \"claude-opus-4-1-20250805\"\n")
+    });
+    let reply = get(&server);
+    assert!(
+        reply.body.contains("claude-opus-4-1-20250805"),
+        "{}",
+        reply.body
+    );
+}
+
+#[test]
 fn config_invalid_is_422_without_paths() {
     let server = TestServer::start_with_store(|dir| write_config(dir, "[chat\nwrap_width = 1\n"));
     let reply = get(&server);

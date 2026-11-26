@@ -126,6 +126,105 @@ pub fn key_shape_ok(key: &str) -> bool {
         .is_none_or(|rest| rest.split('.').all(is_ident))
 }
 
+const TOKEN_PREFIXES: [&str; 8] = [
+    "sk-",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "Bearer ",
+];
+const AWS_PREFIXES: [&str; 2] = ["AKIA", "ASIA"];
+const AWS_BODY_LEN: usize = 16;
+const OPAQUE_MIN: usize = 20;
+const OPAQUE_AFTER_PREFIX_MIN: usize = 16;
+
+fn at_boundary(text: &str, index: usize) -> bool {
+    !text[..index]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+}
+
+fn boundary_matches<'a>(text: &'a str, needle: &'a str) -> impl Iterator<Item = &'a str> {
+    text.match_indices(needle)
+        .filter(|(index, _)| at_boundary(text, *index))
+        .map(|(index, _)| &text[index + needle.len()..])
+}
+
+fn has_token_prefix(text: &str) -> bool {
+    TOKEN_PREFIXES
+        .iter()
+        .any(|prefix| boundary_matches(text, prefix).next().is_some())
+}
+
+fn has_jwt(text: &str) -> bool {
+    boundary_matches(text, "eyJ").any(|rest| rest.matches('.').count() >= 2)
+}
+
+fn has_aws_key_id(text: &str) -> bool {
+    AWS_PREFIXES.iter().any(|prefix| {
+        boundary_matches(text, prefix).any(|rest| {
+            let body: Vec<char> = rest.chars().take(AWS_BODY_LEN).collect();
+            body.len() == AWS_BODY_LEN
+                && body
+                    .iter()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+    })
+}
+
+fn has_slack_token(text: &str) -> bool {
+    boundary_matches(text, "xox").any(|rest| {
+        let mut chars = rest.chars();
+        chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.next() == Some('-')
+    })
+}
+
+fn is_opaque_run(segment: &str, min: usize) -> bool {
+    segment.len() >= min
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '_' | '='))
+        && segment.chars().any(|c| c.is_ascii_alphabetic())
+        && segment.chars().any(|c| c.is_ascii_digit())
+}
+
+fn is_alphabetic_word(segment: &str) -> bool {
+    !segment.is_empty() && segment.chars().all(|c| c.is_ascii_alphabetic())
+}
+
+fn underscore_prefixed_run(segment: &str) -> bool {
+    segment.split_once('_').is_some_and(|(prefix, rest)| {
+        is_alphabetic_word(prefix) && is_opaque_run(rest, OPAQUE_AFTER_PREFIX_MIN)
+    })
+}
+
+fn has_opaque_run(text: &str) -> bool {
+    let mut previous = "";
+    for segment in text.split(|c: char| c == '-' || c.is_whitespace()) {
+        if is_opaque_run(segment, OPAQUE_MIN)
+            || underscore_prefixed_run(segment)
+            || (is_alphabetic_word(previous) && is_opaque_run(segment, OPAQUE_AFTER_PREFIX_MIN))
+        {
+            return true;
+        }
+        previous = segment;
+    }
+    false
+}
+
+pub fn text_has_secret_shape(text: &str) -> bool {
+    text.contains("-----BEGIN")
+        || has_token_prefix(text)
+        || has_jwt(text)
+        || has_aws_key_id(text)
+        || has_slack_token(text)
+        || has_opaque_run(text)
+}
+
 fn is_variable_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_'
 }
@@ -278,6 +377,53 @@ mod tests {
         assert!(key_shape_ok("chat.wrap_width"));
         assert!(!key_shape_ok("wire.prices.a b.input"));
         assert!(!key_shape_ok("wire.prices..input"));
+    }
+
+    #[test]
+    fn each_secret_shape_is_detected() {
+        for text in [
+            "Bearer abc",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
+            "AKIAIOSFODNN7EXAMPLE",
+            "ASIAIOSFODNN7EXAMPLE",
+            "xo\x78b-1-2",
+            "sk-ant-abc",
+            "ghp_SECRET",
+            "gho_a",
+            "ghu_a",
+            "ghs_a",
+            "ghr_a",
+            "github_pat_a",
+            "-----BEGIN RSA PRIVATE KEY-----",
+            "aGVsbG8gd29ybGQgc2VjcmV0MTI1",
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "tok_AbCdEf0123456789xyzQ",
+            "myapp-AbCdEf0123456789",
+        ] {
+            assert!(text_has_secret_shape(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn ordinary_text_has_no_secret_shape() {
+        for text in [
+            "claude-opus-4-1-20250805",
+            "claude-sonnet-4-5",
+            "gpt-5.1-codex-max",
+            "ask-me",
+            "task-force",
+            "tokyo-night",
+            "\"Geist Mono\", monospace",
+            "--color=always",
+            "AKIASHORT",
+            "xox",
+            "eyJ.one",
+            "averyveryverylongwordwithoutdigits",
+            "x:1",
+            "96",
+        ] {
+            assert!(!text_has_secret_shape(text), "{text}");
+        }
     }
 
     #[test]

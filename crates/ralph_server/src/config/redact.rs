@@ -1,4 +1,6 @@
-use super::redact_shapes::{key_class, key_shape_ok, text_has_path_shape, value_shape_ok};
+use super::redact_shapes::{
+    key_class, key_shape_ok, text_has_path_shape, text_has_secret_shape, value_shape_ok,
+};
 use serde_json::Value;
 
 pub const REDACTED: &str = "[redacted]";
@@ -113,7 +115,9 @@ pub fn listing(key: &str) -> Listing {
 }
 
 fn text_is_sensitive(text: &str) -> bool {
-    text_has_path_shape(text) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
+    text_has_path_shape(text)
+        || text_has_secret_shape(text)
+        || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
 fn key_is_sensitive(key: &str) -> bool {
@@ -475,6 +479,114 @@ mod tests {
             false
         ));
         assert!(redacts("tickets.jira", &json!(["a".repeat(65)]), false));
+    }
+
+    fn assert_secret(key: &str, text: &str) {
+        assert!(redacts(key, &json!(text), false), "{key} {text}");
+    }
+
+    #[test]
+    fn bearer_headers_are_redacted_in_loose_fields() {
+        assert_secret("chat.name", "Bearer abc");
+        assert_secret("changes.diff_args", "Authorization: Bearer xyz");
+    }
+
+    #[test]
+    fn jwts_are_redacted_in_loose_fields() {
+        assert_secret(
+            "chat.name",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF",
+        );
+    }
+
+    #[test]
+    fn aws_key_ids_are_redacted_in_loose_fields() {
+        assert_secret("chat.name", "AKIAIOSFODNN7EXAMPLE");
+        assert_secret("web.font", "ASIAIOSFODNN7EXAMPLE");
+    }
+
+    #[test]
+    fn slack_tokens_are_redacted_in_loose_fields() {
+        assert_secret("chat.name", "xo\x78b-123-abc");
+        assert_secret("nap.model", "xo\x78p-1");
+    }
+
+    #[test]
+    fn sk_keys_are_redacted_in_loose_fields() {
+        assert_secret("claude.model", "sk-ant-api03-abc");
+        assert_secret("tag.model", "sk-abc");
+    }
+
+    #[test]
+    fn pem_blocks_are_redacted_in_loose_fields() {
+        assert_secret("chat.name", "-----BEGIN PRIVATE KEY-----");
+    }
+
+    #[test]
+    fn github_tokens_are_redacted_in_a_model_field() {
+        for token in [
+            "ghp_SECRET",
+            "gho_x",
+            "ghu_x",
+            "ghs_x",
+            "ghr_x",
+            "github_pat_x",
+        ] {
+            assert_secret("claude.model", token);
+        }
+    }
+
+    #[test]
+    fn long_base64_runs_are_redacted_in_loose_fields() {
+        assert_secret("chat.name", "aGVsbG8gd29ybGQgc2VjcmV0MTI1");
+        assert_secret("codex.model", "dGhpcyBpcyBhIHNlY3JldCB0b2tlbjEyMw==");
+    }
+
+    #[test]
+    fn long_hex_runs_are_redacted_in_loose_fields() {
+        assert_secret(
+            "chat.name",
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        );
+    }
+
+    #[test]
+    fn prefixed_opaque_runs_are_redacted_in_loose_fields() {
+        assert_secret("chat.name", "tok_AbCdEf0123456789xyzQ");
+        assert_secret("chat.name", "myapp-AbCdEf0123456789");
+        assert_secret("agy.model", "token AbCdEf0123456789");
+    }
+
+    #[test]
+    fn secrets_in_array_items_and_keys_are_redacted() {
+        assert!(redacts(
+            "changes.diff_args",
+            &json!(["--stat", "ghp_SECRET"]),
+            false
+        ));
+        assert!(redacts("wire.prices.ghp_SECRET.input", &json!(1), false));
+    }
+
+    #[test]
+    fn model_names_and_ordinary_text_stay_visible() {
+        for (key, text) in [
+            ("claude.model", "claude-opus-4-1-20250805"),
+            ("claude.model", "claude-sonnet-4-5"),
+            ("codex.model", "gpt-5.1-codex-max"),
+            ("claude.effort", "high"),
+            ("chat.name", "ask-me"),
+            ("chat.name", "task-force"),
+            ("chat.name", "x:1"),
+            ("web.font", "\"Geist Mono\", monospace"),
+            ("changes.pager", "delta"),
+            ("changes.diff_args", "--color=always"),
+            ("theme.name", "tokyo-night"),
+            ("mermaid.style.colors.accent", "#ff00aa"),
+        ] {
+            assert!(!redacts(key, &json!(text), false), "{key} {text}");
+        }
+        assert!(!redacts("chat.wrap_width", &json!(96), false));
+        assert!(!redacts("chat.wrap_width", &json!(1), false));
     }
 
     #[test]
