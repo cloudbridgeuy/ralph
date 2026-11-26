@@ -236,3 +236,34 @@ fn a_next_step_that_skips_a_decision_is_kept_and_leaves_a_notice_row() {
         (Some(Suggestion::Open("answer s1".to_string())), None)
     );
 }
+
+#[test]
+fn the_view_reads_the_stage_file_and_the_log_length_and_leaves_the_model_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 20);
+    save(
+        dir.path(),
+        &Stage {
+            items: vec![item("s1", Kind::Owed)],
+            last: 1,
+        },
+    )
+    .unwrap();
+    let model_text = rendered(dir.path(), &Status::default(), None).unwrap();
+    let view = view(&store, &Status::default(), None).unwrap().unwrap();
+    assert_eq!(view.open.len(), 1);
+    assert_eq!(view.open[0].row.id.to_string(), "s1");
+    assert_eq!(view.open[0].turns_left, 20);
+    assert_eq!(model_text, "Stage:\ns1 owed check the build");
+    assert_eq!(
+        rendered(dir.path(), &Status::default(), None).unwrap(),
+        model_text
+    );
+}
+
+#[test]
+fn a_store_with_no_stage_has_no_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = log_of(dir.path(), 3);
+    assert_eq!(view(&store, &Status::default(), None), Ok(None));
+}

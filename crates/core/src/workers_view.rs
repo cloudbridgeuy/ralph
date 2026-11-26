@@ -155,12 +155,18 @@ fn report_tone(kind: ReportKind) -> Tone {
     }
 }
 
+pub(crate) fn activity_tone(activity: WorkerActivity) -> Tone {
+    match activity {
+        WorkerActivity::Reported(kind) => report_tone(kind),
+        WorkerActivity::Permission => Tone::Attention,
+        WorkerActivity::Running | WorkerActivity::Busy => Tone::Active,
+        WorkerActivity::Idle => Tone::Dim,
+    }
+}
+
 fn status_tone(state: RowState) -> Tone {
     match state {
-        RowState::Live(WorkerActivity::Reported(kind)) => report_tone(kind),
-        RowState::Live(WorkerActivity::Permission) => Tone::Attention,
-        RowState::Live(WorkerActivity::Running | WorkerActivity::Busy) => Tone::Active,
-        RowState::Live(WorkerActivity::Idle) => Tone::Dim,
+        RowState::Live(activity) => activity_tone(activity),
         RowState::Gone => Tone::Plain,
     }
 }

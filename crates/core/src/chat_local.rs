@@ -20,7 +20,10 @@ fn recorded(route: &Route) -> bool {
         Route::Watch(command) => matches!(command, WatchCommand::Start(_) | WatchCommand::Stop(_)),
         Route::Schedule(command) => matches!(command, ScheduleCommand::Cancel(_)),
         Route::Nudge(command) => matches!(command, NudgeCommand::Send { .. }),
-        Route::Stage(command) => !matches!(command, StageCommand::Show | StageCommand::Usage),
+        Route::Stage(command) => !matches!(
+            command,
+            StageCommand::Show | StageCommand::Raw | StageCommand::Usage
+        ),
         Route::DropInbox(_) => true,
         _ => false,
     }

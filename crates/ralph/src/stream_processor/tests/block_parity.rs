@@ -1,7 +1,12 @@
 use std::path::Path;
 
+use ralph_core::code_frame::{BlockKind, Spacing};
+use ralph_core::stream::blocks::OutputBlock;
 use serde_json::{json, Value};
 
+use crate::markdown::MarkdownTheme;
+use crate::render::code_frame::block_kind;
+use crate::render::RenderContext;
 use crate::stream_processor::render_block::render_block;
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 
@@ -37,8 +42,26 @@ fn write(path: &Path, content: &str) -> Step {
     Step::Write(path.display().to_string(), content.to_string())
 }
 
+fn spaced(
+    ctx: &RenderContext<'_>,
+    blocks: &[OutputBlock],
+    markdown: Option<&MarkdownTheme>,
+    spacing: &mut Spacing,
+) -> String {
+    let mut out = String::new();
+    for block in blocks {
+        let kind = match block {
+            OutputBlock::Text(text) => block_kind(ctx, &text.chunk.chunk_type),
+            _ => BlockKind::Flow,
+        };
+        spacing.append(&mut out, &render_block(ctx, block, markdown), kind);
+    }
+    out
+}
+
 fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) {
     let mut processor = StreamProcessor::with_options_and_verbose(highlight, true, verbose.clone());
+    let mut spacing = Spacing::default();
     for step in steps {
         match step {
             Step::Write(path, content) => std::fs::write(path, content).unwrap(),
@@ -47,10 +70,8 @@ fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) 
                 let shown = processor.process_line(line).unwrap_or_default();
                 let markdown = highlight.then_some(&processor.renderer.markdown);
                 let ctx = processor.render_context();
-                let rendered: String = processor.output_blocks()[before..]
-                    .iter()
-                    .map(|block| render_block(&ctx, block, markdown))
-                    .collect();
+                let blocks = &processor.output_blocks()[before..];
+                let rendered = spaced(&ctx, blocks, markdown, &mut spacing);
                 assert_eq!(
                     shown, rendered,
                     "line {line} verbose={verbose:?} highlight={highlight}"
@@ -66,14 +87,32 @@ fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) 
         processor.renderer.tool_colors,
     );
     let (result, final_output) = processor.finish_rendered();
-    let ctx = crate::render::RenderContext::new(&highlighter, highlight)
+    let ctx = RenderContext::new(&highlighter, highlight)
         .with_diff(diff)
         .with_tools(tools);
-    let rendered: String = result.output_blocks[before..]
-        .iter()
-        .map(|block| render_block(&ctx, block, highlight.then_some(&markdown_theme)))
-        .collect();
+    let markdown = highlight.then_some(&markdown_theme);
+    let blocks = &result.output_blocks[before..];
+    let rendered = spaced(&ctx, blocks, markdown, &mut spacing);
     assert_eq!(final_output, rendered);
+}
+
+#[test]
+fn streamed_and_reprinted_blocks_match() {
+    for body in [
+        "```rust\n\nfn main() {}\n\n```\n```sh\nls\n```",
+        "```rust\nlet a = 1;\nlet b = 2;",
+    ] {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        let event = json!({"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":body}]}});
+        let mut streamed = processor
+            .process_line(&event.to_string())
+            .unwrap_or_default();
+        let theme = processor.renderer.markdown.clone();
+        let reprinted = crate::render::render_markdown(&processor.render_context(), body, &theme);
+        streamed.push_str(&processor.finish_rendered().1);
+        assert_eq!(streamed, reprinted, "{body:?}");
+        assert!(!streamed.contains("```"), "{streamed:?}");
+    }
 }
 
 fn assert_parity_everywhere(steps: &[Step]) {

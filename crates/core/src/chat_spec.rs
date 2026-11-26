@@ -186,7 +186,7 @@ fn stage_offers(args: &[&str]) -> Offers {
     };
     match StageVerb::parse(word) {
         Some(StageVerb::Add) => every::<Kind>(),
-        Some(StageVerb::Done | StageVerb::Edit) | None => Offers::default(),
+        Some(StageVerb::Raw | StageVerb::Done | StageVerb::Edit) | None => Offers::default(),
     }
 }
 

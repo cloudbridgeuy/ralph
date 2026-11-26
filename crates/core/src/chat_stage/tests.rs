@@ -221,6 +221,7 @@ fn stage_args_parse_into_commands() {
     };
     assert_eq!(parse_stage_args(""), StageCommand::Show);
     assert_eq!(parse_stage_args("  "), StageCommand::Show);
+    assert_eq!(parse_stage_args(" raw "), StageCommand::Raw);
     assert_eq!(
         parse_stage_args(" add decision merge it now "),
         add(Kind::Decision, "merge it now")
@@ -253,6 +254,8 @@ fn bad_stage_args_become_usage() {
         "edit s1",
         "edit",
         "wipe",
+        "raw now",
+        "rawr",
     ] {
         assert_eq!(parse_stage_args(args), StageCommand::Usage, "{args}");
     }
@@ -389,4 +392,15 @@ fn the_thread_line_never_counts_as_pending() {
     assert!(pending.is_empty());
     assert_eq!(next_step_gap(Some("/hold"), &pending), None);
     assert_eq!(next_step_gap(None, &pending), None);
+}
+
+#[test]
+fn the_usage_lists_every_stage_verb() {
+    for verb in StageVerb::ALL {
+        assert!(
+            STAGE_USAGE.contains(&format!("\n/stage {}", verb.word())),
+            "{}",
+            verb.word()
+        );
+    }
 }
