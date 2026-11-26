@@ -1,7 +1,5 @@
 use crate::chat_memory::{Entry, Role};
-use crate::worker::{
-    startup_state, ActivityState, HarnessId, Report, ReportKind, ReportStatus, Startup,
-};
+use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportKind, Startup};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -75,15 +73,13 @@ pub fn logged_states(entries: &[Entry]) -> HashMap<String, ReportKind> {
         .iter()
         .filter(|entry| entry.role == Role::Worker)
         .flat_map(|entry| entry.text.lines().filter_map(message_header))
-        .filter_map(|(id, status)| Some((id, ReportKind::parse(status)?)))
-        .filter(|(_, kind)| kind.worker_status().is_some())
-        .map(|(id, kind)| (id.to_string(), kind))
+        .filter_map(|(id, status)| Some((id.to_string(), worker_report(status)?)))
         .collect()
 }
 
 fn report_header_id(line: &str) -> Option<&str> {
     let (id, status) = message_header(line)?;
-    is_report_status(status).then_some(id)
+    worker_report(status).map(|_| id)
 }
 
 pub fn message_header(line: &str) -> Option<(&str, &str)> {
@@ -92,10 +88,8 @@ pub fn message_header(line: &str) -> Option<(&str, &str)> {
         .split_once(" · ")
 }
 
-pub fn is_report_status(status: &str) -> bool {
-    ReportStatus::ALL
-        .iter()
-        .any(|known| known.as_str() == status)
+pub fn worker_report(status: &str) -> Option<ReportKind> {
+    ReportKind::parse(status).filter(|kind| kind.worker_status().is_some())
 }
 
 pub fn reported_since_nudge(last_report: Option<&String>, nudge: Option<&Option<String>>) -> bool {
@@ -258,6 +252,7 @@ mod stale_busy;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::ReportStatus;
 
     fn obs() -> WorkerObservation {
         WorkerObservation {
@@ -770,6 +765,16 @@ mod tests {
         let reports = logged_reports(&entries);
         assert_eq!(reports["a"], "t1");
         assert_eq!(reports["b"], "t1");
+    }
+
+    #[test]
+    fn check_report_is_not_a_worker_report() {
+        assert_eq!(worker_report("check"), None);
+        assert_eq!(worker_report("bogus"), None);
+        assert_eq!(
+            worker_report("blocked"),
+            Some(ReportKind::Worker(ReportStatus::Blocked))
+        );
     }
 
     #[test]

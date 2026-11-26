@@ -21,7 +21,7 @@ fn entry(role: Role, at: &str, text: &str) -> Entry {
 
 pub(super) fn line(status: &str, at: &str, text: &str) -> ReportLine {
     ReportLine {
-        status: status.into(),
+        status: ReportKind::parse(status).unwrap(),
         at: at.into(),
         text: text.into(),
     }
@@ -86,6 +86,18 @@ fn a_check_header_ends_the_previous_report_text() {
 }
 
 #[test]
+fn unknown_status_in_log_text_is_ignored() {
+    let text = "[worker A · done]\nreal\n\n[worker A · bogus]\nnoise\n\n[worker B · bogus]\nx";
+    let entries = [entry(Role::Worker, "2026-01-01T00:10:00Z", text)];
+    let grouped = group_reports(&entries, &[]);
+    assert_eq!(
+        grouped["A"],
+        vec![line("done", "2026-01-01T00:10:00Z", "real")]
+    );
+    assert!(!grouped.contains_key("B"));
+}
+
+#[test]
 fn unread_reports_sort_with_logged_ones_by_time() {
     let entries = [entry(
         Role::Worker,
@@ -100,7 +112,7 @@ fn unread_reports_sort_with_logged_ones_by_time() {
     )];
     let statuses: Vec<_> = group_reports(&entries, &unread)["A"]
         .iter()
-        .map(|r| r.status.clone())
+        .map(|r| r.status.as_str())
         .collect();
     assert_eq!(statuses, ["blocked", "done"]);
 }

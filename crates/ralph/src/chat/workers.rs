@@ -448,7 +448,7 @@ mod tests {
             state: Some("busy".into()),
             pending: Vec::new(),
             report: Lookup::Found(ReportLine {
-                status: "done".into(),
+                status: ReportKind::Worker(ReportStatus::Done),
                 at: "2026-01-01T00:48:00Z".into(),
                 text: String::new(),
             }),

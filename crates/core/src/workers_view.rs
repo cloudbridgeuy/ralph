@@ -3,8 +3,8 @@
 
 use crate::chat_memory::{Entry, Role};
 use crate::inbox::age;
-use crate::worker::{branch_name, ActivityMark, Report, StatusLine, Ticket};
-use crate::worker_check::{is_report_status, message_header};
+use crate::worker::{branch_name, ActivityMark, Report, ReportKind, StatusLine, Ticket};
+use crate::worker_check::{message_header, worker_report};
 use crate::worker_costs::window::instant;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ const SUBJECT_SEPARATOR: &str = "¦";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportLine {
-    pub status: String,
+    pub status: ReportKind,
     pub at: String,
     pub text: String,
 }
@@ -206,12 +206,13 @@ fn entry_reports(text: &str, at: &str) -> Vec<(String, ReportLine)> {
     for line in text.lines() {
         match message_header(line) {
             Some((id, status)) => {
-                open = is_report_status(status);
-                if open {
+                let kind = worker_report(status);
+                open = kind.is_some();
+                if let Some(kind) = kind {
                     found.push((
                         id.to_string(),
                         ReportLine {
-                            status: status.to_string(),
+                            status: kind,
                             at: at.to_string(),
                             text: String::new(),
                         },
@@ -245,7 +246,7 @@ pub fn group_reports(entries: &[Entry], unread: &[Report]) -> HashMap<String, Ve
             (
                 report.worker.clone(),
                 ReportLine {
-                    status: report.status.to_string(),
+                    status: report.status,
                     at: report.at.clone(),
                     text: report.text.clone(),
                 },
@@ -342,7 +343,7 @@ fn cut_spans(spans: Vec<Span>, width: usize) -> Vec<Span> {
 
 fn report_cell(report: &ReportLine, now: DateTime<Utc>) -> Vec<Span> {
     vec![
-        span(status_tone(&report.status), report.status.as_str()),
+        span(status_tone(report.status.as_str()), report.status.as_str()),
         plain(" "),
         dim(format!("{} ago", age(&report.at, now))),
     ]
