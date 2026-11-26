@@ -3,6 +3,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use thiserror::Error;
 
 pub const WINDOW_HEIGHT: u32 = 1200;
@@ -112,6 +113,21 @@ pub fn user_js(theme: Theme, marionette_port: u16) -> String {
         "user_pref(\"layout.css.prefers-color-scheme.content-override\", {scheme});\n\
          user_pref(\"marionette.port\", {marionette_port});\n"
     )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConnectStep {
+    Wait,
+    Exited(String),
+    TimedOut,
+}
+
+pub fn connect_step(exit: Option<&str>, elapsed: Duration, timeout: Duration) -> ConnectStep {
+    match exit {
+        Some(status) => ConnectStep::Exited(status.to_string()),
+        None if elapsed >= timeout => ConnectStep::TimedOut,
+        None => ConnectStep::Wait,
+    }
 }
 
 pub fn new_session_body() -> Value {
@@ -277,6 +293,41 @@ mod tests {
         assert!(dark.contains("marionette.port\", 4444)"));
         let light = user_js(Theme::Light, 1);
         assert!(light.contains("prefers-color-scheme.content-override\", 1)"));
+    }
+
+    #[test]
+    fn connect_waits_while_firefox_runs_before_the_deadline() {
+        let step = connect_step(None, Duration::from_secs(1), Duration::from_secs(30));
+        assert_eq!(step, ConnectStep::Wait);
+    }
+
+    #[test]
+    fn connect_stops_at_once_when_firefox_exited() {
+        let step = connect_step(
+            Some("exit status: 0"),
+            Duration::from_millis(100),
+            Duration::from_secs(30),
+        );
+        assert_eq!(step, ConnectStep::Exited("exit status: 0".to_string()));
+    }
+
+    #[test]
+    fn connect_times_out_at_the_deadline() {
+        let timeout = Duration::from_secs(30);
+        assert_eq!(connect_step(None, timeout, timeout), ConnectStep::TimedOut);
+        assert_eq!(
+            connect_step(None, timeout * 2, timeout),
+            ConnectStep::TimedOut
+        );
+    }
+
+    #[test]
+    fn an_exit_wins_over_the_deadline() {
+        let timeout = Duration::from_secs(30);
+        assert_eq!(
+            connect_step(Some("s"), timeout * 2, timeout),
+            ConnectStep::Exited("s".to_string())
+        );
     }
 
     #[test]
