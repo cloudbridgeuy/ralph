@@ -44,6 +44,7 @@ pub mod watches;
 pub mod wire;
 pub mod worker_changes;
 pub mod worker_events;
+pub mod worker_facts;
 pub mod worker_mcp;
 pub(crate) mod worker_shell;
 pub mod worker_usage;

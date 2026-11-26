@@ -14,6 +14,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod detail;
 mod remote;
+mod web;
 
 pub use detail::detail_view;
 pub use remote::{
@@ -21,6 +22,7 @@ pub use remote::{
     Remote, RemoteCache, Review, TicketRemote,
 };
 use remote::{pr_cell, ticket_cell};
+pub use web::{worker_state_rows, WebTone, WorkerFacts, WorkerWebRow};
 
 pub const REPORT_LIMIT: usize = 5;
 pub const NO_WORKERS: &str = "No live workers.";

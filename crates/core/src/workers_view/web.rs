@@ -1,0 +1,204 @@
+use super::ReportLine;
+use crate::worker::{pending_requests, ActivityState};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WebTone {
+    Ok,
+    Bad,
+    Warn,
+    Info,
+    Accent,
+    Neutral,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerFacts {
+    pub id: String,
+    pub harness: String,
+    pub blocked: Option<String>,
+    pub waiting: bool,
+    pub unreported: bool,
+    pub gone: bool,
+    pub activity: Option<ActivityState>,
+    pub ticket: Option<String>,
+    pub last_report: Option<ReportLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WorkerWebRow {
+    pub id: String,
+    pub harness: String,
+    pub state: &'static str,
+    pub tone: WebTone,
+    pub pending_count: usize,
+    pub ticket: Option<String>,
+    pub last_report_status: Option<String>,
+    pub last_report_at: Option<String>,
+}
+
+fn activity_tone(activity: ActivityState) -> WebTone {
+    match activity {
+        ActivityState::Running | ActivityState::Background => WebTone::Ok,
+        ActivityState::Idle => WebTone::Neutral,
+        ActivityState::Failed => WebTone::Bad,
+    }
+}
+
+fn state_and_tone(facts: &WorkerFacts) -> (&'static str, WebTone) {
+    if facts.gone {
+        ("gone", WebTone::Neutral)
+    } else if facts.blocked.is_some() {
+        ("blocked", WebTone::Warn)
+    } else if facts.waiting {
+        ("waiting", WebTone::Info)
+    } else if facts.unreported {
+        ("unreported", WebTone::Accent)
+    } else {
+        facts.activity.map_or(("running", WebTone::Ok), |activity| {
+            (activity.label(), activity_tone(activity))
+        })
+    }
+}
+
+pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
+    let mut sorted: Vec<&WorkerFacts> = facts.iter().collect();
+    sorted.sort_by(|a, b| a.id.cmp(&b.id));
+    sorted
+        .into_iter()
+        .map(|worker| {
+            let (state, tone) = state_and_tone(worker);
+            WorkerWebRow {
+                id: worker.id.clone(),
+                harness: worker.harness.clone(),
+                state,
+                tone,
+                pending_count: worker
+                    .blocked
+                    .as_deref()
+                    .map_or(0, |marker| pending_requests(marker).len()),
+                ticket: worker.ticket.clone(),
+                last_report_status: worker.last_report.as_ref().map(|r| r.status.clone()),
+                last_report_at: worker.last_report.as_ref().map(|r| r.at.clone()),
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worker::ActivityState;
+
+    fn facts(id: &str) -> WorkerFacts {
+        WorkerFacts {
+            id: id.to_string(),
+            harness: "claude".to_string(),
+            blocked: None,
+            waiting: false,
+            unreported: false,
+            gone: false,
+            activity: None,
+            ticket: None,
+            last_report: None,
+        }
+    }
+
+    fn state_of(facts: &WorkerFacts) -> (&'static str, WebTone) {
+        let rows = worker_state_rows(std::slice::from_ref(facts));
+        (rows[0].state, rows[0].tone)
+    }
+
+    #[test]
+    fn a_worker_with_no_marks_is_running() {
+        assert_eq!(state_of(&facts("a")), ("running", WebTone::Ok));
+    }
+
+    #[test]
+    fn each_activity_label_has_its_tone() {
+        let cases = [
+            (ActivityState::Running, "running", WebTone::Ok),
+            (ActivityState::Background, "background", WebTone::Ok),
+            (ActivityState::Idle, "idle", WebTone::Neutral),
+            (ActivityState::Failed, "failed", WebTone::Bad),
+        ];
+        for (activity, label, tone) in cases {
+            let mut worker = facts("a");
+            worker.activity = Some(activity);
+            assert_eq!(state_of(&worker), (label, tone));
+        }
+    }
+
+    #[test]
+    fn the_marks_beat_the_activity_in_a_fixed_order() {
+        let mut worker = facts("a");
+        worker.activity = Some(ActivityState::Failed);
+        worker.unreported = true;
+        assert_eq!(state_of(&worker), ("unreported", WebTone::Accent));
+        worker.waiting = true;
+        assert_eq!(state_of(&worker), ("waiting", WebTone::Info));
+        worker.blocked = Some("{}".to_string());
+        assert_eq!(state_of(&worker), ("blocked", WebTone::Warn));
+        worker.gone = true;
+        assert_eq!(state_of(&worker), ("gone", WebTone::Neutral));
+    }
+
+    #[test]
+    fn pending_counts_the_blocked_marker_requests() {
+        let mut worker = facts("a");
+        assert_eq!(worker_state_rows(&[worker.clone()])[0].pending_count, 0);
+        worker.blocked = Some(r#"{"request_id":"r1"}"#.to_string());
+        assert_eq!(worker_state_rows(&[worker.clone()])[0].pending_count, 1);
+        worker.blocked = Some(r#"{"request_id":"r1","pending":["r1","r2","r3"]}"#.to_string());
+        assert_eq!(worker_state_rows(&[worker.clone()])[0].pending_count, 3);
+        worker.blocked = Some("not json".to_string());
+        assert_eq!(worker_state_rows(&[worker])[0].pending_count, 0);
+    }
+
+    #[test]
+    fn rows_are_sorted_by_id_and_carry_ticket_and_last_report() {
+        let mut second = facts("b");
+        second.ticket = Some("GUZ-9".to_string());
+        second.last_report = Some(ReportLine {
+            status: "done".to_string(),
+            at: "2026-01-01T00:00:00Z".to_string(),
+            text: "secret /Users/alice".to_string(),
+        });
+        let rows = worker_state_rows(&[second, facts("a")]);
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert_eq!(
+            serde_json::to_value(&rows[1]).unwrap(),
+            serde_json::json!({
+                "id": "b", "harness": "claude", "state": "running", "tone": "ok",
+                "pending_count": 0, "ticket": "GUZ-9",
+                "last_report_status": "done", "last_report_at": "2026-01-01T00:00:00Z",
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&rows[0]).unwrap()["ticket"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn the_serialized_row_never_carries_report_text_or_marker_text() {
+        let mut worker = facts("a");
+        worker.blocked = Some(r#"{"request_id":"r1","summary":"rm /Users/alice"}"#.to_string());
+        worker.last_report = Some(ReportLine {
+            status: "done".to_string(),
+            at: "t".to_string(),
+            text: "report-text".to_string(),
+        });
+        let json = serde_json::to_string(&worker_state_rows(&[worker])).unwrap();
+        for leak in ["report-text", "/Users", "rm "] {
+            assert!(!json.contains(leak), "{leak}");
+        }
+    }
+
+    #[test]
+    fn nothing_gives_no_rows() {
+        assert!(worker_state_rows(&[]).is_empty());
+    }
+}
