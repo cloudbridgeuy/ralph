@@ -131,9 +131,13 @@ fn accept_error_is_transient(e: &IoError) -> bool {
     matches!(e.raw_os_error(), Some(23 | 24)) || e.kind() == IoErrorKind::ConnectionAborted
 }
 
+fn accept_error_needs_backoff(e: &IoError) -> bool {
+    matches!(e.raw_os_error(), Some(23 | 24))
+}
+
 #[cfg(test)]
 mod accept_error_test {
-    use super::accept_error_is_transient;
+    use super::{accept_error_is_transient, accept_error_needs_backoff};
     use std::io::{Error, ErrorKind};
 
     #[test]
@@ -147,6 +151,16 @@ mod accept_error_test {
         assert!(accept_error_is_transient(&Error::from(
             ErrorKind::ConnectionAborted
         )));
+    }
+
+    #[test]
+    fn only_descriptor_exhaustion_needs_backoff() {
+        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(24)));
+        assert!(accept_error_needs_backoff(&Error::from_raw_os_error(23)));
+        assert!(!accept_error_needs_backoff(&Error::from(
+            ErrorKind::ConnectionAborted
+        )));
+        assert!(!accept_error_needs_backoff(&Error::from_raw_os_error(22)));
     }
 
     #[test]
@@ -370,7 +384,9 @@ impl Server {
                     }
                     Err(e) if accept_error_is_transient(&e) => {
                         log::warn!("Transient accept error, retrying: {}", e);
-                        thread::sleep(ACCEPT_BACKOFF);
+                        if accept_error_needs_backoff(&e) {
+                            thread::sleep(ACCEPT_BACKOFF);
+                        }
                         continue;
                     }
                     Err(e) => Err(e),
