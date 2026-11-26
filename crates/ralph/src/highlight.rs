@@ -34,7 +34,7 @@
 
 use std::io::IsTerminal;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Theme, ThemeSet};
+use syntect::highlighting::{Color, Theme, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
@@ -45,6 +45,7 @@ use crate::render::pill_style::PillStyle;
 use crate::theme_slots::ResolveColors;
 use crate::tool_theme::ToolColors;
 use crate::ui_theme::UiColors;
+use ralph_core::code_frame::{surface, Backdrop, Rgb, Surface, ThemeTones};
 use ralph_server::config::{RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV};
 
 /// Default theme name used when no theme is specified.
@@ -396,7 +397,35 @@ impl Highlighter {
             .join(", ")
     }
 
+    pub fn surface(&self) -> Surface {
+        let tone = |color: Option<Color>| {
+            color.map(|color| Rgb {
+                r: color.r,
+                g: color.g,
+                b: color.b,
+            })
+        };
+        let tones = ThemeTones {
+            background: tone(self.theme.settings.background),
+            foreground: tone(self.theme.settings.foreground),
+        };
+        let backdrop = if self.use_background {
+            Backdrop::Painted
+        } else {
+            Backdrop::Disabled
+        };
+        surface(tones, backdrop)
+    }
+
     pub fn highlight(&self, code: &str, language: Option<&str>) -> String {
+        self.escaped(code, language, self.use_background)
+    }
+
+    pub fn highlight_foreground(&self, code: &str, language: Option<&str>) -> String {
+        self.escaped(code, language, false)
+    }
+
+    fn escaped(&self, code: &str, language: Option<&str>, use_background: bool) -> String {
         let Some(syntax) = language.and_then(|lang| self.find_syntax(lang)) else {
             return code.to_string();
         };
@@ -407,7 +436,7 @@ impl Highlighter {
         for line in LinesWithEndings::from(code) {
             match highlighter.highlight_line(line, &self.syntax_set) {
                 Ok(ranges) => {
-                    let escaped = as_24_bit_terminal_escaped(&ranges[..], self.use_background);
+                    let escaped = as_24_bit_terminal_escaped(&ranges[..], use_background);
                     output.push_str(&escaped);
                 }
                 Err(_) => {

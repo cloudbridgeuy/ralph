@@ -93,7 +93,7 @@ mod tests {
         let text = "# Notes\n\n```rust\nfn main() {}\n```\n\n```sh\necho hi\n```\n\n```diff\n-old\n+new\n```\n";
         let walked = render(&display, text);
         assert_eq!(walked, render_markdown(ctx, text, &theme));
-        let rust = walked.split("```sh").next().unwrap();
+        let (rust, _) = walked.split_once("── sh ").unwrap();
         assert!(rust.contains("\x1b[38;"), "{rust:?}");
         assert!(!rust.contains("fn main() {}"), "{rust:?}");
     }
@@ -111,7 +111,7 @@ mod tests {
         let text = "```toml\nname = \"ralph\"\n```\n\n```ts\nconst n: number = 1;\n```\n";
         let walked = render(&display, text);
         assert_eq!(walked, render_markdown(&display.ctx, text, &theme));
-        let (toml, ts) = walked.split_once("```ts").unwrap();
+        let (toml, ts) = walked.split_once("── ts ").unwrap();
         assert!(!toml.contains("name = \"ralph\""), "{toml:?}");
         assert!(!ts.contains("const n: number = 1;"), "{ts:?}");
     }

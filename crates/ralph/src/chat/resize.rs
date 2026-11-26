@@ -98,9 +98,62 @@ impl Watch<'_> {
             return;
         }
         if let Some(text) = redraw_text(self.store, self.display, cols) {
-            text.lines().for_each(|row| {
-                self.sink.send(row.to_string()).ok();
-            });
+            self.sink.send(text).ok();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::{Highlighter, ThemeConfig};
+    use crate::markdown::MarkdownTheme;
+    use crate::render::RenderContext;
+    use crate::ui_theme::UiColors;
+    use ralph_core::chat_memory::Role;
+    use ralph_server::chat::memory::Store;
+    use std::sync::mpsc::sync_channel;
+
+    fn rows(text: &str) -> Vec<String> {
+        text.lines().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn the_line_editor_prints_every_redraw_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let reply = "First.\n\nSecond.\n\n```rust\nfn main() {}\n```\n\n```sh\nls\n```\n";
+        Store::new(dir.path().to_path_buf())
+            .append(Role::Assistant, reply)
+            .unwrap();
+        let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::terminal(&highlighter),
+            theme: &theme,
+            color: true,
+            ui: UiColors::default(),
+        };
+        let state = Resize::default();
+        state.reprinted(80);
+        let (sink, printer) = sync_channel(256);
+        let idle = AtomicBool::new(true);
+        Watch {
+            resized: &AtomicBool::new(false),
+            done: &AtomicBool::new(false),
+            at_prompt: &idle,
+            state: &state,
+            store: dir.path(),
+            display: &display,
+            sink,
+        }
+        .settle(48);
+
+        let printed: Vec<String> = printer
+            .try_iter()
+            .flat_map(|message| rows(&message))
+            .collect();
+        let redraw = redraw_text(dir.path(), &display, 48).unwrap();
+        assert!(rows(&redraw).contains(&String::new()), "{redraw:?}");
+        assert_eq!(printed, rows(&redraw));
     }
 }

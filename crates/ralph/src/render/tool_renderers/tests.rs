@@ -74,7 +74,7 @@ fn test_render_bash_invocation_long_command_is_pretty_printed_terminal() {
     let output = render_bash_invocation(&ctx, "echo first-statement; echo second-statement");
 
     assert!(output.contains("▶ Bash"));
-    assert!(output.contains("```sh\n"));
+    assert!(output.contains("── sh "));
     assert!(output.matches('\n').count() >= 4, "Output: {:?}", output);
 }
 

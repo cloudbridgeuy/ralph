@@ -9,8 +9,9 @@
 //! 3. Display after block (new_string) with green background + syntax highlighting
 //! 4. Fall back to unified diff if old_string/new_string unavailable
 
-use crate::diff_highlight::highlight_with_basic_colors;
 use crate::render::ansi;
+use crate::render::code_frame::framed_diff;
+use ralph_core::code_frame::Label;
 
 use crate::render::extract_language_from_path;
 use crate::render::RenderContext;
@@ -228,16 +229,10 @@ pub fn format_no_changes_message(ctx: &RenderContext, file_path: &str) -> String
     }
 }
 
-/// Format diff output with optional highlighting and truncation.
-///
-/// This is the common formatting logic shared between generated diffs
-/// and diffs that come directly from tool results.
 pub fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &str) -> String {
-    // Count lines for potential truncation
     let lines: Vec<&str> = diff_content.lines().collect();
     let line_count = lines.len();
 
-    // Truncate if too long
     let (display_content, truncated) = if line_count > MAX_DIFF_LINES {
         let truncated_lines: String = lines[..MAX_DIFF_LINES].join("\n");
         (truncated_lines, true)
@@ -246,29 +241,14 @@ pub fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &s
     };
 
     if ctx.terminal {
-        // Highlight the diff
-        let highlighted_diff = highlight_with_basic_colors(&display_content, &ctx.diff);
+        let ink = ctx.tools.name_fg();
+        let head = Label::File {
+            path: file_path,
+            kind: "diff",
+            ink: &ink,
+        };
+        let mut output = framed_diff(ctx, &head, &display_content);
 
-        // Build output with header
-        let mut output = String::new();
-
-        // File path header with box drawing
-        output.push_str(&format!(
-            "{}── {} ──{}\n",
-            ctx.tools.name_fg(),
-            file_path,
-            ansi::RESET
-        ));
-
-        // The highlighted diff content wrapped in diff fences
-        output.push_str("```diff\n");
-        output.push_str(&highlighted_diff);
-        if !highlighted_diff.ends_with('\n') {
-            output.push('\n');
-        }
-        output.push_str("```\n");
-
-        // Truncation indicator
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
@@ -280,13 +260,10 @@ pub fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &s
 
         output
     } else {
-        // Plain text format
         let mut output = String::new();
 
-        // Simple header
         output.push_str(&format!("-- {} --\n", file_path));
 
-        // Plain diff content
         output.push_str("```diff\n");
         output.push_str(&display_content);
         if !display_content.ends_with('\n') {
@@ -294,7 +271,6 @@ pub fn format_diff_output(ctx: &RenderContext, file_path: &str, diff_content: &s
         }
         output.push_str("```\n");
 
-        // Truncation indicator
         if truncated {
             output.push_str(&format!("... {} more lines\n", line_count - MAX_DIFF_LINES));
         }
@@ -462,6 +438,26 @@ mod tests {
         assert!(
             !format_before_after(&processor.render_context(), "a.rs", "x", "y").contains('\x1b')
         );
+    }
+
+    #[test]
+    fn edit_result_rule_carries_path() {
+        let processor = colored_processor();
+        let out = format_diff_output(&processor.render_context(), "src/a.rs", "+x\n");
+        let plain = crate::frame::strip_ansi(&out);
+        assert!(plain.starts_with("── src/a.rs · diff ─"), "{plain:?}");
+        assert!(!plain.contains("```"), "{plain:?}");
+        assert_eq!(plain.lines().filter(|row| row.contains('─')).count(), 1);
+        assert!(plain.ends_with("  \n  +x\n  \n"), "{plain:?}");
+    }
+
+    #[test]
+    fn truncated_edit_result_counts_lines_after_the_block() {
+        let processor = colored_processor();
+        let diff = "+x\n".repeat(MAX_DIFF_LINES + 3);
+        let out = format_diff_output(&processor.render_context(), "a.rs", &diff);
+        let plain = crate::frame::strip_ansi(&out);
+        assert!(plain.ends_with("  +x\n  \n... 3 more lines\n"), "{plain:?}");
     }
 
     #[test]
