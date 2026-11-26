@@ -274,4 +274,27 @@ mod tests {
         assert_eq!(ids, ["real"], "{facts:?}");
         assert!(find(&facts, "real").ticket.is_none());
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_log_gives_no_report() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().unwrap();
+        let log = encode_entry(&NewEntry {
+            role: Role::Worker,
+            at: "2026-01-01T00:05:00Z".to_string(),
+            text: "[worker A · done]\nfinished".to_string(),
+        })
+        .unwrap();
+        touch(&outside.path().join("log.jsonl"), &log);
+        let store = tempfile::tempdir().unwrap();
+        owner(store.path(), CLAUDE_OWNER_DIR, "A");
+        symlink(
+            outside.path().join("log.jsonl"),
+            store.path().join("log.jsonl"),
+        )
+        .unwrap();
+        let facts = worker_facts(store.path());
+        assert!(find(&facts, "A").last_report.is_none());
+    }
 }
