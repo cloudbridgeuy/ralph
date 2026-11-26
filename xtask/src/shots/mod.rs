@@ -1,4 +1,5 @@
-use std::fs::File;
+use std::collections::BTreeMap;
+use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,8 @@ pub struct ShotsCommand {
 pub enum ShotsAction {
     List(ListArgs),
     Diff(DiffArgs),
+    Compare(CompareArgs),
+    Approve(ApproveArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -34,8 +37,37 @@ pub struct DiffArgs {
     #[arg(long, default_value = "diff.png")]
     pub out: PathBuf,
 
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = core::DEFAULT_TOLERANCE)]
     pub tolerance: u8,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CompareArgs {
+    #[arg(long)]
+    pub baseline: PathBuf,
+
+    #[arg(long)]
+    pub current: PathBuf,
+
+    #[arg(long)]
+    pub out: PathBuf,
+
+    #[arg(long, default_value_t = core::DEFAULT_TOLERANCE)]
+    pub tolerance: u8,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ApproveArgs {
+    #[arg(long)]
+    pub baseline: PathBuf,
+
+    #[arg(long)]
+    pub current: PathBuf,
+
+    #[arg(long)]
+    pub all: bool,
+
+    pub names: Vec<String>,
 }
 
 type BoxError = Box<dyn std::error::Error>;
@@ -102,6 +134,62 @@ fn diff(args: DiffArgs) -> Result<(), BoxError> {
     }
 }
 
+fn png_names(dir: &Path) -> Result<Vec<String>, BoxError> {
+    let entries =
+        fs::read_dir(dir).map_err(|error| format!("could not read {}: {error}", dir.display()))?;
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.ends_with(".png"))
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+fn compare(args: CompareArgs) -> Result<(), BoxError> {
+    let baseline_names = png_names(&args.baseline)?;
+    let current_names = png_names(&args.current)?;
+    let mut measures = BTreeMap::new();
+    let mut diffs = BTreeMap::new();
+    for name in core::common_names(&baseline_names, &current_names) {
+        let baseline = read_png(&args.baseline.join(&name))?;
+        let current = read_png(&args.current.join(&name))?;
+        let result = core::diff_images(&baseline, &current, args.tolerance);
+        measures.insert(name.clone(), core::measure(&result));
+        if let core::DiffResult::Compared { diff, .. } = result {
+            diffs.insert(name, diff);
+        }
+    }
+    let classification = core::classify(&baseline_names, &current_names, &measures);
+    let diff_dir = args.out.join("diff");
+    fs::create_dir_all(&diff_dir)?;
+    for (name, _) in &classification.changed {
+        if let Some(diff) = diffs.get(name) {
+            write_png(&diff_dir.join(name), diff)?;
+        }
+    }
+    let report = core::render_report(&classification);
+    fs::write(args.out.join("report.md"), &report)?;
+    print!("{report}");
+    if core::is_clean(&classification) {
+        Ok(())
+    } else {
+        Err("shots are not clean".into())
+    }
+}
+
+fn approve(args: ApproveArgs) -> Result<(), BoxError> {
+    let current_names = png_names(&args.current)?;
+    let approved = core::select_approvals(&args.names, args.all, &current_names)?;
+    fs::create_dir_all(&args.baseline)?;
+    for name in &approved {
+        fs::copy(args.current.join(name), args.baseline.join(name))?;
+        println!("approved {name}");
+    }
+    Ok(())
+}
+
 pub fn run(command: ShotsCommand) -> Result<(), BoxError> {
     match command.action {
         ShotsAction::List(args) => {
@@ -111,5 +199,7 @@ pub fn run(command: ShotsCommand) -> Result<(), BoxError> {
             Ok(())
         }
         ShotsAction::Diff(args) => diff(args),
+        ShotsAction::Compare(args) => compare(args),
+        ShotsAction::Approve(args) => approve(args),
     }
 }
