@@ -1,5 +1,6 @@
 use super::core::{self, Screen, Shot, Theme};
 use super::mask;
+use super::prefs;
 use super::seed;
 use super::webdriver::{self, Listening};
 use super::BoxError;
@@ -311,7 +312,7 @@ fn launch_firefox(
 ) -> Result<(ChildGuard, Marionette), BoxError> {
     for attempt in 1..=LAUNCH_ATTEMPTS {
         let port = free_port()?;
-        fs::write(profile.join("user.js"), webdriver::user_js(theme, port))?;
+        fs::write(profile.join("user.js"), prefs::user_js(theme, port))?;
         let mut child = start_firefox(firefox, profile)?;
         match Marionette::connect(port, &mut child) {
             Ok(browser) => return Ok((child, browser)),

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 mod browser;
 mod core;
 mod mask;
+mod prefs;
 mod report;
 mod seed;
 mod seed_spec;
