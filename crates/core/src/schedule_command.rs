@@ -241,7 +241,7 @@ pub fn task_rows(tasks: &[Task]) -> Vec<TaskRow> {
             repeat: task
                 .repeat
                 .as_ref()
-                .map(crate::schedule_repeat::repeat_label),
+                .and_then(crate::schedule_repeat::repeat_row_label),
             has_follow_up: task.follow_up.is_some(),
         })
         .collect()

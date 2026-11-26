@@ -585,3 +585,56 @@ fn workers_ticket_without_a_ticket_shape_is_null() {
     assert_eq!(ticket_of("real"), "GUZ-1748");
     assert!(!reply.body.contains("sk-live"), "{}", reply.body);
 }
+
+const PLANTED: &str = "sk-live-0123456789abcdef";
+
+#[test]
+fn schedules_repeat_with_free_text_is_not_returned() {
+    let server = TestServer::start_with_store(|dir| {
+        let mut planted = task(
+            "planted",
+            command("true"),
+            "2026-03-01T02:00:00Z",
+            TaskStatus::Pending,
+        );
+        planted.repeat = Some(Repeat::Daily {
+            daily: PLANTED.to_string(),
+        });
+        save_all(dir, &[planted]);
+    });
+    let reply = get(&server);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!reply.body.contains("sk-live"), "{}", reply.body);
+    assert_eq!(json_of(&reply)["rows"][0]["repeat"], Value::Null);
+}
+
+#[test]
+fn workers_planted_ticket_and_report_status_are_not_returned() {
+    // The harness is a fixed label chosen from OWNER_DIRS in worker_facts, never
+    // read from a file, so it cannot carry free text. The state, tone and
+    // pending_count are fixed words or a number.
+    let server = TestServer::start_with_store(|store| {
+        owner(store, CLAUDE_OWNER_DIR, "alpha");
+        let record = SpawnRecord {
+            ticket: Some(PLANTED.to_string()),
+            ..SpawnRecord::default()
+        };
+        touch(
+            &spawn_record_path(store, "alpha"),
+            &encode_spawn_record(&record).unwrap(),
+        );
+        let report = encode_entry(&NewEntry {
+            role: Role::Worker,
+            at: "2026-03-01T09:00:00Z".to_string(),
+            text: format!("[worker alpha · {PLANTED}]\nbody"),
+        })
+        .unwrap();
+        touch(&store.join("log.jsonl"), &report);
+    });
+    let reply = get_workers(&server);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!reply.body.contains("sk-live"), "{}", reply.body);
+    assert!(!reply.body.contains("body"), "{}", reply.body);
+    let row = json_of(&reply)["rows"][0].clone();
+    assert_eq!(row["last_report_status"], Value::Null);
+}
