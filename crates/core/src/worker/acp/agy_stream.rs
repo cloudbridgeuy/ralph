@@ -5,10 +5,44 @@ use crate::stream::{
 use crate::worker::{agy_turn_usage, AgyUsage};
 use serde_json::{json, Value};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopReason {
+    EndTurn,
+    MaxTokens,
+    MaxTurnRequests,
+    Refusal,
+    Cancelled,
+    Other(String),
+}
+
+impl StopReason {
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "end_turn" => Self::EndTurn,
+            "max_tokens" => Self::MaxTokens,
+            "max_turn_requests" => Self::MaxTurnRequests,
+            "refusal" => Self::Refusal,
+            "cancelled" => Self::Cancelled,
+            other => Self::Other(other.to_string()),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::EndTurn => "end_turn",
+            Self::MaxTokens => "max_tokens",
+            Self::MaxTurnRequests => "max_turn_requests",
+            Self::Refusal => "refusal",
+            Self::Cancelled => "cancelled",
+            Self::Other(raw) => raw,
+        }
+    }
+}
+
 pub enum AgyEvent<'a> {
     Update(&'a Value),
     Done {
-        stop_reason: &'a str,
+        stop_reason: StopReason,
         usage: Option<&'a AgyUsage>,
     },
 }
@@ -26,7 +60,7 @@ pub fn agy_stream_events(event: &AgyEvent) -> Vec<StreamEvent> {
             session_id: None,
             num_turns: None,
             result: None,
-            terminal_reason: Some((*stop_reason).into()),
+            terminal_reason: Some(stop_reason.as_str().into()),
             model_usage: Default::default(),
         })],
     }
@@ -205,7 +239,7 @@ mod tests {
             thought: None,
         };
         let events = agy_stream_events(&AgyEvent::Done {
-            stop_reason: "end_turn",
+            stop_reason: StopReason::EndTurn,
             usage: Some(&usage),
         });
         let [StreamEvent::Result(result)] = events.as_slice() else {
@@ -218,5 +252,20 @@ mod tests {
             .as_ref()
             .map(|u| (u.input_tokens, u.output_tokens));
         assert_eq!(tokens, Some((100, 20)));
+    }
+
+    #[test]
+    fn stop_reason_parses_known_and_keeps_other() {
+        for (raw, parsed) in [
+            ("end_turn", StopReason::EndTurn),
+            ("max_tokens", StopReason::MaxTokens),
+            ("max_turn_requests", StopReason::MaxTurnRequests),
+            ("refusal", StopReason::Refusal),
+            ("cancelled", StopReason::Cancelled),
+            ("weird", StopReason::Other("weird".to_string())),
+        ] {
+            assert_eq!(StopReason::parse(raw), parsed);
+            assert_eq!(parsed.as_str(), raw);
+        }
     }
 }

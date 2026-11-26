@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn agy_events_render_like_claude_lines() {
-        use crate::worker::{agy_stream_events, AgyEvent, AgyUsage};
+        use crate::worker::{agy_stream_events, AgyEvent, AgyUsage, StopReason};
         use serde_json::json;
 
         let updates = [
@@ -301,7 +301,7 @@ mod tests {
         let mut agy = StreamCollector::new(true, VerboseToolsConfig::default());
         let mut agy_blocks = Vec::new();
         let done = AgyEvent::Done {
-            stop_reason: "end_turn",
+            stop_reason: StopReason::EndTurn,
             usage: Some(&usage),
         };
         let events = updates
