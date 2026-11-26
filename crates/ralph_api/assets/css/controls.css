@@ -91,6 +91,87 @@ r-spark b {
   font-weight: 600;
 }
 
+r-graph {
+  display: block;
+  flex: none;
+  overflow: hidden;
+}
+
+r-graph svg {
+  display: block;
+  overflow: visible;
+}
+
+r-graph .ln {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+r-graph .nd {
+  fill: var(--r-bg);
+  stroke-width: 1.5;
+}
+
+r-graph .ln.plain {
+  stroke: var(--r-muted);
+}
+
+r-graph .nd.plain {
+  stroke: var(--r-ink);
+}
+
+r-graph .nd.full.plain {
+  fill: var(--r-ink);
+}
+
+r-graph .ln.ok {
+  stroke: var(--r-ok);
+}
+
+r-graph .nd.ok {
+  stroke: var(--r-ok);
+}
+
+r-graph .nd.full.ok {
+  fill: var(--r-ok);
+}
+
+r-graph .ln.warn {
+  stroke: var(--r-warn);
+}
+
+r-graph .nd.warn {
+  stroke: var(--r-warn);
+}
+
+r-graph .ln.bad {
+  stroke: var(--r-bad);
+}
+
+r-graph .arrow.ok {
+  fill: var(--r-ok);
+}
+
+r-graph .nd.full {
+  stroke: none;
+}
+
+r-graph .arrow {
+  stroke: none;
+}
+
+r-graph .ln.warn.h {
+  stroke-dasharray: 2 2;
+}
+
+r-table > table > tbody > tr:hover r-graph .nd:not(.full) {
+  fill: var(--r-hover);
+}
+
+r-table > table > tbody > tr[aria-selected="true"] r-graph .nd:not(.full) {
+  fill: var(--r-selected);
+}
+
 r-prose {
   display: block;
   max-width: 92ch;

@@ -6,6 +6,7 @@ use crate::render::{
 use fixture::{parse, Fixture};
 
 mod fixture;
+mod graph;
 mod tree;
 
 const TONES: [Tone; 6] = [
@@ -394,6 +395,7 @@ fn theme_body(fixture: &Fixture) -> String {
         tree::trees(&fixture.very_long_title),
         pills(fixture),
         statuses(fixture),
+        graph::graphs(),
         empties(fixture),
         errors(fixture),
         spinners(),
@@ -425,13 +427,14 @@ mod tests {
     use super::{page, MARKS};
 
     const COMMITTED: &str = include_str!("../../fixtures/catalogue.json");
-    const TAGS: [&str; 12] = [
+    const TAGS: [&str; 13] = [
         "r-box",
         "r-rule",
         "r-table",
         "r-kv",
         "r-pill",
         "r-status",
+        "r-graph",
         "r-empty",
         "r-error",
         "r-spinner",

@@ -12,6 +12,7 @@ use std::{
 pub struct Timeouts {
     pub read: Option<Duration>,
     pub write: Option<Duration>,
+    pub header: Option<Duration>,
 }
 
 /// Unified listener. Either a [`TcpListener`] or [`std::os::unix::net::UnixListener`]
@@ -238,6 +239,7 @@ mod tests {
         let stream = accepted_tcp(Timeouts {
             read: Some(Duration::from_secs(7)),
             write: Some(Duration::from_secs(9)),
+            header: None,
         });
         assert_eq!(stream.read_timeout().unwrap(), Some(Duration::from_secs(7)));
         assert_eq!(

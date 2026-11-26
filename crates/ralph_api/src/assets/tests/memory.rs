@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
-const APP_CSS_CLASSES: [&str; 18] = [
+const APP_CSS_CLASSES: [&str; 19] = [
     "g",
     "chev",
     "id",
@@ -20,10 +20,15 @@ const APP_CSS_CLASSES: [&str; 18] = [
     "why",
     "next",
     "btn",
+    "icon",
 ];
 
 fn memory_css() -> String {
     format!("\n{}", include_str!("../../../assets/css/memory.css"))
+}
+
+fn threads_css() -> String {
+    format!("\n{}", include_str!("../../../assets/css/threads.css"))
 }
 
 fn script_classes(js: &str) -> BTreeSet<String> {
@@ -64,14 +69,18 @@ fn selector_classes_read_selector_lines_only() {
 }
 
 #[test]
-fn memory_css_is_in_the_app_sheet_last() {
+fn memory_css_is_in_the_app_sheet_before_threads_css_which_is_last() {
     assert!(find("/assets/memory.css").is_none());
+    assert!(find("/assets/threads.css").is_none());
     assert!(!shell().contains("memory.css"));
+    assert!(!shell().contains("threads.css"));
     let app = css();
     let memory = memory_css();
+    let threads = threads_css();
     let at = app.find(memory.trim_start()).unwrap();
     assert!(at > app.find("r-tree button:focus-visible").unwrap());
-    assert!(app.ends_with(memory.trim_start()));
+    assert!(app.find(threads.trim_start()).unwrap() > at);
+    assert!(app.ends_with(threads.trim_start()));
 }
 
 #[test]
@@ -100,6 +109,10 @@ fn css_files_stay_under_1000_lines() {
         (
             "css/memory.css",
             include_str!("../../../assets/css/memory.css"),
+        ),
+        (
+            "css/threads.css",
+            include_str!("../../../assets/css/threads.css"),
         ),
     ] {
         let lines = text.lines().count();
@@ -198,14 +211,17 @@ fn every_script_class_has_a_rule_and_every_memory_rule_is_used() {
         assert!(app.contains(&format!(".{owned}")), "app.css lacks .{owned}");
     }
     let used = script_classes(&script());
-    let ruled = selector_classes(&memory_css());
+    let ruled: BTreeSet<String> = selector_classes(&memory_css())
+        .union(&selector_classes(&threads_css()))
+        .cloned()
+        .collect();
     for name in used
         .iter()
         .filter(|name| !APP_CSS_CLASSES.contains(&name.as_str()))
     {
         assert!(
             ruled.contains(name),
-            "css/memory.css lacks a rule for .{name}"
+            "css/memory.css and css/threads.css lack a rule for .{name}"
         );
     }
     for name in &ruled {

@@ -1,0 +1,5 @@
+head_messages 4
+row lint-sweep Open base=2 created=2026-01-02T00:00:00Z active=2027-01-15T08:00:00+00:00 messages=3 workers=0 unread=0
+row docs-pass Parked("2026-01-03T00:00:00Z") base=1 created=2026-01-01T00:00:00Z active=2027-01-15T08:01:40+00:00 messages=1 workers=0 unread=0
+row cache-fix Merged("2026-01-05T00:00:00Z") base=3 created=2026-01-04T00:00:00Z active=2027-01-15T08:03:20+00:00 messages=2 workers=0 unread=0
+tombstone old-idea base=2 created=2025-12-30T00:00:00Z dropped_at=2026-01-06T00:00:00Z

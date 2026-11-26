@@ -1,6 +1,6 @@
 # ralph web Command
 
-`ralph web [--store <DIR>] [--port <N>] [--tailscale]` serves a local HTTP API on 127.0.0.1. With `--tailscale` it also serves on the Tailscale IP of the machine (see [Tailscale](#tailscale)). It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `GET /api/config`, `POST /api/render` and `GET /tokens.css`.
+`ralph web [--store <DIR>] [--port <N>] [--tailscale]` serves a local HTTP API on 127.0.0.1. With `--tailscale` it also serves on the Tailscale IP of the machine (see [Tailscale](#tailscale)). It runs in the foreground until Ctrl-C. It serves the embedded shell, its stylesheet and font, `GET /api/health`, `GET /api/config`, `GET /api/threads`, `POST /api/render` and `GET /tokens.css`.
 
 ## Code Locations
 
@@ -19,7 +19,7 @@
 | Admit | `crates/ralph_api/src/admit.rs` | pure `admit()` and `MAX_HANDLERS`: the cap rule |
 | Server | `crates/ralph_api/src/server.rs` | `bind()`, `serve()` on tiny_http |
 | Assets | `crates/ralph_api/src/assets.rs` | embedded table: `find()` |
-| Asset files | `crates/ralph_api/assets/` | `index.html`, `css/*.css` (including `css/memory.css`), `app.js`, `fonts/` |
+| Asset files | `crates/ralph_api/assets/` | `index.html`, `css/*.css` (including `css/memory.css` and `css/threads.css`), `threads.js`, `app.js`, `fonts/` |
 | Colour lint | `xtask/src/lint/web_colour.rs` | checks the files in `assets/` |
 | Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
 | Markdown | `crates/ralph_api/src/render/{prose,md_event,md_link,code}.rs` | `render_markdown()`: pulldown-cmark events to HTML inside `<r-prose>`; `code.rs` highlights fenced blocks |
@@ -130,6 +130,10 @@ Risk:
 | unknown thread, or `node` past the last entry | 404 `{"error":"not found"}` |
 | memory store missing or unreadable | 500 `{"error":"memory unavailable"}`, with no path and no system text |
 | other method on a memory route | 405 with `Allow: GET` |
+| `GET /api/threads` | 200 `{store, rows}` with one row for each line of the threads table; see [Threads route](#threads-route) |
+| any query key but `token` on `/api/threads` | 400 `{"error":"unknown query key"}` |
+| store unreadable on `/api/threads` | 500 `{"error":"threads unavailable"}`, with no path |
+| other method on `/api/threads` | 405 with `Allow: GET` |
 | `GET /api/workers`, `GET /api/schedules`, `GET /api/watches` | 200 `{"store","rows"}`; see [Workers, schedules and watches](#workers-schedules-and-watches) |
 | other method on those three routes | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
@@ -155,6 +159,20 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 - The stats and the path are worked out in `ralph_api` from the tree and the entry count. There is no change in core.
 - Code: `crates/ralph_api/src/memory_api.rs` (pure response builders and the thin read), `memory/query.rs` (query parser), `memory/json.rs` (JSON bodies), `memory/stats.rs` (node and tree stats, `folded`), `memory/path.rs` (zoom path).
 
+## Threads route
+
+`GET /api/threads` takes no parameters. Only `token` is allowed in the query.
+
+- Body: `{store, rows: [{kind, name, state, age, base, created, active, messages, workers, unread, svg}]}`. `store` is the last path component, as in the other routes. There is no paging.
+- Row order is the order of the table in `ralph thread ls`: the head row (`kind` `head`, name `main`), then open, parked and merged threads, then dropped threads sorted by name. `ralph thread log` has a different layout (a graph by fork point); this route does not follow it.
+- `kind` is `head`, `thread` or `dropped`. `state` is `head`, `open`, `parked`, `merged` or `dropped`. `age` is the time since the park or merge, and `null` for the other states.
+- The head row has `messages` (the length of the main log) and nulls for `age`, `base`, `created`, `active`, `workers` and `unread`. A dropped row has only `name`, `kind` and `state` and `svg`; the other fields are null.
+- A thread row has `base` (the fork point), `created` (in UTC as `YYYY-MM-DDTHH:MM:SSZ`; a stored value that does not parse is sent as it is), `active` (the time since the last write to its log, or `null`), `messages`, `workers` (running workers) and `unread` (unread inbox reports). The values come from the same readers as `ralph thread ls`: `Store::log_len`, the mtime of `log.jsonl`, `running_workers_in` and `Inbox::unread_count`. `thread_rows` takes one tmux listing for each request and passes it to `running_workers_in` for each thread, with the store of that thread, so the request runs `tmux` once. `running_workers` still serves the other callers: it takes its own listing and calls `running_workers_in`. The code is a second copy of that read in `ralph_server::chat::memory::thread_rows`, and both sort with `sort_rows`.
+- `svg` is one three-cell lane for each row, drawn on the server as an [r-graph](#primitives).
+- Read: the thread folders, the length and mtime of each log, `threads/dropped.jsonl`, the worker and inbox counts. Not read: costs, `history.jsonl`, `tags.jsonl`, paths.
+- Each request reads the store again. There is no cache and no lock, and nothing is written.
+- Code: `crates/ralph_api/src/threads_api.rs` (the thin read), `threads/json.rs` (the body), `threads/cells.rs` (the lanes), `render/graph.rs` (the SVG).
+
 ## Config route and screen
 
 `GET /api/config` reads the merged `config.toml` (global file, then the store file, then environment overrides) once for each request and writes nothing. It takes no parameters.
@@ -169,18 +187,19 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 
 Redaction: a row has `redacted: true` and no value when its key is on the redact list (shells, editor, file and directory paths, MCP servers, prompts, permission and sandbox keys), or when its key is not on the safe list and the value looks sensitive (a path, a URL, `@`, `key=` or `token=`). The rule is `crates/ralph_server/src/config/redact.rs`. The handler is `crates/ralph_api/src/config_api.rs`.
 
-The shell shows the route as the second tab, `#/config`. It draws one `r-box` for each section, with the row count in the border. Each row is an `r-kv` line with the key, the value and the source as a pill (muted for `default`). A redacted row shows a muted `hidden` mark. No rows give an `r-empty` "No settings". A failed load gives an `r-error` "Config did not load" with the `why` text and a retry button. The contract is `crates/ralph_api/tests/config_screen_contract.rs`.
+The shell shows the route as the sixth tab, `#/config`. It draws one `r-box` for each section, with the row count in the border. Each row is an `r-kv` line with the key, the value and the source as a pill (muted for `default`). A redacted row shows a muted `hidden` mark. No rows give an `r-empty` "No settings". A failed load gives an `r-error` "Config did not load" with the `why` text and a retry button. The contract is `crates/ralph_api/tests/config_screen_contract.rs`.
 
 ## Embedded assets
 
 - The files in `crates/ralph_api/assets/` are in the binary through `include_bytes!`. There is no build step.
 - The CSP is `default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. Assets also send `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`.
-- The shell loads one style sheet, `/assets/app.css`, and one script, `/app.js` (`<script src="/app.js" defer>`, same origin, so the CSP is unchanged: no `'unsafe-inline'`). It has no inline script and no `style=`. Its nav links use `#/name`.
+- The shell loads one style sheet, `/assets/app.css`, and one script, `/app.js` (`threads.js` then `app.js`, joined by `concat!` in `assets.rs`; `<script src="/app.js" defer>`, same origin, so the CSP is unchanged: no `'unsafe-inline'`). It has no inline script and no `style=`. Its nav links use `#/name`.
 - The font is the full variable font Geist Mono (`GeistMono[wght].woff2`) from vercel/geist-font tag v1.9.2, unchanged. It is not a latin-only subset. The repo name has no brackets: `fonts/geist-mono.woff2`.
 - `fonts/NOTICE` records the tag, the source path and the SHA-256. `fonts/OFL.txt` is the upstream licence. `ralph licenses` prints both.
 - The `[web]` font default starts with `"Geist Mono"`.
-- `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. Thirteen are built: r-box, r-rule, r-table, r-kv, r-tree, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code and r-prose. The fourteenth, r-graph, passes the lint but has no builder yet. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint. It does not scan `url(...)` contents or comments (`/* */`, and `//` in `.js` and `.mjs` only), and it does not read a css id selector such as `#add` as a hex colour. A `color-mix()` may take a `var(--r-*)` token as its percentage. In `.css` files it judges each declaration as one statement, even when it spans lines; HTML `style=` and `<style>` content stay judged line by line.
+- `cargo xtask lint` runs a colour lint on `assets/`. It refuses raw colours, named colours (also in custom properties), `var()` outside `--r-*`, any `--r-*` definition (tokens come only from `/tokens.css`) and custom elements that are not one of the 14 allowed primitives. All fourteen are built: r-box, r-rule, r-table, r-kv, r-tree, r-pill, r-status, r-empty, r-error, r-spinner, r-spark, r-code, r-prose and r-graph. It skips binary assets (woff, woff2, png, jpg, jpeg, gif, ico, webp). It refuses `.svgz` files, because it cannot scan gzipped SVG; use plain `.svg`. A file that is not UTF-8, or that it cannot read, fails the lint. It does not scan `url(...)` contents or comments (`/* */`, and `//` in `.js` and `.mjs` only), and it does not read a css id selector such as `#add` as a hex colour. A `color-mix()` may take a `var(--r-*)` token as its percentage. In `.css` files it judges each declaration as one statement, even when it spans lines; HTML `style=` and `<style>` content stay judged line by line.
 - `css/memory.css` holds the memory screen rules and joins `app.css` after `css/responsive.css`. The test `css_files_stay_under_1000_lines` keeps every CSS file under 1,000 lines.
+- `css/threads.css` holds the threads screen rules and joins `app.css` after `css/memory.css`. The `.drop-1`, `.drop-2` and `.drop-3` classes hide table columns at 1180px, 1000px and 760px.
 - `css/memory.css` classes: `.tabs`, `.crumbs`, `.statline`, `.split`, `.detail`, `.summary`, `.pager` and `kbd`, plus the selected tree row and the focus rings. Read the file for the rules.
 - The colour lint scans every file that `git ls-files` lists under `assets/`. An untracked file is not scanned until `git add`.
 - A body of 32 KB or more goes out with chunked transfer encoding. The test client decodes it.
@@ -201,6 +220,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 | `r-error` | `error(what)`, `error_with(&ErrorParts)` | `role="alert"`; a `span.what` with an optional outline bad `r-pill` status code, an optional `span.why` and an optional `span.next`; every text is escaped; `compact` is one flex row with `next` on the right |
 | `r-spinner` | `spinner()` | `role="status"` with visually hidden "Loading" text |
 | `r-spark` | `spark_svg(values, w, h)` | returns `None` for an empty series; the caller renders `r-empty` |
+| `r-graph` | `graph_svg(&[Cell])` | one inline SVG for a lane of cells; a cell is 8px wide and the row is 24px high, so three cells make a 24px by 24px SVG with `aria-hidden`; the glyphs `● ○ ├ ╰ ─ ◄ ✕` are drawn as shapes, not as text; a tone (`plain`, `ok`, `warn`, `bad`) maps to a role token (`--r-muted` and `--r-ink`, `--r-ok`, `--r-warn`, `--r-bad`) in `css/controls.css`; the horizontal lines of the `warn` tone are dashed (`2 2`); an open node takes the hover or selected fill of its table row |
 
 - Every builder is a pure function that returns a `String`. One `escape()` handles text and attribute values (`& < > " '`).
 - Attribute values come from closed enums (`Tone`: ok, bad, warn, info, accent, neutral; `Shape`; `PillShape`; `PillVariant`; `Icon`), never from free text. The one exception is the `r-box` title: it goes into `aria-label`, escaped by `escape()`. `inner_html` of `frame()` must be built from these builders.
@@ -236,12 +256,14 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 - tiny_http 0.12.0 runs one thread for each open connection: the accept loop in `Server::from_listener` hands each connection to `TaskPool::spawn`, which starts a new thread when none is free (`lib.rs:323`, `util/task_pool.rs:69-76`). An admitted stalled request costs two threads: the tiny_http connection thread and the handler thread that holds the slot. Past 8 requests in progress, a stalled request costs the connection thread and a thread that sends the 503. All of these threads end when the client closes the socket or a timeout fires.
 - The server reads a request body up to 256 KiB, and only for an authorised `POST /api/render`. It checks Host and token on the headers first. A request that fails a check, or that targets another path, gets its answer without a body read, so `Expect: 100-continue` gets no `100 Continue`. A `Content-Length` over the cap gets 413 `{"error":"too large"}` at once, without a body read, on every route and method, before the Host and token checks. The bytes read are checked again against the cap. The 413 comes after the 503 check and before the 403 and 401 checks, so it leaks nothing about auth. 
 - Each connection has a 10 s read timeout and a 10 s write timeout (`Limits` in `server.rs`). They come from the vendored tiny_http `Timeouts` (`vendor/tiny_http`). They apply to loopback too. A stalled request body is closed by the read timeout.
-- After a rejected request (401, 403 or 413), the handler thread drains the unread body while it holds the handler slot. The drain stops after 64 KiB or 2 s since it started. It checks both between reads. One rejected request holds a slot for at most about 2 s plus one 10 s read, which is about 12 s.
+- After a rejected request (401, 403 or 413), the handler thread drains the unread body. It releases the handler slot first, after the response is written and flushed (`Request::respond_then` in the vendored tiny_http). The drain stops after 64 KiB or 2 s since it started. It checks both between reads. The drain can run for about 12 s (2 s plus one 10 s read), but it holds no slot.
 - The drain reads through a fixed 8 KiB buffer (the vendored `EqualReader` in `vendor/tiny_http/src/util/equal_reader.rs`). A huge declared `Content-Length` does not allocate that size.
-- Known limit: the slot stays held during the drain. tiny_http drops the request, and so drains it, inside `respond()`. To release the slot before the drain, the vendored crate needs a hook. This is not done.
-- Known limit: a client that sends headers slowly (header slowloris) is bounded only by the per-read timeout. tiny_http reads headers before the handler slot is taken.
+- The server stops reading headers 10 s after the first request-line byte (`Limits.header`). The client gets 408 and a close. This applies to loopback too. Keep-alive idle time before the first byte does not count. The deadline is checked only after a byte arrives, so the real bound is the 10 s header deadline plus one 10 s read timeout, about 20 s.
 - Known limit: a drain that stops early leaves the connection open (keep-alive). tiny_http drops a `Connection` header set on a response and does not close on it. The leftover body bytes can be parsed as the next request on that connection. Garbage gets a 400 and a close. A crafted body is routed and authenticated like any request, so it gives no auth bypass.
-- Residual risk: up to 8 allowed tailnet devices that keep reconnecting and sending rejected requests can still keep the server on 503. An accept cap or a per-request total deadline is the follow-up. It is not done.
+- Per-peer cap: a peer IP can have at most 2 draining rejected requests at a time. These are 401, 403, 413, and the 503 from the 8-request cap. The 8-request 503 is counted before routing. A peer whose request gets this 503 is counted, even if the request would have passed authentication. A count lasts until the response is written and the body drain ends. A further rejected request from that peer gets 503 `{"error":"busy"}`. This applies to the 8-request 503 too. The server closes that connection with no body drain, and the request is not counted. It holds no thread and no count after the write. A routed request that is not rejected (any status other than 401, 403 and 413) is never counted and never refused. A tailnet device has a 100.x IPv4 address and an `fd7a:` IPv6 address. The cap counts per IP address, so one device can have 4 draining rejected requests. The cap is in `admit.rs` and `server.rs`.
+- A false 503 can happen. A request under the cap can see one extra count for a moment. This happens while a request over the cap from the same peer is closed, because the closing request is entered in the count before it is dropped.
+- Loopback peers (127.0.0.0/8, `::1`, and IPv4-mapped loopback) and requests with no peer address are exempt from the per-peer cap. Their drain threads have no cap. The 8 slots no longer bound them, because the slot is released before the drain. Every drain runs in the `run_off_loop` thread of its request, not in the accept loop, for up to about 12 s. This includes the 8-request 503. Residual risk: no total thread cap exists. A tailnet peer can hold at most 4 draining rejected requests per device. A loopback peer has no limit.
+- The close after a closing 503 is `Request::respond_and_close` in the vendored tiny_http. It shuts down the socket after the write. If the client is still sending, the close can send a TCP reset. The client may then see the reset and not the 503.
 - A stalled request never blocks the stop check.
 
 ## tokens.css
@@ -303,7 +325,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Memory screen
 
-- Routes `#/memory` and `#/config`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `css/memory.css`.
+- Routes `#/memory`, `#/threads`, `#/workers`, `#/schedules`, `#/watches` and `#/config`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `css/memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
 - Stat line: from the root `stats`, for example `45 entries, 2 of 8 blocks summarised, last entry <time>`.
@@ -331,13 +353,30 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - An entry row opens in place: it gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`, and a detail row below holds the rendered text. Click, Enter or Space toggles it. Only one row is open at a time.
   - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`. The `.btn` look comes from `css/controls.css`; `css/memory.css` only lays the links out and mutes a disabled one, hover included.
   - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `button`, `select`, `textarea` and editable fields (a focused tree row is a `button`), and with Ctrl, Meta or Alt.
-- Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
+- Summary and entry text go to `POST /api/render`. The returned `r-prose` HTML goes through `setRendered`, the only `innerHTML` in the scripts. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.
 - States: loading (`r-spinner` after 200 ms), empty store (`r-empty`), HTTP error (`r-error` with status code, server message as text and a `.btn` Retry button; the retry runs the same load again and moves focus to the new content or the new Retry button), and 404 for an unknown thread or node. A slow detail load is dropped if you select another node first.
 - Keyboard: Tab reaches the tabs, the breadcrumb links, one tree item (roving tabindex), the entry rows and the pager. Up and Down move between visible tree items. Right expands or goes to the first child. Left collapses or goes to the parent. Home and End go to the first and last item. Enter and Space open or close. Focus returns to the same tree item after a redraw. Links, `.btn`, entry rows and tree buttons show a `:focus-visible` outline.
 - Not shown: `tags.jsonl`, analytics, `history.jsonl`, paths.
 - Contract tests: `tests/memory_screen_contract.rs` (script served like the other assets, one `innerHTML`, no `eval(`, `style.`, `<img`, only primitive tags) and `src/assets/tests/memory.rs` (`css/memory.css` is the last file in `app.css`, the 1,000 line cap, role tokens only, every class the script uses has a rule).
 - No JavaScript runner exists. The script tests are text checks on the source and on the CSS. No test runs the key handling, the focus moves or `replaceState`. Check those by hand in a browser.
+
+## Threads screen
+
+- Route `#/threads`, the second nav link (memory, threads, workers, schedules, watches, config, catalogue). State is in the hash: `#/threads?thread=<name>`. A hash with no `thread` leaves it out. The code is in `assets/threads.js`, which `assets.rs` joins before `app.js`, and the styles are in `css/threads.css`, after `css/memory.css`.
+- Layout: breadcrumb, a stat line (`N threads, N open, N parked, N merged, N dropped, N messages on main`) and a `.split.master-wide`: the table on the left (`3fr`) and the detail pane on the right (`2fr`, at least 40ch). The split stacks at 760px or narrower.
+- Columns: name (with the r-graph lane), state, fork, created, active, msgs, workers, unread. The `active` column is hidden at 1180px or narrower, `unread` at 1000px, and `workers` at 760px. At 760px the age after the state pill is also hidden.
+- The head row (`main`) and the dropped rows are muted. You cannot select them and they have no `tabindex`. Only `thread` rows are selectable.
+- The default selection is the first selectable row. A `thread` in the hash selects that row. A click selects a row and writes the hash with `replaceState`.
+- Detail pane: the state pill, fork (`#base of N on main` and an extent bar), created, active, messages, workers and unread; a link `Open the memory of <name>` to `#/memory?thread=<name>`; and, for a state that has commands, `in the terminal` chips:
+  - open: `ralph chat --thread <name>`, `ralph thread pull <name>`, `ralph thread merge <name>`
+  - parked: `ralph thread revive <name>`, `ralph thread drop <name>`
+  - merged: no chips
+  - The chips are text only. The screen runs nothing.
+- Keys: Up and Down move the selection, Home and End go to the first and last thread, Enter selects the focused row and opens its memory (with no focused row, it opens the selected thread), Space selects the focused row, and `r` retries after an error, also while focus is on the Retry button. The other keys are ignored in `input`, `button`, `select`, `textarea` and editable fields, on links, and with Ctrl, Meta or Alt.
+- States: loading (`r-spinner` after 200 ms), a whole-screen `r-error` "The threads screen did not load." with the status code, the reason and a Retry button (the retry runs the load again and focus moves to the new Retry button; a 503 says that the server is busy), an unknown `thread` (a 404 `r-error` in the detail pane, the table stays and no row is selected, with up to three links to threads that exist), and no threads (an `r-empty` row with `ralph chat --thread <name>`).
+- The server `svg` of each row goes through `setRendered` in `app.js`, the one `innerHTML` sink of the scripts. All other text uses `textContent`.
+- The screen is read-only and makes one request, `GET /api/threads`, for each load. See [Threads route](#threads-route). The command guide is [threads.md](threads.md).
 
 ## r-tree markup
 
@@ -385,4 +424,4 @@ Worker state comes from the marker files, in this order: `gone`, `blocked`, `wai
 
 An unreadable or corrupt record is skipped and the good rows are returned. The readers decide this. `GET /api/schedules` and `GET /api/watches` use `ScheduleStore::read_all` and `WatchStore::read_all`, which never write: a corrupt file stays on disk. The chat uses the `load_all` readers, which still delete a corrupt record. The readers warn on stderr only, never in the body. There is no 500 for these routes, because the readers return no error.
 
-The shell shows the routes as tabs 3 to 5: `#/workers`, `#/schedules` and `#/watches`; Catalogue is tab 6. Each screen is an `r-table`. State, status, kind and late cells are `r-pill` marks. Workers use the `tone` from the API. Schedules: `pending` is `info`, `running` is `ok`, `proposed` is `neutral`, and a late task has a `bad` pill. Watches: `normal` is `neutral` and `persistent` is `accent`. An empty list gives an `r-empty` ("No live workers", "No scheduled tasks" or "No active watches"). A failed load gives an `r-error` with a retry button. There is no live refresh. The contracts are `crates/ralph_api/tests/lists_contract.rs` and `lists_screen_contract.rs`.
+The shell shows the routes as tabs 3 to 5: `#/workers`, `#/schedules` and `#/watches`; config is tab 6 and Catalogue is tab 7. Each screen is an `r-table`. State, status, kind and late cells are `r-pill` marks. Workers use the `tone` from the API. Schedules: `pending` is `info`, `running` is `ok`, `proposed` is `neutral`, and a late task has a `bad` pill. Watches: `normal` is `neutral` and `persistent` is `accent`. An empty list gives an `r-empty` ("No live workers", "No scheduled tasks" or "No active watches"). A failed load gives an `r-error` with a retry button. There is no live refresh. The contracts are `crates/ralph_api/tests/lists_contract.rs` and `lists_screen_contract.rs`.

@@ -3,3 +3,6 @@ extend-exclude = ["vendor/"]
 
 [default.extend-identifiers]
 PNGf = "PNGf"
+
+[default.extend-words]
+nd = "nd"
