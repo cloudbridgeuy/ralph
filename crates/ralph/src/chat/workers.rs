@@ -19,8 +19,8 @@ use ralph_core::worker_costs::views::{costs_by_view, Inputs};
 use ralph_core::worker_costs::window::window_start;
 use ralph_core::workers_view::{
     count_untracked, detail_view, group_reports, lines_text, not_live, parse_head, parse_numstat,
-    workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
-    WorkerRow, TONE_ACTIVE, TONE_BLOCKED, TONE_DONE, TONE_END, TONE_WAITING,
+    workers_text, workers_view, Diff, Lookup, Remote, ReportLine, RowState, Span, Tone, View,
+    WorkerDetail, WorkerRow, TONE_ACTIVE, TONE_BLOCKED, TONE_DONE, TONE_END, TONE_WAITING,
 };
 use ralph_server::chat::memory::{load_usage, read_optional, usage_path, Store};
 use ralph_server::chat::monitor::Monitor;
@@ -92,7 +92,7 @@ fn report_of(reports: &Option<HashMap<String, Vec<ReportLine>>>, id: &str) -> Lo
 fn cheap_row(
     store: &Path,
     worker: &RunningWorker,
-    state: Option<String>,
+    state: Option<RowState>,
     report: Lookup<ReportLine>,
 ) -> WorkerRow {
     WorkerRow {
@@ -125,7 +125,7 @@ fn row(
         .workers
         .into_iter()
         .find(|state| state.id == worker.id)
-        .map(|state| state.state.to_string());
+        .map(|state| RowState::Live(state.state));
     let report = report_of(&facts.reports, &worker.id);
     let tree = facts
         .porcelain
@@ -184,12 +184,12 @@ pub(super) fn tool_report(
         .iter()
         .map(|worker| {
             let state = if gone_path(dir, &worker.id).exists() {
-                Some("gone".to_string())
+                Some(RowState::Gone)
             } else {
                 states
                     .iter()
                     .find(|state| state.id == worker.id)
-                    .map(|state| state.state.to_string())
+                    .map(|state| RowState::Live(state.state))
             };
             cheap_row(dir, worker, state, report_of(&reports, &worker.id))
         })
@@ -445,7 +445,7 @@ mod tests {
         WorkerRow {
             id: id.into(),
             harness: "claude".into(),
-            state: Some("busy".into()),
+            state: Some(RowState::Live(WorkerActivity::Busy)),
             pending: Vec::new(),
             report: Lookup::Found(ReportLine {
                 status: ReportKind::Worker(ReportStatus::Done),

@@ -2,8 +2,11 @@
 //! shell collected.
 
 use crate::chat_memory::{Entry, Role};
+use crate::chat_status::WorkerActivity;
 use crate::inbox::age;
-use crate::worker::{branch_name, ActivityMark, Report, ReportKind, StatusLine, Ticket};
+use crate::worker::{
+    branch_name, ActivityMark, Report, ReportKind, ReportStatus, StatusLine, Ticket,
+};
 use crate::worker_check::{message_header, worker_report};
 use crate::worker_costs::window::instant;
 use chrono::{DateTime, Utc};
@@ -120,19 +123,48 @@ pub fn lines_text(lines: &[Vec<Span>]) -> String {
         .join("\n")
 }
 
-fn status_tone(state: &str) -> Tone {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowState {
+    Live(WorkerActivity),
+    Gone,
+}
+
+impl RowState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Live(activity) => activity.as_str(),
+            Self::Gone => "gone",
+        }
+    }
+}
+
+fn report_tone(kind: ReportKind) -> Tone {
+    match kind {
+        ReportKind::Worker(ReportStatus::Done) => Tone::Done,
+        ReportKind::Worker(ReportStatus::Blocked) => Tone::Blocked,
+        ReportKind::Worker(ReportStatus::Question) => Tone::Attention,
+        ReportKind::Check
+        | ReportKind::Warning
+        | ReportKind::Watch
+        | ReportKind::Merged
+        | ReportKind::View
+        | ReportKind::ThreadClosed
+        | ReportKind::External => Tone::Plain,
+    }
+}
+
+fn status_tone(state: RowState) -> Tone {
     match state {
-        "done" => Tone::Done,
-        "blocked" => Tone::Blocked,
-        "question" | "permission" => Tone::Attention,
-        "running" | "busy" => Tone::Active,
-        "idle" => Tone::Dim,
-        _ => Tone::Plain,
+        RowState::Live(WorkerActivity::Reported(kind)) => report_tone(kind),
+        RowState::Live(WorkerActivity::Permission) => Tone::Attention,
+        RowState::Live(WorkerActivity::Running | WorkerActivity::Busy) => Tone::Active,
+        RowState::Live(WorkerActivity::Idle) => Tone::Dim,
+        RowState::Gone => Tone::Plain,
     }
 }
 
 fn state_span(row: &WorkerRow) -> Span {
-    match &row.state {
+    match row.state {
         Some(state) => span(status_tone(state), state.as_str()),
         None => dim("-"),
     }
@@ -161,7 +193,7 @@ pub struct Diff {
 pub struct WorkerRow {
     pub id: String,
     pub harness: String,
-    pub state: Option<String>,
+    pub state: Option<RowState>,
     pub pending: Vec<String>,
     pub report: Lookup<ReportLine>,
     pub status: Option<StatusLine>,
@@ -343,7 +375,7 @@ fn cut_spans(spans: Vec<Span>, width: usize) -> Vec<Span> {
 
 fn report_cell(report: &ReportLine, now: DateTime<Utc>) -> Vec<Span> {
     vec![
-        span(status_tone(report.status.as_str()), report.status.as_str()),
+        span(report_tone(report.status), report.status.as_str()),
         plain(" "),
         dim(format!("{} ago", age(&report.at, now))),
     ]
@@ -595,7 +627,7 @@ pub fn workers_text(rows: &[WorkerRow], now: DateTime<Utc>) -> String {
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
-            let state = row.state.as_deref().unwrap_or("-");
+            let state = row.state.map_or("-", RowState::as_str);
             let state = if row.pending.is_empty() {
                 state.to_string()
             } else {
