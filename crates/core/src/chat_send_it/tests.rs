@@ -1,7 +1,7 @@
 use super::*;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
-use crate::worker::{Report, ReportKind};
+use crate::worker::{Report, ReportKind, WorkerId};
 use signing::*;
 
 mod block;
@@ -178,7 +178,7 @@ fn a_run_plan_parses_with_typed_steps_actions_and_grants() {
         Step {
             task: "collect evidence".to_string(),
             criterion: Criterion::WorkerDone {
-                worker: "E1".to_string(),
+                worker: WorkerId::parse("E1").unwrap(),
                 verify: None,
             },
         }
@@ -265,9 +265,14 @@ fn at(step: usize) -> Progress {
 }
 
 fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Ticked> {
-    let last: HashMap<String, ReportKind> = known
+    let last: HashMap<WorkerId, ReportKind> = known
         .iter()
-        .map(|(id, status)| (id.to_string(), ReportKind::parse(status).unwrap()))
+        .map(|(id, status)| {
+            (
+                WorkerId::parse(id).unwrap(),
+                ReportKind::parse(status).unwrap(),
+            )
+        })
         .collect();
     let running: Vec<String> = running.iter().map(ToString::to_string).collect();
     start_run(

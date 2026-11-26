@@ -73,7 +73,7 @@ pub struct Monitor {
     pub store: Store,
     pub store_dir: PathBuf,
     pub status: Mutex<Status>,
-    pub seen: Mutex<HashMap<String, ReportKind>>,
+    pub seen: Mutex<HashMap<WorkerId, ReportKind>>,
     pub active: Mutex<Option<HashSet<String>>>,
     pub recent_history_tokens: usize,
     pub worker_check_secs: Option<u64>,

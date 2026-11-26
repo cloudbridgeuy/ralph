@@ -1,8 +1,11 @@
 use super::{capabilities, is_dashed_token, Feature, HarnessId, Support};
+use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct WorkerId(String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +40,32 @@ impl WorkerId {
     }
 
     pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for WorkerId {
+    type Error = WorkerIdError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::parse(&text)
+    }
+}
+
+impl From<WorkerId> for String {
+    fn from(id: WorkerId) -> Self {
+        id.0
+    }
+}
+
+impl fmt::Display for WorkerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Borrow<str> for WorkerId {
+    fn borrow(&self) -> &str {
         &self.0
     }
 }

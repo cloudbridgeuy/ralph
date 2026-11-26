@@ -1,5 +1,5 @@
 use super::*;
-use crate::worker::{branch_name, worktree_for_branch, ReportKind, ReportStatus};
+use crate::worker::{branch_name, worktree_for_branch, ReportKind, ReportStatus, WorkerId};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ impl Default for Progress {
 }
 
 pub struct Seen<'a> {
-    pub last: &'a HashMap<String, ReportKind>,
+    pub last: &'a HashMap<WorkerId, ReportKind>,
     pub running: &'a [String],
 }
 
@@ -77,7 +77,7 @@ pub fn step_line(plan: &RunPlan, index: usize, step: &Step) -> String {
 
 fn wait_on(criterion: &Criterion) -> Next {
     match criterion {
-        Criterion::WorkerDone { worker, .. } => Next::Hold(worker.clone()),
+        Criterion::WorkerDone { worker, .. } => Next::Hold(worker.to_string()),
         Criterion::WatchPasses { command } => Next::Watch(command.clone()),
         Criterion::CheckPasses { command } => Next::Check(command.clone()),
         Criterion::Judge { .. } => Next::Judge,
@@ -150,7 +150,7 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             (progress, next)
         }
         (Event::Report(report), Criterion::WorkerDone { worker, .. })
-            if report.from.to_string() == *worker =>
+            if report.from.worker() == Some(worker) =>
         {
             if report.status == ReportKind::Worker(ReportStatus::Done) {
                 done_reported(plan, progress, &step.criterion)
@@ -280,7 +280,7 @@ pub fn verify_spec(step: usize, command: &str, cwd: PathBuf) -> WatchSpec {
 
 pub fn verify_worker(plan: &RunPlan, progress: Progress) -> Option<&str> {
     match plan.steps.get(progress.step).map(|step| &step.criterion) {
-        Some(Criterion::WorkerDone { worker, .. }) if progress.verifying => Some(worker),
+        Some(Criterion::WorkerDone { worker, .. }) if progress.verifying => Some(worker.as_str()),
         _ => None,
     }
 }
@@ -323,8 +323,8 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
             Some(ReportKind::Worker(ReportStatus::Done)) => {
                 done_reported(plan, progress, &step.criterion)
             }
-            known if known.is_some() || seen.running.contains(worker) => {
-                (progress, Next::Hold(worker.clone()))
+            known if known.is_some() || seen.running.iter().any(|id| id == worker.as_str()) => {
+                (progress, Next::Hold(worker.to_string()))
             }
             _ => advance(plan, progress, Event::Start),
         },

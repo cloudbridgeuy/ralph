@@ -1,5 +1,7 @@
 use crate::chat_memory::{Entry, Role};
-use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportKind, Startup};
+use crate::worker::{
+    startup_state, ActivityState, HarnessId, Report, ReportKind, Startup, WorkerId,
+};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -68,12 +70,12 @@ pub fn logged_reports(entries: &[Entry]) -> HashMap<String, String> {
     reports
 }
 
-pub fn logged_states(entries: &[Entry]) -> HashMap<String, ReportKind> {
+pub fn logged_states(entries: &[Entry]) -> HashMap<WorkerId, ReportKind> {
     entries
         .iter()
         .filter(|entry| entry.role == Role::Worker)
         .flat_map(|entry| entry.text.lines().filter_map(message_header))
-        .filter_map(|(id, status)| Some((id.to_string(), worker_report(status)?)))
+        .filter_map(|(id, status)| Some((WorkerId::parse(id).ok()?, worker_report(status)?)))
         .collect()
 }
 

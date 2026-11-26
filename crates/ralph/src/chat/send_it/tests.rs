@@ -677,7 +677,7 @@ fn go_on_a_stopped_worker_step_skips_it_once_the_worker_reported_done() {
     go(&send_it, Some(&hash), true);
     send_it.release(&hash, Some(1)).unwrap();
     let done = ralph_core::worker::ReportKind::parse("done").unwrap();
-    let last = [("GUZ-1".to_string(), done)].into();
+    let last = [(ralph_core::worker::WorkerId::parse("GUZ-1").unwrap(), done)].into();
     let seen = Seen {
         last: &last,
         running: &[],
