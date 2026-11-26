@@ -1,3 +1,19 @@
+mod gantt;
+mod git;
+mod journey;
+mod lines;
+mod mindmap;
+mod packet;
+mod pie;
+mod quadrant;
+mod requirement;
+mod sankey;
+#[cfg(test)]
+mod testing;
+mod timeline;
+mod xychart;
+
+use lines::{body_lines, statements, Statement};
 use ralph_server::config::MermaidSection;
 use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
@@ -6,8 +22,6 @@ const SMALL_SOURCE_BYTES: usize = 16 * 1024;
 const LARGE_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_PARTICIPANTS: usize = 20;
 const MAX_STATEMENTS: usize = 2000;
-const MAX_GIT_COMMITS: usize = 200;
-const MAX_GIT_BRANCHES: usize = 20;
 const SEQUENCE_ARROWS: [&str; 8] = ["-->>", "->>", "--x", "-x", "--)", "-)", "-->", "->"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +32,16 @@ pub enum DiagramKind {
     Class,
     State,
     GitGraph,
+    Pie,
+    Journey,
+    Sankey,
+    Packet,
+    Timeline,
+    Mindmap,
+    Quadrant,
+    XyChart,
+    Gantt,
+    Requirement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,79 +55,17 @@ pub enum Refusal {
     TooManyStatements,
     TooManyCommits,
     TooManyBranches,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct BranchName<'a>(&'a str);
-
-impl<'a> BranchName<'a> {
-    const MAIN: Self = Self("main");
-
-    fn parse(raw: &'a str) -> Option<Self> {
-        let name = raw.trim();
-        (!name.is_empty()).then_some(Self(name))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GitLine<'a> {
-    Commit,
-    Branch(BranchName<'a>),
-    Switch,
-    Other,
-}
-
-impl<'a> GitLine<'a> {
-    fn parse(line: &'a str) -> Self {
-        let code = strip_inline_comment(line);
-        let (verb, rest) = code.split_once(char::is_whitespace).unwrap_or((code, ""));
-        match verb {
-            "commit" | "merge" | "cherry-pick" => Self::Commit,
-            "branch" => BranchName::parse(rest).map_or(Self::Other, Self::Branch),
-            "switch" => Self::Switch,
-            _ => Self::Other,
-        }
-    }
-}
-
-fn strip_inline_comment(line: &str) -> &str {
-    let mut quoted = false;
-    line.char_indices()
-        .find(|&(at, c)| {
-            quoted ^= c == '"';
-            !quoted && line[at..].starts_with("%%")
-        })
-        .map_or(line, |(at, _)| &line[..at])
-}
-
-struct GitSize {
-    commits: usize,
-    branches: usize,
-}
-
-fn size_of(lines: &[GitLine<'_>]) -> GitSize {
-    let mut commits = 0;
-    let mut branches = HashSet::from([BranchName::MAIN]);
-    for line in lines {
-        match line {
-            GitLine::Commit => commits += 1,
-            GitLine::Branch(name) => {
-                branches.insert(*name);
-            }
-            GitLine::Switch | GitLine::Other => {}
-        }
-    }
-    GitSize {
-        commits,
-        branches: branches.len(),
-    }
-}
-
-fn body_lines(source: &str) -> impl Iterator<Item = &str> {
-    source
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("%%"))
+    LineTooLong,
+    TooManySlices,
+    TooManyTasks,
+    TooManyFlows,
+    TooManyBits,
+    TooManyEntries,
+    TooManyNodes,
+    TooDeep,
+    TooManyPoints,
+    TooLongTask,
+    TooManyBlocks,
 }
 
 fn kind_of(header: &str) -> Option<DiagramKind> {
@@ -118,6 +80,16 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "classDiagram" => Some(DiagramKind::Class),
         "stateDiagram" | "stateDiagram-v2" => Some(DiagramKind::State),
         "gitGraph" => Some(DiagramKind::GitGraph),
+        "pie" => Some(DiagramKind::Pie),
+        "journey" => Some(DiagramKind::Journey),
+        "sankey" | "sankey-beta" => Some(DiagramKind::Sankey),
+        "packet" | "packet-beta" => Some(DiagramKind::Packet),
+        "timeline" => Some(DiagramKind::Timeline),
+        "mindmap" => Some(DiagramKind::Mindmap),
+        "quadrantChart" => Some(DiagramKind::Quadrant),
+        "xychart" | "xychart-beta" => Some(DiagramKind::XyChart),
+        "gantt" => Some(DiagramKind::Gantt),
+        "requirementDiagram" => Some(DiagramKind::Requirement),
         _ => None,
     }
 }
@@ -165,6 +137,16 @@ fn statement_count(source: &str) -> usize {
     body_lines(source).count().saturating_sub(1)
 }
 
+fn check_typed(
+    source: &str,
+    check: fn(&[Statement<'_>]) -> Result<(), Refusal>,
+) -> Result<(), Refusal> {
+    if source.len() > SMALL_SOURCE_BYTES {
+        return Err(Refusal::TooLarge);
+    }
+    check(&statements(source)?)
+}
+
 pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<DiagramKind, Refusal> {
     if source.len() > limits.max_input_bytes {
         return Err(Refusal::TooLarge);
@@ -198,21 +180,24 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
                 return Err(Refusal::TooManyParticipants);
             }
         }
+        DiagramKind::Pie => check_typed(source, pie::check)?,
+        DiagramKind::Journey => check_typed(source, journey::check)?,
+        DiagramKind::Sankey => check_typed(source, sankey::check)?,
+        DiagramKind::Packet => check_typed(source, packet::check)?,
+        DiagramKind::Timeline => check_typed(source, timeline::check)?,
+        DiagramKind::Mindmap => check_typed(source, mindmap::check)?,
+        DiagramKind::Quadrant => check_typed(source, quadrant::check)?,
+        DiagramKind::XyChart => {
+            xychart::check_header(header)?;
+            check_typed(source, xychart::check)?;
+        }
+        DiagramKind::Gantt => check_typed(source, gantt::check)?,
+        DiagramKind::Requirement => check_typed(source, requirement::check)?,
         DiagramKind::GitGraph => {
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);
             }
-            let lines: Vec<GitLine<'_>> = body_lines(source).skip(1).map(GitLine::parse).collect();
-            if lines.contains(&GitLine::Switch) {
-                return Err(Refusal::Unsupported);
-            }
-            let size = size_of(&lines);
-            if size.commits > MAX_GIT_COMMITS {
-                return Err(Refusal::TooManyCommits);
-            }
-            if size.branches > MAX_GIT_BRANCHES {
-                return Err(Refusal::TooManyBranches);
-            }
+            git::check(source)?;
         }
     }
     Ok(kind)
@@ -289,7 +274,11 @@ mod tests {
     fn unsupported_and_empty_refused() {
         let l = limits();
         assert_eq!(
-            mermaid_precheck("gantt\n  title T", &l),
+            mermaid_precheck("block\n  a", &l),
+            Err(Refusal::Unsupported)
+        );
+        assert_eq!(
+            mermaid_precheck("architecture-beta\n  service a(server)[A]", &l),
             Err(Refusal::Unsupported)
         );
         assert_eq!(mermaid_precheck("%% only\n\n", &l), Err(Refusal::Empty));
