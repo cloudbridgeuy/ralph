@@ -1,6 +1,6 @@
 use crate::render::graph_svg;
 use crate::threads::cells::{lane_cells, Lane};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use ralph_core::chat_thread_log::Tombstone;
 use ralph_core::chat_thread_table::{ago, ThreadRow, ThreadState};
 use ralph_server::chat::memory::ThreadsSnapshot;
@@ -21,6 +21,15 @@ fn state_age(state: &ThreadState, now: DateTime<Utc>) -> Option<String> {
     }
 }
 
+fn created_text(created: &str) -> String {
+    DateTime::parse_from_rfc3339(created)
+        .map(|at| {
+            at.with_timezone(&Utc)
+                .to_rfc3339_opts(SecondsFormat::Secs, true)
+        })
+        .unwrap_or_else(|_| created.to_string())
+}
+
 fn thread_row(row: &ThreadRow, now: DateTime<Utc>) -> Value {
     json!({
         "kind": "thread",
@@ -28,7 +37,7 @@ fn thread_row(row: &ThreadRow, now: DateTime<Utc>) -> Value {
         "state": state_name(&row.state),
         "age": state_age(&row.state, now),
         "base": row.base,
-        "created": row.created,
+        "created": created_text(&row.created),
         "active": row.active.as_deref().and_then(|at| ago(at, now)),
         "messages": row.messages,
         "workers": row.workers,
@@ -164,6 +173,37 @@ mod tests {
                 dropped_at: "2026-01-06T00:00:00Z".to_string(),
             }],
         }
+    }
+
+    #[test]
+    fn created_is_normalised_to_whole_seconds_with_a_z_suffix() {
+        let real = row(
+            "real",
+            ThreadState::Open,
+            1,
+            "2026-01-02T03:04:05.123456789+00:00",
+        );
+        let offset = row("offset", ThreadState::Open, 1, "2026-01-02T05:04:05+02:00");
+        let snapshot = ThreadsSnapshot {
+            rows: vec![real, offset],
+            head_messages: 1,
+            tombstones: vec![],
+        };
+        let body = threads_body("chat", &snapshot, now());
+        assert_eq!(rows(&body)[1]["created"], "2026-01-02T03:04:05Z");
+        assert_eq!(rows(&body)[2]["created"], "2026-01-02T03:04:05Z");
+    }
+
+    #[test]
+    fn created_that_does_not_parse_passes_through_unchanged() {
+        let odd = row("odd", ThreadState::Open, 1, "yesterday-ish");
+        let snapshot = ThreadsSnapshot {
+            rows: vec![odd],
+            head_messages: 1,
+            tombstones: vec![],
+        };
+        let body = threads_body("chat", &snapshot, now());
+        assert_eq!(rows(&body)[1]["created"], "yesterday-ish");
     }
 
     fn empty() -> ThreadsSnapshot {
