@@ -49,6 +49,43 @@ pub fn parse_listening(line: &str) -> Result<Listening, WebdriverError> {
     })
 }
 
+pub const FAILURE_STREAM_CAP: usize = 2048;
+
+pub fn find_listening(lines: &[String]) -> Option<Listening> {
+    lines.iter().find_map(|line| parse_listening(line).ok())
+}
+
+pub fn push_head(buf: &mut Vec<u8>, chunk: &[u8], cap: usize) {
+    let room = cap.saturating_sub(buf.len());
+    buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
+}
+
+fn bounded(text: &str, cap: usize) -> &str {
+    let mut end = text.len().min(cap);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+fn stream_section(name: &str, text: &str) -> String {
+    let text = bounded(text.trim(), FAILURE_STREAM_CAP);
+    if text.is_empty() {
+        format!("no {name}")
+    } else {
+        format!("{name}:\n{text}")
+    }
+}
+
+pub fn format_start_failure(status: &str, stdout: &str, stderr: &str) -> String {
+    format!(
+        "ralph web did not start ({})\n{}\n{}",
+        bounded(status, 100),
+        stream_section("stderr", stderr),
+        stream_section("stdout", stdout)
+    )
+}
+
 pub fn token_url(listening: &Listening) -> String {
     format!("{}/?token={}", listening.base, listening.token)
 }
@@ -412,5 +449,69 @@ mod tests {
         let pairs = child_env(Path::new("/tmp/shots-scratch/home"), None, None);
         assert!(!pairs.is_empty());
         assert!(pairs.iter().all(|(_, value)| !value.contains("/Users/")));
+    }
+
+    #[test]
+    fn find_listening_returns_the_first_good_line() {
+        let lines = vec![
+            "noise\n".to_string(),
+            "ralph web listening on http://127.0.0.1:4242/?token=abc\n".to_string(),
+            "store: /tmp/x\n".to_string(),
+        ];
+        let found = find_listening(&lines).unwrap();
+        assert_eq!(found.base, "http://127.0.0.1:4242");
+        assert_eq!(found.token, "abc");
+    }
+
+    #[test]
+    fn find_listening_is_none_without_a_good_line() {
+        assert_eq!(find_listening(&[]), None);
+        assert_eq!(find_listening(&["store: /tmp/x\n".to_string()]), None);
+    }
+
+    #[test]
+    fn push_head_keeps_only_the_first_cap_bytes() {
+        let mut buf = Vec::new();
+        push_head(&mut buf, b"abcd", 6);
+        push_head(&mut buf, b"efgh", 6);
+        push_head(&mut buf, b"ijkl", 6);
+        assert_eq!(buf, b"abcdef");
+    }
+
+    #[test]
+    fn push_head_accepts_empty_chunks() {
+        let mut buf = Vec::new();
+        push_head(&mut buf, b"", 4);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn failure_text_includes_status_and_stderr() {
+        let text = format_start_failure("exit status: 3", "out line", "boom happened");
+        assert!(text.contains("exit status: 3"));
+        assert!(text.contains("boom happened"));
+        assert!(text.contains("out line"));
+    }
+
+    #[test]
+    fn failure_text_is_bounded() {
+        let big = "x".repeat(100_000);
+        let text = format_start_failure("exit status: 1", &big, &big);
+        assert!(text.len() <= 2 * FAILURE_STREAM_CAP + 200, "{}", text.len());
+    }
+
+    #[test]
+    fn failure_text_bound_respects_char_boundaries() {
+        let big = "é".repeat(5_000);
+        let text = format_start_failure("s", &big, &big);
+        assert!(text.len() <= 2 * FAILURE_STREAM_CAP + 200);
+    }
+
+    #[test]
+    fn failure_text_handles_empty_streams() {
+        let text = format_start_failure("exit status: 1", "", "");
+        assert!(text.contains("exit status: 1"));
+        assert!(text.contains("no stderr"));
+        assert!(text.contains("no stdout"));
     }
 }

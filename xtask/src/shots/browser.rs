@@ -8,11 +8,17 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
+const LISTEN_TIMEOUT: Duration = Duration::from_secs(30);
+const STDERR_SETTLE: Duration = Duration::from_millis(200);
+const EXIT_GRACE: Duration = Duration::from_secs(1);
 const READY_POLL: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -151,14 +157,103 @@ fn start_ralph(
             std::env::var("TMPDIR").ok().as_deref(),
         ))
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("could not start {}: {error}", ralph.display()))?;
     let stdout = child.stdout.take().ok_or("ralph web has no stdout")?;
-    let guard = ChildGuard(child);
-    let mut line = String::new();
-    BufReader::new(stdout).read_line(&mut line)?;
-    Ok((guard, webdriver::parse_listening(&line)?))
+    let stderr = child.stderr.take().ok_or("ralph web has no stderr")?;
+    let mut guard = ChildGuard(child);
+    let stderr_head = Arc::new(Mutex::new(Vec::new()));
+    spawn_stderr_reader(stderr, Arc::clone(&stderr_head));
+    let lines = spawn_line_reader(stdout);
+    let started = Instant::now();
+    let mut read = Vec::new();
+    let reason = loop {
+        let left = LISTEN_TIMEOUT.saturating_sub(started.elapsed());
+        match lines.recv_timeout(left) {
+            Ok(line) => {
+                read.push(line);
+                if let Some(listening) = webdriver::find_listening(&read) {
+                    return Ok((guard, listening));
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                break format!("no listen line within {}s", LISTEN_TIMEOUT.as_secs())
+            }
+            Err(RecvTimeoutError::Disconnected) => break "stdout closed".to_string(),
+        }
+    };
+    Err(start_failure(&mut guard, &reason, &read, &stderr_head).into())
+}
+
+fn spawn_line_reader(stdout: ChildStdout) -> mpsc::Receiver<String> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if sender.send(line).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    receiver
+}
+
+fn spawn_stderr_reader(mut stderr: ChildStderr, head: Arc<Mutex<Vec<u8>>>) {
+    thread::spawn(move || {
+        let mut chunk = [0u8; 1024];
+        while let Ok(count) = stderr.read(&mut chunk) {
+            if count == 0 {
+                break;
+            }
+            if let Ok(mut buf) = head.lock() {
+                webdriver::push_head(&mut buf, &chunk[..count], webdriver::FAILURE_STREAM_CAP);
+            }
+        }
+    });
+}
+
+fn exit_within(child: &mut Child, grace: Duration) -> Option<ExitStatus> {
+    let started = Instant::now();
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Some(status);
+        }
+        if started.elapsed() >= grace {
+            return None;
+        }
+        sleep(Duration::from_millis(20));
+    }
+}
+
+fn start_failure(
+    guard: &mut ChildGuard,
+    reason: &str,
+    read: &[String],
+    stderr_head: &Mutex<Vec<u8>>,
+) -> String {
+    let status = match exit_within(&mut guard.0, EXIT_GRACE) {
+        Some(status) => format!("{reason}; exited with {status}"),
+        None => {
+            let _ = guard.0.kill();
+            match guard.0.wait() {
+                Ok(status) => format!("{reason}; killed, {status}"),
+                Err(error) => format!("{reason}; wait failed: {error}"),
+            }
+        }
+    };
+    sleep(STDERR_SETTLE);
+    let stderr = stderr_head
+        .lock()
+        .map(|buf| String::from_utf8_lossy(&buf).into_owned())
+        .unwrap_or_default();
+    webdriver::format_start_failure(&status, &read.concat(), &stderr)
 }
 
 fn start_firefox(firefox: &Path, profile: &Path) -> Result<ChildGuard, BoxError> {
