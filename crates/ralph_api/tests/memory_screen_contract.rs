@@ -370,7 +370,8 @@ fn the_screen_is_a_tree_beside_a_detail_pane() {
     assert!(body.contains(r#"el("div", null, { class: "detail" })"#));
     assert!(body.contains(r#""aria-selected", "true""#));
     assert!(body.contains("history.replaceState(null, \"\", buildHash("));
-    assert_eq!(body.matches("history.replaceState").count(), 1);
+    let select = function_body(&body, "async function selectNode(");
+    assert_eq!(select.matches("history.replaceState").count(), 1);
 }
 
 #[test]
@@ -469,7 +470,7 @@ fn an_entry_row_is_keyboard_reachable() {
 fn the_pager_binds_bracket_keys_and_ignores_form_fields_and_buttons() {
     let body = script();
     assert_eq!(
-        body.matches(r#"document.addEventListener("keydown""#)
+        body.matches(r#"document.addEventListener("keydown", onPagerKey)"#)
             .count(),
         1
     );

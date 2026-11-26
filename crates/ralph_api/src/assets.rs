@@ -16,6 +16,12 @@ pub(crate) const APP_CSS: &str = concat!(
     include_str!("../assets/css/tree.css"),
     include_str!("../assets/css/responsive.css"),
     include_str!("../assets/css/memory.css"),
+    include_str!("../assets/css/threads.css"),
+);
+
+const APP_JS: &str = concat!(
+    include_str!("../assets/threads.js"),
+    include_str!("../assets/app.js"),
 );
 
 const ASSETS: &[Asset] = &[
@@ -32,7 +38,7 @@ const ASSETS: &[Asset] = &[
     Asset {
         path: "/app.js",
         content_type: "text/javascript; charset=utf-8",
-        bytes: include_bytes!("../assets/app.js"),
+        bytes: APP_JS.as_bytes(),
     },
     Asset {
         path: "/assets/geist-mono.woff2",

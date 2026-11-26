@@ -1,6 +1,6 @@
 "use strict";
 
-const SCREENS = ["/memory", "/config"];
+const SCREENS = ["/memory", "/threads", "/config"];
 const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -793,6 +793,7 @@ async function show(refocus) {
   }
   markCurrentScreen(state.route);
   main.replaceChildren();
+  if (state.route === THREADS_ROUTE) return showThreads(main, mine, refocus);
   const config = state.route === "/config";
   const stop = delayedSpinner(main, config ? "Loading config" : "Loading memory");
   try {
