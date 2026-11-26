@@ -453,6 +453,8 @@ Subcommands:
 - Config: a `config.toml` with the `tokyo-night` theme, `wrap_width = 100` and `cell_output_limit = 40`.
 - Catalogue: no store data.
 
+The threads screen prints relative times (`4s ago`, `269d ago`) that depend on the wall clock. Before each capture, the browser step rewrites every text node in `#main` that matches `<digits><unit> ago` to `--`, waits one settle, and rewrites again. The threads screen has no refresh timer. The code is `xtask/src/shots/mask.rs`. Other screens have no relative times.
+
 ### Baselines
 
 The root is `~/.local/share/ralph-shots/` and lies outside the repo. It holds three folders: `baseline` (approved), `current` (the last run) and `report`. The matrix has 26 PNG files: six screens (memory, threads, workers, schedules, watches, config) in two themes (dark, light) and two widths (1440 and 390), plus `catalogue-1440.png` and `catalogue-390.png`. Names are `<screen>-<theme>-<width>.png` and `catalogue-<width>.png`. The catalogue has no theme in its name and is taken in the dark theme. The window is 1200 px high.

@@ -1,4 +1,5 @@
 use super::core::{self, Screen, Shot, Theme};
+use super::mask;
 use super::seed;
 use super::webdriver::{self, Listening};
 use super::BoxError;
@@ -107,6 +108,13 @@ impl Marionette {
         Ok(false)
     }
 
+    fn mask(&mut self, screen: Screen) -> Result<(), BoxError> {
+        if let Some(script) = mask::mask_script(screen) {
+            self.execute(&script)?;
+        }
+        Ok(())
+    }
+
     fn screenshot(&mut self) -> Result<Vec<u8>, BoxError> {
         let result = self.call("WebDriver:TakeScreenshot", &webdriver::screenshot_body())?;
         Ok(webdriver::decode_screenshot(&result)?)
@@ -193,6 +201,9 @@ fn capture_theme(
         if !browser.wait_ready(shot.screen)? {
             timed_out.push(shot.name());
         }
+        browser.mask(shot.screen)?;
+        sleep(SETTLE);
+        browser.mask(shot.screen)?;
         fs::write(out.join(shot.name()), browser.screenshot()?)?;
         println!("captured {}", shot.name());
     }
