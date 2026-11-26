@@ -18,13 +18,22 @@ const OWNER_DIRS: [(&str, &str); 5] = [
     ("opencode", OPENCODE_OWNER_DIR),
 ];
 
+/// True only for a regular file. A symlink is never followed, so a link in the
+/// store cannot pull in a file from outside it.
+fn is_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
+}
+
+fn read_file(path: &Path) -> Option<String> {
+    is_file(path).then(|| fs::read_to_string(path).ok())?
+}
+
 fn ticket_of(store: &Path, id: &str) -> Option<String> {
-    let raw = fs::read_to_string(spawn_record_path(store, id)).ok()?;
-    decode_spawn_record(&raw)?.ticket
+    decode_spawn_record(&read_file(&spawn_record_path(store, id))?)?.ticket
 }
 
 fn activity_of(store: &Path, id: &str) -> Option<ActivityState> {
-    ActivityMark::parse(&fs::read_to_string(activity_path(store, id)).ok()?).map(|mark| mark.state)
+    ActivityMark::parse(&read_file(&activity_path(store, id))?).map(|mark| mark.state)
 }
 
 fn last_reports(store: &Path) -> HashMap<String, ReportLine> {
@@ -44,14 +53,15 @@ pub fn worker_facts(store: &Path) -> Vec<WorkerFacts> {
         .flat_map(|(harness, dir)| {
             entry_ids(store, dir)
                 .into_iter()
+                .filter(move |id| is_file(&store.join(dir).join(id)))
                 .map(move |id| (*harness, id))
         })
         .map(|(harness, id)| WorkerFacts {
             harness: harness.to_string(),
-            blocked: fs::read_to_string(blocked_path(store, &id)).ok(),
-            waiting: waiting_path(store, &id).exists(),
-            unreported: unreported_path(store, &id).exists(),
-            gone: gone_path(store, &id).exists(),
+            blocked: read_file(&blocked_path(store, &id)),
+            waiting: is_file(&waiting_path(store, &id)),
+            unreported: is_file(&unreported_path(store, &id)),
+            gone: is_file(&gone_path(store, &id)),
             activity: activity_of(store, &id),
             ticket: ticket_of(store, &id),
             last_report: reports.remove(&id),
@@ -194,5 +204,37 @@ mod tests {
             ("done", "2026-01-01T00:05:00Z")
         );
         assert!(find(&facts, "B").last_report.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_are_never_followed() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("outside");
+        let record = SpawnRecord {
+            ticket: Some("GUZ-9".to_string()),
+            ..SpawnRecord::default()
+        };
+        touch(&target, &encode_spawn_record(&record).unwrap());
+        let store = tempfile::tempdir().unwrap();
+        let root = store.path();
+        let link = |path: &Path| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            symlink(&target, path).unwrap();
+        };
+        link(&root.join(CLAUDE_OWNER_DIR).join("linked"));
+        owner(root, CLAUDE_OWNER_DIR, "real");
+        link(&spawn_record_path(root, "real"));
+        link(&blocked_path(root, "real"));
+        link(&activity_path(root, "real"));
+        link(&waiting_path(root, "real"));
+        link(&gone_path(root, "real"));
+        let facts = worker_facts(root);
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        let real = find(&facts, "real");
+        assert!(real.ticket.is_none());
+        assert!(real.blocked.is_none() && real.activity.is_none());
+        assert!(!real.waiting && !real.gone);
     }
 }
