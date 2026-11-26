@@ -76,6 +76,25 @@ fn assert_parity(steps: &[Step], verbose: &VerboseToolsConfig, highlight: bool) 
     assert_eq!(final_output, rendered);
 }
 
+#[test]
+fn streamed_and_reprinted_blocks_match() {
+    for body in [
+        "```rust\n\nfn main() {}\n\n```\n```sh\nls\n```",
+        "```rust\nlet a = 1;\nlet b = 2;",
+    ] {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        let event = json!({"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":body}]}});
+        let mut streamed = processor
+            .process_line(&event.to_string())
+            .unwrap_or_default();
+        let theme = processor.renderer.markdown.clone();
+        let reprinted = crate::render::render_markdown(&processor.render_context(), body, &theme);
+        streamed.push_str(&processor.finish_rendered().1);
+        assert_eq!(streamed, reprinted, "{body:?}");
+        assert!(!streamed.contains("```"), "{streamed:?}");
+    }
+}
+
 fn assert_parity_everywhere(steps: &[Step]) {
     for verbose in [VerboseToolsConfig::new(), VerboseToolsConfig::all()] {
         for highlight in [false, true] {

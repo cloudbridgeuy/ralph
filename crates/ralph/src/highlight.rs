@@ -397,6 +397,14 @@ impl Highlighter {
     }
 
     pub fn highlight(&self, code: &str, language: Option<&str>) -> String {
+        self.escaped(code, language, self.use_background)
+    }
+
+    pub fn highlight_foreground(&self, code: &str, language: Option<&str>) -> String {
+        self.escaped(code, language, false)
+    }
+
+    fn escaped(&self, code: &str, language: Option<&str>, use_background: bool) -> String {
         let Some(syntax) = language.and_then(|lang| self.find_syntax(lang)) else {
             return code.to_string();
         };
@@ -407,7 +415,7 @@ impl Highlighter {
         for line in LinesWithEndings::from(code) {
             match highlighter.highlight_line(line, &self.syntax_set) {
                 Ok(ranges) => {
-                    let escaped = as_24_bit_terminal_escaped(&ranges[..], self.use_background);
+                    let escaped = as_24_bit_terminal_escaped(&ranges[..], use_background);
                     output.push_str(&escaped);
                 }
                 Err(_) => {
