@@ -488,7 +488,7 @@ mod tests {
     fn build_report_uses_the_watch_status_and_given_time() {
         let report =
             build_report(&spec(None), &WatchOutcome::Exited(0), &tail_of(&[]), "t1").unwrap();
-        assert_eq!(report.worker, "watch:ci");
+        assert_eq!(report.from.to_string(), "watch:ci");
         assert_eq!(report.at, "t1");
         assert_eq!(report.status.as_str(), "watch");
         assert!(report.text.contains("exited with code 0"));

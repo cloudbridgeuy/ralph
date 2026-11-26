@@ -266,7 +266,7 @@ mod tests {
             "2026-11-03T00:00:00Z",
         )
         .unwrap();
-        assert_eq!(report.worker, "drift-codex");
+        assert_eq!(report.from.to_string(), "drift-codex");
         assert_eq!(report.status.as_str(), "warning");
         assert_eq!(report.at, "2026-11-03T00:00:00Z");
         assert_eq!(

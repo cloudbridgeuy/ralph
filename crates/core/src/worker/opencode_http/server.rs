@@ -236,7 +236,7 @@ mod tests {
     fn failure_report_blocks_with_the_problem() {
         let report =
             opencode_failure_report(&WorkerId::parse("GUZ-1").unwrap(), "now", SERVER_STOPPED);
-        assert_eq!(report.worker, "GUZ-1");
+        assert_eq!(report.from.to_string(), "GUZ-1");
         assert_eq!(report.status.as_str(), "blocked");
         assert_eq!(
             report.text,

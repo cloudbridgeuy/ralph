@@ -178,7 +178,7 @@ mod tests {
         let [report] = plan.rejected.as_slice() else {
             panic!("{plan:?}");
         };
-        assert_eq!(report.worker, "watch:a");
+        assert_eq!(report.from.to_string(), "watch:a");
         assert_eq!(report.at, "t1");
         assert_eq!(report.status.as_str(), "watch");
         assert!(report
@@ -283,7 +283,7 @@ mod tests {
         let report =
             start_failure_report("watch:ci", "a watch named `ci` is already running", "t").unwrap();
         assert_eq!(report.status.as_str(), "watch");
-        assert_eq!(report.worker, "watch:ci");
+        assert_eq!(report.from.to_string(), "watch:ci");
         assert!(report.text.contains("did not start"));
         assert!(report.text.contains("already running"));
     }

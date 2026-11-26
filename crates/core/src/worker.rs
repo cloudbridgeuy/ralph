@@ -1,5 +1,5 @@
-use crate::chat_thread::{ThreadName, THREAD_REPORT_PREFIX};
-use crate::inbox_post::{mark_untrusted, EXTERNAL_REPORT_PREFIX};
+use crate::chat_thread::ThreadName;
+use crate::inbox_post::mark_untrusted;
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
 use crate::watch_tools::StopTarget;
@@ -215,7 +215,8 @@ pub const REPORT_REMINDER: &str = "You stopped without calling report. Call repo
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
-    pub worker: String,
+    #[serde(rename = "worker")]
+    pub from: Sender,
     pub at: String,
     pub status: ReportKind,
     pub text: String,
@@ -224,7 +225,7 @@ pub struct Report {
 impl Report {
     fn with_kind(from: Sender, at: &str, status: ReportKind, text: String) -> Self {
         Self {
-            worker: from.to_string(),
+            from,
             at: at.to_string(),
             status,
             text,
@@ -465,7 +466,8 @@ pub fn exclude_lines(harness: HarnessId, repo: &Path, worktree_dir: &Path) -> Ve
 pub fn inbox_file_name(report: &Report, seq: u64) -> String {
     let stamp: String = report.at.chars().filter(char::is_ascii_digit).collect();
     let worker: String = report
-        .worker
+        .from
+        .to_string()
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' {
@@ -481,17 +483,16 @@ pub fn inbox_file_name(report: &Report, seq: u64) -> String {
 pub fn chat_message(reports: &[Report]) -> String {
     reports
         .iter()
-        .map(|r| {
-            if let Some(name) = r.worker.strip_prefix(THREAD_REPORT_PREFIX) {
-                format!("[thread {name} · {}]\n{}", r.status, r.text)
-            } else if let Some(source) = r.worker.strip_prefix(EXTERNAL_REPORT_PREFIX) {
-                format!(
-                    "[external {source} · {}]\n{}",
-                    r.status,
-                    mark_untrusted(&r.text)
-                )
-            } else {
-                format!("[worker {} · {}]\n{}", r.worker, r.status, r.text)
+        .map(|r| match &r.from {
+            Sender::Thread(name) => format!("[thread {name} · {}]\n{}", r.status, r.text),
+            Sender::External(source) => format!(
+                "[external {} · {}]\n{}",
+                source.as_str(),
+                r.status,
+                mark_untrusted(&r.text)
+            ),
+            Sender::Worker(_) | Sender::Watch(_) => {
+                format!("[worker {} · {}]\n{}", r.from, r.status, r.text)
             }
         })
         .collect::<Vec<_>>()
@@ -611,7 +612,7 @@ mod tests {
 
     fn report(worker: &str, status: &str, text: &str) -> Report {
         Report {
-            worker: worker.to_string(),
+            from: crate::worker::Sender::parse(worker).unwrap(),
             at: "2026-10-09T15:30:01.5+00:00".to_string(),
             status: ReportKind::parse(status).unwrap(),
             text: text.into(),
@@ -801,8 +802,8 @@ mod tests {
     #[test]
     fn inbox_file_name_sorts_by_time_and_sanitizes_worker() {
         assert_eq!(
-            inbox_file_name(&report("GUZ/1 2", "done", "x"), 7),
-            "2026100915300150000-000007-GUZ_1_2.json"
+            inbox_file_name(&report("thread:side", "done", "x"), 7),
+            "2026100915300150000-000007-thread_side.json"
         );
     }
 

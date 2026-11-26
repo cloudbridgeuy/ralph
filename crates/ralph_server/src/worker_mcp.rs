@@ -117,7 +117,7 @@ impl Inbox {
 
     fn log_report(&self, report: &Report, status: ReportStatus, seq: u64) {
         let store = self.dir.parent().unwrap_or(Path::new("."));
-        outcome_log::record(store, &report.worker, |key| {
+        outcome_log::record(store, &report.from.to_string(), |key| {
             report_event(&ReportFacts {
                 key,
                 status,

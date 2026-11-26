@@ -6,7 +6,7 @@ fn entry(worker: &str) -> Entry {
     Entry {
         source: format!("20261025122100-000003-{worker}.json"),
         report: Report {
-            worker: worker.to_string(),
+            from: crate::worker::Sender::parse(worker).unwrap(),
             at: "t".to_string(),
             status: ReportKind::Worker(ReportStatus::Done),
             text: String::new(),

@@ -153,7 +153,7 @@ fn take(path: &Path) -> Option<WatchRequest> {
 fn post_failure(inbox: &Inbox, report: &Report) {
     warn_if_err(
         inbox.post(report, 0),
-        format!("posting watch {}", report.worker),
+        format!("posting watch {}", report.from),
     );
 }
 

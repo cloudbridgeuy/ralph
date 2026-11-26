@@ -71,7 +71,7 @@ fn render_report(report: &Report, display: &Display, width: usize) -> String {
     format!(
         "{}\n{}",
         worker_header(
-            &report.worker,
+            &report.from.to_string(),
             report.status,
             width,
             display.color.then_some(&display.theme.palette)

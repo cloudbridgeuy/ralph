@@ -119,7 +119,7 @@ pub struct WireReport {
 impl From<InboxReport> for WireReport {
     fn from(report: InboxReport) -> Self {
         Self {
-            worker: report.worker,
+            worker: report.from.to_string(),
             at: report.at,
             status: report.status.as_str().to_string(),
             text: report.text,
@@ -751,7 +751,7 @@ mod tests {
     fn a_wire_report_keeps_every_field_and_writes_the_status_string() {
         for kind in ReportKind::ALL {
             let report = InboxReport {
-                worker: "w1".into(),
+                from: ralph_core::worker::Sender::parse("w1").unwrap(),
                 at: "now".into(),
                 status: kind,
                 text: "body".into(),
@@ -794,7 +794,7 @@ mod tests {
     fn inbox_push_stays_within_the_frame_limit_for_escaped_and_multibyte_text() {
         let field = "\u{0000}".repeat(MAX_FRAME_BYTES / 5);
         let report = InboxReport {
-            worker: field.clone(),
+            from: ralph_core::worker::Sender::parse("w").unwrap(),
             at: field,
             status: ReportKind::External,
             text: "🦀".repeat(MAX_FRAME_BYTES / 4),

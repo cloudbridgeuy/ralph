@@ -278,7 +278,7 @@ pub fn group_reports(entries: &[Entry], unread: &[Report]) -> HashMap<String, Ve
         .filter(|report| report.status.worker_status().is_some())
         .map(|report| {
             (
-                report.worker.clone(),
+                report.from.to_string(),
                 ReportLine {
                     status: report.status,
                     at: report.at.clone(),

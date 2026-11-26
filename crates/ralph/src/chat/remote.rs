@@ -18,7 +18,7 @@ use ralph_core::program_status::{Phase, State};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{truncate_string, OutputBlock};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
-use ralph_core::worker::{blocked_notice, Attention, Report, ReportKind};
+use ralph_core::worker::{blocked_notice, Attention, Report, ReportKind, Sender};
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
@@ -91,7 +91,7 @@ fn needing_user(wire: &WireReport) -> Option<Report> {
     let status = ReportKind::parse(&wire.status)?;
     match status.attention() {
         Attention::NeedsUser => Some(Report {
-            worker: wire.worker.clone(),
+            from: Sender::parse(&wire.worker).ok()?,
             at: wire.at.clone(),
             status,
             text: wire.text.clone(),

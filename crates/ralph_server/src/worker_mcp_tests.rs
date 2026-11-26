@@ -90,7 +90,7 @@ fn load_ledger_keeps_good_entries_when_one_is_malformed() {
 
     let mut warnings = Vec::new();
     let reports = sync_reports(&inbox, &mut warnings);
-    let workers: Vec<&str> = reports.iter().map(|r| r.worker.as_str()).collect();
+    let workers: Vec<String> = reports.iter().map(|r| r.from.to_string()).collect();
     assert_eq!(workers, ["A", "B"]);
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("bad"));

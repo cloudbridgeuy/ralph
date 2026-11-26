@@ -105,7 +105,7 @@ pub fn inbox_alert(
 fn notification_body(fresh: &[&Report]) -> String {
     fresh
         .iter()
-        .map(|report| format!("{} {}", report.worker, report.status))
+        .map(|report| format!("{} {}", report.from, report.status))
         .collect::<Vec<_>>()
         .join(", ")
 }

@@ -36,7 +36,7 @@ fn running(id: &str, started: &str) -> Task {
 
 fn report(worker: &str, at: &str, status: &str) -> Report {
     Report {
-        worker: worker.to_string(),
+        from: crate::worker::Sender::parse(worker).unwrap(),
         at: at.to_string(),
         status: crate::worker::ReportKind::parse(status).unwrap(),
         text: "t".to_string(),
@@ -303,7 +303,7 @@ fn command_tasks_are_left_to_the_watch_path() {
 #[test]
 fn chat_reports_keep_the_schedule_tag() {
     let report = chat_report("a", "text".to_string(), "2026-01-01T10:00:00Z").unwrap();
-    assert_eq!(report.worker, "schedule:a");
+    assert_eq!(report.from.to_string(), "schedule:a");
     assert_eq!(report.status.as_str(), "watch");
     assert_eq!(report.text, "text");
 }

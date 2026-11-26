@@ -214,7 +214,7 @@ impl Ledger {
     pub fn drop_worker(&mut self, worker: &str) -> Vec<Entry> {
         let (dropped, kept): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
             .into_iter()
-            .partition(|e| e.report.worker == worker);
+            .partition(|e| e.report.from.to_string() == worker);
         self.entries = kept;
         dropped
     }
@@ -274,7 +274,7 @@ pub fn unread_turn(selection: Selection, reports: &[Report]) -> Result<UnreadTur
 pub fn drop_log_line(entry: &Entry, now: DateTime<Utc>) -> String {
     serde_json::json!({
         "timestamp": now.to_rfc3339(),
-        "worker": entry.report.worker,
+        "worker": entry.report.from,
         "status": entry.report.status,
         "text": entry.report.text,
     })
@@ -304,7 +304,7 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
         .map(|(i, e)| {
             [
                 format!("#{}", i + 1),
-                e.report.worker.clone(),
+                e.report.from.to_string(),
                 e.report.status.to_string(),
                 age(&e.report.at, now),
             ]
@@ -727,6 +727,18 @@ mod tests {
             | DecodeError::BadMessage(_) => false,
         });
         assert!(match decode_message(br#"{"worker":"A"}"#).unwrap_err() {
+            DecodeError::BadMessage(_) => true,
+            DecodeError::NotJson(_)
+            | DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadEntry(_) => false,
+        });
+    }
+    #[test]
+    fn inbox_message_with_malformed_sender_is_rejected() {
+        let message =
+            br#"{"worker":"bad id!","at":"2026-01-01T00:00:00Z","status":"done","text":"hi"}"#;
+        assert!(match decode_message(message).unwrap_err() {
             DecodeError::BadMessage(_) => true,
             DecodeError::NotJson(_)
             | DecodeError::MissingEntries

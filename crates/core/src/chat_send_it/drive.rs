@@ -150,7 +150,7 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             (progress, next)
         }
         (Event::Report(report), Criterion::WorkerDone { worker, .. })
-            if report.worker == *worker =>
+            if report.from.to_string() == *worker =>
         {
             if report.status == ReportKind::Worker(ReportStatus::Done) {
                 done_reported(plan, progress, &step.criterion)
@@ -432,7 +432,7 @@ fn unanswered_flag<'a>(ended: &Ended<'a>, file: &RunFile) -> Option<&'a Report> 
                 .drained
                 .iter()
                 .filter(|report| flagged(report))
-                .find(|report| !(may_reply && ended.answered.contains(&report.worker)))
+                .find(|report| !(may_reply && ended.answered.contains(&report.from.to_string())))
         })
 }
 
@@ -486,7 +486,7 @@ fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
                 ended
                     .drained
                     .iter()
-                    .filter(|report| report.worker == *source && !flagged(report))
+                    .filter(|report| report.from.to_string() == *source && !flagged(report))
                     .map(Event::Report),
             )
             .collect(),
@@ -596,7 +596,9 @@ pub fn settle_check(
     let source = check_watch_id(driving.progress.step);
     let decided = match decided {
         Next::Stop(StopReason::CheckFailed { step, .. }) => {
-            let report = reports.iter().find(|report| report.worker == source);
+            let report = reports
+                .iter()
+                .find(|report| report.from.to_string() == source);
             Next::Stop(StopReason::CheckFailed {
                 step,
                 detail: Some(check_detail(outcome, report)),
@@ -626,7 +628,9 @@ fn would_block(progress: Progress, outcome: &WatchOutcome, reports: &[Report]) -
         && *outcome != WatchOutcome::Exited(0))
     .then(|| {
         let source = check_watch_id(progress.step);
-        let report = reports.iter().find(|report| report.worker == source);
+        let report = reports
+            .iter()
+            .find(|report| report.from.to_string() == source);
         would_block_line(progress.step, &check_detail(outcome, report))
     })
 }

@@ -289,7 +289,7 @@ fn flagged_stop() -> StopReason {
 
 fn worker_report(worker: &str, status: &str) -> Report {
     Report {
-        worker: worker.to_string(),
+        from: crate::worker::Sender::parse(worker).unwrap(),
         at: "2026-01-01T00:00:00Z".to_string(),
         status: crate::worker::ReportKind::parse(status).unwrap(),
         text: "text".to_string(),

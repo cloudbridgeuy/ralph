@@ -119,7 +119,7 @@ fn report_end(task: &Task, reports: &[Report]) -> Option<WorkerEnd> {
     let started = started_at(task);
     reports
         .iter()
-        .filter(|report| report.worker == worker)
+        .filter(|report| report.from.to_string() == worker)
         .filter(|report| DateTime::parse_from_rfc3339(&report.at).is_ok_and(|at| at >= started))
         .filter_map(|report| report.status.worker_status())
         .next_back()
@@ -228,12 +228,15 @@ pub fn vanished_text(task: &Task) -> String {
 pub fn new_scheduled_reports(known: &[Report], incoming: &[Report]) -> Vec<Report> {
     let mut fresh: Vec<Report> = Vec::new();
     for report in incoming {
-        let relevant =
-            report.worker.starts_with(WORKER_ID_PREFIX) && report.status.worker_status().is_some();
+        let relevant = report
+            .from
+            .worker()
+            .is_some_and(|id| id.as_str().starts_with(WORKER_ID_PREFIX))
+            && report.status.worker_status().is_some();
         let seen = known
             .iter()
             .chain(&fresh)
-            .any(|old| old.worker == report.worker && old.at == report.at);
+            .any(|old| old.from == report.from && old.at == report.at);
         if relevant && !seen {
             fresh.push(report.clone());
         }

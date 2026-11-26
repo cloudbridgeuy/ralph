@@ -105,7 +105,7 @@ fn drop_worker_removes_its_queued_reports_and_logs_each() {
         .peek()
         .unwrap()
         .into_iter()
-        .map(|r| r.worker)
+        .map(|r| r.from.to_string())
         .collect();
     assert_eq!(left, ["B"]);
     let log = fs::read_to_string(dir.path().join(DROP_LOG)).unwrap();
@@ -190,7 +190,7 @@ fn report_lands_in_inbox_and_drains_once() {
     assert_eq!(inbox.peek().unwrap().len(), 1);
     let reports = inbox.drain(Selection::All).unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].worker, "GUZ-1");
+    assert_eq!(reports[0].from.to_string(), "GUZ-1");
     assert_eq!(reports[0].text, "hello");
     assert!(inbox.peek().unwrap().is_empty());
 }
@@ -402,7 +402,7 @@ fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
 
 fn same_name_report(text: &str) -> Report {
     Report {
-        worker: "schedule:a".to_string(),
+        from: ralph_core::worker::Sender::parse("schedule:a").unwrap(),
         at: "2026-01-01T00:00:00Z".to_string(),
         status: ralph_core::worker::ReportKind::Worker(ReportStatus::Blocked),
         text: text.to_string(),

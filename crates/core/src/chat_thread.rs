@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn a_merged_report_reads_as_a_thread_message() {
         let report = merged_report(&name("auth"), "Picked x. #auth:0", "2026-11-03T10:00:00Z");
-        assert_eq!(report.worker, "thread:auth");
+        assert_eq!(report.from.to_string(), "thread:auth");
         assert_eq!(report.status.as_str(), "merged");
         assert_eq!(report.at, "2026-11-03T10:00:00Z");
         let worker = Report::from_worker(
@@ -894,7 +894,7 @@ mod tests {
     fn a_view_report_reads_as_thread_view_in_main() {
         let report = view_report(&name("auth"), "block", "t");
         assert_eq!(
-            (report.worker.as_str(), report.at.as_str()),
+            (report.from.to_string().as_str(), report.at.as_str()),
             ("thread:auth", "t")
         );
         assert_eq!(

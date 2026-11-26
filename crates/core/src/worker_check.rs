@@ -54,7 +54,7 @@ pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
     reports
         .iter()
         .filter(|report| report.status.worker_status().is_some())
-        .map(|report| (report.worker.clone(), report.at.clone()))
+        .map(|report| (report.from.to_string(), report.at.clone()))
         .collect()
 }
 

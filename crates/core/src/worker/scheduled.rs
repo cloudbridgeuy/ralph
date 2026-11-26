@@ -720,7 +720,7 @@ mod tests {
             );
             assert!(!denied.line.contains("person"), "{}", denied.line);
             let report = denied.report.unwrap();
-            assert_eq!(report.worker, "sched-1");
+            assert_eq!(report.from.to_string(), "sched-1");
             assert!(report.text.contains(&ask.content.tool));
         }
     }
@@ -736,7 +736,7 @@ mod tests {
             );
             assert!(report.is_some(), "{verdict:?}");
             let report = report.unwrap();
-            assert_eq!(report.worker, "sched-1");
+            assert_eq!(report.from.to_string(), "sched-1");
             assert_eq!(report.at, "2026-11-24T10:00:00Z");
             assert_eq!(report.status, ReportKind::Worker(ReportStatus::Blocked));
             assert!(report.text.contains("Bash"));
