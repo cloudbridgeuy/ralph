@@ -72,6 +72,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn all_lists_every_watch_shape_variant_once() {
+        let index = |value: WatchShape| match value {
+            WatchShape::Plain => 0,
+            WatchShape::Timeout => 1,
+            WatchShape::Wake => 2,
+            WatchShape::Persistent => 3,
+        };
+        let indexes: Vec<usize> = WatchShape::ALL.iter().map(|value| index(*value)).collect();
+        assert_eq!(indexes, (0..4).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn every_watch_shape_has_one_watch() {
         let specs = watch_specs();
         for shape in WatchShape::ALL {

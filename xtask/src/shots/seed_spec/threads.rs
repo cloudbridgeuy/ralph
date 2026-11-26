@@ -141,6 +141,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn all_lists_every_thread_state_variant_once() {
+        let index = |value: ThreadState| match value {
+            ThreadState::Open => 0,
+            ThreadState::Parked => 1,
+            ThreadState::Merged => 2,
+            ThreadState::Closed => 3,
+            ThreadState::AutoMerge => 4,
+        };
+        let indexes: Vec<usize> = ThreadState::ALL.iter().map(|value| index(*value)).collect();
+        assert_eq!(indexes, (0..5).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn every_thread_state_has_one_thread() {
         let specs = thread_specs();
         for state in ThreadState::ALL {

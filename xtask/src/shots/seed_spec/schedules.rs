@@ -131,6 +131,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn all_lists_every_schedule_kind_variant_once() {
+        let index = |value: ScheduleKind| match value {
+            ScheduleKind::Once => 0,
+            ScheduleKind::Every => 1,
+            ScheduleKind::Daily => 2,
+            ScheduleKind::Due => 3,
+            ScheduleKind::Late => 4,
+            ScheduleKind::Running => 5,
+            ScheduleKind::Proposed => 6,
+            ScheduleKind::WorkerTimeout => 7,
+        };
+        let indexes: Vec<usize> = ScheduleKind::ALL
+            .iter()
+            .map(|value| index(*value))
+            .collect();
+        assert_eq!(indexes, (0..8).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn every_schedule_kind_has_one_task() {
         let specs = schedule_specs();
         for kind in ScheduleKind::ALL {

@@ -197,6 +197,22 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
+    fn all_lists_every_worker_shape_variant_once() {
+        let index = |value: WorkerShape| match value {
+            WorkerShape::Running => 0,
+            WorkerShape::Background => 1,
+            WorkerShape::Idle => 2,
+            WorkerShape::Failed => 3,
+            WorkerShape::Blocked => 4,
+            WorkerShape::Waiting => 5,
+            WorkerShape::Unreported => 6,
+            WorkerShape::Gone => 7,
+        };
+        let indexes: Vec<usize> = WorkerShape::ALL.iter().map(|value| index(*value)).collect();
+        assert_eq!(indexes, (0..8).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn every_worker_shape_has_one_worker() {
         let specs = worker_specs();
         for shape in WorkerShape::ALL {
