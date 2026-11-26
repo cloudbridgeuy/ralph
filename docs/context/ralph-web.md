@@ -335,7 +335,7 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 | `/api/watches` | `id`, `kind` (`normal` or `persistent`), `started_at`, `timeout_secs`, `timeout_deadline`, `wake_deadline`, `has_follow_up`; sorted like `/watch` |
 | `/api/workers` | `id`, `harness`, `state`, `tone`, `pending_count`, `ticket`, `last_report_status`, `last_report_at`; sorted by `id` |
 
-Free text in a stored field is dropped, not masked. `ticket` is returned only in the shape `^[A-Z][A-Z0-9]*-[0-9]+$`, and `repeat` only for a valid `daily HH:MM` or an `every` span; both are `null` otherwise. `last_report_status` is always `done`, `blocked` or `question`, because the report reader keeps no other status, and `harness` comes from a fixed list of owner directories.
+Free text in a stored field is dropped, not masked. `ticket` is returned only in the shape `^[A-Z][A-Z0-9]*-[0-9]+$` with a project of at most 10 characters and a number of at most 8 digits, and `repeat` only for a valid `daily HH:MM` or an `every` span; both are `null` otherwise. `last_report_status` is always `done`, `blocked` or `question`, because the report reader keeps no other status, `last_report_at` is a canonical UTC time or `null`, and `harness` comes from a fixed list of owner directories.
 
 Ids are the exception. `GET /api/schedules` and `GET /api/watches` return each `id` exactly as stored, with no hashing and no filtering, and `GET /api/workers` does the same for worker ids. An id is a name that the model or the user chose, so it may contain any text they put there. The per-run token is the only guard. With `--tailscale`, these routes reach every tailnet device that holds the token.
 

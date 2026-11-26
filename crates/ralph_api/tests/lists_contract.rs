@@ -558,7 +558,11 @@ fn workers_body_matches_the_golden_and_leaks_nothing() {
 #[test]
 fn workers_ticket_without_a_ticket_shape_is_null() {
     let server = TestServer::start_with_store(|store| {
-        for (id, ticket) in [("secret", "sk-live-0123456789abcdef"), ("real", "GUZ-1748")] {
+        for (id, ticket) in [
+            ("secret", "sk-live-0123456789abcdef"),
+            ("long", "A-4111111111111111"),
+            ("real", "GUZ-1748"),
+        ] {
             owner(store, CLAUDE_OWNER_DIR, id);
             let record = SpawnRecord {
                 ticket: Some(ticket.to_string()),
@@ -582,6 +586,7 @@ fn workers_ticket_without_a_ticket_shape_is_null() {
             .clone()
     };
     assert_eq!(ticket_of("secret"), Value::Null);
+    assert_eq!(ticket_of("long"), Value::Null);
     assert_eq!(ticket_of("real"), "GUZ-1748");
     assert!(!reply.body.contains("sk-live"), "{}", reply.body);
 }

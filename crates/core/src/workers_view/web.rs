@@ -64,12 +64,18 @@ fn state_and_tone(facts: &WorkerFacts) -> (&'static str, WebTone) {
     }
 }
 
-/// A ticket key is shown only with the shape `^[A-Z][A-Z0-9]*-[0-9]+$`.
+/// A ticket key is shown only with the shape `^[A-Z][A-Z0-9]*-[0-9]+$`, with a
+/// project of at most 10 characters and a number of at most 8 digits.
 /// Any other text in the spawn record is dropped, not masked.
+const MAX_PROJECT_LEN: usize = 10;
+const MAX_NUMBER_LEN: usize = 8;
+
 pub fn ticket_shape(key: &str) -> Option<&str> {
     let (project, number) = key.split_once('-')?;
     let mut letters = project.chars();
-    let valid = letters.next().is_some_and(|c| c.is_ascii_uppercase())
+    let valid = project.len() <= MAX_PROJECT_LEN
+        && number.len() <= MAX_NUMBER_LEN
+        && letters.next().is_some_and(|c| c.is_ascii_uppercase())
         && letters.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
         && !number.is_empty()
         && number.chars().all(|c| c.is_ascii_digit());
@@ -120,7 +126,7 @@ mod tests {
 
     #[test]
     fn only_ticket_shaped_keys_pass() {
-        for ok in ["GUZ-1", "GUZ-1748", "A-0", "AB2-30"] {
+        for ok in ["GUZ-1", "GUZ-1748", "A-0", "AB2-30", "ABCDEFGHIJ-12345678"] {
             assert_eq!(ticket_shape(ok), Some(ok), "{ok}");
         }
         for bad in [
@@ -133,6 +139,9 @@ mod tests {
             "2GUZ-1",
             "GUZ-1\n",
             "",
+            "A-4111111111111111",
+            "A-123456789",
+            "ABCDEFGHIJK-1",
         ] {
             assert_eq!(ticket_shape(bad), None, "{bad}");
         }
