@@ -126,3 +126,24 @@ fn a_store_with_no_threads_gives_an_empty_snapshot() {
     assert!(snapshot.rows.is_empty());
     assert!(snapshot.tombstones.is_empty());
 }
+
+#[test]
+fn running_workers_in_keeps_only_the_sessions_tagged_with_that_store() {
+    let mine = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let listing = format!(
+        "ralph-a\t{}\tA\nralph-b\t{}\tB\nralph-c\t{}\tC\n",
+        mine.path().display(),
+        other.path().display(),
+        mine.path().display(),
+    );
+    let ids = |dir: &Path| -> Vec<String> {
+        running_workers_in(&listing, dir)
+            .into_iter()
+            .map(|worker| worker.id)
+            .collect()
+    };
+    assert_eq!(ids(mine.path()), ["A", "C"]);
+    assert_eq!(ids(other.path()), ["B"]);
+    assert!(ids(tempfile::tempdir().unwrap().path()).is_empty());
+}

@@ -2,7 +2,7 @@ use super::Store;
 use crate::chat::fork::read_meta;
 use crate::chat::thread::thread_dir;
 use crate::worker_mcp::Inbox;
-use crate::workers::{canonical_store, running_workers};
+use crate::workers::{canonical_store, running_workers_in, tmux_listing};
 use ralph_core::chat_thread::{ThreadMeta, ThreadName, THREADS_DIR};
 use ralph_core::chat_thread_log::{parse_tombstones, Tombstone, DROPPED_FILE};
 use ralph_core::chat_thread_table::{sort_rows, ThreadRow, ThreadState};
@@ -20,9 +20,10 @@ pub struct ThreadsSnapshot {
 
 pub fn thread_rows(store: &Path) -> io::Result<ThreadsSnapshot> {
     let head_messages = Store::new(store.to_path_buf()).log_len()?;
+    let listing = tmux_listing();
     let mut rows = Vec::new();
     for (name, meta) in live_threads(store)? {
-        rows.push(row_of(store, &name, &meta)?);
+        rows.push(row_of(store, &listing, &name, &meta)?);
     }
     sort_rows(&mut rows);
     Ok(ThreadsSnapshot {
@@ -46,7 +47,12 @@ fn live_threads(store: &Path) -> io::Result<Vec<(ThreadName, ThreadMeta)>> {
         .collect())
 }
 
-fn row_of(store: &Path, name: &ThreadName, meta: &ThreadMeta) -> io::Result<ThreadRow> {
+fn row_of(
+    store: &Path,
+    listing: &str,
+    name: &ThreadName,
+    meta: &ThreadMeta,
+) -> io::Result<ThreadRow> {
     let dir = thread_dir(store, name);
     Ok(ThreadRow {
         name: name.to_string(),
@@ -55,7 +61,7 @@ fn row_of(store: &Path, name: &ThreadName, meta: &ThreadMeta) -> io::Result<Thre
         created: meta.created.clone(),
         active: log_mtime(&dir),
         messages: Store::new(dir.clone()).log_len()?,
-        workers: running_workers(&canonical_store(dir.clone())).len(),
+        workers: running_workers_in(listing, &canonical_store(dir.clone())).len(),
         unread: Inbox::new(dir.join(INBOX_DIR)).unread_count()?,
     })
 }
