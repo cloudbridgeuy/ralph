@@ -1,3 +1,7 @@
+mod git;
+mod lines;
+
+use lines::body_lines;
 use ralph_server::config::MermaidSection;
 use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
@@ -6,8 +10,6 @@ const SMALL_SOURCE_BYTES: usize = 16 * 1024;
 const LARGE_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_PARTICIPANTS: usize = 20;
 const MAX_STATEMENTS: usize = 2000;
-const MAX_GIT_COMMITS: usize = 200;
-const MAX_GIT_BRANCHES: usize = 20;
 const SEQUENCE_ARROWS: [&str; 8] = ["-->>", "->>", "--x", "-x", "--)", "-)", "-->", "->"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,79 +33,6 @@ pub enum Refusal {
     TooManyStatements,
     TooManyCommits,
     TooManyBranches,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct BranchName<'a>(&'a str);
-
-impl<'a> BranchName<'a> {
-    const MAIN: Self = Self("main");
-
-    fn parse(raw: &'a str) -> Option<Self> {
-        let name = raw.trim();
-        (!name.is_empty()).then_some(Self(name))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GitLine<'a> {
-    Commit,
-    Branch(BranchName<'a>),
-    Switch,
-    Other,
-}
-
-impl<'a> GitLine<'a> {
-    fn parse(line: &'a str) -> Self {
-        let code = strip_inline_comment(line);
-        let (verb, rest) = code.split_once(char::is_whitespace).unwrap_or((code, ""));
-        match verb {
-            "commit" | "merge" | "cherry-pick" => Self::Commit,
-            "branch" => BranchName::parse(rest).map_or(Self::Other, Self::Branch),
-            "switch" => Self::Switch,
-            _ => Self::Other,
-        }
-    }
-}
-
-fn strip_inline_comment(line: &str) -> &str {
-    let mut quoted = false;
-    line.char_indices()
-        .find(|&(at, c)| {
-            quoted ^= c == '"';
-            !quoted && line[at..].starts_with("%%")
-        })
-        .map_or(line, |(at, _)| &line[..at])
-}
-
-struct GitSize {
-    commits: usize,
-    branches: usize,
-}
-
-fn size_of(lines: &[GitLine<'_>]) -> GitSize {
-    let mut commits = 0;
-    let mut branches = HashSet::from([BranchName::MAIN]);
-    for line in lines {
-        match line {
-            GitLine::Commit => commits += 1,
-            GitLine::Branch(name) => {
-                branches.insert(*name);
-            }
-            GitLine::Switch | GitLine::Other => {}
-        }
-    }
-    GitSize {
-        commits,
-        branches: branches.len(),
-    }
-}
-
-fn body_lines(source: &str) -> impl Iterator<Item = &str> {
-    source
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("%%"))
 }
 
 fn kind_of(header: &str) -> Option<DiagramKind> {
@@ -202,17 +131,7 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);
             }
-            let lines: Vec<GitLine<'_>> = body_lines(source).skip(1).map(GitLine::parse).collect();
-            if lines.contains(&GitLine::Switch) {
-                return Err(Refusal::Unsupported);
-            }
-            let size = size_of(&lines);
-            if size.commits > MAX_GIT_COMMITS {
-                return Err(Refusal::TooManyCommits);
-            }
-            if size.branches > MAX_GIT_BRANCHES {
-                return Err(Refusal::TooManyBranches);
-            }
+            git::check(source)?;
         }
     }
     Ok(kind)
