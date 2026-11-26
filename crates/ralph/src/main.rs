@@ -570,7 +570,7 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
 }
 
 struct MemoryCommand {
-    command: String,
+    command: subprocess::Invocation,
     codex_model: Option<String>,
     instructions: String,
     _workdir: Option<tempfile::TempDir>,
@@ -580,7 +580,7 @@ fn memory_command(
     harness: &str,
     model: &str,
     instructions: &str,
-    claude: impl FnOnce() -> String,
+    claude: impl FnOnce() -> subprocess::Invocation,
 ) -> std::io::Result<MemoryCommand> {
     let codex = harness == "codex";
     let workdir = if codex {
@@ -677,7 +677,7 @@ fn run_memory_command(
                     .and_then(|sink| {
                         subprocess::invoke_subprocess_silent(
                             &subprocess::SpinnerSubprocessConfig {
-                                command: subprocess::Invocation::shell(command.command.clone()),
+                                command: command.command.clone(),
                                 timeout_secs: Some(curator.timeout),
                                 verbose_tools: stream_processor::VerboseToolsConfig::new(),
                                 show_tools: std::io::stdout().is_terminal(),

@@ -2,7 +2,7 @@ use crate::config::ChatSection;
 use crate::subprocess::Invocation;
 use ralph_core::claude_leftovers::{claude_dir, configured_dir, CLAUDE_CONFIG_DIR_ENV};
 use ralph_core::sanitize::strip_controls;
-use ralph_core::worker::{inbox_env, CLAUDE_COMMAND};
+use ralph_core::worker::{inbox_env, CLAUDE_COMMAND, CODEX_COMMAND};
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,11 +10,6 @@ use std::path::{Path, PathBuf};
 pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
 pub const ASK_PERMISSION_MODE_ENV: &str = "RALPH_ASK_PERMISSION_MODE";
 const CHAT_DISABLE_BACKGROUND_TASKS_ENV: &str = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS";
-
-fn shell_quote(value: &str) -> String {
-    let escaped = value.replace('\'', "'\"'\"'");
-    format!("'{}'", escaped)
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Isolation {
@@ -118,21 +113,58 @@ pub fn prompt_stdin(prompt: &str) -> String {
     strip_controls(prompt).into_owned()
 }
 
-pub fn build_codex_memory_command(model: &str, workdir: &Path) -> String {
-    format!(
-        "codex exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C {} --model {} --disable shell_tool --disable apps --disable multi_agent -c 'web_search=\"disabled\"' -",
-        shell_quote(&workdir.to_string_lossy()),
-        shell_quote(model),
-    )
+pub fn build_codex_memory_command(model: &str, workdir: &Path) -> Invocation {
+    let mut args: Vec<OsString> = [
+        "exec",
+        "--json",
+        "--sandbox",
+        "read-only",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--skip-git-repo-check",
+        "-C",
+    ]
+    .map(OsString::from)
+    .into();
+    args.push(workdir.into());
+    args.extend(
+        [
+            "--model",
+            model,
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "apps",
+            "--disable",
+            "multi_agent",
+            "-c",
+            "web_search=\"disabled\"",
+            "-",
+        ]
+        .map(OsString::from),
+    );
+    Invocation {
+        program: CODEX_COMMAND,
+        args,
+        env: Vec::new(),
+    }
 }
 
-pub fn build_memory_command(model: &str, home: Option<&Path>, config_dir: Option<&Path>) -> String {
-    memory_command(model, "", &Isolation::for_memory(config_dir), home)
+pub fn build_memory_command(
+    model: &str,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+) -> Invocation {
+    memory_command(model, None, &Isolation::for_memory(config_dir), home)
 }
 
-pub fn build_nap_command(model: &str, home: Option<&Path>, config_dir: Option<&Path>) -> String {
-    let system = system_prompt_arg(&ralph_core::chat_memory::nap_system());
-    memory_command(model, &system, &Isolation::for_nap(config_dir), home)
+pub fn build_nap_command(
+    model: &str,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+) -> Invocation {
+    let system = ralph_core::chat_memory::nap_system();
+    memory_command(model, Some(&system), &Isolation::for_nap(config_dir), home)
 }
 
 pub fn build_tag_command(
@@ -140,26 +172,42 @@ pub fn build_tag_command(
     system_prompt: &str,
     home: Option<&Path>,
     config_dir: Option<&Path>,
-) -> String {
-    let system = system_prompt_arg(system_prompt);
-    memory_command(model, &system, &Isolation::for_memory(config_dir), home)
+) -> Invocation {
+    let isolation = Isolation::for_memory(config_dir);
+    memory_command(model, Some(system_prompt), &isolation, home)
 }
 
-fn system_prompt_arg(system_prompt: &str) -> String {
-    format!("--system-prompt {} ", shell_quote(system_prompt))
-}
-
-fn memory_command(model: &str, system: &str, isolation: &Isolation, home: Option<&Path>) -> String {
-    let model = shell_quote(model);
-    let env = config_dir_env(isolation.config_dir.as_deref(), home)
-        .map(|(key, dir)| format!("{key}={} ", shell_quote(&dir.to_string_lossy())))
-        .unwrap_or_default();
-    let [sources_flag, sources, settings_flag, settings] =
-        isolation_args(home, false, isolation, false);
-    format!(
-        "{env}claude --verbose --model {model} {system}{sources_flag} {sources} {settings_flag} {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
-        shell_quote(&settings),
-    )
+fn memory_command(
+    model: &str,
+    system_prompt: Option<&str>,
+    isolation: &Isolation,
+    home: Option<&Path>,
+) -> Invocation {
+    let mut args: Vec<OsString> = ["--verbose", "--model", model].map(OsString::from).into();
+    if let Some(system_prompt) = system_prompt {
+        args.extend(["--system-prompt", system_prompt].map(OsString::from));
+    }
+    args.extend(isolation_args(home, false, isolation, false).map(OsString::from));
+    args.extend(
+        [
+            "--tools",
+            "",
+            "--mcp-config",
+            "{\"mcpServers\":{}}",
+            "--strict-mcp-config",
+            "--output-format",
+            "stream-json",
+            "-p",
+        ]
+        .map(OsString::from),
+    );
+    Invocation {
+        program: CLAUDE_COMMAND,
+        args,
+        env: config_dir_env(isolation.config_dir.as_deref(), home)
+            .into_iter()
+            .collect(),
+    }
 }
 
 pub fn build_chat_command(
@@ -266,10 +314,10 @@ mod tests {
 
     #[test]
     fn codex_memory_command_is_isolated() {
-        let cmd = build_codex_memory_command("model 'x'", Path::new("/tmp/a b"));
+        let cmd = line(build_codex_memory_command("model-x", Path::new("/tmp/a b")));
         assert_eq!(
             cmd,
-            r#"codex exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C '/tmp/a b' --model 'model '"'"'x'"'"'' --disable shell_tool --disable apps --disable multi_agent -c 'web_search="disabled"' -"#
+            r#"codex exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C /tmp/a b --model model-x --disable shell_tool --disable apps --disable multi_agent -c web_search="disabled" -"#
         );
     }
 
@@ -295,6 +343,25 @@ mod tests {
     }
 
     #[test]
+    fn a_hostile_curator_value_is_exactly_one_argument() {
+        let hostile = "$(touch /tmp/pwned); id #";
+        let home = Some(Path::new("/home/u"));
+        for (invocation, program) in [
+            (build_nap_command(hostile, home, None), "claude"),
+            (build_memory_command(hostile, home, None), "claude"),
+            (build_tag_command(hostile, hostile, home, None), "claude"),
+            (
+                build_codex_memory_command(hostile, Path::new(hostile)),
+                "codex",
+            ),
+        ] {
+            assert_eq!(invocation.program, program);
+            let flag = invocation.args.iter().position(|arg| arg == "--model");
+            assert_eq!(invocation.args[flag.unwrap() + 1], hostile);
+        }
+    }
+
+    #[test]
     fn build_command_is_plain_ask() {
         let cmd = line(build_command("bypassPermissions", None, None));
         assert!(cmd.contains("--permission-mode bypassPermissions"));
@@ -306,60 +373,43 @@ mod tests {
 
     #[test]
     fn tagger_is_haiku_5_5_with_the_prompt_as_the_system_prompt_and_no_tools() {
-        let cmd = build_tag_command(
+        let cmd = line(build_tag_command(
             "claude-haiku-5-5",
             "Label 'x'.",
             Some(Path::new("/home/u")),
             None,
-        );
-        assert!(cmd.contains("--model 'claude-haiku-5-5' "), "{cmd}");
-        assert!(
-            cmd.contains(r#"--system-prompt 'Label '"'"'x'"'"'.'"#),
-            "{cmd}"
-        );
+        ));
+        assert!(cmd.contains("--model claude-haiku-5-5 "), "{cmd}");
+        assert!(cmd.contains("--system-prompt Label 'x'. "), "{cmd}");
         assert!(cmd.contains("--setting-sources project,local"));
-        assert!(cmd.contains("--tools ''"));
-        assert!(cmd.contains("--mcp-config '{\"mcpServers\":{}}' --strict-mcp-config"));
+        assert!(cmd.contains("--tools  --mcp-config"));
+        assert!(cmd.contains("--mcp-config {\"mcpServers\":{}} --strict-mcp-config"));
         assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
         assert!(!cmd.contains("--resume"));
     }
 
     #[test]
-    fn memory_models_are_one_shell_argument() {
-        let merge = build_memory_command("custom-merge", None, None);
-        assert!(merge.contains("--model 'custom-merge' "), "{merge}");
-        let cmd = build_nap_command("model 'x' $(false)", None, None);
-        assert!(
-            cmd.contains(r#"--model 'model '"'"'x'"'"' $(false)' "#),
-            "{cmd}"
-        );
-    }
-
-    #[test]
     fn tagger_uses_the_model_it_is_given() {
-        let cmd = build_tag_command("model-x", "p", None, None);
-        assert!(cmd.contains("--model 'model-x' "), "{cmd}");
+        let cmd = line(build_tag_command("model-x", "p", None, None));
+        assert!(cmd.contains("--model model-x "), "{cmd}");
         assert!(!cmd.contains("haiku"), "{cmd}");
     }
 
     #[test]
     fn nap_curator_gets_the_nap_rules_as_its_system_prompt() {
-        let cmd = build_nap_command("haiku", Some(Path::new("/home/u")), None);
+        let cmd = line(build_nap_command("haiku", Some(Path::new("/home/u")), None));
         let system = ralph_core::chat_memory::nap_system();
-        assert!(
-            cmd.contains(&format!("--system-prompt {} ", shell_quote(&system))),
-            "{cmd}"
-        );
+        assert!(cmd.contains(&format!("--system-prompt {system} ")), "{cmd}");
         assert!(cmd.contains("Invent nothing"), "{cmd}");
-        assert!(cmd.contains("--model 'haiku' "), "{cmd}");
-        assert!(cmd.contains("--tools ''"), "{cmd}");
+        assert!(cmd.contains("--model haiku "), "{cmd}");
+        assert!(cmd.contains("--tools  --mcp-config"), "{cmd}");
         assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
     }
 
     #[test]
     fn nap_curator_drops_every_claude_md_and_auto_memory_but_merge_and_tag_keep_them() {
         let home = Some(Path::new("/home/u"));
-        let nap = build_nap_command("haiku", home, None);
+        let nap = line(build_nap_command("haiku", home, None));
         for needle in [
             r#""autoMemoryEnabled":false"#,
             r#""**/CLAUDE.md""#,
@@ -371,7 +421,9 @@ mod tests {
         for other in [
             build_memory_command("haiku", home, None),
             build_tag_command("claude-haiku-5-5", "p", home, None),
-        ] {
+        ]
+        .map(line)
+        {
             assert!(!other.contains("autoMemoryEnabled"), "{other}");
             assert!(!other.contains("**/CLAUDE.md"), "{other}");
         }
@@ -388,18 +440,26 @@ mod tests {
 
     #[test]
     fn merge_curator_keeps_the_default_system_prompt() {
-        let cmd = build_memory_command("haiku", Some(Path::new("/home/u")), None);
+        let cmd = line(build_memory_command(
+            "haiku",
+            Some(Path::new("/home/u")),
+            None,
+        ));
         assert!(!cmd.contains("--system-prompt"), "{cmd}");
     }
 
     #[test]
     fn memory_curator_is_haiku_and_isolated_without_tools() {
-        let cmd = build_memory_command("haiku", Some(Path::new("/home/u")), None);
-        assert!(cmd.contains("--model 'haiku'"));
+        let cmd = line(build_memory_command(
+            "haiku",
+            Some(Path::new("/home/u")),
+            None,
+        ));
+        assert!(cmd.contains("--model haiku"));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains("claudeMdExcludes"));
         assert!(cmd.contains("/home/u/.claude/CLAUDE.md"));
-        assert!(cmd.contains("--tools ''"));
+        assert!(cmd.contains("--tools  --mcp-config"));
         assert!(cmd.contains("--strict-mcp-config"));
         assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
         assert!(!cmd.contains("--agent"));
@@ -518,7 +578,7 @@ mod tests {
             None,
             &Isolation::default(),
         ));
-        let nap = build_memory_command("haiku", None, None);
+        let nap = line(build_memory_command("haiku", None, None));
         for cmd in [chat, nap] {
             assert!(cmd.contains(r#""totalTokensReminder":"off""#), "{cmd}");
         }
@@ -531,7 +591,7 @@ mod tests {
         let home = Some(Path::new("/home/u"));
         let commands = [
             line(build_command("auto", None, home)),
-            build_memory_command("haiku", home, None),
+            line(build_memory_command("haiku", home, None)),
             line(build_chat_command(
                 Path::new("/s/p.md"),
                 &[],
@@ -560,8 +620,12 @@ mod tests {
             "claude --verbose --permission-mode auto --output-format stream-json -p"
         );
         assert_eq!(
-            build_memory_command("haiku", Some(Path::new("/home/u")), None),
-            r#"claude --verbose --model 'haiku' --setting-sources project,local --settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}' --tools '' --mcp-config '{"mcpServers":{}}' --strict-mcp-config --output-format stream-json -p"#
+            line(build_memory_command(
+                "haiku",
+                Some(Path::new("/home/u")),
+                None
+            )),
+            r#"claude --verbose --model haiku --setting-sources project,local --settings {"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"} --tools  --mcp-config {"mcpServers":{}} --strict-mcp-config --output-format stream-json -p"#
         );
         assert_eq!(
             line(build_chat_command(Path::new("/s/p.md"), &[], "auto", None, &Isolation::default())),
@@ -575,8 +639,8 @@ mod tests {
         let dir = Some(Path::new("~/alt dir"));
         let ask = line(build_command("auto", dir, home));
         assert!(ask.starts_with("CLAUDE_CONFIG_DIR=/home/u/alt dir claude --verbose "));
-        let memory = build_memory_command("haiku", home, dir);
-        assert!(memory.starts_with("CLAUDE_CONFIG_DIR='/home/u/alt dir' claude "));
+        let memory = line(build_memory_command("haiku", home, dir));
+        assert!(memory.starts_with("CLAUDE_CONFIG_DIR=/home/u/alt dir claude "));
         assert!(memory.contains(r#"["/home/u/alt dir/CLAUDE.md"]"#));
         let isolation = Isolation::for_chat(&ChatSection::default(), Path::new("/work"), dir);
         let chat = line(build_chat_command(

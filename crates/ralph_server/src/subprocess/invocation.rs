@@ -10,14 +10,6 @@ pub struct Invocation {
 }
 
 impl Invocation {
-    pub fn shell(command_text: String) -> Self {
-        Self {
-            program: "sh",
-            args: vec!["-c".into(), command_text.into()],
-            env: Vec::new(),
-        }
-    }
-
     pub(super) fn command(&self) -> Command {
         let mut command = Command::new(self.program);
         command
@@ -53,14 +45,6 @@ mod tests {
             command.get_envs().collect::<Vec<_>>(),
             [(OsStr::new("RALPH_INBOX"), Some(OsStr::new("/a b")))]
         );
-    }
-
-    #[test]
-    fn a_shell_invocation_is_sh_with_the_text_as_one_argument() {
-        let invocation = Invocation::shell("claude -p".to_string());
-        assert_eq!(invocation.program, "sh");
-        assert_eq!(invocation.args, ["-c", "claude -p"]);
-        assert!(invocation.env.is_empty());
     }
 
     #[test]
