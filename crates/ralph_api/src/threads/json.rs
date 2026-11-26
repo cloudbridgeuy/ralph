@@ -1,3 +1,4 @@
+use crate::render::graph_svg;
 use crate::threads::cells::{lane_cells, Lane};
 use chrono::{DateTime, Utc};
 use ralph_core::chat_thread_log::Tombstone;
@@ -33,6 +34,7 @@ fn thread_row(row: &ThreadRow, now: DateTime<Utc>) -> Value {
         "workers": row.workers,
         "unread": row.unread,
         "cells": cells_json(state_lane(&row.state)),
+        "svg": lane_svg(state_lane(&row.state)),
     })
 }
 
@@ -41,6 +43,10 @@ fn cells_json(lane: Lane) -> Vec<Value> {
         .iter()
         .map(|cell| json!({"ch": cell.ch.to_string(), "tone": cell.tone.name()}))
         .collect()
+}
+
+fn lane_svg(lane: Lane) -> String {
+    graph_svg(&lane_cells(lane))
 }
 
 fn state_lane(state: &ThreadState) -> Lane {
@@ -64,6 +70,7 @@ fn head_row(messages: usize) -> Value {
         "workers": null,
         "unread": null,
         "cells": cells_json(Lane::Head),
+        "svg": lane_svg(Lane::Head),
     })
 }
 
@@ -80,6 +87,7 @@ fn dropped_row(tombstone: &Tombstone) -> Value {
         "workers": null,
         "unread": null,
         "cells": cells_json(Lane::Dropped),
+        "svg": lane_svg(Lane::Dropped),
     })
 }
 
@@ -229,6 +237,24 @@ mod tests {
         assert_eq!(head["messages"], 4);
         assert_eq!(head["base"], Value::Null);
         assert_eq!(head["cells"][0]["ch"], "●");
+    }
+
+    #[test]
+    fn every_row_carries_its_graph_svg() {
+        let body = threads_body("chat", &fixture(), now());
+        let lanes = [
+            Lane::Head,
+            Lane::Open,
+            Lane::Parked,
+            Lane::Merged,
+            Lane::Dropped,
+        ];
+        assert_eq!(rows(&body).len(), lanes.len());
+        for (row, lane) in rows(&body).iter().zip(lanes) {
+            let expected = graph_svg(&lane_cells(lane));
+            assert_eq!(row["svg"], expected.as_str(), "{}", row["name"]);
+            assert!(expected.starts_with("<r-graph><svg"));
+        }
     }
 
     #[test]
