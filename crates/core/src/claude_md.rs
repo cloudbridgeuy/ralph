@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_DEPTH: usize = 5;
 const FILE_NAME: &str = "CLAUDE.md";
+const PROJECT_FILES: [&str; 3] = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"];
 
 pub struct Loaded {
     pub path: PathBuf,
@@ -31,7 +32,9 @@ pub fn claude_md_paths(layout: &Layout) -> Vec<PathBuf> {
         .filter(|_| layout.project)
         .collect();
     dirs.reverse();
-    let project = dirs.into_iter().map(|dir| dir.join(FILE_NAME));
+    let project = dirs
+        .into_iter()
+        .flat_map(|dir| PROJECT_FILES.map(|name| dir.join(name)));
     user.into_iter().chain(project).collect()
 }
 
@@ -220,18 +223,42 @@ mod tests {
     }
 
     #[test]
-    fn the_user_file_comes_first_then_root_to_cwd() {
-        let paths = claude_md_paths(&layout(true, Some(Path::new("/h/.claude"))));
+    fn each_dir_reads_claude_md_then_dot_claude_then_local() {
+        let layout = Layout {
+            git_root: Path::new("/r"),
+            cwd: Path::new("/r/a"),
+            user_dir: Some(Path::new("/h/.claude")),
+            project: true,
+        };
         let expected: Vec<PathBuf> = [
             "/h/.claude/CLAUDE.md",
             "/r/CLAUDE.md",
+            "/r/.claude/CLAUDE.md",
+            "/r/CLAUDE.local.md",
             "/r/a/CLAUDE.md",
-            "/r/a/b/CLAUDE.md",
+            "/r/a/.claude/CLAUDE.md",
+            "/r/a/CLAUDE.local.md",
         ]
         .iter()
         .map(PathBuf::from)
         .collect();
-        assert_eq!(paths, expected);
+        assert_eq!(claude_md_paths(&layout), expected);
+    }
+
+    #[test]
+    fn project_off_drops_dot_claude_and_local_files() {
+        let paths = claude_md_paths(&layout(false, Some(Path::new("/h/.claude"))));
+        assert!(paths.iter().all(|path| path.starts_with("/h/.claude")));
+    }
+
+    #[test]
+    fn missing_project_files_are_skipped() {
+        let map = files(&[("/r/CLAUDE.local.md", "mine")]);
+        let text = run(
+            &map,
+            &["/r/CLAUDE.md", "/r/.claude/CLAUDE.md", "/r/CLAUDE.local.md"],
+        );
+        assert_eq!(text, "Contents of /r/CLAUDE.local.md:\n\nmine");
     }
 
     #[test]
