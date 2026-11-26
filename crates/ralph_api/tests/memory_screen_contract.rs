@@ -234,9 +234,11 @@ fn the_script_draws_the_same_chevron_and_extent_bar_as_the_rust_tree() {
 #[test]
 fn a_block_with_no_summary_says_no_summary_yet_in_plain_text() {
     let body = script();
-    assert!(!body.contains("pending"));
+    let none = function_body(&body, "function noSummary(");
+    assert!(!none.contains("pending"));
     assert!(body.contains(r#"el("span", "no summary yet", { class: "none" })"#));
     let cell = function_body(&body, "function summaryCell(");
+    assert!(!cell.contains("pending"));
     assert!(cell.contains("summary === null"));
     assert!(cell.contains("noSummary()"));
     assert!(!cell.contains("pill("));
