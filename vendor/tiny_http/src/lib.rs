@@ -337,7 +337,8 @@ impl Server {
             log::debug!("Running accept thread");
             while !inside_close_trigger.load(Relaxed) {
                 let new_client = match server.accept(timeouts) {
-                    Ok((sock, _)) => {
+                    Ok(None) => continue,
+                    Ok(Some((sock, _))) => {
                         use util::RefinedTcpStream;
                         let split = match ssl {
                             None => RefinedTcpStream::new(sock),
