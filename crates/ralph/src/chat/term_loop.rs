@@ -11,8 +11,9 @@ use crate::chat::rerender::redraw_text;
 use crate::chat::resize::Resize;
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, Keyboard};
-use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active, InboxTurn};
+use crate::chat::send_it::{dispatch, held_item, tick, took_over, Active, Driven, InboxTurn};
 use crate::chat::session::{print_exit_notice, route_queued, save_unsent};
+use crate::chat::stash::DraftStash;
 use crate::chat::switch::{chat_exit, check as check_switch, ChatExit, Leave};
 use crate::chat::{thread, thread_cmd};
 use crate::signal;
@@ -74,6 +75,7 @@ pub(super) struct TerminalLoop<'a> {
     pub(super) inbox_display: &'a dyn Fn(bool) -> Display<'a>,
     pub(super) local: &'a LocalRoute<'a>,
     pub(super) editor: Reedline,
+    pub(super) stash: DraftStash,
     pub(super) pending: Option<Submitted>,
     pub(super) sending: Option<Active>,
     pub(super) offered: Option<(String, u64)>,
@@ -115,6 +117,14 @@ pub(super) enum Flow {
 
 impl TerminalLoop<'_> {
     pub(super) fn run(mut self) -> Result<ChatExit, Box<dyn Error>> {
+        let ran = self.drive();
+        if let Some(notice) = self.stash.save(self.editor.history_mut()) {
+            eprintln!("{notice}");
+        }
+        ran
+    }
+
+    fn drive(&mut self) -> Result<ChatExit, Box<dyn Error>> {
         let session = self.session;
         let monitor = &session.core;
         let settles_closes = !self.in_thread;
@@ -128,10 +138,11 @@ impl TerminalLoop<'_> {
             let submitted = match self.pending.take() {
                 Some(submitted) => Some(submitted),
                 None => {
+                    self.stash.restore(&mut self.editor);
                     self.at_prompt.store(true, Ordering::SeqCst);
                     self.idle.store(true, Ordering::SeqCst);
                     print_above_prompt(Some(self.prompt_sink.clone()));
-                    let submitted = next_route(&mut self.editor, self.prompt);
+                    let submitted = next_route(&mut self.editor, self.prompt, &self.stash);
                     print_above_prompt(None);
                     self.at_prompt.store(false, Ordering::SeqCst);
                     self.idle.store(false, Ordering::SeqCst);
@@ -232,7 +243,12 @@ impl TerminalLoop<'_> {
                 break;
             }
         }
-        Ok(self.leaving.unwrap_or(ChatExit::Quit))
+        Ok(self.leaving.take().unwrap_or(ChatExit::Quit))
+    }
+
+    fn enter(&mut self, mut driven: Driven) -> Option<Submitted> {
+        driven.prefill = self.stash.displace(driven.prefill.take());
+        driven.enter(&mut self.editor)
     }
 
     pub(super) fn queue_next(&mut self) {
@@ -319,8 +335,7 @@ impl TerminalLoop<'_> {
             }
             if let Some(started) = reply.started {
                 let mut driven = dispatch(&session.send_it, started, &session.core);
-                (self.sending, self.pending) =
-                    (driven.active.take(), driven.enter(&mut self.editor));
+                (self.sending, self.pending) = (driven.active.take(), self.enter(driven));
             }
             return Ok(None);
         };
@@ -392,7 +407,7 @@ impl TerminalLoop<'_> {
             }
             Err(TurnOutcome::Exit) => {
                 let lost = unsent_texts(&self.carried, self.editor.current_buffer_contents());
-                let saved = save_unsent(&mut self.editor, &lost);
+                let saved = save_unsent(self.editor.history_mut(), &lost);
                 print_exit_notice(lost.len(), saved);
                 self.editor.sync_history()?;
                 self.leaving = Some(chat_exit(LoopExit::ShellCell));
@@ -413,12 +428,12 @@ impl TerminalLoop<'_> {
             Held::Item(position) => {
                 let driven =
                     held_item(&session.send_it, &mut self.sending, position, &session.core)?;
-                self.pending = driven.enter(&mut self.editor);
+                self.pending = self.enter(driven);
             }
             Held::Left => {
                 session.set_phase(Phase::Prompt);
                 if let Some(active) = self.sending.take() {
-                    took_over(&session.send_it, &active).enter(&mut self.editor);
+                    self.enter(took_over(&session.send_it, &active));
                 }
             }
             Held::Quit => {
@@ -463,7 +478,7 @@ impl TerminalLoop<'_> {
             }
         };
         let lost = unsent_texts(&self.carried, self.editor.current_buffer_contents());
-        let saved = save_unsent(&mut self.editor, &lost);
+        let saved = save_unsent(self.editor.history_mut(), &lost);
         if !saved {
             if signal::is_terminated() {
                 print_exit_notice(lost.len(), saved);
@@ -499,7 +514,7 @@ impl TerminalLoop<'_> {
         session.refresh();
         if outcome == TurnOutcome::Exit {
             let lost = unsent(&queue);
-            let saved = save_unsent(&mut self.editor, &lost);
+            let saved = save_unsent(self.editor.history_mut(), &lost);
             print_exit_notice(lost.len(), saved);
             self.editor.sync_history()?;
             self.leaving = Some(chat_exit(LoopExit::TurnExit));
@@ -535,7 +550,7 @@ impl TerminalLoop<'_> {
                 self.suggestions.set(Suggestion::Open(line));
             }
         }
-        let suggestion = self.suggestions.take();
+        let suggestion = self.stash.displace(self.suggestions.take());
         let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {
             Decision::Send { text, rest } => {

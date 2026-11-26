@@ -1,8 +1,9 @@
 use crate::ansi::{DIM, RESET};
-use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR};
+use crate::chat::editor::{edit_draft, IDLE_CTRL_C, OPEN_EDITOR, STASH_DRAFT};
 use crate::chat::keys::answer_oldest_worker;
 use crate::chat::resize::Resize;
 use crate::chat::sent::SentStyle;
+use crate::chat::stash::DraftStash;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::switch::ChatExit;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
@@ -223,6 +224,7 @@ impl Submitted {
 pub(super) fn next_route(
     editor: &mut Reedline,
     prompt: &ChatPrompt,
+    stash: &DraftStash,
 ) -> io::Result<Result<Submitted, ChatExit>> {
     let attachments = prompt.monitor.store_dir.join(ATTACHMENTS_DIR);
     loop {
@@ -233,6 +235,7 @@ pub(super) fn next_route(
                     .and_then(|choice| answer_oldest_worker(&prompt.monitor, choice))
                 {
                     println!("{report}");
+                    stash.restore(editor);
                     continue;
                 }
                 let status = prompt.monitor.status();
@@ -244,6 +247,7 @@ pub(super) fn next_route(
                 );
                 return Ok(Ok(Submitted { line, route }));
             }
+            Signal::HostCommand(command) if command == STASH_DRAFT => stash.push(editor),
             Signal::HostCommand(command) if command == PASTE_IMAGE => {
                 *prompt.notice.borrow_mut() = paste_image(editor, &attachments)
             }
@@ -261,11 +265,16 @@ pub(super) fn next_route(
                         is_terminated(),
                     )
                 });
-                match step {
-                    Some(IdleStep::ClearDraft) => editor.run_edit_commands(&[EditCommand::Clear]),
-                    Some(IdleStep::Closed) => return Ok(Err(ChatExit::Closed)),
-                    Some(IdleStep::Quit) | None => return Ok(Err(ChatExit::Quit)),
-                }
+                let exit = match step {
+                    Some(IdleStep::ClearDraft) => {
+                        editor.run_edit_commands(&[EditCommand::Clear]);
+                        continue;
+                    }
+                    Some(IdleStep::Closed) => ChatExit::Closed,
+                    Some(IdleStep::Quit) | None => ChatExit::Quit,
+                };
+                editor.leave_suspended_prompt()?;
+                return Ok(Err(exit));
             }
         }
     }
