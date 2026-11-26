@@ -10,7 +10,7 @@ use ralph_core::shell_format::{format_fence, is_shell_fence};
 
 use ralph_core::stream::blocks::ImageFile;
 
-use super::code_frame::{framed, framed_diff};
+use super::code_frame::{body_width, framed, framed_diff};
 use super::image::{disk_image, render_with_markers, ImageBounds};
 use super::link::mark_links;
 use super::marker::paint_links;
@@ -118,13 +118,14 @@ pub fn render_markdown_with(
     markdown: &MarkdownTheme,
     picture: impl Fn(&ParsedChunk) -> Option<String>,
 ) -> String {
+    let ctx = ctx.refreshed();
     parse_chunks(text)
         .iter()
         .map(|chunk| {
             if let Some(drawn) = picture(chunk) {
                 return drawn;
             }
-            let rendered = render_text_block(ctx, chunk, Some(markdown));
+            let rendered = render_text_block(&ctx, chunk, Some(markdown));
             match chunk.chunk_type {
                 ChunkType::Prose => rendered,
                 _ => rendered + "\n",
@@ -211,13 +212,13 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
     };
 
     if ctx.terminal && language == Some("mermaid") {
-        if let Some(diagram) = (ctx.mermaid)(content, ctx.width) {
+        if let Some(diagram) = (ctx.mermaid)(content, body_width(ctx)) {
             return framed(ctx, &label, &diagram);
         }
     }
 
     let formatted = (is_shell_fence(language) && !content.contains('\x1b'))
-        .then(|| format_fence(content, ctx.width))
+        .then(|| format_fence(content, body_width(ctx)))
         .flatten();
     let (content, language) = match formatted.as_deref() {
         Some(formatted) => (formatted, Some("sh")),

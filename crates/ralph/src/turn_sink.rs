@@ -46,10 +46,16 @@ pub(crate) trait ReplyWidth: Send + Sync {
     fn rendered(&self, cols: usize);
 }
 
-fn has_prose(blocks: &[OutputBlock]) -> bool {
-    blocks.iter().any(
-        |block| matches!(block, OutputBlock::Text(text) if text.chunk.chunk_type == ChunkType::Prose),
-    )
+fn has_reply_text(blocks: &[OutputBlock]) -> bool {
+    blocks.iter().any(|block| {
+        matches!(
+            block,
+            OutputBlock::Text(text) if matches!(
+                text.chunk.chunk_type,
+                ChunkType::Prose | ChunkType::Code { .. } | ChunkType::Diff
+            )
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +131,7 @@ impl TerminalSink {
         };
         match event {
             TurnEvent::Busy(Wait::Response) => reply_width.begin(),
-            TurnEvent::Blocks(blocks) if has_prose(blocks) => {
+            TurnEvent::Blocks(blocks) if has_reply_text(blocks) => {
                 reply_width.rendered((self.columns)());
             }
             _ => {}
@@ -202,6 +208,33 @@ mod tests {
             chunk_type: ChunkType::Prose,
             content: content.to_string(),
         })
+    }
+
+    #[derive(Default)]
+    struct Widths(Mutex<Vec<usize>>);
+
+    impl ReplyWidth for Widths {
+        fn begin(&self) {}
+
+        fn rendered(&self, cols: usize) {
+            self.0.lock().unwrap().push(cols);
+        }
+    }
+
+    #[test]
+    fn code_only_reply_records_width() {
+        let widths = Arc::new(Widths::default());
+        let sink = TerminalSink::with_highlighting(None, &ThemeConfig::default(), || 77, false)
+            .unwrap()
+            .with_reply_width(widths.clone());
+        for chunk in [
+            ParsedChunk::code("a", None),
+            ParsedChunk::diff("+a"),
+            ParsedChunk::directive("a", "ask", "b"),
+        ] {
+            sink.track(&TurnEvent::Blocks(vec![OutputBlock::text(chunk)]));
+        }
+        assert_eq!(*widths.0.lock().unwrap(), vec![77, 77]);
     }
 
     #[test]

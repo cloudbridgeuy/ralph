@@ -5,7 +5,7 @@ use crate::chat_status::truncate_to_width;
 
 const RULE: &str = "─";
 const LEAD: &str = "── ";
-const MARGIN: &str = "  ";
+pub const MARGIN: &str = "  ";
 const TAB: &str = "    ";
 const CSI: &str = "\x1b[";
 const KITTY_OPEN: &str = "\x1b_G";

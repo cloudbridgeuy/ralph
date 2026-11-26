@@ -1,11 +1,11 @@
 use ralph_core::code_frame::Label;
 use ralph_core::shell_format::format_command;
 
-use crate::render::code_frame::{framed, without_line_end};
+use crate::render::code_frame::{body_width, framed, without_line_end};
 use crate::render::tool_renderers::context::{ansi, RenderContext};
 
 pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
-    let formatted = format_command(command, ctx.width);
+    let formatted = format_command(command, body_width(ctx));
     let command = formatted.as_deref().unwrap_or(command);
     let is_multiline = command.contains('\n');
 

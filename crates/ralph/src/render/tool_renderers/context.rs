@@ -1,11 +1,10 @@
-//! Render context and ANSI color constants.
-
 use crate::diff_theme::DiffColors;
 use crate::highlight::Highlighter;
 use crate::tool_theme::ToolColors;
 
 pub use crate::ansi;
 
+#[derive(Clone, Copy)]
 pub struct RenderContext<'a> {
     pub highlighter: &'a Highlighter,
     pub terminal: bool,
@@ -76,6 +75,14 @@ impl<'a> RenderContext<'a> {
         self
     }
 
+    pub fn refreshed(self) -> Self {
+        if self.terminal {
+            self.with_viewport(self.viewport)
+        } else {
+            self
+        }
+    }
+
     pub fn with_diff(mut self, diff: DiffColors) -> Self {
         self.diff = diff;
         self
@@ -86,12 +93,10 @@ impl<'a> RenderContext<'a> {
         self
     }
 
-    /// Create a context for terminal rendering (with ANSI codes).
     pub fn terminal(highlighter: &'a Highlighter) -> Self {
         Self::new(highlighter, true)
     }
 
-    /// Create a context for plain text rendering (no ANSI codes).
     pub fn plain(highlighter: &'a Highlighter) -> Self {
         Self::new(highlighter, false)
     }

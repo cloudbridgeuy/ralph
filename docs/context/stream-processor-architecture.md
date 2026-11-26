@@ -126,6 +126,16 @@ Prose text uses **block buffering** (`prose_threshold = usize::MAX`) so that `re
 
 Code fences render through `render_code_block` (`render/text.rs`). Shell fences (`bash`, `sh`, `zsh`, `shell`) first go through `ralph_core::shell_format::format_fence`, so they show like a Bash tool call; the stored `ParsedChunk` keeps the raw text.
 
+## Code Frames
+
+On a terminal, code fences, diff fences, `Edit` and `NotebookEdit` result diffs and multi-line Bash calls print as frames, not as fence lines. Pipes and chat with `NO_COLOR` keep the raw ```` ``` ```` text, and the stored text never changes.
+
+- Look: a rule that carries the language (`── rust ───`) or the file path, one blank row above and below the body, and a 2 column left margin. Tabs print as 4 spaces. Back-to-back blocks have one blank row between them.
+- Shading: the fill is the syntax theme background moved 8% toward the theme foreground, and the rule colour is 40%. The fill is painted behind every character (highlighting sets the foreground only) and `ESC[K` fills the rest of the row. With `[theme] no_background` or a theme without both colours, there is no fill: a dim rule or the file ink, the margin, and a closing rule.
+- Width: the rule spans the terminal width. `render_markdown_with` measures it again at each call, so `/view`, `/rerender` and the resize redraw use the current width. Shell layout and mermaid diagrams get the width minus the margin.
+- Limits: a long line soft wraps and its next row has no margin; mouse selection includes the margin and the expanded tabs. The rule ignores `wrap_width`, and the resize redraw compares against the capped width, so with a cap a frame can wrap without a redraw.
+- Pure layout is `ralph_core::code_frame`; the shell is `crates/ralph/src/render/code_frame.rs`.
+
 ### Flush points
 
 Buffered prose is flushed (collected as blocks) at these points:

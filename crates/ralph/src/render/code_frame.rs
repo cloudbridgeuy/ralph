@@ -1,4 +1,4 @@
-use ralph_core::code_frame::{frame_block, Columns, Label};
+use ralph_core::code_frame::{frame_block, Columns, Label, MARGIN};
 
 use super::RenderContext;
 use crate::diff_highlight::highlight_with_basic_colors;
@@ -11,6 +11,14 @@ pub(crate) fn framed(ctx: &RenderContext<'_>, label: &Label<'_>, body: &str) -> 
 pub(crate) fn framed_diff(ctx: &RenderContext<'_>, label: &Label<'_>, diff: &str) -> String {
     let coloured = highlight_with_basic_colors(diff, &ctx.diff);
     framed(ctx, label, without_line_end(&coloured))
+}
+
+pub(crate) fn body_width(ctx: &RenderContext<'_>) -> usize {
+    if ctx.terminal {
+        ctx.width.saturating_sub(MARGIN.len())
+    } else {
+        ctx.width
+    }
 }
 
 pub(crate) fn without_line_end(text: &str) -> &str {
@@ -153,6 +161,41 @@ mod tests {
         let highlighter = highlighter();
         let out = render_bash_invocation(&terminal(&highlighter, 20), "pwd");
         assert_eq!(strip_ansi(&out), "▶ Bash\n  pwd\n");
+    }
+
+    #[test]
+    fn reprint_uses_current_columns() {
+        let highlighter = highlighter();
+        let mut ctx = terminal(&highlighter, 100);
+        ctx.viewport = Viewport::fixed(60, 24);
+        let out = render_markdown(&ctx, "```rust\na\n```\n", &MarkdownTheme::default());
+        let rule = strip_ansi(out.lines().next().unwrap());
+        assert_eq!(rule.chars().count(), 60, "{rule:?}");
+    }
+
+    #[test]
+    fn shell_and_mermaid_width_excludes_the_margin() {
+        let highlighter = highlighter();
+        let mut ctx = terminal(&highlighter, 12);
+        ctx.mermaid = |_, width| Some(width.to_string());
+        let diagram = render_code_block(&ctx, "graph TD", Some("mermaid"));
+        assert!(strip_ansi(&diagram).contains("\n  10\n"), "{diagram:?}");
+        for out in [
+            render_code_block(&ctx, "aaaa | bbbb", Some("sh")),
+            render_bash_invocation(&ctx, "aaaa | bbbb"),
+        ] {
+            let plain = strip_ansi(&out);
+            assert!(!plain.contains("aaaa | bbbb"), "{plain:?}");
+        }
+    }
+
+    #[test]
+    fn plain_shell_width_is_unchanged() {
+        let highlighter = highlighter();
+        let mut ctx = RenderContext::plain(&highlighter);
+        ctx.width = 12;
+        let out = render_code_block(&ctx, "aaaa | bbbb", Some("sh"));
+        assert_eq!(out, "```sh\naaaa | bbbb\n```");
     }
 
     #[test]
