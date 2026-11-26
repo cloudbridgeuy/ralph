@@ -124,10 +124,9 @@ fn overload_delivery(peer: Option<IpAddr>, peers: &Arc<PeerCounts>) -> Delivery 
 }
 
 fn enter_capped(ip: IpAddr, peers: &Arc<PeerCounts>) -> Delivery {
-    let (guard, previous) = PeerCounts::enter(peers, ip);
-    match admit(previous, MAX_REJECTED_PER_PEER) {
-        Admission::Accept => Delivery::Drain(Some(guard)),
-        Admission::Reject => Delivery::Close,
+    match PeerCounts::try_enter(peers, ip, MAX_REJECTED_PER_PEER) {
+        Some(guard) => Delivery::Drain(Some(guard)),
+        None => Delivery::Close,
     }
 }
 
@@ -310,8 +309,7 @@ mod tests {
         let (response, delivery) = limit_rejected(error(403, "forbidden host"), peer(), &peers);
         assert_eq!(response.status, 503);
         assert!(matches!(delivery, Delivery::Close));
-        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
-        assert_eq!(previous, MAX_REJECTED_PER_PEER);
+        assert!(PeerCounts::try_enter(&peers, peer().unwrap(), MAX_REJECTED_PER_PEER).is_none());
     }
 
     #[test]
@@ -330,17 +328,15 @@ mod tests {
     fn reject_overloaded_holds_the_guard_through_the_drain() {
         let peers = Arc::new(PeerCounts::default());
         let ip = IpAddr::from([100, 64, 0, 9]);
-        let (guard, _) = PeerCounts::enter(&peers, ip);
-        let mut held_during_drain = 0;
-        reject_overloaded(Some(guard), |after_write| {
+        let guard = PeerCounts::try_enter(&peers, ip, 1);
+        assert!(guard.is_some());
+        let mut held_during_drain = false;
+        reject_overloaded(guard, |after_write| {
             after_write();
-            let (probe, previous) = PeerCounts::enter(&peers, ip);
-            held_during_drain = previous;
-            drop(probe);
+            held_during_drain = PeerCounts::try_enter(&peers, ip, 1).is_none();
         });
-        assert_eq!(held_during_drain, 1);
-        let (_probe, after) = PeerCounts::enter(&peers, ip);
-        assert_eq!(after, 0);
+        assert!(held_during_drain);
+        assert!(PeerCounts::try_enter(&peers, ip, 1).is_some());
     }
 
     #[test]
@@ -353,8 +349,7 @@ mod tests {
             .iter()
             .all(|delivery| matches!(delivery, Delivery::Drain(Some(_)))));
         assert!(matches!(overload_delivery(peer(), &peers), Delivery::Close));
-        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
-        assert_eq!(previous, MAX_REJECTED_PER_PEER);
+        assert!(PeerCounts::try_enter(&peers, peer().unwrap(), MAX_REJECTED_PER_PEER).is_none());
     }
 
     #[test]
