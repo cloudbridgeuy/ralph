@@ -129,6 +129,7 @@ fn start_ralph(
     ralph: &Path,
     store: &Path,
     home: &Path,
+    cwd: &Path,
 ) -> Result<(ChildGuard, Listening), BoxError> {
     if !ralph.is_file() {
         return Err(format!(
@@ -137,7 +138,9 @@ fn start_ralph(
         )
         .into());
     }
+    fs::create_dir_all(cwd)?;
     let mut child = Command::new(ralph)
+        .current_dir(cwd)
         .args(["web", "--store"])
         .arg(store)
         .args(["--port", "0"])
@@ -222,7 +225,8 @@ pub fn capture(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxE
     seed::seed(&store)?;
     let home = scratch.path().join("home");
     fs::create_dir_all(&home)?;
-    let (_ralph, listening) = start_ralph(&options.ralph, &store, &home)?;
+    let (_ralph, listening) =
+        start_ralph(&options.ralph, &store, &home, &scratch.path().join("cwd"))?;
     clear_pngs(out)?;
     let mut timed_out = Vec::new();
     for theme in Theme::ALL {
