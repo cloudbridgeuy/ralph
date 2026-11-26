@@ -35,10 +35,11 @@ impl ScheduleStore {
     }
 
     /// Reads every readable record and never writes: a corrupt file is
-    /// skipped with a warning and stays on disk.
+    /// skipped with a warning and stays on disk. A symlink is never followed.
     pub fn read_all(&self) -> Vec<Task> {
         self.record_paths()
             .into_iter()
+            .filter(|path| fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()))
             .filter_map(|path| match decode(&path) {
                 Ok(task) => Some(task),
                 Err(e) => {
@@ -197,5 +198,21 @@ mod tests {
         fs::write(dir.path().join(".partial.json"), "{").unwrap();
         assert!(store.load_all().is_empty());
         assert!(dir.path().join(".partial.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_all_does_not_follow_a_symlinked_record() {
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("outside.json");
+        fs::write(&target, serde_json::to_vec(&task("linked")).unwrap()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        let record = task("real");
+        store.save(&record).unwrap();
+        std::os::unix::fs::symlink(&target, dir.path().join("link.json")).unwrap();
+        assert_eq!(store.read_all(), vec![record]);
+        assert!(dir.path().join("link.json").exists());
+        assert_eq!(store.load_all().len(), 2);
     }
 }
