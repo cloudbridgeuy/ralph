@@ -455,7 +455,7 @@ fn the_served_sheet_ends_with_threads_css_after_responsive_and_memory() {
     let css = css_text();
     assert!(css.ends_with(THREADS_CSS));
     let threads = css.rfind(THREADS_CSS).unwrap();
-    assert!(css.find("r-graph[clip]").unwrap() < threads);
+    assert!(css.find("r-table.stackable thead").unwrap() < threads);
     assert!(css.find("r-tree li > button:focus-visible").unwrap() < threads);
 }
 
