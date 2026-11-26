@@ -27,7 +27,7 @@ pub(crate) fn watches_response(store: &Path) -> ApiResponse {
     if !store.is_dir() {
         return error(404, "store not found");
     }
-    let saved = WatchStore::new(store.join(WATCHES_DIR)).load_all();
+    let saved = WatchStore::new(store.join(WATCHES_DIR)).read_all();
     json_ok(json!({"store": store_name(store), "rows": watch_rows(&saved)}))
 }
 

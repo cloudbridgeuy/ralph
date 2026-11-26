@@ -304,7 +304,7 @@ fn watches_missing_dir_is_empty_rows() {
 }
 
 #[test]
-fn watches_skip_a_corrupt_file() {
+fn watches_skip_a_corrupt_file_and_keep_it_on_disk() {
     let server = TestServer::start_with_store(|dir| {
         save_watches(dir, &watches()[..1]);
         fs::write(dir.join(WATCHES_DIR).join("broken.json"), "{not json").unwrap();
@@ -314,6 +314,15 @@ fn watches_skip_a_corrupt_file() {
     let rows = json_of(&reply)["rows"].clone();
     assert_eq!(rows.as_array().unwrap().len(), 1);
     assert_eq!(rows[0]["id"], "w2");
+    assert!(!reply.body.contains("broken"), "{}", reply.body);
+    assert!(
+        server
+            .store_path()
+            .join(WATCHES_DIR)
+            .join("broken.json")
+            .exists(),
+        "a GET must not delete a watch file"
+    );
 }
 
 #[test]
