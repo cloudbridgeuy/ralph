@@ -4,6 +4,8 @@ mod common;
 
 use common::{Host, Reply, TestServer};
 
+const APP_JS: &str = include_str!("../assets/app.js");
+
 const CSP: &str = "default-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const PRIMITIVES: [&str; 14] = [
@@ -372,6 +374,7 @@ fn the_screen_is_a_tree_beside_a_detail_pane() {
     assert!(body.contains("history.replaceState(null, \"\", buildHash("));
     let select = function_body(&body, "async function selectNode(");
     assert_eq!(select.matches("history.replaceState").count(), 1);
+    assert_eq!(APP_JS.matches("history.replaceState").count(), 1);
 }
 
 #[test]
