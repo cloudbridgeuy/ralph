@@ -331,7 +331,7 @@ mod tests {
         Some(IpAddr::from([100, 64, 0, 9]))
     }
 
-    fn run_deliver(delivery: Delivery) -> (Vec<&'static str>, usize) {
+    fn run_deliver(delivery: Delivery, during_drain: impl FnOnce()) -> (Vec<&'static str>, usize) {
         let log = RefCell::new(Vec::new());
         let released = Rc::new(Cell::new(0));
         let counter = Rc::clone(&released);
@@ -342,6 +342,7 @@ mod tests {
             release: Box::new(move || counter.set(counter.get() + 1)),
             on_drain: |(), _, release: Box<dyn FnOnce()>| {
                 log.borrow_mut().push("drain");
+                during_drain();
                 release();
             },
             on_close: |(), _, release: Box<dyn FnOnce()>| {
@@ -357,7 +358,9 @@ mod tests {
         let peers = Arc::new(PeerCounts::default());
         let guard = PeerCounts::try_enter(&peers, peer().unwrap(), MAX_REJECTED_PER_PEER);
         assert!(guard.is_some());
-        let (log, released) = run_deliver(Delivery::Drain(guard));
+        let (log, released) = run_deliver(Delivery::Drain(guard), || {
+            assert!(PeerCounts::try_enter(&peers, peer().unwrap(), 1).is_none());
+        });
         assert_eq!(log, ["drain"]);
         assert_eq!(released, 1);
         assert!(PeerCounts::try_enter(&peers, peer().unwrap(), 1).is_some());
@@ -365,7 +368,7 @@ mod tests {
 
     #[test]
     fn deliver_closes_a_close_delivery() {
-        let (log, released) = run_deliver(Delivery::Close);
+        let (log, released) = run_deliver(Delivery::Close, || {});
         assert_eq!(log, ["close"]);
         assert_eq!(released, 1);
     }
