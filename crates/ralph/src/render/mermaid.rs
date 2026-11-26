@@ -4,10 +4,12 @@ mod lines;
 mod mindmap;
 mod packet;
 mod pie;
+mod quadrant;
 mod sankey;
 #[cfg(test)]
 mod testing;
 mod timeline;
+mod xychart;
 
 use lines::{body_lines, statements, Statement};
 use ralph_server::config::MermaidSection;
@@ -34,6 +36,8 @@ pub enum DiagramKind {
     Packet,
     Timeline,
     Mindmap,
+    Quadrant,
+    XyChart,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +59,7 @@ pub enum Refusal {
     TooManyEntries,
     TooManyNodes,
     TooDeep,
+    TooManyPoints,
 }
 
 fn kind_of(header: &str) -> Option<DiagramKind> {
@@ -75,6 +80,8 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "packet" | "packet-beta" => Some(DiagramKind::Packet),
         "timeline" => Some(DiagramKind::Timeline),
         "mindmap" => Some(DiagramKind::Mindmap),
+        "quadrantChart" => Some(DiagramKind::Quadrant),
+        "xychart" | "xychart-beta" => Some(DiagramKind::XyChart),
         _ => None,
     }
 }
@@ -171,6 +178,11 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
         DiagramKind::Packet => check_typed(source, packet::check)?,
         DiagramKind::Timeline => check_typed(source, timeline::check)?,
         DiagramKind::Mindmap => check_typed(source, mindmap::check)?,
+        DiagramKind::Quadrant => check_typed(source, quadrant::check)?,
+        DiagramKind::XyChart => {
+            xychart::check_header(header)?;
+            check_typed(source, xychart::check)?;
+        }
         DiagramKind::GitGraph => {
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);
