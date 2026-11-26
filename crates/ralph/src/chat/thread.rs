@@ -16,7 +16,7 @@ use ralph_core::chat_thread::{
 use ralph_core::chat_thread_cmd::{
     merge_posted_message, parked_message, revived_message, view_posted_message, OpenOpts,
 };
-use ralph_core::program_status::REX_BLOCK_ENV;
+use ralph_core::program_status::{RexBlock, REX_BLOCK_ENV};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report};
@@ -259,14 +259,17 @@ pub fn open_thread(store: &Path, opts: &OpenOpts) -> Result<String, String> {
         main.to_string_lossy(),
         cwd.to_string_lossy(),
     );
-    let block = std::env::var(REX_BLOCK_ENV).ok();
+    let block = std::env::var(REX_BLOCK_ENV)
+        .ok()
+        .as_deref()
+        .and_then(RexBlock::parse);
     let config_dir = std::env::var("RALPH_CONFIG_DIR").ok();
     let spawn = OpenSpawn {
         name,
         exe: &exe,
         main: &main,
         cwd: &cwd,
-        block: block.as_deref(),
+        block: block.as_ref(),
         config_dir: config_dir.as_deref(),
     };
     match open_launch(spawn) {

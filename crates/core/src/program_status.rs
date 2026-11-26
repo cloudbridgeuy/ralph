@@ -2,7 +2,6 @@ use crate::chat_status::Status;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
 
 pub const APP: &str = "ralph";
 pub const REX_BLOCK_ENV: &str = "REX_BLOCK";
@@ -67,8 +66,81 @@ pub enum Phase {
     Prompt,
 }
 
-pub fn status_enabled(config: bool, tty: bool, rex_block: Option<&OsStr>) -> bool {
-    config && tty && rex_block.is_some_and(|value| !value.is_empty())
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RexBlock(String);
+
+impl RexBlock {
+    pub fn parse(raw: &str) -> Option<Self> {
+        (!raw.is_empty()).then(|| Self(raw.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusSetting {
+    Enabled,
+    Disabled,
+}
+
+impl StatusSetting {
+    pub fn from_bool(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stdout {
+    Tty,
+    NotTty,
+}
+
+impl Stdout {
+    pub fn from_is_terminal(is_terminal: bool) -> Self {
+        if is_terminal {
+            Self::Tty
+        } else {
+            Self::NotTty
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusOff {
+    Disabled,
+    NotTty,
+    NotInRex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalStatus {
+    On,
+    Off(StatusOff),
+}
+
+impl TerminalStatus {
+    pub fn is_on(self) -> bool {
+        matches!(self, Self::On)
+    }
+}
+
+pub fn status_enabled(
+    setting: StatusSetting,
+    stdout: Stdout,
+    rex: Option<&RexBlock>,
+) -> TerminalStatus {
+    match (setting, stdout, rex) {
+        (StatusSetting::Disabled, _, _) => TerminalStatus::Off(StatusOff::Disabled),
+        (_, Stdout::NotTty, _) => TerminalStatus::Off(StatusOff::NotTty),
+        (_, _, None) => TerminalStatus::Off(StatusOff::NotInRex),
+        (StatusSetting::Enabled, Stdout::Tty, Some(_)) => TerminalStatus::On,
+    }
 }
 
 fn unread_msg(unread: usize) -> String {
@@ -158,12 +230,24 @@ mod tests {
 
     #[test]
     fn status_needs_config_tty_and_non_empty_rex_block() {
-        let block = Some(OsStr::new("blk-1"));
-        assert!(status_enabled(true, true, block));
-        assert!(!status_enabled(false, true, block));
-        assert!(!status_enabled(true, false, block));
-        assert!(!status_enabled(true, true, None));
-        assert!(!status_enabled(true, true, Some(OsStr::new(""))));
+        let block = RexBlock::parse("blk-1").unwrap();
+        assert_eq!(
+            status_enabled(StatusSetting::Enabled, Stdout::Tty, Some(&block)),
+            TerminalStatus::On
+        );
+        assert_eq!(
+            status_enabled(StatusSetting::Disabled, Stdout::Tty, Some(&block)),
+            TerminalStatus::Off(StatusOff::Disabled)
+        );
+        assert_eq!(
+            status_enabled(StatusSetting::Enabled, Stdout::NotTty, Some(&block)),
+            TerminalStatus::Off(StatusOff::NotTty)
+        );
+        assert_eq!(
+            status_enabled(StatusSetting::Enabled, Stdout::Tty, None),
+            TerminalStatus::Off(StatusOff::NotInRex)
+        );
+        assert_eq!(RexBlock::parse(""), None);
     }
 
     #[test]

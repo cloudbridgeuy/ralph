@@ -72,7 +72,9 @@ use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
-use ralph_core::program_status::{status_enabled, REX_BLOCK_ENV};
+use ralph_core::program_status::{
+    status_enabled, RexBlock, StatusOff, StatusSetting, Stdout, TerminalStatus, REX_BLOCK_ENV,
+};
 use ralph_server::chat::host::spawn_session_host;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::ready_ids;
@@ -102,11 +104,12 @@ pub(crate) use ralph_server::config::{
 };
 
 fn terminal_status_enabled(
-    config: bool,
-    tty: bool,
-    env: impl FnOnce(&str) -> Option<std::ffi::OsString>,
-) -> bool {
-    status_enabled(config, tty, env(REX_BLOCK_ENV).as_deref())
+    setting: StatusSetting,
+    stdout: Stdout,
+    env: impl FnOnce(&str) -> Option<String>,
+) -> TerminalStatus {
+    let block = env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse);
+    status_enabled(setting, stdout, block.as_ref())
 }
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
@@ -117,12 +120,16 @@ fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
     (highlighter, MarkdownTheme::from_config(Some(config)))
 }
 
-fn alert_config(args: &ChatArgs, chat: &ChatSection, terminal_status: bool) -> AlertConfig {
+fn alert_config(
+    args: &ChatArgs,
+    chat: &ChatSection,
+    terminal_status: TerminalStatus,
+) -> AlertConfig {
     AlertConfig {
         sound: chat.inbox_alert_sound && !args.no_inbox_sound,
         notification: chat.inbox_alert_notification && !args.no_inbox_notification,
         unknown_focus: chat.inbox_alert_unknown_focus,
-        terminal_status,
+        terminal_status: terminal_status.is_on(),
     }
 }
 
@@ -135,7 +142,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             },
             |config| config.chat,
         );
-        return remote::run(socket, alert_config(&args, &chat, false));
+        return remote::run(
+            socket,
+            alert_config(&args, &chat, TerminalStatus::Off(StatusOff::Disabled)),
+        );
     }
     if let Some(ChatCommand::History(history)) = args.command {
         print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
@@ -220,9 +230,9 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         ralph_server::config::effective_grants(&config.chat, &store_dir),
     )?;
     let terminal_status = terminal_status_enabled(
-        chat_config.terminal_status,
-        std::io::stdout().is_terminal(),
-        |key| std::env::var_os(key),
+        StatusSetting::from_bool(chat_config.terminal_status),
+        Stdout::from_is_terminal(std::io::stdout().is_terminal()),
+        |key| std::env::var(key).ok(),
     );
     let alert = alert_config(&args, chat_config, terminal_status);
     let term = Arc::new(TermStatus::new(
@@ -504,30 +514,39 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod rex_status_tests {
     use super::terminal_status_enabled;
-    use std::ffi::OsString;
+    use ralph_core::program_status::{StatusOff, StatusSetting, Stdout, TerminalStatus};
 
     #[test]
     fn rex_pane_with_rex_block_enables_terminal_status() {
         let env = |key: &str| match key {
-            "REX_BLOCK" => Some(OsString::from("blk-1")),
-            "REX_SERVER" => Some(OsString::from("/tmp/rex.sock")),
-            "TERM_PROGRAM" => Some(OsString::from("rex")),
+            "REX_BLOCK" => Some("blk-1".to_string()),
+            "REX_SERVER" => Some("/tmp/rex.sock".to_string()),
+            "TERM_PROGRAM" => Some("rex".to_string()),
             _ => None,
         };
-        assert!(terminal_status_enabled(true, true, env));
+        assert_eq!(
+            terminal_status_enabled(StatusSetting::Enabled, Stdout::Tty, env),
+            TerminalStatus::On
+        );
     }
 
     #[test]
     fn empty_or_missing_rex_block_disables_terminal_status() {
-        let empty = |key: &str| (key == "REX_BLOCK").then(|| OsString::from(""));
-        assert!(!terminal_status_enabled(true, true, empty));
+        let empty = |key: &str| (key == "REX_BLOCK").then(String::new);
+        assert_eq!(
+            terminal_status_enabled(StatusSetting::Enabled, Stdout::Tty, empty),
+            TerminalStatus::Off(StatusOff::NotInRex)
+        );
 
         let missing = |key: &str| match key {
-            "REX_SERVER" => Some(OsString::from("/tmp/rex.sock")),
-            "TERM_PROGRAM" => Some(OsString::from("rex")),
+            "REX_SERVER" => Some("/tmp/rex.sock".to_string()),
+            "TERM_PROGRAM" => Some("rex".to_string()),
             _ => None,
         };
-        assert!(!terminal_status_enabled(true, true, missing));
+        assert_eq!(
+            terminal_status_enabled(StatusSetting::Enabled, Stdout::Tty, missing),
+            TerminalStatus::Off(StatusOff::NotInRex)
+        );
     }
 }
 

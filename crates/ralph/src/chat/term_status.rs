@@ -1,5 +1,5 @@
 use crate::inbox_alert::{write_terminal, TMUX_PANE_ENV};
-use ralph_core::program_status::{encode, tmux_wrap, Report, State};
+use ralph_core::program_status::{encode, tmux_wrap, Report, State, TerminalStatus};
 use ralph_core::term_title::{title_end, title_start};
 use std::sync::{Arc, Mutex};
 
@@ -28,16 +28,16 @@ fn take_title_restore(sent: &mut Sent) -> bool {
 }
 
 pub(super) struct TermStatus {
-    enabled: bool,
+    status: TerminalStatus,
     title_enabled: bool,
     in_tmux: bool,
     sent: Mutex<Sent>,
 }
 
 impl TermStatus {
-    pub(super) fn new(enabled: bool, title_enabled: bool) -> Self {
+    pub(super) fn new(status: TerminalStatus, title_enabled: bool) -> Self {
         Self {
-            enabled,
+            status,
             title_enabled,
             in_tmux: std::env::var_os(TMUX_PANE_ENV).is_some(),
             sent: Mutex::new(Sent::default()),
@@ -45,7 +45,7 @@ impl TermStatus {
     }
 
     pub(super) fn send(&self, report: &Report) {
-        if !self.enabled {
+        if !self.status.is_on() {
             return;
         }
         let Some(bytes) = frame(report, self.in_tmux) else {
@@ -74,7 +74,7 @@ impl TermStatus {
         if take_title_restore(&mut sent) {
             let _ = write_terminal(title_end());
         }
-        if self.enabled && !sent.closed {
+        if self.status.is_on() && !sent.closed {
             let clear = Report {
                 state: State::Clear,
                 msg: None,
