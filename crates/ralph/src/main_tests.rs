@@ -288,3 +288,14 @@ fn agy_curator_rows_skip_empty_usage() {
     };
     assert!(agy_curator_rows(&rows, "m", &raw).unwrap().is_empty());
 }
+
+#[test]
+fn curator_error_marks_only_a_timeout_as_timed_out() {
+    let timeout = std::time::Duration::from_secs(9);
+    let timed_out = curator_error(ralph_server::OneShotError::TimedOut(timeout));
+    assert!(timed_out.timed_out);
+    assert_eq!(timed_out.message, "agy timed out after 9s");
+    let failed = curator_error(ralph_server::OneShotError::Failed("boom".into()));
+    assert!(!failed.timed_out);
+    assert_eq!(failed.message, "boom");
+}

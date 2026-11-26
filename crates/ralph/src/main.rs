@@ -706,6 +706,14 @@ fn agy_curator_rows(
     .with_store(Some(rows.store.clone()))])
 }
 
+fn curator_error(error: ralph_server::OneShotError) -> ralph_core::chat_memory::CuratorError {
+    ralph_core::chat_memory::CuratorError {
+        timed_out: matches!(error, ralph_server::OneShotError::TimedOut(_)),
+        message: error.to_string(),
+        exit: None,
+    }
+}
+
 fn run_agy_curator(
     prompt: &str,
     curator: &Curator,
@@ -727,7 +735,7 @@ fn run_agy_curator(
         effort: None,
         timeout: std::time::Duration::from_secs(curator.timeout),
     })
-    .map_err(failed)?;
+    .map_err(curator_error)?;
     if let Some(raw) = &shot.usage {
         let rows = CuratorRows {
             kind: curator.kind.clone(),

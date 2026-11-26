@@ -47,6 +47,32 @@ pub struct AcpOneShot {
     pub model: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OneShotError {
+    TimedOut(Duration),
+    Failed(String),
+}
+
+impl std::fmt::Display for OneShotError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OneShotError::TimedOut(timeout) => {
+                write!(formatter, "agy timed out after {}s", timeout.as_secs())
+            }
+            OneShotError::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+fn reply_error(error: mpsc::RecvTimeoutError, timeout: Duration) -> OneShotError {
+    match error {
+        mpsc::RecvTimeoutError::Timeout => OneShotError::TimedOut(timeout),
+        mpsc::RecvTimeoutError::Disconnected => {
+            OneShotError::Failed("agy one-shot ended without a reply".to_string())
+        }
+    }
+}
+
 pub struct OneShotRequest<'a> {
     pub cwd: &'a Path,
     pub prompt: &'a str,
@@ -104,11 +130,15 @@ async fn converse(
     })
 }
 
-pub fn run(request: &OneShotRequest) -> Result<AcpOneShot, String> {
+pub fn run(request: &OneShotRequest) -> Result<AcpOneShot, OneShotError> {
     let mut command = agy_settings::command(AGY_AGENT.command, PermissionMode::Ask);
     command.current_dir(request.cwd);
-    let (mut child, stdin, stdout, stderr) = spawn_in_shell(command)
-        .map_err(|error| format!("could not start `{} acp`: {error}", AGY_AGENT.command))?;
+    let (mut child, stdin, stdout, stderr) = spawn_in_shell(command).map_err(|error| {
+        OneShotError::Failed(format!(
+            "could not start `{} acp`: {error}",
+            AGY_AGENT.command
+        ))
+    })?;
     let log = CappedLog::new(None, "one-shot");
     drain_stderr(stderr, Arc::clone(&log));
     let (sender, receiver) = mpsc::channel();
@@ -166,12 +196,10 @@ pub fn run(request: &OneShotRequest) -> Result<AcpOneShot, String> {
                 .ok();
         }
     });
-    let result = receiver.recv_timeout(request.timeout).unwrap_or_else(|_| {
-        Err(format!(
-            "agy timed out after {}s",
-            request.timeout.as_secs()
-        ))
-    });
+    let result = match receiver.recv_timeout(request.timeout) {
+        Ok(result) => result.map_err(OneShotError::Failed),
+        Err(error) => Err(reply_error(error, request.timeout)),
+    };
     stop_child(&mut child);
     result
 }
@@ -188,6 +216,23 @@ mod tests {
             .map(|(index, kind)| json!({"optionId": format!("o{index}"), "name": *kind, "kind": *kind}))
             .collect();
         json!({"sessionId": "s", "toolCall": {"toolCallId": "c", "name": "run_command"}, "options": options})
+    }
+
+    #[test]
+    fn a_receive_timeout_is_a_timed_out_error() {
+        let timeout = Duration::from_secs(7);
+        let error = reply_error(mpsc::RecvTimeoutError::Timeout, timeout);
+        assert_eq!(error, OneShotError::TimedOut(timeout));
+        assert_eq!(error.to_string(), "agy timed out after 7s");
+    }
+
+    #[test]
+    fn a_dropped_sender_is_a_failure_not_a_timeout() {
+        let error = reply_error(mpsc::RecvTimeoutError::Disconnected, Duration::from_secs(7));
+        assert_eq!(
+            error,
+            OneShotError::Failed("agy one-shot ended without a reply".to_string())
+        );
     }
 
     #[test]
