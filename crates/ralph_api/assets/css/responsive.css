@@ -1,4 +1,8 @@
 @media (max-width: 760px) {
+  r-graph[clip] {
+    max-width: 48px;
+  }
+
   r-table.stackable thead {
     display: none;
   }

@@ -205,12 +205,28 @@ fn the_stylesheet_has_no_data_uri() {
 }
 
 #[test]
-fn graph_tones_use_the_status_tokens_and_strokes_stay_one_pixel() {
+fn graph_tones_use_the_role_tokens_and_dashes_mark_the_parked_lane() {
     let css = css();
-    assert_declares(&css, "r-graph .plain", "color: var(--r-ink);");
-    assert_declares(&css, "r-graph .green", "color: var(--r-ok);");
-    assert_declares(&css, "r-graph .yellow", "color: var(--r-warn);");
-    assert_declares(&css, "r-graph .red", "color: var(--r-bad);");
-    assert_declares(&css, "r-graph .dot", "fill: currentColor;");
-    assert_declares(&css, "r-graph .graph", "stroke-width: 1;");
+    assert_declares(&css, "r-graph .ln.plain", "stroke: var(--r-muted);");
+    assert_declares(&css, "r-graph .nd.plain", "stroke: var(--r-ink);");
+    assert_declares(&css, "r-graph .nd.full.plain", "fill: var(--r-ink);");
+    for tone in ["ok", "warn", "bad"] {
+        let stroke = format!("stroke: var(--r-{tone});");
+        let fill = format!("fill: var(--r-{tone});");
+        assert_declares(&css, &format!("r-graph .ln.{tone}"), &stroke);
+        assert_declares(&css, &format!("r-graph .nd.{tone}"), &stroke);
+        assert_declares(&css, &format!("r-graph .nd.full.{tone}"), &fill);
+    }
+    assert_declares(&css, "r-graph .arrow.ok", "fill: var(--r-ok);");
+    assert_declares(&css, "r-graph .ln", "stroke-width: 1.5;");
+    assert_declares(&css, "r-graph .nd", "fill: var(--r-bg);");
+    assert_declares(&css, "r-graph .ln.warn.h", "stroke-dasharray: 2 2;");
+    assert_declares(&css, "r-graph[clip]", "max-width: 96px;");
+}
+
+#[test]
+fn graph_hollow_nodes_take_the_row_fill() {
+    let css = css();
+    assert!(css.contains("tr:hover r-graph .nd:not(.full)"));
+    assert!(css.contains("tr[aria-selected=\"true\"] r-graph .nd:not(.full)"));
 }

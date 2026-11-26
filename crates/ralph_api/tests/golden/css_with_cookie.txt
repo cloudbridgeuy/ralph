@@ -584,34 +584,99 @@ r-spark b {
 
 r-graph {
   display: block;
-  max-width: 100%;
+  flex: none;
+  overflow: hidden;
 }
 
-r-graph .graph {
+r-graph svg {
   display: block;
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
+  overflow: visible;
 }
 
-r-graph .plain {
-  color: var(--r-ink);
+r-graph .ln {
+  fill: none;
+  stroke-width: 1.5;
 }
 
-r-graph .green {
-  color: var(--r-ok);
+r-graph .nd {
+  fill: var(--r-bg);
+  stroke-width: 1.5;
 }
 
-r-graph .yellow {
-  color: var(--r-warn);
+r-graph .ln.plain {
+  stroke: var(--r-muted);
 }
 
-r-graph .red {
-  color: var(--r-bad);
+r-graph .nd.plain {
+  stroke: var(--r-ink);
 }
 
-r-graph .dot {
-  fill: currentColor;
+r-graph .nd.full.plain {
+  fill: var(--r-ink);
+}
+
+r-graph .ln.ok {
+  stroke: var(--r-ok);
+}
+
+r-graph .nd.ok {
+  stroke: var(--r-ok);
+}
+
+r-graph .nd.full.ok {
+  fill: var(--r-ok);
+}
+
+r-graph .ln.warn {
+  stroke: var(--r-warn);
+}
+
+r-graph .nd.warn {
+  stroke: var(--r-warn);
+}
+
+r-graph .nd.full.warn {
+  fill: var(--r-warn);
+}
+
+r-graph .ln.bad {
+  stroke: var(--r-bad);
+}
+
+r-graph .nd.bad {
+  stroke: var(--r-bad);
+}
+
+r-graph .nd.full.bad {
+  fill: var(--r-bad);
+}
+
+r-graph .arrow.ok {
+  fill: var(--r-ok);
+}
+
+r-graph .nd.full {
   stroke: none;
+}
+
+r-graph .arrow {
+  stroke: none;
+}
+
+r-graph .ln.warn.h {
+  stroke-dasharray: 2 2;
+}
+
+r-table > table > tbody > tr:hover r-graph .nd:not(.full) {
+  fill: var(--r-hover);
+}
+
+r-table > table > tbody > tr[aria-selected="true"] r-graph .nd:not(.full) {
+  fill: var(--r-selected);
+}
+
+r-graph[clip] {
+  max-width: 96px;
 }
 
 r-prose {
@@ -992,6 +1057,10 @@ r-tree r-error {
 }
 
 @media (max-width: 760px) {
+  r-graph[clip] {
+    max-width: 48px;
+  }
+
   r-table.stackable thead {
     display: none;
   }
