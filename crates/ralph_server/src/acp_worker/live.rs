@@ -4,13 +4,12 @@ use agent_client_protocol::schema::v1::PromptResponse;
 use agent_client_protocol::JsonRpcNotification;
 use ralph_core::chat_tools::{tool_verdict, ToolPolicy, ToolVerdict};
 use ralph_core::worker::AgyUsage;
-use ralph_core::worker::StopReason;
 use ralph_core::worker::{
-    claude_tool_name, permission_content, refusal, ClaudePermission, PermissionOption,
+    claude_tool_name, refusal, ClaudePermission, PermissionOption, StopReason,
 };
 use serde_json::Value;
 
-#[allow(dead_code, reason = "the chat session constructs and answers these")]
+#[allow(dead_code, reason = "the chat session constructs this")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionPolicy {
     RejectAll,
