@@ -47,11 +47,27 @@ fn over_rss_limit(child: &Child, max_rss_mb: u64) -> bool {
     rss_bytes(child.id()).is_some_and(|b| b > max_rss_mb.saturating_mul(1024 * 1024))
 }
 
+#[derive(Clone, Copy)]
+struct StdoutCap(u64);
+
+const TEXT_STDOUT_CAP: StdoutCap = StdoutCap(4 * 1024 * 1024);
+const PICTURE_STDOUT_CAP: StdoutCap = StdoutCap(16 * 1024 * 1024);
+
+fn read_capped(stdout: impl Read, cap: StdoutCap) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    stdout
+        .take(cap.0.saturating_add(1))
+        .read_to_end(&mut buf)
+        .ok()?;
+    (buf.len() as u64 <= cap.0).then_some(buf)
+}
+
 struct Guarded<'a> {
     args: &'a [&'a str],
     input: Vec<u8>,
     timeout_ms: u64,
     max_rss_mb: u64,
+    stdout_cap: StdoutCap,
 }
 
 fn spawn_child(args: &[&str]) -> Option<Child> {
@@ -68,15 +84,13 @@ fn spawn_child(args: &[&str]) -> Option<Child> {
 fn run_guarded(job: Guarded<'_>) -> Option<Vec<u8>> {
     let mut child = spawn_child(job.args)?;
     let mut stdin = child.stdin.take()?;
-    let mut stdout = child.stdout.take()?;
+    let stdout = child.stdout.take()?;
+    let cap = job.stdout_cap;
     let input = job.input;
     thread::spawn(move || {
         let _ = stdin.write_all(&input);
     });
-    let reader = thread::spawn(move || {
-        let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).ok().map(|_| buf)
-    });
+    let reader = thread::spawn(move || read_capped(stdout, cap));
     let deadline = Instant::now() + Duration::from_millis(job.timeout_ms);
     let status = loop {
         match child.try_wait() {
@@ -115,6 +129,7 @@ pub fn render(source: &str, width: usize) -> Option<String> {
         input: source.as_bytes().to_vec(),
         timeout_ms: limits.timeout_ms,
         max_rss_mb: limits.max_rss_mb,
+        stdout_cap: TEXT_STDOUT_CAP,
     })?;
     let output = String::from_utf8(output).ok()?;
     fits_width(&output, width).then_some(output.trim_end().to_string())
@@ -132,6 +147,25 @@ pub fn picture(source: &str, theme: &Theme, ui: &UiColors, room: Room) -> Option
         input: serde_json::to_vec(&request).ok()?,
         timeout_ms: limits.picture_timeout_ms,
         max_rss_mb: limits.max_rss_mb,
+        stdout_cap: PICTURE_STDOUT_CAP,
     })?;
     (!png.is_empty()).then_some(png)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_up_to_the_cap_is_kept() {
+        let kept = read_capped(&b"abcd"[..], StdoutCap(4));
+        assert_eq!(kept, Some(b"abcd".to_vec()));
+    }
+
+    #[test]
+    fn output_over_the_cap_is_refused() {
+        assert_eq!(read_capped(&b"abcde"[..], StdoutCap(4)), None);
+        let flood = std::io::repeat(b'x').take(1 << 20);
+        assert_eq!(read_capped(flood, StdoutCap(4)), None);
+    }
 }
