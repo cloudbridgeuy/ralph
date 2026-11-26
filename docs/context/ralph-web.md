@@ -443,7 +443,7 @@ Subcommands:
 
 ### Fixture store
 
-`shots seed` writes a store of neutral, made-up data. Every time derives from one pinned instant, `2026-03-02T12:00:00Z`, so two seeds give equal stores. It refuses an `--out` folder that has any entry. Pass a missing or empty folder. `run` seeds a temporary store and starts `ralph web --store <it> --port 0` on it. The server child gets `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `RALPH_CONFIG_DIR` set to an empty folder inside the temporary directory, so the config screen shows no value from the real global config. Each screen gets:
+`shots seed` writes a store of neutral, made-up data. Every time derives from one pinned instant, `2026-03-02T12:00:00Z`, so two seeds give equal stores. It refuses an `--out` folder that has any entry. Pass a missing or empty folder. `run` seeds a temporary store and starts `ralph web --store <it> --port 0` on it. Each screen gets:
 
 - Memory: 40 log entries on 20 topics and 6 summary nodes.
 - Threads: 5 threads, one in each state (open, parked, merged, closed, auto-merge).
@@ -455,17 +455,34 @@ Subcommands:
 
 The threads screen prints relative times (`4s ago`, `269d ago`) that depend on the wall clock. Before each capture, the browser step rewrites every text node in `#main` that matches `<digits><unit> ago` to `--`, waits one settle, and rewrites again. The threads screen has no refresh timer. The code is `xtask/src/shots/mask.rs`. Other screens have no relative times.
 
+### Server environment
+
+The `ralph web` child starts with `env_clear`, so nothing from the caller reaches it except two values. The child gets only these variables:
+
+- `PATH` and `TMPDIR`, copied from the caller when set.
+- `HOME`, set to `home` in the temporary directory.
+- `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_CACHE_HOME`, set to `config`, `data` and `cache` under that `home`.
+- `RALPH_CONFIG_DIR`, set to `config/ralph` under that `home`.
+
+No `RALPH_*` variable (except `RALPH_CONFIG_DIR`) and no `NO_COLOR` from the caller reach the server. The config screen shows no value from the real global config. The working directory is `cwd` in the temporary directory.
+
+### Partial runs
+
+`--screen` and `--theme` limit `run` and `check` to the matching shots. A partial `run` deletes and replaces only the PNG files of the selected shots in `<root>/current`. It leaves other files there. `check --screen S` compares only the selected names in baseline and current. Shots outside the selection are not listed as New or Missing.
+
 ### Baselines
 
 The root is `~/.local/share/ralph-shots/` and lies outside the repo. It holds three folders: `baseline` (approved), `current` (the last run) and `report`. The matrix has 26 PNG files: six screens (memory, threads, workers, schedules, watches, config) in two themes (dark, light) and two widths (1440 and 390), plus `catalogue-1440.png` and `catalogue-390.png`. Names are `<screen>-<theme>-<width>.png` and `catalogue-<width>.png`. The catalogue has no theme in its name and is taken in the dark theme. The window is 1200 px high.
 
 ### Browser
 
-The browser is Firefox Developer Edition. `run` starts it headless with `--marionette` and drives it over the built-in Marionette socket. It does not use geckodriver. The geckodriver in `~/.local/bin` is x86_64 and does not run on this machine.
+The browser is Firefox Developer Edition. `run` starts it headless with `--marionette` and drives it over the built-in Marionette socket. The tool needs no geckodriver.
 
 - There is one Firefox session for each theme. Each session gets its own profile whose `user.js` sets `layout.css.prefers-color-scheme.content-override` (0 dark, 1 light) and a free `marionette.port`. The run stops with an error if the browser does not report the expected scheme.
 - For each shot the window is resized, the page goes to `about:blank`, then to the screen URL. The first navigation of a session carries the per-run token.
 - Ready wait: a screen is ready when `document.readyState` is `complete`, there is no `.r-spinner`, and `#main` has child nodes. The catalogue is ready at `readyState` `complete`. The wait polls every 100 ms for up to 10 s, then settles 250 ms and takes the shot.
+- The profile is quiet. Telemetry, update checks, first-run and welcome pages, safe browsing and prefetch are off. `ui.useOverlayScrollbars` is `0`, so shots show classic scrollbars and not overlay scrollbars.
+- Timeouts: the listen line from `ralph web` must arrive within 30 s. Firefox must open Marionette within 30 s. Each Marionette read and write has a 60 s limit.
 - A shot that never became ready is still saved. `run` prints `timed out waiting for ready:` and the names. Treat a name in that list as suspect: the PNG may show a spinner.
 
 ### Diff rule
