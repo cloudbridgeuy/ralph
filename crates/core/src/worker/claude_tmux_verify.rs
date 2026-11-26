@@ -1,6 +1,6 @@
 use super::{
     claude_worker_settings, decode_claude_version, task_dir_path, worker_launch, ActivityMark,
-    ActivityState, CheckResult, ClaudeShell, ClaudeWorkerArgs, UsageSink, VersionProbe,
+    ActivityState, CheckResult, ClaudeMode, ClaudeShell, ClaudeWorkerArgs, UsageSink, VersionProbe,
     WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
 };
 use serde_json::Value;
@@ -28,7 +28,7 @@ pub const CLAUDE_VERIFY_FLAGS: [&str; 7] = [
 ];
 pub const CLAUDE_VERIFY_MCP: &str = r#"{"mcpServers":{}}"#;
 const VERIFY_ID: &str = "verify";
-const VERIFY_PERMISSION_MODE: &str = "default";
+const VERIFY_PERMISSION_MODE: ClaudeMode = ClaudeMode::Default;
 pub const CLAUDE_VERIFY_PERMISSION_PROMPT: &str = CLAUDE_PERMISSION_PROMPT;
 
 pub struct VerifyPaths {
@@ -348,7 +348,7 @@ mod tests {
             store: &paths.store,
             mcp_config: &paths.mcp_config,
             settings: &paths.settings,
-            permission_mode: "default",
+            permission_mode: ClaudeMode::Default,
             attachments: &paths.attachments,
             task_dir: &paths.task_dir,
             model: None,

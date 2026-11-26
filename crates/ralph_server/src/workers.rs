@@ -13,8 +13,8 @@ use ralph_core::worker::{
     legacy_base_unset_warning, lost_marker_name, opencode_close_handoff, parse_interrupt_result,
     prompt_entry_name, ready_path, reply_event, resolve_worktree_dir, sent_path, session_name,
     session_owner, session_survived_kill, stop_step, tagged_sessions, uptake, via_permission,
-    worktree_for_branch, worktree_path, ActivityMark, Base, CloseStep, Feature, Handoff,
-    HandoffFiles, HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep,
+    worktree_for_branch, worktree_path, ActivityMark, Base, ClaudeMode, CloseStep, Feature,
+    Handoff, HandoffFiles, HarnessId, InterruptOutcome, Owner, Probe, ReplyFacts, Support, Sweep,
     TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_OWNER_DIR, REPLY_CONFIRM,
     SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
@@ -48,7 +48,7 @@ pub struct Workers {
     store_dir: PathBuf,
     written_store: PathBuf,
     exe: PathBuf,
-    permission_mode: String,
+    permission_mode: ClaudeMode,
     worktree_dir: Option<String>,
     handoff_timeout: Duration,
     confirm_timeout: Duration,
@@ -74,7 +74,7 @@ impl Workers {
     pub fn new(
         store_dir: PathBuf,
         exe: PathBuf,
-        permission_mode: String,
+        permission_mode: ClaudeMode,
         worktree_dir: Option<String>,
     ) -> Self {
         Self {
@@ -845,7 +845,7 @@ mod tests {
         let workers = Workers::new(
             PathBuf::from("rel/store"),
             "/bin/ralph".into(),
-            "auto".into(),
+            ClaudeMode::Auto,
             None,
         );
         assert!(workers.written_store.is_absolute());
@@ -862,7 +862,12 @@ mod tests {
     pub(super) fn workers_in(dir: &Path) -> Workers {
         Workers {
             confirm_timeout: Duration::ZERO,
-            ..Workers::new(dir.to_path_buf(), "/bin/ralph".into(), "auto".into(), None)
+            ..Workers::new(
+                dir.to_path_buf(),
+                "/bin/ralph".into(),
+                ClaudeMode::Auto,
+                None,
+            )
         }
     }
 

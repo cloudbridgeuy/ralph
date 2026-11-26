@@ -1,11 +1,11 @@
 use super::*;
-use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::{Role, Trigger};
 use ralph_core::chat_send_it::{
     plan_hash, write_run, Action, Awaiting, Limits, Refusal, Seen, StepResult, Trust, VerifyMode,
 };
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::watch::WatchOutcome;
+use ralph_core::{chat_local::notice_record, worker::ClaudeMode};
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::send_it::{Screen, NOT_PROPOSED, NO_RUN};
 use ralph_server::chat::session::{Emit, Event};
@@ -406,7 +406,7 @@ fn the_socket_records_a_step_result_only_in_a_send_it_turn() {
     let (send_it, active) = judging(dir.path());
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
-        workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+        workers: Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None),
         send_it: send_it.clone(),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
@@ -500,7 +500,7 @@ fn a_worker_turn_reply_the_run_does_not_allow_is_refused_and_stops_the_run() {
     let dir = tempfile::tempdir().unwrap();
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
-        workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+        workers: Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None),
         send_it: quiet(dir.path()),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),
@@ -542,7 +542,7 @@ fn the_socket_runs_a_listed_tool_and_a_refused_one_stops_the_run() {
     let dir = tempfile::tempdir().unwrap();
     let shared = Shared {
         store: Store::new(dir.path().to_path_buf()),
-        workers: Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None),
+        workers: Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None),
         send_it: quiet(dir.path()),
         watches: watches(dir.path()),
         inbox: Arc::new(Inbox::new(dir.path().join("inbox"))),

@@ -540,39 +540,69 @@ fn configured(chat: Option<&str>, ask: Option<&str>) -> AppConfig {
 #[test]
 fn chat_permission_mode_precedence() {
     let config = configured(Some("plan"), Some("dontAsk"));
+    let chat = |flag, env| config.chat_permission_mode(flag, env).unwrap();
     assert_eq!(
-        config.chat_permission_mode(Some("manual"), Some("acceptEdits")),
-        "manual"
+        chat(Some("manual"), Some("acceptEdits")),
+        ClaudeMode::Manual
     );
+    assert_eq!(chat(None, Some("acceptEdits")), ClaudeMode::AcceptEdits);
+    assert_eq!(chat(None, Some("")), ClaudeMode::Plan);
+    assert_eq!(chat(None, None), ClaudeMode::Plan);
     assert_eq!(
-        config.chat_permission_mode(None, Some("acceptEdits")),
-        "acceptEdits"
-    );
-    assert_eq!(config.chat_permission_mode(None, Some("")), "plan");
-    assert_eq!(config.chat_permission_mode(None, None), "plan");
-    assert_eq!(
-        configured(None, Some("dontAsk")).chat_permission_mode(None, None),
-        "auto"
+        configured(None, Some("dontAsk"))
+            .chat_permission_mode(None, None)
+            .unwrap(),
+        ClaudeMode::Auto
     );
 }
 
 #[test]
 fn ask_permission_mode_precedence() {
     let config = configured(Some("plan"), Some("dontAsk"));
+    let ask = |flag, env| config.ask_permission_mode(flag, env).unwrap();
+    assert_eq!(ask(Some("manual"), Some("acceptEdits")), ClaudeMode::Manual);
+    assert_eq!(ask(None, Some("acceptEdits")), ClaudeMode::AcceptEdits);
+    assert_eq!(ask(None, Some("")), ClaudeMode::DontAsk);
+    assert_eq!(ask(None, None), ClaudeMode::DontAsk);
     assert_eq!(
-        config.ask_permission_mode(Some("manual"), Some("acceptEdits")),
-        "manual"
+        configured(Some("plan"), None)
+            .ask_permission_mode(None, None)
+            .unwrap(),
+        ClaudeMode::BypassPermissions
     );
-    assert_eq!(
-        config.ask_permission_mode(None, Some("acceptEdits")),
-        "acceptEdits"
-    );
-    assert_eq!(config.ask_permission_mode(None, Some("")), "dontAsk");
-    assert_eq!(config.ask_permission_mode(None, None), "dontAsk");
-    assert_eq!(
-        configured(Some("plan"), None).ask_permission_mode(None, None),
-        "bypassPermissions"
-    );
+}
+
+#[test]
+fn an_unknown_permission_mode_is_refused_and_names_its_source() {
+    let hostile = "$(touch /tmp/pwned)";
+    let config = configured(Some(hostile), Some(""));
+    let unset = AppConfig::new();
+    for (result, origin) in [
+        (
+            config.chat_permission_mode(None, None),
+            "chat.permission_mode",
+        ),
+        (
+            config.ask_permission_mode(None, None),
+            "ask.permission_mode",
+        ),
+        (
+            unset.chat_permission_mode(Some("yolo"), None),
+            "--permission-mode",
+        ),
+        (
+            unset.chat_permission_mode(None, Some("Plan")),
+            "RALPH_CHAT_PERMISSION_MODE",
+        ),
+        (
+            unset.ask_permission_mode(None, Some("x")),
+            "RALPH_ASK_PERMISSION_MODE",
+        ),
+    ] {
+        let message = result.unwrap_err().to_string();
+        assert!(message.starts_with(&format!("{origin}: ")), "{message}");
+        assert!(message.contains("bypassPermissions"), "{message}");
+    }
 }
 
 fn write_layer(dir: &TempDir, name: &str, content: &str) -> PathBuf {

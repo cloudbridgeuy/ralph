@@ -41,6 +41,7 @@ use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{extract_response_text, OutputBlock, VerboseToolsConfig};
 use ralph_core::stream::IterationMetadata;
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
+use ralph_core::worker::ClaudeMode;
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::{self};
@@ -147,7 +148,7 @@ pub struct Turn {
     pub runtime_files: RuntimeFiles,
     pub socket: SocketHandle,
     pub system_prompt_file: PathBuf,
-    pub permission_mode: String,
+    pub permission_mode: ClaudeMode,
     pub plugin_args: Vec<String>,
     pub model_args: Vec<String>,
     pub skills: Vec<ChatSkill>,
@@ -627,7 +628,7 @@ impl Turn {
                 build_chat_command(
                     &self.system_prompt_file,
                     &args,
-                    &self.permission_mode,
+                    self.permission_mode,
                     dirs::home_dir().as_deref(),
                     &self.isolation,
                 ),

@@ -385,7 +385,7 @@ impl Workers {
                     store: &fs::canonicalize(&self.store_dir)?,
                     mcp_config: &self.write_config(id, *site, servers)?,
                     settings: &settings,
-                    permission_mode: &self.permission_mode,
+                    permission_mode: self.permission_mode,
                     attachments: &attachments,
                     task_dir: &task_dir,
                     model: *model,
@@ -899,6 +899,7 @@ fn ensure_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::worker::ClaudeMode;
 
     #[test]
     fn a_reused_lane_names_its_own_branch() {
@@ -941,7 +942,7 @@ mod tests {
         fs::create_dir(&real).unwrap();
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        let workers = Workers::new(link.clone(), "/bin/ralph".into(), "auto".into(), None);
+        let workers = Workers::new(link.clone(), "/bin/ralph".into(), ClaudeMode::Auto, None);
         let markers = WorkerMarkers::new(&workers.store_dir, "A");
         let site = WorkerSite {
             store: workers.store_dir.clone(),

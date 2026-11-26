@@ -2,7 +2,7 @@ use crate::config::ChatSection;
 use crate::subprocess::Invocation;
 use ralph_core::claude_leftovers::{claude_dir, configured_dir, CLAUDE_CONFIG_DIR_ENV};
 use ralph_core::sanitize::strip_controls;
-use ralph_core::worker::{inbox_env, CLAUDE_COMMAND, CODEX_COMMAND};
+use ralph_core::worker::{inbox_env, ClaudeMode, CLAUDE_COMMAND, CODEX_COMMAND};
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -213,14 +213,14 @@ fn memory_command(
 pub fn build_chat_command(
     system_prompt_file: &Path,
     extra_args: &[String],
-    permission_mode: &str,
+    permission_mode: ClaudeMode,
     home: Option<&Path>,
     isolation: &Isolation,
 ) -> Invocation {
     let mcptools = extra_args
         .windows(2)
         .any(|args| args[0] == "--permission-prompt-tool" && args[1] == "stdio");
-    let mut args: Vec<OsString> = ["--verbose", "--permission-mode", permission_mode]
+    let mut args: Vec<OsString> = ["--verbose", "--permission-mode", permission_mode.as_str()]
         .map(OsString::from)
         .into();
     args.extend(isolation_args(home, true, isolation, mcptools).map(OsString::from));
@@ -253,7 +253,7 @@ pub fn with_chat_inbox(mut invocation: Invocation, store: &Path) -> io::Result<I
 }
 
 pub fn build_command(
-    permission_mode: &str,
+    permission_mode: ClaudeMode,
     config_dir: Option<&Path>,
     home: Option<&Path>,
 ) -> Invocation {
@@ -262,7 +262,7 @@ pub fn build_command(
         args: [
             "--verbose",
             "--permission-mode",
-            permission_mode,
+            permission_mode.as_str(),
             "--output-format",
             "stream-json",
             "-p",
@@ -301,14 +301,15 @@ mod tests {
         let alias = dir.path().join("alias");
         std::os::unix::fs::symlink(&store, &alias).unwrap();
         let canonical = std::fs::canonicalize(&store).unwrap().join("inbox");
-        let invocation = with_chat_inbox(build_command("auto", None, None), &alias).unwrap();
+        let invocation =
+            with_chat_inbox(build_command(ClaudeMode::Auto, None, None), &alias).unwrap();
         assert_eq!(invocation.env, [("RALPH_INBOX", canonical.into())]);
     }
 
     #[test]
     fn chat_inbox_command_rejects_a_missing_store() {
         let dir = tempfile::tempdir().unwrap();
-        let ask = build_command("auto", None, None);
+        let ask = build_command(ClaudeMode::Auto, None, None);
         assert!(with_chat_inbox(ask, &dir.path().join("missing")).is_err());
     }
 
@@ -319,27 +320,6 @@ mod tests {
             cmd,
             r#"codex exec --json --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C /tmp/a b --model model-x --disable shell_tool --disable apps --disable multi_agent -c web_search="disabled" -"#
         );
-    }
-
-    #[test]
-    fn a_hostile_permission_mode_is_exactly_one_argument_of_claude() {
-        let hostile = "$(touch /tmp/pwned); id #";
-        let chat = build_chat_command(
-            Path::new("/s/p.md"),
-            &[],
-            hostile,
-            None,
-            &Isolation::default(),
-        );
-        for invocation in [chat, build_command(hostile, None, None)] {
-            assert_eq!(invocation.program, "claude");
-            let flag = invocation
-                .args
-                .iter()
-                .position(|arg| arg == "--permission-mode")
-                .unwrap();
-            assert_eq!(invocation.args[flag + 1], hostile);
-        }
     }
 
     #[test]
@@ -363,7 +343,7 @@ mod tests {
 
     #[test]
     fn build_command_is_plain_ask() {
-        let cmd = line(build_command("bypassPermissions", None, None));
+        let cmd = line(build_command(ClaudeMode::BypassPermissions, None, None));
         assert!(cmd.contains("--permission-mode bypassPermissions"));
         assert!(cmd.ends_with(" -p"), "{cmd}");
         assert!(!cmd.contains("--agent"));
@@ -472,7 +452,7 @@ mod tests {
         let cmd = line(build_chat_command(
             Path::new("/s/chat-1/system-prompt.md"),
             &mcp,
-            "plan",
+            ClaudeMode::Plan,
             Some(Path::new("/home/u")),
             &Isolation::default(),
         ));
@@ -493,7 +473,11 @@ mod tests {
         let config =
             serde_json::json!({"mcpServers": {"mcptools": {}, "ralph-chat": {}, "linear": {}}});
         let args = ralph_core::chat::build_mcp_args(Path::new("/s/mcp.json"), &config);
-        for (mode, user_settings) in [("auto", false), ("dontAsk", false), ("auto", true)] {
+        for (mode, user_settings) in [
+            (ClaudeMode::Auto, false),
+            (ClaudeMode::DontAsk, false),
+            (ClaudeMode::Auto, true),
+        ] {
             let isolation = Isolation {
                 user_settings,
                 ..Isolation::default()
@@ -514,7 +498,7 @@ mod tests {
                     "totalTokensReminder": "off"
                 })
             );
-            assert!(cmd.contains(&format!("--permission-mode {mode} ")));
+            assert!(cmd.contains(&format!("--permission-mode {} ", mode.as_str())));
             assert!(cmd.contains(if user_settings {
                 "--setting-sources user,project,local"
             } else {
@@ -536,7 +520,7 @@ mod tests {
         let cmd = line(build_chat_command(
             Path::new("/s/p.md"),
             &without_discovery,
-            "auto",
+            ClaudeMode::Auto,
             None,
             &Isolation::default(),
         ));
@@ -548,7 +532,7 @@ mod tests {
         let cmd = line(build_chat_command(
             Path::new("/s/p.md"),
             &no_mcptools,
-            "auto",
+            ClaudeMode::Auto,
             None,
             &Isolation::default(),
         ));
@@ -561,7 +545,7 @@ mod tests {
         let cmd = line(build_chat_command(
             Path::new("/s/p.md"),
             &ralph_core::chat::build_agents_args(),
-            "auto",
+            ClaudeMode::Auto,
             Some(Path::new("/home/u")),
             &Isolation::default(),
         ));
@@ -574,7 +558,7 @@ mod tests {
         let chat = line(build_chat_command(
             Path::new("/s/p.md"),
             &[],
-            "auto",
+            ClaudeMode::Auto,
             None,
             &Isolation::default(),
         ));
@@ -590,12 +574,12 @@ mod tests {
     fn prompts_stay_off_every_command_line() {
         let home = Some(Path::new("/home/u"));
         let commands = [
-            line(build_command("auto", None, home)),
+            line(build_command(ClaudeMode::Auto, None, home)),
             line(build_memory_command("haiku", home, None)),
             line(build_chat_command(
                 Path::new("/s/p.md"),
                 &[],
-                "auto",
+                ClaudeMode::Auto,
                 home,
                 &Isolation::default(),
             )),
@@ -616,7 +600,11 @@ mod tests {
     #[test]
     fn unset_config_dir_adds_no_env_prefix() {
         assert_eq!(
-            line(build_command("auto", None, Some(Path::new("/home/u")))),
+            line(build_command(
+                ClaudeMode::Auto,
+                None,
+                Some(Path::new("/home/u"))
+            )),
             "claude --verbose --permission-mode auto --output-format stream-json -p"
         );
         assert_eq!(
@@ -628,7 +616,7 @@ mod tests {
             r#"claude --verbose --model haiku --setting-sources project,local --settings {"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"} --tools  --mcp-config {"mcpServers":{}} --strict-mcp-config --output-format stream-json -p"#
         );
         assert_eq!(
-            line(build_chat_command(Path::new("/s/p.md"), &[], "auto", None, &Isolation::default())),
+            line(build_chat_command(Path::new("/s/p.md"), &[], ClaudeMode::Auto, None, &Isolation::default())),
             "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings {\"autoCompactEnabled\":false,\"totalTokensReminder\":\"off\"} --append-system-prompt-file /s/p.md --input-format stream-json --output-format stream-json -p"
         );
     }
@@ -637,7 +625,7 @@ mod tests {
     fn config_dir_prefixes_every_command_and_moves_the_exclude() {
         let home = Some(Path::new("/home/u"));
         let dir = Some(Path::new("~/alt dir"));
-        let ask = line(build_command("auto", dir, home));
+        let ask = line(build_command(ClaudeMode::Auto, dir, home));
         assert!(ask.starts_with("CLAUDE_CONFIG_DIR=/home/u/alt dir claude --verbose "));
         let memory = line(build_memory_command("haiku", home, dir));
         assert!(memory.starts_with("CLAUDE_CONFIG_DIR=/home/u/alt dir claude "));
@@ -646,7 +634,7 @@ mod tests {
         let chat = line(build_chat_command(
             Path::new("/s/p.md"),
             &[],
-            "auto",
+            ClaudeMode::Auto,
             home,
             &isolation,
         ));

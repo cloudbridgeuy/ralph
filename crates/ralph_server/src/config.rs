@@ -1,9 +1,10 @@
+use crate::invoke::{ASK_PERMISSION_MODE_ENV, CHAT_PERMISSION_MODE_ENV};
 use crate::paths;
 use crate::warn::warn_once;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::chat_thread::config_root;
 use ralph_core::inbox_alert::UnknownFocus;
-use ralph_core::worker::TicketKeys;
+use ralph_core::worker::{ClaudeMode, TicketKeys};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,8 +54,8 @@ pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;
 pub use permissions::{
     configured_permission_mode, confirm_answer, effective_grants, resolve_permission_mode,
-    save_grants, saved_grants, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
-    GRANTS_FILE,
+    save_grants, saved_grants, PermissionModeError, ASK_DEFAULT_PERMISSION_MODE,
+    CHAT_DEFAULT_PERMISSION_MODE, GRANTS_FILE,
 };
 pub use rows::{config_rows, ConfigRow, RowSource};
 pub use usage::{configured_ledger, ledger_path, UsageSection};
@@ -540,20 +541,28 @@ impl ThemeSection {
 }
 
 impl AppConfig {
-    pub fn chat_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+    pub fn chat_permission_mode(
+        &self,
+        flag: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<ClaudeMode, PermissionModeError> {
         resolve_permission_mode(
             flag,
-            env,
-            self.chat.permission_mode.as_deref(),
+            (CHAT_PERMISSION_MODE_ENV, env),
+            ("chat.permission_mode", self.chat.permission_mode.as_deref()),
             CHAT_DEFAULT_PERMISSION_MODE,
         )
     }
 
-    pub fn ask_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+    pub fn ask_permission_mode(
+        &self,
+        flag: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<ClaudeMode, PermissionModeError> {
         resolve_permission_mode(
             flag,
-            env,
-            self.ask.permission_mode.as_deref(),
+            (ASK_PERMISSION_MODE_ENV, env),
+            ("ask.permission_mode", self.ask.permission_mode.as_deref()),
             ASK_DEFAULT_PERMISSION_MODE,
         )
     }

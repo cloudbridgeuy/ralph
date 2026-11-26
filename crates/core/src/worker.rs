@@ -10,6 +10,7 @@ use std::path::{Component, Path, PathBuf};
 
 mod acp;
 mod claude;
+mod claude_mode;
 mod claude_tmux;
 mod claude_tmux_verify;
 mod claude_verify;
@@ -55,6 +56,7 @@ mod version_gate;
 mod worktree;
 pub use acp::*;
 pub use claude::*;
+pub use claude_mode::*;
 pub use claude_tmux::*;
 pub use claude_tmux_verify::*;
 pub use claude_verify::*;

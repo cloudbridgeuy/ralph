@@ -1,7 +1,8 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    allowed_tools, offer_allow_always, Action, ActivityMark, BlockedContent, PermissionMode,
-    PermissionOption, Report, ThreadSignal, TurnEnd, Turns, VersionGate, ALLOW_ALWAYS, SERVER_NAME,
+    allowed_tools, offer_allow_always, Action, ActivityMark, BlockedContent, ClaudeMode,
+    PermissionMode, PermissionOption, Report, ThreadSignal, TurnEnd, Turns, VersionGate,
+    ALLOW_ALWAYS, SERVER_NAME,
 };
 use crate::chat::mcptools_ask_settings;
 use crate::stream::{interrupt_line, result_is_error};
@@ -222,8 +223,8 @@ pub fn claude_args(options: &ClaudeArgs) -> Vec<String> {
         copied,
     } = *options;
     let native_mode = match mode {
-        PermissionMode::Ask => "default",
-        PermissionMode::Yolo => "auto",
+        PermissionMode::Ask => ClaudeMode::Default,
+        PermissionMode::Yolo => ClaudeMode::Auto,
     };
     let mut args: Vec<String> = [
         "-p",
@@ -233,7 +234,7 @@ pub fn claude_args(options: &ClaudeArgs) -> Vec<String> {
         "--output-format",
         "stream-json",
         "--permission-mode",
-        native_mode,
+        native_mode.as_str(),
         "--permission-prompt-tool",
         "stdio",
         "--mcp-config",

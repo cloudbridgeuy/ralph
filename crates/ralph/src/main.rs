@@ -287,7 +287,7 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
     for warning in verbose_tools.warnings() {
         warn(warning);
     }
-    let app_config = ralph_server::config::AppConfig::load().unwrap_or_default();
+    let app_config = ralph_server::config::AppConfig::load()?;
     warn::set_warning_color(theme_config.ui().warning);
     Ok(InvocationConfig {
         prompt: resolve_ask_prompt(args.prompt.as_deref())?,
@@ -299,7 +299,7 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
             std::env::var(invoke::ASK_PERMISSION_MODE_ENV)
                 .ok()
                 .as_deref(),
-        ),
+        )?,
         config_dir: app_config.claude.config_dir,
         interrupt: CancelToken::default(),
     })
