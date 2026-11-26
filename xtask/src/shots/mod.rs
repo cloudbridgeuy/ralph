@@ -3,9 +3,11 @@ use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
+mod browser;
 mod core;
 mod seed;
 mod seed_spec;
+mod webdriver;
 
 #[derive(Debug, clap::Parser)]
 pub struct ShotsCommand {
@@ -20,6 +22,8 @@ pub enum ShotsAction {
     Compare(CompareArgs),
     Approve(ApproveArgs),
     Seed(SeedArgs),
+    Run(RunArgs),
+    Check(CheckArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -77,6 +81,33 @@ pub struct ApproveArgs {
 pub struct SeedArgs {
     #[arg(long)]
     pub out: PathBuf,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RunArgs {
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+
+    #[arg(long)]
+    pub ralph: Option<PathBuf>,
+
+    #[arg(long)]
+    pub firefox: Option<PathBuf>,
+
+    #[arg(long)]
+    pub screen: Option<core::Screen>,
+
+    #[arg(long)]
+    pub theme: Option<core::Theme>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CheckArgs {
+    #[command(flatten)]
+    pub run: RunArgs,
+
+    #[arg(long, default_value_t = core::DEFAULT_TOLERANCE)]
+    pub tolerance: u8,
 }
 
 type BoxError = Box<dyn std::error::Error>;
@@ -143,6 +174,14 @@ fn diff(args: DiffArgs) -> Result<(), BoxError> {
     }
 }
 
+fn baseline_names(dir: &Path) -> Result<Vec<String>, BoxError> {
+    if dir.is_dir() {
+        png_names(dir)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 fn png_names(dir: &Path) -> Result<Vec<String>, BoxError> {
     let entries =
         fs::read_dir(dir).map_err(|error| format!("could not read {}: {error}", dir.display()))?;
@@ -157,7 +196,7 @@ fn png_names(dir: &Path) -> Result<Vec<String>, BoxError> {
 }
 
 fn compare(args: CompareArgs) -> Result<(), BoxError> {
-    let baseline_names = png_names(&args.baseline)?;
+    let baseline_names = baseline_names(&args.baseline)?;
     let current_names = png_names(&args.current)?;
     let mut measures = BTreeMap::new();
     let mut diffs = BTreeMap::new();
@@ -188,6 +227,43 @@ fn compare(args: CompareArgs) -> Result<(), BoxError> {
     }
 }
 
+const DEFAULT_FIREFOX: &str = "/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox";
+
+fn capture_current(args: RunArgs) -> Result<PathBuf, BoxError> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let resolve = |given, under_home| {
+        webdriver::resolve_path(given, home.as_deref(), under_home)
+            .ok_or_else(|| BoxError::from("HOME is not set; pass the path as a flag"))
+    };
+    let root = resolve(args.root, ".local/share/ralph-shots")?;
+    let options = browser::CaptureOptions {
+        ralph: args
+            .ralph
+            .unwrap_or_else(|| PathBuf::from("target/debug/ralph")),
+        firefox: args
+            .firefox
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_FIREFOX)),
+        screen: args.screen,
+        theme: args.theme,
+    };
+    let current = root.join("current");
+    let timed_out = browser::capture(&options, &current)?;
+    if !timed_out.is_empty() {
+        println!("timed out waiting for ready: {}", timed_out.join(", "));
+    }
+    Ok(root)
+}
+
+fn check(args: CheckArgs) -> Result<(), BoxError> {
+    let root = capture_current(args.run)?;
+    compare(CompareArgs {
+        baseline: root.join("baseline"),
+        current: root.join("current"),
+        out: root.join("report"),
+        tolerance: args.tolerance,
+    })
+}
+
 fn approve(args: ApproveArgs) -> Result<(), BoxError> {
     let current_names = png_names(&args.current)?;
     let approved = core::select_approvals(&args.names, args.all, &current_names)?;
@@ -210,6 +286,8 @@ pub fn run(command: ShotsCommand) -> Result<(), BoxError> {
         ShotsAction::Diff(args) => diff(args),
         ShotsAction::Compare(args) => compare(args),
         ShotsAction::Approve(args) => approve(args),
+        ShotsAction::Run(args) => capture_current(args).map(|_| ()),
+        ShotsAction::Check(args) => check(args),
         ShotsAction::Seed(args) => {
             let written = seed::seed(&args.out)?;
             println!("seeded {written} records into {}", args.out.display());
