@@ -298,7 +298,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Memory screen
 
-- Route `#/memory`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `css/memory.css`.
+- Routes `#/memory` and `#/config`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `css/memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
 - Stat line: from the root `stats`, for example `45 entries, 2 of 8 blocks summarised, last entry <time>`.
