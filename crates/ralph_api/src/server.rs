@@ -91,12 +91,19 @@ pub fn serve(
             Admission::Reject => {
                 let guard = peer_of(&request).map(|ip| PeerCounts::enter(&peers, ip).0);
                 run_off_loop(request, move |request| {
-                    respond_then(request, overloaded(), move || drop(guard));
+                    reject_overloaded(guard, |after_write| {
+                        respond_then(request, overloaded(), after_write);
+                    });
                 });
             }
         }
     }
     Ok(())
+}
+
+fn reject_overloaded(guard: Option<PeerGuard>, respond: impl FnOnce(Box<dyn FnOnce()>)) {
+    respond(Box::new(|| ()));
+    drop(guard);
 }
 
 fn peer_of(request: &Request) -> Option<IpAddr> {
@@ -283,6 +290,23 @@ mod tests {
         assert_eq!(response.status, 200);
         assert!(guard.is_none());
         drop(held);
+    }
+
+    #[test]
+    fn reject_overloaded_holds_the_guard_through_the_drain() {
+        let peers = Arc::new(PeerCounts::default());
+        let ip = IpAddr::from([100, 64, 0, 9]);
+        let (guard, _) = PeerCounts::enter(&peers, ip);
+        let mut held_during_drain = 0;
+        reject_overloaded(Some(guard), |after_write| {
+            after_write();
+            let (probe, previous) = PeerCounts::enter(&peers, ip);
+            held_during_drain = previous;
+            drop(probe);
+        });
+        assert_eq!(held_during_drain, 1);
+        let (_probe, after) = PeerCounts::enter(&peers, ip);
+        assert_eq!(after, 0);
     }
 
     #[test]
