@@ -275,13 +275,10 @@ fn start_firefox(firefox: &Path, profile: &Path) -> Result<ChildGuard, BoxError>
     Ok(ChildGuard(child))
 }
 
-fn clear_pngs(dir: &Path) -> Result<(), BoxError> {
+fn clear_stale(dir: &Path, shots: &[Shot]) -> Result<(), BoxError> {
     fs::create_dir_all(dir)?;
-    for entry in fs::read_dir(dir)?.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "png") {
-            fs::remove_file(path)?;
-        }
+    for name in core::stale_names(shots, &super::png_names(dir)?) {
+        fs::remove_file(dir.join(name))?;
     }
     Ok(())
 }
@@ -330,7 +327,7 @@ pub fn capture(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxE
     fs::create_dir_all(&home)?;
     let (_ralph, listening) =
         start_ralph(&options.ralph, &store, &home, &scratch.path().join("cwd"))?;
-    clear_pngs(out)?;
+    clear_stale(out, &shots)?;
     let mut timed_out = Vec::new();
     for theme in Theme::ALL {
         let group: Vec<Shot> = shots

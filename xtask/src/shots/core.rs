@@ -153,6 +153,23 @@ pub fn filter(shots: Vec<Shot>, screen: Option<Screen>, theme: Option<Theme>) ->
         .collect()
 }
 
+fn selected_names(selected: &[Shot]) -> BTreeSet<String> {
+    selected.iter().map(Shot::name).collect()
+}
+
+pub fn stale_names(selected: &[Shot], existing: &[String]) -> Vec<String> {
+    restrict_names(existing, selected)
+}
+
+pub fn restrict_names(names: &[String], selected: &[Shot]) -> Vec<String> {
+    let wanted = selected_names(selected);
+    names
+        .iter()
+        .filter(|name| wanted.contains(*name))
+        .cloned()
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rgba {
     pub width: u32,
@@ -390,6 +407,48 @@ pub fn select_approvals(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    fn memory_shots() -> Vec<Shot> {
+        filter(matrix(), Some(Screen::Memory), None)
+    }
+
+    #[test]
+    fn a_memory_run_touches_only_memory_names() {
+        let existing = names(&["memory-dark-1440.png", "threads-dark-1440.png"]);
+        assert_eq!(
+            stale_names(&memory_shots(), &existing),
+            names(&["memory-dark-1440.png"])
+        );
+    }
+
+    #[test]
+    fn a_full_run_clears_every_matrix_name_and_keeps_others() {
+        let existing = names(&["memory-dark-1440.png", "threads-light-390.png", "notes.png"]);
+        assert_eq!(
+            stale_names(&matrix(), &existing),
+            names(&["memory-dark-1440.png", "threads-light-390.png"])
+        );
+    }
+
+    #[test]
+    fn restricted_sets_report_no_missing_for_other_screens() {
+        let selected = memory_shots();
+        let baseline = restrict_names(
+            &names(&["memory-dark-1440.png", "threads-dark-1440.png"]),
+            &selected,
+        );
+        let current = restrict_names(&names(&["memory-dark-1440.png"]), &selected);
+        let measures = BTreeMap::from([(
+            "memory-dark-1440.png".to_string(),
+            Measure::Pixels {
+                changed: 0,
+                total: 10,
+            },
+        )]);
+        let classification = classify(&baseline, &current, &measures);
+        assert!(classification.missing.is_empty());
+        assert!(is_clean(&classification));
+    }
 
     #[test]
     fn a_themed_shot_name_has_screen_theme_and_width() {

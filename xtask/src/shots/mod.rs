@@ -197,8 +197,16 @@ fn png_names(dir: &Path) -> Result<Vec<String>, BoxError> {
 }
 
 fn compare(args: CompareArgs) -> Result<(), BoxError> {
-    let baseline_names = baseline_names(&args.baseline)?;
-    let current_names = png_names(&args.current)?;
+    compare_selected(args, None)
+}
+
+fn compare_selected(args: CompareArgs, selected: Option<&[core::Shot]>) -> Result<(), BoxError> {
+    let mut baseline_names = baseline_names(&args.baseline)?;
+    let mut current_names = png_names(&args.current)?;
+    if let Some(shots) = selected {
+        baseline_names = core::restrict_names(&baseline_names, shots);
+        current_names = core::restrict_names(&current_names, shots);
+    }
     let mut measures = BTreeMap::new();
     let mut diffs = BTreeMap::new();
     for name in core::common_names(&baseline_names, &current_names) {
@@ -230,7 +238,7 @@ fn compare(args: CompareArgs) -> Result<(), BoxError> {
 
 const DEFAULT_FIREFOX: &str = "/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox";
 
-fn capture_current(args: RunArgs) -> Result<PathBuf, BoxError> {
+fn capture_current(args: RunArgs) -> Result<(PathBuf, Vec<core::Shot>), BoxError> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let resolve = |given, under_home| {
         webdriver::resolve_path(given, home.as_deref(), under_home)
@@ -247,22 +255,25 @@ fn capture_current(args: RunArgs) -> Result<PathBuf, BoxError> {
         screen: args.screen,
         theme: args.theme,
     };
+    let selected = core::filter(core::matrix(), options.screen, options.theme);
     let current = root.join("current");
     let timed_out = browser::capture(&options, &current)?;
     if !timed_out.is_empty() {
         println!("timed out waiting for ready: {}", timed_out.join(", "));
     }
-    Ok(root)
+    Ok((root, selected))
 }
 
 fn check(args: CheckArgs) -> Result<(), BoxError> {
-    let root = capture_current(args.run)?;
-    compare(CompareArgs {
+    let filtered = args.run.screen.is_some() || args.run.theme.is_some();
+    let (root, selected) = capture_current(args.run)?;
+    let compare_args = CompareArgs {
         baseline: root.join("baseline"),
         current: root.join("current"),
         out: root.join("report"),
         tolerance: args.tolerance,
-    })
+    };
+    compare_selected(compare_args, filtered.then_some(selected.as_slice()))
 }
 
 fn approve(args: ApproveArgs) -> Result<(), BoxError> {
