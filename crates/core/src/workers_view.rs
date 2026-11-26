@@ -281,7 +281,7 @@ pub fn group_reports(entries: &[Entry], unread: &[Report]) -> HashMap<String, Ve
                 report.from.to_string(),
                 ReportLine {
                     status: report.status,
-                    at: report.at.clone(),
+                    at: report.at.to_rfc3339(),
                     text: report.text.clone(),
                 },
             )

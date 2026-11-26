@@ -2,6 +2,7 @@ use crate::mcp::string_arg;
 use crate::watch::{watch_id, WatchKind, WatchSpec};
 use crate::watch_store::file_name;
 use crate::worker::{Report, SenderError, WatchId};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -109,7 +110,7 @@ pub fn watch_in_use_message(id: &str) -> String {
     format!("a watch named `{id}` is already running")
 }
 
-pub fn plan_queued(requests: Vec<WatchRequest>, used: &[String], at: &str) -> QueuedPlan {
+pub fn plan_queued(requests: Vec<WatchRequest>, used: &[String], at: DateTime<Utc>) -> QueuedPlan {
     let mut taken: Vec<String> = used.to_vec();
     let mut plan = QueuedPlan {
         start: Vec::new(),
@@ -128,7 +129,11 @@ pub fn plan_queued(requests: Vec<WatchRequest>, used: &[String], at: &str) -> Qu
     plan
 }
 
-pub fn start_failure_report(id: &str, error: &str, at: &str) -> Result<Report, SenderError> {
+pub fn start_failure_report(
+    id: &str,
+    error: &str,
+    at: DateTime<Utc>,
+) -> Result<Report, SenderError> {
     WatchId::parse(id)
         .map(|watch| Report::watch(&watch, at, format!("Watch `{id}` did not start: {error}.")))
 }
@@ -163,7 +168,11 @@ mod tests {
 
     #[test]
     fn queued_requests_with_free_ids_all_start() {
-        let plan = plan_queued(vec![queued("watch:a"), queued("watch:b")], &[], "t");
+        let plan = plan_queued(
+            vec![queued("watch:a"), queued("watch:b")],
+            &[],
+            chrono::DateTime::UNIX_EPOCH,
+        );
         let ids: Vec<&str> = plan.start.iter().map(|spec| spec.id.as_str()).collect();
         assert_eq!(ids, ["watch:a", "watch:b"]);
         assert!(plan.rejected.is_empty());
@@ -172,14 +181,18 @@ mod tests {
     #[test]
     fn queued_requests_for_active_or_saved_ids_are_rejected_with_a_report() {
         let used = vec!["watch:a".to_string()];
-        let plan = plan_queued(vec![queued("watch:a"), queued("watch:b")], &used, "t1");
+        let plan = plan_queued(
+            vec![queued("watch:a"), queued("watch:b")],
+            &used,
+            chrono::DateTime::UNIX_EPOCH,
+        );
         assert_eq!(plan.start.len(), 1);
         assert_eq!(plan.start[0].id, "watch:b");
         let [report] = plan.rejected.as_slice() else {
             panic!("{plan:?}");
         };
         assert_eq!(report.from.to_string(), "watch:a");
-        assert_eq!(report.at, "t1");
+        assert_eq!(report.at, chrono::DateTime::UNIX_EPOCH);
         assert_eq!(report.status.as_str(), "watch");
         assert!(report
             .text
@@ -188,7 +201,11 @@ mod tests {
 
     #[test]
     fn a_repeated_id_in_one_batch_starts_once() {
-        let plan = plan_queued(vec![queued("watch:a"), queued("watch:a")], &[], "t");
+        let plan = plan_queued(
+            vec![queued("watch:a"), queued("watch:a")],
+            &[],
+            chrono::DateTime::UNIX_EPOCH,
+        );
         assert_eq!(plan.start.len(), 1);
         assert_eq!(plan.rejected.len(), 1);
     }
@@ -198,7 +215,7 @@ mod tests {
         let mut request = queued("watch:a");
         request.persistent = true;
         request.timeout_secs = Some(5);
-        let plan = plan_queued(vec![request], &[], "t");
+        let plan = plan_queued(vec![request], &[], chrono::DateTime::UNIX_EPOCH);
         assert_eq!(plan.start[0].kind, WatchKind::Persistent);
         assert_eq!(plan.start[0].timeout, Some(Duration::from_secs(5)));
     }
@@ -280,8 +297,12 @@ mod tests {
 
     #[test]
     fn failure_report_uses_the_watch_status() {
-        let report =
-            start_failure_report("watch:ci", "a watch named `ci` is already running", "t").unwrap();
+        let report = start_failure_report(
+            "watch:ci",
+            "a watch named `ci` is already running",
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert_eq!(report.status.as_str(), "watch");
         assert_eq!(report.from.to_string(), "watch:ci");
         assert!(report.text.contains("did not start"));

@@ -7,7 +7,7 @@ fn entry(worker: &str) -> Entry {
         source: format!("20261025122100-000003-{worker}.json"),
         report: Report {
             from: crate::worker::Sender::parse(worker).unwrap(),
-            at: "t".to_string(),
+            at: chrono::DateTime::UNIX_EPOCH,
             status: ReportKind::Worker(ReportStatus::Done),
             text: String::new(),
         },
@@ -20,7 +20,7 @@ fn close_entry(thread: &str) -> Entry {
         source: format!("20261025122100-000003-{worker}.json"),
         report: Report::thread_closed(
             &crate::chat_thread::ThreadName::parse(thread).unwrap(),
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
             String::new(),
         ),
     }

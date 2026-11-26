@@ -446,7 +446,7 @@ pub fn run_stdio_server(
                 seq += 1;
                 let report = Report::from_worker(
                     &worker_id,
-                    &chrono::Utc::now().to_rfc3339(),
+                    chrono::Utc::now(),
                     status,
                     changes.map_or(text.clone(), |changes| changes.attach_to(&text)),
                 );

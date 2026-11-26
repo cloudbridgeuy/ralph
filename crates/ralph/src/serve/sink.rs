@@ -57,7 +57,7 @@ mod tests {
         let key = SessionKey::Thread(ThreadName::parse("side").unwrap());
         let report = Report::from_worker(
             &ralph_core::worker::WorkerId::parse("w1").unwrap(),
-            "",
+            chrono::DateTime::UNIX_EPOCH,
             ralph_core::worker::ReportStatus::Done,
             "finished".into(),
         );

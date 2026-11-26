@@ -1,4 +1,5 @@
 use crate::worker::{Report, SenderError, WatchId};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -213,7 +214,7 @@ pub fn build_report(
     spec: &WatchSpec,
     outcome: &WatchOutcome,
     tail: &Tail,
-    at: &str,
+    at: DateTime<Utc>,
 ) -> Result<Report, SenderError> {
     WatchId::parse(&spec.id)
         .map(|watch| Report::watch(&watch, at, report_text(spec, outcome, tail)))
@@ -476,8 +477,13 @@ mod tests {
     #[test]
     fn a_built_report_gives_its_output_tail_to_the_check_detail() {
         let outcome = WatchOutcome::Exited(2);
-        let report =
-            build_report(&spec(None), &outcome, &tail_of(&["first", "boom"]), "t1").unwrap();
+        let report = build_report(
+            &spec(None),
+            &outcome,
+            &tail_of(&["first", "boom"]),
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert_eq!(
             crate::chat_send_it::check_detail(&outcome, Some(&report)),
             "exited with code 2; last output: first / boom"
@@ -486,10 +492,15 @@ mod tests {
 
     #[test]
     fn build_report_uses_the_watch_status_and_given_time() {
-        let report =
-            build_report(&spec(None), &WatchOutcome::Exited(0), &tail_of(&[]), "t1").unwrap();
+        let report = build_report(
+            &spec(None),
+            &WatchOutcome::Exited(0),
+            &tail_of(&[]),
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert_eq!(report.from.to_string(), "watch:ci");
-        assert_eq!(report.at, "t1");
+        assert_eq!(report.at, chrono::DateTime::UNIX_EPOCH);
         assert_eq!(report.status.as_str(), "watch");
         assert!(report.text.contains("exited with code 0"));
     }

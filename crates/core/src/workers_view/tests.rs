@@ -81,7 +81,7 @@ fn non_report_statuses_and_other_roles_are_ignored() {
     ];
     let unread = [Report::check(
         &WorkerId::parse("A").unwrap(),
-        "2026-01-01T00:12:00Z",
+        "2026-01-01T00:12:00Z".parse().unwrap(),
         "quiet".into(),
     )];
     assert!(group_reports(&entries, &unread).is_empty());
@@ -115,7 +115,7 @@ fn unread_reports_sort_with_logged_ones_by_time() {
     )];
     let unread = [Report::from_worker(
         &WorkerId::parse("A").unwrap(),
-        "2026-01-01T00:40:00Z",
+        "2026-01-01T00:40:00Z".parse().unwrap(),
         crate::worker::ReportStatus::Blocked,
         "new".into(),
     )];

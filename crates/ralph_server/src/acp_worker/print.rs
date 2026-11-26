@@ -213,10 +213,10 @@ impl Shared {
                     write_file(&self.markers.waiting, "").ok();
                 }
                 Action::PostFailure(problem) => {
-                    let at = chrono::Utc::now().to_rfc3339();
+                    let at = chrono::Utc::now();
                     let agent = HarnessId::Cursor.as_str();
                     let report = WorkerId::parse(&self.id)
-                        .map(|id| prompt_failure_report(agent, &id, &at, &problem));
+                        .map(|id| prompt_failure_report(agent, &id, at, &problem));
                     warn_if_err(
                         report
                             .map_err(std::io::Error::other)
@@ -633,7 +633,7 @@ mod tests {
         let inbox = Inbox::new(dir.path().join("inbox"));
         let report = Report::from_worker(
             &WorkerId::parse("A").unwrap(),
-            "2026-11-07T00:00:00Z",
+            "2026-11-07T00:00:00Z".parse().unwrap(),
             ralph_core::worker::ReportStatus::Done,
             "ok".to_string(),
         );

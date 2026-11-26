@@ -129,7 +129,7 @@ mod tests {
     fn report(worker: &str, status: &str) -> Report {
         Report::from_worker(
             &WorkerId::parse(worker).unwrap(),
-            "2026-10-12T00:00:00Z",
+            "2026-10-12T00:00:00Z".parse().unwrap(),
             ReportStatus::parse(status).unwrap(),
             "summary".into(),
         )

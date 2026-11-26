@@ -415,7 +415,7 @@ mod tests {
     fn report_requires_one_exact_delivery() {
         let entry = Report::from_worker(
             &ralph_core::worker::WorkerId::parse(ID).unwrap(),
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
             ralph_core::worker::ReportStatus::Done,
             TEXT.into(),
         );
@@ -426,19 +426,19 @@ mod tests {
         for bad in [
             Report::from_worker(
                 &ralph_core::worker::WorkerId::parse("other").unwrap(),
-                "t",
+                chrono::DateTime::UNIX_EPOCH,
                 ralph_core::worker::ReportStatus::Done,
                 TEXT.into(),
             ),
             Report::from_worker(
                 &ralph_core::worker::WorkerId::parse(ID).unwrap(),
-                "t",
+                chrono::DateTime::UNIX_EPOCH,
                 ralph_core::worker::ReportStatus::Blocked,
                 TEXT.into(),
             ),
             Report::from_worker(
                 &ralph_core::worker::WorkerId::parse(ID).unwrap(),
-                "t",
+                chrono::DateTime::UNIX_EPOCH,
                 ralph_core::worker::ReportStatus::Done,
                 "wrong".into(),
             ),

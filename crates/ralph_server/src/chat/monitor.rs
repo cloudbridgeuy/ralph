@@ -254,9 +254,8 @@ impl Monitor {
                     format!("nudging worker {id}"),
                 ),
                 CheckAction::Inbox(id, text) => {
-                    let report = WorkerId::parse(&id).map(|worker| {
-                        Report::check(&worker, &chrono::Utc::now().to_rfc3339(), text)
-                    });
+                    let report = WorkerId::parse(&id)
+                        .map(|worker| Report::check(&worker, chrono::Utc::now(), text));
                     warn_if_err(
                         report
                             .map_err(std::io::Error::other)

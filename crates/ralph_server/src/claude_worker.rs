@@ -158,7 +158,7 @@ impl Shared {
     }
 
     fn ask_unattended(&self, ask: &ClaudePermission) {
-        let at = chrono::Utc::now().to_rfc3339();
+        let at = chrono::Utc::now();
         let Ok(worker) = WorkerId::parse(&self.id) else {
             warn(format!(
                 "worker id {} is not valid; its permission was not answered",
@@ -166,7 +166,7 @@ impl Shared {
             ));
             return;
         };
-        let answer = unattended_claude_answer(&worker, &at, ask);
+        let answer = unattended_claude_answer(&worker, at, ask);
         if let Some(report) = answer.report {
             warn_if_err(
                 self.inbox.post(&report, 0),
@@ -252,10 +252,10 @@ impl Shared {
                     write_file(&self.markers.waiting, "").ok();
                 }
                 Action::PostFailure(problem) => {
-                    let at = chrono::Utc::now().to_rfc3339();
+                    let at = chrono::Utc::now();
                     let agent = HarnessId::Claude.as_str();
                     let report = WorkerId::parse(&self.id)
-                        .map(|id| prompt_failure_report(agent, &id, &at, &problem));
+                        .map(|id| prompt_failure_report(agent, &id, at, &problem));
                     warn_if_err(
                         report
                             .map_err(std::io::Error::other)
@@ -297,9 +297,9 @@ impl Shared {
                 ClaudeLine::Permission(ask) => self.ask(ask),
                 ClaudeLine::Cancel(id) => self.permissions.settle(|reply| reply.request_id == id),
                 ClaudeLine::Malformed => {
-                    let at = chrono::Utc::now().to_rfc3339();
+                    let at = chrono::Utc::now();
                     let report =
-                        WorkerId::parse(&self.id).map(|id| stuck_permission_report(&id, &at));
+                        WorkerId::parse(&self.id).map(|id| stuck_permission_report(&id, at));
                     warn_if_err(
                         report
                             .map_err(std::io::Error::other)

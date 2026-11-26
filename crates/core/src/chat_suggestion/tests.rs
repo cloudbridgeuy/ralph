@@ -283,7 +283,7 @@ fn a_schedule_target_holds_and_matches_the_task_reports() {
             source: "s".to_string(),
             report: Report {
                 from: crate::worker::Sender::parse(worker).unwrap(),
-                at: "t".to_string(),
+                at: chrono::DateTime::UNIX_EPOCH,
                 status: crate::worker::ReportKind::Worker(ReportStatus::Done),
                 text: String::new(),
             },

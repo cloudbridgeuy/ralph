@@ -1,6 +1,7 @@
 use crate::chat_status::truncate_to_width;
 use crate::chat_thread::{AutoMode, ThreadMeta, ThreadName};
 use crate::worker::{Report, ReportKind, Sender};
+use chrono::{DateTime, Utc};
 
 pub struct ThreadClosedNotice {
     pub merge: &'static str,
@@ -45,7 +46,7 @@ pub fn thread_closed_notice(name: &ThreadName, auto: AutoMode) -> String {
     format!("{name}{suffix}")
 }
 
-pub fn thread_closed_report(name: &ThreadName, auto: AutoMode, at: &str) -> Report {
+pub fn thread_closed_report(name: &ThreadName, auto: AutoMode, at: DateTime<Utc>) -> Report {
     Report::thread_closed(name, at, thread_closed_notice(name, auto))
 }
 
@@ -231,9 +232,18 @@ mod tests {
 
     #[test]
     fn report_carries_the_notice_under_a_per_thread_worker() {
-        let report = thread_closed_report(&name(), AutoMode::Drop, "2026-01-01T00:00:00Z");
+        let report = thread_closed_report(
+            &name(),
+            AutoMode::Drop,
+            "2026-01-01T00:00:00Z".parse().unwrap(),
+        );
         assert_eq!(report.from.to_string(), "thread:side");
-        assert_eq!(report.at, "2026-01-01T00:00:00Z");
+        assert_eq!(
+            report.at,
+            "2026-01-01T00:00:00Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
         assert_eq!(report.status.as_str(), "thread-closed");
         assert_eq!(report.text, "side closed \u{b7} Enter to drop or keep it");
     }
@@ -398,11 +408,11 @@ mod tests {
 
     #[test]
     fn close_reports_split_from_digests_and_workers() {
-        let closed = thread_closed_report(&name(), AutoMode::Merge, "t");
-        let digest = Report::merged(&name(), "t", "x".to_string());
+        let closed = thread_closed_report(&name(), AutoMode::Merge, chrono::DateTime::UNIX_EPOCH);
+        let digest = Report::merged(&name(), chrono::DateTime::UNIX_EPOCH, "x".to_string());
         let worker = Report::from_worker(
             &crate::worker::WorkerId::parse("w1").unwrap(),
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Done,
             "x".to_string(),
         );

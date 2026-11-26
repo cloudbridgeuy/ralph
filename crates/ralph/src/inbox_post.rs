@@ -13,8 +13,13 @@ pub fn run(args: InboxArgs) -> Result<(), Box<dyn Error>> {
     match args.command {
         InboxCommand::Post { store, from, input } => {
             let store = std::env::current_dir()?.join(store);
-            let at = chrono::Utc::now().to_rfc3339();
-            post(&store, &from, &input, &mut io::stdin().lock(), &at)?;
+            post(
+                &store,
+                &from,
+                &input,
+                &mut io::stdin().lock(),
+                chrono::Utc::now(),
+            )?;
             println!(
                 "Posted a report from external:{from} to {}",
                 store.display()
@@ -46,7 +51,7 @@ pub fn post(
     source: &str,
     input: &Path,
     stdin: &mut impl Read,
-    at: &str,
+    at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), String> {
     check_store(
         store.is_dir(),
@@ -99,7 +104,7 @@ mod tests {
             "ci",
             Path::new("-"),
             &mut &b"all green"[..],
-            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z".parse().unwrap(),
         )
         .unwrap();
         let reports = posted(dir.path());
@@ -119,7 +124,7 @@ mod tests {
             "ci",
             &file,
             &mut io::empty(),
-            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z".parse().unwrap(),
         )
         .unwrap();
         assert_eq!(posted(dir.path())[0].text, "from a file");
@@ -133,7 +138,7 @@ mod tests {
             "ci",
             &dir.path().join("none.txt"),
             &mut io::empty(),
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
         )
         .unwrap_err();
         assert!(err.contains("Could not open"), "{err}");
@@ -144,7 +149,14 @@ mod tests {
     fn an_oversized_report_is_refused_and_writes_nothing() {
         let dir = store();
         let big = vec![b'a'; MAX_TEXT_BYTES + 1];
-        let err = post(dir.path(), "ci", Path::new("-"), &mut big.as_slice(), "t").unwrap_err();
+        let err = post(
+            dir.path(),
+            "ci",
+            Path::new("-"),
+            &mut big.as_slice(),
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap_err();
         assert!(err.contains("65536"), "{err}");
         assert!(posted(dir.path()).is_empty());
     }
@@ -152,7 +164,14 @@ mod tests {
     #[test]
     fn a_folder_that_is_not_a_store_is_refused_and_not_touched() {
         let dir = tempfile::tempdir().unwrap();
-        let err = post(dir.path(), "ci", Path::new("-"), &mut &b"x"[..], "t").unwrap_err();
+        let err = post(
+            dir.path(),
+            "ci",
+            Path::new("-"),
+            &mut &b"x"[..],
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap_err();
         assert!(err.contains("not a chat store"), "{err}");
         assert!(!dir.path().join(INBOX_DIR).exists());
     }
@@ -161,7 +180,14 @@ mod tests {
     fn a_missing_store_is_refused_and_not_created() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("nope");
-        assert!(post(&missing, "ci", Path::new("-"), &mut &b"x"[..], "t").is_err());
+        assert!(post(
+            &missing,
+            "ci",
+            Path::new("-"),
+            &mut &b"x"[..],
+            chrono::DateTime::UNIX_EPOCH
+        )
+        .is_err());
         assert!(!missing.exists());
     }
 
@@ -169,7 +195,14 @@ mod tests {
     fn a_store_with_only_a_lock_file_is_accepted() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("LOCK"), "").unwrap();
-        post(dir.path(), "ci", Path::new("-"), &mut &b"x"[..], "t").unwrap();
+        post(
+            dir.path(),
+            "ci",
+            Path::new("-"),
+            &mut &b"x"[..],
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert_eq!(posted(dir.path()).len(), 1);
     }
 
@@ -181,7 +214,7 @@ mod tests {
             "ci",
             Path::new("-"),
             &mut &b"\x1b[2Jhi"[..],
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
         )
         .unwrap_err();
         assert!(err.contains("U+001B"), "{err}");

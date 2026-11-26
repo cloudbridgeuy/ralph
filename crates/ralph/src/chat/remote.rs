@@ -6,6 +6,7 @@ use crate::highlight::ThemeConfig;
 use crate::inbox_alert;
 use crate::signal;
 use crate::turn_sink::TerminalSink;
+use chrono::DateTime;
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat_answer::AnswerArgs;
 use ralph_core::chat_memory::Trigger;
@@ -92,7 +93,7 @@ fn needing_user(wire: &WireReport) -> Option<Report> {
     match status.attention() {
         Attention::NeedsUser => Some(Report {
             from: Sender::parse(&wire.worker).ok()?,
-            at: wire.at.clone(),
+            at: DateTime::parse_from_rfc3339(&wire.at).ok()?.to_utc(),
             status,
             text: wire.text.clone(),
         }),

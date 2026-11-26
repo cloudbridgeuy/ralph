@@ -94,7 +94,7 @@ fn drop_worker_removes_its_queued_reports_and_logs_each() {
     for (worker, seq) in [("A", 1), ("B", 1), ("A", 2)] {
         let report = Report::from_worker(
             &WorkerId::parse(worker).unwrap(),
-            &format!("2026-11-10T13:00:0{seq}Z"),
+            format!("2026-11-10T13:00:0{seq}Z").parse().unwrap(),
             ReportStatus::Done,
             "t".to_string(),
         );
@@ -362,7 +362,7 @@ fn drain_some_takes_only_that_position() {
     for (seq, text) in [(1, "one"), (2, "two")] {
         let report = Report::from_worker(
             &WorkerId::parse("A").unwrap(),
-            &format!("2026-01-01T00:00:0{seq}Z"),
+            format!("2026-01-01T00:00:0{seq}Z").parse().unwrap(),
             ReportStatus::Done,
             text.to_string(),
         );
@@ -380,7 +380,7 @@ fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
     let post = |text: &str, seq| {
         let report = Report::from_worker(
             &WorkerId::parse("A").unwrap(),
-            &format!("2026-01-01T00:00:0{seq}Z"),
+            format!("2026-01-01T00:00:0{seq}Z").parse().unwrap(),
             ReportStatus::Done,
             text.to_string(),
         );
@@ -403,7 +403,7 @@ fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
 fn same_name_report(text: &str) -> Report {
     Report {
         from: ralph_core::worker::Sender::parse("schedule:a").unwrap(),
-        at: "2026-01-01T00:00:00Z".to_string(),
+        at: "2026-01-01T00:00:00Z".parse().unwrap(),
         status: ralph_core::worker::ReportKind::Worker(ReportStatus::Blocked),
         text: text.to_string(),
     }

@@ -48,7 +48,7 @@ pub struct ClaudePermission {
     pub content: BlockedContent,
 }
 
-pub fn stuck_permission_report(id: &WorkerId, at: &str) -> Report {
+pub fn stuck_permission_report(id: &WorkerId, at: chrono::DateTime<chrono::Utc>) -> Report {
     Report::ralph_blocked(
         id,
         at,
@@ -945,8 +945,8 @@ mod tests {
 
     #[test]
     fn a_stuck_permission_report_blocks_the_worker_with_the_close_hint() {
-        let report =
-            stuck_permission_report(&WorkerId::parse("A").unwrap(), "2026-01-01T00:00:00Z");
+        let id = WorkerId::parse("A").unwrap();
+        let report = stuck_permission_report(&id, "2026-01-01T00:00:00Z".parse().unwrap());
         assert_eq!(report.from.to_string(), "A");
         assert_eq!(report.status.as_str(), "blocked");
         assert_eq!(

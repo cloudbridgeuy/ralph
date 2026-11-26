@@ -3,6 +3,7 @@ use crate::inbox_post::mark_untrusted;
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
 use crate::watch_tools::StopTarget;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -217,22 +218,27 @@ pub const REPORT_REMINDER: &str = "You stopped without calling report. Call repo
 pub struct Report {
     #[serde(rename = "worker")]
     pub from: Sender,
-    pub at: String,
+    pub at: DateTime<Utc>,
     pub status: ReportKind,
     pub text: String,
 }
 
 impl Report {
-    fn with_kind(from: Sender, at: &str, status: ReportKind, text: String) -> Self {
+    fn with_kind(from: Sender, at: DateTime<Utc>, status: ReportKind, text: String) -> Self {
         Self {
             from,
-            at: at.to_string(),
+            at,
             status,
             text,
         }
     }
 
-    pub fn from_worker(worker: &WorkerId, at: &str, status: ReportStatus, text: String) -> Self {
+    pub fn from_worker(
+        worker: &WorkerId,
+        at: DateTime<Utc>,
+        status: ReportStatus,
+        text: String,
+    ) -> Self {
         Self::with_kind(
             Sender::Worker(worker.clone()),
             at,
@@ -241,15 +247,15 @@ impl Report {
         )
     }
 
-    pub fn ralph_blocked(worker: &WorkerId, at: &str, text: String) -> Self {
+    pub fn ralph_blocked(worker: &WorkerId, at: DateTime<Utc>, text: String) -> Self {
         Self::from_worker(worker, at, ReportStatus::Blocked, text)
     }
 
-    pub fn check(worker: &WorkerId, at: &str, text: String) -> Self {
+    pub fn check(worker: &WorkerId, at: DateTime<Utc>, text: String) -> Self {
         Self::with_kind(Sender::Worker(worker.clone()), at, ReportKind::Check, text)
     }
 
-    pub fn warning(worker: &WorkerId, at: &str, text: String) -> Self {
+    pub fn warning(worker: &WorkerId, at: DateTime<Utc>, text: String) -> Self {
         Self::with_kind(
             Sender::Worker(worker.clone()),
             at,
@@ -258,19 +264,19 @@ impl Report {
         )
     }
 
-    pub fn watch(watch: &WatchId, at: &str, text: String) -> Self {
+    pub fn watch(watch: &WatchId, at: DateTime<Utc>, text: String) -> Self {
         Self::with_kind(Sender::Watch(watch.clone()), at, ReportKind::Watch, text)
     }
 
-    pub fn merged(thread: &ThreadName, at: &str, text: String) -> Self {
+    pub fn merged(thread: &ThreadName, at: DateTime<Utc>, text: String) -> Self {
         Self::with_kind(Sender::Thread(thread.clone()), at, ReportKind::Merged, text)
     }
 
-    pub fn view(thread: &ThreadName, at: &str, text: String) -> Self {
+    pub fn view(thread: &ThreadName, at: DateTime<Utc>, text: String) -> Self {
         Self::with_kind(Sender::Thread(thread.clone()), at, ReportKind::View, text)
     }
 
-    pub fn thread_closed(thread: &ThreadName, at: &str, text: String) -> Self {
+    pub fn thread_closed(thread: &ThreadName, at: DateTime<Utc>, text: String) -> Self {
         Self::with_kind(
             Sender::Thread(thread.clone()),
             at,
@@ -279,7 +285,7 @@ impl Report {
         )
     }
 
-    pub fn external(source: &SourceName, at: &str, text: String) -> Self {
+    pub fn external(source: &SourceName, at: DateTime<Utc>, text: String) -> Self {
         Self::with_kind(
             Sender::External(source.clone()),
             at,
@@ -464,7 +470,7 @@ pub fn exclude_lines(harness: HarnessId, repo: &Path, worktree_dir: &Path) -> Ve
 }
 
 pub fn inbox_file_name(report: &Report, seq: u64) -> String {
-    let stamp: String = report.at.chars().filter(char::is_ascii_digit).collect();
+    let stamp = report.at.format("%Y%m%d%H%M%S%9f");
     let worker: String = report
         .from
         .to_string()
@@ -613,7 +619,7 @@ mod tests {
     fn report(worker: &str, status: &str, text: &str) -> Report {
         Report {
             from: crate::worker::Sender::parse(worker).unwrap(),
-            at: "2026-10-09T15:30:01.5+00:00".to_string(),
+            at: "2026-10-09T15:30:01.5+00:00".parse().unwrap(),
             status: ReportKind::parse(status).unwrap(),
             text: text.into(),
         }
@@ -803,7 +809,7 @@ mod tests {
     fn inbox_file_name_sorts_by_time_and_sanitizes_worker() {
         assert_eq!(
             inbox_file_name(&report("thread:side", "done", "x"), 7),
-            "2026100915300150000-000007-thread_side.json"
+            "20261009153001500000000-000007-thread_side.json"
         );
     }
 

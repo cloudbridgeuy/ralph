@@ -29,8 +29,8 @@ pub(crate) fn post_denial(
     verdict: &Unattended,
     content: &BlockedContent,
 ) {
-    let at = chrono::Utc::now().to_rfc3339();
-    let report = WorkerId::parse(worker).map(|id| verdict.denial_report(&id, &at, content));
+    let at = chrono::Utc::now();
+    let report = WorkerId::parse(worker).map(|id| verdict.denial_report(&id, at, content));
     if let Some(report) = report.transpose() {
         warn_if_err(
             report
@@ -94,9 +94,9 @@ impl<R> PermissionQueue<R> {
             request_id: self.published_id(&content.request_id),
             ..content
         };
-        let at = chrono::Utc::now().to_rfc3339();
+        let at = chrono::Utc::now();
         let report =
-            WorkerId::parse(&self.worker_id).map(|id| permission_alert_report(&id, &at, &content));
+            WorkerId::parse(&self.worker_id).map(|id| permission_alert_report(&id, at, &content));
         queue.push_back(Pending { reply, content });
         self.publish(&queue);
         warn_if_err(

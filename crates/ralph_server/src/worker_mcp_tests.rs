@@ -25,7 +25,7 @@ fn malformed_message_file_is_skipped_and_others_delivered() {
     let post = |text: &str, seq| {
         let report = Report::from_worker(
             &WorkerId::parse("A").unwrap(),
-            &format!("2026-01-01T00:00:0{seq}Z"),
+            format!("2026-01-01T00:00:0{seq}Z").parse().unwrap(),
             ReportStatus::Done,
             text.to_string(),
         );
@@ -79,9 +79,9 @@ fn load_ledger_keeps_good_entries_when_one_is_malformed() {
     let inbox = Inbox::new(inbox_dir.clone());
     let raw = serde_json::json!({
         "entries": [
-            {"source": "a", "report": {"worker": "A", "at": "t1", "status": "done", "text": "ok"}},
+            {"source": "a", "report": {"worker": "A", "at": "2026-01-01T00:00:01Z", "status": "done", "text": "ok"}},
             {"source": "bad", "report": {"worker": "A"}},
-            {"source": "b", "report": {"worker": "B", "at": "t2", "status": "done", "text": "ok2"}},
+            {"source": "b", "report": {"worker": "B", "at": "2026-01-01T00:00:02Z", "status": "done", "text": "ok2"}},
         ],
     });
     let original = serde_json::to_vec(&raw).unwrap();
@@ -153,7 +153,7 @@ fn post_past_taken_names(taken: u64) -> (io::Result<()>, usize) {
     fs::create_dir_all(&inbox_dir).unwrap();
     let report = Report::from_worker(
         &WorkerId::parse("A").unwrap(),
-        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z".parse().unwrap(),
         ReportStatus::Done,
         "late".to_string(),
     );

@@ -399,7 +399,7 @@ mod tests {
     fn inbox_report() -> Report {
         Report::from_worker(
             &WorkerId::parse("w").unwrap(),
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Done,
             "verify".to_string(),
         )
@@ -473,7 +473,7 @@ mod tests {
     fn report_fails_when_the_only_report_is_not_done() {
         let blocked = Report::from_worker(
             &WorkerId::parse("w").unwrap(),
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Blocked,
             "verify".to_string(),
         );
@@ -619,13 +619,14 @@ mod tests {
 
     #[test]
     fn parse_reports_keeps_valid_reports_and_skips_the_rest() {
-        let valid = r#"{"worker":"verify","at":"t","status":"done","text":"verify"}"#;
+        let valid =
+            r#"{"worker":"verify","at":"2026-01-01T00:00:00Z","status":"done","text":"verify"}"#;
         let found = parse_reports(&[valid.to_string(), "not json".to_string(), "{}".to_string()]);
         assert_eq!(
             found,
             vec![Report::from_worker(
                 &WorkerId::parse("verify").unwrap(),
-                "t",
+                "2026-01-01T00:00:00Z".parse().unwrap(),
                 crate::worker::ReportStatus::Done,
                 "verify".into()
             )]
@@ -636,7 +637,9 @@ mod tests {
     fn file(name: &str, status: &str) -> InboxFile {
         (
             name.to_string(),
-            format!(r#"{{"worker":"w","at":"t","status":"{status}","text":"verify"}}"#),
+            format!(
+                r#"{{"worker":"w","at":"2026-01-01T00:00:00Z","status":"{status}","text":"verify"}}"#
+            ),
         )
     }
 

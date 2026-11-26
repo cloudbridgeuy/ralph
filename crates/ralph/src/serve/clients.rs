@@ -89,7 +89,7 @@ mod tests {
         });
         let report = Report::from_worker(
             &ralph_core::worker::WorkerId::parse("w1").unwrap(),
-            "now",
+            chrono::DateTime::UNIX_EPOCH,
             ralph_core::worker::ReportStatus::Done,
             "finished".into(),
         );

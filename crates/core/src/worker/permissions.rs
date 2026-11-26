@@ -2,6 +2,7 @@ use crate::chat_answer::AnswerArgs;
 use crate::worker::{
     deny_line, permission_response, ClaudePermission, Report, WorkerId, ALLOW_ONCE,
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -399,7 +400,11 @@ pub fn no_option_message(options: &[PermissionOption]) -> String {
     )
 }
 
-pub fn permission_alert_report(id: &WorkerId, at: &str, content: &BlockedContent) -> Report {
+pub fn permission_alert_report(
+    id: &WorkerId,
+    at: DateTime<Utc>,
+    content: &BlockedContent,
+) -> Report {
     let ids: Vec<&str> = content
         .options
         .iter()
@@ -678,7 +683,11 @@ mod tests {
             options: options(),
             pending: Vec::new(),
         };
-        let report = permission_alert_report(&WorkerId::parse("A").unwrap(), "t", &content);
+        let report = permission_alert_report(
+            &WorkerId::parse("A").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
+            &content,
+        );
         assert!(report.text.contains("shell"));
         assert!(report.text.contains("request 7"));
         assert!(report.text.contains("allow-once, reject-once"));

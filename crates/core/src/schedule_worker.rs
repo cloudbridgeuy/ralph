@@ -120,7 +120,7 @@ fn report_end(task: &Task, reports: &[Report]) -> Option<WorkerEnd> {
     reports
         .iter()
         .filter(|report| report.from.to_string() == worker)
-        .filter(|report| DateTime::parse_from_rfc3339(&report.at).is_ok_and(|at| at >= started))
+        .filter(|report| report.at >= started)
         .filter_map(|report| report.status.worker_status())
         .next_back()
         .map(|status| match ReportKind::Worker(status).attention() {
@@ -196,7 +196,7 @@ pub fn plan_worker_tick<'a>(
     }
 }
 
-pub fn chat_report(task_id: &str, text: String, at: &str) -> Result<Report, SenderError> {
+pub fn chat_report(task_id: &str, text: String, at: DateTime<Utc>) -> Result<Report, SenderError> {
     WatchId::parse(&watch_id(task_id)).map(|watch| Report::watch(&watch, at, text))
 }
 

@@ -413,7 +413,7 @@ mod tests {
         let report = ralph_core::worker::prompt_failure_report(
             "agy",
             &ralph_core::worker::WorkerId::parse("A").unwrap(),
-            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z".parse().unwrap(),
             "unfinished",
         );
         write_file(

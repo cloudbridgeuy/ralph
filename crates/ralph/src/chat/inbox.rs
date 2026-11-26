@@ -88,7 +88,7 @@ mod tests {
     fn report(worker: &str) -> Report {
         Report::from_worker(
             &ralph_core::worker::WorkerId::parse(worker).unwrap(),
-            "2026-11-17T00:00:00Z",
+            "2026-11-17T00:00:00Z".parse().unwrap(),
             ralph_core::worker::ReportStatus::Done,
             format!("{worker} finished"),
         )

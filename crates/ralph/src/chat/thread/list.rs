@@ -100,7 +100,7 @@ mod tests {
         let auth = name("auth");
         ensure(&main, &name("b-side")).unwrap();
         Inbox::new(dir.join(INBOX_DIR))
-            .post(&merged_report(&auth, "a", "t1"), 0)
+            .post(&merged_report(&auth, "a", chrono::DateTime::UNIX_EPOCH), 0)
             .unwrap();
         park_thread(&main, &name("b-side"), &[]).unwrap();
         let rows = rows(&main, &|n| usize::from(n.as_str() == "auth") * 3).unwrap();

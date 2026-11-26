@@ -125,7 +125,7 @@ impl Waiter {
                 &self.spec,
                 &outcome,
                 &locked(&self.tail),
-                &chrono::Utc::now().to_rfc3339(),
+                chrono::Utc::now(),
             );
             *locked(&self.outcome) = Some(outcome);
             warn_if_err(
@@ -203,7 +203,7 @@ impl Watches {
         now: chrono::DateTime<chrono::Utc>,
     ) {
         let tail = Tail::new(TAIL_MAX_LINES, TAIL_MAX_BYTES);
-        let report = build_report(spec, outcome, &tail, &now.to_rfc3339());
+        let report = build_report(spec, outcome, &tail, now);
         warn_if_err(
             report
                 .map_err(std::io::Error::other)

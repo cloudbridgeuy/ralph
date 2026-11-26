@@ -64,7 +64,7 @@ pub fn finish_worker(
         return;
     }
     if let Some(text) = repeat_stopped_text(task, end) {
-        let report = chat_report(&task.id, text, &now.to_rfc3339());
+        let report = chat_report(&task.id, text, now);
         warn_if_err(
             report
                 .map_err(std::io::Error::other)
@@ -88,7 +88,7 @@ fn stop_if_open(
     match open_branch_decision(task, is_open(&branch)) {
         OpenBranch::Start => false,
         OpenBranch::Stop(text) => {
-            let report = chat_report(&task.id, text, &now.to_rfc3339());
+            let report = chat_report(&task.id, text, now);
             warn_if_err(
                 report
                     .map_err(std::io::Error::other)

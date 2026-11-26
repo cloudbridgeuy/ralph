@@ -178,7 +178,11 @@ mod tests {
     #[test]
     fn ralph_blocked_report_serializes_as_blocked() {
         let worker = WorkerId::parse("w1").unwrap();
-        let report = Report::ralph_blocked(&worker, "2026-11-25T00:00:00Z", "stuck".to_string());
+        let report = Report::ralph_blocked(
+            &worker,
+            "2026-11-25T00:00:00Z".parse().unwrap(),
+            "stuck".to_string(),
+        );
         let encoded: Value = serde_json::to_value(&report).unwrap();
         assert_eq!(
             encoded,
@@ -225,45 +229,72 @@ mod tests {
         let source = SourceName::parse("ci").unwrap();
         let cases = [
             (
-                Report::from_worker(&worker, "t", ReportStatus::Done, "ok".into()),
+                Report::from_worker(
+                    &worker,
+                    chrono::DateTime::UNIX_EPOCH,
+                    ReportStatus::Done,
+                    "ok".into(),
+                ),
                 "w1",
                 "done",
             ),
             (
-                Report::from_worker(&worker, "t", ReportStatus::Blocked, "no".into()),
+                Report::from_worker(
+                    &worker,
+                    chrono::DateTime::UNIX_EPOCH,
+                    ReportStatus::Blocked,
+                    "no".into(),
+                ),
                 "w1",
                 "blocked",
             ),
             (
-                Report::from_worker(&worker, "t", ReportStatus::Question, "q".into()),
+                Report::from_worker(
+                    &worker,
+                    chrono::DateTime::UNIX_EPOCH,
+                    ReportStatus::Question,
+                    "q".into(),
+                ),
                 "w1",
                 "question",
             ),
             (
-                Report::ralph_blocked(&worker, "t", "p".into()),
+                Report::ralph_blocked(&worker, chrono::DateTime::UNIX_EPOCH, "p".into()),
                 "w1",
                 "blocked",
             ),
-            (Report::check(&worker, "t", "c".into()), "w1", "check"),
-            (Report::warning(&worker, "t", "w".into()), "w1", "warning"),
-            (Report::watch(&watch, "t", "x".into()), "watch:ci", "watch"),
             (
-                Report::merged(&thread, "t", "m".into()),
+                Report::check(&worker, chrono::DateTime::UNIX_EPOCH, "c".into()),
+                "w1",
+                "check",
+            ),
+            (
+                Report::warning(&worker, chrono::DateTime::UNIX_EPOCH, "w".into()),
+                "w1",
+                "warning",
+            ),
+            (
+                Report::watch(&watch, chrono::DateTime::UNIX_EPOCH, "x".into()),
+                "watch:ci",
+                "watch",
+            ),
+            (
+                Report::merged(&thread, chrono::DateTime::UNIX_EPOCH, "m".into()),
                 "thread:side",
                 "merged",
             ),
             (
-                Report::view(&thread, "t", "v".into()),
+                Report::view(&thread, chrono::DateTime::UNIX_EPOCH, "v".into()),
                 "thread:side",
                 "view",
             ),
             (
-                Report::thread_closed(&thread, "t", "tc".into()),
+                Report::thread_closed(&thread, chrono::DateTime::UNIX_EPOCH, "tc".into()),
                 "thread:side",
                 "thread-closed",
             ),
             (
-                Report::external(&source, "t", "e".into()),
+                Report::external(&source, chrono::DateTime::UNIX_EPOCH, "e".into()),
                 "external:ci",
                 "report",
             ),

@@ -300,9 +300,9 @@ fn turn_end<T>(result: &Result<T, agent_client_protocol::Error>, interrupted: bo
 }
 
 fn post_prompt_failure(turns: &Turns, problem: &str) {
-    let at = chrono::Utc::now().to_rfc3339();
+    let at = chrono::Utc::now();
     let report = WorkerId::parse(&turns.worker_id)
-        .map(|id| prompt_failure_report(turns.agent.name, &id, &at, problem));
+        .map(|id| prompt_failure_report(turns.agent.name, &id, at, problem));
     crate::warn::warn_if_err(
         report
             .map_err(std::io::Error::other)

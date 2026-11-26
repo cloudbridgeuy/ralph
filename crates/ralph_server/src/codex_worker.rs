@@ -351,9 +351,9 @@ impl Pump {
                     }
                 }
                 Action::PostFailure(problem) => {
-                    let at = chrono::Utc::now().to_rfc3339();
+                    let at = chrono::Utc::now();
                     let report = WorkerId::parse(&self.id).map(|id| {
-                        prompt_failure_report(HarnessId::Codex.as_str(), &id, &at, &problem)
+                        prompt_failure_report(HarnessId::Codex.as_str(), &id, at, &problem)
                     });
                     warn_if_err(
                         report

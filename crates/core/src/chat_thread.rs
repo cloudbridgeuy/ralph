@@ -1,6 +1,7 @@
 use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
 pub use crate::chat_thread_root::{config_root, fork_of};
 use crate::worker::{shell_quote, Report};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -208,7 +209,7 @@ pub fn digest_with(
     ))
 }
 
-pub fn merged_report(name: &ThreadName, digest: &str, at: &str) -> Report {
+pub fn merged_report(name: &ThreadName, digest: &str, at: DateTime<Utc>) -> Report {
     Report::merged(name, at, digest.to_string())
 }
 
@@ -230,7 +231,7 @@ pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<St
     Ok(block)
 }
 
-pub fn view_report(name: &ThreadName, block: &str, at: &str) -> Report {
+pub fn view_report(name: &ThreadName, block: &str, at: DateTime<Utc>) -> Report {
     Report::view(name, at, block.to_string())
 }
 
@@ -708,13 +709,22 @@ mod tests {
 
     #[test]
     fn a_merged_report_reads_as_a_thread_message() {
-        let report = merged_report(&name("auth"), "Picked x. #auth:0", "2026-11-03T10:00:00Z");
+        let report = merged_report(
+            &name("auth"),
+            "Picked x. #auth:0",
+            "2026-11-03T10:00:00Z".parse().unwrap(),
+        );
         assert_eq!(report.from.to_string(), "thread:auth");
         assert_eq!(report.status.as_str(), "merged");
-        assert_eq!(report.at, "2026-11-03T10:00:00Z");
+        assert_eq!(
+            report.at,
+            "2026-11-03T10:00:00Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
         let worker = Report::from_worker(
             &crate::worker::WorkerId::parse("GUZ-1").unwrap(),
-            "t",
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Done,
             "ok".to_string(),
         );
@@ -892,10 +902,10 @@ mod tests {
 
     #[test]
     fn a_view_report_reads_as_thread_view_in_main() {
-        let report = view_report(&name("auth"), "block", "t");
+        let report = view_report(&name("auth"), "block", chrono::DateTime::UNIX_EPOCH);
         assert_eq!(
-            (report.from.to_string().as_str(), report.at.as_str()),
-            ("thread:auth", "t")
+            (report.from.to_string().as_str(), report.at),
+            ("thread:auth", chrono::DateTime::UNIX_EPOCH)
         );
         assert_eq!(
             crate::worker::chat_message(&[report]),

@@ -120,7 +120,9 @@ impl From<InboxReport> for WireReport {
     fn from(report: InboxReport) -> Self {
         Self {
             worker: report.from.to_string(),
-            at: report.at,
+            at: report
+                .at
+                .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
             status: report.status.as_str().to_string(),
             text: report.text,
         }
@@ -752,7 +754,7 @@ mod tests {
         for kind in ReportKind::ALL {
             let report = InboxReport {
                 from: ralph_core::worker::Sender::parse("w1").unwrap(),
-                at: "now".into(),
+                at: "2026-01-01T00:00:00.5Z".parse().unwrap(),
                 status: kind,
                 text: "body".into(),
             };
@@ -760,7 +762,7 @@ mod tests {
                 WireReport::from(report),
                 WireReport {
                     worker: "w1".into(),
-                    at: "now".into(),
+                    at: "2026-01-01T00:00:00.500Z".into(),
                     status: kind.as_str().into(),
                     text: "body".into(),
                 }
@@ -782,7 +784,7 @@ mod tests {
     fn inbox_push_preserves_large_reports_that_fit_in_one_frame() {
         let report = InboxReport::external(
             &ralph_core::worker::SourceName::parse("w").unwrap(),
-            "now",
+            chrono::DateTime::UNIX_EPOCH,
             "a".repeat(MAX_FRAME_BYTES / 2),
         );
         let sent = WireReport::from(report.clone());
@@ -795,9 +797,9 @@ mod tests {
         let field = "\u{0000}".repeat(MAX_FRAME_BYTES / 5);
         let report = InboxReport {
             from: ralph_core::worker::Sender::parse("w").unwrap(),
-            at: field,
+            at: chrono::DateTime::UNIX_EPOCH,
             status: ReportKind::External,
-            text: "🦀".repeat(MAX_FRAME_BYTES / 4),
+            text: format!("{field}{}", "🦀".repeat(MAX_FRAME_BYTES / 4)),
         };
         let line = encode_frame(0, &inbox_frame(&SessionKey::Main, report, 1));
         assert!(line.len() <= MAX_FRAME_BYTES);

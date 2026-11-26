@@ -854,9 +854,9 @@ fn post_prompt(api: &HttpSse, session_id: &str, text: &str) -> Result<(), String
 }
 
 fn post_problem(target: &Target, problem: &str) {
-    let at = chrono::Utc::now().to_rfc3339();
+    let at = chrono::Utc::now();
     let report =
-        WorkerId::parse(&target.worker).map(|id| opencode_failure_report(&id, &at, problem));
+        WorkerId::parse(&target.worker).map(|id| opencode_failure_report(&id, at, problem));
     warn_if_err(
         report
             .map_err(std::io::Error::other)

@@ -54,7 +54,7 @@ pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
     reports
         .iter()
         .filter(|report| report.status.worker_status().is_some())
-        .map(|report| (report.from.to_string(), report.at.clone()))
+        .map(|report| (report.from.to_string(), report.at.to_rfc3339()))
         .collect()
 }
 
@@ -732,22 +732,30 @@ mod tests {
         let reports = [
             Report::from_worker(
                 &WorkerId::parse("w1").unwrap(),
-                "t1",
+                chrono::DateTime::UNIX_EPOCH,
                 ReportStatus::Done,
                 String::new(),
             ),
-            Report::check(&WorkerId::parse("w1").unwrap(), "t2", String::new()),
-            Report::check(&WorkerId::parse("w2").unwrap(), "t3", String::new()),
+            Report::check(
+                &WorkerId::parse("w1").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                String::new(),
+            ),
+            Report::check(
+                &WorkerId::parse("w2").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                String::new(),
+            ),
             Report::from_worker(
                 &WorkerId::parse("w1").unwrap(),
-                "t4",
+                "2026-01-01T00:00:04Z".parse().unwrap(),
                 ReportStatus::Question,
                 String::new(),
             ),
         ];
         let last = last_reports(&reports);
         assert_eq!(last.len(), 1);
-        assert_eq!(last["w1"], "t4");
+        assert_eq!(last["w1"], "2026-01-01T00:00:04+00:00");
     }
 
     fn worker_entry(at: &str, text: &str) -> Entry {

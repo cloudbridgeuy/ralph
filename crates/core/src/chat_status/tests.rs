@@ -474,13 +474,13 @@ fn workers_come_from_prefixed_sessions_with_last_known_state() {
     let reports = [
         Report::from_worker(
             &WorkerId::parse("GUZ-2").unwrap(),
-            "a",
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Question,
             "x".into(),
         ),
         Report::from_worker(
             &WorkerId::parse("GUZ-2").unwrap(),
-            "b",
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Done,
             "y".into(),
         ),
