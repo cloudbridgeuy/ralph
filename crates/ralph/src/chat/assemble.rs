@@ -6,7 +6,7 @@ use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
 use ralph_core::worker::ATTACHMENTS_DIR;
-use ralph_server::chat::backend::{ChatBackend, ClaudeBackend};
+use ralph_server::chat::backend::{ChatBackend, ClaudeSlot};
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::keepalive::Stamp;
 use ralph_server::chat::memory::Store;
@@ -116,7 +116,14 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
     });
     let run = run_id(std::process::id(), &key, chrono::Utc::now());
     let last_ping: Stamp = Arc::default();
-    let backend: Arc<dyn ChatBackend> = Arc::new(ClaudeBackend);
+    let backend: Arc<dyn ChatBackend> = Arc::new(ClaudeSlot {
+        system_prompt_file: wiring.system_prompt_file.clone(),
+        permission_mode: settings.permission_mode.clone(),
+        mcp_args: std::mem::take(&mut wiring.mcp_args),
+        plugin_args: std::mem::take(&mut wiring.plugin_args),
+        model_args: options.model_args,
+        isolation,
+    });
     let caps = backend.capabilities();
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -160,17 +167,11 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         store: Store::new(store_dir.to_path_buf()),
         store_dir: store_dir.to_path_buf(),
         fork: options.fork,
-        mcp_args: std::mem::take(&mut wiring.mcp_args),
         runtime_files: wiring.runtime_files,
         socket,
-        system_prompt_file: wiring.system_prompt_file.clone(),
-        permission_mode: settings.permission_mode.clone(),
-        plugin_args: std::mem::take(&mut wiring.plugin_args),
-        model_args: options.model_args,
         skills: std::mem::take(&mut wiring.skills),
         custom_prompt: options.custom_prompt,
         reply_images: options.output.reply_images,
-        isolation,
         backend,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
