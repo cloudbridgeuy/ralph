@@ -126,56 +126,48 @@ mod test;
 mod util;
 
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
-const ACCEPT_MAX_CONSECUTIVE_FAILURES: u32 = 100;
 
-#[derive(Debug, PartialEq)]
-enum AcceptAction {
-    Retry,
-    Stop,
-}
-
-fn accept_error_action(consecutive_failures: u32) -> AcceptAction {
-    if consecutive_failures >= ACCEPT_MAX_CONSECUTIVE_FAILURES {
-        AcceptAction::Stop
-    } else {
-        AcceptAction::Retry
-    }
+fn should_log_accept_error(streak: u32) -> bool {
+    streak == 1 || streak % 100 == 0
 }
 
 #[cfg(test)]
-mod accept_error_test {
-    use super::{accept_error_action, AcceptAction, ACCEPT_MAX_CONSECUTIVE_FAILURES};
+mod accept_log_test {
+    use super::should_log_accept_error;
 
     #[test]
-    fn first_failure_retries() {
-        assert_eq!(accept_error_action(1), AcceptAction::Retry);
+    fn streak_1_logs_the_first_error() {
+        assert!(should_log_accept_error(1));
     }
 
     #[test]
-    fn failure_before_the_limit_retries() {
-        assert_eq!(
-            accept_error_action(ACCEPT_MAX_CONSECUTIVE_FAILURES - 1),
-            AcceptAction::Retry
-        );
+    fn streak_2_does_not_log() {
+        assert!(!should_log_accept_error(2));
     }
 
     #[test]
-    fn failure_at_the_limit_stops() {
-        assert_eq!(
-            accept_error_action(ACCEPT_MAX_CONSECUTIVE_FAILURES),
-            AcceptAction::Stop
-        );
+    fn streak_99_does_not_log() {
+        assert!(!should_log_accept_error(99));
     }
 
     #[test]
-    fn the_limit_is_one_hundred() {
-        assert_eq!(accept_error_action(99), AcceptAction::Retry);
-        assert_eq!(accept_error_action(100), AcceptAction::Stop);
+    fn streak_100_logs_every_hundredth() {
+        assert!(should_log_accept_error(100));
     }
 
     #[test]
-    fn failure_past_the_limit_stops() {
-        assert_eq!(accept_error_action(101), AcceptAction::Stop);
+    fn streak_101_does_not_log() {
+        assert!(!should_log_accept_error(101));
+    }
+
+    #[test]
+    fn streak_200_logs_every_hundredth() {
+        assert!(should_log_accept_error(200));
+    }
+
+    #[test]
+    fn streak_u32_max_does_not_log_because_it_is_not_a_multiple_of_100() {
+        assert!(!should_log_accept_error(u32::MAX));
     }
 }
 
@@ -190,27 +182,10 @@ pub struct Server {
     close: Arc<AtomicBool>,
 
     // queue for messages received by child threads
-    messages: Arc<MessagesQueue<Message>>,
+    messages: Arc<MessagesQueue<Request>>,
 
     // result of TcpListener::local_addr()
     listening_addr: ListenAddr,
-}
-
-enum Message {
-    Error(IoError),
-    NewRequest(Request),
-}
-
-impl From<IoError> for Message {
-    fn from(e: IoError) -> Message {
-        Message::Error(e)
-    }
-}
-
-impl From<Request> for Message {
-    fn from(rq: Request) -> Message {
-        Message::NewRequest(rq)
-    }
 }
 
 // Compile-time assertion that Server implements Sync and Send.
@@ -354,7 +329,7 @@ impl Server {
             log::debug!("Running accept thread");
             let mut consecutive_failures = 0u32;
             while !inside_close_trigger.load(Relaxed) {
-                let new_client = match server.accept(timeouts) {
+                let client = match server.accept(timeouts) {
                     Ok(None) => {
                         consecutive_failures = 0;
                         continue;
@@ -383,7 +358,7 @@ impl Server {
                             ClientConnection::new(write_closable, read_closable, timeouts.header)
                         });
                         match connection {
-                            Ok(client) => Ok(client),
+                            Ok(client) => client,
                             Err(e) => {
                                 log::warn!("Dropping connection, socket clone failed: {}", e);
                                 continue;
@@ -391,46 +366,33 @@ impl Server {
                         }
                     }
                     Err(e) => {
-                        consecutive_failures += 1;
-                        match accept_error_action(consecutive_failures) {
-                            AcceptAction::Retry => {
-                                log::warn!("Accept error, retrying: {}", e);
-                                thread::sleep(ACCEPT_BACKOFF);
-                                continue;
-                            }
-                            AcceptAction::Stop => Err(e),
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        if should_log_accept_error(consecutive_failures) {
+                            log::warn!("Accept error, retrying: {}", e);
                         }
+                        thread::sleep(ACCEPT_BACKOFF);
+                        continue;
                     }
                 };
 
-                match new_client {
-                    Ok(client) => {
-                        let messages = inside_messages.clone();
-                        let mut client = Some(client);
-                        tasks_pool.spawn(Box::new(move || {
-                            if let Some(client) = client.take() {
-                                // Synchronization is needed for HTTPS requests to avoid a deadlock
-                                if client.secure() {
-                                    let (sender, receiver) = mpsc::channel();
-                                    for rq in client {
-                                        messages.push(rq.with_notify_sender(sender.clone()).into());
-                                        receiver.recv().unwrap();
-                                    }
-                                } else {
-                                    for rq in client {
-                                        messages.push(rq.into());
-                                    }
-                                }
+                let messages = inside_messages.clone();
+                let mut client = Some(client);
+                tasks_pool.spawn(Box::new(move || {
+                    if let Some(client) = client.take() {
+                        // Synchronization is needed for HTTPS requests to avoid a deadlock
+                        if client.secure() {
+                            let (sender, receiver) = mpsc::channel();
+                            for rq in client {
+                                messages.push(rq.with_notify_sender(sender.clone()));
+                                receiver.recv().unwrap();
                             }
-                        }));
+                        } else {
+                            for rq in client {
+                                messages.push(rq);
+                            }
+                        }
                     }
-
-                    Err(e) => {
-                        log::error!("Error accepting new client: {}", e);
-                        inside_messages.push(e.into());
-                        break;
-                    }
-                }
+                }));
             }
             log::debug!("Terminating accept thread");
         });
@@ -466,8 +428,7 @@ impl Server {
     /// Blocks until an HTTP request has been submitted and returns it.
     pub fn recv(&self) -> IoResult<Request> {
         match self.messages.pop() {
-            Some(Message::Error(err)) => Err(err),
-            Some(Message::NewRequest(rq)) => Ok(rq),
+            Some(rq) => Ok(rq),
             None => Err(IoError::new(IoErrorKind::Other, "thread unblocked")),
         }
     }
@@ -475,8 +436,7 @@ impl Server {
     /// Same as `recv()` but doesn't block longer than timeout
     pub fn recv_timeout(&self, timeout: Duration) -> IoResult<Option<Request>> {
         match self.messages.pop_timeout(timeout) {
-            Some(Message::Error(err)) => Err(err),
-            Some(Message::NewRequest(rq)) => Ok(Some(rq)),
+            Some(rq) => Ok(Some(rq)),
             None => Ok(None),
         }
     }
@@ -484,8 +444,7 @@ impl Server {
     /// Same as `recv()` but doesn't block.
     pub fn try_recv(&self) -> IoResult<Option<Request>> {
         match self.messages.try_pop() {
-            Some(Message::Error(err)) => Err(err),
-            Some(Message::NewRequest(rq)) => Ok(Some(rq)),
+            Some(rq) => Ok(Some(rq)),
             None => Ok(None),
         }
     }
