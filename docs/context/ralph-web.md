@@ -340,7 +340,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - The pager.
 - Tree rows:
   - A folded block is one row with the `no summary yet` text. It has no `aria-expanded` and does not open.
-  - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. It opens to show the full text.
+  - A leaf root node is drawn as the entry (`#i role`, compact time and first line), not as a node. In the tree, it opens to show the full text. The entries table in the detail pane has its own in-place rows, described under `Entries and paging`.
   - Any entry row in the entries table of the detail pane opens in place. See `Entries and paging`.
   - Opening a block adds only its child blocks or entry rows. The tree group has no summary row: the summary is in the detail pane.
   - A block with no summary shows `no summary yet` in its row.
