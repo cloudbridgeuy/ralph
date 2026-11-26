@@ -179,12 +179,12 @@ mod tests {
     }
 
     fn report(worker: &str) -> Report {
-        Report {
-            worker: worker.to_string(),
-            at: String::new(),
-            status: "done".to_string(),
-            text: String::new(),
-        }
+        Report::from_worker(
+            worker,
+            "",
+            ralph_core::worker::ReportStatus::Done,
+            String::new(),
+        )
     }
 
     #[test]

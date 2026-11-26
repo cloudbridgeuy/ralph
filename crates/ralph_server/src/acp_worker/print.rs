@@ -623,12 +623,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let markers = WorkerMarkers::new(dir.path(), "A");
         let inbox = Inbox::new(dir.path().join("inbox"));
-        let report = Report {
-            worker: "A".to_string(),
-            at: "2026-11-07T00:00:00Z".to_string(),
-            status: "done".to_string(),
-            text: "ok".to_string(),
-        };
+        let report = Report::from_worker(
+            "A",
+            "2026-11-07T00:00:00Z",
+            ralph_core::worker::ReportStatus::Done,
+            "ok".to_string(),
+        );
         inbox.post(&report, 0).unwrap();
         write_file(&markers.reported, "").unwrap();
         let mut turns = Turns::default();

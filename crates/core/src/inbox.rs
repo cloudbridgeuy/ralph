@@ -332,16 +332,12 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::ReportStatus;
 
     fn arrival(source: &str) -> (String, Report) {
         (
             source.to_string(),
-            Report {
-                worker: "A".to_string(),
-                at: "t".to_string(),
-                status: "done".to_string(),
-                text: source.to_string(),
-            },
+            Report::from_worker("A", "t", ReportStatus::Done, source.to_string()),
         )
     }
 
@@ -356,12 +352,7 @@ mod tests {
     fn entry(worker: &str, at: &str) -> Entry {
         Entry {
             source: worker.to_string(),
-            report: Report {
-                worker: worker.to_string(),
-                at: at.to_string(),
-                status: "done".to_string(),
-                text: String::new(),
-            },
+            report: Report::from_worker(worker, at, ReportStatus::Done, String::new()),
         }
     }
 

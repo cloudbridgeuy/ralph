@@ -31,11 +31,17 @@ fn running(id: &str, started: &str) -> Task {
 }
 
 fn report(worker: &str, at: &str, status: &str) -> Report {
-    Report {
-        worker: worker.to_string(),
-        at: at.to_string(),
-        status: status.to_string(),
-        text: "t".to_string(),
+    match crate::worker::ReportKind::parse(status).unwrap() {
+        crate::worker::ReportKind::Worker(s) => Report::from_worker(worker, at, s, "t".to_string()),
+        crate::worker::ReportKind::Check => Report::check(worker, at, "t".to_string()),
+        crate::worker::ReportKind::Warning => Report::warning(worker, at, "t".to_string()),
+        crate::worker::ReportKind::Watch => Report::watch(worker, at, "t".to_string()),
+        crate::worker::ReportKind::Merged => Report::merged(worker, at, "t".to_string()),
+        crate::worker::ReportKind::View => Report::view(worker, at, "t".to_string()),
+        crate::worker::ReportKind::ThreadClosed => {
+            Report::thread_closed(worker, at, "t".to_string())
+        }
+        crate::worker::ReportKind::External => Report::external(worker, at, "t".to_string()),
     }
 }
 

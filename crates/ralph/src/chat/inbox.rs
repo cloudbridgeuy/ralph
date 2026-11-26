@@ -86,12 +86,12 @@ mod tests {
     use crate::highlight::Highlighter;
 
     fn report(worker: &str) -> Report {
-        Report {
-            worker: worker.to_string(),
-            at: "2026-11-17T00:00:00Z".to_string(),
-            status: "done".to_string(),
-            text: format!("{worker} finished"),
-        }
+        Report::from_worker(
+            worker,
+            "2026-11-17T00:00:00Z",
+            ralph_core::worker::ReportStatus::Done,
+            format!("{worker} finished"),
+        )
     }
 
     fn with_display<R>(check: impl FnOnce(&Display) -> R) -> R {

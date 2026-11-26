@@ -394,12 +394,12 @@ mod tests {
     }
 
     fn inbox_report() -> Report {
-        Report {
-            worker: "w".to_string(),
-            at: "t".to_string(),
-            status: "done".to_string(),
-            text: "verify".to_string(),
-        }
+        Report::from_worker(
+            "w",
+            "t",
+            crate::worker::ReportStatus::Done,
+            "verify".to_string(),
+        )
     }
 
     fn report_check_after(lines: &[Value], inbox: &[Report]) -> CheckResult {
@@ -468,10 +468,12 @@ mod tests {
 
     #[test]
     fn report_fails_when_the_only_report_is_not_done() {
-        let blocked = Report {
-            status: "blocked".to_string(),
-            ..inbox_report()
-        };
+        let blocked = Report::from_worker(
+            "w",
+            "t",
+            crate::worker::ReportStatus::Blocked,
+            "verify".to_string(),
+        );
         let check = report_check_after(&[connected(), report_tool_use()], &[blocked]);
         assert_eq!(
             check,
@@ -618,12 +620,12 @@ mod tests {
         let found = parse_reports(&[valid.to_string(), "not json".to_string(), "{}".to_string()]);
         assert_eq!(
             found,
-            vec![Report {
-                worker: "verify".into(),
-                at: "t".into(),
-                status: "done".into(),
-                text: "verify".into(),
-            }]
+            vec![Report::from_worker(
+                "verify",
+                "t",
+                crate::worker::ReportStatus::Done,
+                "verify".into()
+            )]
         );
         assert!(parse_reports(&[]).is_empty());
     }

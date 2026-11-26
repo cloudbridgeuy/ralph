@@ -2,7 +2,7 @@ use super::*;
 use crate::chat_send_it::{run_end_prefill, Next as SendItNext, StopReason};
 use crate::chat_status::{ScheduleState, WatchState, WorkerState};
 use crate::inbox::Entry;
-use crate::worker::Report;
+use crate::worker::{Report, ReportStatus};
 use serde_json::json;
 
 fn parse(text: &str) -> Result<String, String> {
@@ -281,12 +281,7 @@ fn a_schedule_target_holds_and_matches_the_task_reports() {
     for worker in ["schedule:nightly", "sched-nightly"] {
         let entry = Entry {
             source: "s".to_string(),
-            report: Report {
-                worker: worker.to_string(),
-                at: "t".to_string(),
-                status: "done".to_string(),
-                text: String::new(),
-            },
+            report: Report::from_worker(worker, "t", ReportStatus::Done, String::new()),
         };
         assert!(filter.matches(&entry));
     }

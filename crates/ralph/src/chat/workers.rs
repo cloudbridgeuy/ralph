@@ -636,12 +636,12 @@ mod tests {
             id: "A".into(),
             state: "done".into(),
         }];
-        let unread = [Report {
-            worker: "A".into(),
-            at: "2026-01-01T00:48:00Z".into(),
-            status: "done".into(),
-            text: "shipped".into(),
-        }];
+        let unread = [Report::from_worker(
+            "A",
+            "2026-01-01T00:48:00Z",
+            ralph_core::worker::ReportStatus::Done,
+            "shipped".into(),
+        )];
         let text = tool_report(&store, &running, &states, Some(&unread), now());
         assert_eq!(text, "A claude done worker/A done 12m ago");
     }

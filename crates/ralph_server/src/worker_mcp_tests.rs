@@ -23,12 +23,12 @@ fn malformed_message_file_is_skipped_and_others_delivered() {
     let inbox_dir = dir.path().join("inbox");
     let inbox = Inbox::new(inbox_dir.clone());
     let post = |text: &str, seq| {
-        let report = Report {
-            worker: "A".to_string(),
-            at: format!("2026-01-01T00:00:0{seq}Z"),
-            status: "done".to_string(),
-            text: text.to_string(),
-        };
+        let report = Report::from_worker(
+            "A",
+            &format!("2026-01-01T00:00:0{seq}Z"),
+            ReportStatus::Done,
+            text.to_string(),
+        );
         inbox.post(&report, seq).unwrap();
     };
     post("first", 1);

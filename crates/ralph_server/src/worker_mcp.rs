@@ -631,12 +631,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let inbox = Inbox::new(dir.path().join("inbox"));
         for (worker, seq) in [("A", 1), ("B", 1), ("A", 2)] {
-            let report = Report {
-                worker: worker.to_string(),
-                at: format!("2026-11-10T13:00:0{seq}Z"),
-                status: "done".to_string(),
-                text: "t".to_string(),
-            };
+            let report = Report::from_worker(
+                worker,
+                &format!("2026-11-10T13:00:0{seq}Z"),
+                ReportStatus::Done,
+                "t".to_string(),
+            );
             inbox.post(&report, seq).unwrap();
         }
         assert_eq!(inbox.drop_worker("A").unwrap(), 2);
@@ -899,12 +899,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let inbox = Inbox::new(dir.path().join("inbox"));
         for (seq, text) in [(1, "one"), (2, "two")] {
-            let report = Report {
-                worker: "A".to_string(),
-                at: format!("2026-01-01T00:00:0{seq}Z"),
-                status: "done".to_string(),
-                text: text.to_string(),
-            };
+            let report = Report::from_worker(
+                "A",
+                &format!("2026-01-01T00:00:0{seq}Z"),
+                ReportStatus::Done,
+                text.to_string(),
+            );
             inbox.post(&report, seq).unwrap();
         }
         let taken = inbox.drain(Selection::At("2".parse().unwrap())).unwrap();
@@ -917,12 +917,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let inbox = Inbox::new(dir.path().join("inbox"));
         let post = |text: &str, seq| {
-            let report = Report {
-                worker: "A".to_string(),
-                at: format!("2026-01-01T00:00:0{seq}Z"),
-                status: "done".to_string(),
-                text: text.to_string(),
-            };
+            let report = Report::from_worker(
+                "A",
+                &format!("2026-01-01T00:00:0{seq}Z"),
+                ReportStatus::Done,
+                text.to_string(),
+            );
             inbox.post(&report, seq).unwrap();
         };
         post("one", 1);

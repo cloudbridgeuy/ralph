@@ -733,22 +733,13 @@ mod tests {
         assert_eq!(memory.workers.keys().collect::<Vec<_>>(), vec!["w2"]);
     }
 
-    fn report(worker: &str, at: &str, status: &str) -> Report {
-        Report {
-            worker: worker.to_string(),
-            at: at.to_string(),
-            status: status.to_string(),
-            text: String::new(),
-        }
-    }
-
     #[test]
     fn last_reports_ignore_check_posts() {
         let reports = [
-            report("w1", "t1", "done"),
-            report("w1", "t2", CHECK_STATUS),
-            report("w2", "t3", CHECK_STATUS),
-            report("w1", "t4", "question"),
+            Report::from_worker("w1", "t1", ReportStatus::Done, String::new()),
+            Report::check("w1", "t2", String::new()),
+            Report::check("w2", "t3", String::new()),
+            Report::from_worker("w1", "t4", ReportStatus::Question, String::new()),
         ];
         let last = last_reports(&reports);
         assert_eq!(last.len(), 1);

@@ -87,12 +87,12 @@ mod tests {
             clients.greet(&writer, 1, &hello_reply(VERSION)).unwrap();
             buffer
         });
-        let report = Report {
-            worker: "w1".into(),
-            status: "done".into(),
-            text: "finished".into(),
-            at: "now".into(),
-        };
+        let report = Report::from_worker(
+            "w1",
+            "now",
+            ralph_core::worker::ReportStatus::Done,
+            "finished".into(),
+        );
         clients.push(&inbox_frame(&SessionKey::Main, report, 1));
         for buffer in buffers {
             let bytes = buffer.lock().unwrap();

@@ -722,12 +722,12 @@ mod tests {
         assert_eq!(report.worker, "thread:auth");
         assert_eq!(report.status, "merged");
         assert_eq!(report.at, "2026-11-03T10:00:00Z");
-        let worker = Report {
-            worker: "GUZ-1".to_string(),
-            at: "t".to_string(),
-            status: "done".to_string(),
-            text: "ok".to_string(),
-        };
+        let worker = Report::from_worker(
+            "GUZ-1",
+            "t",
+            crate::worker::ReportStatus::Done,
+            "ok".to_string(),
+        );
         assert_eq!(
             crate::worker::chat_message(&[report, worker]),
             "[thread auth · merged]\nPicked x. #auth:0\n\n[worker GUZ-1 · done]\nok"

@@ -402,20 +402,16 @@ mod tests {
         assert!(!close_answer(None));
     }
 
-    fn report(worker: &str, status: &str) -> Report {
-        Report {
-            worker: worker.to_string(),
-            at: "t".to_string(),
-            status: status.to_string(),
-            text: "x".to_string(),
-        }
-    }
-
     #[test]
     fn close_reports_split_from_digests_and_workers() {
         let closed = thread_closed_report(&name(), AutoMode::Merge, "t");
-        let digest = report("thread:side", "merged");
-        let worker = report("w1", "done");
+        let digest = Report::merged("thread:side", "t", "x".to_string());
+        let worker = Report::from_worker(
+            "w1",
+            "t",
+            crate::worker::ReportStatus::Done,
+            "x".to_string(),
+        );
         assert!(is_close_report(&closed));
         assert!(!is_close_report(&digest));
         let (closes, rest) =

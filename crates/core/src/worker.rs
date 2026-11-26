@@ -586,12 +586,12 @@ mod tests {
     }
 
     fn report(worker: &str, status: &str, text: &str) -> Report {
-        Report {
-            worker: worker.into(),
-            at: "2026-10-09T15:30:01.5+00:00".into(),
-            status: status.into(),
-            text: text.into(),
-        }
+        Report::with_kind(
+            worker,
+            "2026-10-09T15:30:01.5+00:00",
+            ReportKind::parse(status).unwrap(),
+            text.into(),
+        )
     }
 
     #[test]
