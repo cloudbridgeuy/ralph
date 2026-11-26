@@ -126,6 +126,13 @@ r-tree li > button:focus-visible {
   cursor: default;
 }
 
+.pager .btn[aria-disabled="true"]:hover {
+  background: var(--r-bg);
+  color: var(--r-muted);
+  border-color: var(--r-line);
+  cursor: default;
+}
+
 kbd {
   font-size: 12px;
   padding: 0 0.5ch;

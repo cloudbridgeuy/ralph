@@ -324,7 +324,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - Paging stays inside the node range. `older` stops at `lo`. `newer` stops at `hi`.
   - The label reads `entries A–B of N`. A and B are absolute 0-based inclusive positions. With no node, N is the entry count. In a node, N is the node range `lo–hi-1`, as in the tree labels, so node 32-63 on its first page reads `entries 32–51 of 32–63`. An empty page reads `entries 0 of N` with the same N.
   - An entry row opens in place: it gets `aria-selected="true"`, `class="open"` and `aria-expanded="true"`, and a detail row below holds the rendered text. Click, Enter or Space toggles it. Only one row is open at a time.
-  - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`. The `.btn` look comes from `css/controls.css`; `css/memory.css` only lays the links out and mutes a disabled one.
+  - The pager has two `.btn` links, `older` with `kbd` `[` and `newer` with `kbd` `]`. An end of range shows `aria-disabled="true"` and no `href`. The `.btn` look comes from `css/controls.css`; `css/memory.css` only lays the links out and mutes a disabled one, hover included.
   - The keys `[` and `]` follow the older and newer links from anywhere on the screen. They are ignored in `input`, `button`, `select`, `textarea` and editable fields (a focused tree row is a `button`), and with Ctrl, Meta or Alt.
 - Summary and entry text go to `POST /api/render` and the returned `r-prose` HTML is the only `innerHTML` in the script. All other text uses `textContent`.
 - Requests use the cookie (`credentials: same-origin`). The script never reads the token.

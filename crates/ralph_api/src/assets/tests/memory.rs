@@ -245,6 +245,16 @@ fn the_pager_buttons_take_their_look_from_controls_and_memory_adds_layout_and_di
 }
 
 #[test]
+fn a_disabled_pager_link_keeps_its_look_on_hover() {
+    let css = memory_css();
+    let rule = ".pager .btn[aria-disabled=\"true\"]:hover";
+    assert_declares(&css, rule, "background: var(--r-bg);");
+    assert_declares(&css, rule, "color: var(--r-muted);");
+    assert_declares(&css, rule, "border-color: var(--r-line);");
+    assert_declares(&css, rule, "cursor: default;");
+}
+
+#[test]
 fn kbd_uses_role_tokens() {
     let css = memory_css();
     assert_declares(&css, "kbd", "font-size: 12px;");
