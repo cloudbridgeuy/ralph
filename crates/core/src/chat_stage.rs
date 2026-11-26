@@ -482,3 +482,5 @@ fn one_line(raw: Option<&str>, name: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests;
+
+pub mod view;
