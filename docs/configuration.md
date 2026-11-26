@@ -465,7 +465,7 @@ A `0` for `cache_secs` or `lookup_timeout_ms`, or an unknown `pr_provider` or `v
 
 In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, stateDiagram-v2, and gitGraph. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
 
-mermaid-text can drop a transition label on an edge into a composite state. In a gitGraph it refuses `merge` with `id:`, `tag:` or `type:` and a later `checkout` of a branch declared with `order:`, and it never truncates the branch-name row, so long names make the output too wide; each case shows the source.
+mermaid-text can drop a transition label on an edge into a composite state. In a gitGraph it refuses `merge` with `id:`, `tag:` or `type:` and a later `checkout` of a branch declared with `order:`, and it never truncates the branch-name row, so long names make the output too wide; each case shows the source. mermaid-text ignores `switch` and would draw later commits on the wrong branch, so ralph also shows the source for a gitGraph that uses it; `checkout` draws.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

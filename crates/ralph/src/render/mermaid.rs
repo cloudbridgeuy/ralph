@@ -49,6 +49,7 @@ impl<'a> BranchName<'a> {
 enum GitLine<'a> {
     Commit,
     Branch(BranchName<'a>),
+    Switch,
     Other,
 }
 
@@ -59,6 +60,7 @@ impl<'a> GitLine<'a> {
         match verb {
             "commit" | "merge" | "cherry-pick" => Self::Commit,
             "branch" => BranchName::parse(rest).map_or(Self::Other, Self::Branch),
+            "switch" => Self::Switch,
             _ => Self::Other,
         }
     }
@@ -78,7 +80,7 @@ fn size_of(lines: &[GitLine<'_>]) -> GitSize {
             GitLine::Branch(name) => {
                 branches.insert(*name);
             }
-            GitLine::Other => {}
+            GitLine::Switch | GitLine::Other => {}
         }
     }
     GitSize {
@@ -191,6 +193,9 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
                 return Err(Refusal::TooLarge);
             }
             let lines: Vec<GitLine<'_>> = body_lines(source).skip(1).map(GitLine::parse).collect();
+            if lines.contains(&GitLine::Switch) {
+                return Err(Refusal::Unsupported);
+            }
             let size = size_of(&lines);
             if size.commits > MAX_GIT_COMMITS {
                 return Err(Refusal::TooManyCommits);
@@ -427,6 +432,26 @@ mod tests {
         assert_eq!(
             mermaid_precheck(&graph(at + 1), &limits()),
             Err(Refusal::TooLarge)
+        );
+    }
+
+    #[test]
+    fn git_graph_with_switch_is_refused() {
+        let l = limits();
+        for line in ["switch main", "switch\tmain %% back"] {
+            let src = format!("gitGraph\n  commit\n  branch dev\n  {line}\n  commit");
+            assert_eq!(
+                mermaid_precheck(&src, &l),
+                Err(Refusal::Unsupported),
+                "{src}"
+            );
+        }
+        assert_eq!(
+            mermaid_precheck(
+                "gitGraph\n  commit id: \"switch\"\n  branch switch\n  %% switch main",
+                &l
+            ),
+            Ok(DiagramKind::GitGraph)
         );
     }
 
