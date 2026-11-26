@@ -52,7 +52,7 @@ where
 
         match self.reader.read(buf) {
             Ok(len) => {
-                self.size -= len;
+                self.size = self.size.saturating_sub(len);
                 Ok(len)
             }
             err @ Err(_) => err,
@@ -86,7 +86,7 @@ where
                     break;
                 }
                 Ok(other) => {
-                    remaining_to_read -= other;
+                    remaining_to_read = remaining_to_read.saturating_sub(other);
                 }
             }
         }
@@ -239,5 +239,28 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
         assert!(inner.total > 0);
         assert!(inner.total < 20);
+    }
+
+    struct LyingReader;
+
+    impl Read for LyingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            Ok(buf.len() + 10)
+        }
+    }
+
+    #[test]
+    fn drop_drain_survives_a_reader_that_returns_more_than_asked() {
+        let (equal_reader, _) = EqualReader::new(LyingReader, 100);
+        drop(equal_reader);
+    }
+
+    #[test]
+    fn read_survives_a_reader_that_returns_more_than_asked() {
+        let (mut equal_reader, _) = EqualReader::new(LyingReader, 5);
+        let mut buf = [0u8; 8];
+
+        assert_eq!(equal_reader.read(&mut buf).unwrap(), 15);
+        assert_eq!(equal_reader.read(&mut buf).unwrap(), 0);
     }
 }

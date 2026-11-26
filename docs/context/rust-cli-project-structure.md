@@ -51,6 +51,8 @@ Local patch in `vendor/tiny_http`: `Server::from_listener_with_timeouts` sets a 
 Local patch in `vendor/tiny_http`: the `EqualReader` drop drain reads through a fixed 8 KiB buffer, so a huge declared `Content-Length` allocates nothing large (GUZ-1755).
 The same drain stops after 64 KiB drained or 2 s since it started, checked between reads, so a slow body cannot hold the handler thread.
 
+Local patch in `vendor/tiny_http`: the `EqualReader` read and drain counters use `saturating_sub`, so a reader that returns more bytes than asked cannot underflow (GUZ-1851).
+
 ## Two-Crate Architecture (Functional Core - Imperative Shell)
 
 Separate pure logic from I/O operations using two crates:
