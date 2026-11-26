@@ -49,7 +49,7 @@ pub(super) fn flag_settings(args: &ChatArgs) -> Vec<Setting> {
             flag(
                 "--permission-mode",
                 Value::String(mode),
-                Some("chat.permission_mode"),
+                Some("chat.claude.permission_mode"),
             )
         }),
         args.worktree_dir.clone().map(|dir| {
@@ -171,7 +171,7 @@ mod tests {
                 setting(
                     "--permission-mode",
                     text("plan"),
-                    Some("chat.permission_mode")
+                    Some("chat.claude.permission_mode")
                 ),
                 setting("--worktree-dir", text(".wt"), Some("chat.worktree_dir")),
                 setting(

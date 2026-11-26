@@ -1,5 +1,7 @@
 pub use ralph_server::config::{env_settings, Origin, Setting};
-use ralph_server::config::{leaf_sources, read_layer, winning_override, AppConfig, Notice, Row};
+use ralph_server::config::{
+    leaf_sources, read_layer, winning_override, AppConfig, ConfigError, Notice, Row,
+};
 use ralph_server::warn::{warn, warn_once};
 use std::path::{Path, PathBuf};
 use toml::{Table, Value};
@@ -210,7 +212,7 @@ fn chat_rows(effective: &Table, layers: StartLayers) -> Vec<Row> {
     leaf_sources(effective, &global, &store)
 }
 
-pub fn load_for_chat(global: &Path, store: &Path) -> ChatLoad {
+pub fn load_for_chat(global: &Path, store: &Path) -> Result<ChatLoad, ConfigError> {
     let (result, notices) = AppConfig::load_from(global, Some(store));
     notices
         .iter()
@@ -219,6 +221,7 @@ pub fn load_for_chat(global: &Path, store: &Path) -> ChatLoad {
     let mut warnings: Vec<String> = notices.into_iter().map(|notice| notice.message).collect();
     let (config, loaded) = match result {
         Ok(config) => (config, true),
+        Err(e @ ConfigError::RemovedPermissionMode { .. }) => return Err(e),
         Err(e) => {
             let message = format!("Failed to load config: {e}");
             warn(&message);
@@ -234,12 +237,12 @@ pub fn load_for_chat(global: &Path, store: &Path) -> ChatLoad {
         fell_back,
     };
     let rows = chat_rows(&table, layers);
-    ChatLoad {
+    Ok(ChatLoad {
         config,
         warnings,
         rows,
         effective: loaded.then_some(table),
-    }
+    })
 }
 
 pub fn effective_now(global: &Path, store: &Path) -> Option<Table> {
@@ -621,13 +624,23 @@ mod tests {
     }
 
     #[test]
+    fn chat_does_not_load_a_removed_permission_mode_key() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let global = dir.path().join("global.toml");
+        let store = dir.path().join("config.toml");
+        std::fs::write(&global, "").unwrap();
+        std::fs::write(&store, "[chat]\npermission_mode = \"plan\"\n").unwrap();
+        assert!(load_for_chat(&global, &store).is_err());
+    }
+
+    #[test]
     fn a_broken_store_file_falls_back_and_its_keys_are_not_store_rows() {
         let dir = tempfile::TempDir::new().unwrap();
         let global = dir.path().join("global.toml");
         let store = dir.path().join("config.toml");
         std::fs::write(&global, "[chat]\nwrap_width = 80\n").unwrap();
         std::fs::write(&store, "[chat]\nwrap_width = \"wide\"\n").unwrap();
-        let loaded = load_for_chat(&global, &store);
+        let loaded = load_for_chat(&global, &store).unwrap();
         assert_eq!(loaded.config.chat.wrap_width, Some(80));
         assert_eq!(loaded.warnings.len(), 1);
         assert!(loaded.warnings[0].starts_with("ignoring store config"));

@@ -254,7 +254,7 @@ mod tests {
     use ralph_core::program_status::Phase;
     use ralph_core::schedule::TaskKind;
     use ralph_core::schedule_resume::LostTurn;
-    use ralph_core::worker::SessionRef;
+    use ralph_core::worker::{ClaudeMode, SessionRef};
     use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -278,7 +278,7 @@ mod tests {
             workers: Workers::new(
                 dir.to_path_buf(),
                 PathBuf::from("ralph"),
-                String::new(),
+                ClaudeMode::Auto,
                 None,
             ),
             check: Mutex::new(CheckState::seeded(&store)),

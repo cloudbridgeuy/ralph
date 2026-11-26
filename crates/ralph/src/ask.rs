@@ -2,6 +2,7 @@ use crate::highlight::ThemeConfig;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::turn_sink::TerminalSink;
 use ralph_core::cancel::CancelToken;
+use ralph_core::worker::ClaudeMode;
 use ralph_server::invoke::{build_command, prompt_stdin};
 use ralph_server::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
@@ -17,7 +18,7 @@ pub struct InvocationConfig {
     pub timeout_secs: u64,
     pub theme_config: ThemeConfig,
     pub verbose_tools: VerboseToolsConfig,
-    pub permission_mode: String,
+    pub permission_mode: ClaudeMode,
     pub config_dir: Option<PathBuf>,
     pub interrupt: CancelToken,
 }
@@ -29,7 +30,7 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
     );
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
         command: build_command(
-            &config.permission_mode,
+            config.permission_mode,
             config.config_dir.as_deref(),
             dirs::home_dir().as_deref(),
         ),

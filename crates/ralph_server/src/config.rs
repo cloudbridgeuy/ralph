@@ -1,10 +1,11 @@
+use crate::invoke::{ASK_PERMISSION_MODE_ENV, CHAT_PERMISSION_MODE_ENV};
 use crate::paths;
 use crate::warn::warn_once;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::chat_backend::MemoryHarness;
 use ralph_core::chat_thread::config_root;
 use ralph_core::inbox_alert::UnknownFocus;
-use ralph_core::worker::TicketKeys;
+use ralph_core::worker::{ClaudeMode, PermissionMode, TicketKeys};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,10 +53,11 @@ pub use env::{
 pub use layers::{leaf_sources, Row, Source};
 pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;
+use permissions::permission_setting;
 pub use permissions::{
     configured_permission_mode, confirm_answer, effective_grants, resolve_permission_mode,
-    save_grants, saved_grants, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
-    GRANTS_FILE,
+    save_grants, saved_grants, ClaudeModeSection, PermissionModeError,
+    CHAT_DEFAULT_PERMISSION_MODE, GRANTS_FILE,
 };
 pub use rows::{config_rows, ConfigRow, RowSource};
 pub use usage::{configured_ledger, ledger_path, UsageSection};
@@ -104,6 +106,15 @@ fn parse_error(path: &Path, source: toml::de::Error) -> ConfigError {
         path: path.display().to_string(),
         source,
     }
+}
+
+fn refuse_removed_keys(path: &Path, layer: &Table) -> Result<(), ConfigError> {
+    layers::removed_permission_mode(layer).map_or(Ok(()), |section| {
+        Err(ConfigError::RemovedPermissionMode {
+            path: path.display().to_string(),
+            section,
+        })
+    })
 }
 
 pub fn read_layer(path: &Path) -> Result<Table, ConfigError> {
@@ -156,6 +167,9 @@ pub enum ConfigError {
 
     #[error("Invalid config at {path}: {message}")]
     InvalidMemory { path: String, message: String },
+
+    #[error("Invalid config at {path}: [{section}] permission_mode was removed; set permission_mode in [{section}.claude]")]
+    RemovedPermissionMode { path: String, section: &'static str },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -315,7 +329,18 @@ impl Default for MermaidSection {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AskSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission_mode: Option<String>,
+    pub permissions: Option<toml::Value>,
+    #[serde(default)]
+    pub claude: ClaudeModeSection,
+}
+
+impl AskSection {
+    pub fn permissions_setting(&self) -> (PermissionMode, Option<String>) {
+        match &self.permissions {
+            None => (PermissionMode::Yolo, None),
+            value => permission_setting("ask", value.as_ref()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,7 +392,7 @@ pub struct ChatSection {
     #[serde(default)]
     pub worktree_dir: Option<String>,
     #[serde(default)]
-    pub permission_mode: Option<String>,
+    pub claude: ClaudeModeSection,
     #[serde(default)]
     pub permissions: Option<toml::Value>,
     #[serde(default = "default_true")]
@@ -457,7 +482,7 @@ impl Default for ChatSection {
             cell_output_bytes: None,
             worker_base: None,
             worktree_dir: None,
-            permission_mode: None,
+            claude: ClaudeModeSection::default(),
             permissions: None,
             inbox_alert_sound: true,
             inbox_alert_notification: false,
@@ -541,21 +566,39 @@ impl ThemeSection {
 }
 
 impl AppConfig {
-    pub fn chat_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+    pub fn chat_permission_mode(
+        &self,
+        flag: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<ClaudeMode, PermissionModeError> {
         resolve_permission_mode(
             flag,
-            env,
-            self.chat.permission_mode.as_deref(),
+            (CHAT_PERMISSION_MODE_ENV, env),
+            (
+                "chat.claude.permission_mode",
+                self.chat.claude.permission_mode.as_deref(),
+            ),
             CHAT_DEFAULT_PERMISSION_MODE,
         )
     }
 
-    pub fn ask_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+    pub fn ask_permission_mode(
+        &self,
+        flag: Option<&str>,
+        env: Option<&str>,
+    ) -> Result<ClaudeMode, PermissionModeError> {
+        let neutral = match self.ask.permissions_setting().0 {
+            PermissionMode::Ask => ClaudeMode::DontAsk,
+            PermissionMode::Yolo => ClaudeMode::BypassPermissions,
+        };
         resolve_permission_mode(
             flag,
-            env,
-            self.ask.permission_mode.as_deref(),
-            ASK_DEFAULT_PERMISSION_MODE,
+            (ASK_PERMISSION_MODE_ENV, env),
+            (
+                "ask.claude.permission_mode",
+                self.ask.claude.permission_mode.as_deref(),
+            ),
+            neutral,
         )
     }
 
@@ -584,6 +627,7 @@ impl AppConfig {
         store: Option<&Path>,
     ) -> (Result<Self, ConfigError>, Vec<Notice>) {
         match (Self::load_layers(global, store), store) {
+            (Err(error @ ConfigError::RemovedPermissionMode { .. }), _) => (Err(error), Vec::new()),
             (Err(store_error), Some(store_path)) => match Self::load_layers(global, None) {
                 Ok(config) => {
                     let notice = Notice {
@@ -608,6 +652,9 @@ impl AppConfig {
             .flatten()
             .map(|path| read_layer(path).map(|table| (path, table)))
             .collect::<Result<Vec<_>, _>>()?;
+        layers
+            .iter()
+            .try_for_each(|(path, layer)| refuse_removed_keys(path, layer))?;
         let merged = layers
             .iter()
             .cloned()
@@ -645,6 +692,8 @@ impl AppConfig {
             path: path.to_string(),
             source,
         };
+        let table = content.parse::<Table>().map_err(parse_error)?;
+        refuse_removed_keys(Path::new(path), &table)?;
         let mut unknown = Vec::new();
         let deserializer = toml::de::Deserializer::parse(content).map_err(parse_error)?;
         let config: Self =

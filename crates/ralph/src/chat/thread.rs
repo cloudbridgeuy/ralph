@@ -509,7 +509,7 @@ mod tests {
         )
         .unwrap();
         let global = root.path().join("global.toml");
-        let loaded = load_for_chat(&global, &config_root(&dir).join("config.toml"));
+        let loaded = load_for_chat(&global, &config_root(&dir).join("config.toml")).unwrap();
         assert_eq!(loaded.config.chat.recent_history_tokens, Some(1234));
     }
 

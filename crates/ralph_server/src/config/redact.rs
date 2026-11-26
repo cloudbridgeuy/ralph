@@ -247,8 +247,9 @@ mod tests {
             "agy.permissions",
             "cursor.permissions",
             "chat.permissions",
-            "chat.permission_mode",
-            "ask.permission_mode",
+            "chat.claude.permission_mode",
+            "ask.claude.permission_mode",
+            "ask.permissions",
         ] {
             assert_eq!(listing(key), Listing::Redact, "{key}");
         }

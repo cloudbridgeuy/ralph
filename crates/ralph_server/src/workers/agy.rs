@@ -107,7 +107,7 @@ mod tests {
         assert!(Workers::new(
             dir.path().into(),
             PathBuf::from("ralph"),
-            String::new(),
+            ClaudeMode::Auto,
             None
         )
         .refuse_busy_headless("A", false)
@@ -126,7 +126,7 @@ mod tests {
         Workers::new(
             dir.path().into(),
             PathBuf::from("ralph"),
-            String::new(),
+            ClaudeMode::Auto,
             None,
         )
         .refuse_busy_headless("A", false)?;
@@ -152,7 +152,7 @@ mod tests {
         let workers = Workers::new(
             dir.path().into(),
             PathBuf::from("ralph"),
-            String::new(),
+            ClaudeMode::Auto,
             None,
         );
         assert_eq!(
@@ -171,7 +171,7 @@ mod tests {
         assert!(Workers::new(
             dir.path().into(),
             PathBuf::from("ralph"),
-            String::new(),
+            ClaudeMode::Auto,
             None
         )
         .refuse_busy_headless("A", false)

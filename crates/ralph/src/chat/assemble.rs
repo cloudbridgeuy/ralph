@@ -5,7 +5,7 @@ use ralph_core::chat::{CustomPrompt, ReplyImages};
 use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
-use ralph_core::worker::ATTACHMENTS_DIR;
+use ralph_core::worker::{ClaudeMode, ATTACHMENTS_DIR};
 use ralph_server::chat::backend::{ChatBackend, ClaudeBackend};
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::keepalive::Stamp;
@@ -33,7 +33,7 @@ pub(crate) struct Settings {
     pub global_config: PathBuf,
     pub store_config: PathBuf,
     pub loaded: ChatLoad,
-    pub permission_mode: String,
+    pub permission_mode: ClaudeMode,
     pub tuning: Tuning,
 }
 
@@ -46,13 +46,13 @@ pub(crate) fn load_settings(
     let cwd = std::env::current_dir()?;
     let global_config = absolute_from(&config_path(), &cwd);
     let store_config = thread::store_config_path(store_dir);
-    let loaded = load_for_chat(&global_config, &store_config);
+    let loaded = load_for_chat(&global_config, &store_config)?;
     let permission_mode = loaded.config.chat_permission_mode(
         permission_mode,
         std::env::var(ralph_server::invoke::CHAT_PERMISSION_MODE_ENV)
             .ok()
             .as_deref(),
-    );
+    )?;
     let tuning = tuning(&loaded.config.chat, recent_history_tokens)?;
     Ok(Settings {
         exe,
@@ -131,7 +131,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         workers: Workers::new(
             store_dir.to_path_buf(),
             settings.exe.clone(),
-            settings.permission_mode.clone(),
+            settings.permission_mode,
             options.worktree_dir,
         ),
         live: Arc::clone(&live),
@@ -164,7 +164,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         runtime_files: wiring.runtime_files,
         socket,
         system_prompt_file: wiring.system_prompt_file.clone(),
-        permission_mode: settings.permission_mode.clone(),
+        permission_mode: settings.permission_mode,
         plugin_args: std::mem::take(&mut wiring.plugin_args),
         model_args: options.model_args,
         skills: std::mem::take(&mut wiring.skills),

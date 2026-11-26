@@ -1,9 +1,9 @@
 use super::acp::REPORT_TOOL;
 use super::{
     agy_auto_allow_option, claude_args, control_response, disallowed_tool_args, mcptools_decision,
-    permission_response, BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision,
-    PermissionMode, PermissionOption, Report, SandboxMode, WorkerId, ALLOW_ONCE, SERVER_NAME,
-    WORKER_PROMPT,
+    permission_response, BlockedContent, ClaudeArgs, ClaudeMode, ClaudePermission,
+    McptoolsDecision, PermissionMode, PermissionOption, Report, SandboxMode, WorkerId, ALLOW_ONCE,
+    SERVER_NAME, WORKER_PROMPT,
 };
 use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
 use chrono::{DateTime, Utc};
@@ -31,7 +31,7 @@ pub fn worker_prompt(scheduled: bool) -> &'static str {
     }
 }
 
-pub const SCHEDULED_PERMISSION_MODE: &str = "auto";
+pub const SCHEDULED_PERMISSION_MODE: ClaudeMode = ClaudeMode::Auto;
 
 const WORKER_TOOLS: [&str; 2] = [REPORT_TOOL, "set_status"];
 
@@ -242,7 +242,7 @@ mod tests {
             store: Path::new("/s"),
             mcp_config: Path::new("/s/workers/A.json"),
             settings: Path::new("/s/workers/A.settings.json"),
-            permission_mode: "auto",
+            permission_mode: ClaudeMode::Auto,
             attachments: Path::new("/s/attachments"),
             task_dir: Path::new("/s/workers/A.task"),
             model: None,
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn a_scheduled_worker_forces_auto_mode_whatever_the_chat_uses() {
         let chat = ClaudeWorkerArgs {
-            permission_mode: "bypassPermissions",
+            permission_mode: ClaudeMode::BypassPermissions,
             ..claude_args()
         };
         let scheduled = ClaudeWorkerArgs {
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn an_unscheduled_worker_keeps_the_chat_mode() {
         let chat = ClaudeWorkerArgs {
-            permission_mode: "acceptEdits",
+            permission_mode: ClaudeMode::AcceptEdits,
             ..claude_args()
         };
         assert_eq!(mode_after_flag(&worker_command(&chat)), "acceptEdits");
