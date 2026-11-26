@@ -44,7 +44,7 @@ fn threads_response(store: &Path, threads: &[ThreadInfo]) -> ApiResponse {
     json_ok(threads_body(&store_name(store), threads))
 }
 
-fn check_token_keys(raw: &str) -> Result<(), QueryError> {
+pub(crate) fn check_token_keys(raw: &str) -> Result<(), QueryError> {
     for segment in raw.split('&').filter(|segment| !segment.is_empty()) {
         if segment_key(segment)? != TOKEN_KEY {
             return Err(QueryError::UnknownKey);

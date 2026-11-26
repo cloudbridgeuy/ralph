@@ -3,6 +3,7 @@ use crate::catalogue;
 use crate::config_api;
 use crate::memory_api;
 use crate::render_api::{reject_oversize, render};
+use crate::threads_api;
 use crate::token::{extract_tokens, Token};
 use std::path::PathBuf;
 
@@ -13,6 +14,7 @@ const CONFIG_PATH: &str = "/api/config";
 const MEMORY_PATH: &str = "/api/memory";
 const ENTRIES_PATH: &str = "/api/memory/entries";
 const THREADS_PATH: &str = "/api/memory/threads";
+const THREAD_GRAPH_PATH: &str = "/api/threads";
 const CATALOGUE_PATH: &str = "/catalogue";
 const CATALOGUE_FIXTURE: &str = include_str!("../fixtures/catalogue.json");
 const HTML: &str = "text/html; charset=utf-8";
@@ -82,9 +84,10 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (MEMORY_PATH, "GET") => memory_api::memory(request, config),
         (ENTRIES_PATH, "GET") => memory_api::entries(request, config),
         (THREADS_PATH, "GET") => memory_api::threads(request, config),
+        (THREAD_GRAPH_PATH, "GET") => threads_api::threads(request, config),
         (CONFIG_PATH, "GET") => config_api::config(request, config),
         (CONFIG_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
-        (MEMORY_PATH | ENTRIES_PATH | THREADS_PATH, _) => {
+        (MEMORY_PATH | ENTRIES_PATH | THREADS_PATH | THREAD_GRAPH_PATH, _) => {
             with_header(error(405, "method not allowed"), ("Allow", "GET"))
         }
         _ => match assets::find(&request.path) {
