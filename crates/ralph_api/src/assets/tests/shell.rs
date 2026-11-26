@@ -75,13 +75,12 @@ fn every_nav_href_maps_to_a_screen_or_the_catalogue() {
 #[test]
 fn routes_without_a_screen_are_hidden_from_the_nav() {
     let html = shell();
-    for hidden in ["workers", "schedules", "watches", "threads"] {
-        assert!(!html.contains(&format!("#/{hidden}")), "{hidden}");
-        assert!(
-            !nav_links(&html).iter().any(|(_, t)| t.ends_with(hidden)),
-            "{hidden}"
-        );
-    }
+    let hidden = "threads";
+    assert!(!html.contains(&format!("#/{hidden}")), "{hidden}");
+    assert!(
+        !nav_links(&html).iter().any(|(_, t)| t.ends_with(hidden)),
+        "{hidden}"
+    );
 }
 
 #[test]
@@ -93,7 +92,10 @@ fn nav_tabs_are_numbered_from_one_in_order() {
         vec![
             "<span class=\"n\" aria-hidden=\"true\">1</span>memory",
             "<span class=\"n\" aria-hidden=\"true\">2</span>config",
-            "<span class=\"n\" aria-hidden=\"true\">3</span>catalogue"
+            "<span class=\"n\" aria-hidden=\"true\">3</span>workers",
+            "<span class=\"n\" aria-hidden=\"true\">4</span>schedules",
+            "<span class=\"n\" aria-hidden=\"true\">5</span>watches",
+            "<span class=\"n\" aria-hidden=\"true\">6</span>catalogue"
         ]
     );
 }
