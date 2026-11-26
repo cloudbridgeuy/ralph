@@ -141,7 +141,12 @@ fn start_ralph(
         .args(["web", "--store"])
         .arg(store)
         .args(["--port", "0"])
-        .envs(webdriver::isolated_env(home))
+        .env_clear()
+        .envs(webdriver::child_env(
+            home,
+            std::env::var("PATH").ok().as_deref(),
+            std::env::var("TMPDIR").ok().as_deref(),
+        ))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

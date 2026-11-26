@@ -146,15 +146,20 @@ pub fn resolve_path(
     given.or_else(|| home.map(|home| home.join(under_home)))
 }
 
-pub fn isolated_env(dir: &Path) -> Vec<(String, String)> {
+pub fn child_env(dir: &Path, path: Option<&str>, tmpdir: Option<&str>) -> Vec<(String, String)> {
     let under = |sub: &str| dir.join(sub).display().to_string();
-    vec![
-        ("HOME".to_string(), dir.display().to_string()),
-        ("XDG_CONFIG_HOME".to_string(), under("config")),
-        ("XDG_DATA_HOME".to_string(), under("data")),
-        ("XDG_CACHE_HOME".to_string(), under("cache")),
-        ("RALPH_CONFIG_DIR".to_string(), under("config/ralph")),
-    ]
+    let passed = [("PATH", path), ("TMPDIR", tmpdir)]
+        .into_iter()
+        .filter_map(|(name, value)| Some((name.to_string(), value?.to_string())));
+    passed
+        .chain([
+            ("HOME".to_string(), dir.display().to_string()),
+            ("XDG_CONFIG_HOME".to_string(), under("config")),
+            ("XDG_DATA_HOME".to_string(), under("data")),
+            ("XDG_CACHE_HOME".to_string(), under("cache")),
+            ("RALPH_CONFIG_DIR".to_string(), under("config/ralph")),
+        ])
+        .collect()
 }
 
 #[cfg(test)]
@@ -336,10 +341,49 @@ mod tests {
         assert_eq!(resolve_path(None, None, ".a"), None);
     }
 
+    const ALLOWLIST: [&str; 7] = [
+        "PATH",
+        "TMPDIR",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "RALPH_CONFIG_DIR",
+    ];
+
+    fn value_of<'a>(pairs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+        pairs
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
     #[test]
-    fn isolated_env_points_every_resolver_var_inside_the_dir() {
+    fn child_env_names_are_exactly_the_allowlist() {
+        let pairs = child_env(Path::new("/tmp/s/home"), Some("/bin"), Some("/tmp/t"));
+        let mut names: Vec<&str> = pairs.iter().map(|(key, _)| key.as_str()).collect();
+        names.sort_unstable();
+        let mut expected = ALLOWLIST.to_vec();
+        expected.sort_unstable();
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn child_env_never_leaks_ralph_or_color_vars() {
+        let pairs = child_env(Path::new("/tmp/s/home"), Some("/bin"), Some("/tmp/t"));
+        for (key, _) in &pairs {
+            assert!(
+                !key.starts_with("RALPH_") || key == "RALPH_CONFIG_DIR",
+                "{key}"
+            );
+            assert_ne!(key, "NO_COLOR");
+        }
+    }
+
+    #[test]
+    fn child_env_points_every_resolver_var_inside_the_dir() {
         let dir = Path::new("/tmp/shots-scratch/home");
-        let pairs = isolated_env(dir);
+        let pairs = child_env(dir, None, None);
         for name in [
             "HOME",
             "XDG_CONFIG_HOME",
@@ -347,18 +391,25 @@ mod tests {
             "XDG_CACHE_HOME",
             "RALPH_CONFIG_DIR",
         ] {
-            let value = pairs
-                .iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| value.as_str())
-                .unwrap_or_default();
+            let value = value_of(&pairs, name).unwrap_or_default();
             assert!(Path::new(value).starts_with(dir), "{name}={value}");
         }
     }
 
     #[test]
-    fn isolated_env_names_no_real_home() {
-        let pairs = isolated_env(Path::new("/tmp/shots-scratch/home"));
+    fn child_env_passes_path_and_tmpdir_only_when_given() {
+        let dir = Path::new("/tmp/s/home");
+        let none = child_env(dir, None, None);
+        assert_eq!(value_of(&none, "PATH"), None);
+        assert_eq!(value_of(&none, "TMPDIR"), None);
+        let both = child_env(dir, Some("/usr/bin"), Some("/var/tmp"));
+        assert_eq!(value_of(&both, "PATH"), Some("/usr/bin"));
+        assert_eq!(value_of(&both, "TMPDIR"), Some("/var/tmp"));
+    }
+
+    #[test]
+    fn child_env_names_no_real_home() {
+        let pairs = child_env(Path::new("/tmp/shots-scratch/home"), None, None);
         assert!(!pairs.is_empty());
         assert!(pairs.iter().all(|(_, value)| !value.contains("/Users/")));
     }
