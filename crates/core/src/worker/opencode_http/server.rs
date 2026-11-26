@@ -117,7 +117,7 @@ pub fn opencode_failure_report(id: &str, at: &str, problem: &str) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::{ReportStatus, SERVER_STOPPED};
+    use crate::worker::SERVER_STOPPED;
 
     #[test]
     fn reconnect_delay_allows_five_attempts_two_seconds_apart() {
@@ -220,7 +220,7 @@ mod tests {
     fn failure_report_blocks_with_the_problem() {
         let report = opencode_failure_report("GUZ-1", "now", SERVER_STOPPED);
         assert_eq!(report.worker, "GUZ-1");
-        assert_eq!(report.status, ReportStatus::Blocked.as_str());
+        assert_eq!(report.status.as_str(), "blocked");
         assert_eq!(
             report.text,
             "The opencode turn failed: the opencode server stopped during the turn."

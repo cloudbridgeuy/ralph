@@ -5,7 +5,6 @@ use crate::worker::{
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const DRIFT_REPORT_STATUS: &str = "warning";
 pub const NO_FAILING_CHECK: &str = "verify spec";
 pub const TIME_LIMIT_CHECK: &str = "time limit";
 pub const LOCK_CHECK: &str = "drift lock";
@@ -266,7 +265,7 @@ mod tests {
             "2026-11-03T00:00:00Z",
         );
         assert_eq!(report.worker, "drift-codex");
-        assert_eq!(report.status, DRIFT_REPORT_STATUS);
+        assert_eq!(report.status.as_str(), "warning");
         assert_eq!(report.at, "2026-11-03T00:00:00Z");
         assert_eq!(
             report.text,

@@ -3,7 +3,6 @@ use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportStatu
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
-pub const CHECK_STATUS: &str = "check";
 pub const NUDGE_TEXT: &str =
     "You stopped without calling report. Call the report tool now: done, blocked or question.";
 
@@ -54,11 +53,7 @@ pub struct WorkerMemory {
 pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
     reports
         .iter()
-        .filter(|report| {
-            ReportStatus::ALL
-                .iter()
-                .any(|status| status.as_str() == report.status)
-        })
+        .filter(|report| report.status.worker_status().is_some())
         .map(|report| (report.worker.clone(), report.at.clone()))
         .collect()
 }

@@ -305,7 +305,7 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
             [
                 format!("#{}", i + 1),
                 e.report.worker.clone(),
-                e.report.status.clone(),
+                e.report.status.to_string(),
                 age(&e.report.at, now),
             ]
         })
@@ -598,6 +598,23 @@ mod tests {
         let (ledger, skipped) = Ledger::decode(&bytes);
         assert_eq!(sources(&ledger), ["a", "b"]);
         assert_eq!(skipped.len(), 1);
+    }
+
+    #[test]
+    fn ledger_entry_with_unknown_status_is_skipped() {
+        let entry = |source: &str, status: &str| {
+            serde_json::json!({
+                "source": source,
+                "report": {"worker": "A", "at": "t", "status": status, "text": source},
+            })
+        };
+        let raw = serde_json::json!({
+            "entries": [entry("good", "done"), entry("unknown", "failed")],
+        });
+        let (ledger, skipped) = Ledger::decode(&serde_json::to_vec(&raw).unwrap());
+        assert_eq!(sources(&ledger), ["good"]);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].source.as_deref(), Some("unknown"));
     }
 
     #[test]

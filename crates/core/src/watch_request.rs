@@ -137,7 +137,6 @@ pub fn start_failure_report(id: &str, error: &str, at: &str) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::watch::WATCH_STATUS;
 
     fn request() -> WatchRequest {
         WatchRequest {
@@ -182,7 +181,7 @@ mod tests {
         };
         assert_eq!(report.worker, "watch:a");
         assert_eq!(report.at, "t1");
-        assert_eq!(report.status, WATCH_STATUS);
+        assert_eq!(report.status.as_str(), "watch");
         assert!(report
             .text
             .contains("did not start: a watch named `watch:a` is already running."));
@@ -283,7 +282,7 @@ mod tests {
     #[test]
     fn failure_report_uses_the_watch_status() {
         let report = start_failure_report("ci", "a watch named `ci` is already running", "t");
-        assert_eq!(report.status, WATCH_STATUS);
+        assert_eq!(report.status.as_str(), "watch");
         assert_eq!(report.worker, "ci");
         assert!(report.text.contains("did not start"));
         assert!(report.text.contains("already running"));

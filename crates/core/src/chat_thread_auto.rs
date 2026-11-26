@@ -1,8 +1,6 @@
 use crate::chat_status::truncate_to_width;
 use crate::chat_thread::{AutoMode, ThreadMeta, ThreadName, THREAD_REPORT_PREFIX};
-use crate::worker::Report;
-
-pub const THREAD_CLOSED_STATUS: &str = "thread-closed";
+use crate::worker::{Report, ReportKind};
 
 pub struct ThreadClosedNotice {
     pub merge: &'static str,
@@ -127,7 +125,7 @@ pub fn close_answer(line: Option<&str>) -> bool {
 }
 
 pub fn is_close_report(report: &Report) -> bool {
-    report.status == THREAD_CLOSED_STATUS && report.worker.starts_with(THREAD_REPORT_PREFIX)
+    report.status == ReportKind::ThreadClosed && report.worker.starts_with(THREAD_REPORT_PREFIX)
 }
 
 pub fn split_close_reports(reports: Vec<Report>) -> (Vec<Report>, Vec<Report>) {
@@ -240,7 +238,7 @@ mod tests {
         let report = thread_closed_report(&name(), AutoMode::Drop, "2026-01-01T00:00:00Z");
         assert_eq!(report.worker, "thread:side");
         assert_eq!(report.at, "2026-01-01T00:00:00Z");
-        assert_eq!(report.status, "thread-closed");
+        assert_eq!(report.status.as_str(), "thread-closed");
         assert_eq!(report.text, "side closed \u{b7} Enter to drop or keep it");
     }
 

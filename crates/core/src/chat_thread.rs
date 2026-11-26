@@ -10,8 +10,6 @@ pub const THREAD_FILE: &str = "thread.json";
 pub const MAIN_PREFIX_LINES: usize = 100;
 pub const MAX_NAME_CHARS: usize = 32;
 pub const THREAD_REPORT_PREFIX: &str = "thread:";
-pub const MERGED_STATUS: &str = "merged";
-pub const VIEW_STATUS: &str = "view";
 pub const VIEW_BLOCK_LINES: usize = 100;
 pub const MAX_VIEW_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_DIGEST_BYTES: usize = 2048;
@@ -720,7 +718,7 @@ mod tests {
     fn a_merged_report_reads_as_a_thread_message() {
         let report = merged_report(&name("auth"), "Picked x. #auth:0", "2026-11-03T10:00:00Z");
         assert_eq!(report.worker, "thread:auth");
-        assert_eq!(report.status, "merged");
+        assert_eq!(report.status.as_str(), "merged");
         assert_eq!(report.at, "2026-11-03T10:00:00Z");
         let worker = Report::from_worker(
             "GUZ-1",

@@ -1,5 +1,5 @@
 use super::*;
-use crate::worker::{branch_name, worktree_for_branch};
+use crate::worker::{branch_name, worktree_for_branch, ReportKind, ReportStatus};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +152,7 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
         (Event::Report(report), Criterion::WorkerDone { worker, .. })
             if report.worker == *worker =>
         {
-            if report.status == "done" {
+            if report.status == ReportKind::Worker(ReportStatus::Done) {
                 done_reported(plan, progress, &step.criterion)
             } else {
                 unmet

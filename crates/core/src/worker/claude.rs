@@ -942,7 +942,7 @@ mod tests {
     fn a_stuck_permission_report_blocks_the_worker_with_the_close_hint() {
         let report = stuck_permission_report("A", "2026-01-01T00:00:00Z");
         assert_eq!(report.worker, "A");
-        assert_eq!(report.status, "blocked");
+        assert_eq!(report.status.as_str(), "blocked");
         assert_eq!(
             report.text,
             "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."

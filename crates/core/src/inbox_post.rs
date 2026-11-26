@@ -4,7 +4,6 @@ use crate::sanitize::forbidden_control;
 use crate::worker::Report;
 
 pub const EXTERNAL_REPORT_PREFIX: &str = "external:";
-pub const EXTERNAL_STATUS: &str = "report";
 pub const MAX_TEXT_BYTES: usize = 65536;
 
 pub fn validate_source(source: &str) -> Result<(), String> {
@@ -105,7 +104,7 @@ mod tests {
     fn report_has_prefixed_worker_and_report_status() {
         let r = external_report("ci", "2026-01-01T00:00:00Z", b"all green").unwrap();
         assert_eq!(r.worker, "external:ci");
-        assert_eq!(r.status, "report");
+        assert_eq!(r.status.as_str(), "report");
         assert_eq!(r.text, "all green");
         assert_eq!(r.at, "2026-01-01T00:00:00Z");
     }

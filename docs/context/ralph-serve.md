@@ -86,7 +86,7 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 ## Maintenance
 
 - Main and each open thread have their own attachments directory and maintenance host. The host runs queued watches, armed schedules, inbox checks, and configured idle keepalive. Main runs the daily drift check. A successful reply starts the usual memory nap.
-- Each fresh report stays unread. Serve sends one `inbox` frame with envelope id `0` to every greeted client, regardless of the client's attached session. The body carries `thread` (null for main), `report` (`WireReport`: worker, status, timestamp `at`, and text, all strings), and the session's total `unread` count. Reports that fit the frame travel in full. If a frame would exceed 1 MiB, serve caps each report field at 32 KiB for transport. The inbox retains the original report.
+- Each fresh report stays unread. Serve sends one `inbox` frame with envelope id `0` to every greeted client, regardless of the client's attached session. The body carries `thread` (null for main), `report` (`WireReport`: worker, status, timestamp `at`, and text, all strings), and the session's total `unread` count. Reports that fit the frame travel in full. If a frame would exceed 1 MiB, serve caps the report's worker, `at` and text at 32 KiB each for transport. The inbox retains the original report.
 - `ralph chat --connect` opts in. At its next socket read it displays the session, worker, status, unread count, and report text on one line of up to 240 characters. A push can arrive between replies or during a turn. A `blocked` or `question` report also raises the inbox alert. Any other status, one the client does not know included, prints the line only.
 
 ## Limits

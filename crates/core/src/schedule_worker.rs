@@ -112,11 +112,7 @@ fn report_end(task: &Task, reports: &[Report]) -> Option<WorkerEnd> {
         .iter()
         .filter(|report| report.worker == worker)
         .filter(|report| DateTime::parse_from_rfc3339(&report.at).is_ok_and(|at| at >= started))
-        .filter_map(|report| {
-            ReportStatus::ALL
-                .iter()
-                .find(|status| status.as_str() == report.status)
-        })
+        .filter_map(|report| report.status.worker_status())
         .next_back()
         .map(|status| match status {
             ReportStatus::Done => WorkerEnd::Done,
@@ -223,10 +219,8 @@ pub fn vanished_text(task: &Task) -> String {
 pub fn new_scheduled_reports(known: &[Report], incoming: &[Report]) -> Vec<Report> {
     let mut fresh: Vec<Report> = Vec::new();
     for report in incoming {
-        let relevant = report.worker.starts_with(WORKER_ID_PREFIX)
-            && ReportStatus::ALL
-                .iter()
-                .any(|status| status.as_str() == report.status);
+        let relevant =
+            report.worker.starts_with(WORKER_ID_PREFIX) && report.status.worker_status().is_some();
         let seen = known
             .iter()
             .chain(&fresh)

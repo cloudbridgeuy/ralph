@@ -1,5 +1,4 @@
 use super::*;
-use crate::watch::WATCH_STATUS;
 
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
@@ -306,7 +305,7 @@ fn command_tasks_are_left_to_the_watch_path() {
 fn chat_reports_keep_the_schedule_tag() {
     let report = chat_report("a", "text".to_string(), "2026-01-01T10:00:00Z");
     assert_eq!(report.worker, "schedule:a");
-    assert_eq!(report.status, WATCH_STATUS);
+    assert_eq!(report.status.as_str(), "watch");
     assert_eq!(report.text, "text");
 }
 

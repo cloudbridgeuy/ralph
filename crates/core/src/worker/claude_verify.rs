@@ -2,8 +2,8 @@ use super::acp::REPORT_TOOL;
 use super::claude::{calls_report, init_status};
 use super::{
     decode_line, deny_line, interrupted_end, permission_response, turn_stop, CheckResult,
-    ClaudeLine, Report, ThreadSignal, TurnSummary, Verdict, VersionProbe, ALLOW_ONCE,
-    CLAUDE_COMMAND, CLAUDE_GATE, SERVER_NAME, VERSION_PROBE_LIMIT,
+    ClaudeLine, Report, ReportKind, ReportStatus, ThreadSignal, TurnSummary, Verdict, VersionProbe,
+    ALLOW_ONCE, CLAUDE_COMMAND, CLAUDE_GATE, SERVER_NAME, VERSION_PROBE_LIMIT,
 };
 use crate::stream::interrupt_line;
 use serde_json::Value;
@@ -158,7 +158,9 @@ pub fn report_check(fold: &ClaudeFold, inbox: &[Report]) -> CheckResult {
     }
     match inbox {
         [] => CheckResult::fail("report", "the report call wrote no inbox file"),
-        [only] if only.status == "done" => CheckResult::pass("report", "inbox got a done report"),
+        [only] if only.status == ReportKind::Worker(ReportStatus::Done) => {
+            CheckResult::pass("report", "inbox got a done report")
+        }
         [only] => CheckResult::fail(
             "report",
             format!("the report was {}, expected done", only.status),
@@ -649,7 +651,7 @@ mod tests {
         let after = [file("a.json", "blocked"), file("b.json", "done")];
         let found = new_reports(&before, &after);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].status, "done");
+        assert_eq!(found[0].status.as_str(), "done");
     }
 
     #[test]

@@ -213,7 +213,7 @@ pub const REPORT_REMINDER: &str = "You stopped without calling report. Call repo
 pub struct Report {
     pub worker: String,
     pub at: String,
-    pub status: String,
+    pub status: ReportKind,
     pub text: String,
 }
 
@@ -222,7 +222,7 @@ impl Report {
         Self {
             worker: worker.to_string(),
             at: at.to_string(),
-            status: status.as_str().to_string(),
+            status,
             text,
         }
     }

@@ -121,7 +121,7 @@ impl From<InboxReport> for WireReport {
         Self {
             worker: report.worker,
             at: report.at,
-            status: report.status,
+            status: report.status.as_str().to_string(),
             text: report.text,
         }
     }
@@ -182,12 +182,7 @@ pub fn inbox_frame(key: &SessionKey, report: InboxReport, unread: usize) -> Serv
     }
     if let ServerMsg::Inbox { report, .. } = &mut frame {
         const MAX_FIELD_BYTES: usize = MAX_FRAME_BYTES / 32;
-        for field in [
-            &mut report.worker,
-            &mut report.at,
-            &mut report.status,
-            &mut report.text,
-        ] {
+        for field in [&mut report.worker, &mut report.at, &mut report.text] {
             if field.len() > MAX_FIELD_BYTES {
                 field.truncate(field.floor_char_boundary(MAX_FIELD_BYTES - '…'.len_utf8()));
                 field.push('…');
@@ -758,7 +753,7 @@ mod tests {
             let report = InboxReport {
                 worker: "w1".into(),
                 at: "now".into(),
-                status: kind.as_str().into(),
+                status: kind,
                 text: "body".into(),
             };
             assert_eq!(

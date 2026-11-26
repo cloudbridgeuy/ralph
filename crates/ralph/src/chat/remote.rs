@@ -93,7 +93,7 @@ fn needing_user(wire: &WireReport) -> Option<Report> {
         Attention::NeedsUser => Some(Report {
             worker: wire.worker.clone(),
             at: wire.at.clone(),
-            status: wire.status.clone(),
+            status,
             text: wire.text.clone(),
         }),
         Attention::Informs => None,

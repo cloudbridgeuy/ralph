@@ -106,7 +106,7 @@ fn a_permission_line_without_a_request_id_posts_one_failure_and_queues_nothing()
     assert!(run.permission_events().is_empty());
     let reports = run.reports();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].status, "blocked");
+    assert_eq!(reports[0].status.as_str(), "blocked");
     assert_eq!(
         reports[0].text,
         "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."

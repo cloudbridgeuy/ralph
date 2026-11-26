@@ -24,7 +24,7 @@ fn shell_prompt(target: &Path) -> String {
 
 fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
     if delivered
-        && matches!(reports, [entry] if entry.worker == ID && entry.status == "done" && entry.text == TEXT)
+        && matches!(reports, [entry] if entry.worker == ID && entry.status.as_str() == "done" && entry.text == TEXT)
     {
         Ok("one expected report delivered".to_string())
     } else {

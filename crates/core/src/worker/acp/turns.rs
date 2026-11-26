@@ -465,7 +465,7 @@ mod tests {
     fn prompt_failure_report_blocks_the_worker() {
         let report = prompt_failure_report(CURSOR_AGENT.name, "A", "2026-01-01T00:00:00Z", "boom");
         assert_eq!(report.worker, "A");
-        assert_eq!(report.status, "blocked");
+        assert_eq!(report.status.as_str(), "blocked");
         assert!(report.text.contains("boom"));
     }
 

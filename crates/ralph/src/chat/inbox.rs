@@ -72,7 +72,7 @@ fn render_report(report: &Report, display: &Display, width: usize) -> String {
         "{}\n{}",
         worker_header(
             &report.worker,
-            &report.status,
+            report.status,
             width,
             display.color.then_some(&display.theme.palette)
         ),
@@ -128,7 +128,12 @@ mod tests {
         assert!(turn.unwrap().is_some());
         let out = String::from_utf8(out).unwrap();
         assert_eq!(out, shown);
-        let header = worker_header("w1", "done", 40, None);
+        let header = worker_header(
+            "w1",
+            ralph_core::worker::ReportKind::Worker(ralph_core::worker::ReportStatus::Done),
+            40,
+            None,
+        );
         assert!(out.starts_with(&format!("{header}\n")), "{out}");
     }
 
