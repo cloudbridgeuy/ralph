@@ -165,7 +165,8 @@ fn start_ralph(
     let mut guard = ChildGuard(child);
     let stderr_head = Arc::new(Mutex::new(Vec::new()));
     spawn_stderr_reader(stderr, Arc::clone(&stderr_head));
-    let lines = spawn_line_reader(stdout);
+    let stdout_tail = Arc::new(Mutex::new(Vec::new()));
+    let lines = spawn_line_reader(stdout, Arc::clone(&stdout_tail));
     let started = Instant::now();
     let mut read = Vec::new();
     let reason = loop {
@@ -183,10 +184,10 @@ fn start_ralph(
             Err(RecvTimeoutError::Disconnected) => break "stdout closed".to_string(),
         }
     };
-    Err(start_failure(&mut guard, &reason, &read, &stderr_head).into())
+    Err(start_failure(&mut guard, &reason, &stdout_tail, &stderr_head).into())
 }
 
-fn spawn_line_reader(stdout: ChildStdout) -> mpsc::Receiver<String> {
+fn spawn_line_reader(stdout: ChildStdout, tail: Arc<Mutex<Vec<u8>>>) -> mpsc::Receiver<String> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -195,9 +196,14 @@ fn spawn_line_reader(stdout: ChildStdout) -> mpsc::Receiver<String> {
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    if sender.send(line).is_err() {
-                        break;
+                    if let Ok(mut buf) = tail.lock() {
+                        webdriver::push_tail(
+                            &mut buf,
+                            line.as_bytes(),
+                            webdriver::FAILURE_STREAM_CAP,
+                        );
                     }
+                    let _ = sender.send(line);
                 }
             }
         }
@@ -235,7 +241,7 @@ fn exit_within(child: &mut Child, grace: Duration) -> Option<ExitStatus> {
 fn start_failure(
     guard: &mut ChildGuard,
     reason: &str,
-    read: &[String],
+    stdout_tail: &Mutex<Vec<u8>>,
     stderr_head: &Mutex<Vec<u8>>,
 ) -> String {
     let status = match exit_within(&mut guard.0, EXIT_GRACE) {
@@ -249,11 +255,13 @@ fn start_failure(
         }
     };
     sleep(STDERR_SETTLE);
-    let stderr = stderr_head
-        .lock()
-        .map(|buf| String::from_utf8_lossy(&buf).into_owned())
-        .unwrap_or_default();
-    webdriver::format_start_failure(&status, &read.concat(), &stderr)
+    let text = |shared: &Mutex<Vec<u8>>| {
+        shared
+            .lock()
+            .map(|buf| String::from_utf8_lossy(&buf).into_owned())
+            .unwrap_or_default()
+    };
+    webdriver::format_start_failure(&status, &text(stdout_tail), &text(stderr_head))
 }
 
 fn start_firefox(firefox: &Path, profile: &Path) -> Result<ChildGuard, BoxError> {

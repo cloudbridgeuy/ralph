@@ -60,6 +60,12 @@ pub fn push_head(buf: &mut Vec<u8>, chunk: &[u8], cap: usize) {
     buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
 }
 
+pub fn push_tail(buf: &mut Vec<u8>, chunk: &[u8], cap: usize) {
+    buf.extend_from_slice(chunk);
+    let excess = buf.len().saturating_sub(cap);
+    buf.drain(..excess);
+}
+
 fn bounded(text: &str, cap: usize) -> &str {
     let mut end = text.len().min(cap);
     while !text.is_char_boundary(end) {
@@ -513,5 +519,24 @@ mod tests {
         assert!(text.contains("exit status: 1"));
         assert!(text.contains("no stderr"));
         assert!(text.contains("no stdout"));
+    }
+
+    #[test]
+    fn push_tail_keeps_only_the_last_cap_bytes() {
+        let mut buf = Vec::new();
+        push_tail(&mut buf, b"abcd", 6);
+        push_tail(&mut buf, b"efgh", 6);
+        assert_eq!(buf, b"cdefgh");
+        push_tail(&mut buf, b"0123456789", 6);
+        assert_eq!(buf, b"456789");
+    }
+
+    #[test]
+    fn push_tail_accepts_empty_chunks_and_zero_cap() {
+        let mut buf = b"ab".to_vec();
+        push_tail(&mut buf, b"", 4);
+        assert_eq!(buf, b"ab");
+        push_tail(&mut buf, b"cd", 0);
+        assert!(buf.is_empty());
     }
 }
