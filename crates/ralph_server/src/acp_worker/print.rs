@@ -6,6 +6,7 @@ use crate::cursor_sweep::sweep_worker_server;
 use crate::cursor_usage::{record_cursor_usage, CursorTurn};
 use crate::subprocess::unregister_group;
 use crate::transport::stdio::{stop_child, stop_groups};
+use crate::warn::warn_if_err;
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_events::{apply_effect, push_event, Events};
@@ -17,10 +18,10 @@ use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
     exit_outcome, inbox_env, next_chat, once_per_turn_server, print_action_note, print_args,
     print_end_note, print_model, print_spawn_note, print_turn_signals, prompt_failure_report,
-    reduce, task_prompt, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome,
-    HandoffFiles, HarnessId, HeadlessState, ModelUsage, PermissionAnswer, PermissionMode,
-    PrintArgs, PrintEvent, Scope, SessionRecord, SpawnRequest, TurnEnd, Turns, WorkerEvent,
-    WorkerMarkers, CURSOR_AGENT, SERVER_NAME,
+    reduce, turn_end_activity, turn_end_for, Action, ActivityState, ExitOutcome, HandoffFiles,
+    HarnessId, HeadlessState, ModelUsage, PermissionAnswer, PermissionMode, PrintArgs, PrintEvent,
+    Scope, SessionRecord, SpawnRequest, TurnEnd, Turns, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
+    SERVER_NAME,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -213,9 +214,11 @@ impl Shared {
                 Action::PostFailure(problem) => {
                     let at = chrono::Utc::now().to_rfc3339();
                     let agent = HarnessId::Cursor.as_str();
-                    self.inbox
-                        .post(&prompt_failure_report(agent, &self.id, &at, &problem), 0)
-                        .ok();
+                    warn_if_err(
+                        self.inbox
+                            .post(&prompt_failure_report(agent, &self.id, &at, &problem), 0),
+                        format!("posting the prompt failure of worker {}", self.id),
+                    );
                 }
                 Action::Interrupt(_) => self.interrupt_group(),
                 Action::InterruptResult { entry, outcome } => {
@@ -486,6 +489,7 @@ impl PrintWorker {
                     model: request.model.clone(),
                     effort: None,
                     permissions: Some(mode),
+                    scheduled: request.scheduled,
                 },
                 store,
             },
@@ -506,7 +510,7 @@ impl PrintWorker {
         });
         if resume.is_none() {
             write_file(&shared.run.session, &shared.run.record.render()).ok();
-            let task = task_prompt(&request.task);
+            let task = request.prompt();
             shared.drive(|turns| turns.accept(task));
         }
         Ok(Self {

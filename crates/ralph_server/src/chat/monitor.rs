@@ -22,6 +22,7 @@ use ralph_core::chat_thread_auto::split_close_reports;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::fresh_reports;
 use ralph_core::program_status::{self, report_for, Phase};
+use ralph_core::schedule_resume::LostTurn;
 use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
@@ -84,6 +85,7 @@ pub struct Monitor {
     pub known: Mutex<Vec<Report>>,
     pub fresh: Mutex<(Vec<Report>, usize)>,
     pub starting: Arc<Mutex<Vec<String>>>,
+    pub resuming: Mutex<Vec<LostTurn>>,
     pub scheduled_reports: Mutex<Vec<Report>>,
     pub warned: Mutex<HashSet<String>>,
     pub unrecorded: Mutex<HashSet<String>>,

@@ -1,4 +1,6 @@
-use super::{shell_quote, BlockedContent, PermissionOption, ALLOW_ONCE};
+use super::{
+    shell_quote, BlockedContent, PermissionOption, Unattended, ALLOW_ONCE, UNATTENDED_REFUSAL,
+};
 use crate::chat_socket::{runtime_dir_name, StoreKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -114,6 +116,7 @@ pub fn parse_hook_input(text: &str) -> Result<HookInput, String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HookOutcome {
     Answered(String),
+    RefusedUnattended,
     TimedOut,
     BridgeGone(String),
     BadInput(String),
@@ -135,6 +138,7 @@ fn deny_reason(outcome: &HookOutcome) -> Option<String> {
     match outcome {
         HookOutcome::Answered(option) if option == ALLOW_ONCE => None,
         HookOutcome::Answered(_) => Some("the person denied it".to_string()),
+        HookOutcome::RefusedUnattended => Some(UNATTENDED_REFUSAL.to_string()),
         HookOutcome::TimedOut => Some(format!("no answer within {} s", BRIDGE_TIMEOUT.as_secs())),
         HookOutcome::BridgeGone(error) => {
             Some(format!("the ralph permission bridge failed: {error}"))
@@ -164,8 +168,21 @@ pub struct BridgeAsk {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BridgeAnswer {
-    pub option_id: String,
+#[serde(tag = "answer", rename_all = "snake_case")]
+pub enum BridgeAnswer {
+    Chosen { option_id: String },
+    RefusedUnattended,
+}
+
+impl From<Unattended<'_>> for BridgeAnswer {
+    fn from(verdict: Unattended<'_>) -> Self {
+        match verdict {
+            Unattended::Allow(option) => Self::Chosen {
+                option_id: option.option_id.clone(),
+            },
+            Unattended::Deny(_) | Unattended::Cancel => Self::RefusedUnattended,
+        }
+    }
 }
 
 pub fn hook_request_id(tool_use_id: &str, counter: u64) -> String {
@@ -182,7 +199,10 @@ pub fn read_outcome(read: io::Result<String>) -> HookOutcome {
         }
         Ok(line) => serde_json::from_str::<BridgeAnswer>(line.trim()).map_or_else(
             |e| HookOutcome::BridgeGone(format!("unreadable bridge answer: {e}")),
-            |answer| HookOutcome::Answered(answer.option_id),
+            |answer| match answer {
+                BridgeAnswer::Chosen { option_id } => HookOutcome::Answered(option_id),
+                BridgeAnswer::RefusedUnattended => HookOutcome::RefusedUnattended,
+            },
         ),
         Err(e)
             if matches!(

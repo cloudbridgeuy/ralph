@@ -146,6 +146,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         write_file(&files.session, &record.render())?;
         let workers = Workers::new(

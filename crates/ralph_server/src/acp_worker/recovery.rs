@@ -133,6 +133,7 @@ pub(super) fn save(
         model: Some(settings.model.clone()),
         effort: settings.effort.clone(),
         permissions: Some(opening.permission_mode),
+        scheduled: opening.scheduled,
     };
     crate::cursor_owner::write_file_atomic(
         &ralph_core::worker::HandoffFiles::agy(&store, &opening.worker_id).session,
@@ -241,6 +242,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         assert_eq!(resume(&AGY_AGENT, "A", &record, &alias, true), Resume::Go);
         Ok(())
@@ -261,6 +263,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         assert!(matches!(
             resume(&AGY_AGENT, "A", &record, &store, true),
@@ -311,6 +314,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         write_file(&files.session, &record.render())?;
         write_file(&files.close, "")?;
@@ -344,6 +348,7 @@ mod tests {
             permission_mode: PermissionMode::Ask,
             updates: Arc::new(Mutex::new(None)),
             inbox,
+            scheduled: false,
         };
         let settings = agy_settings::Selection {
             model: "flash-high".into(),
@@ -381,6 +386,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         assert!(matches!(
             resume(&AGY_AGENT, "A", &record, dir.path(), true),
@@ -401,6 +407,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         write_file(&files.session, &record.render())?;
         let report = ralph_core::worker::prompt_failure_report(
@@ -432,6 +439,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         let mut current = old.clone();
         current.session_id = "new".into();
@@ -464,6 +472,7 @@ mod tests {
             model: None,
             effort: None,
             permissions: None,
+            scheduled: false,
         };
         write_file(&files.session, &record.render())?;
         let host = CursorHost::agy(dir.path().into());

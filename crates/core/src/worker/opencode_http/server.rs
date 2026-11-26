@@ -98,6 +98,8 @@ pub struct OpencodeRecord {
     pub cwd: PathBuf,
     pub model: String,
     pub inbox: PathBuf,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scheduled: bool,
 }
 
 impl OpencodeRecord {
@@ -216,9 +218,23 @@ mod tests {
             cwd: PathBuf::from("/w"),
             model: "github-copilot/claude-haiku-4.5".to_string(),
             inbox: PathBuf::from("/i"),
+            scheduled: false,
         };
+        assert!(!record.render().contains("scheduled"));
         assert_eq!(OpencodeRecord::parse(&record.render()), Some(record));
         assert_eq!(OpencodeRecord::parse("not json"), None);
+    }
+
+    #[test]
+    fn record_keeps_the_scheduled_flag() {
+        let record = OpencodeRecord {
+            session_id: "ses_one".to_string(),
+            cwd: PathBuf::from("/w"),
+            model: "github-copilot/claude-haiku-4.5".to_string(),
+            inbox: PathBuf::from("/i"),
+            scheduled: true,
+        };
+        assert_eq!(OpencodeRecord::parse(&record.render()), Some(record));
     }
 
     #[test]

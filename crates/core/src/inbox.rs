@@ -188,10 +188,10 @@ impl Ledger {
 
     pub fn ingest(&mut self, arrivals: Vec<(String, Report)>) {
         for (source, report) in arrivals {
-            if self.entries.iter().any(|e| e.source == source) {
-                continue;
+            let entry = Entry { source, report };
+            if !self.entries.contains(&entry) {
+                self.entries.push(entry);
             }
-            self.entries.push(Entry { source, report });
         }
     }
 
@@ -390,6 +390,19 @@ mod tests {
         ledger.ingest(vec![arrival("a"), arrival("b")]);
         ledger.ingest(vec![arrival("b"), arrival("c")]);
         assert_eq!(sources(&ledger), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn ingest_keeps_a_different_report_under_a_known_source() {
+        let mut ledger = Ledger::default();
+        let (source, first) = arrival("a");
+        let second = Report {
+            text: "second".to_string(),
+            ..first.clone()
+        };
+        ledger.ingest(vec![(source.clone(), first.clone())]);
+        ledger.ingest(vec![(source, second.clone())]);
+        assert_eq!(ledger.reports(), [first, second]);
     }
 
     #[test]

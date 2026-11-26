@@ -5,7 +5,7 @@ use crate::chat::memory::{self, Store};
 use crate::chat::monitor::{Monitor, ProcessMemo};
 use crate::chat::port::{SessionPort, TurnCall};
 use crate::chat::schedule::restore_schedule;
-use crate::chat::schedule_worker::alive_worker_ids;
+use crate::chat::schedule_worker::stored_workers;
 use crate::chat::send_it::{Screen, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
@@ -184,6 +184,7 @@ pub fn open_core(parts: CoreParts) -> Monitor {
         known: Mutex::new(known),
         fresh: Mutex::new((Vec::new(), 0)),
         starting: Arc::default(),
+        resuming: Mutex::new(Vec::new()),
         scheduled_reports: Mutex::new(Vec::new()),
         warned: Mutex::new(HashSet::new()),
         unrecorded: Mutex::new(HashSet::new()),
@@ -215,7 +216,11 @@ pub fn serve(
         },
         roster,
     );
-    restore_schedule(&core.schedule, &alive_worker_ids(&core.store_dir));
+    *locked(&core.resuming) = restore_schedule(
+        &core.schedule,
+        &core.store_dir,
+        &stored_workers(&core.store_dir),
+    );
     handle
 }
 
