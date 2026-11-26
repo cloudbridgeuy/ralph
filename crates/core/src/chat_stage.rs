@@ -11,6 +11,7 @@ pub const STAGE_REPEAT_TURNS: usize = 5;
 pub const STAGE_ADD: &str = "stage_add";
 pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
+pub const THREAD_UNRESOLVED: &str = "unresolved, end with /thread merge or drop";
 pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,7 +156,7 @@ pub fn expire(stage: Stage, log_len: usize) -> (Stage, Vec<Item>) {
 }
 
 pub fn thread_line(name: &ThreadName) -> String {
-    format!("thread {name}: unresolved, end with /thread merge or drop")
+    format!("thread {name}: {THREAD_UNRESOLVED}")
 }
 
 pub fn render(items: &[Item], status: &Status, thread: Option<&ThreadName>) -> String {
