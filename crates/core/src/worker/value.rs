@@ -2,7 +2,7 @@ use super::{capabilities, is_dashed_token, Feature, HarnessId, Support};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WorkerId(String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
