@@ -59,6 +59,7 @@ pub mod chat_typed;
 pub mod chat_view;
 pub mod chunk;
 pub mod claude_leftovers;
+pub mod claude_md;
 pub mod code_frame;
 pub mod cursor_leftovers;
 pub mod diff_command;

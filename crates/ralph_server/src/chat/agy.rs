@@ -9,6 +9,7 @@ use ralph_core::cancel::CancelToken;
 use ralph_core::chat_backend::{Caps, AGY};
 use ralph_core::chat_memory::AgyNapError;
 use ralph_core::chat_tools::ToolPolicy;
+use ralph_core::claude_md::append_claude_md;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{extract_response_text, VerboseToolsConfig};
 use ralph_core::worker::{agy_notice, agy_stream_events, AgyEvent, Choice, Classes};
@@ -27,6 +28,7 @@ pub struct AgySlot {
     pub effort: Option<String>,
     pub servers: Vec<McpServer>,
     pub policy: ToolPolicy,
+    pub claude_md: String,
 }
 
 pub struct AgySession {
@@ -131,7 +133,10 @@ impl ChatBackend for AgySlot {
         .map_err(|message| SubprocessError::SpawnFailed(io::Error::other(message)))?;
         Ok(Box::new(AgySession {
             live: Some(live),
-            opening: Some(strip_controls(launch.system).into_owned()),
+            opening: Some(append_claude_md(
+                &strip_controls(launch.system),
+                &self.claude_md,
+            )),
             config: SpinnerSubprocessConfig {
                 command: String::new(),
                 timeout_secs: None,

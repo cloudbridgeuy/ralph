@@ -4,6 +4,8 @@ use crate::signal;
 use ralph_core::chat::{CustomPrompt, ReplyImages};
 use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::chat_tools::chat_tool_policy;
+use ralph_core::claude_leftovers::claude_dir;
+use ralph_core::claude_md::{claude_md_paths, git_root, inline_claude_md, Layout, Loaded};
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
 use ralph_core::worker::ATTACHMENTS_DIR;
@@ -147,6 +149,7 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
                         effort,
                         servers: acp_servers(&mcp_config)?,
                         policy: chat_tool_policy(names),
+                        claude_md: agy_claude_md(config, &settings.cwd),
                     }),
                     Vec::new(),
                 )
@@ -246,6 +249,26 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         start_warnings,
         model_args,
         close,
+    })
+}
+
+fn agy_claude_md(config: &ralph_server::config::AppConfig, cwd: &Path) -> String {
+    let home = dirs::home_dir();
+    let user_dir = home
+        .as_deref()
+        .filter(|_| config.chat.user_claude_md)
+        .map(|home| claude_dir(config.claude.config_dir.as_deref(), home));
+    let root = git_root(cwd, &|dir| dir.join(".git").exists());
+    let paths = claude_md_paths(&Layout {
+        git_root: &root,
+        cwd,
+        user_dir: user_dir.as_deref(),
+        project: config.chat.project_claude_md,
+    });
+    inline_claude_md(&paths, home.as_deref(), &|path| {
+        let path = path.canonicalize().ok()?;
+        let text = std::fs::read_to_string(&path).ok()?;
+        Some(Loaded { path, text })
     })
 }
 
