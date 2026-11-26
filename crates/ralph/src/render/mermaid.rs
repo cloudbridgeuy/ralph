@@ -6,6 +6,8 @@ const SMALL_SOURCE_BYTES: usize = 16 * 1024;
 const LARGE_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_PARTICIPANTS: usize = 20;
 const MAX_STATEMENTS: usize = 2000;
+const MAX_GIT_COMMITS: usize = 200;
+const MAX_GIT_BRANCHES: usize = 20;
 const SEQUENCE_ARROWS: [&str; 8] = ["-->>", "->>", "--x", "-x", "--)", "-)", "-->", "->"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +17,7 @@ pub enum DiagramKind {
     Er,
     Class,
     State,
+    GitGraph,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +29,62 @@ pub enum Refusal {
     TooManyRelations,
     TooManyParticipants,
     TooManyStatements,
+    TooManyCommits,
+    TooManyBranches,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct BranchName<'a>(&'a str);
+
+impl<'a> BranchName<'a> {
+    const MAIN: Self = Self("main");
+
+    fn parse(raw: &'a str) -> Option<Self> {
+        let name = raw.trim();
+        (!name.is_empty()).then_some(Self(name))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitLine<'a> {
+    Commit,
+    Branch(BranchName<'a>),
+    Other,
+}
+
+impl<'a> GitLine<'a> {
+    fn parse(line: &'a str) -> Self {
+        let code = line.split_once("%%").map_or(line, |(code, _)| code);
+        let (verb, rest) = code.split_once(char::is_whitespace).unwrap_or((code, ""));
+        match verb {
+            "commit" | "merge" | "cherry-pick" => Self::Commit,
+            "branch" => BranchName::parse(rest).map_or(Self::Other, Self::Branch),
+            _ => Self::Other,
+        }
+    }
+}
+
+struct GitSize {
+    commits: usize,
+    branches: usize,
+}
+
+fn size_of(lines: &[GitLine<'_>]) -> GitSize {
+    let mut commits = 0;
+    let mut branches = HashSet::from([BranchName::MAIN]);
+    for line in lines {
+        match line {
+            GitLine::Commit => commits += 1,
+            GitLine::Branch(name) => {
+                branches.insert(*name);
+            }
+            GitLine::Other => {}
+        }
+    }
+    GitSize {
+        commits,
+        branches: branches.len(),
+    }
 }
 
 fn body_lines(source: &str) -> impl Iterator<Item = &str> {
@@ -46,6 +105,7 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "erDiagram" => Some(DiagramKind::Er),
         "classDiagram" => Some(DiagramKind::Class),
         "stateDiagram" | "stateDiagram-v2" => Some(DiagramKind::State),
+        "gitGraph" => Some(DiagramKind::GitGraph),
         _ => None,
     }
 }
@@ -126,6 +186,19 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
                 return Err(Refusal::TooManyParticipants);
             }
         }
+        DiagramKind::GitGraph => {
+            if source.len() > SMALL_SOURCE_BYTES {
+                return Err(Refusal::TooLarge);
+            }
+            let lines: Vec<GitLine<'_>> = body_lines(source).skip(1).map(GitLine::parse).collect();
+            let size = size_of(&lines);
+            if size.commits > MAX_GIT_COMMITS {
+                return Err(Refusal::TooManyCommits);
+            }
+            if size.branches > MAX_GIT_BRANCHES {
+                return Err(Refusal::TooManyBranches);
+            }
+        }
     }
     Ok(kind)
 }
@@ -182,6 +255,14 @@ mod tests {
             (
                 "stateDiagram-v2\n  [*] --> Idle\n  Idle --> [*]",
                 DiagramKind::State,
+            ),
+            (
+                "gitGraph\n    commit id: \"main\"\n    branch worker/x\n    commit id: \"C1\"",
+                DiagramKind::GitGraph,
+            ),
+            (
+                "gitGraph LR:\n  commit\n  branch dev\n  commit\n  checkout main\n  merge dev",
+                DiagramKind::GitGraph,
             ),
         ];
         for (src, kind) in cases {
@@ -301,6 +382,51 @@ mod tests {
         assert_eq!(
             mermaid_precheck(&format!("sequenceDiagram\n{implicit}"), &l),
             Err(Refusal::TooManyParticipants)
+        );
+    }
+
+    #[test]
+    fn git_graph_commit_limit_counts_every_commit_verb() {
+        let l = limits();
+        let graph = |n: usize| {
+            let verbs = ["commit", "merge dev", "cherry-pick id: \"a\""];
+            let rows: String = verbs
+                .iter()
+                .cycle()
+                .take(n)
+                .map(|verb| format!("  {verb}\n"))
+                .collect();
+            format!("gitGraph\n  branch dev\n  checkout main\n{rows}")
+        };
+        assert_eq!(mermaid_precheck(&graph(200), &l), Ok(DiagramKind::GitGraph));
+        assert_eq!(
+            mermaid_precheck(&graph(201), &l),
+            Err(Refusal::TooManyCommits)
+        );
+    }
+
+    #[test]
+    fn git_graph_branch_limit_counts_distinct_names_and_main() {
+        let l = limits();
+        let graph = |n: usize| {
+            let branches: String = (0..n).map(|i| format!("  branch b{i}\n")).collect();
+            format!("gitGraph\n{branches}  branch b0\n  branch b0 %% again\n  branch main\n")
+        };
+        assert_eq!(mermaid_precheck(&graph(19), &l), Ok(DiagramKind::GitGraph));
+        assert_eq!(
+            mermaid_precheck(&graph(20), &l),
+            Err(Refusal::TooManyBranches)
+        );
+    }
+
+    #[test]
+    fn git_graph_source_limit() {
+        let graph = |n: usize| format!("gitGraph\n%%{}\ncommit", "x".repeat(n));
+        let at = SMALL_SOURCE_BYTES - graph(0).len();
+        assert!(mermaid_precheck(&graph(at), &limits()).is_ok());
+        assert_eq!(
+            mermaid_precheck(&graph(at + 1), &limits()),
+            Err(Refusal::TooLarge)
         );
     }
 
