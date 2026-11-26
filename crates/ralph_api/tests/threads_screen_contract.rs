@@ -50,7 +50,7 @@ fn the_threads_script_opens_in_strict_mode_and_declares_functions_before_app_js_
 }
 
 #[test]
-fn the_nav_lists_threads_between_memory_and_config() {
+fn the_nav_lists_threads_second_between_memory_and_workers() {
     let html = served("/");
     let memory = html
         .find("<a href=\"#/memory\"><span class=\"n\" aria-hidden=\"true\">1</span>memory</a>")
@@ -58,11 +58,13 @@ fn the_nav_lists_threads_between_memory_and_config() {
     let threads = html
         .find("<a href=\"#/threads\"><span class=\"n\" aria-hidden=\"true\">2</span>threads</a>")
         .unwrap();
-    let config = html
-        .find("<a href=\"#/config\"><span class=\"n\" aria-hidden=\"true\">3</span>config</a>")
+    let workers = html
+        .find("<a href=\"#/workers\"><span class=\"n\" aria-hidden=\"true\">3</span>workers</a>")
         .unwrap();
-    assert!(memory < threads && threads < config);
-    assert!(APP_JS.contains("const SCREENS = [\"/memory\", \"/threads\", \"/config\"];"));
+    assert!(memory < threads && threads < workers);
+    assert!(APP_JS.contains(
+        "const SCREENS = [\"/memory\", \"/threads\", \"/workers\", \"/schedules\", \"/watches\", \"/config\"];"
+    ));
     assert!(APP_JS.contains("const ROUTE = SCREENS[0];"));
 }
 

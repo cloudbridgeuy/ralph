@@ -1,7 +1,7 @@
 use super::*;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
-use crate::worker::Report;
+use crate::worker::{Report, ReportKind};
 use signing::*;
 
 mod block;
@@ -83,19 +83,14 @@ fn an_off_stop_says_the_plan_is_deleted() {
 }
 
 fn report(status: &str) -> Report {
-    Report {
-        worker: "GUZ-1".to_string(),
-        at: "2026-01-01T00:00:00Z".to_string(),
-        status: status.to_string(),
-        text: "text".to_string(),
-    }
+    worker_report("GUZ-1", status)
 }
 
 #[test]
 fn only_question_and_blocked_reports_flag_a_worker() {
     assert!(worker_flagged(&[report("done"), report("question")]));
     assert!(worker_flagged(&[report("blocked")]));
-    assert!(!worker_flagged(&[report("done"), report("progress")]));
+    assert!(!worker_flagged(&[report("done"), report("check")]));
     assert!(!worker_flagged(&[]));
 }
 
@@ -270,9 +265,9 @@ fn at(step: usize) -> Progress {
 }
 
 fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Ticked> {
-    let last: HashMap<String, String> = known
+    let last: HashMap<String, ReportKind> = known
         .iter()
-        .map(|(id, status)| (id.to_string(), status.to_string()))
+        .map(|(id, status)| (id.to_string(), ReportKind::parse(status).unwrap()))
         .collect();
     let running: Vec<String> = running.iter().map(ToString::to_string).collect();
     start_run(
@@ -293,10 +288,17 @@ fn flagged_stop() -> StopReason {
 }
 
 fn worker_report(worker: &str, status: &str) -> Report {
-    Report {
-        worker: worker.to_string(),
-        status: status.to_string(),
-        ..report(status)
+    let at = "2026-01-01T00:00:00Z";
+    let text = "text".to_string();
+    match crate::worker::ReportKind::parse(status).unwrap() {
+        crate::worker::ReportKind::Worker(s) => Report::from_worker(worker, at, s, text),
+        crate::worker::ReportKind::Check => Report::check(worker, at, text),
+        crate::worker::ReportKind::Warning => Report::warning(worker, at, text),
+        crate::worker::ReportKind::Watch => Report::watch(worker, at, text),
+        crate::worker::ReportKind::Merged => Report::merged(worker, at, text),
+        crate::worker::ReportKind::View => Report::view(worker, at, text),
+        crate::worker::ReportKind::ThreadClosed => Report::thread_closed(worker, at, text),
+        crate::worker::ReportKind::External => Report::external(worker, at, text),
     }
 }
 
@@ -363,7 +365,7 @@ fn reports_move_on_wait_or_stop() {
         ),
         (worker_report("X9", "done"), (at(0), Next::Wait)),
         (
-            worker_report("E1", "exited"),
+            worker_report("E1", "check"),
             (at(0), Next::Stop(StopReason::Unmet { step: 1 })),
         ),
     ] {

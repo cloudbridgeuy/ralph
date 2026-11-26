@@ -105,7 +105,7 @@ mod tests {
         let reports = posted(dir.path());
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].worker, "external:ci");
-        assert_eq!(reports[0].status, "report");
+        assert_eq!(reports[0].status.as_str(), "report");
         assert_eq!(reports[0].text, "all green");
     }
 

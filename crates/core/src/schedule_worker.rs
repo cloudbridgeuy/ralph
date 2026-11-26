@@ -2,8 +2,7 @@ use crate::schedule::{
     format_span, watch_id, Task, TaskKind, TaskStatus, SCHEDULE_ID_PREFIX,
     WORKER_DEFAULT_TIMEOUT_SECS,
 };
-use crate::watch::WATCH_STATUS;
-use crate::worker::{HarnessId, Report, ReportStatus, WorkerId, WorkerIdError};
+use crate::worker::{Attention, HarnessId, Report, ReportKind, WorkerId, WorkerIdError};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
 use std::time::Duration;
 
@@ -120,15 +119,11 @@ fn report_end(task: &Task, reports: &[Report]) -> Option<WorkerEnd> {
         .iter()
         .filter(|report| report.worker == worker)
         .filter(|report| DateTime::parse_from_rfc3339(&report.at).is_ok_and(|at| at >= started))
-        .filter_map(|report| {
-            ReportStatus::ALL
-                .iter()
-                .find(|status| status.as_str() == report.status)
-        })
+        .filter_map(|report| report.status.worker_status())
         .next_back()
-        .map(|status| match status {
-            ReportStatus::Done => WorkerEnd::Done,
-            ReportStatus::Blocked | ReportStatus::Question => WorkerEnd::Attention,
+        .map(|status| match ReportKind::Worker(status).attention() {
+            Attention::NeedsUser => WorkerEnd::Attention,
+            Attention::Informs => WorkerEnd::Done,
         })
 }
 
@@ -200,12 +195,7 @@ pub fn plan_worker_tick<'a>(
 }
 
 pub fn chat_report(task_id: &str, text: String, at: &str) -> Report {
-    Report {
-        worker: watch_id(task_id),
-        at: at.to_string(),
-        status: WATCH_STATUS.to_string(),
-        text,
-    }
+    Report::watch(&watch_id(task_id), at, text)
 }
 
 pub fn start_failure_text(task_id: &str, error: &str) -> String {
@@ -236,10 +226,8 @@ pub fn vanished_text(task: &Task) -> String {
 pub fn new_scheduled_reports(known: &[Report], incoming: &[Report]) -> Vec<Report> {
     let mut fresh: Vec<Report> = Vec::new();
     for report in incoming {
-        let relevant = report.worker.starts_with(WORKER_ID_PREFIX)
-            && ReportStatus::ALL
-                .iter()
-                .any(|status| status.as_str() == report.status);
+        let relevant =
+            report.worker.starts_with(WORKER_ID_PREFIX) && report.status.worker_status().is_some();
         let seen = known
             .iter()
             .chain(&fresh)

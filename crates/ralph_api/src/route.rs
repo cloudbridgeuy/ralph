@@ -1,6 +1,7 @@
 use crate::assets::{self, Asset, SHELL_PATH};
 use crate::catalogue;
 use crate::config_api;
+use crate::lists_api;
 use crate::memory_api;
 use crate::render_api::{reject_oversize, render};
 use crate::threads_api;
@@ -11,6 +12,9 @@ const HEALTH_PATH: &str = "/api/health";
 const TOKENS_PATH: &str = "/tokens.css";
 const RENDER_PATH: &str = "/api/render";
 const CONFIG_PATH: &str = "/api/config";
+const SCHEDULES_PATH: &str = "/api/schedules";
+const WATCHES_PATH: &str = "/api/watches";
+const WORKERS_PATH: &str = "/api/workers";
 const MEMORY_PATH: &str = "/api/memory";
 const ENTRIES_PATH: &str = "/api/memory/entries";
 const THREADS_PATH: &str = "/api/memory/threads";
@@ -87,6 +91,12 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (THREAD_GRAPH_PATH, "GET") => threads_api::threads(request, config),
         (CONFIG_PATH, "GET") => config_api::config(request, config),
         (CONFIG_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
+        (SCHEDULES_PATH, "GET") => lists_api::schedules(request, config),
+        (SCHEDULES_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
+        (WATCHES_PATH, "GET") => lists_api::watches(request, config),
+        (WATCHES_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
+        (WORKERS_PATH, "GET") => lists_api::workers(request, config),
+        (WORKERS_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (MEMORY_PATH | ENTRIES_PATH | THREADS_PATH | THREAD_GRAPH_PATH, _) => {
             with_header(error(405, "method not allowed"), ("Allow", "GET"))
         }

@@ -27,11 +27,10 @@ use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
     marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
-    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, READY_DIR,
+    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, ReportKind, Scope, READY_DIR,
 };
 use ralph_core::worker_check::{
-    last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, CHECK_STATUS,
-    NUDGE_TEXT,
+    last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation, NUDGE_TEXT,
 };
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -73,7 +72,7 @@ pub struct Monitor {
     pub store: Store,
     pub store_dir: PathBuf,
     pub status: Mutex<Status>,
-    pub seen: Mutex<HashMap<String, String>>,
+    pub seen: Mutex<HashMap<String, ReportKind>>,
     pub active: Mutex<Option<HashSet<String>>>,
     pub recent_history_tokens: usize,
     pub worker_check_secs: Option<u64>,
@@ -254,12 +253,7 @@ impl Monitor {
                     format!("nudging worker {id}"),
                 ),
                 CheckAction::Inbox(id, text) => {
-                    let report = Report {
-                        worker: id.clone(),
-                        at: chrono::Utc::now().to_rfc3339(),
-                        status: CHECK_STATUS.to_string(),
-                        text,
-                    };
+                    let report = Report::check(&id, &chrono::Utc::now().to_rfc3339(), text);
                     warn_if_err(
                         self.inbox.post(&report, 0),
                         format!("posting check for worker {id}"),

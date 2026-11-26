@@ -1,6 +1,6 @@
 "use strict";
 
-const SCREENS = ["/memory", "/threads", "/config"];
+const SCREENS = ["/memory", "/threads", "/workers", "/schedules", "/watches", "/config"];
 const ROUTE = SCREENS[0];
 const PAGE_SIZE = 20;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -773,6 +773,91 @@ function drawConfig(main, data) {
   main.replaceChildren(...boxes);
 }
 
+function listPill(text, tone) {
+  return append(el("r-pill", null, { tone, shape: "square" }), el("span", text));
+}
+
+const SCHEDULE_TONES = { pending: "info", running: "ok", proposed: "neutral" };
+const WATCH_TONES = { persistent: "accent", normal: "neutral" };
+
+const LISTS = {
+  "/workers": {
+    name: "Workers",
+    path: "/api/workers",
+    empty: "No live workers",
+    columns: ["Worker", "Harness", "State", "Pending", "Ticket", "Last report"],
+    cells: (row) => [
+      row.id,
+      row.harness,
+      listPill(row.state, row.tone),
+      String(row.pending_count),
+      row.ticket || "-",
+      row.last_report_status ? row.last_report_status + " " + row.last_report_at : "-",
+    ],
+  },
+  "/schedules": {
+    name: "Schedules",
+    path: "/api/schedules",
+    empty: "No scheduled tasks",
+    columns: ["Task", "Kind", "Status", "Runs at", "Repeat", "Late"],
+    cells: (row) => [
+      row.id,
+      row.kind,
+      listPill(row.status, SCHEDULE_TONES[row.status] || "neutral"),
+      row.at,
+      row.repeat || "-",
+      row.late ? listPill("late", "bad") : "-",
+    ],
+  },
+  "/watches": {
+    name: "Watches",
+    path: "/api/watches",
+    empty: "No active watches",
+    columns: ["Watch", "Kind", "Started", "Wakes", "Expires"],
+    cells: (row) => [
+      row.id,
+      listPill(row.kind, WATCH_TONES[row.kind] || "neutral"),
+      row.started_at,
+      row.wake_deadline || "-",
+      row.timeout_deadline || "-",
+    ],
+  },
+};
+
+async function loadList(spec) {
+  const data = await api(spec.path);
+  document.getElementById("store").textContent = data.store;
+  return data;
+}
+
+function listFailure(name, error, retry) {
+  const box = el("r-error", null, { role: "alert" });
+  const why = el("span", null, { class: "why" });
+  why.textContent = error.why || error.message || String(error);
+  const button = el("button", "Retry", { type: "button", class: "btn" });
+  button.addEventListener("click", retry);
+  append(box, el("span", name + " did not load", { class: "what" }), why, append(el("span", null, { class: "next" }), button));
+  return box;
+}
+
+function listTable(spec, rows) {
+  const head = append(el("tr"), ...spec.columns.map((name) => el("th", name)));
+  const body = el("tbody");
+  rows.forEach((row) => {
+    const cells = spec.cells(row).map((cell) => append(el("td"), typeof cell === "string" ? document.createTextNode(cell) : cell));
+    append(body, append(el("tr"), ...cells));
+  });
+  return append(el("r-table"), append(el("table"), append(el("thead"), head), body));
+}
+
+function drawList(main, spec, data) {
+  if (data.rows.length === 0) {
+    main.replaceChildren(emptyState(spec.empty));
+    return;
+  }
+  main.replaceChildren(listTable(spec, data.rows));
+}
+
 function markCurrentScreen(route) {
   for (const link of document.querySelectorAll("nav a")) {
     if (link.getAttribute("href") === "#" + route) link.setAttribute("aria-current", "page");
@@ -795,12 +880,14 @@ async function show(refocus) {
   main.replaceChildren();
   if (state.route === THREADS_ROUTE) return showThreads(main, mine, refocus);
   const config = state.route === "/config";
-  const stop = delayedSpinner(main, config ? "Loading config" : "Loading memory");
+  const list = LISTS[state.route];
+  const stop = delayedSpinner(main, list ? "Loading " + list.name.toLowerCase() : config ? "Loading config" : "Loading memory");
   try {
-    const data = await (config ? loadConfig() : loadMemory(state));
+    const data = await (list ? loadList(list) : config ? loadConfig() : loadMemory(state));
     if (mine !== generation) return;
     stop();
-    if (config) drawConfig(main, data);
+    if (list) drawList(main, list, data);
+    else if (config) drawConfig(main, data);
     else drawMemory(main, state, data);
     const again = focusKey && main.querySelector('button[data-key="' + focusKey + '"]');
     if (again) again.focus();
@@ -808,7 +895,8 @@ async function show(refocus) {
   } catch (error) {
     if (mine !== generation) return;
     stop();
-    const box = config ? configFailure(error, () => show(true)) : failure(error, () => show(true));
+    const retry = () => show(true);
+    const box = list ? listFailure(list.name, error, retry) : config ? configFailure(error, retry) : failure(error, retry);
     main.replaceChildren(box);
     if (refocus) focusRetry(box);
   }

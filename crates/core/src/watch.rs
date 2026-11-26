@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub const WATCH_STATUS: &str = "watch";
 pub const WATCH_ID_PREFIX: &str = "watch:";
 pub const TAIL_MAX_LINES: usize = 50;
 pub const TAIL_MAX_BYTES: usize = 8 * 1024;
@@ -211,12 +210,7 @@ pub fn report_text(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail) -> Str
 }
 
 pub fn build_report(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail, at: &str) -> Report {
-    Report {
-        worker: spec.id.clone(),
-        at: at.to_string(),
-        status: WATCH_STATUS.to_string(),
-        text: report_text(spec, outcome, tail),
-    }
+    Report::watch(&spec.id, at, report_text(spec, outcome, tail))
 }
 
 #[cfg(test)]
@@ -488,7 +482,7 @@ mod tests {
         let report = build_report(&spec(None), &WatchOutcome::Exited(0), &tail_of(&[]), "t1");
         assert_eq!(report.worker, "ci");
         assert_eq!(report.at, "t1");
-        assert_eq!(report.status, WATCH_STATUS);
+        assert_eq!(report.status.as_str(), "watch");
         assert!(report.text.contains("exited with code 0"));
     }
 

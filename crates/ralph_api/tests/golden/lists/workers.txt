@@ -1,0 +1,7 @@
+status: 200
+Content-Type: application/json
+Cache-Control: no-store
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+
+{"store":"store","rows":[{"id":"alpha","harness":"claude","state":"blocked","tone":"warn","pending_count":2,"ticket":"GUZ-1","last_report_status":"done","last_report_at":"2026-03-01T09:00:00Z"},{"id":"bravo","harness":"cursor","state":"waiting","tone":"info","pending_count":0,"ticket":null,"last_report_status":null,"last_report_at":null},{"id":"charlie","harness":"agy","state":"failed","tone":"bad","pending_count":0,"ticket":null,"last_report_status":null,"last_report_at":null},{"id":"delta","harness":"codex","state":"gone","tone":"neutral","pending_count":0,"ticket":null,"last_report_status":null,"last_report_at":null},{"id":"echo","harness":"opencode","state":"unreported","tone":"accent","pending_count":0,"ticket":null,"last_report_status":null,"last_report_at":null},{"id":"foxtrot","harness":"claude","state":"running","tone":"ok","pending_count":0,"ticket":null,"last_report_status":null,"last_report_at":null}]}

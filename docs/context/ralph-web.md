@@ -24,6 +24,9 @@
 | Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
 | Markdown | `crates/ralph_api/src/render/{prose,md_event,md_link,code}.rs` | `render_markdown()`: pulldown-cmark events to HTML inside `<r-prose>`; `code.rs` highlights fenced blocks |
 | Catalogue page | `crates/ralph_api/src/catalogue/` | `page()` builds `/catalogue`; `fixture.rs` parses the fixture |
+| List routes | `crates/ralph_api/src/lists_api.rs` | `workers`, `schedules`, `watches` handlers |
+| List rows | `crates/core/src/{schedule_command,watch_command}.rs`, `crates/core/src/workers_view/web.rs` | pure `task_rows()`, `watch_rows()`, `worker_state_rows()` |
+| Worker facts | `crates/ralph_server/src/worker_facts.rs` | `worker_facts()`: reads the marker files and the spawn record |
 | Fixture | `crates/ralph_api/fixtures/catalogue.json` | sanitised sample data for the catalogue |
 | Fixture generator | `xtask/src/catalogue/` | `core.rs` is pure; `mod.rs` reads and writes files |
 
@@ -131,6 +134,8 @@ Risk:
 | any query key but `token` on `/api/threads` | 400 `{"error":"unknown query key"}` |
 | store unreadable on `/api/threads` | 500 `{"error":"threads unavailable"}`, with no path |
 | other method on `/api/threads` | 405 with `Allow: GET` |
+| `GET /api/workers`, `GET /api/schedules`, `GET /api/watches` | 200 `{"store","rows"}`; see [Workers, schedules and watches](#workers-schedules-and-watches) |
+| other method on those three routes | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
 
 The 503 is the only answer that does not pass the Host and token checks. The server sends it before `route()` runs, so a request without a token also gets it. The other rows apply in the order shown, after the 503 row.
@@ -182,7 +187,7 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 
 Redaction: a row has `redacted: true` and no value when its key is on the redact list (shells, editor, file and directory paths, MCP servers, prompts, permission and sandbox keys), or when its key is not on the safe list and the value looks sensitive (a path, a URL, `@`, `key=` or `token=`). The rule is `crates/ralph_server/src/config/redact.rs`. The handler is `crates/ralph_api/src/config_api.rs`.
 
-The shell shows the route as the second tab, `#/config`. It draws one `r-box` for each section, with the row count in the border. Each row is an `r-kv` line with the key, the value and the source as a pill (muted for `default`). A redacted row shows a muted `hidden` mark. No rows give an `r-empty` "No settings". A failed load gives an `r-error` "Config did not load" with the `why` text and a retry button. The contract is `crates/ralph_api/tests/config_screen_contract.rs`.
+The shell shows the route as the sixth tab, `#/config`. It draws one `r-box` for each section, with the row count in the border. Each row is an `r-kv` line with the key, the value and the source as a pill (muted for `default`). A redacted row shows a muted `hidden` mark. No rows give an `r-empty` "No settings". A failed load gives an `r-error` "Config did not load" with the `why` text and a retry button. The contract is `crates/ralph_api/tests/config_screen_contract.rs`.
 
 ## Embedded assets
 
@@ -318,7 +323,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Memory screen
 
-- Routes `#/memory` and `#/config`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `css/memory.css`.
+- Routes `#/memory`, `#/threads`, `#/workers`, `#/schedules`, `#/watches` and `#/config`. A hash with any other route is replaced by `#/memory`. All code is in `assets/app.js`: plain script, no framework, no build step. Pure helpers (`parseHash`, `buildHash`, `defaultAfter`, `clampAfter`, `rangeAfter`, `olderAfter`, `newerAfter`, `treeStep`, `leafRootKey`, `pagerScope`, `pagerLabel`, `pagerDirection`, `crumbParts`, `statLine`, `compactAt`, `roleAttrs`, `navTarget`) sit apart from the DOM code. The styles are in `css/memory.css`.
 - Layout: thread tabs, a stat line, and a `.split` with the tree on the left and a detail pane on the right. The split stacks at 760px or narrower.
 - Tabs: one link per thread, `main` first, then the names from `/api/memory/threads`. The current thread has `aria-current="page"`. A parked or merged thread shows a pill.
 - Stat line: from the root `stats`, for example `45 entries, 2 of 8 blocks summarised, last entry <time>`.
@@ -356,7 +361,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 
 ## Threads screen
 
-- Route `#/threads`, the second nav link (memory, threads, config, catalogue). State is in the hash: `#/threads?thread=<name>`. A hash with no `thread` leaves it out. The code is in `assets/threads.js`, which `assets.rs` joins before `app.js`, and the styles are in `css/threads.css`, after `css/memory.css`.
+- Route `#/threads`, the second nav link (memory, threads, workers, schedules, watches, config, catalogue). State is in the hash: `#/threads?thread=<name>`. A hash with no `thread` leaves it out. The code is in `assets/threads.js`, which `assets.rs` joins before `app.js`, and the styles are in `css/threads.css`, after `css/memory.css`.
 - Layout: breadcrumb, a stat line (`N threads, N open, N parked, N merged, N dropped, N messages on main`) and a `.split.master-wide`: the table on the left (`3fr`) and the detail pane on the right (`2fr`, at least 40ch). The split stacks at 760px or narrower.
 - Columns: name (with the r-graph lane), state, fork, created, active, msgs, workers, unread. The `active` column is hidden at 1180px or narrower, `unread` at 1000px, and `workers` at 760px. At 760px the age after the state pill is also hidden.
 - The head row (`main`) and the dropped rows are muted. You cannot select them and they have no `tabindex`. Only `thread` rows are selectable.
@@ -392,3 +397,29 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
 - `.clip` cuts a cell on one line with a CSS ellipsis on the real column width. `app.js` sends the first line of an entry whole and no longer cuts it at a fixed length.
 - Rows reserve a 2px left bar. Hover fills with `--r-hover` and leaves the text colour alone. `aria-selected="true"` fills with `--r-selected` and shows an accent bar. `.open` shows the accent bar with no fill. The memory screen sets `aria-selected` and `.open` on an entry row that is open.
 - `.stackable` is opt-in and only the entries table has it. At 760px or narrower it hides the header and turns each row into two lines: `#`, role and time, then the text, clipped at two lines.
+
+## Workers, schedules and watches
+
+`GET /api/workers`, `GET /api/schedules` and `GET /api/watches` take no parameters. Each answers `{"store":"<name>","rows":[...]}`. `store` is the last path component. Rows hold metadata only. Commands, briefs, follow-up text, report text, pending request text, paths, branches and URLs are never returned. Each row says only whether a follow-up exists.
+
+| Route | Row fields |
+|-------|------------|
+| `/api/schedules` | `id`, `kind` (`command` or `worker`), `status` (`proposed`, `pending` or `running`), `at`, `late`, `deadline`, `timeout_secs`, `repeat`, `has_follow_up`; sorted by `at`, then `id` |
+| `/api/watches` | `id`, `kind` (`normal` or `persistent`), `started_at`, `timeout_secs`, `timeout_deadline`, `wake_deadline`, `has_follow_up`; sorted like `/watch` |
+| `/api/workers` | `id`, `harness`, `state`, `tone`, `pending_count`, `ticket`, `last_report_status`, `last_report_at`; sorted by `id` |
+
+Free text in a stored field is dropped, not masked. `ticket` is returned only in the shape `^[A-Z][A-Z0-9]*-[0-9]+$` with a project of at most 10 characters and a number of at most 8 digits, and `repeat` only for a valid `daily HH:MM` or an `every` span; both are `null` otherwise. `last_report_status` is always `done`, `blocked` or `question`, because the report reader keeps no other status, `last_report_at` is a canonical UTC time or `null`, and `harness` comes from a fixed list of owner directories.
+
+Ids are the exception. `GET /api/schedules` and `GET /api/watches` return each `id` exactly as stored, with no hashing and no filtering, and `GET /api/workers` does the same for worker ids. An id is a name that the model or the user chose, so it may contain any text they put there. The per-run token is the only guard. With `--tailscale`, these routes reach every tailnet device that holds the token.
+
+Worker state comes from the marker files, in this order: `gone`, `blocked`, `waiting`, `unreported`, then the activity label (`running`, `background`, `idle`, `failed`), then `running`. `tone` is chosen on the server: `running` and `background` are `ok`, `blocked` is `warn`, `waiting` is `info`, `unreported` is `accent`, `idle` and `gone` are `neutral`, `failed` is `bad`. Workers are listed from the store files only. There is no tmux, git, monitor or network lookup, so a worker that exists only as a tmux session does not appear.
+
+| Answer | When |
+|--------|------|
+| 200 with `"rows":[]` | the store exists but the directory for the route does not, or it holds no records |
+| 404 `{"error":"store not found"}` | the store directory is missing |
+| 405 with `Allow: GET` | other method |
+
+An unreadable or corrupt record is skipped and the good rows are returned. The readers decide this. `GET /api/schedules` and `GET /api/watches` use `ScheduleStore::read_all` and `WatchStore::read_all`, which never write: a corrupt file stays on disk. The chat uses the `load_all` readers, which still delete a corrupt record. The readers warn on stderr only, never in the body. There is no 500 for these routes, because the readers return no error.
+
+The shell shows the routes as tabs 3 to 5: `#/workers`, `#/schedules` and `#/watches`; config is tab 6 and Catalogue is tab 7. Each screen is an `r-table`. State, status, kind and late cells are `r-pill` marks. Workers use the `tone` from the API. Schedules: `pending` is `info`, `running` is `ok`, `proposed` is `neutral`, and a late task has a `bad` pill. Watches: `normal` is `neutral` and `persistent` is `accent`. An empty list gives an `r-empty` ("No live workers", "No scheduled tasks" or "No active watches"). A failed load gives an `r-error` with a retry button. There is no live refresh. The contracts are `crates/ralph_api/tests/lists_contract.rs` and `lists_screen_contract.rs`.

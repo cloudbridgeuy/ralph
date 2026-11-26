@@ -1,5 +1,5 @@
 use crate::mcp::string_arg;
-use crate::watch::{watch_id, WatchKind, WatchSpec, WATCH_STATUS};
+use crate::watch::{watch_id, WatchKind, WatchSpec};
 use crate::watch_store::file_name;
 use crate::worker::Report;
 use serde::{Deserialize, Serialize};
@@ -131,12 +131,7 @@ pub fn plan_queued(requests: Vec<WatchRequest>, used: &[String], at: &str) -> Qu
 }
 
 pub fn start_failure_report(id: &str, error: &str, at: &str) -> Report {
-    Report {
-        worker: id.to_string(),
-        at: at.to_string(),
-        status: WATCH_STATUS.to_string(),
-        text: format!("Watch `{id}` did not start: {error}."),
-    }
+    Report::watch(id, at, format!("Watch `{id}` did not start: {error}."))
 }
 
 #[cfg(test)]
@@ -186,7 +181,7 @@ mod tests {
         };
         assert_eq!(report.worker, "watch:a");
         assert_eq!(report.at, "t1");
-        assert_eq!(report.status, WATCH_STATUS);
+        assert_eq!(report.status.as_str(), "watch");
         assert!(report
             .text
             .contains("did not start: a watch named `watch:a` is already running."));
@@ -287,7 +282,7 @@ mod tests {
     #[test]
     fn failure_report_uses_the_watch_status() {
         let report = start_failure_report("ci", "a watch named `ci` is already running", "t");
-        assert_eq!(report.status, WATCH_STATUS);
+        assert_eq!(report.status.as_str(), "watch");
         assert_eq!(report.worker, "ci");
         assert!(report.text.contains("did not start"));
         assert!(report.text.contains("already running"));

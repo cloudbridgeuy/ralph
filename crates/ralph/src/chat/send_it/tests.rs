@@ -14,7 +14,6 @@ use ralph_server::watches::Watches;
 use ralph_server::worker_mcp::Inbox;
 use ralph_server::workers::Workers;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -40,7 +39,7 @@ fn go(send_it: &SendIt, shown: Option<&str>, typed: bool) -> (String, Option<Tic
         shown,
         typed,
         &Seen {
-            last: &HashMap::new(),
+            last: &Default::default(),
             running: &[],
         },
     )
@@ -457,12 +456,12 @@ fn the_next_tick_takes_the_answered_workers_once() {
         driving: go(&send_it, Some(&hash), true).1.unwrap().driving,
         watched: None,
     };
-    let flagged = [ralph_core::worker::Report {
-        worker: "E1".to_string(),
-        at: "2026-01-01T00:00:00Z".to_string(),
-        status: "question".to_string(),
-        text: "q".to_string(),
-    }];
+    let flagged = [ralph_core::worker::Report::from_worker(
+        "E1",
+        "2026-01-01T00:00:00Z",
+        ralph_core::worker::ReportStatus::Question,
+        "q".to_string(),
+    )];
     let with_question = || Ended {
         drained: &flagged,
         ..ended()
@@ -677,7 +676,8 @@ fn go_on_a_stopped_worker_step_skips_it_once_the_worker_reported_done() {
     let hash = send_it.status(80).shown.unwrap();
     go(&send_it, Some(&hash), true);
     send_it.release(&hash, Some(1)).unwrap();
-    let last = HashMap::from([("GUZ-1".to_string(), "done".to_string())]);
+    let done = ralph_core::worker::ReportKind::parse("done").unwrap();
+    let last = [("GUZ-1".to_string(), done)].into();
     let seen = Seen {
         last: &last,
         running: &[],

@@ -1,4 +1,8 @@
 use super::*;
+use crate::chat_status::WorkerActivity;
+use crate::worker::ReportStatus;
+
+const BUSY: RowState = RowState::Live(WorkerActivity::Busy);
 
 const NOW: &str = "2026-01-01T01:00:00Z";
 
@@ -21,7 +25,7 @@ fn entry(role: Role, at: &str, text: &str) -> Entry {
 
 pub(super) fn line(status: &str, at: &str, text: &str) -> ReportLine {
     ReportLine {
-        status: status.into(),
+        status: ReportKind::parse(status).unwrap(),
         at: at.into(),
         text: text.into(),
     }
@@ -31,7 +35,7 @@ pub(super) fn row(id: &str) -> WorkerRow {
     WorkerRow {
         id: id.into(),
         harness: "claude".into(),
-        state: Some("busy".into()),
+        state: Some(BUSY),
         pending: Vec::new(),
         report: Lookup::Found(line("done", "2026-01-01T00:48:00Z", "")),
         status: None,
@@ -74,12 +78,7 @@ fn non_report_statuses_and_other_roles_are_ignored() {
         entry(Role::Worker, "2026-01-01T00:10:00Z", text),
         entry(Role::User, "2026-01-01T00:11:00Z", "[worker A · done]\nx"),
     ];
-    let unread = [Report {
-        worker: "A".into(),
-        at: "2026-01-01T00:12:00Z".into(),
-        status: "check".into(),
-        text: "quiet".into(),
-    }];
+    let unread = [Report::check("A", "2026-01-01T00:12:00Z", "quiet".into())];
     assert!(group_reports(&entries, &unread).is_empty());
 }
 
@@ -91,21 +90,33 @@ fn a_check_header_ends_the_previous_report_text() {
 }
 
 #[test]
+fn unknown_status_in_log_text_is_ignored() {
+    let text = "[worker A · done]\nreal\n\n[worker A · bogus]\nnoise\n\n[worker B · bogus]\nx";
+    let entries = [entry(Role::Worker, "2026-01-01T00:10:00Z", text)];
+    let grouped = group_reports(&entries, &[]);
+    assert_eq!(
+        grouped["A"],
+        vec![line("done", "2026-01-01T00:10:00Z", "real")]
+    );
+    assert!(!grouped.contains_key("B"));
+}
+
+#[test]
 fn unread_reports_sort_with_logged_ones_by_time() {
     let entries = [entry(
         Role::Worker,
         "2026-01-01T00:30:00Z",
         "[worker A · done]\nold",
     )];
-    let unread = [Report {
-        worker: "A".into(),
-        at: "2026-01-01T00:40:00Z".into(),
-        status: "blocked".into(),
-        text: "new".into(),
-    }];
+    let unread = [Report::from_worker(
+        "A",
+        "2026-01-01T00:40:00Z",
+        crate::worker::ReportStatus::Blocked,
+        "new".into(),
+    )];
     let statuses: Vec<_> = group_reports(&entries, &unread)["A"]
         .iter()
-        .map(|r| r.status.clone())
+        .map(|r| r.status.as_str())
         .collect();
     assert_eq!(statuses, ["blocked", "done"]);
 }
@@ -460,18 +471,6 @@ fn not_live_names_the_id() {
 }
 
 #[test]
-fn status_tone_maps_each_state() {
-    assert_eq!(status_tone("done"), Tone::Done);
-    assert_eq!(status_tone("blocked"), Tone::Blocked);
-    assert_eq!(status_tone("question"), Tone::Attention);
-    assert_eq!(status_tone("permission"), Tone::Attention);
-    assert_eq!(status_tone("running"), Tone::Active);
-    assert_eq!(status_tone("busy"), Tone::Active);
-    assert_eq!(status_tone("idle"), Tone::Dim);
-    assert_eq!(status_tone("weird"), Tone::Plain);
-}
-
-#[test]
 fn behind_is_toned_only_above_zero() {
     let tone = |count| {
         behind_text(&WorkerRow {
@@ -518,7 +517,7 @@ fn cut_spans_keep_the_cut_text_of_the_plain_line() {
 #[test]
 fn workers_text_is_one_plain_line_per_worker() {
     let mut gone = row("GUZ-2");
-    gone.state = Some("gone".into());
+    gone.state = Some(RowState::Gone);
     gone.report = Lookup::Missing;
     let mut unknown = row("GUZ-3");
     unknown.harness = "codex".into();
@@ -536,7 +535,7 @@ fn workers_text_is_one_plain_line_per_worker() {
 #[test]
 fn workers_text_lists_every_pending_permission_request() {
     let mut blocked = row("B");
-    blocked.state = Some("permission".into());
+    blocked.state = Some(RowState::Live(WorkerActivity::Permission));
     blocked.pending = vec!["a".into(), "b".into()];
     assert_eq!(
         workers_text(&[blocked], now()),
@@ -612,9 +611,9 @@ fn workers_text_without_workers_says_so() {
     assert_eq!(workers_text(&[], now()), "no workers");
 }
 
-fn tone_row(id: &str, state: &str, behind: usize) -> WorkerRow {
+fn tone_row(id: &str, state: RowState, behind: usize) -> WorkerRow {
     WorkerRow {
-        state: Some(state.into()),
+        state: Some(state),
         behind: Lookup::Found(behind),
         ..row(id)
     }
@@ -637,7 +636,7 @@ fn styled_diff_cells_mark_added_and_removed_counts() {
 
 #[test]
 fn styled_behind_marks_waiting_above_zero_and_keeps_zero_dim() {
-    let markdown = styled_table(&[tone_row("GUZ-1", "busy", 2), tone_row("GUZ-2", "busy", 0)]);
+    let markdown = styled_table(&[tone_row("GUZ-1", BUSY, 2), tone_row("GUZ-2", BUSY, 0)]);
     let lines: Vec<&str> = markdown.lines().collect();
     assert!(
         lines[2].contains(&format!("| {TONE_WAITING}2{TONE_END} |")),
@@ -648,17 +647,44 @@ fn styled_behind_marks_waiting_above_zero_and_keeps_zero_dim() {
 
 #[test]
 fn styled_state_cells_mark_their_tones() {
+    let report = |status| RowState::Live(WorkerActivity::Reported(ReportKind::Worker(status)));
     let states = [
-        ("done", TONE_DONE),
-        ("blocked", TONE_BLOCKED),
-        ("question", TONE_WAITING),
-        ("running", TONE_ACTIVE),
+        (
+            report(ReportStatus::Done),
+            format!("{TONE_DONE}done{TONE_END}"),
+        ),
+        (
+            report(ReportStatus::Blocked),
+            format!("{TONE_BLOCKED}blocked{TONE_END}"),
+        ),
+        (
+            report(ReportStatus::Question),
+            format!("{TONE_WAITING}question{TONE_END}"),
+        ),
+        (
+            RowState::Live(WorkerActivity::Permission),
+            format!("{TONE_WAITING}permission{TONE_END}"),
+        ),
+        (
+            RowState::Live(WorkerActivity::Running),
+            format!("{TONE_ACTIVE}running{TONE_END}"),
+        ),
+        (
+            RowState::Live(WorkerActivity::Busy),
+            format!("{TONE_ACTIVE}busy{TONE_END}"),
+        ),
+        (RowState::Live(WorkerActivity::Idle), "*idle*".to_string()),
+        (
+            RowState::Live(WorkerActivity::Reported(ReportKind::Check)),
+            "check".to_string(),
+        ),
+        (RowState::Gone, "gone".to_string()),
     ];
-    for (state, marker) in states {
+    for (state, cell) in states {
         let markdown = styled_table(&[tone_row("GUZ-1", state, 2)]);
         assert!(
-            markdown.contains(&format!("| {marker}{state}{TONE_END} |")),
-            "{state}: {markdown}"
+            markdown.contains(&format!("| {cell} |")),
+            "{cell}: {markdown}"
         );
     }
 }

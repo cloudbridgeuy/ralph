@@ -1,5 +1,5 @@
 use super::*;
-use crate::worker::{branch_name, worktree_for_branch};
+use crate::worker::{branch_name, worktree_for_branch, ReportKind, ReportStatus};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +25,7 @@ impl Default for Progress {
 }
 
 pub struct Seen<'a> {
-    pub last: &'a HashMap<String, String>,
+    pub last: &'a HashMap<String, ReportKind>,
     pub running: &'a [String],
 }
 
@@ -152,7 +152,7 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
         (Event::Report(report), Criterion::WorkerDone { worker, .. })
             if report.worker == *worker =>
         {
-            if report.status == "done" {
+            if report.status == ReportKind::Worker(ReportStatus::Done) {
                 done_reported(plan, progress, &step.criterion)
             } else {
                 unmet
@@ -320,7 +320,9 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
     };
     match &step.criterion {
         Criterion::WorkerDone { worker, .. } => match seen.last.get(worker) {
-            Some(status) if status == "done" => done_reported(plan, progress, &step.criterion),
+            Some(ReportKind::Worker(ReportStatus::Done)) => {
+                done_reported(plan, progress, &step.criterion)
+            }
             known if known.is_some() || seen.running.contains(worker) => {
                 (progress, Next::Hold(worker.clone()))
             }

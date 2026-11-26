@@ -22,33 +22,67 @@ use crate::status_queue::QueueCell;
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
 use crate::worker::{
-    opencode_session_id, same_store, tagged_sessions, HarnessId, Report, ReportStatus,
+    opencode_session_id, same_store, tagged_sessions, Attention, HarnessId, Report, ReportKind,
 };
 use crate::worker_costs::args::{parse_costs_args, CostsArgs};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-const DEFAULT_STATE: &str = "running";
-const BUSY_STATE: &str = "busy";
-const IDLE_STATE: &str = "idle";
-const PERMISSION_STATE: &str = "permission";
 pub const INBOX_USAGE: &str = "Usage: /inbox [next | N | list | peek N | drop N]";
 const SEPARATOR: &str = " · ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerState {
     pub id: String,
-    pub state: String,
+    pub state: WorkerActivity,
 }
 
 impl WorkerState {
     pub fn is_blocked(&self) -> bool {
-        self.state == PERMISSION_STATE
+        self.state == WorkerActivity::Permission
     }
 
     pub fn is_running(&self) -> bool {
-        [DEFAULT_STATE, BUSY_STATE, PERMISSION_STATE].contains(&self.state.as_str())
+        match self.state {
+            WorkerActivity::Running | WorkerActivity::Busy | WorkerActivity::Permission => true,
+            WorkerActivity::Reported(_) | WorkerActivity::Idle => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerActivity {
+    Reported(ReportKind),
+    Permission,
+    Busy,
+    Idle,
+    Running,
+}
+
+impl WorkerActivity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reported(kind) => kind.as_str(),
+            Self::Permission => "permission",
+            Self::Busy => "busy",
+            Self::Idle => "idle",
+            Self::Running => "running",
+        }
+    }
+
+    pub fn attention(self) -> Attention {
+        match self {
+            Self::Reported(kind) => kind.attention(),
+            Self::Permission => Attention::NeedsUser,
+            Self::Busy | Self::Idle | Self::Running => Attention::Informs,
+        }
+    }
+}
+
+impl std::fmt::Display for WorkerActivity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -488,16 +522,16 @@ fn ready_is_covered(
         || resumable.iter().any(|session| session == id)
 }
 
-pub fn latest_states(reports: &[Report]) -> HashMap<String, String> {
+pub fn latest_states(reports: &[Report]) -> HashMap<String, ReportKind> {
     reports
         .iter()
-        .map(|r| (r.worker.clone(), r.status.clone()))
+        .map(|r| (r.worker.clone(), r.status))
         .collect()
 }
 
 pub fn worker_states(
     workers: &[RunningWorker],
-    seen: &HashMap<String, String>,
+    seen: &HashMap<String, ReportKind>,
     sent: &HashSet<String>,
     active: Option<&HashSet<String>>,
     blocked: &HashSet<String>,
@@ -510,36 +544,34 @@ pub fn worker_states(
                 worker,
                 blocked.contains(&worker.id),
                 seen.get(&worker.id)
-                    .filter(|status| !superseded(status, sent.contains(&worker.id))),
+                    .copied()
+                    .filter(|status| !superseded(*status, sent.contains(&worker.id))),
                 active,
             ),
         })
         .collect()
 }
 
-fn superseded(status: &str, sent: bool) -> bool {
-    sent && ReportStatus::ALL
-        .iter()
-        .any(|reported| reported.as_str() == status)
+fn superseded(status: ReportKind, sent: bool) -> bool {
+    sent && status.worker_status().is_some()
 }
 
 fn worker_state(
     worker: &RunningWorker,
     permission_pending: bool,
-    reported: Option<&String>,
+    reported: Option<ReportKind>,
     active: Option<&HashSet<String>>,
-) -> String {
+) -> WorkerActivity {
     let session_active = active
         .filter(|_| worker.kind == HarnessId::Opencode)
         .map(|active| active.contains(&opencode_session_id(&worker.id)));
     match (session_active, reported) {
-        _ if permission_pending => PERMISSION_STATE,
-        (Some(true), _) => BUSY_STATE,
-        (_, Some(state)) => state,
-        (Some(false), None) => IDLE_STATE,
-        (None, None) => DEFAULT_STATE,
+        _ if permission_pending => WorkerActivity::Permission,
+        (Some(true), _) => WorkerActivity::Busy,
+        (_, Some(kind)) => WorkerActivity::Reported(kind),
+        (Some(false), None) => WorkerActivity::Idle,
+        (None, None) => WorkerActivity::Running,
     }
-    .to_string()
 }
 
 fn fit(candidates: Vec<String>, width: usize) -> String {

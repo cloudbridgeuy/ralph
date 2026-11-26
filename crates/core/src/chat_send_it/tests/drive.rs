@@ -163,8 +163,12 @@ fn a_resumed_worker_step_whose_worker_reported_done_moves_to_the_next_step() {
 #[test]
 fn a_resumed_worker_step_with_a_known_or_running_worker_holds_and_does_not_resend() {
     let question: &[(&str, &str)] = &[("E1", "question")];
-    let idle: &[(&str, &str)] = &[("E1", "idle")];
-    for (known, running) in [(question, &[][..]), (idle, &[][..]), (&[][..], &["E1"][..])] {
+    let check: &[(&str, &str)] = &[("E1", "check")];
+    for (known, running) in [
+        (question, &[][..]),
+        (check, &[][..]),
+        (&[][..], &["E1"][..]),
+    ] {
         let started = start(&stopped_on(1), known, running).unwrap();
         assert_eq!(started.next, Next::Hold("E1".to_string()));
         assert_eq!(

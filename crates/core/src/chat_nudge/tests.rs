@@ -1,5 +1,7 @@
 use super::*;
-use crate::chat_status::{route_input, EmptySubmit, Route, ScheduleState, WatchState, WorkerState};
+use crate::chat_status::{
+    route_input, EmptySubmit, Route, ScheduleState, WatchState, WorkerActivity, WorkerState,
+};
 use std::collections::BTreeSet;
 
 fn send(id: &str, text: &str) -> NudgeCommand {
@@ -19,7 +21,7 @@ fn status() -> Status {
             .iter()
             .map(|id| WorkerState {
                 id: id.to_string(),
-                state: "running".to_string(),
+                state: WorkerActivity::Running,
             })
             .collect(),
         watches: vec![WatchState {

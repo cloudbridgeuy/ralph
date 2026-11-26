@@ -22,14 +22,14 @@ fn config_block(js: &str) -> String {
 }
 
 #[test]
-fn the_nav_puts_config_third_and_the_catalogue_fourth() {
+fn the_nav_puts_config_sixth_and_the_catalogue_last() {
     let html = fetch("/");
     let memory = html.find("<a href=\"#/memory\">").unwrap();
     let config = html
-        .find("<a href=\"#/config\"><span class=\"n\" aria-hidden=\"true\">3</span>config</a>")
+        .find("<a href=\"#/config\"><span class=\"n\" aria-hidden=\"true\">6</span>config</a>")
         .unwrap();
     let catalogue = html
-        .find("<a href=\"/catalogue\"><span class=\"n\" aria-hidden=\"true\">4</span>catalogue</a>")
+        .find("<a href=\"/catalogue\"><span class=\"n\" aria-hidden=\"true\">7</span>catalogue</a>")
         .unwrap();
     assert!(memory < config && config < catalogue);
 }
@@ -37,7 +37,9 @@ fn the_nav_puts_config_third_and_the_catalogue_fourth() {
 #[test]
 fn the_script_lists_config_as_a_screen_after_threads() {
     let js = fetch("/app.js");
-    assert!(js.contains("const SCREENS = [\"/memory\", \"/threads\", \"/config\"];"));
+    assert!(js.contains(
+        "const SCREENS = [\"/memory\", \"/threads\", \"/workers\", \"/schedules\", \"/watches\", \"/config\"];"
+    ));
 }
 
 #[test]

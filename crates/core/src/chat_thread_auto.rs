@@ -1,8 +1,6 @@
 use crate::chat_status::truncate_to_width;
 use crate::chat_thread::{AutoMode, ThreadMeta, ThreadName, THREAD_REPORT_PREFIX};
-use crate::worker::Report;
-
-pub const THREAD_CLOSED_STATUS: &str = "thread-closed";
+use crate::worker::{Report, ReportKind};
 
 pub struct ThreadClosedNotice {
     pub merge: &'static str,
@@ -48,12 +46,11 @@ pub fn thread_closed_notice(name: &ThreadName, auto: AutoMode) -> String {
 }
 
 pub fn thread_closed_report(name: &ThreadName, auto: AutoMode, at: &str) -> Report {
-    Report {
-        worker: format!("{THREAD_REPORT_PREFIX}{name}"),
-        at: at.to_string(),
-        status: THREAD_CLOSED_STATUS.to_string(),
-        text: thread_closed_notice(name, auto),
-    }
+    Report::thread_closed(
+        &format!("{THREAD_REPORT_PREFIX}{name}"),
+        at,
+        thread_closed_notice(name, auto),
+    )
 }
 
 pub fn with_auto(meta: &ThreadMeta, auto: Option<AutoMode>) -> Option<ThreadMeta> {
@@ -128,7 +125,7 @@ pub fn close_answer(line: Option<&str>) -> bool {
 }
 
 pub fn is_close_report(report: &Report) -> bool {
-    report.status == THREAD_CLOSED_STATUS && report.worker.starts_with(THREAD_REPORT_PREFIX)
+    report.status == ReportKind::ThreadClosed && report.worker.starts_with(THREAD_REPORT_PREFIX)
 }
 
 pub fn split_close_reports(reports: Vec<Report>) -> (Vec<Report>, Vec<Report>) {
@@ -241,7 +238,7 @@ mod tests {
         let report = thread_closed_report(&name(), AutoMode::Drop, "2026-01-01T00:00:00Z");
         assert_eq!(report.worker, "thread:side");
         assert_eq!(report.at, "2026-01-01T00:00:00Z");
-        assert_eq!(report.status, "thread-closed");
+        assert_eq!(report.status.as_str(), "thread-closed");
         assert_eq!(report.text, "side closed \u{b7} Enter to drop or keep it");
     }
 
@@ -403,20 +400,16 @@ mod tests {
         assert!(!close_answer(None));
     }
 
-    fn report(worker: &str, status: &str) -> Report {
-        Report {
-            worker: worker.to_string(),
-            at: "t".to_string(),
-            status: status.to_string(),
-            text: "x".to_string(),
-        }
-    }
-
     #[test]
     fn close_reports_split_from_digests_and_workers() {
         let closed = thread_closed_report(&name(), AutoMode::Merge, "t");
-        let digest = report("thread:side", "merged");
-        let worker = report("w1", "done");
+        let digest = Report::merged("thread:side", "t", "x".to_string());
+        let worker = Report::from_worker(
+            "w1",
+            "t",
+            crate::worker::ReportStatus::Done,
+            "x".to_string(),
+        );
         assert!(is_close_report(&closed));
         assert!(!is_close_report(&digest));
         let (closes, rest) =

@@ -471,18 +471,13 @@ fn workers_come_from_prefixed_sessions_with_last_known_state() {
     let ids: Vec<&str> = workers.iter().map(|worker| worker.id.as_str()).collect();
     assert_eq!(ids, vec!["GUZ-1", "GUZ-2"]);
     let reports = [
-        Report {
-            worker: "GUZ-2".into(),
-            at: "a".into(),
-            status: "question".into(),
-            text: "x".into(),
-        },
-        Report {
-            worker: "GUZ-2".into(),
-            at: "b".into(),
-            status: "done".into(),
-            text: "y".into(),
-        },
+        Report::from_worker(
+            "GUZ-2",
+            "a",
+            crate::worker::ReportStatus::Question,
+            "x".into(),
+        ),
+        Report::from_worker("GUZ-2", "b", crate::worker::ReportStatus::Done, "y".into()),
     ];
     let states = worker_states(
         &workers,
@@ -491,8 +486,11 @@ fn workers_come_from_prefixed_sessions_with_last_known_state() {
         None,
         &HashSet::new(),
     );
-    assert_eq!(states[0].state, "running");
-    assert_eq!(states[1].state, "done");
+    assert_eq!(states[0].state, WorkerActivity::Running);
+    assert_eq!(
+        states[1].state,
+        WorkerActivity::Reported(ReportKind::Worker(crate::worker::ReportStatus::Done))
+    );
 }
 
 #[test]
@@ -625,14 +623,14 @@ fn opencode_workers_are_busy_while_their_session_is_active() {
         worker("claude", HarnessId::ClaudeTmux),
     ];
     let seen = HashMap::from([
-        ("done".to_string(), "done".to_string()),
-        ("redo".to_string(), "done".to_string()),
+        ("done".to_string(), ReportKind::parse("done").unwrap()),
+        ("redo".to_string(), ReportKind::parse("done").unwrap()),
     ]);
     let active = HashSet::from(["ses_ralphbusy".to_string(), "ses_ralphredo".to_string()]);
     let states = |active| -> Vec<String> {
         worker_states(&workers, &seen, &HashSet::new(), active, &HashSet::new())
             .into_iter()
-            .map(|worker| worker.state)
+            .map(|worker| worker.state.to_string())
             .collect()
     };
     assert_eq!(
@@ -660,11 +658,11 @@ fn a_sent_message_drops_a_report_status_but_keeps_other_statuses() {
         worker("busy", HarnessId::Opencode),
     ];
     let seen = HashMap::from([
-        ("redone".to_string(), "done".to_string()),
-        ("quiet".to_string(), "done".to_string()),
-        ("checked".to_string(), "check".to_string()),
-        ("ask".to_string(), "question".to_string()),
-        ("busy".to_string(), "done".to_string()),
+        ("redone".to_string(), ReportKind::parse("done").unwrap()),
+        ("quiet".to_string(), ReportKind::parse("done").unwrap()),
+        ("checked".to_string(), ReportKind::parse("check").unwrap()),
+        ("ask".to_string(), ReportKind::parse("question").unwrap()),
+        ("busy".to_string(), ReportKind::parse("done").unwrap()),
     ]);
     let sent: HashSet<String> = ["redone", "checked", "ask", "busy"]
         .map(String::from)
@@ -672,7 +670,7 @@ fn a_sent_message_drops_a_report_status_but_keeps_other_statuses() {
     let active = HashSet::from(["ses_ralphbusy".to_string()]);
     let states: Vec<String> = worker_states(&workers, &seen, &sent, Some(&active), &HashSet::new())
         .into_iter()
-        .map(|worker| worker.state)
+        .map(|worker| worker.state.to_string())
         .collect();
     assert_eq!(states, vec!["running", "done", "check", "running", "busy"]);
 }
@@ -684,10 +682,10 @@ fn a_pending_permission_overrides_a_report_and_counts_as_running() {
         session: "ralph-p-w".into(),
         kind: HarnessId::Cursor,
     }];
-    let seen = HashMap::from([("w".to_string(), "question".to_string())]);
+    let seen = HashMap::from([("w".to_string(), ReportKind::parse("question").unwrap())]);
     let blocked = HashSet::from(["w".to_string()]);
     let states = worker_states(&workers, &seen, &HashSet::new(), None, &blocked);
-    assert_eq!(states[0].state, "permission");
+    assert_eq!(states[0].state, WorkerActivity::Permission);
     assert!(states[0].is_running());
 }
 

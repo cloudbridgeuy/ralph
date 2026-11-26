@@ -4,6 +4,7 @@ use crate::schedule::{
 };
 use crate::schedule_worker::worker_id;
 use chrono::{DateTime, FixedOffset, Utc};
+use serde::Serialize;
 
 pub const SCHEDULE_USAGE: &str = "Usage: /schedule [list] | cancel <id>. /schedule does not create tasks: the model proposes them and you arm each one at a y/n prompt.";
 const NO_TASKS: &str = "No scheduled tasks.";
@@ -202,6 +203,48 @@ pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> St
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TaskRow {
+    pub id: String,
+    pub kind: &'static str,
+    pub status: TaskStatus,
+    pub at: DateTime<Utc>,
+    pub late: bool,
+    pub deadline: Option<DateTime<Utc>>,
+    pub timeout_secs: Option<u64>,
+    pub repeat: Option<String>,
+    pub has_follow_up: bool,
+}
+
+fn row_kind(kind: &TaskKind) -> &'static str {
+    match kind {
+        TaskKind::Command { .. } => "command",
+        TaskKind::Worker { .. } => "worker",
+    }
+}
+
+pub fn task_rows(tasks: &[Task]) -> Vec<TaskRow> {
+    let mut sorted: Vec<&Task> = tasks.iter().collect();
+    sorted.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+    sorted
+        .into_iter()
+        .map(|task| TaskRow {
+            id: task.id.clone(),
+            kind: row_kind(&task.kind),
+            status: task.status,
+            at: task.at,
+            late: task.late,
+            deadline: task.deadline,
+            timeout_secs: task.timeout_secs,
+            repeat: task
+                .repeat
+                .as_ref()
+                .and_then(crate::schedule_repeat::repeat_row_label),
+            has_follow_up: task.follow_up.is_some(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -490,5 +533,58 @@ mod tests {
                 "c  cmd  armed  15:00  in 3h                   echo c",
             ]
         );
+    }
+
+    #[test]
+    fn task_rows_sort_by_time_then_id_and_keep_the_shape() {
+        use crate::schedule_repeat::Repeat;
+        let mut late = task("b", "2026-01-01T09:00:00Z", TaskStatus::Running, true);
+        late.repeat = Some(Repeat::Every { every_secs: 21600 });
+        late.timeout_secs = Some(60);
+        late.deadline = Some(utc("2026-01-01T10:00:00Z"));
+        late.follow_up = Some("tell me".to_string());
+        let mut worker = task("a", "2026-01-01T09:00:00Z", TaskStatus::Proposed, false);
+        worker.kind = TaskKind::Worker {
+            brief: "do it".to_string(),
+        };
+        let later = task("c", "2026-01-02T09:00:00Z", TaskStatus::Pending, false);
+        let rows = task_rows(&[later, late, worker]);
+        let value = serde_json::to_value(&rows).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!([
+                {"id": "a", "kind": "worker", "status": "proposed", "at": "2026-01-01T09:00:00Z",
+                 "late": false, "deadline": null, "timeout_secs": null, "repeat": null,
+                 "has_follow_up": false},
+                {"id": "b", "kind": "command", "status": "running", "at": "2026-01-01T09:00:00Z",
+                 "late": true, "deadline": "2026-01-01T10:00:00Z", "timeout_secs": 60,
+                 "repeat": "every 6h", "has_follow_up": true},
+                {"id": "c", "kind": "command", "status": "pending", "at": "2026-01-02T09:00:00Z",
+                 "late": false, "deadline": null, "timeout_secs": null, "repeat": null,
+                 "has_follow_up": false},
+            ])
+        );
+    }
+
+    #[test]
+    fn task_rows_drop_command_brief_and_follow_up_text() {
+        let mut command = task("a", "2026-01-01T09:00:00Z", TaskStatus::Pending, false);
+        command.kind = TaskKind::Command {
+            command: "curl /Users/alice/secret.sh".to_string(),
+        };
+        command.follow_up = Some("follow-up-text".to_string());
+        let mut worker = task("b", "2026-01-01T09:00:00Z", TaskStatus::Pending, false);
+        worker.kind = TaskKind::Worker {
+            brief: "brief-text".to_string(),
+        };
+        let json = serde_json::to_string(&task_rows(&[command, worker])).unwrap();
+        for leak in ["curl", "/Users", "follow-up-text", "brief-text"] {
+            assert!(!json.contains(leak), "{leak}");
+        }
+    }
+
+    #[test]
+    fn task_rows_of_nothing_is_empty() {
+        assert!(task_rows(&[]).is_empty());
     }
 }
