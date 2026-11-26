@@ -367,8 +367,10 @@ fn enter_and_space_act_on_the_focused_row_and_enter_falls_back_to_the_selected_r
 fn r_retries_even_while_focus_is_on_the_retry_button_and_other_keys_still_skip_buttons() {
     let keys = function_body(THREADS_JS, "function onThreadsKey(");
     let retry = keys.find("event.key === \"r\"").unwrap();
-    let typing = keys.find("isTyping(event.target)").unwrap();
-    assert!(retry < typing);
+    let guard = keys
+        .find("if (isTyping(event.target) || event.target.closest(\"a\")) return;")
+        .unwrap();
+    assert!(retry < guard);
     assert!(keys.contains(
         "event.key === \"r\" && (!isTyping(event.target) || event.target.closest(\"r-error\"))"
     ));
