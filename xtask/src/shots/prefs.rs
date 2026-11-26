@@ -9,6 +9,7 @@ enum Pref {
 }
 
 const PREFS: &[(&str, Pref)] = &[
+    ("ui.useOverlayScrollbars", Pref::Int(0)),
     (
         "datareporting.policy.dataSubmissionEnabled",
         Pref::Bool(false),
@@ -202,6 +203,14 @@ mod tests {
         assert!(line_for("toolkit.telemetry.server").is_some());
         assert!(line_for("services.settings.server").is_some());
         assert!(line_for("browser.urlbar.suggest.searches").is_some());
+    }
+
+    #[test]
+    fn overlay_scrollbars_are_off_so_captures_do_not_flake() {
+        assert_eq!(
+            line_for("ui.useOverlayScrollbars").as_deref(),
+            Some("user_pref(\"ui.useOverlayScrollbars\", 0);")
+        );
     }
 
     #[test]
