@@ -59,15 +59,15 @@ impl ClientConnection {
         write_socket: RefinedTcpStream,
         mut read_socket: RefinedTcpStream,
         header_limit: Option<Duration>,
-    ) -> ClientConnection {
+    ) -> IoResult<ClientConnection> {
         let remote_addr = read_socket.peer_addr();
         let secure = read_socket.secure();
-        let close_handle = Arc::new(Mutex::new(read_socket.handle()));
+        let close_handle = Arc::new(Mutex::new(read_socket.handle()?));
 
         let mut source = SequentialReaderBuilder::new(BufReader::with_capacity(1024, read_socket));
         let first_header = source.next().unwrap();
 
-        ClientConnection {
+        Ok(ClientConnection {
             source,
             sink: SequentialWriterBuilder::new(BufWriter::with_capacity(1024, write_socket)),
             remote_addr,
@@ -77,7 +77,7 @@ impl ClientConnection {
             secure,
             header_limit,
             header_started: None,
-        }
+        })
     }
 
     /// true if the connection is HTTPS
@@ -333,8 +333,8 @@ mod test {
         let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         client.write_all(bytes).unwrap();
         let (server, _) = listener.accept().unwrap();
-        let (read, write) = RefinedTcpStream::new(Connection::from(server));
-        ClientConnection::new(write, read, limit)
+        let (read, write) = RefinedTcpStream::new(Connection::from(server)).unwrap();
+        ClientConnection::new(write, read, limit).unwrap()
     }
 
     #[test]

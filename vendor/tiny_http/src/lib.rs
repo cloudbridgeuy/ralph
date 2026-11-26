@@ -125,6 +125,43 @@ mod ssl;
 mod test;
 mod util;
 
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+
+fn accept_error_is_transient(e: &IoError) -> bool {
+    matches!(e.raw_os_error(), Some(23 | 24)) || e.kind() == IoErrorKind::ConnectionAborted
+}
+
+#[cfg(test)]
+mod accept_error_test {
+    use super::accept_error_is_transient;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn descriptor_exhaustion_is_transient() {
+        assert!(accept_error_is_transient(&Error::from_raw_os_error(24)));
+        assert!(accept_error_is_transient(&Error::from_raw_os_error(23)));
+    }
+
+    #[test]
+    fn connection_aborted_is_transient() {
+        assert!(accept_error_is_transient(&Error::from(
+            ErrorKind::ConnectionAborted
+        )));
+    }
+
+    #[test]
+    fn other_errors_are_not_transient() {
+        for kind in [
+            ErrorKind::InvalidInput,
+            ErrorKind::BrokenPipe,
+            ErrorKind::ConnectionReset,
+        ] {
+            assert!(!accept_error_is_transient(&Error::from(kind)));
+        }
+        assert!(!accept_error_is_transient(&Error::from_raw_os_error(22)));
+    }
+}
+
 /// The main class of this library.
 ///
 /// Destroying this object will immediately close the listening socket and the reading
@@ -302,7 +339,7 @@ impl Server {
                 let new_client = match server.accept(timeouts) {
                     Ok((sock, _)) => {
                         use util::RefinedTcpStream;
-                        let (read_closable, write_closable) = match ssl {
+                        let split = match ssl {
                             None => RefinedTcpStream::new(sock),
                             #[cfg(any(feature = "ssl-openssl", feature = "ssl-rustls"))]
                             Some(ref ssl) => {
@@ -319,7 +356,21 @@ impl Server {
                             Some(ref _ssl) => unreachable!(),
                         };
 
-                        Ok(ClientConnection::new(write_closable, read_closable, timeouts.header))
+                        let connection = split.and_then(|(read_closable, write_closable)| {
+                            ClientConnection::new(write_closable, read_closable, timeouts.header)
+                        });
+                        match connection {
+                            Ok(client) => Ok(client),
+                            Err(e) => {
+                                log::warn!("Dropping connection, socket clone failed: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                    Err(e) if accept_error_is_transient(&e) => {
+                        log::warn!("Transient accept error, retrying: {}", e);
+                        thread::sleep(ACCEPT_BACKOFF);
+                        continue;
                     }
                     Err(e) => Err(e),
                 };
