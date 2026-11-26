@@ -677,7 +677,7 @@ fn run_memory_command(
                     .and_then(|sink| {
                         subprocess::invoke_subprocess_silent(
                             &subprocess::SpinnerSubprocessConfig {
-                                command: command.command.clone(),
+                                command: subprocess::Invocation::shell(command.command.clone()),
                                 timeout_secs: Some(curator.timeout),
                                 verbose_tools: stream_processor::VerboseToolsConfig::new(),
                                 show_tools: std::io::stdout().is_terminal(),

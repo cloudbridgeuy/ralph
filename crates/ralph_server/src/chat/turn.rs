@@ -12,7 +12,8 @@ use crate::ledger;
 use crate::private_file::write_private;
 use crate::subprocess::spawn_detached;
 use crate::subprocess::{
-    recorded, OutputGate, SpinnerSubprocessConfig, StreamingSubprocessResult, SubprocessError,
+    recorded, Invocation, OutputGate, SpinnerSubprocessConfig, StreamingSubprocessResult,
+    SubprocessError,
 };
 use crate::timing;
 use crate::watches::locked;
@@ -623,7 +624,7 @@ impl Turn {
         ]
         .concat();
         let config = SpinnerSubprocessConfig {
-            command: with_chat_inbox(
+            command: Invocation::shell(with_chat_inbox(
                 build_chat_command(
                     &self.system_prompt_file,
                     &args,
@@ -632,7 +633,7 @@ impl Turn {
                     &self.isolation,
                 ),
                 &self.store_dir,
-            )?,
+            )?),
             timeout_secs: None,
             verbose_tools: VerboseToolsConfig::new(),
             show_tools: self.show_tools,
