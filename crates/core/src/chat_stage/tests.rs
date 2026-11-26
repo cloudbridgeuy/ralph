@@ -1,5 +1,6 @@
 use super::*;
-use crate::chat_status::{ScheduleState, WatchState, WorkerState};
+use crate::chat_status::{ScheduleState, WatchState, WorkerActivity, WorkerState};
+use crate::worker::{ReportKind, ReportStatus};
 use serde_json::json;
 
 fn item(id: &str, kind: Kind, turn: usize) -> Item {
@@ -13,10 +14,15 @@ fn item(id: &str, kind: Kind, turn: usize) -> Item {
     }
 }
 
-fn worker(id: &str, state: &str) -> WorkerState {
+const QUESTION: WorkerActivity =
+    WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Question));
+const BLOCKED: WorkerActivity = WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Blocked));
+const DONE: WorkerActivity = WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done));
+
+fn worker(id: &str, state: WorkerActivity) -> WorkerState {
     WorkerState {
         id: id.to_string(),
-        state: state.to_string(),
+        state,
     }
 }
 
@@ -53,17 +59,17 @@ fn model_items_take_one_line_each_with_the_ref_when_given() {
 fn workers_needing_the_user_get_their_own_line() {
     let status = Status {
         workers: vec![
-            worker("w1", "question"),
-            worker("w2", "running"),
-            worker("w3", "blocked"),
-            worker("w4", "permission"),
-            worker("w5", "done"),
+            worker("w1", QUESTION),
+            worker("w2", WorkerActivity::Running),
+            worker("w3", BLOCKED),
+            worker("w4", WorkerActivity::Permission),
+            worker("w5", DONE),
         ],
         ..Status::default()
     };
     assert_eq!(
         render(&[], &status, None),
-        "Stage:\nneeds you: w1 question, w4 permission\nworkers: w2, w3, w5"
+        "Stage:\nneeds you: w1 question, w3 blocked, w4 permission\nworkers: w2, w5"
     );
 }
 
@@ -332,13 +338,22 @@ fn a_decision_named_by_id_or_ref_is_no_gap() {
 
 #[test]
 fn a_worker_in_question_named_by_id_is_no_gap() {
-    let pending = pending_of(&[], vec![worker("w1", "question")]);
+    let pending = pending_of(&[], vec![worker("w1", QUESTION)]);
     assert_eq!(next_step_gap(Some("@w1 yes"), &pending), None);
 }
 
 #[test]
-fn a_blocked_worker_is_no_pending_decision() {
-    assert!(pending_of(&[], vec![worker("w1", "blocked")]).is_empty());
+fn permission_pending_needs_you() {
+    let pending = pending_of(&[], vec![worker("w1", WorkerActivity::Permission)]);
+    assert_eq!(next_step_gap(Some("@w1 allow"), &pending), None);
+    assert!(next_step_gap(None, &pending).is_some());
+}
+
+#[test]
+fn blocked_worker_report_needs_you() {
+    let pending = pending_of(&[], vec![worker("w1", BLOCKED)]);
+    assert_eq!(next_step_gap(Some("@w1 go on"), &pending), None);
+    assert!(next_step_gap(None, &pending).is_some());
 }
 
 #[test]
@@ -351,7 +366,7 @@ fn a_hold_is_a_gap_even_when_it_names_the_pending_entry() {
 fn a_missing_next_step_is_a_gap() {
     let pending = pending_of(
         &[decision("s2", Some("GUZ-1805"))],
-        vec![worker("w1", "question")],
+        vec![worker("w1", QUESTION)],
     );
     let gap = next_step_gap(None, &pending).unwrap();
     assert_eq!(
@@ -370,7 +385,7 @@ fn an_id_does_not_match_inside_a_longer_id() {
 
 #[test]
 fn the_thread_line_never_counts_as_pending() {
-    let pending = pending_of(&[], vec![worker("w1", "working")]);
+    let pending = pending_of(&[], vec![worker("w1", WorkerActivity::Busy)]);
     assert!(pending.is_empty());
     assert_eq!(next_step_gap(Some("/hold"), &pending), None);
     assert_eq!(next_step_gap(None, &pending), None);

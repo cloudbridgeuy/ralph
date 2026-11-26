@@ -54,7 +54,7 @@ fn full_status() -> Status {
         closes: Vec::new(),
         workers: vec![WorkerState {
             id: "w1".into(),
-            state: "running".into(),
+            state: crate::chat_status::WorkerActivity::Running,
         }],
         watches: vec![WatchState {
             id: "watch:w1".into(),

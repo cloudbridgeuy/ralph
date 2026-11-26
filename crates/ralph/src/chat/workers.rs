@@ -19,8 +19,8 @@ use ralph_core::worker_costs::views::{costs_by_view, Inputs};
 use ralph_core::worker_costs::window::window_start;
 use ralph_core::workers_view::{
     count_untracked, detail_view, group_reports, lines_text, not_live, parse_head, parse_numstat,
-    workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
-    WorkerRow, TONE_ACTIVE, TONE_BLOCKED, TONE_DONE, TONE_END, TONE_WAITING,
+    workers_text, workers_view, Diff, Lookup, Remote, ReportLine, RowState, Span, Tone, View,
+    WorkerDetail, WorkerRow, TONE_ACTIVE, TONE_BLOCKED, TONE_DONE, TONE_END, TONE_WAITING,
 };
 use ralph_server::chat::memory::{load_usage, read_optional, usage_path, Store};
 use ralph_server::chat::monitor::Monitor;
@@ -92,7 +92,7 @@ fn report_of(reports: &Option<HashMap<String, Vec<ReportLine>>>, id: &str) -> Lo
 fn cheap_row(
     store: &Path,
     worker: &RunningWorker,
-    state: Option<String>,
+    state: Option<RowState>,
     report: Lookup<ReportLine>,
 ) -> WorkerRow {
     WorkerRow {
@@ -125,7 +125,7 @@ fn row(
         .workers
         .into_iter()
         .find(|state| state.id == worker.id)
-        .map(|state| state.state);
+        .map(|state| RowState::Live(state.state));
     let report = report_of(&facts.reports, &worker.id);
     let tree = facts
         .porcelain
@@ -184,12 +184,12 @@ pub(super) fn tool_report(
         .iter()
         .map(|worker| {
             let state = if gone_path(dir, &worker.id).exists() {
-                Some("gone".to_string())
+                Some(RowState::Gone)
             } else {
                 states
                     .iter()
                     .find(|state| state.id == worker.id)
-                    .map(|state| state.state.clone())
+                    .map(|state| RowState::Live(state.state))
             };
             cheap_row(dir, worker, state, report_of(&reports, &worker.id))
         })
@@ -420,6 +420,8 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
+    use ralph_core::chat_status::WorkerActivity;
+    use ralph_core::worker::{ReportKind, ReportStatus};
     use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote, TONE_MARKERS};
     use unicode_width::UnicodeWidthStr;
 
@@ -443,10 +445,10 @@ mod tests {
         WorkerRow {
             id: id.into(),
             harness: "claude".into(),
-            state: Some("busy".into()),
+            state: Some(RowState::Live(WorkerActivity::Busy)),
             pending: Vec::new(),
             report: Lookup::Found(ReportLine {
-                status: "done".into(),
+                status: ReportKind::Worker(ReportStatus::Done),
                 at: "2026-01-01T00:48:00Z".into(),
                 text: String::new(),
             }),
@@ -619,7 +621,7 @@ mod tests {
         ];
         let states = [WorkerState {
             id: "A".into(),
-            state: "done".into(),
+            state: WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done)),
         }];
         assert_eq!(
             tool_report(&store, &running, &states, Some(&[]), now()),
@@ -634,7 +636,7 @@ mod tests {
         let running = [RunningWorker::headless("A", HarnessId::Claude)];
         let states = [WorkerState {
             id: "A".into(),
-            state: "done".into(),
+            state: WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done)),
         }];
         let unread = [Report::from_worker(
             "A",

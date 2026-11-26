@@ -39,12 +39,13 @@ pub fn mode(status: &Status) -> Mode {
 mod tests {
     use super::*;
     use crate::chat_hold::HoldFilter;
-    use crate::chat_status::{WatchState, WorkerState};
+    use crate::chat_status::{WatchState, WorkerActivity, WorkerState};
+    use crate::worker::{ReportKind, ReportStatus};
 
-    fn worker(state: &str) -> WorkerState {
+    fn worker(state: WorkerActivity) -> WorkerState {
         WorkerState {
             id: "w".into(),
-            state: state.into(),
+            state,
         }
     }
 
@@ -84,7 +85,7 @@ mod tests {
             hold: Some(HoldFilter::Source("w1".into())),
             napping: true,
             unread: 3,
-            workers: vec![worker("running")],
+            workers: vec![worker(WorkerActivity::Running)],
             watches: vec![watch()],
             ..Status::default()
         };
@@ -102,7 +103,7 @@ mod tests {
 
     #[test]
     fn running_or_busy_worker_is_work() {
-        for state in ["running", "busy"] {
+        for state in [WorkerActivity::Running, WorkerActivity::Busy] {
             let status = Status {
                 workers: vec![worker(state)],
                 ..Status::default()
@@ -122,7 +123,12 @@ mod tests {
 
     #[test]
     fn finished_idle_and_blocked_workers_are_not_work() {
-        for state in ["done", "idle", "blocked", "question"] {
+        for state in [
+            WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done)),
+            WorkerActivity::Idle,
+            WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Blocked)),
+            WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Question)),
+        ] {
             let status = Status {
                 workers: vec![worker(state)],
                 ..Status::default()
@@ -136,7 +142,7 @@ mod tests {
         let status = Status {
             napping: true,
             unread: 3,
-            workers: vec![worker("running")],
+            workers: vec![worker(WorkerActivity::Running)],
             watches: vec![watch()],
             ..Status::default()
         };
@@ -147,7 +153,7 @@ mod tests {
     fn inbox_beats_work() {
         let status = Status {
             unread: 1,
-            workers: vec![worker("running")],
+            workers: vec![worker(WorkerActivity::Running)],
             watches: vec![watch()],
             ..Status::default()
         };

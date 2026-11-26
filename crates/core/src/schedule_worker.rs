@@ -2,7 +2,7 @@ use crate::schedule::{
     format_span, watch_id, Task, TaskKind, TaskStatus, SCHEDULE_ID_PREFIX,
     WORKER_DEFAULT_TIMEOUT_SECS,
 };
-use crate::worker::{HarnessId, Report, ReportStatus, WorkerId, WorkerIdError};
+use crate::worker::{Attention, HarnessId, Report, ReportKind, WorkerId, WorkerIdError};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
 use std::time::Duration;
 
@@ -121,9 +121,9 @@ fn report_end(task: &Task, reports: &[Report]) -> Option<WorkerEnd> {
         .filter(|report| DateTime::parse_from_rfc3339(&report.at).is_ok_and(|at| at >= started))
         .filter_map(|report| report.status.worker_status())
         .next_back()
-        .map(|status| match status {
-            ReportStatus::Done => WorkerEnd::Done,
-            ReportStatus::Blocked | ReportStatus::Question => WorkerEnd::Attention,
+        .map(|status| match ReportKind::Worker(status).attention() {
+            Attention::NeedsUser => WorkerEnd::Attention,
+            Attention::Informs => WorkerEnd::Done,
         })
 }
 

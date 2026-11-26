@@ -2,6 +2,7 @@ use crate::chat_spec::Keyword;
 use crate::chat_status::Status;
 use crate::chat_suggestion::Suggestion;
 use crate::chat_thread::ThreadName;
+use crate::worker::Attention;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -11,8 +12,6 @@ pub const STAGE_ADD: &str = "stage_add";
 pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
 pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
-
-const NEEDS_USER_STATES: [&str; 2] = ["question", "permission"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -172,7 +171,7 @@ pub fn render(items: &[Item], status: &Status, thread: Option<&ThreadName>) -> S
     let (needing, other): (Vec<_>, Vec<_>) = status
         .workers
         .iter()
-        .partition(|worker| NEEDS_USER_STATES.contains(&worker.state.as_str()));
+        .partition(|worker| worker.state.attention() == Attention::NeedsUser);
     let facts = [
         line(
             "needs you",
@@ -250,7 +249,7 @@ pub fn pending_decisions(items: &[Item], status: &Status) -> Vec<Pending> {
     let workers = status
         .workers
         .iter()
-        .filter(|worker| NEEDS_USER_STATES.contains(&worker.state.as_str()))
+        .filter(|worker| worker.state.attention() == Attention::NeedsUser)
         .map(|worker| Pending {
             label: format!("{} {}", worker.id, worker.state),
             keys: vec![worker.id.clone()],

@@ -1,5 +1,5 @@
 use crate::chat_memory::{Entry, Role};
-use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportStatus, Startup};
+use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportKind, Startup};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -68,19 +68,18 @@ pub fn logged_reports(entries: &[Entry]) -> HashMap<String, String> {
     reports
 }
 
-pub fn logged_states(entries: &[Entry]) -> HashMap<String, String> {
+pub fn logged_states(entries: &[Entry]) -> HashMap<String, ReportKind> {
     entries
         .iter()
         .filter(|entry| entry.role == Role::Worker)
         .flat_map(|entry| entry.text.lines().filter_map(message_header))
-        .filter(|(_, status)| is_report_status(status))
-        .map(|(id, status)| (id.to_string(), status.to_string()))
+        .filter_map(|(id, status)| Some((id.to_string(), worker_report(status)?)))
         .collect()
 }
 
 fn report_header_id(line: &str) -> Option<&str> {
     let (id, status) = message_header(line)?;
-    is_report_status(status).then_some(id)
+    worker_report(status).map(|_| id)
 }
 
 pub fn message_header(line: &str) -> Option<(&str, &str)> {
@@ -89,10 +88,8 @@ pub fn message_header(line: &str) -> Option<(&str, &str)> {
         .split_once(" · ")
 }
 
-pub fn is_report_status(status: &str) -> bool {
-    ReportStatus::ALL
-        .iter()
-        .any(|known| known.as_str() == status)
+pub fn worker_report(status: &str) -> Option<ReportKind> {
+    ReportKind::parse(status).filter(|kind| kind.worker_status().is_some())
 }
 
 pub fn reported_since_nudge(last_report: Option<&String>, nudge: Option<&Option<String>>) -> bool {
@@ -255,6 +252,7 @@ mod stale_busy;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::ReportStatus;
 
     fn obs() -> WorkerObservation {
         WorkerObservation {
@@ -770,6 +768,16 @@ mod tests {
     }
 
     #[test]
+    fn check_report_is_not_a_worker_report() {
+        assert_eq!(worker_report("check"), None);
+        assert_eq!(worker_report("bogus"), None);
+        assert_eq!(
+            worker_report("blocked"),
+            Some(ReportKind::Worker(ReportStatus::Blocked))
+        );
+    }
+
+    #[test]
     fn logged_reports_ignores_check_status() {
         let entries = [worker_entry("t1", "[worker w1 · check]\nstuck")];
         assert!(logged_reports(&entries).is_empty());
@@ -794,8 +802,8 @@ mod tests {
             worker_entry("t2", "[worker w1 · done]\nz\n\n[worker w3 · check]\nstuck"),
         ];
         let states = logged_states(&entries);
-        assert_eq!(states.get("w1").map(String::as_str), Some("done"));
-        assert_eq!(states.get("w2").map(String::as_str), Some("done"));
+        assert_eq!(states.get("w1").map(|kind| kind.as_str()), Some("done"));
+        assert_eq!(states.get("w2").map(|kind| kind.as_str()), Some("done"));
         assert!(!states.contains_key("w3"));
     }
 

@@ -109,7 +109,10 @@ pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
                     .as_deref()
                     .and_then(ticket_shape)
                     .map(str::to_string),
-                last_report_status: worker.last_report.as_ref().map(|r| r.status.clone()),
+                last_report_status: worker
+                    .last_report
+                    .as_ref()
+                    .map(|r| r.status.as_str().to_string()),
                 last_report_at: worker
                     .last_report
                     .as_ref()
@@ -122,7 +125,7 @@ pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::ActivityState;
+    use crate::worker::{ActivityState, ReportKind, ReportStatus};
 
     #[test]
     fn only_ticket_shaped_keys_pass() {
@@ -152,7 +155,7 @@ mod tests {
         let at = |text: &str| {
             let mut worker = facts("w");
             worker.last_report = Some(ReportLine {
-                status: "done".to_string(),
+                status: ReportKind::Worker(ReportStatus::Done),
                 at: text.to_string(),
                 text: "body".to_string(),
             });
@@ -236,7 +239,7 @@ mod tests {
         let mut second = facts("b");
         second.ticket = Some("GUZ-9".to_string());
         second.last_report = Some(ReportLine {
-            status: "done".to_string(),
+            status: ReportKind::Worker(ReportStatus::Done),
             at: "2026-01-01T00:00:00Z".to_string(),
             text: "secret /Users/alice".to_string(),
         });
@@ -262,7 +265,7 @@ mod tests {
         let mut worker = facts("a");
         worker.blocked = Some(r#"{"request_id":"r1","summary":"rm /Users/alice"}"#.to_string());
         worker.last_report = Some(ReportLine {
-            status: "done".to_string(),
+            status: ReportKind::Worker(ReportStatus::Done),
             at: "t".to_string(),
             text: "report-text".to_string(),
         });

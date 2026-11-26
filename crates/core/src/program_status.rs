@@ -136,7 +136,7 @@ pub fn tmux_wrap(sequence: &str) -> String {
 mod tests {
     use super::*;
     use crate::chat_hold::HoldFilter;
-    use crate::chat_status::WorkerState;
+    use crate::chat_status::{WorkerActivity, WorkerState};
 
     fn report(state: State, msg: Option<&str>) -> Report {
         Report {
@@ -263,7 +263,7 @@ mod tests {
     fn running_worker() -> WorkerState {
         WorkerState {
             id: "w".into(),
-            state: "running".into(),
+            state: WorkerActivity::Running,
         }
     }
 
