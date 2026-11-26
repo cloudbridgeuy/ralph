@@ -5,6 +5,7 @@ mod escape;
 mod frame;
 #[cfg(test)]
 pub(crate) mod golden;
+mod graph;
 mod kv;
 mod md_event;
 mod md_link;
@@ -21,6 +22,7 @@ pub use empty::{empty, empty_compact, empty_next};
 pub use error::{error, error_with, ErrorParts};
 pub use escape::escape;
 pub use frame::frame;
+pub use graph::graph_svg;
 pub use kv::{kv, kv_inline, kv_sourced};
 pub use pill::{pill, pill_with, Icon, PillShape, PillVariant};
 pub use prose::render_markdown;

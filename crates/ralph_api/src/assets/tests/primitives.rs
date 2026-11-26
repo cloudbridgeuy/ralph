@@ -14,6 +14,7 @@ fn the_stylesheet_styles_every_primitive() {
         "r-error",
         "r-spinner",
         "r-spark",
+        "r-graph",
     ] {
         assert!(css.contains(&format!("\n{tag}")), "{tag}");
     }
@@ -201,4 +202,15 @@ fn the_stylesheet_styles_prose_and_code() {
 #[test]
 fn the_stylesheet_has_no_data_uri() {
     assert!(!css().contains("data:"));
+}
+
+#[test]
+fn graph_tones_use_the_status_tokens_and_strokes_stay_one_pixel() {
+    let css = css();
+    assert_declares(&css, "r-graph .plain", "color: var(--r-ink);");
+    assert_declares(&css, "r-graph .green", "color: var(--r-ok);");
+    assert_declares(&css, "r-graph .yellow", "color: var(--r-warn);");
+    assert_declares(&css, "r-graph .red", "color: var(--r-bad);");
+    assert_declares(&css, "r-graph .dot", "fill: currentColor;");
+    assert_declares(&css, "r-graph .graph", "stroke-width: 1;");
 }

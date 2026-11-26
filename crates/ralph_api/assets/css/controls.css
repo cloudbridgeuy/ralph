@@ -91,6 +91,38 @@ r-spark b {
   font-weight: 600;
 }
 
+r-graph {
+  display: block;
+  max-width: 100%;
+}
+
+r-graph .graph {
+  display: block;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+r-graph .plain {
+  color: var(--r-ink);
+}
+
+r-graph .green {
+  color: var(--r-ok);
+}
+
+r-graph .yellow {
+  color: var(--r-warn);
+}
+
+r-graph .red {
+  color: var(--r-bad);
+}
+
+r-graph .dot {
+  fill: currentColor;
+  stroke: none;
+}
+
 r-prose {
   display: block;
   max-width: 92ch;
