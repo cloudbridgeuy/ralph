@@ -216,7 +216,7 @@ impl std::fmt::Display for AgyNapError {
             Self::Notice(AgyNotice::Quota { reset_secs: None }) => {
                 write!(f, "agy quota reached")
             }
-            Self::Notice(AgyNotice::ApiError { .. }) => write!(f, "agy API error"),
+            Self::Notice(AgyNotice::ApiError { .. }) => write!(f, "agy API error: network error"),
             Self::Notice(AgyNotice::Safety) => {
                 write!(f, "agy blocked the reply with its content safety filters")
             }
@@ -589,5 +589,42 @@ mod tests {
             agy_nap_reply("  ", &[]),
             Err(AgyNapError::Summary(_))
         ));
+    }
+
+    fn kind_of(error: &AgyNapError) -> crate::retry::FailureKind {
+        crate::retry::classify(&crate::retry::FailureInput {
+            timed_out: false,
+            exit_code: 1,
+            text: &error.to_string(),
+        })
+    }
+
+    #[test]
+    fn agy_quota_is_not_retried() {
+        let error = AgyNapError::Notice(AgyNotice::Quota {
+            reset_secs: Some(10845),
+        });
+        let kind = kind_of(&error);
+        assert_eq!(kind, crate::retry::FailureKind::Refusal);
+        assert_eq!(crate::retry::retry_delay(kind, 0), None);
+    }
+
+    #[test]
+    fn agy_api_error_is_outage() {
+        let error = AgyNapError::Notice(AgyNotice::ApiError { attempt: Some(1) });
+        let kind = kind_of(&error);
+        assert_eq!(kind, crate::retry::FailureKind::Outage);
+        assert!(crate::retry::retry_delay(kind, 0).is_some());
+    }
+
+    #[test]
+    fn agy_safety_and_tool_calls_are_refusals() {
+        for error in [
+            AgyNapError::Notice(AgyNotice::Safety),
+            AgyNapError::Notice(AgyNotice::Other),
+            AgyNapError::ToolCall("run_command".into()),
+        ] {
+            assert_eq!(kind_of(&error), crate::retry::FailureKind::Refusal);
+        }
     }
 }

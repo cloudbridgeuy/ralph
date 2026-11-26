@@ -656,7 +656,21 @@ fn run_curator_with_command(
     command: &MemoryCommand,
 ) -> Result<String, ralph_core::chat_memory::CuratorError> {
     if command.harness == ralph_core::chat_backend::MemoryHarness::Agy {
-        return run_agy_curator(prompt, curator, command);
+        return backoff::retry_on_outage(
+            "chat memory curator",
+            || match run_agy_curator(prompt, curator, command) {
+                Ok(summary) => backoff::Attempt::Done(Ok(summary)),
+                Err(error) => {
+                    let failure = backoff::FailureText {
+                        timed_out: false,
+                        exit_code: 1,
+                        text: error.message.clone(),
+                    };
+                    backoff::Attempt::Failed(Err(error), failure)
+                }
+            },
+            |delay| backoff::wait_unless(signal::is_terminated, delay),
+        );
     }
     let run = run_memory_command(command, prompt, curator)?;
     ralph_core::chat_memory::nap_summary(run.code, run.text.as_deref()).map_err(|message| {
