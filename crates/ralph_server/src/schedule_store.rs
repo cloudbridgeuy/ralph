@@ -28,6 +28,31 @@ impl ScheduleStore {
     }
 
     pub fn load_all(&self) -> Vec<Task> {
+        self.record_paths()
+            .into_iter()
+            .filter_map(|path| load(&path))
+            .collect()
+    }
+
+    /// Reads every readable record and never writes: a corrupt file is
+    /// skipped with a warning and stays on disk.
+    pub fn read_all(&self) -> Vec<Task> {
+        self.record_paths()
+            .into_iter()
+            .filter_map(|path| match decode(&path) {
+                Ok(task) => Some(task),
+                Err(e) => {
+                    warn(format!(
+                        "skipping unreadable scheduled task {}: {e}",
+                        path.display()
+                    ));
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn record_paths(&self) -> Vec<PathBuf> {
         let entries = match fs::read_dir(&self.dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Vec::new(),
@@ -39,7 +64,6 @@ impl ScheduleStore {
         entries
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
             .filter(|path| is_record(path))
-            .filter_map(|path| load(&path))
             .collect()
     }
 }
@@ -51,11 +75,14 @@ fn is_record(path: &Path) -> bool {
             .is_some_and(|name| !name.to_string_lossy().starts_with('.'))
 }
 
-fn load(path: &Path) -> Option<Task> {
-    let parsed = fs::read(path)
+fn decode(path: &Path) -> Result<Task, String> {
+    fs::read(path)
         .map_err(|e| e.to_string())
-        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()));
-    match parsed {
+        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+}
+
+fn load(path: &Path) -> Option<Task> {
+    match decode(path) {
         Ok(saved) => Some(saved),
         Err(e) => {
             warn(format!(
@@ -145,6 +172,22 @@ mod tests {
         fs::write(&bad, "{nope").unwrap();
         assert_eq!(store.load_all().len(), 1);
         assert!(!bad.exists());
+    }
+
+    #[test]
+    fn read_all_skips_corrupt_records_and_keeps_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        let record = task("ok");
+        store.save(&record).unwrap();
+        let bad = dir.path().join("bad.json");
+        fs::write(&bad, "{nope").unwrap();
+        fs::write(dir.path().join(".partial.json"), "{").unwrap();
+        assert_eq!(store.read_all(), vec![record]);
+        assert!(bad.exists());
+        assert!(ScheduleStore::new(dir.path().join("none"))
+            .read_all()
+            .is_empty());
     }
 
     #[test]

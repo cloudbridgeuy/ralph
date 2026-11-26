@@ -15,7 +15,7 @@ pub(crate) fn schedules_response(store: &Path) -> ApiResponse {
     if !store.is_dir() {
         return error(404, "store not found");
     }
-    let tasks = ScheduleStore::new(store.join(SCHEDULE_DIR)).load_all();
+    let tasks = ScheduleStore::new(store.join(SCHEDULE_DIR)).read_all();
     json_ok(json!({"store": store_name(store), "rows": task_rows(&tasks)}))
 }
 
