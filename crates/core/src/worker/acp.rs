@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 mod agy_model;
 mod agy_notice;
+mod agy_stream;
 mod agy_usage;
 mod frames;
 mod handoff;
@@ -14,6 +15,7 @@ mod turns;
 
 pub use agy_model::*;
 pub use agy_notice::*;
+pub use agy_stream::*;
 pub use agy_usage::*;
 pub use frames::*;
 pub use handoff::*;

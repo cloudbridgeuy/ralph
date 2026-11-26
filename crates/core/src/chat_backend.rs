@@ -51,11 +51,7 @@ impl MemoryHarness {
                 cost: Support::None,
                 ..CLAUDE
             },
-            Self::Agy => Caps {
-                harness: "agy",
-                cost: Support::None,
-                ..CLAUDE
-            },
+            Self::Agy => AGY,
         }
     }
 
@@ -67,6 +63,18 @@ impl MemoryHarness {
         matches!(self, Self::Codex | Self::Agy)
     }
 }
+
+pub const AGY: Caps = Caps {
+    harness: "agy",
+    cost: Support::None,
+    cache_tokens: Support::Full,
+    cache_ttl: Support::None,
+    context_tokens: Support::Full,
+    cancel: Support::Partial("session cancel only"),
+    mcp_tools: Support::Partial("tool names use the mcp_server_tool form"),
+    system_prompt: Support::Partial("first user turn"),
+    tool_blocks: Support::Partial("raw output only on some tools"),
+};
 
 pub fn cache_ttl_secs(caps: &Caps) -> Option<i64> {
     match caps.cache_ttl {
