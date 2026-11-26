@@ -20,7 +20,8 @@ const OWNER_DIRS: [(&str, &str); 5] = [
 
 /// True only for a regular file below `store`. No part of the path under the
 /// store may be a symlink, so a link in the store cannot pull in a file or a
-/// directory from outside it. The store path itself is used as given.
+/// directory from outside it. On unix the file must have one link, so a hard
+/// link to a file elsewhere is refused too. The store path is used as given.
 fn is_file(store: &Path, path: &Path) -> bool {
     let Ok(below) = path.strip_prefix(store) else {
         return false;
@@ -29,7 +30,18 @@ fn is_file(store: &Path, path: &Path) -> bool {
     below.components().all(|part| {
         current.push(part);
         fs::symlink_metadata(&current).is_ok_and(|meta| !meta.file_type().is_symlink())
-    }) && fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
+    }) && fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file() && single_link(&meta))
+}
+
+#[cfg(unix)]
+fn single_link(meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    meta.nlink() == 1
+}
+
+#[cfg(not(unix))]
+fn single_link(_: &fs::Metadata) -> bool {
+    true
 }
 
 fn read_file(store: &Path, path: &Path) -> Option<String> {
@@ -296,5 +308,20 @@ mod tests {
         .unwrap();
         let facts = worker_facts(store.path());
         assert!(find(&facts, "A").last_report.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hard_linked_marker_is_not_read() {
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("private");
+        touch(&target, "private text");
+        let store = tempfile::tempdir().unwrap();
+        let root = store.path();
+        owner(root, CLAUDE_OWNER_DIR, "real");
+        fs::create_dir_all(blocked_path(root, "real").parent().unwrap()).unwrap();
+        fs::hard_link(&target, blocked_path(root, "real")).unwrap();
+        let facts = worker_facts(root);
+        assert!(find(&facts, "real").blocked.is_none());
     }
 }
