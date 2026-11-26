@@ -337,6 +337,8 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 
 Free text in a stored field is dropped, not masked. `ticket` is returned only in the shape `^[A-Z][A-Z0-9]*-[0-9]+$`, and `repeat` only for a valid `daily HH:MM` or an `every` span; both are `null` otherwise. `last_report_status` is always `done`, `blocked` or `question`, because the report reader keeps no other status, and `harness` comes from a fixed list of owner directories.
 
+Ids are the exception. `GET /api/schedules` and `GET /api/watches` return each `id` exactly as stored, with no hashing and no filtering, and `GET /api/workers` does the same for worker ids. An id is a name that the model or the user chose, so it may contain any text they put there. The per-run token is the only guard. With `--tailscale`, these routes reach every tailnet device that holds the token.
+
 Worker state comes from the marker files, in this order: `gone`, `blocked`, `waiting`, `unreported`, then the activity label (`running`, `background`, `idle`, `failed`), then `running`. `tone` is chosen on the server: `running` and `background` are `ok`, `blocked` is `warn`, `waiting` is `info`, `unreported` is `accent`, `idle` and `gone` are `neutral`, `failed` is `bad`. Workers are listed from the store files only. There is no tmux, git, monitor or network lookup, so a worker that exists only as a tmux session does not appear.
 
 | Answer | When |
