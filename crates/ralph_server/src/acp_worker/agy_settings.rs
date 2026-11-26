@@ -102,8 +102,7 @@ pub(super) async fn open(
     connection: &ConnectionTo<Agent>,
     opening: &Opening,
 ) -> Result<(SessionId, Selection), String> {
-    let request =
-        NewSessionRequest::new(opening.cwd.clone()).mcp_servers(vec![opening.server.clone()]);
+    let request = NewSessionRequest::new(opening.cwd.clone()).mcp_servers(opening.servers.clone());
     let response = connection
         .send_request(UntypedMessage::new("session/new", request).map_err(|e| e.to_string())?)
         .block_task()
@@ -132,7 +131,7 @@ pub(super) async fn load(
     id: SessionId,
 ) -> Result<(SessionId, Selection), String> {
     let request = LoadSessionRequest::new(id.clone(), opening.cwd.clone())
-        .mcp_servers(vec![opening.server.clone()]);
+        .mcp_servers(opening.servers.clone());
     let response = connection
         .send_request(UntypedMessage::new("session/load", request).map_err(|e| e.to_string())?)
         .block_task()

@@ -91,7 +91,7 @@ fn option_of_kind<'a>(content: &'a BlockedContent, kind: &str) -> Option<&'a Per
     content.options.iter().find(|option| option.kind == kind)
 }
 
-fn refusal(content: &BlockedContent) -> Unattended<'_> {
+pub fn refusal(content: &BlockedContent) -> Unattended<'_> {
     option_of_kind(content, "reject_once").map_or(Unattended::Cancel, Unattended::Deny)
 }
 

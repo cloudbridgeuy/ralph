@@ -1,3 +1,5 @@
+pub(super) mod picture;
+
 use super::lines::Statement;
 use super::Refusal;
 

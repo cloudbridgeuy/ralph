@@ -30,15 +30,50 @@ fn svg(lanes: &[Lane]) -> String {
         .collect()
 }
 
+fn dense_state() -> String {
+    [
+        svg(&dense()),
+        svg(&[Lane::Head, Lane::Parked]),
+        svg(&[Lane::Head, Lane::Merged]),
+    ]
+    .concat()
+}
+
 pub(super) fn graphs() -> String {
     group(
         "r-graph",
         &[
             ("empty", svg(&[])),
             ("sparse", svg(&[Lane::Head, Lane::Open])),
-            ("dense", svg(&dense())),
+            ("dense", dense_state()),
             ("error", error("could not load the thread graph")),
             ("very-long", svg(&crowded())),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::graphs;
+
+    const CURVE: &str = "M4 -1V8Q4 12 8 12";
+
+    fn svgs() -> Vec<String> {
+        graphs()
+            .split("</svg>")
+            .filter_map(|part| part.find("<svg").map(|start| part[start..].to_string()))
+            .collect()
+    }
+
+    fn has_curve_with(class: &str) -> bool {
+        svgs()
+            .iter()
+            .any(|svg| svg.contains(CURVE) && svg.contains(class))
+    }
+
+    #[test]
+    fn dense_shows_the_last_row_curve_for_parked_and_merged() {
+        assert!(has_curve_with("ln warn h"));
+        assert!(has_curve_with("ln ok h"));
+    }
 }

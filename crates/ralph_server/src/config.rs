@@ -2,6 +2,7 @@ use crate::invoke::{ASK_PERMISSION_MODE_ENV, CHAT_PERMISSION_MODE_ENV};
 use crate::paths;
 use crate::warn::warn_once;
 use ralph_core::chat::WORKER_QUIET_SECS;
+use ralph_core::chat_backend::MemoryHarness;
 use ralph_core::chat_thread::config_root;
 use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::worker::{ClaudeMode, PermissionMode, TicketKeys};
@@ -706,8 +707,14 @@ impl AppConfig {
             ("nap", &self.nap.harness, &self.nap.model),
             ("tag", &self.tag.harness, &self.tag.model),
         ] {
-            let message = if !matches!(harness.as_str(), "claude" | "codex") {
-                Some(format!("{name}.harness must be claude or codex"))
+            let parsed = MemoryHarness::parse(harness)
+                .filter(|parsed| name == "nap" || *parsed != MemoryHarness::Agy);
+            let message = if parsed.is_none() {
+                Some(if name == "nap" {
+                    format!("{name}.harness must be claude, codex or agy")
+                } else {
+                    format!("{name}.harness must be claude or codex")
+                })
             } else if model.trim().is_empty()
                 || model.trim_start().starts_with('-')
                 || model.chars().any(char::is_control)
@@ -715,8 +722,15 @@ impl AppConfig {
                 Some(format!(
                     "{name}.model must be nonempty and must not start with an option"
                 ))
-            } else if harness == "codex" && matches!(model.as_str(), "haiku" | "claude-haiku-5-5") {
-                Some(format!("{name}.model must be set to a Codex model"))
+            } else if parsed.is_some_and(MemoryHarness::needs_explicit_model)
+                && matches!(model.as_str(), "haiku" | "claude-haiku-5-5")
+            {
+                let kind = if parsed == Some(MemoryHarness::Agy) {
+                    "Gemini"
+                } else {
+                    "Codex"
+                };
+                Some(format!("{name}.model must be set to a {kind} model"))
             } else {
                 None
             };

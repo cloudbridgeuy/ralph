@@ -914,6 +914,35 @@ fn memory_codex_models_are_validated() {
 }
 
 #[test]
+fn nap_accepts_agy() {
+    let (config, _) = AppConfig::parse_reporting_unknown(
+        "[nap]\nharness = 'agy'\nmodel = 'gemini-3-flash'",
+        "test",
+    )
+    .unwrap();
+    assert_eq!(config.nap.harness, "agy");
+}
+
+#[test]
+fn tag_rejects_agy() {
+    let error = AppConfig::parse_reporting_unknown(
+        "[tag]\nharness = 'agy'\nmodel = 'gemini-3-flash'",
+        "test",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("tag.harness"), "{error}");
+}
+
+#[test]
+fn agy_nap_rejects_haiku_default() {
+    let error = AppConfig::parse_reporting_unknown("[nap]\nharness = 'agy'", "test")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Gemini model"), "{error}");
+}
+
+#[test]
 fn memory_settings_merge_per_key() {
     let global = "[nap]\nharness = 'claude'\nmodel = 'opus'\n[tag]\nmodel = 'sonnet'"
         .parse::<toml::Table>()

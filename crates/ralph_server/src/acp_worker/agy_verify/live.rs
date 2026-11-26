@@ -222,8 +222,11 @@ fn prepare(
         .map_err(|error| format!("could not create verify worktree: {error}"))?;
     let mut opening = opening(dir, "unused", mode, updates);
     opening.cwd = worktree;
-    opening.server = serde_json::from_value(acp_mcp_server(&exe, ID, &opening.inbox, &owner, None))
-        .map_err(|error| format!("could not configure worker MCP: {error}"))?;
+    opening.servers =
+        vec![
+            serde_json::from_value(acp_mcp_server(&exe, ID, &opening.inbox, &owner, None))
+                .map_err(|error| format!("could not configure worker MCP: {error}"))?,
+        ];
     Ok(opening)
 }
 

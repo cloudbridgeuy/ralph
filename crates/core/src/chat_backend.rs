@@ -26,6 +26,56 @@ pub const CLAUDE: Caps = Caps {
     tool_blocks: Support::Full,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryHarness {
+    Claude,
+    Codex,
+    Agy,
+}
+
+impl MemoryHarness {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "agy" => Some(Self::Agy),
+            _ => None,
+        }
+    }
+
+    pub fn caps(self) -> Caps {
+        match self {
+            Self::Claude => CLAUDE,
+            Self::Codex => Caps {
+                harness: "codex",
+                cost: Support::None,
+                ..CLAUDE
+            },
+            Self::Agy => AGY,
+        }
+    }
+
+    pub fn inlines_instructions(self) -> bool {
+        matches!(self, Self::Codex | Self::Agy)
+    }
+
+    pub fn needs_explicit_model(self) -> bool {
+        matches!(self, Self::Codex | Self::Agy)
+    }
+}
+
+pub const AGY: Caps = Caps {
+    harness: "agy",
+    cost: Support::None,
+    cache_tokens: Support::Full,
+    cache_ttl: Support::None,
+    context_tokens: Support::Full,
+    cancel: Support::Partial("session cancel only"),
+    mcp_tools: Support::Partial("tool names use the mcp_server_tool form"),
+    system_prompt: Support::Partial("first user turn"),
+    tool_blocks: Support::Partial("raw output only on some tools"),
+};
+
 pub fn cache_ttl_secs(caps: &Caps) -> Option<i64> {
     match caps.cache_ttl {
         Support::None => None,
@@ -62,5 +112,31 @@ mod tests {
         ] {
             assert_eq!(support, Support::Full);
         }
+    }
+
+    #[test]
+    fn memory_harness_parses_known_names_only() {
+        assert_eq!(MemoryHarness::parse("agy"), Some(MemoryHarness::Agy));
+        assert_eq!(MemoryHarness::parse("codex"), Some(MemoryHarness::Codex));
+        assert_eq!(MemoryHarness::parse("claude"), Some(MemoryHarness::Claude));
+        assert_eq!(MemoryHarness::parse("other"), None);
+    }
+
+    #[test]
+    fn memory_harness_caps_name_the_harness_and_drop_cost() {
+        assert_eq!(MemoryHarness::Claude.caps(), CLAUDE);
+        for (harness, name) in [(MemoryHarness::Codex, "codex"), (MemoryHarness::Agy, "agy")] {
+            let caps = harness.caps();
+            assert_eq!((caps.harness, caps.cost), (name, Support::None));
+        }
+    }
+
+    #[test]
+    fn only_claude_keeps_instructions_out_of_the_prompt_and_default_model() {
+        for harness in [MemoryHarness::Codex, MemoryHarness::Agy] {
+            assert!(harness.inlines_instructions() && harness.needs_explicit_model());
+        }
+        let claude = MemoryHarness::Claude;
+        assert!(!claude.inlines_instructions() && !claude.needs_explicit_model());
     }
 }

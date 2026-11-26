@@ -1,5 +1,5 @@
 use crate::ledger;
-use agent_client_protocol::schema::v1::PromptResponse;
+use agent_client_protocol::schema::v1::{PromptResponse, Usage};
 use ralph_core::chat_memory::{worker_usage_record, CallSite};
 use ralph_core::worker::{agy_turn_usage, AgyUsage, ModelUsage};
 use std::io;
@@ -36,6 +36,17 @@ pub(crate) fn record_verify(
     record_as(path, target, response, kind)
 }
 
+pub(crate) fn raw_usage(raw: &Usage) -> AgyUsage {
+    AgyUsage {
+        total: raw.total_tokens,
+        input: raw.input_tokens,
+        output: raw.output_tokens,
+        read: raw.cached_read_tokens,
+        write: raw.cached_write_tokens,
+        thought: raw.thought_tokens,
+    }
+}
+
 fn record_as(
     path: &Path,
     target: &Target<'_>,
@@ -45,16 +56,8 @@ fn record_as(
     let Some(raw) = &response.usage else {
         return Ok(());
     };
-    let raw = AgyUsage {
-        total: raw.total_tokens,
-        input: raw.input_tokens,
-        output: raw.output_tokens,
-        read: raw.cached_read_tokens,
-        write: raw.cached_write_tokens,
-        thought: raw.thought_tokens,
-    };
-    let Some(usage) =
-        agy_turn_usage(&raw).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+    let Some(usage) = agy_turn_usage(&raw_usage(raw))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
     else {
         return Ok(());
     };
