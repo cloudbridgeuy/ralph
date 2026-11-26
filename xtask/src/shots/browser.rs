@@ -117,7 +117,11 @@ fn free_port() -> Result<u16, BoxError> {
     Ok(TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port())
 }
 
-fn start_ralph(ralph: &Path, store: &Path) -> Result<(ChildGuard, Listening), BoxError> {
+fn start_ralph(
+    ralph: &Path,
+    store: &Path,
+    home: &Path,
+) -> Result<(ChildGuard, Listening), BoxError> {
     if !ralph.is_file() {
         return Err(format!(
             "{} does not exist; run `cargo build -p ralph` or pass --ralph",
@@ -129,6 +133,7 @@ fn start_ralph(ralph: &Path, store: &Path) -> Result<(ChildGuard, Listening), Bo
         .args(["web", "--store"])
         .arg(store)
         .args(["--port", "0"])
+        .envs(webdriver::isolated_env(home))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -199,7 +204,9 @@ pub fn capture(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxE
     let scratch = tempfile::tempdir()?;
     let store = scratch.path().join("store");
     seed::seed(&store)?;
-    let (_ralph, listening) = start_ralph(&options.ralph, &store)?;
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home)?;
+    let (_ralph, listening) = start_ralph(&options.ralph, &store, &home)?;
     clear_pngs(out)?;
     let mut timed_out = Vec::new();
     for theme in Theme::ALL {

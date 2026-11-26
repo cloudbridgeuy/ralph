@@ -146,6 +146,17 @@ pub fn resolve_path(
     given.or_else(|| home.map(|home| home.join(under_home)))
 }
 
+pub fn isolated_env(dir: &Path) -> Vec<(String, String)> {
+    let under = |sub: &str| dir.join(sub).display().to_string();
+    vec![
+        ("HOME".to_string(), dir.display().to_string()),
+        ("XDG_CONFIG_HOME".to_string(), under("config")),
+        ("XDG_DATA_HOME".to_string(), under("data")),
+        ("XDG_CACHE_HOME".to_string(), under("cache")),
+        ("RALPH_CONFIG_DIR".to_string(), under("config/ralph")),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,5 +334,32 @@ mod tests {
             Some(PathBuf::from("/home/u/.local/bin/g"))
         );
         assert_eq!(resolve_path(None, None, ".a"), None);
+    }
+
+    #[test]
+    fn isolated_env_points_every_resolver_var_inside_the_dir() {
+        let dir = Path::new("/tmp/shots-scratch/home");
+        let pairs = isolated_env(dir);
+        for name in [
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "RALPH_CONFIG_DIR",
+        ] {
+            let value = pairs
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+                .unwrap_or_default();
+            assert!(Path::new(value).starts_with(dir), "{name}={value}");
+        }
+    }
+
+    #[test]
+    fn isolated_env_names_no_real_home() {
+        let pairs = isolated_env(Path::new("/tmp/shots-scratch/home"));
+        assert!(!pairs.is_empty());
+        assert!(pairs.iter().all(|(_, value)| !value.contains("/Users/")));
     }
 }

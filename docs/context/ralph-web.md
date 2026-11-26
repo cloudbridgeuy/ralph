@@ -443,7 +443,7 @@ Subcommands:
 
 ### Fixture store
 
-`shots seed` writes a store of neutral, made-up data. Every time derives from one pinned instant, `2026-03-02T12:00:00Z`, so two seeds give equal stores. It refuses an `--out` folder that has any entry. Pass a missing or empty folder. `run` seeds a temporary store and starts `ralph web --store <it> --port 0` on it. Each screen gets:
+`shots seed` writes a store of neutral, made-up data. Every time derives from one pinned instant, `2026-03-02T12:00:00Z`, so two seeds give equal stores. It refuses an `--out` folder that has any entry. Pass a missing or empty folder. `run` seeds a temporary store and starts `ralph web --store <it> --port 0` on it. The server child gets `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `RALPH_CONFIG_DIR` set to an empty folder inside the temporary directory, so the config screen shows no value from the real global config. Each screen gets:
 
 - Memory: 40 log entries on 20 topics and 6 summary nodes.
 - Threads: 5 threads, one in each state (open, parked, merged, closed, auto-merge).
