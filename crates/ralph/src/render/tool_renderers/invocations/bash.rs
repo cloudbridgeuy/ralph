@@ -20,7 +20,7 @@ pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
             output.push_str(&framed(ctx, &Label::Language("sh"), &highlighted));
         } else {
             output.push_str("  ");
-            let highlighted = ctx.highlighter.highlight(command, Some("sh"));
+            let highlighted = ctx.highlighter.highlight_foreground(command, Some("sh"));
             let trimmed = highlighted.trim_end_matches(ansi::RESET);
             output.push_str(trimmed);
             output.push_str(&format!("{}\n", ansi::RESET));

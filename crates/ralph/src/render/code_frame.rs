@@ -48,28 +48,50 @@ mod tests {
         Highlighter::with_config(ThemeConfig::default().with_no_background(true)).unwrap()
     }
 
-    fn unfilled_characters(out: &str, fill: &str) -> String {
-        let mut loose = String::new();
-        for row in out.lines().skip(1) {
-            let mut filled = false;
-            let mut rest = row;
-            while let Some(first) = rest.chars().next() {
-                if let Some(after) = rest.strip_prefix(fill) {
-                    filled = true;
-                    rest = after;
-                } else if first == '\x1b' {
-                    let end = rest.find(|c: char| c.is_ascii_alphabetic()).unwrap() + 1;
-                    filled &= &rest[..end] != "\x1b[0m";
-                    rest = &rest[end..];
-                } else {
-                    if !filled {
-                        loose.push(first);
+    fn background_after(codes: &str, current: Option<String>) -> Option<String> {
+        let mut codes = codes.split(';');
+        let mut background = current;
+        while let Some(code) = codes.next() {
+            match code.parse::<u16>().unwrap_or(0) {
+                0 | 49 => background = None,
+                code @ (40..=47 | 100..=107) => background = Some(code.to_string()),
+                code @ (38 | 48) => {
+                    let mode = codes.next().unwrap_or_default();
+                    let take = if mode == "2" { 3 } else { 1 };
+                    let values: Vec<&str> = codes.by_ref().take(take).collect();
+                    if code == 48 {
+                        background = Some(format!("\x1b[48;{mode};{}m", values.join(";")));
                     }
-                    rest = &rest[first.len_utf8()..];
                 }
+                _ => {}
+            }
+        }
+        background
+    }
+
+    fn unfilled_characters(rows: &str, fill: &str) -> String {
+        let mut loose = String::new();
+        let mut background = None;
+        let mut rest = rows;
+        while let Some(first) = rest.chars().next() {
+            if let Some(sequence) = rest.strip_prefix("\x1b[") {
+                let end = sequence.find(|c: char| c.is_ascii_alphabetic()).unwrap();
+                if sequence[end..].starts_with('m') {
+                    background = background_after(&sequence[..end], background);
+                }
+                rest = &sequence[end + 1..];
+            } else {
+                if first != '\n' && background.as_deref() != Some(fill) {
+                    loose.push(first);
+                }
+                rest = &rest[first.len_utf8()..];
             }
         }
         loose
+    }
+
+    fn below_the_rule(out: &str) -> &str {
+        out.split_once('\n').unwrap().1
     }
 
     #[test]
@@ -90,7 +112,11 @@ mod tests {
             let out = render_code_block(&terminal(&highlighter, 40), code, language);
             let fill = truecolor_background(55, 60, 71);
             assert!(out.contains(&fill), "{out:?}");
-            assert_eq!(unfilled_characters(&out, &fill), "", "{out:?}");
+            assert_eq!(
+                unfilled_characters(below_the_rule(&out), &fill),
+                "",
+                "{out:?}"
+            );
         }
     }
 
@@ -143,7 +169,11 @@ mod tests {
         let highlighter = highlighter();
         let out = render_diff_block(&terminal(&highlighter, 30), "@@ -1 +1 @@\n-a\n+b\n c");
         let fill = truecolor_background(55, 60, 71);
-        assert_eq!(unfilled_characters(&out, &fill), "", "{out:?}");
+        assert_eq!(
+            unfilled_characters(below_the_rule(&out), &fill),
+            "",
+            "{out:?}"
+        );
     }
 
     #[test]
@@ -161,6 +191,35 @@ mod tests {
         let highlighter = highlighter();
         let out = render_bash_invocation(&terminal(&highlighter, 20), "pwd");
         assert_eq!(strip_ansi(&out), "▶ Bash\n  pwd\n");
+    }
+
+    #[test]
+    fn real_highlighter_output_stays_on_the_fill() {
+        let highlighter = highlighter();
+        let ctx = terminal(&highlighter, 60);
+        let fill = truecolor_background(55, 60, 71);
+        let script = "for f in *.rs; do\n\techo \"$f\" | wc -l # count\ndone";
+        let patch = "diff --git a b\n--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n same";
+        for out in [
+            render_code_block(&ctx, "cargo test", Some("sh")),
+            render_code_block(&ctx, script, Some("bash")),
+            render_diff_block(&ctx, patch),
+        ] {
+            assert!(out.contains("\x1b[3"), "{out:?}");
+            assert_eq!(
+                unfilled_characters(below_the_rule(&out), &fill),
+                "",
+                "{out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_line_terminal_bash_paints_no_background() {
+        let highlighter = highlighter();
+        let out = render_bash_invocation(&terminal(&highlighter, 40), "cargo test");
+        assert!(out.contains("\x1b[38;2;"), "{out:?}");
+        assert!(!out.contains("\x1b[48;"), "{out:?}");
     }
 
     #[test]
