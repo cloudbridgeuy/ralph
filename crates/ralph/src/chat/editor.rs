@@ -34,6 +34,7 @@ pub(super) const OPEN_EDITOR: &str = "open-editor";
 pub(super) const BACK_OUT: &str = "back-out-queue";
 pub(super) const QUEUE_CTRL_C: &str = "queue-ctrl-c";
 pub(super) const IDLE_CTRL_C: &str = "idle-ctrl-c";
+pub(super) const STASH_DRAFT: &str = "stash-draft";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
@@ -270,7 +271,7 @@ pub(super) fn vi_keybindings() -> (Keybindings, Keybindings) {
 }
 
 pub(super) fn edit_mode(mode: EditModeConfig) -> ChatEditMode {
-    edit_mode_with(mode, idle_bindings)
+    edit_mode_with(mode, idle_bindings, idle_typing_bindings)
 }
 
 pub(super) fn queue_bindings(keybindings: &mut Keybindings) {
@@ -295,17 +296,31 @@ fn idle_bindings(keybindings: &mut Keybindings) {
     );
 }
 
-fn edit_mode_with(mode: EditModeConfig, extra: fn(&mut Keybindings)) -> ChatEditMode {
+pub(super) fn idle_typing_bindings(keybindings: &mut Keybindings) {
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('q'),
+        ReedlineEvent::ExecuteHostCommand(STASH_DRAFT.to_string()),
+    );
+}
+
+fn edit_mode_with(
+    mode: EditModeConfig,
+    every: fn(&mut Keybindings),
+    typing: fn(&mut Keybindings),
+) -> ChatEditMode {
     let inner: Box<dyn EditMode> = match mode {
         EditModeConfig::Emacs => {
             let mut keybindings = emacs_keybindings();
-            extra(&mut keybindings);
+            every(&mut keybindings);
+            typing(&mut keybindings);
             Box::new(Emacs::new(keybindings))
         }
         EditModeConfig::Vi => {
             let (mut insert, mut normal) = vi_keybindings();
-            extra(&mut insert);
-            extra(&mut normal);
+            every(&mut insert);
+            typing(&mut insert);
+            every(&mut normal);
             Box::new(Vi::new(insert, normal, default_vi_visual_keybindings()))
         }
     };
@@ -316,15 +331,21 @@ fn edit_mode_with(mode: EditModeConfig, extra: fn(&mut Keybindings)) -> ChatEdit
     }
 }
 
+pub(super) fn history(store_dir: &Path) -> Result<FileBackedHistory, Box<dyn std::error::Error>> {
+    Ok(FileBackedHistory::with_file(
+        HISTORY_CAPACITY,
+        store_dir.join(HISTORY_FILE),
+    )?)
+}
+
 pub(super) fn build_editor(
     store_dir: &Path,
     mode: EditModeConfig,
     highlighter: Option<SuggestionHighlighter>,
     monitor: Arc<Monitor>,
 ) -> Result<Reedline, Box<dyn std::error::Error>> {
-    let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     let editor = Reedline::create()
-        .with_history(Box::new(history))
+        .with_history(Box::new(history(store_dir)?))
         .with_edit_mode(Box::new(edit_mode(mode)))
         .with_completer(Box::new(HoldCompleter {
             monitor,
@@ -342,7 +363,7 @@ pub(super) fn build_editor(
 
 pub(super) fn build_queue_editor(mode: EditModeConfig, sent_style: SentStyle) -> Reedline {
     Reedline::create()
-        .with_edit_mode(Box::new(edit_mode_with(mode, queue_bindings)))
+        .with_edit_mode(Box::new(edit_mode_with(mode, queue_bindings, |_| {})))
         .with_highlighter(Box::new(SuggestionHighlighter::new(
             SuggestionCell::default(),
             Color::Default,

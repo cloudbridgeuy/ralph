@@ -12,7 +12,7 @@ use ralph_core::chat_thread::{in_scope, ThreadName};
 use ralph_server::config::PromptFiles;
 use ralph_server::history_log;
 use ralph_server::warn::warn_if_err;
-use reedline::{HistoryItem, Reedline};
+use reedline::{History, HistoryItem, Reedline};
 use std::io;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -166,12 +166,10 @@ pub(super) fn route_queued(text: String, editor: &mut Reedline, prompt: &ChatPro
     Submitted { line: text, route }
 }
 
-pub(super) fn save_unsent(editor: &mut Reedline, lost: &[String]) -> bool {
+pub(super) fn save_unsent(history: &mut dyn History, lost: &[String]) -> bool {
     let mut saved = true;
     for text in lost {
-        let result = editor
-            .history_mut()
-            .save(HistoryItem::from_command_line(text.clone()));
+        let result = history.save(HistoryItem::from_command_line(text.clone()));
         saved &= result.is_ok();
         warn_if_err(result, "Failed to save chat history");
     }

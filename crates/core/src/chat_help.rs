@@ -372,6 +372,10 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
         effect: "paste a clipboard image as [Image #N: path]",
     },
     KeyHelp {
+        keys: "Ctrl-Q",
+        effect: "stash the draft and clear the prompt; the draft comes back after the next submit",
+    },
+    KeyHelp {
         keys: "Esc Esc",
         effect: "clear the whole draft (emacs mode)",
     },
@@ -411,7 +415,7 @@ pub const VI_KEYS: &[KeyHelp] = &[
         effect: "clear the whole draft (insert and normal mode)",
     },
     KeyHelp {
-        keys: "Alt-Enter, Ctrl-J, Ctrl-V, Ctrl-O, Tab, Shift-Tab",
+        keys: "Alt-Enter, Ctrl-J, Ctrl-V, Ctrl-O, Ctrl-Q, Tab, Shift-Tab",
         effect: "insert mode only; normal mode adds just Ctrl-G and Ctrl-U",
     },
 ];

@@ -1,6 +1,6 @@
 use super::editor::{
-    edit_mode, emacs_keybindings, esc_esc, queue_bindings, vi_keybindings, visual_reset,
-    IDLE_CTRL_C, OPEN_EDITOR,
+    edit_mode, emacs_keybindings, esc_esc, idle_typing_bindings, queue_bindings, vi_keybindings,
+    visual_reset, IDLE_CTRL_C, OPEN_EDITOR, STASH_DRAFT,
 };
 use super::inbox::Display;
 use super::{reply_style, resolve_store};
@@ -165,6 +165,20 @@ fn vi_find_v_still_moves() {
     assert_eq!(mode.edit_mode(), PromptEditMode::Vi(PromptViMode::Normal));
 }
 
+fn ctrl_q(mode: &mut impl EditMode) -> ReedlineEvent {
+    press(mode, KeyCode::Char('q'), KeyModifiers::CONTROL)
+}
+
+#[test]
+fn ctrl_q_stashes_in_emacs_and_vi_insert_only() {
+    let stash = ReedlineEvent::ExecuteHostCommand(STASH_DRAFT.to_string());
+    assert_eq!(ctrl_q(&mut edit_mode(EditModeConfig::Emacs)), stash);
+    let mut vi = edit_mode(EditModeConfig::Vi);
+    assert_eq!(ctrl_q(&mut vi), stash);
+    press(&mut vi, KeyCode::Esc, KeyModifiers::NONE);
+    assert_ne!(ctrl_q(&mut vi), stash);
+}
+
 #[test]
 fn store_precedence_is_flag_then_env_then_cwd() {
     let cwd = Path::new("/work");
@@ -297,11 +311,14 @@ fn assert_documented(labels: Vec<String>, tables: &[&[KeyHelp]]) {
 
 #[test]
 fn every_chat_binding_has_a_help_entry() {
+    let mut emacs = emacs_keybindings();
+    idle_typing_bindings(&mut emacs);
     assert_documented(
-        added_labels(&emacs_keybindings(), &default_emacs_keybindings()),
+        added_labels(&emacs, &default_emacs_keybindings()),
         &[PROMPT_KEYS],
     );
-    let (insert, normal) = vi_keybindings();
+    let (mut insert, normal) = vi_keybindings();
+    idle_typing_bindings(&mut insert);
     assert_documented(
         added_labels(&insert, &default_vi_insert_keybindings()),
         &[PROMPT_KEYS, VI_KEYS],

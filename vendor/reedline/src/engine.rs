@@ -2297,6 +2297,17 @@ impl Reedline {
         self.run_edit_commands_with_status(commands);
     }
 
+    pub fn reset_undo_stack(&mut self) {
+        self.editor.reset_undo_stack();
+    }
+
+    pub fn leave_suspended_prompt(&mut self) -> Result<()> {
+        if self.suspended_state.take().is_some() {
+            self.painter.move_cursor_to_end()?;
+        }
+        Ok(())
+    }
+
     fn run_edit_commands_with_status(&mut self, commands: &[EditCommand]) -> EditCommandStatus {
         let status = self.apply_edit_commands(commands);
         if status == EditCommandStatus::Applied && self.input_mode == InputMode::HistoryTraversal {
