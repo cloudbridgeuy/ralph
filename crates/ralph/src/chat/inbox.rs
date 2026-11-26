@@ -72,7 +72,7 @@ fn render_report(report: &Report, display: &Display, width: usize) -> String {
         "{}\n{}",
         worker_header(
             &report.worker,
-            &report.status,
+            report.status,
             width,
             display.color.then_some(&display.theme.palette)
         ),
@@ -86,12 +86,12 @@ mod tests {
     use crate::highlight::Highlighter;
 
     fn report(worker: &str) -> Report {
-        Report {
-            worker: worker.to_string(),
-            at: "2026-11-17T00:00:00Z".to_string(),
-            status: "done".to_string(),
-            text: format!("{worker} finished"),
-        }
+        Report::from_worker(
+            worker,
+            "2026-11-17T00:00:00Z",
+            ralph_core::worker::ReportStatus::Done,
+            format!("{worker} finished"),
+        )
     }
 
     fn with_display<R>(check: impl FnOnce(&Display) -> R) -> R {
@@ -128,7 +128,12 @@ mod tests {
         assert!(turn.unwrap().is_some());
         let out = String::from_utf8(out).unwrap();
         assert_eq!(out, shown);
-        let header = worker_header("w1", "done", 40, None);
+        let header = worker_header(
+            "w1",
+            ralph_core::worker::ReportKind::Worker(ralph_core::worker::ReportStatus::Done),
+            40,
+            None,
+        );
         assert!(out.starts_with(&format!("{header}\n")), "{out}");
     }
 

@@ -491,7 +491,7 @@ fn ready_is_covered(
 pub fn latest_states(reports: &[Report]) -> HashMap<String, String> {
     reports
         .iter()
-        .map(|r| (r.worker.clone(), r.status.clone()))
+        .map(|r| (r.worker.clone(), r.status.to_string()))
         .collect()
 }
 

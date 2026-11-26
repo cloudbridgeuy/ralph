@@ -1,5 +1,6 @@
 use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::markdown::Palette;
+use ralph_core::worker::{ReportKind, ReportStatus};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const FRAME_WIDTH: usize = 4;
@@ -58,18 +59,24 @@ fn truncate_to_width(text: &str, max: usize) -> String {
     out
 }
 
-fn status_color(status: &str, palette: &Palette) -> String {
+fn status_color(status: ReportKind, palette: &Palette) -> String {
     fg(match status {
-        "done" => palette.done,
-        "blocked" | "failed" => palette.blocked,
-        "waiting" | "check" => palette.waiting,
-        _ => None,
+        ReportKind::Worker(ReportStatus::Done) => palette.done,
+        ReportKind::Worker(ReportStatus::Blocked) => palette.blocked,
+        ReportKind::Check => palette.waiting,
+        ReportKind::Worker(ReportStatus::Question)
+        | ReportKind::Warning
+        | ReportKind::Watch
+        | ReportKind::Merged
+        | ReportKind::View
+        | ReportKind::ThreadClosed
+        | ReportKind::External => None,
     })
 }
 
 pub fn worker_header(
     worker: &str,
-    status: &str,
+    status: ReportKind,
     terminal_width: usize,
     palette: Option<&Palette>,
 ) -> String {
@@ -92,14 +99,17 @@ mod tests {
     use crate::ansi::{BLUE, GREEN, RED, YELLOW};
     use termimad::crossterm::style::Color;
 
-    fn colored(worker: &str, status: &str, width: usize) -> String {
+    const DONE: ReportKind = ReportKind::Worker(ReportStatus::Done);
+    const BLOCKED: ReportKind = ReportKind::Worker(ReportStatus::Blocked);
+
+    fn colored(worker: &str, status: ReportKind, width: usize) -> String {
         worker_header(worker, status, width, Some(&Palette::default()))
     }
 
     #[test]
     fn plain_header_when_not_color() {
         assert_eq!(
-            worker_header("GUZ-476", "done", 80, None),
+            worker_header("GUZ-476", DONE, 80, None),
             "[worker GUZ-476 · done]"
         );
     }
@@ -107,7 +117,7 @@ mod tests {
     #[test]
     fn colored_header_is_boxed() {
         assert_eq!(
-            strip_ansi(&colored("GUZ-476", "done", 80)),
+            strip_ansi(&colored("GUZ-476", DONE, 80)),
             "╭─────────────────────────╮\n│ ● worker GUZ-476 · done │\n╰─────────────────────────╯"
         );
     }
@@ -115,14 +125,23 @@ mod tests {
     #[test]
     fn status_colors_follow_meaning() {
         let palette = Palette::default();
-        assert_eq!(status_color("done", &palette), GREEN);
-        assert_eq!(status_color("blocked", &palette), RED);
-        assert_eq!(status_color("failed", &palette), RED);
-        assert_eq!(status_color("waiting", &palette), YELLOW);
-        assert_eq!(status_color("check", &palette), YELLOW);
-        assert_eq!(status_color("question", &palette), "");
-        assert!(colored("a", "blocked", 80).contains(RED));
-        assert!(colored("a", "done", 80).starts_with(BLUE));
+        for kind in ReportKind::ALL {
+            let expected = match kind {
+                ReportKind::Worker(ReportStatus::Done) => GREEN,
+                ReportKind::Worker(ReportStatus::Blocked) => RED,
+                ReportKind::Check => YELLOW,
+                ReportKind::Worker(ReportStatus::Question)
+                | ReportKind::Warning
+                | ReportKind::Watch
+                | ReportKind::Merged
+                | ReportKind::View
+                | ReportKind::ThreadClosed
+                | ReportKind::External => "",
+            };
+            assert_eq!(status_color(kind, &palette), expected, "{kind}");
+        }
+        assert!(colored("a", BLOCKED, 80).contains(RED));
+        assert!(colored("a", DONE, 80).starts_with(BLUE));
     }
 
     #[test]
@@ -132,7 +151,7 @@ mod tests {
             done: Some(Color::Cyan),
             ..Palette::default()
         };
-        let out = worker_header("a", "done", 80, Some(&palette));
+        let out = worker_header("a", DONE, 80, Some(&palette));
         assert!(out.starts_with("\x1b[95m"));
         assert!(out.contains("\x1b[96m"));
         assert!(!out.contains(GREEN));
@@ -140,14 +159,14 @@ mod tests {
 
     #[test]
     fn wide_worker_ids_align_by_display_width() {
-        let out = strip_ansi(&colored("作業", "done", 80));
+        let out = strip_ansi(&colored("作業", DONE, 80));
         let widths: Vec<usize> = out.lines().map(UnicodeWidthStr::width).collect();
         assert!(widths.iter().all(|w| *w == widths[0]));
     }
 
     #[test]
     fn long_worker_ids_are_cut_to_fit_terminal() {
-        let out = strip_ansi(&colored(&"x".repeat(100), "done", 30));
+        let out = strip_ansi(&colored(&"x".repeat(100), DONE, 30));
         assert!(out.lines().all(|line| line.width() <= 30));
         assert!(out.contains('…'));
     }

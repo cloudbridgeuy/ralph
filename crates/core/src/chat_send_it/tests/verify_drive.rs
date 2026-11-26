@@ -128,7 +128,7 @@ fn a_report_that_is_not_done_stays_unmet_before_any_verify() {
     let (_, next) = advance(
         &verifying_plan(),
         with_mode(0, VerifyMode::Enforce),
-        Event::Report(&worker_report("E1", "working")),
+        Event::Report(&worker_report("E1", "check")),
     );
     assert_eq!(next, Next::Stop(StopReason::Unmet { step: 1 }));
 }

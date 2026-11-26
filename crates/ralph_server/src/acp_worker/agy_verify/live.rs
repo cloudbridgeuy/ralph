@@ -24,7 +24,7 @@ fn shell_prompt(target: &Path) -> String {
 
 fn report(reports: &[Report], delivered: bool) -> Result<String, String> {
     if delivered
-        && matches!(reports, [entry] if entry.worker == ID && entry.status == "done" && entry.text == TEXT)
+        && matches!(reports, [entry] if entry.worker == ID && entry.status.as_str() == "done" && entry.text == TEXT)
     {
         Ok("one expected report delivered".to_string())
     } else {
@@ -413,29 +413,31 @@ mod tests {
 
     #[test]
     fn report_requires_one_exact_delivery() {
-        let entry = Report {
-            worker: ID.into(),
-            at: "t".into(),
-            status: "done".into(),
-            text: TEXT.into(),
-        };
+        let entry =
+            Report::from_worker(ID, "t", ralph_core::worker::ReportStatus::Done, TEXT.into());
         assert!(report(std::slice::from_ref(&entry), true).is_ok());
         assert!(report(&[], true).is_err());
         assert!(report(std::slice::from_ref(&entry), false).is_err());
         assert!(report(&[entry.clone(), entry.clone()], true).is_err());
         for bad in [
-            Report {
-                worker: "other".into(),
-                ..entry.clone()
-            },
-            Report {
-                status: "blocked".into(),
-                ..entry.clone()
-            },
-            Report {
-                text: "wrong".into(),
-                ..entry.clone()
-            },
+            Report::from_worker(
+                "other",
+                "t",
+                ralph_core::worker::ReportStatus::Done,
+                TEXT.into(),
+            ),
+            Report::from_worker(
+                ID,
+                "t",
+                ralph_core::worker::ReportStatus::Blocked,
+                TEXT.into(),
+            ),
+            Report::from_worker(
+                ID,
+                "t",
+                ralph_core::worker::ReportStatus::Done,
+                "wrong".into(),
+            ),
         ] {
             assert!(report(&[bad], true).is_err());
         }

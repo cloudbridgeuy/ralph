@@ -305,7 +305,7 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
             [
                 format!("#{}", i + 1),
                 e.report.worker.clone(),
-                e.report.status.clone(),
+                e.report.status.to_string(),
                 age(&e.report.at, now),
             ]
         })
@@ -332,16 +332,12 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::ReportStatus;
 
     fn arrival(source: &str) -> (String, Report) {
         (
             source.to_string(),
-            Report {
-                worker: "A".to_string(),
-                at: "t".to_string(),
-                status: "done".to_string(),
-                text: source.to_string(),
-            },
+            Report::from_worker("A", "t", ReportStatus::Done, source.to_string()),
         )
     }
 
@@ -356,12 +352,7 @@ mod tests {
     fn entry(worker: &str, at: &str) -> Entry {
         Entry {
             source: worker.to_string(),
-            report: Report {
-                worker: worker.to_string(),
-                at: at.to_string(),
-                status: "done".to_string(),
-                text: String::new(),
-            },
+            report: Report::from_worker(worker, at, ReportStatus::Done, String::new()),
         }
     }
 
@@ -620,6 +611,23 @@ mod tests {
         let (ledger, skipped) = Ledger::decode(&bytes);
         assert_eq!(sources(&ledger), ["a", "b"]);
         assert_eq!(skipped.len(), 1);
+    }
+
+    #[test]
+    fn ledger_entry_with_unknown_status_is_skipped() {
+        let entry = |source: &str, status: &str| {
+            serde_json::json!({
+                "source": source,
+                "report": {"worker": "A", "at": "t", "status": status, "text": source},
+            })
+        };
+        let raw = serde_json::json!({
+            "entries": [entry("good", "done"), entry("unknown", "failed")],
+        });
+        let (ledger, skipped) = Ledger::decode(&serde_json::to_vec(&raw).unwrap());
+        assert_eq!(sources(&ledger), ["good"]);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].source.as_deref(), Some("unknown"));
     }
 
     #[test]

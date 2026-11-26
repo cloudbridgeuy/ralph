@@ -2,8 +2,8 @@ use super::acp::REPORT_TOOL;
 use super::claude::{calls_report, init_status};
 use super::{
     decode_line, deny_line, interrupted_end, permission_response, turn_stop, CheckResult,
-    ClaudeLine, Report, ThreadSignal, TurnSummary, Verdict, VersionProbe, ALLOW_ONCE,
-    CLAUDE_COMMAND, CLAUDE_GATE, SERVER_NAME, VERSION_PROBE_LIMIT,
+    ClaudeLine, Report, ReportKind, ReportStatus, ThreadSignal, TurnSummary, Verdict, VersionProbe,
+    ALLOW_ONCE, CLAUDE_COMMAND, CLAUDE_GATE, SERVER_NAME, VERSION_PROBE_LIMIT,
 };
 use crate::stream::interrupt_line;
 use serde_json::Value;
@@ -158,7 +158,9 @@ pub fn report_check(fold: &ClaudeFold, inbox: &[Report]) -> CheckResult {
     }
     match inbox {
         [] => CheckResult::fail("report", "the report call wrote no inbox file"),
-        [only] if only.status == "done" => CheckResult::pass("report", "inbox got a done report"),
+        [only] if only.status == ReportKind::Worker(ReportStatus::Done) => {
+            CheckResult::pass("report", "inbox got a done report")
+        }
         [only] => CheckResult::fail(
             "report",
             format!("the report was {}, expected done", only.status),
@@ -394,12 +396,12 @@ mod tests {
     }
 
     fn inbox_report() -> Report {
-        Report {
-            worker: "w".to_string(),
-            at: "t".to_string(),
-            status: "done".to_string(),
-            text: "verify".to_string(),
-        }
+        Report::from_worker(
+            "w",
+            "t",
+            crate::worker::ReportStatus::Done,
+            "verify".to_string(),
+        )
     }
 
     fn report_check_after(lines: &[Value], inbox: &[Report]) -> CheckResult {
@@ -468,10 +470,12 @@ mod tests {
 
     #[test]
     fn report_fails_when_the_only_report_is_not_done() {
-        let blocked = Report {
-            status: "blocked".to_string(),
-            ..inbox_report()
-        };
+        let blocked = Report::from_worker(
+            "w",
+            "t",
+            crate::worker::ReportStatus::Blocked,
+            "verify".to_string(),
+        );
         let check = report_check_after(&[connected(), report_tool_use()], &[blocked]);
         assert_eq!(
             check,
@@ -618,12 +622,12 @@ mod tests {
         let found = parse_reports(&[valid.to_string(), "not json".to_string(), "{}".to_string()]);
         assert_eq!(
             found,
-            vec![Report {
-                worker: "verify".into(),
-                at: "t".into(),
-                status: "done".into(),
-                text: "verify".into(),
-            }]
+            vec![Report::from_worker(
+                "verify",
+                "t",
+                crate::worker::ReportStatus::Done,
+                "verify".into()
+            )]
         );
         assert!(parse_reports(&[]).is_empty());
     }
@@ -647,7 +651,7 @@ mod tests {
         let after = [file("a.json", "blocked"), file("b.json", "done")];
         let found = new_reports(&before, &after);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].status, "done");
+        assert_eq!(found[0].status.as_str(), "done");
     }
 
     #[test]

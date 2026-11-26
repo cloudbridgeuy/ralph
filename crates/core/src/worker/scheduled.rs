@@ -2,8 +2,7 @@ use super::acp::REPORT_TOOL;
 use super::{
     agy_auto_allow_option, claude_args, control_response, disallowed_tool_args, mcptools_decision,
     permission_response, BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision,
-    PermissionMode, PermissionOption, Report, ReportStatus, SandboxMode, ALLOW_ONCE, SERVER_NAME,
-    WORKER_PROMPT,
+    PermissionMode, PermissionOption, Report, SandboxMode, ALLOW_ONCE, SERVER_NAME, WORKER_PROMPT,
 };
 use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
 use serde_json::{json, Value};
@@ -166,15 +165,14 @@ impl<'a> Unattended<'a> {
 }
 
 fn denied_report(worker: &str, at: &str, content: &BlockedContent) -> Report {
-    Report {
-        worker: worker.to_string(),
-        at: at.to_string(),
-        status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!(
+    Report::ralph_blocked(
+        worker,
+        at,
+        format!(
             "Scheduled worker {worker} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
             content.tool, content.summary
         ),
-    }
+    )
 }
 
 pub const ORIGIN_MAIN: &str = "origin/main";
@@ -233,6 +231,7 @@ mod tests {
         ClaudeWorkerArgs,
     };
     use super::*;
+    use crate::worker::{ReportKind, ReportStatus};
     use std::path::Path;
 
     fn claude_args() -> ClaudeWorkerArgs<'static> {
@@ -731,7 +730,7 @@ mod tests {
             let report = report.unwrap();
             assert_eq!(report.worker, "sched-1");
             assert_eq!(report.at, "2026-11-24T10:00:00Z");
-            assert_eq!(report.status, ReportStatus::Blocked.as_str());
+            assert_eq!(report.status, ReportKind::Worker(ReportStatus::Blocked));
             assert!(report.text.contains("Bash"));
             assert!(report.text.contains("do it"));
             assert!(report.text.contains("nobody was watching"));

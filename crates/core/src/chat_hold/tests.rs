@@ -1,23 +1,20 @@
 use super::*;
 use crate::chat_status::{ScheduleState, Status, WatchState, WorkerState};
-use crate::worker::Report;
+use crate::worker::{Report, ReportStatus};
 
 fn entry(worker: &str) -> Entry {
     Entry {
         source: format!("20261025122100-000003-{worker}.json"),
-        report: Report {
-            worker: worker.to_string(),
-            at: "t".to_string(),
-            status: "done".to_string(),
-            text: String::new(),
-        },
+        report: Report::from_worker(worker, "t", ReportStatus::Done, String::new()),
     }
 }
 
 fn close_entry(thread: &str) -> Entry {
-    let mut closed = entry(&format!("thread:{thread}"));
-    closed.report.status = "thread-closed".to_string();
-    closed
+    let worker = format!("thread:{thread}");
+    Entry {
+        source: format!("20261025122100-000003-{worker}.json"),
+        report: Report::thread_closed(&worker, "t", String::new()),
+    }
 }
 
 fn source(name: &str) -> HoldFilter {

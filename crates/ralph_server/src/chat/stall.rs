@@ -4,7 +4,6 @@ use crate::warn::warn_if_err;
 use crate::watches::locked;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{activity_path, sent_path, ActivityMark, HarnessId, Report};
-use ralph_core::worker_check::CHECK_STATUS;
 use ralph_core::worker_stall::{
     after_send, alert_text, auto_continue_log_path, auto_continued_path, gate_send, log_line,
     report_secs, reported_since_go_ahead, stall_action, AutoContinue, ContinueStep, StallAction,
@@ -169,12 +168,7 @@ impl Monitor {
     fn alert_stalled(&self, worker: &RunningWorker, record: Option<AutoContinue>) {
         let id = &worker.id;
         let tmux = (worker.kind == HarnessId::ClaudeTmux).then_some(worker.session.as_str());
-        let report = Report {
-            worker: id.clone(),
-            at: chrono::Utc::now().to_rfc3339(),
-            status: CHECK_STATUS.to_string(),
-            text: alert_text(id, tmux),
-        };
+        let report = Report::check(id, &chrono::Utc::now().to_rfc3339(), alert_text(id, tmux));
         warn_if_err(
             self.inbox.post(&report, 0),
             format!("posting check for worker {id}"),

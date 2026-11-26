@@ -55,12 +55,12 @@ mod tests {
     #[test]
     fn fresh_reports_reach_the_sink_with_their_session_and_unread_count() {
         let key = SessionKey::Thread(ThreadName::parse("side").unwrap());
-        let report = Report {
-            worker: "w1".into(),
-            status: "done".into(),
-            at: String::new(),
-            text: "finished".into(),
-        };
+        let report = Report::from_worker(
+            "w1",
+            "",
+            ralph_core::worker::ReportStatus::Done,
+            "finished".into(),
+        );
         let delivered = RefCell::new(Vec::new());
         let sink = inbox_sink(key, |msg| {
             delivered

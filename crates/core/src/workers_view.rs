@@ -240,12 +240,12 @@ pub fn group_reports(entries: &[Entry], unread: &[Report]) -> HashMap<String, Ve
         .flat_map(|entry| entry_reports(&entry.text, &entry.at));
     let waiting = unread
         .iter()
-        .filter(|report| is_report_status(&report.status))
+        .filter(|report| report.status.worker_status().is_some())
         .map(|report| {
             (
                 report.worker.clone(),
                 ReportLine {
-                    status: report.status.clone(),
+                    status: report.status.to_string(),
                     at: report.at.clone(),
                     text: report.text.clone(),
                 },

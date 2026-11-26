@@ -77,6 +77,7 @@ use ralph_server::chat::monitor::ready_ids;
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
+use ralph_server::config::{AppConfig, ChatSection};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
 use ralph_server::paths::absolute_from;
 use ralph_server::warn::{warn, warn_if_err};
@@ -107,9 +108,25 @@ fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
     (highlighter, MarkdownTheme::from_config(Some(config)))
 }
 
+fn alert_config(args: &ChatArgs, chat: &ChatSection, terminal_status: bool) -> AlertConfig {
+    AlertConfig {
+        sound: chat.inbox_alert_sound && !args.no_inbox_sound,
+        notification: chat.inbox_alert_notification && !args.no_inbox_notification,
+        unknown_focus: chat.inbox_alert_unknown_focus,
+        terminal_status,
+    }
+}
+
 pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     if let Some(socket) = &args.connect {
-        return remote::run(socket);
+        let chat = AppConfig::load().map_or_else(
+            |error| {
+                warn(format!("Using the default inbox alerts: {error}"));
+                ChatSection::default()
+            },
+            |config| config.chat,
+        );
+        return remote::run(socket, alert_config(&args, &chat, false));
     }
     if let Some(ChatCommand::History(history)) = args.command {
         print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
@@ -118,7 +135,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     signal::ignore_sigttou();
     let flags = config::flag_settings(&args);
-    let store_dir = chat_dir(args.store, args.thread.as_ref())?;
+    let store_dir = chat_dir(args.store.clone(), args.thread.as_ref())?;
     std::fs::create_dir_all(&store_dir)?;
     let store_root = canonical_store(store_dir.clone());
     ralph_server::config::set_store_layer(&store_dir);
@@ -198,12 +215,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         std::io::stdout().is_terminal(),
         std::env::var_os(REX_SESSION_ENV).is_some_and(|value| !value.is_empty()),
     );
-    let alert = AlertConfig {
-        sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
-        notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
-        unknown_focus: chat_config.inbox_alert_unknown_focus,
-        terminal_status,
-    };
+    let alert = alert_config(&args, chat_config, terminal_status);
     let term = Arc::new(TermStatus::new(
         terminal_status,
         chat_config.terminal_title && std::io::stdout().is_terminal(),

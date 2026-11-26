@@ -1,5 +1,5 @@
 use super::*;
-use ralph_core::worker::{Grants, Report};
+use ralph_core::worker::{Grants, Report, ReportKind, ReportStatus};
 use tempfile::TempDir;
 
 const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
@@ -116,7 +116,7 @@ fn a_permission_line_without_a_request_id_posts_one_failure_and_queues_nothing()
     assert!(run.permission_events().is_empty());
     let reports = run.reports();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].status, "blocked");
+    assert_eq!(reports[0].status.as_str(), "blocked");
     assert_eq!(
         reports[0].text,
         "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
@@ -181,7 +181,7 @@ fn a_scheduled_worker_denies_and_reports_in_both_modes_and_never_queues() {
         let reports = run.reports();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].worker, "w");
-        assert_eq!(reports[0].status, "blocked");
+        assert_eq!(reports[0].status, ReportKind::Worker(ReportStatus::Blocked));
         assert!(reports[0].text.contains("mcp__mcptools__execute"));
     }
 }
