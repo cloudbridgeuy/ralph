@@ -107,6 +107,15 @@ fn parse_error(path: &Path, source: toml::de::Error) -> ConfigError {
     }
 }
 
+fn refuse_removed_keys(path: &Path, layer: &Table) -> Result<(), ConfigError> {
+    layers::removed_permission_mode(layer).map_or(Ok(()), |section| {
+        Err(ConfigError::RemovedPermissionMode {
+            path: path.display().to_string(),
+            section,
+        })
+    })
+}
+
 pub fn read_layer(path: &Path) -> Result<Table, ConfigError> {
     if !path.exists() {
         return Ok(Table::new());
@@ -642,14 +651,9 @@ impl AppConfig {
             .flatten()
             .map(|path| read_layer(path).map(|table| (path, table)))
             .collect::<Result<Vec<_>, _>>()?;
-        if let Some((path, section)) = layers.iter().find_map(|(path, layer)| {
-            layers::removed_permission_mode(layer).map(|section| (path, section))
-        }) {
-            return Err(ConfigError::RemovedPermissionMode {
-                path: path.display().to_string(),
-                section,
-            });
-        }
+        layers
+            .iter()
+            .try_for_each(|(path, layer)| refuse_removed_keys(path, layer))?;
         let merged = layers
             .iter()
             .cloned()
@@ -687,6 +691,8 @@ impl AppConfig {
             path: path.to_string(),
             source,
         };
+        let table = content.parse::<Table>().map_err(parse_error)?;
+        refuse_removed_keys(Path::new(path), &table)?;
         let mut unknown = Vec::new();
         let deserializer = toml::de::Deserializer::parse(content).map_err(parse_error)?;
         let config: Self =

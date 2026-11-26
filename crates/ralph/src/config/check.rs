@@ -42,6 +42,16 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(config.changes.warnings())
         .chain(config.mermaid.style.warnings())
         .chain(chat.permissions_setting().1)
+        .chain(config.ask.permissions_setting().1)
+        .chain(
+            [
+                config.chat_permission_mode(None, None),
+                config.ask_permission_mode(None, None),
+            ]
+            .into_iter()
+            .filter_map(Result::err)
+            .map(|error| error.to_string()),
+        )
         .chain(chat.worker_quiet_setting().1)
         .chain(chat.reset_limits_setting().1)
         .chain(chat.send_it_setting().1)
@@ -202,6 +212,38 @@ mod tests {
         assert!(check("[chat]\nemphasis_icons = \"yes\"\n", "c").is_err());
         assert!(errors("[chat]\nemphasis_round = true\n").is_empty());
         assert!(errors("[chat]\nemphasis_icons = true\n").is_empty());
+    }
+
+    #[test]
+    fn a_bad_claude_permission_mode_is_an_error_for_chat_and_ask() {
+        for section in ["chat", "ask"] {
+            let bad = errors(&format!("[{section}.claude]\npermission_mode = \"yolo\"\n"));
+            let origin = format!("{section}.claude.permission_mode: ");
+            assert_eq!(bad.len(), 1, "{bad:?}");
+            assert!(bad[0].starts_with(&origin), "{bad:?}");
+            let good = format!("[{section}.claude]\npermission_mode = \"plan\"\n");
+            assert!(errors(&good).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_bad_ask_permissions_value_is_an_error() {
+        assert_eq!(
+            errors("[ask]\npermissions = \"always\"\n"),
+            ["[ask] permissions must be \"ask\" or \"yolo\"; using \"ask\""]
+        );
+    }
+
+    #[test]
+    fn a_removed_permission_mode_key_fails_and_names_the_claude_table() {
+        for section in ["chat", "ask"] {
+            let content = format!("[{section}]\npermission_mode = \"plan\"\n");
+            let message = check(&content, "c").unwrap_err().to_string();
+            assert!(
+                message.contains(&format!("[{section}.claude]")),
+                "{message}"
+            );
+        }
     }
 
     #[test]
