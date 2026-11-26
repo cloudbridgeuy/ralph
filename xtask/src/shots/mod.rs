@@ -221,6 +221,14 @@ fn compare_selected(args: CompareArgs, selected: Option<&[core::Shot]>) -> Resul
     let classification = core::classify(&baseline_names, &current_names, &measures);
     let diff_dir = args.out.join("diff");
     fs::create_dir_all(&diff_dir)?;
+    let changed_names: Vec<String> = classification
+        .changed
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in core::stale_diffs(&png_names(&diff_dir)?, &changed_names) {
+        fs::remove_file(diff_dir.join(name))?;
+    }
     for (name, _) in &classification.changed {
         if let Some(diff) = diffs.get(name) {
             write_png(&diff_dir.join(name), diff)?;

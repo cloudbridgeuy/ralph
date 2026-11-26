@@ -161,6 +161,15 @@ pub fn stale_names(selected: &[Shot], existing: &[String]) -> Vec<String> {
     restrict_names(existing, selected)
 }
 
+pub fn stale_diffs(existing: &[String], changed: &[String]) -> Vec<String> {
+    let kept = sorted_set(changed);
+    existing
+        .iter()
+        .filter(|name| name.ends_with(".png") && !kept.contains(name))
+        .cloned()
+        .collect()
+}
+
 pub fn restrict_names(names: &[String], selected: &[Shot]) -> Vec<String> {
     let wanted = selected_names(selected);
     names
@@ -407,6 +416,27 @@ pub fn select_approvals(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn diffs_of_shots_that_no_longer_changed_are_stale() {
+        let existing = names(&["a.png", "b.png", "c.png"]);
+        assert_eq!(
+            stale_diffs(&existing, &names(&["b.png"])),
+            names(&["a.png", "c.png"])
+        );
+    }
+
+    #[test]
+    fn no_diff_is_stale_when_every_one_still_changed() {
+        let existing = names(&["a.png"]);
+        assert!(stale_diffs(&existing, &names(&["a.png", "z.png"])).is_empty());
+    }
+
+    #[test]
+    fn only_png_diffs_are_stale() {
+        let existing = names(&["a.png", "notes.txt"]);
+        assert_eq!(stale_diffs(&existing, &[]), names(&["a.png"]));
+    }
 
     fn memory_shots() -> Vec<Shot> {
         filter(matrix(), Some(Screen::Memory), None)
