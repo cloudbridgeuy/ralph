@@ -1,5 +1,5 @@
 use crate::config::MermaidStyleExt;
-use crate::render::mermaid::{fits_width, mermaid_precheck};
+use crate::render::mermaid::{fits_width, mermaid_precheck, picture_precheck};
 use crate::render::mermaid_picture::PictureRequest;
 use crate::ui_theme::UiColors;
 use ralph_core::mermaid_fit::Room;
@@ -137,6 +137,7 @@ pub fn render(source: &str, width: usize) -> Option<String> {
 
 pub fn picture(source: &str, theme: &Theme, ui: &UiColors, room: Room) -> Option<Vec<u8>> {
     let limits = limits();
+    picture_precheck(source, limits).ok()?;
     let request = PictureRequest {
         source: source.to_string(),
         style: limits.style.resolve(theme, ui).0,
