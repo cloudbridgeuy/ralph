@@ -89,11 +89,12 @@ pub fn serve(
         match admit(active.load(Ordering::SeqCst), MAX_HANDLERS) {
             Admission::Accept => spawn_handler(request, &shared, &active, &peers),
             Admission::Reject => {
-                let guard = peer_of(&request).map(|ip| PeerCounts::enter(&peers, ip).0);
-                run_off_loop(request, move |request| {
-                    reject_overloaded(guard, |after_write| {
+                let delivery = overload_delivery(peer_of(&request), &peers);
+                run_off_loop(request, move |request| match delivery {
+                    Delivery::Drain(guard) => reject_overloaded(guard, |after_write| {
                         respond_then(request, overloaded(), after_write);
-                    });
+                    }),
+                    Delivery::Close => respond_and_close(request, overloaded(), || ()),
                 });
             }
         }
@@ -115,6 +116,21 @@ enum Delivery {
     Close,
 }
 
+fn overload_delivery(peer: Option<IpAddr>, peers: &Arc<PeerCounts>) -> Delivery {
+    match peer {
+        Some(ip) => enter_capped(ip, peers),
+        None => Delivery::Drain(None),
+    }
+}
+
+fn enter_capped(ip: IpAddr, peers: &Arc<PeerCounts>) -> Delivery {
+    let (guard, previous) = PeerCounts::enter(peers, ip);
+    match admit(previous, MAX_REJECTED_PER_PEER) {
+        Admission::Accept => Delivery::Drain(Some(guard)),
+        Admission::Reject => Delivery::Close,
+    }
+}
+
 fn limit_rejected(
     response: ApiResponse,
     peer: Option<IpAddr>,
@@ -123,10 +139,9 @@ fn limit_rejected(
     let Some(ip) = peer.filter(|_| counts_toward_peer_cap(response.status)) else {
         return (response, Delivery::Drain(None));
     };
-    let (guard, previous) = PeerCounts::enter(peers, ip);
-    match admit(previous, MAX_REJECTED_PER_PEER) {
-        Admission::Accept => (response, Delivery::Drain(Some(guard))),
-        Admission::Reject => (overloaded(), Delivery::Close),
+    match enter_capped(ip, peers) {
+        Delivery::Close => (overloaded(), Delivery::Close),
+        drain => (response, drain),
     }
 }
 
@@ -326,6 +341,31 @@ mod tests {
         assert_eq!(held_during_drain, 1);
         let (_probe, after) = PeerCounts::enter(&peers, ip);
         assert_eq!(after, 0);
+    }
+
+    #[test]
+    fn overload_delivery_closes_a_peer_at_the_cap_and_holds_nothing() {
+        let peers = Arc::new(PeerCounts::default());
+        let held: Vec<_> = (0..MAX_REJECTED_PER_PEER)
+            .map(|_| overload_delivery(peer(), &peers))
+            .collect();
+        assert!(held
+            .iter()
+            .all(|delivery| matches!(delivery, Delivery::Drain(Some(_)))));
+        assert!(matches!(overload_delivery(peer(), &peers), Delivery::Close));
+        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
+        assert_eq!(previous, MAX_REJECTED_PER_PEER);
+    }
+
+    #[test]
+    fn overload_delivery_never_limits_exempt_peers() {
+        let peers = Arc::new(PeerCounts::default());
+        for _ in 0..5 {
+            assert!(matches!(
+                overload_delivery(None, &peers),
+                Delivery::Drain(None)
+            ));
+        }
     }
 
     #[test]
