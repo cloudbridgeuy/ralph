@@ -4,6 +4,7 @@ use super::{
     Source,
 };
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use toml::Table;
 
@@ -60,19 +61,37 @@ fn json(value: &toml::Value) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
 }
 
+fn tracked_row(full_key: &str, value: serde_json::Value, source: RowSource) -> (bool, ConfigRow) {
+    (mask_key(full_key) != full_key, row(full_key, value, source))
+}
+
+fn number_masked(rows: Vec<(bool, ConfigRow)>) -> Vec<ConfigRow> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    rows.into_iter()
+        .map(|(masked, mut row)| {
+            if masked {
+                let count = counts.entry(row.section.clone()).or_insert(0);
+                *count += 1;
+                row.key = format!("[redacted-{count}]");
+            }
+            row
+        })
+        .collect()
+}
+
 fn build_rows(layered: &[Row], overrides: &[Setting]) -> Vec<ConfigRow> {
     let from_layers = layered
         .iter()
         .map(|layer| match winning_override(overrides, &layer.key) {
-            Some(setting) => row(&layer.key, json(&setting.value), RowSource::Env),
-            None => row(&layer.key, json(&layer.value), source_of(layer.source)),
+            Some(setting) => tracked_row(&layer.key, json(&setting.value), RowSource::Env),
+            None => tracked_row(&layer.key, json(&layer.value), source_of(layer.source)),
         });
     let env_only = overrides.iter().filter_map(|setting| {
         let key = setting.key?;
         (!layered.iter().any(|layer| layer.key == key))
-            .then(|| row(key, json(&setting.value), RowSource::Env))
+            .then(|| tracked_row(key, json(&setting.value), RowSource::Env))
     });
-    from_layers.chain(env_only).collect()
+    number_masked(from_layers.chain(env_only).collect())
 }
 
 pub fn config_rows(
@@ -140,7 +159,7 @@ mod tests {
         let (g, s) = dirs_with(Some("[wire.prices.\"/Users/me/srv\"]\ninput = 1\n"), None);
         let text = serde_json::to_string(&rows(&g, &s, no_env)).unwrap();
         assert!(!text.contains("/Users"), "{text}");
-        assert!(text.contains("[redacted]"));
+        assert!(text.contains("[redacted-1]"));
     }
 
     #[test]
@@ -218,7 +237,7 @@ mod tests {
         let body = serde_json::to_string(&rows).unwrap();
         assert!(!body.contains("corp"), "{body}");
         assert!(!body.contains("/Users"), "{body}");
-        let masked = find(&rows, "wire", "[redacted]");
+        let masked = find(&rows, "wire", "[redacted-1]");
         assert!(masked.redacted);
         assert_eq!(masked.value, serde_json::json!("[redacted]"));
     }
@@ -233,6 +252,52 @@ mod tests {
         assert!(font.redacted);
         let body = serde_json::to_string(&rows).unwrap();
         assert!(!body.contains("/Users"), "{body}");
+    }
+
+    #[test]
+    fn colliding_redacted_keys_are_numbered() {
+        let (g, s) = dirs_with(
+            None,
+            Some("[wire.prices.\"/a/x\"]\ninput = 1\n[wire.prices.\"/b/y\"]\ninput = 1\n"),
+        );
+        let rows = rows(&g, &s, no_env);
+        assert!(find(&rows, "wire", "[redacted-1]").redacted);
+        assert!(find(&rows, "wire", "[redacted-2]").redacted);
+        assert!(rows.iter().all(|row| row.key != "[redacted]"));
+        let body = serde_json::to_string(&rows).unwrap();
+        assert!(!body.contains("/a"), "{body}");
+        assert!(!body.contains("/b"), "{body}");
+    }
+
+    #[test]
+    fn a_single_masked_row_is_numbered_one() {
+        let (g, s) = dirs_with(None, Some("[wire.prices.\"/a/x\"]\ninput = 1\n"));
+        let rows = rows(&g, &s, no_env);
+        let masked: Vec<&ConfigRow> = rows
+            .iter()
+            .filter(|row| row.redacted && row.section == "wire")
+            .collect();
+        assert!(masked.iter().any(|row| row.key == "[redacted-1]"));
+        assert!(rows.iter().all(|row| row.key != "[redacted-2]"));
+    }
+
+    #[test]
+    fn number_masked_counts_per_section_and_skips_plain_rows() {
+        let plain = |section: &str, key: &str| ConfigRow {
+            section: section.to_string(),
+            key: key.to_string(),
+            value: serde_json::json!(1),
+            source: RowSource::Default,
+            redacted: false,
+        };
+        let numbered = number_masked(vec![
+            (true, plain("wire", "[redacted]")),
+            (false, plain("wire", "x")),
+            (true, plain("root", "[redacted]")),
+            (true, plain("wire", "[redacted]")),
+        ]);
+        let keys: Vec<&str> = numbered.iter().map(|row| row.key.as_str()).collect();
+        assert_eq!(keys, ["[redacted-1]", "x", "[redacted-1]", "[redacted-2]"]);
     }
 
     #[test]
