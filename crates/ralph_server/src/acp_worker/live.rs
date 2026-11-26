@@ -5,9 +5,11 @@ use agent_client_protocol::JsonRpcNotification;
 use ralph_core::chat_tools::{tool_verdict, ToolPolicy, ToolVerdict};
 use ralph_core::worker::AgyUsage;
 use ralph_core::worker::{
-    claude_tool_name, refusal, ClaudePermission, PermissionOption, StopReason,
+    claude_tool_name, refusal, Choice, ClaudePermission, PermissionOption, StopReason,
 };
 use serde_json::Value;
+
+pub type AnswerSender = oneshot::Sender<Choice>;
 
 #[allow(dead_code, reason = "the chat session constructs this")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,8 +24,10 @@ pub enum Decision {
     Ask(ClaudePermission),
 }
 
+#[allow(dead_code, reason = "the chat session constructs this")]
 pub enum AcpEvent {
     Update(Value),
+    Ask(ClaudePermission, AnswerSender),
     Done {
         stop_reason: StopReason,
         usage: Option<AgyUsage>,
@@ -39,8 +43,10 @@ pub struct AcpOpen<'a> {
     pub policy: PermissionPolicy,
 }
 
+#[allow(dead_code, reason = "the chat session constructs this")]
 enum Command {
     Prompt(String),
+    Cancel,
     Close,
 }
 
@@ -76,6 +82,18 @@ pub fn decide(policy: &PermissionPolicy, request: &Value) -> Option<Decision> {
     }
 }
 
+fn option_for(choice: Choice, options: &[PermissionOption]) -> Option<String> {
+    let kinds: &[&str] = match choice {
+        Choice::AllowOnce => &["allow_once"],
+        Choice::AllowAlways => &["allow_always", "allow_once"],
+        Choice::Deny => &["reject_once"],
+    };
+    kinds
+        .iter()
+        .find_map(|kind| option_of_kind(options, kind))
+        .map(|option| option.option_id.clone())
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcNotification)]
 #[serde(transparent)]
 #[notification(method = "session/update")]
@@ -85,10 +103,33 @@ fn answer(
     policy: &PermissionPolicy,
     request: &RawPermissionRequest,
     responder: Responder<RequestPermissionResponse>,
+    events: &mpsc::Sender<AcpEvent>,
+    connection: &ConnectionTo<Agent>,
 ) {
     match decide(policy, &request.0) {
         Some(Decision::Select(option_id)) => respond_selected(responder, option_id),
-        Some(Decision::Ask(_)) | None => respond_cancelled(responder),
+        Some(Decision::Ask(ask)) => {
+            let options = ask.content.options.clone();
+            let (sender, receiver) = oneshot::channel();
+            events.send(AcpEvent::Ask(ask, sender)).ok();
+            let waiting = async move {
+                match receiver
+                    .await
+                    .ok()
+                    .and_then(|choice| option_for(choice, &options))
+                {
+                    Some(option_id) => respond_selected(responder, option_id),
+                    None => respond_cancelled(responder),
+                }
+                Ok(())
+            };
+            if connection.spawn(waiting).is_err() {
+                events
+                    .send(AcpEvent::Failed("agy connection is closed".to_string()))
+                    .ok();
+            }
+        }
+        None => respond_cancelled(responder),
     }
 }
 
@@ -107,6 +148,9 @@ async fn prompt(
         select! {
             response = request => return Some(finished(response)),
             command = commands.next() => match command {
+                Some(Command::Cancel) => {
+                    connection.send_notification(CancelNotification::new(session.clone())).ok();
+                }
                 Some(Command::Prompt(_)) => {}
                 Some(Command::Close) | None => return None,
             },
@@ -157,6 +201,11 @@ async fn converse(
                     None => break,
                 };
             }
+            Command::Cancel => {
+                connection
+                    .send_notification(CancelNotification::new(session.clone()))
+                    .ok();
+            }
             Command::Close => break,
         }
     }
@@ -196,13 +245,14 @@ impl AcpLive {
         thread::spawn(move || {
             let on_update = Arc::clone(&opening.updates);
             let update_events = events.clone();
+            let request_events = events.clone();
             let converse_events = events.clone();
             let outcome = block_on(
                 Client
                     .builder()
                     .on_receive_request(
-                        async move |request: RawPermissionRequest, responder, _cx| {
-                            answer(&policy, &request, responder);
+                        async move |request: RawPermissionRequest, responder, cx| {
+                            answer(&policy, &request, responder, &request_events, &cx);
                             Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
@@ -264,6 +314,16 @@ impl AcpLive {
 
     pub fn next(&self, wait: Duration) -> Option<AcpEvent> {
         self.events.recv_timeout(wait).ok()
+    }
+
+    #[allow(dead_code, reason = "the chat session constructs this")]
+    pub fn cancel(&self) {
+        self.commands.unbounded_send(Command::Cancel).ok();
+    }
+
+    #[allow(dead_code, reason = "the chat session constructs this")]
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
     }
 
     pub fn close(self) {

@@ -81,6 +81,7 @@ pub fn run(request: &OneShotRequest) -> Result<AcpOneShot, OneShotError> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         match live.next(remaining) {
             Some(AcpEvent::Update(update)) => fold(&mut collected, &update),
+            Some(AcpEvent::Ask(..)) => {}
             Some(AcpEvent::Done { stop_reason, usage }) => {
                 let Collected { text, tool_calls } = collected;
                 break Ok(AcpOneShot {
