@@ -56,6 +56,7 @@ mod cancel;
 mod cursor_worker;
 pub(crate) mod journal;
 mod model;
+pub(crate) mod one_shot;
 mod permissions;
 mod print;
 mod print_hooks;
@@ -105,7 +106,7 @@ struct Opening {
     agent: AcpAgent,
     launch: Launch,
     cwd: PathBuf,
-    server: McpServer,
+    servers: Vec<McpServer>,
     worker_id: String,
     model: Option<String>,
     permission_mode: PermissionMode,
@@ -143,7 +144,7 @@ async fn open_session(
             let loaded = connection
                 .send_request(
                     LoadSessionRequest::new(session.clone(), opening.cwd.clone())
-                        .mcp_servers(vec![opening.server.clone()]),
+                        .mcp_servers(opening.servers.clone()),
                 )
                 .block_task()
                 .await;
@@ -399,7 +400,7 @@ impl AcpWorker {
                             agent,
                             launch,
                             cwd,
-                            server,
+                            servers: vec![server],
                             worker_id: worker_id.clone(),
                             model: session_model,
                             permission_mode,
