@@ -4,6 +4,8 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
 mod core;
+mod seed;
+mod seed_spec;
 
 #[derive(Debug, clap::Parser)]
 pub struct ShotsCommand {
@@ -17,6 +19,7 @@ pub enum ShotsAction {
     Diff(DiffArgs),
     Compare(CompareArgs),
     Approve(ApproveArgs),
+    Seed(SeedArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -68,6 +71,12 @@ pub struct ApproveArgs {
     pub all: bool,
 
     pub names: Vec<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct SeedArgs {
+    #[arg(long)]
+    pub out: PathBuf,
 }
 
 type BoxError = Box<dyn std::error::Error>;
@@ -201,5 +210,10 @@ pub fn run(command: ShotsCommand) -> Result<(), BoxError> {
         ShotsAction::Diff(args) => diff(args),
         ShotsAction::Compare(args) => compare(args),
         ShotsAction::Approve(args) => approve(args),
+        ShotsAction::Seed(args) => {
+            let written = seed::seed(&args.out)?;
+            println!("seeded {written} records into {}", args.out.display());
+            Ok(())
+        }
     }
 }

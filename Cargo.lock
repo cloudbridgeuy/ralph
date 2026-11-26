@@ -3112,6 +3112,7 @@ dependencies = [
  "clap",
  "png",
  "ralph_core",
+ "ralph_server",
  "serde_json",
  "tempfile",
  "thiserror",
