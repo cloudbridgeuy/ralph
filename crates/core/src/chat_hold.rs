@@ -62,10 +62,12 @@ impl HoldFilter {
     pub fn matches(&self, entry: &Entry) -> bool {
         match self {
             HoldFilter::Any => true,
-            HoldFilter::Source(source) => source_matches_worker(source, &entry.report.worker),
+            HoldFilter::Source(source) => {
+                source_matches_worker(source, &entry.report.from.to_string())
+            }
             HoldFilter::Set(sources) => sources
                 .iter()
-                .any(|source| source_matches_worker(source, &entry.report.worker)),
+                .any(|source| source_matches_worker(source, &entry.report.from.to_string())),
         }
     }
 }

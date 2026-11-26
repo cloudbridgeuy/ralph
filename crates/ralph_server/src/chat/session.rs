@@ -36,7 +36,7 @@ use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{latest_states, Status};
 use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
-use ralph_core::worker::{Report, ReportKind, INBOX_DIR};
+use ralph_core::worker::{Report, ReportKind, WorkerId, INBOX_DIR};
 use ralph_core::worker_check::logged_states;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -297,7 +297,7 @@ impl Reply {
 }
 
 impl Session {
-    pub fn worker_states(&self) -> (HashMap<String, ReportKind>, Vec<String>) {
+    pub fn worker_states(&self) -> (HashMap<WorkerId, ReportKind>, Vec<String>) {
         let mut last = Store::new(self.core.store_dir.clone())
             .load()
             .map(|(entries, _)| logged_states(&entries))

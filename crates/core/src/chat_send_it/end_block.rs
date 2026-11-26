@@ -63,7 +63,7 @@ pub(super) fn first_line(text: &str) -> String {
 impl StopReason {
     pub(super) fn flagged_by(report: &Report) -> Self {
         StopReason::WorkerFlagged {
-            worker: report.worker.clone(),
+            worker: report.from.to_string(),
             line: first_line(&report.text),
         }
     }

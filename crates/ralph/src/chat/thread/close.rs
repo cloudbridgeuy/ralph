@@ -19,10 +19,9 @@ pub(crate) fn record_exit(store: Option<PathBuf>, thread: Option<&ThreadName>, e
         ChatExit::Switch(..) => CloseEvent::Switched,
         ChatExit::Quit => CloseEvent::Other,
     };
-    let at = chrono::Utc::now().to_rfc3339();
     let result = store_dir(store)
         .map_err(|e| e.to_string())
-        .and_then(|main| record_close(&main, name, event, &at));
+        .and_then(|main| record_close(&main, name, event, chrono::Utc::now()));
     if let Err(e) = result {
         eprintln!("Could not record the close of thread {name}: {e}");
     }
@@ -32,7 +31,7 @@ pub(super) fn record_close(
     main: &Path,
     name: &ThreadName,
     event: CloseEvent,
-    at: &str,
+    at: chrono::DateTime<chrono::Utc>,
 ) -> Result<(), String> {
     if event == CloseEvent::Other {
         return Ok(());
@@ -108,7 +107,7 @@ mod tests {
             main.path(),
             &name("side"),
             CloseEvent::Closed,
-            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z".parse().unwrap(),
         )
         .unwrap();
         assert!(closed(main.path(), "side"));
@@ -126,7 +125,13 @@ mod tests {
     fn switch_marks_without_a_report() {
         let main = tempfile::tempdir().unwrap();
         thread_with(main.path(), "side", Some(AutoMode::Drop));
-        record_close(main.path(), &name("side"), CloseEvent::Switched, "t").unwrap();
+        record_close(
+            main.path(),
+            &name("side"),
+            CloseEvent::Switched,
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert!(closed(main.path(), "side"));
         assert!(posted(main.path()).is_empty());
     }
@@ -136,8 +141,20 @@ mod tests {
         let main = tempfile::tempdir().unwrap();
         thread_with(main.path(), "side", Some(AutoMode::Merge));
         thread_with(main.path(), "plain", None);
-        record_close(main.path(), &name("side"), CloseEvent::Other, "t").unwrap();
-        record_close(main.path(), &name("plain"), CloseEvent::Closed, "t").unwrap();
+        record_close(
+            main.path(),
+            &name("side"),
+            CloseEvent::Other,
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        record_close(
+            main.path(),
+            &name("plain"),
+            CloseEvent::Closed,
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert!(!closed(main.path(), "side"));
         assert!(!closed(main.path(), "plain"));
         assert!(posted(main.path()).is_empty());
@@ -153,7 +170,7 @@ mod tests {
                 main.path(),
                 &name(n),
                 CloseEvent::Closed,
-                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z".parse().unwrap(),
             )
             .unwrap();
         }
@@ -161,7 +178,13 @@ mod tests {
         let old = thread_dir(main.path(), &name("old"));
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("thread.json"), r#"{"base":0,"created":"t"}"#).unwrap();
-        record_close(main.path(), &name("old"), CloseEvent::Closed, "t").unwrap();
+        record_close(
+            main.path(),
+            &name("old"),
+            CloseEvent::Closed,
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert!(!closed(main.path(), "old"));
     }
 
@@ -186,7 +209,12 @@ mod tests {
     #[test]
     fn an_other_close_on_a_missing_thread_does_nothing() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = record_close(tmp.path(), &name("ghost"), CloseEvent::Other, "t");
+        let result = record_close(
+            tmp.path(),
+            &name("ghost"),
+            CloseEvent::Other,
+            chrono::DateTime::UNIX_EPOCH,
+        );
         assert_eq!(result, Ok(()));
         assert!(!thread_dir(tmp.path(), &name("ghost"))
             .join("thread.json")

@@ -56,8 +56,8 @@ mod tests {
     fn fresh_reports_reach_the_sink_with_their_session_and_unread_count() {
         let key = SessionKey::Thread(ThreadName::parse("side").unwrap());
         let report = Report::from_worker(
-            "w1",
-            "",
+            &ralph_core::worker::WorkerId::parse("w1").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
             ralph_core::worker::ReportStatus::Done,
             "finished".into(),
         );

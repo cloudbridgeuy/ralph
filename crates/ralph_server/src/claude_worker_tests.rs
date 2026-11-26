@@ -180,7 +180,7 @@ fn a_scheduled_worker_denies_and_reports_in_both_modes_and_never_queues() {
         );
         let reports = run.reports();
         assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].worker, "w");
+        assert_eq!(reports[0].from.to_string(), "w");
         assert_eq!(reports[0].status, ReportKind::Worker(ReportStatus::Blocked));
         assert!(reports[0].text.contains("mcp__mcptools__execute"));
     }

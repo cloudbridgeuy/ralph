@@ -639,8 +639,8 @@ mod tests {
             state: WorkerActivity::Reported(ReportKind::Worker(ReportStatus::Done)),
         }];
         let unread = [Report::from_worker(
-            "A",
-            "2026-01-01T00:48:00Z",
+            &ralph_core::worker::WorkerId::parse("A").unwrap(),
+            "2026-01-01T00:48:00Z".parse().unwrap(),
             ralph_core::worker::ReportStatus::Done,
             "shipped".into(),
         )];

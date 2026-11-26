@@ -125,11 +125,13 @@ impl Waiter {
                 &self.spec,
                 &outcome,
                 &locked(&self.tail),
-                &chrono::Utc::now().to_rfc3339(),
+                chrono::Utc::now(),
             );
             *locked(&self.outcome) = Some(outcome);
             warn_if_err(
-                inbox.post(&report, 0),
+                report
+                    .map_err(std::io::Error::other)
+                    .and_then(|report| inbox.post(&report, 0)),
                 format!("posting watch {}", self.spec.id),
             );
             if persistent {
@@ -201,9 +203,11 @@ impl Watches {
         now: chrono::DateTime<chrono::Utc>,
     ) {
         let tail = Tail::new(TAIL_MAX_LINES, TAIL_MAX_BYTES);
-        let report = build_report(spec, outcome, &tail, &now.to_rfc3339());
+        let report = build_report(spec, outcome, &tail, now);
         warn_if_err(
-            self.inbox.post(&report, 0),
+            report
+                .map_err(std::io::Error::other)
+                .and_then(|report| self.inbox.post(&report, 0)),
             format!("posting watch {}", spec.id),
         );
         self.store.remove(&spec.id);

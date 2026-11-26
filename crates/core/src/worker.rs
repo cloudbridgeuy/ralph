@@ -1,8 +1,9 @@
-use crate::chat_thread::THREAD_REPORT_PREFIX;
-use crate::inbox_post::{mark_untrusted, EXTERNAL_REPORT_PREFIX};
+use crate::chat_thread::ThreadName;
+use crate::inbox_post::mark_untrusted;
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
 use crate::watch_tools::StopTarget;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -39,6 +40,7 @@ mod process_tree;
 mod report;
 mod rollback;
 mod scheduled;
+mod sender;
 mod shell;
 mod startup;
 mod status;
@@ -91,6 +93,7 @@ pub use process_tree::*;
 pub use report::*;
 pub use rollback::*;
 pub use scheduled::*;
+pub use sender::*;
 pub use shell::*;
 pub use startup::*;
 pub use status::*;
@@ -213,56 +216,82 @@ pub const REPORT_REMINDER: &str = "You stopped without calling report. Call repo
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
-    pub worker: String,
-    pub at: String,
+    #[serde(rename = "worker")]
+    pub from: Sender,
+    pub at: DateTime<Utc>,
     pub status: ReportKind,
     pub text: String,
 }
 
 impl Report {
-    fn with_kind(worker: &str, at: &str, status: ReportKind, text: String) -> Self {
+    fn with_kind(from: Sender, at: DateTime<Utc>, status: ReportKind, text: String) -> Self {
         Self {
-            worker: worker.to_string(),
-            at: at.to_string(),
+            from,
+            at,
             status,
             text,
         }
     }
 
-    pub fn from_worker(worker: &str, at: &str, status: ReportStatus, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Worker(status), text)
+    pub fn from_worker(
+        worker: &WorkerId,
+        at: DateTime<Utc>,
+        status: ReportStatus,
+        text: String,
+    ) -> Self {
+        Self::with_kind(
+            Sender::Worker(worker.clone()),
+            at,
+            ReportKind::Worker(status),
+            text,
+        )
     }
 
-    pub fn ralph_blocked(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Worker(ReportStatus::Blocked), text)
+    pub fn ralph_blocked(worker: &WorkerId, at: DateTime<Utc>, text: String) -> Self {
+        Self::from_worker(worker, at, ReportStatus::Blocked, text)
     }
 
-    pub fn check(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Check, text)
+    pub fn check(worker: &WorkerId, at: DateTime<Utc>, text: String) -> Self {
+        Self::with_kind(Sender::Worker(worker.clone()), at, ReportKind::Check, text)
     }
 
-    pub fn warning(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Warning, text)
+    pub fn warning(worker: &WorkerId, at: DateTime<Utc>, text: String) -> Self {
+        Self::with_kind(
+            Sender::Worker(worker.clone()),
+            at,
+            ReportKind::Warning,
+            text,
+        )
     }
 
-    pub fn watch(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Watch, text)
+    pub fn watch(watch: &WatchId, at: DateTime<Utc>, text: String) -> Self {
+        Self::with_kind(Sender::Watch(watch.clone()), at, ReportKind::Watch, text)
     }
 
-    pub fn merged(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Merged, text)
+    pub fn merged(thread: &ThreadName, at: DateTime<Utc>, text: String) -> Self {
+        Self::with_kind(Sender::Thread(thread.clone()), at, ReportKind::Merged, text)
     }
 
-    pub fn view(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::View, text)
+    pub fn view(thread: &ThreadName, at: DateTime<Utc>, text: String) -> Self {
+        Self::with_kind(Sender::Thread(thread.clone()), at, ReportKind::View, text)
     }
 
-    pub fn thread_closed(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::ThreadClosed, text)
+    pub fn thread_closed(thread: &ThreadName, at: DateTime<Utc>, text: String) -> Self {
+        Self::with_kind(
+            Sender::Thread(thread.clone()),
+            at,
+            ReportKind::ThreadClosed,
+            text,
+        )
     }
 
-    pub fn external(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::External, text)
+    pub fn external(source: &SourceName, at: DateTime<Utc>, text: String) -> Self {
+        Self::with_kind(
+            Sender::External(source.clone()),
+            at,
+            ReportKind::External,
+            text,
+        )
     }
 }
 
@@ -441,9 +470,10 @@ pub fn exclude_lines(harness: HarnessId, repo: &Path, worktree_dir: &Path) -> Ve
 }
 
 pub fn inbox_file_name(report: &Report, seq: u64) -> String {
-    let stamp: String = report.at.chars().filter(char::is_ascii_digit).collect();
+    let stamp = report.at.format("%Y%m%d%H%M%S%9f");
     let worker: String = report
-        .worker
+        .from
+        .to_string()
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' {
@@ -459,17 +489,16 @@ pub fn inbox_file_name(report: &Report, seq: u64) -> String {
 pub fn chat_message(reports: &[Report]) -> String {
     reports
         .iter()
-        .map(|r| {
-            if let Some(name) = r.worker.strip_prefix(THREAD_REPORT_PREFIX) {
-                format!("[thread {name} · {}]\n{}", r.status, r.text)
-            } else if let Some(source) = r.worker.strip_prefix(EXTERNAL_REPORT_PREFIX) {
-                format!(
-                    "[external {source} · {}]\n{}",
-                    r.status,
-                    mark_untrusted(&r.text)
-                )
-            } else {
-                format!("[worker {} · {}]\n{}", r.worker, r.status, r.text)
+        .map(|r| match &r.from {
+            Sender::Thread(name) => format!("[thread {name} · {}]\n{}", r.status, r.text),
+            Sender::External(source) => format!(
+                "[external {} · {}]\n{}",
+                source.as_str(),
+                r.status,
+                mark_untrusted(&r.text)
+            ),
+            Sender::Worker(_) | Sender::Watch(_) => {
+                format!("[worker {} · {}]\n{}", r.from, r.status, r.text)
             }
         })
         .collect::<Vec<_>>()
@@ -588,12 +617,12 @@ mod tests {
     }
 
     fn report(worker: &str, status: &str, text: &str) -> Report {
-        Report::with_kind(
-            worker,
-            "2026-10-09T15:30:01.5+00:00",
-            ReportKind::parse(status).unwrap(),
-            text.into(),
-        )
+        Report {
+            from: crate::worker::Sender::parse(worker).unwrap(),
+            at: "2026-10-09T15:30:01.5+00:00".parse().unwrap(),
+            status: ReportKind::parse(status).unwrap(),
+            text: text.into(),
+        }
     }
 
     #[test]
@@ -779,8 +808,8 @@ mod tests {
     #[test]
     fn inbox_file_name_sorts_by_time_and_sanitizes_worker() {
         assert_eq!(
-            inbox_file_name(&report("GUZ/1 2", "done", "x"), 7),
-            "2026100915300150000-000007-GUZ_1_2.json"
+            inbox_file_name(&report("thread:side", "done", "x"), 7),
+            "20261009153001500000000-000007-thread_side.json"
         );
     }
 

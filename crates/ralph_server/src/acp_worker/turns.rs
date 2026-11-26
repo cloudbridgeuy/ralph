@@ -2,6 +2,7 @@ use super::cancel::Cancellation;
 use super::*;
 use crate::worker_mcp::remove_if_present;
 use futures::select_biased;
+use ralph_core::worker::WorkerId;
 use ralph_core::worker::{turn_end_activity, ActivityState};
 
 pub(super) struct Turns {
@@ -299,10 +300,13 @@ fn turn_end<T>(result: &Result<T, agent_client_protocol::Error>, interrupted: bo
 }
 
 fn post_prompt_failure(turns: &Turns, problem: &str) {
-    let at = chrono::Utc::now().to_rfc3339();
-    let report = prompt_failure_report(turns.agent.name, &turns.worker_id, &at, problem);
+    let at = chrono::Utc::now();
+    let report = WorkerId::parse(&turns.worker_id)
+        .map(|id| prompt_failure_report(turns.agent.name, &id, at, problem));
     crate::warn::warn_if_err(
-        turns.inbox.post(&report, 0),
+        report
+            .map_err(std::io::Error::other)
+            .and_then(|report| turns.inbox.post(&report, 0)),
         format!("posting the prompt failure of worker {}", turns.worker_id),
     );
 }
