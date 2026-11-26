@@ -95,7 +95,7 @@ fn opening(
         agent: AGY_AGENT,
         launch: Launch::Fresh,
         cwd: dir.to_path_buf(),
-        server: server(dir, receipt),
+        servers: vec![server(dir, receipt)],
         worker_id: "verify".to_string(),
         model: Some("gemini-3.8-flash-low".to_string()),
         permission_mode: mode,

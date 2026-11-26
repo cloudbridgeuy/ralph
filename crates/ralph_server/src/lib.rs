@@ -4,6 +4,7 @@
 
 pub(crate) mod acp_log;
 pub(crate) mod acp_worker;
+pub use acp_worker::one_shot::{run as run_agy_one_shot, AcpOneShot, OneShotRequest};
 pub mod backoff;
 pub mod chat;
 pub(crate) mod claude_cleanup;

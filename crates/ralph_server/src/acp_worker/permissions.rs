@@ -40,7 +40,7 @@ fn selected_response(command: WorkerCommand) -> Option<RequestPermissionResponse
     }
 }
 
-fn respond_cancelled(responder: Reply) {
+pub(super) fn respond_cancelled(responder: Reply) {
     responder
         .respond(RequestPermissionResponse::new(
             RequestPermissionOutcome::Cancelled,
@@ -48,7 +48,7 @@ fn respond_cancelled(responder: Reply) {
         .ok();
 }
 
-fn respond_selected(responder: Reply, option_id: String) {
+pub(super) fn respond_selected(responder: Reply, option_id: String) {
     let request_id = responder.id().to_string();
     let answer = PermissionAnswer {
         request_id,
