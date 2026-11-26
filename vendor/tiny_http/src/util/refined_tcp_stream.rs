@@ -112,6 +112,18 @@ impl RefinedTcpStream {
         (read, write)
     }
 
+    pub(crate) fn handle(&self) -> RefinedTcpStream {
+        RefinedTcpStream {
+            stream: self.stream.clone(),
+            close_read: false,
+            close_write: false,
+        }
+    }
+
+    pub(crate) fn shutdown_both(&mut self) {
+        self.stream.shutdown(Shutdown::Both).ok();
+    }
+
     /// Returns true if this struct wraps around a secure connection.
     #[inline]
     pub(crate) fn secure(&self) -> bool {

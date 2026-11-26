@@ -6,8 +6,9 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
-use crate::util::{EqualReader, FusedReader};
+use crate::util::{EqualReader, FusedReader, RefinedTcpStream};
 use crate::{HTTPVersion, Header, Method, Response, StatusCode};
 use chunked_transfer::Decoder;
 
@@ -74,6 +75,7 @@ pub struct Request {
 
     // If Some, a message must be sent after responding
     notify_when_responded: Option<Sender<()>>,
+    close_handle: Option<Arc<Mutex<RefinedTcpStream>>>,
 }
 
 struct NotifyOnDrop<R> {
@@ -238,6 +240,7 @@ where
         body_length: content_length,
         must_send_continue: expects_continue,
         notify_when_responded: None,
+        close_handle: None,
     })
 }
 
@@ -449,6 +452,24 @@ impl Request {
         res
     }
 
+    pub fn respond_and_close<R, F>(mut self, response: Response<R>, after_write: F) -> Result<(), IoError>
+    where
+        R: Read,
+        F: FnOnce(),
+    {
+        let res = self.respond_impl(response);
+        if let Some(handle) = self.close_handle.take() {
+            if let Ok(mut stream) = handle.lock() {
+                stream.shutdown_both();
+            }
+        }
+        if let Some(sender) = self.notify_when_responded.take() {
+            sender.send(()).unwrap();
+        }
+        after_write();
+        res
+    }
+
     fn respond_impl<R>(&mut self, response: Response<R>) -> Result<(), IoError>
     where
         R: Read,
@@ -476,6 +497,11 @@ impl Request {
             ErrorKind::ConnectionReset => Ok(()),
             _ => Err(err),
         })
+    }
+
+    pub(crate) fn with_close_handle(mut self, handle: Arc<Mutex<RefinedTcpStream>>) -> Self {
+        self.close_handle = Some(handle);
+        self
     }
 
     pub(crate) fn with_notify_sender(mut self, sender: Sender<()>) -> Self {

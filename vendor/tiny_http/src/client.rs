@@ -6,6 +6,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read};
 
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::common::{HTTPVersion, Method};
@@ -33,6 +34,8 @@ pub struct ClientConnection {
     // set to true if we know that the previous request is the last one
     no_more_requests: bool,
 
+    close_handle: Arc<Mutex<RefinedTcpStream>>,
+
     // true if the connection goes through SSL
     secure: bool,
 
@@ -59,6 +62,7 @@ impl ClientConnection {
     ) -> ClientConnection {
         let remote_addr = read_socket.peer_addr();
         let secure = read_socket.secure();
+        let close_handle = Arc::new(Mutex::new(read_socket.handle()));
 
         let mut source = SequentialReaderBuilder::new(BufReader::with_capacity(1024, read_socket));
         let first_header = source.next().unwrap();
@@ -69,6 +73,7 @@ impl ClientConnection {
             remote_addr,
             next_header_source: first_header,
             no_more_requests: false,
+            close_handle,
             secure,
             header_limit,
             header_started: None,
@@ -179,7 +184,7 @@ impl ClientConnection {
         })?;
 
         // return the request
-        Ok(request)
+        Ok(request.with_close_handle(Arc::clone(&self.close_handle)))
     }
 }
 

@@ -110,18 +110,23 @@ fn peer_of(request: &Request) -> Option<IpAddr> {
     counted_peer(request.remote_addr().map(SocketAddr::ip))
 }
 
+enum Delivery {
+    Drain(Option<PeerGuard>),
+    Close,
+}
+
 fn limit_rejected(
     response: ApiResponse,
     peer: Option<IpAddr>,
     peers: &Arc<PeerCounts>,
-) -> (ApiResponse, Option<PeerGuard>) {
+) -> (ApiResponse, Delivery) {
     let Some(ip) = peer.filter(|_| counts_toward_peer_cap(response.status)) else {
-        return (response, None);
+        return (response, Delivery::Drain(None));
     };
     let (guard, previous) = PeerCounts::enter(peers, ip);
     match admit(previous, MAX_REJECTED_PER_PEER) {
-        Admission::Accept => (response, Some(guard)),
-        Admission::Reject => (overloaded(), Some(guard)),
+        Admission::Accept => (response, Delivery::Drain(Some(guard))),
+        Admission::Reject => (overloaded(), Delivery::Close),
     }
 }
 
@@ -139,9 +144,13 @@ fn spawn_handler(
         let (config, token) = &*shared;
         let mut request = request;
         let response = route(&to_api_request(&mut request, config, token), config, token);
-        let (response, guard) = limit_rejected(response, peer, &peers);
-        respond_then(request, response, move || drop(slot));
-        drop(guard);
+        match limit_rejected(response, peer, &peers) {
+            (response, Delivery::Drain(guard)) => {
+                respond_then(request, response, move || drop(slot));
+                drop(guard);
+            }
+            (response, Delivery::Close) => respond_and_close(request, response, move || drop(slot)),
+        }
     });
 }
 
@@ -184,6 +193,13 @@ impl Drop for Slot {
 fn respond_then(request: Request, response: ApiResponse, after_write: impl FnOnce()) {
     warn_if_err(
         request.respond_then(to_http_response(response), after_write),
+        "ralph web: could not write a response",
+    );
+}
+
+fn respond_and_close(request: Request, response: ApiResponse, after_write: impl FnOnce()) {
+    warn_if_err(
+        request.respond_and_close(to_http_response(response), after_write),
         "ralph web: could not write a response",
     );
 }
@@ -267,17 +283,20 @@ mod tests {
     }
 
     #[test]
-    fn limit_rejected_replaces_the_third_rejection_with_busy() {
+    fn limit_rejected_closes_the_third_rejection_without_counting_it() {
         let peers = Arc::new(PeerCounts::default());
-        let mut guards = Vec::new();
+        let mut held = Vec::new();
         for _ in 0..MAX_REJECTED_PER_PEER {
-            let (response, guard) = limit_rejected(error(401, "unauthorized"), peer(), &peers);
+            let (response, delivery) = limit_rejected(error(401, "unauthorized"), peer(), &peers);
             assert_eq!(response.status, 401);
-            guards.push(guard);
+            assert!(matches!(delivery, Delivery::Drain(Some(_))));
+            held.push(delivery);
         }
-        let (response, guard) = limit_rejected(error(403, "forbidden host"), peer(), &peers);
+        let (response, delivery) = limit_rejected(error(403, "forbidden host"), peer(), &peers);
         assert_eq!(response.status, 503);
-        assert!(guard.is_some());
+        assert!(matches!(delivery, Delivery::Close));
+        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
+        assert_eq!(previous, MAX_REJECTED_PER_PEER);
     }
 
     #[test]
@@ -286,9 +305,9 @@ mod tests {
         let held: Vec<_> = (0..MAX_REJECTED_PER_PEER)
             .map(|_| limit_rejected(error(401, "unauthorized"), peer(), &peers))
             .collect();
-        let (response, guard) = limit_rejected(json_ok(json!({})), peer(), &peers);
+        let (response, delivery) = limit_rejected(json_ok(json!({})), peer(), &peers);
         assert_eq!(response.status, 200);
-        assert!(guard.is_none());
+        assert!(matches!(delivery, Delivery::Drain(None)));
         drop(held);
     }
 
@@ -313,9 +332,9 @@ mod tests {
     fn limit_rejected_ignores_exempt_peers() {
         let peers = Arc::new(PeerCounts::default());
         for _ in 0..5 {
-            let (response, guard) = limit_rejected(error(401, "unauthorized"), None, &peers);
+            let (response, delivery) = limit_rejected(error(401, "unauthorized"), None, &peers);
             assert_eq!(response.status, 401);
-            assert!(guard.is_none());
+            assert!(matches!(delivery, Delivery::Drain(None)));
         }
     }
     use std::io::Read;
