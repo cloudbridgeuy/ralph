@@ -1,6 +1,6 @@
 use crate::worker::{
-    CheckResult, DriftEntry, DriftOutcome, Report, Verdict, VerifiedAgents, FREE_VERIFY_LIMIT,
-    INBOX_DIR,
+    CheckResult, DriftEntry, DriftOutcome, Report, Verdict, VerifiedAgents, WorkerId,
+    WorkerIdError, FREE_VERIFY_LIMIT, INBOX_DIR,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -107,16 +107,17 @@ pub fn drift_alert(
     new: &str,
     checks: &[String],
     at: &str,
-) -> Report {
-    Report::warning(
-        &format!("drift-{agent}"),
+) -> Result<Report, WorkerIdError> {
+    let sender = WorkerId::parse(&format!("drift-{agent}"))?;
+    Ok(Report::warning(
+        &sender,
         at,
         format!(
             "{agent} {new} is installed but failed `ralph worker verify {agent}`. Last verified version: {}. Failing checks: {}. Running {agent} workers keep the old binary until restart.",
             old.unwrap_or("none"),
             checks.join(", ")
         ),
-    )
+    ))
 }
 
 pub fn known_fail_warning(agent: &str, version: &str, checks: &[String]) -> String {
@@ -263,7 +264,8 @@ mod tests {
             "0.170.0",
             &checks(&["initialize", "thread/start"]),
             "2026-11-03T00:00:00Z",
-        );
+        )
+        .unwrap();
         assert_eq!(report.worker, "drift-codex");
         assert_eq!(report.status.as_str(), "warning");
         assert_eq!(report.at, "2026-11-03T00:00:00Z");
@@ -275,7 +277,7 @@ mod tests {
 
     #[test]
     fn the_alert_says_none_when_nothing_was_verified() {
-        let report = drift_alert("codex", None, "0.170.0", &checks(&["time limit"]), "t");
+        let report = drift_alert("codex", None, "0.170.0", &checks(&["time limit"]), "t").unwrap();
         assert!(report
             .text
             .contains("Last verified version: none. Failing checks: time limit."));

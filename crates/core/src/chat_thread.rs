@@ -209,11 +209,7 @@ pub fn digest_with(
 }
 
 pub fn merged_report(name: &ThreadName, digest: &str, at: &str) -> Report {
-    Report::merged(
-        &format!("{THREAD_REPORT_PREFIX}{name}"),
-        at,
-        digest.to_string(),
-    )
+    Report::merged(name, at, digest.to_string())
 }
 
 pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<String, String> {
@@ -235,11 +231,7 @@ pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<St
 }
 
 pub fn view_report(name: &ThreadName, block: &str, at: &str) -> Report {
-    Report::view(
-        &format!("{THREAD_REPORT_PREFIX}{name}"),
-        at,
-        block.to_string(),
-    )
+    Report::view(name, at, block.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -721,7 +713,7 @@ mod tests {
         assert_eq!(report.status.as_str(), "merged");
         assert_eq!(report.at, "2026-11-03T10:00:00Z");
         let worker = Report::from_worker(
-            "GUZ-1",
+            &crate::worker::WorkerId::parse("GUZ-1").unwrap(),
             "t",
             crate::worker::ReportStatus::Done,
             "ok".to_string(),

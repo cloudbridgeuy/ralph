@@ -88,7 +88,7 @@ mod tests {
             buffer
         });
         let report = Report::from_worker(
-            "w1",
+            &ralph_core::worker::WorkerId::parse("w1").unwrap(),
             "now",
             ralph_core::worker::ReportStatus::Done,
             "finished".into(),

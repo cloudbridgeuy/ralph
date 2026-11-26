@@ -167,7 +167,10 @@ pub fn start_queued(watches: &Watches, inbox: &Inbox, store_dir: &Path) {
     for spec in plan.start {
         let id = spec.id.clone();
         if let Err(error) = watches.start(spec) {
-            post_failure(inbox, &start_failure_report(&id, &error.to_string(), &now));
+            match start_failure_report(&id, &error.to_string(), &now) {
+                Ok(report) => post_failure(inbox, &report),
+                Err(sender) => warn(format!("posting watch {id}: {sender}")),
+            }
         }
     }
 }

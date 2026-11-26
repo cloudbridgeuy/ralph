@@ -412,7 +412,7 @@ mod tests {
         write_file(&files.session, &record.render())?;
         let report = ralph_core::worker::prompt_failure_report(
             "agy",
-            "A",
+            &ralph_core::worker::WorkerId::parse("A").unwrap(),
             "2026-01-01T00:00:00Z",
             "unfinished",
         );

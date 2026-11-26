@@ -180,7 +180,7 @@ mod tests {
 
     fn report(worker: &str) -> Report {
         Report::from_worker(
-            worker,
+            &ralph_core::worker::WorkerId::parse(worker).unwrap(),
             "",
             ralph_core::worker::ReportStatus::Done,
             String::new(),

@@ -24,7 +24,7 @@ fn malformed_message_file_is_skipped_and_others_delivered() {
     let inbox = Inbox::new(inbox_dir.clone());
     let post = |text: &str, seq| {
         let report = Report::from_worker(
-            "A",
+            &WorkerId::parse("A").unwrap(),
             &format!("2026-01-01T00:00:0{seq}Z"),
             ReportStatus::Done,
             text.to_string(),
@@ -152,7 +152,7 @@ fn post_past_taken_names(taken: u64) -> (io::Result<()>, usize) {
     let inbox_dir = dir.path().join("inbox");
     fs::create_dir_all(&inbox_dir).unwrap();
     let report = Report::from_worker(
-        "A",
+        &WorkerId::parse("A").unwrap(),
         "2026-01-01T00:00:00Z",
         ReportStatus::Done,
         "late".to_string(),

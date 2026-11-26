@@ -46,11 +46,7 @@ pub fn thread_closed_notice(name: &ThreadName, auto: AutoMode) -> String {
 }
 
 pub fn thread_closed_report(name: &ThreadName, auto: AutoMode, at: &str) -> Report {
-    Report::thread_closed(
-        &format!("{THREAD_REPORT_PREFIX}{name}"),
-        at,
-        thread_closed_notice(name, auto),
-    )
+    Report::thread_closed(name, at, thread_closed_notice(name, auto))
 }
 
 pub fn with_auto(meta: &ThreadMeta, auto: Option<AutoMode>) -> Option<ThreadMeta> {
@@ -403,9 +399,9 @@ mod tests {
     #[test]
     fn close_reports_split_from_digests_and_workers() {
         let closed = thread_closed_report(&name(), AutoMode::Merge, "t");
-        let digest = Report::merged("thread:side", "t", "x".to_string());
+        let digest = Report::merged(&name(), "t", "x".to_string());
         let worker = Report::from_worker(
-            "w1",
+            &crate::worker::WorkerId::parse("w1").unwrap(),
             "t",
             crate::worker::ReportStatus::Done,
             "x".to_string(),

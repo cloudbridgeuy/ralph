@@ -97,7 +97,12 @@ fn an_inbox_push_that_needs_the_user_carries_the_report_to_alert_on() {
             inbox_step(name),
             Ok(Step::Push(Push {
                 line: format!("main/w1 {name} (1 unread): hi"),
-                needs_user: Some(WorkerReport::from_worker("w1", "now", status, "hi".into())),
+                needs_user: Some(WorkerReport::from_worker(
+                    &ralph_core::worker::WorkerId::parse("w1").unwrap(),
+                    "now",
+                    status,
+                    "hi".into()
+                )),
             }))
         );
     }

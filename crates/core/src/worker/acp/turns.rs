@@ -1,4 +1,4 @@
-use crate::worker::{worker_prompt, Report, REPORT_REMINDER};
+use crate::worker::{worker_prompt, Report, WorkerId, REPORT_REMINDER};
 use std::collections::VecDeque;
 
 pub fn prompt_entry_name(nanos: u64, pid: u32) -> String {
@@ -200,7 +200,7 @@ pub fn stop_problem(agent: &str, reason: &str) -> String {
     format!("the {agent} agent ended its turn with `{reason}`")
 }
 
-pub fn prompt_failure_report(agent: &str, id: &str, at: &str, problem: &str) -> Report {
+pub fn prompt_failure_report(agent: &str, id: &WorkerId, at: &str, problem: &str) -> Report {
     Report::ralph_blocked(
         id,
         at,
@@ -472,7 +472,12 @@ mod tests {
 
     #[test]
     fn prompt_failure_report_blocks_the_worker() {
-        let report = prompt_failure_report(CURSOR_AGENT.name, "A", "2026-01-01T00:00:00Z", "boom");
+        let report = prompt_failure_report(
+            CURSOR_AGENT.name,
+            &WorkerId::parse("A").unwrap(),
+            "2026-01-01T00:00:00Z",
+            "boom",
+        );
         assert_eq!(report.worker, "A");
         assert_eq!(report.status.as_str(), "blocked");
         assert!(report.text.contains("boom"));
@@ -482,7 +487,7 @@ mod tests {
     fn a_cursor_stop_reason_keeps_its_exact_failure_text() {
         let report = prompt_failure_report(
             CURSOR_AGENT.name,
-            "A",
+            &WorkerId::parse("A").unwrap(),
             "2026-01-01T00:00:00Z",
             &stop_problem(CURSOR_AGENT.name, "refusal"),
         );

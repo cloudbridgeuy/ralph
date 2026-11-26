@@ -13,6 +13,7 @@ use crate::worker_shell::{in_shell, worker_shell};
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::Scope;
+use ralph_core::worker::WorkerId;
 use ralph_core::worker::{
     advance, decode_opencode_usage, descendants, hex_encode, opencode_failure_report,
     opencode_serve_command, opencode_server_log, opencode_server_record_path,
@@ -854,9 +855,12 @@ fn post_prompt(api: &HttpSse, session_id: &str, text: &str) -> Result<(), String
 
 fn post_problem(target: &Target, problem: &str) {
     let at = chrono::Utc::now().to_rfc3339();
-    let report = opencode_failure_report(&target.worker, &at, problem);
+    let report =
+        WorkerId::parse(&target.worker).map(|id| opencode_failure_report(&id, &at, problem));
     warn_if_err(
-        Inbox::new(target.inbox.clone()).post(&report, 0),
+        report
+            .map_err(std::io::Error::other)
+            .and_then(|report| Inbox::new(target.inbox.clone()).post(&report, 0)),
         format!("posting the failure of worker {}", target.worker),
     );
 }

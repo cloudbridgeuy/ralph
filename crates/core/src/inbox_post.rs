@@ -1,7 +1,7 @@
 use crate::chat_name::is_format_char;
 use crate::chat_thread::MAX_NAME_CHARS;
 use crate::sanitize::forbidden_control;
-use crate::worker::Report;
+use crate::worker::{Report, SourceName};
 
 pub const EXTERNAL_REPORT_PREFIX: &str = "external:";
 pub const MAX_TEXT_BYTES: usize = 65536;
@@ -62,12 +62,8 @@ pub(crate) fn mark_untrusted(text: &str) -> String {
 }
 
 pub fn external_report(source: &str, at: &str, bytes: &[u8]) -> Result<Report, String> {
-    validate_source(source)?;
-    Ok(Report::external(
-        &format!("{EXTERNAL_REPORT_PREFIX}{source}"),
-        at,
-        decode_text(bytes)?,
-    ))
+    let source = SourceName::parse(source).map_err(|error| error.to_string())?;
+    Ok(Report::external(&source, at, decode_text(bytes)?))
 }
 
 pub fn check_store(is_dir: bool, has_log: bool, has_lock: bool) -> Result<(), String> {

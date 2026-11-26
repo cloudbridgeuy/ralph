@@ -2,7 +2,8 @@ use super::acp::REPORT_TOOL;
 use super::{
     agy_auto_allow_option, claude_args, control_response, disallowed_tool_args, mcptools_decision,
     permission_response, BlockedContent, ClaudeArgs, ClaudePermission, McptoolsDecision,
-    PermissionMode, PermissionOption, Report, SandboxMode, ALLOW_ONCE, SERVER_NAME, WORKER_PROMPT,
+    PermissionMode, PermissionOption, Report, SandboxMode, WorkerId, ALLOW_ONCE, SERVER_NAME,
+    WORKER_PROMPT,
 };
 use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
 use serde_json::{json, Value};
@@ -119,7 +120,7 @@ pub struct UnattendedAnswer {
 }
 
 pub fn unattended_claude_answer(
-    worker: &str,
+    worker: &WorkerId,
     at: &str,
     ask: &ClaudePermission,
 ) -> UnattendedAnswer {
@@ -153,7 +154,7 @@ impl<'a> Unattended<'a> {
 
     pub fn denial_report(
         &self,
-        worker: &str,
+        worker: &WorkerId,
         at: &str,
         content: &BlockedContent,
     ) -> Option<Report> {
@@ -164,12 +165,13 @@ impl<'a> Unattended<'a> {
     }
 }
 
-fn denied_report(worker: &str, at: &str, content: &BlockedContent) -> Report {
+fn denied_report(worker: &WorkerId, at: &str, content: &BlockedContent) -> Report {
     Report::ralph_blocked(
         worker,
         at,
         format!(
-            "Scheduled worker {worker} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
+            "Scheduled worker {} was denied a permission request on {}: {}. The task was scheduled and nobody was watching, so nobody was asked.",
+            worker.as_str(),
             content.tool, content.summary
         ),
     )
@@ -687,7 +689,9 @@ mod tests {
 
     #[test]
     fn unattended_claude_allows_reads_and_denies_everything_else_with_a_report() {
-        let answer = |ask: &ClaudePermission| unattended_claude_answer("sched-1", "now", ask);
+        let answer = |ask: &ClaudePermission| {
+            unattended_claude_answer(&WorkerId::parse("sched-1").unwrap(), "now", ask)
+        };
         let read = answer(&claude_ask("mcp__mcptools__execute", json!({"code": "x"})));
         assert!(read.line.contains(r#""behavior":"allow""#), "{}", read.line);
         assert_eq!(read.report, None);
@@ -725,7 +729,11 @@ mod tests {
     fn a_denial_or_cancel_reports_blocked_and_an_allow_reports_nothing() {
         let bash = content("Bash", codex_options());
         for verdict in [Unattended::Deny(&bash.options[1]), Unattended::Cancel] {
-            let report = verdict.denial_report("sched-1", "2026-11-24T10:00:00Z", &bash);
+            let report = verdict.denial_report(
+                &WorkerId::parse("sched-1").unwrap(),
+                "2026-11-24T10:00:00Z",
+                &bash,
+            );
             assert!(report.is_some(), "{verdict:?}");
             let report = report.unwrap();
             assert_eq!(report.worker, "sched-1");
@@ -736,7 +744,10 @@ mod tests {
             assert!(report.text.contains("nobody was watching"));
         }
         let allow = Unattended::Allow(&bash.options[0]);
-        assert_eq!(allow.denial_report("sched-1", "now", &bash), None);
+        assert_eq!(
+            allow.denial_report(&WorkerId::parse("sched-1").unwrap(), "now", &bash),
+            None
+        );
     }
 
     #[test]

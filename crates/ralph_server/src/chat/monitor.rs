@@ -24,6 +24,7 @@ use ralph_core::inbox_alert::fresh_reports;
 use ralph_core::program_status::{self, report_for, Phase};
 use ralph_core::schedule_resume::LostTurn;
 use ralph_core::schedule_worker::new_scheduled_reports;
+use ralph_core::worker::WorkerId;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
     marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
@@ -253,9 +254,13 @@ impl Monitor {
                     format!("nudging worker {id}"),
                 ),
                 CheckAction::Inbox(id, text) => {
-                    let report = Report::check(&id, &chrono::Utc::now().to_rfc3339(), text);
+                    let report = WorkerId::parse(&id).map(|worker| {
+                        Report::check(&worker, &chrono::Utc::now().to_rfc3339(), text)
+                    });
                     warn_if_err(
-                        self.inbox.post(&report, 0),
+                        report
+                            .map_err(std::io::Error::other)
+                            .and_then(|report| self.inbox.post(&report, 0)),
                         format!("posting check for worker {id}"),
                     );
                 }

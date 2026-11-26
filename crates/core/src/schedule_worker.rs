@@ -2,7 +2,9 @@ use crate::schedule::{
     format_span, watch_id, Task, TaskKind, TaskStatus, SCHEDULE_ID_PREFIX,
     WORKER_DEFAULT_TIMEOUT_SECS,
 };
-use crate::worker::{Attention, HarnessId, Report, ReportKind, WorkerId, WorkerIdError};
+use crate::worker::{
+    Attention, HarnessId, Report, ReportKind, SenderError, WatchId, WorkerId, WorkerIdError,
+};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
 use std::time::Duration;
 
@@ -194,8 +196,8 @@ pub fn plan_worker_tick<'a>(
     }
 }
 
-pub fn chat_report(task_id: &str, text: String, at: &str) -> Report {
-    Report::watch(&watch_id(task_id), at, text)
+pub fn chat_report(task_id: &str, text: String, at: &str) -> Result<Report, SenderError> {
+    WatchId::parse(&watch_id(task_id)).map(|watch| Report::watch(&watch, at, text))
 }
 
 pub fn start_failure_text(task_id: &str, error: &str) -> String {

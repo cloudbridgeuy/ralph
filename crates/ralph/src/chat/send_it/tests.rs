@@ -457,7 +457,7 @@ fn the_next_tick_takes_the_answered_workers_once() {
         watched: None,
     };
     let flagged = [ralph_core::worker::Report::from_worker(
-        "E1",
+        &ralph_core::worker::WorkerId::parse("E1").unwrap(),
         "2026-01-01T00:00:00Z",
         ralph_core::worker::ReportStatus::Question,
         "q".to_string(),

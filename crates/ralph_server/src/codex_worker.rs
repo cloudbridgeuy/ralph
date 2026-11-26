@@ -16,6 +16,7 @@ use crate::worker_mcp::Inbox;
 use crate::worker_shell::spawn_in_shell;
 use crate::workers::headless::{mark_prompt_lost, report_interrupt_gone, HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
+use ralph_core::worker::WorkerId;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, answer_server_request, check_effort, check_login, check_model,
     check_version, classify, codex_close_plan, decide, decode_thread, decode_turn_id,
@@ -351,10 +352,13 @@ impl Pump {
                 }
                 Action::PostFailure(problem) => {
                     let at = chrono::Utc::now().to_rfc3339();
-                    let report =
-                        prompt_failure_report(HarnessId::Codex.as_str(), &self.id, &at, &problem);
+                    let report = WorkerId::parse(&self.id).map(|id| {
+                        prompt_failure_report(HarnessId::Codex.as_str(), &id, &at, &problem)
+                    });
                     warn_if_err(
-                        self.inbox.post(&report, 0),
+                        report
+                            .map_err(std::io::Error::other)
+                            .and_then(|report| self.inbox.post(&report, 0)),
                         format!("posting the prompt failure of worker {}", self.id),
                     );
                 }

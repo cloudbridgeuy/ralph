@@ -333,11 +333,17 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
 mod tests {
     use super::*;
     use crate::worker::ReportStatus;
+    use crate::worker::WorkerId;
 
     fn arrival(source: &str) -> (String, Report) {
         (
             source.to_string(),
-            Report::from_worker("A", "t", ReportStatus::Done, source.to_string()),
+            Report::from_worker(
+                &WorkerId::parse("A").unwrap(),
+                "t",
+                ReportStatus::Done,
+                source.to_string(),
+            ),
         )
     }
 
@@ -352,7 +358,12 @@ mod tests {
     fn entry(worker: &str, at: &str) -> Entry {
         Entry {
             source: worker.to_string(),
-            report: Report::from_worker(worker, at, ReportStatus::Done, String::new()),
+            report: Report::from_worker(
+                &WorkerId::parse(worker).unwrap(),
+                at,
+                ReportStatus::Done,
+                String::new(),
+            ),
         }
     }
 

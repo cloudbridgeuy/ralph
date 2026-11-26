@@ -780,7 +780,11 @@ mod tests {
 
     #[test]
     fn inbox_push_preserves_large_reports_that_fit_in_one_frame() {
-        let report = InboxReport::external("w", "now", "a".repeat(MAX_FRAME_BYTES / 2));
+        let report = InboxReport::external(
+            &ralph_core::worker::SourceName::parse("w").unwrap(),
+            "now",
+            "a".repeat(MAX_FRAME_BYTES / 2),
+        );
         let sent = WireReport::from(report.clone());
         let frame = inbox_frame(&SessionKey::Main, report, 1);
         assert!(matches!(frame, ServerMsg::Inbox { report: received, .. } if received == sent));
@@ -789,7 +793,12 @@ mod tests {
     #[test]
     fn inbox_push_stays_within_the_frame_limit_for_escaped_and_multibyte_text() {
         let field = "\u{0000}".repeat(MAX_FRAME_BYTES / 5);
-        let report = InboxReport::external(&field, &field, "🦀".repeat(MAX_FRAME_BYTES / 4));
+        let report = InboxReport {
+            worker: field.clone(),
+            at: field,
+            status: ReportKind::External,
+            text: "🦀".repeat(MAX_FRAME_BYTES / 4),
+        };
         let line = encode_frame(0, &inbox_frame(&SessionKey::Main, report, 1));
         assert!(line.len() <= MAX_FRAME_BYTES);
         let body = decode_frame::<ServerMsg>(&line).unwrap().body;

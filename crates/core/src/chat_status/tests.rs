@@ -1,6 +1,7 @@
 use super::*;
 use crate::changes::{ScopeQuery, TurnWindow};
 use crate::diff_command::{DiffArgs, DiffTarget, WINDOW_USAGE};
+use crate::worker::WorkerId;
 use crate::worker_costs::args::CostsArgs;
 use crate::worker_costs::views::View;
 use crate::worker_costs::window::Window;
@@ -472,12 +473,17 @@ fn workers_come_from_prefixed_sessions_with_last_known_state() {
     assert_eq!(ids, vec!["GUZ-1", "GUZ-2"]);
     let reports = [
         Report::from_worker(
-            "GUZ-2",
+            &WorkerId::parse("GUZ-2").unwrap(),
             "a",
             crate::worker::ReportStatus::Question,
             "x".into(),
         ),
-        Report::from_worker("GUZ-2", "b", crate::worker::ReportStatus::Done, "y".into()),
+        Report::from_worker(
+            &WorkerId::parse("GUZ-2").unwrap(),
+            "b",
+            crate::worker::ReportStatus::Done,
+            "y".into(),
+        ),
     ];
     let states = worker_states(
         &workers,

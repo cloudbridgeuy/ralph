@@ -253,6 +253,7 @@ mod stale_busy;
 mod tests {
     use super::*;
     use crate::worker::ReportStatus;
+    use crate::worker::WorkerId;
 
     fn obs() -> WorkerObservation {
         WorkerObservation {
@@ -729,10 +730,20 @@ mod tests {
     #[test]
     fn last_reports_ignore_check_posts() {
         let reports = [
-            Report::from_worker("w1", "t1", ReportStatus::Done, String::new()),
-            Report::check("w1", "t2", String::new()),
-            Report::check("w2", "t3", String::new()),
-            Report::from_worker("w1", "t4", ReportStatus::Question, String::new()),
+            Report::from_worker(
+                &WorkerId::parse("w1").unwrap(),
+                "t1",
+                ReportStatus::Done,
+                String::new(),
+            ),
+            Report::check(&WorkerId::parse("w1").unwrap(), "t2", String::new()),
+            Report::check(&WorkerId::parse("w2").unwrap(), "t3", String::new()),
+            Report::from_worker(
+                &WorkerId::parse("w1").unwrap(),
+                "t4",
+                ReportStatus::Question,
+                String::new(),
+            ),
         ];
         let last = last_reports(&reports);
         assert_eq!(last.len(), 1);

@@ -1,4 +1,4 @@
-use crate::chat_thread::THREAD_REPORT_PREFIX;
+use crate::chat_thread::{ThreadName, THREAD_REPORT_PREFIX};
 use crate::inbox_post::{mark_untrusted, EXTERNAL_REPORT_PREFIX};
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
@@ -222,49 +222,69 @@ pub struct Report {
 }
 
 impl Report {
-    fn with_kind(worker: &str, at: &str, status: ReportKind, text: String) -> Self {
+    fn with_kind(from: Sender, at: &str, status: ReportKind, text: String) -> Self {
         Self {
-            worker: worker.to_string(),
+            worker: from.to_string(),
             at: at.to_string(),
             status,
             text,
         }
     }
 
-    pub fn from_worker(worker: &str, at: &str, status: ReportStatus, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Worker(status), text)
+    pub fn from_worker(worker: &WorkerId, at: &str, status: ReportStatus, text: String) -> Self {
+        Self::with_kind(
+            Sender::Worker(worker.clone()),
+            at,
+            ReportKind::Worker(status),
+            text,
+        )
     }
 
-    pub fn ralph_blocked(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Worker(ReportStatus::Blocked), text)
+    pub fn ralph_blocked(worker: &WorkerId, at: &str, text: String) -> Self {
+        Self::from_worker(worker, at, ReportStatus::Blocked, text)
     }
 
-    pub fn check(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Check, text)
+    pub fn check(worker: &WorkerId, at: &str, text: String) -> Self {
+        Self::with_kind(Sender::Worker(worker.clone()), at, ReportKind::Check, text)
     }
 
-    pub fn warning(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Warning, text)
+    pub fn warning(worker: &WorkerId, at: &str, text: String) -> Self {
+        Self::with_kind(
+            Sender::Worker(worker.clone()),
+            at,
+            ReportKind::Warning,
+            text,
+        )
     }
 
-    pub fn watch(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Watch, text)
+    pub fn watch(watch: &WatchId, at: &str, text: String) -> Self {
+        Self::with_kind(Sender::Watch(watch.clone()), at, ReportKind::Watch, text)
     }
 
-    pub fn merged(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::Merged, text)
+    pub fn merged(thread: &ThreadName, at: &str, text: String) -> Self {
+        Self::with_kind(Sender::Thread(thread.clone()), at, ReportKind::Merged, text)
     }
 
-    pub fn view(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::View, text)
+    pub fn view(thread: &ThreadName, at: &str, text: String) -> Self {
+        Self::with_kind(Sender::Thread(thread.clone()), at, ReportKind::View, text)
     }
 
-    pub fn thread_closed(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::ThreadClosed, text)
+    pub fn thread_closed(thread: &ThreadName, at: &str, text: String) -> Self {
+        Self::with_kind(
+            Sender::Thread(thread.clone()),
+            at,
+            ReportKind::ThreadClosed,
+            text,
+        )
     }
 
-    pub fn external(worker: &str, at: &str, text: String) -> Self {
-        Self::with_kind(worker, at, ReportKind::External, text)
+    pub fn external(source: &SourceName, at: &str, text: String) -> Self {
+        Self::with_kind(
+            Sender::External(source.clone()),
+            at,
+            ReportKind::External,
+            text,
+        )
     }
 }
 
@@ -590,12 +610,12 @@ mod tests {
     }
 
     fn report(worker: &str, status: &str, text: &str) -> Report {
-        Report::with_kind(
-            worker,
-            "2026-10-09T15:30:01.5+00:00",
-            ReportKind::parse(status).unwrap(),
-            text.into(),
-        )
+        Report {
+            worker: worker.to_string(),
+            at: "2026-10-09T15:30:01.5+00:00".to_string(),
+            status: ReportKind::parse(status).unwrap(),
+            text: text.into(),
+        }
     }
 
     #[test]

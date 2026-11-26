@@ -2,6 +2,7 @@ use ralph_core::inbox::{
     decode_message, drop_log_line, DecodeError, Entry, Ledger, Position, Selection,
 };
 use ralph_core::mcp::tool_result;
+use ralph_core::worker::WorkerId;
 use ralph_core::worker::{
     accept_report, append_status, decode_statuses, encode_statuses, handle_request,
     inbox_file_name, refuses_repeat_report, report_event, reported_path, sent_path, status_path,
@@ -402,6 +403,7 @@ pub fn run_stdio_server(
     input: impl BufRead,
     mut output: impl Write,
 ) -> io::Result<()> {
+    let worker_id = WorkerId::parse(worker).map_err(io::Error::other)?;
     let mut seq = 0;
     for line in input.lines() {
         let line = line?;
@@ -443,7 +445,7 @@ pub fn run_stdio_server(
                 }
                 seq += 1;
                 let report = Report::from_worker(
-                    worker,
+                    &worker_id,
                     &chrono::Utc::now().to_rfc3339(),
                     status,
                     changes.map_or(text.clone(), |changes| changes.attach_to(&text)),

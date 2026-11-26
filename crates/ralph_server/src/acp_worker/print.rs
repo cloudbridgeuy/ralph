@@ -14,6 +14,7 @@ use crate::worker_mcp::Inbox;
 use crate::worker_shell::spawn_in_shell;
 use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
+use ralph_core::worker::WorkerId;
 use ralph_core::worker::{
     acp_mcp_server, bind_started_turn, claude_mcp_config, cursor_mcp_json, decode_print_line,
     exit_outcome, inbox_env, next_chat, once_per_turn_server, print_action_note, print_args,
@@ -214,9 +215,12 @@ impl Shared {
                 Action::PostFailure(problem) => {
                     let at = chrono::Utc::now().to_rfc3339();
                     let agent = HarnessId::Cursor.as_str();
+                    let report = WorkerId::parse(&self.id)
+                        .map(|id| prompt_failure_report(agent, &id, &at, &problem));
                     warn_if_err(
-                        self.inbox
-                            .post(&prompt_failure_report(agent, &self.id, &at, &problem), 0),
+                        report
+                            .map_err(std::io::Error::other)
+                            .and_then(|report| self.inbox.post(&report, 0)),
                         format!("posting the prompt failure of worker {}", self.id),
                     );
                 }
@@ -628,7 +632,7 @@ mod tests {
         let markers = WorkerMarkers::new(dir.path(), "A");
         let inbox = Inbox::new(dir.path().join("inbox"));
         let report = Report::from_worker(
-            "A",
+            &WorkerId::parse("A").unwrap(),
             "2026-11-07T00:00:00Z",
             ralph_core::worker::ReportStatus::Done,
             "ok".to_string(),

@@ -288,17 +288,11 @@ fn flagged_stop() -> StopReason {
 }
 
 fn worker_report(worker: &str, status: &str) -> Report {
-    let at = "2026-01-01T00:00:00Z";
-    let text = "text".to_string();
-    match crate::worker::ReportKind::parse(status).unwrap() {
-        crate::worker::ReportKind::Worker(s) => Report::from_worker(worker, at, s, text),
-        crate::worker::ReportKind::Check => Report::check(worker, at, text),
-        crate::worker::ReportKind::Warning => Report::warning(worker, at, text),
-        crate::worker::ReportKind::Watch => Report::watch(worker, at, text),
-        crate::worker::ReportKind::Merged => Report::merged(worker, at, text),
-        crate::worker::ReportKind::View => Report::view(worker, at, text),
-        crate::worker::ReportKind::ThreadClosed => Report::thread_closed(worker, at, text),
-        crate::worker::ReportKind::External => Report::external(worker, at, text),
+    Report {
+        worker: worker.to_string(),
+        at: "2026-01-01T00:00:00Z".to_string(),
+        status: crate::worker::ReportKind::parse(status).unwrap(),
+        text: "text".to_string(),
     }
 }
 

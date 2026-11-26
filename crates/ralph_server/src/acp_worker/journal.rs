@@ -94,9 +94,10 @@ pub(super) fn record(dir: &Path) -> Result<String, String> {
         .and_then(|name| name.to_str())
         .ok_or("invalid worker id")?;
     let at = chrono::Utc::now().to_rfc3339();
+    let id = WorkerId::parse(id).map_err(|error| error.to_string())?;
     let report = prompt_failure_report(
         "agy",
-        id,
+        &id,
         &at,
         "the chat ended before accepted work finished; its outcome is unknown. Review the work and resend any message that is still needed",
     );

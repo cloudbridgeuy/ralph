@@ -1,6 +1,7 @@
 use crate::warn::warn_if_err;
 use crate::worker_events::{push_event, Events};
 use crate::worker_mcp::Inbox;
+use ralph_core::worker::WorkerId;
 use ralph_core::worker::{
     match_option, no_option_message, pending_position, permission_alert_report, process_request_id,
     BlockedContent, PermissionOption, Unattended, WorkerEvent,
@@ -29,9 +30,12 @@ pub(crate) fn post_denial(
     content: &BlockedContent,
 ) {
     let at = chrono::Utc::now().to_rfc3339();
-    if let Some(report) = verdict.denial_report(worker, &at, content) {
+    let report = WorkerId::parse(worker).map(|id| verdict.denial_report(&id, &at, content));
+    if let Some(report) = report.transpose() {
         warn_if_err(
-            inbox.post(&report, 0),
+            report
+                .map_err(std::io::Error::other)
+                .and_then(|report| inbox.post(&report, 0)),
             format!("posting the denial of worker {worker}"),
         );
     }
@@ -91,11 +95,14 @@ impl<R> PermissionQueue<R> {
             ..content
         };
         let at = chrono::Utc::now().to_rfc3339();
-        let report = permission_alert_report(&self.worker_id, &at, &content);
+        let report =
+            WorkerId::parse(&self.worker_id).map(|id| permission_alert_report(&id, &at, &content));
         queue.push_back(Pending { reply, content });
         self.publish(&queue);
         warn_if_err(
-            self.inbox.post(&report, 0),
+            report
+                .map_err(std::io::Error::other)
+                .and_then(|report| self.inbox.post(&report, 0)),
             format!("posting the permission alert of worker {}", self.worker_id),
         );
     }

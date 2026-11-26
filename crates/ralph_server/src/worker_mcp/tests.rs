@@ -93,7 +93,7 @@ fn drop_worker_removes_its_queued_reports_and_logs_each() {
     let inbox = Inbox::new(dir.path().join("inbox"));
     for (worker, seq) in [("A", 1), ("B", 1), ("A", 2)] {
         let report = Report::from_worker(
-            worker,
+            &WorkerId::parse(worker).unwrap(),
             &format!("2026-11-10T13:00:0{seq}Z"),
             ReportStatus::Done,
             "t".to_string(),
@@ -361,7 +361,7 @@ fn drain_some_takes_only_that_position() {
     let inbox = Inbox::new(dir.path().join("inbox"));
     for (seq, text) in [(1, "one"), (2, "two")] {
         let report = Report::from_worker(
-            "A",
+            &WorkerId::parse("A").unwrap(),
             &format!("2026-01-01T00:00:0{seq}Z"),
             ReportStatus::Done,
             text.to_string(),
@@ -379,7 +379,7 @@ fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
     let inbox = Inbox::new(dir.path().join("inbox"));
     let post = |text: &str, seq| {
         let report = Report::from_worker(
-            "A",
+            &WorkerId::parse("A").unwrap(),
             &format!("2026-01-01T00:00:0{seq}Z"),
             ReportStatus::Done,
             text.to_string(),
@@ -401,7 +401,12 @@ fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
 }
 
 fn same_name_report(text: &str) -> Report {
-    Report::ralph_blocked("schedule:a", "2026-01-01T00:00:00Z", text.to_string())
+    Report {
+        worker: "schedule:a".to_string(),
+        at: "2026-01-01T00:00:00Z".to_string(),
+        status: ralph_core::worker::ReportKind::Worker(ReportStatus::Blocked),
+        text: text.to_string(),
+    }
 }
 
 fn queued_texts(inbox: &Inbox) -> Vec<String> {

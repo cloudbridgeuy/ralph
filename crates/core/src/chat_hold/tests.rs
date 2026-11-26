@@ -5,7 +5,12 @@ use crate::worker::{Report, ReportKind, ReportStatus};
 fn entry(worker: &str) -> Entry {
     Entry {
         source: format!("20261025122100-000003-{worker}.json"),
-        report: Report::from_worker(worker, "t", ReportStatus::Done, String::new()),
+        report: Report {
+            worker: worker.to_string(),
+            at: "t".to_string(),
+            status: ReportKind::Worker(ReportStatus::Done),
+            text: String::new(),
+        },
     }
 }
 
@@ -13,7 +18,11 @@ fn close_entry(thread: &str) -> Entry {
     let worker = format!("thread:{thread}");
     Entry {
         source: format!("20261025122100-000003-{worker}.json"),
-        report: Report::thread_closed(&worker, "t", String::new()),
+        report: Report::thread_closed(
+            &crate::chat_thread::ThreadName::parse(thread).unwrap(),
+            "t",
+            String::new(),
+        ),
     }
 }
 

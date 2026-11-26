@@ -130,7 +130,9 @@ fn finish_lost_turns(monitor: &Monitor, running: &[String], now: chrono::DateTim
 fn post_report(monitor: &Monitor, task: &Task, text: String, now: chrono::DateTime<chrono::Utc>) {
     let report = chat_report(&task.id, text, &now.to_rfc3339());
     warn_if_err(
-        monitor.inbox.post(&report, 0),
+        report
+            .map_err(std::io::Error::other)
+            .and_then(|report| monitor.inbox.post(&report, 0)),
         format!("posting schedule {}", task.id),
     );
 }
@@ -225,7 +227,9 @@ fn start_task(
                 let text = start_failure_text(&task.id, &error.to_string());
                 let report = chat_report(&task.id, text, &now.to_rfc3339());
                 warn_if_err(
-                    inbox.post(&report, 0),
+                    report
+                        .map_err(std::io::Error::other)
+                        .and_then(|report| inbox.post(&report, 0)),
                     format!("posting schedule {}", task.id),
                 );
                 store.remove(&task.id);

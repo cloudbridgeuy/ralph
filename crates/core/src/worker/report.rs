@@ -138,7 +138,8 @@ impl<'de> Deserialize<'de> for ReportKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::Report;
+    use crate::chat_thread::ThreadName;
+    use crate::worker::{Report, SourceName, WatchId, WorkerId};
     use serde_json::{json, Value};
 
     #[test]
@@ -176,7 +177,8 @@ mod tests {
 
     #[test]
     fn ralph_blocked_report_serializes_as_blocked() {
-        let report = Report::ralph_blocked("w1", "2026-11-25T00:00:00Z", "stuck".to_string());
+        let worker = WorkerId::parse("w1").unwrap();
+        let report = Report::ralph_blocked(&worker, "2026-11-25T00:00:00Z", "stuck".to_string());
         let encoded: Value = serde_json::to_value(&report).unwrap();
         assert_eq!(
             encoded,
@@ -216,34 +218,60 @@ mod tests {
     }
 
     #[test]
-    fn constructors_set_expected_wire_status() {
+    fn constructors_write_their_typed_sender_and_status() {
+        let worker = WorkerId::parse("w1").unwrap();
+        let watch = WatchId::parse("watch:ci").unwrap();
+        let thread = ThreadName::parse("side").unwrap();
+        let source = SourceName::parse("ci").unwrap();
         let cases = [
             (
-                Report::from_worker("w1", "t", ReportStatus::Done, "ok".into()),
+                Report::from_worker(&worker, "t", ReportStatus::Done, "ok".into()),
+                "w1",
                 "done",
             ),
             (
-                Report::from_worker("w1", "t", ReportStatus::Blocked, "no".into()),
+                Report::from_worker(&worker, "t", ReportStatus::Blocked, "no".into()),
+                "w1",
                 "blocked",
             ),
             (
-                Report::from_worker("w1", "t", ReportStatus::Question, "q".into()),
+                Report::from_worker(&worker, "t", ReportStatus::Question, "q".into()),
+                "w1",
                 "question",
             ),
-            (Report::ralph_blocked("w1", "t", "p".into()), "blocked"),
-            (Report::check("w1", "t", "c".into()), "check"),
-            (Report::warning("w1", "t", "w".into()), "warning"),
-            (Report::watch("w1", "t", "x".into()), "watch"),
-            (Report::merged("w1", "t", "m".into()), "merged"),
-            (Report::view("w1", "t", "v".into()), "view"),
             (
-                Report::thread_closed("w1", "t", "tc".into()),
+                Report::ralph_blocked(&worker, "t", "p".into()),
+                "w1",
+                "blocked",
+            ),
+            (Report::check(&worker, "t", "c".into()), "w1", "check"),
+            (Report::warning(&worker, "t", "w".into()), "w1", "warning"),
+            (Report::watch(&watch, "t", "x".into()), "watch:ci", "watch"),
+            (
+                Report::merged(&thread, "t", "m".into()),
+                "thread:side",
+                "merged",
+            ),
+            (
+                Report::view(&thread, "t", "v".into()),
+                "thread:side",
+                "view",
+            ),
+            (
+                Report::thread_closed(&thread, "t", "tc".into()),
+                "thread:side",
                 "thread-closed",
             ),
-            (Report::external("w1", "t", "e".into()), "report"),
+            (
+                Report::external(&source, "t", "e".into()),
+                "external:ci",
+                "report",
+            ),
         ];
-        for (report, expected) in cases {
-            assert_eq!(serde_json::to_value(&report).unwrap()["status"], expected);
+        for (report, sender, status) in cases {
+            let encoded = serde_json::to_value(&report).unwrap();
+            assert_eq!(encoded["worker"], sender);
+            assert_eq!(encoded["status"], status);
         }
     }
 }

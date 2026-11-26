@@ -289,6 +289,7 @@ pub fn argv_check(
 mod tests {
     use super::*;
     use crate::worker::PermissionSetup;
+    use crate::worker::WorkerId;
     use serde_json::json;
 
     fn feed(fold: &mut ClaudeFold, plan: ClaudePlan, lines: &[Value]) -> Vec<String> {
@@ -397,7 +398,7 @@ mod tests {
 
     fn inbox_report() -> Report {
         Report::from_worker(
-            "w",
+            &WorkerId::parse("w").unwrap(),
             "t",
             crate::worker::ReportStatus::Done,
             "verify".to_string(),
@@ -471,7 +472,7 @@ mod tests {
     #[test]
     fn report_fails_when_the_only_report_is_not_done() {
         let blocked = Report::from_worker(
-            "w",
+            &WorkerId::parse("w").unwrap(),
             "t",
             crate::worker::ReportStatus::Blocked,
             "verify".to_string(),
@@ -623,7 +624,7 @@ mod tests {
         assert_eq!(
             found,
             vec![Report::from_worker(
-                "verify",
+                &WorkerId::parse("verify").unwrap(),
                 "t",
                 crate::worker::ReportStatus::Done,
                 "verify".into()

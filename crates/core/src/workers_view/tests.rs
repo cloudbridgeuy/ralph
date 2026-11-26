@@ -1,6 +1,7 @@
 use super::*;
 use crate::chat_status::WorkerActivity;
 use crate::worker::ReportStatus;
+use crate::worker::WorkerId;
 
 const BUSY: RowState = RowState::Live(WorkerActivity::Busy);
 
@@ -78,7 +79,11 @@ fn non_report_statuses_and_other_roles_are_ignored() {
         entry(Role::Worker, "2026-01-01T00:10:00Z", text),
         entry(Role::User, "2026-01-01T00:11:00Z", "[worker A · done]\nx"),
     ];
-    let unread = [Report::check("A", "2026-01-01T00:12:00Z", "quiet".into())];
+    let unread = [Report::check(
+        &WorkerId::parse("A").unwrap(),
+        "2026-01-01T00:12:00Z",
+        "quiet".into(),
+    )];
     assert!(group_reports(&entries, &unread).is_empty());
 }
 
@@ -109,7 +114,7 @@ fn unread_reports_sort_with_logged_ones_by_time() {
         "[worker A · done]\nold",
     )];
     let unread = [Report::from_worker(
-        "A",
+        &WorkerId::parse("A").unwrap(),
         "2026-01-01T00:40:00Z",
         crate::worker::ReportStatus::Blocked,
         "new".into(),

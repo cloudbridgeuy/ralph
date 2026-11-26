@@ -299,8 +299,8 @@ fn post_alert(agent: &str, entry: &DriftEntry, inbox: &Path) -> bool {
         return false;
     };
     let old = last_verified_version(&verified_agents::load(), agent);
-    let report = drift_alert(agent, old.as_deref(), &entry.version, checks, &entry.at);
-    Inbox::new(inbox.to_path_buf()).post(&report, 0).is_ok()
+    drift_alert(agent, old.as_deref(), &entry.version, checks, &entry.at)
+        .is_ok_and(|report| Inbox::new(inbox.to_path_buf()).post(&report, 0).is_ok())
 }
 
 struct EndOwnGroup;

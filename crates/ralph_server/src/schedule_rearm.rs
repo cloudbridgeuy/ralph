@@ -66,7 +66,9 @@ pub fn finish_worker(
     if let Some(text) = repeat_stopped_text(task, end) {
         let report = chat_report(&task.id, text, &now.to_rfc3339());
         warn_if_err(
-            inbox.post(&report, 0),
+            report
+                .map_err(std::io::Error::other)
+                .and_then(|report| inbox.post(&report, 0)),
             format!("posting schedule {}", task.id),
         );
     }
@@ -88,7 +90,9 @@ fn stop_if_open(
         OpenBranch::Stop(text) => {
             let report = chat_report(&task.id, text, &now.to_rfc3339());
             warn_if_err(
-                inbox.post(&report, 0),
+                report
+                    .map_err(std::io::Error::other)
+                    .and_then(|report| inbox.post(&report, 0)),
                 format!("posting schedule {}", task.id),
             );
             store.remove(&task.id);

@@ -1,4 +1,4 @@
-use crate::worker::Report;
+use crate::worker::{Report, SenderError, WatchId};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -209,8 +209,14 @@ pub fn report_text(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail) -> Str
     text
 }
 
-pub fn build_report(spec: &WatchSpec, outcome: &WatchOutcome, tail: &Tail, at: &str) -> Report {
-    Report::watch(&spec.id, at, report_text(spec, outcome, tail))
+pub fn build_report(
+    spec: &WatchSpec,
+    outcome: &WatchOutcome,
+    tail: &Tail,
+    at: &str,
+) -> Result<Report, SenderError> {
+    WatchId::parse(&spec.id)
+        .map(|watch| Report::watch(&watch, at, report_text(spec, outcome, tail)))
 }
 
 #[cfg(test)]
@@ -219,7 +225,7 @@ mod tests {
 
     fn spec(follow_up: Option<&str>) -> WatchSpec {
         WatchSpec {
-            id: "ci".to_string(),
+            id: "watch:ci".to_string(),
             command: "gh run watch 1".to_string(),
             follow_up: follow_up.map(str::to_string),
             kind: WatchKind::Normal,
@@ -428,7 +434,7 @@ mod tests {
     #[test]
     fn report_for_exit_zero() {
         let text = report_text(&spec(None), &WatchOutcome::Exited(0), &tail_of(&["ok"]));
-        assert!(text.starts_with("Watch `ci` exited with code 0."));
+        assert!(text.starts_with("Watch `watch:ci` exited with code 0."));
         assert!(text.contains("Command: gh run watch 1"));
         assert!(text.ends_with("Output:\nok"));
     }
@@ -470,7 +476,8 @@ mod tests {
     #[test]
     fn a_built_report_gives_its_output_tail_to_the_check_detail() {
         let outcome = WatchOutcome::Exited(2);
-        let report = build_report(&spec(None), &outcome, &tail_of(&["first", "boom"]), "t1");
+        let report =
+            build_report(&spec(None), &outcome, &tail_of(&["first", "boom"]), "t1").unwrap();
         assert_eq!(
             crate::chat_send_it::check_detail(&outcome, Some(&report)),
             "exited with code 2; last output: first / boom"
@@ -479,8 +486,9 @@ mod tests {
 
     #[test]
     fn build_report_uses_the_watch_status_and_given_time() {
-        let report = build_report(&spec(None), &WatchOutcome::Exited(0), &tail_of(&[]), "t1");
-        assert_eq!(report.worker, "ci");
+        let report =
+            build_report(&spec(None), &WatchOutcome::Exited(0), &tail_of(&[]), "t1").unwrap();
+        assert_eq!(report.worker, "watch:ci");
         assert_eq!(report.at, "t1");
         assert_eq!(report.status.as_str(), "watch");
         assert!(report.text.contains("exited with code 0"));

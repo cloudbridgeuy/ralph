@@ -1,7 +1,8 @@
 use super::acp::REPORT_TOOL;
 use super::{
     allowed_tools, offer_allow_always, Action, ActivityMark, BlockedContent, PermissionMode,
-    PermissionOption, Report, ThreadSignal, TurnEnd, Turns, VersionGate, ALLOW_ALWAYS, SERVER_NAME,
+    PermissionOption, Report, ThreadSignal, TurnEnd, Turns, VersionGate, WorkerId, ALLOW_ALWAYS,
+    SERVER_NAME,
 };
 use crate::chat::mcptools_ask_settings;
 use crate::stream::{interrupt_line, result_is_error};
@@ -47,7 +48,7 @@ pub struct ClaudePermission {
     pub content: BlockedContent,
 }
 
-pub fn stuck_permission_report(id: &str, at: &str) -> Report {
+pub fn stuck_permission_report(id: &WorkerId, at: &str) -> Report {
     Report::ralph_blocked(
         id,
         at,
@@ -944,7 +945,8 @@ mod tests {
 
     #[test]
     fn a_stuck_permission_report_blocks_the_worker_with_the_close_hint() {
-        let report = stuck_permission_report("A", "2026-01-01T00:00:00Z");
+        let report =
+            stuck_permission_report(&WorkerId::parse("A").unwrap(), "2026-01-01T00:00:00Z");
         assert_eq!(report.worker, "A");
         assert_eq!(report.status.as_str(), "blocked");
         assert_eq!(

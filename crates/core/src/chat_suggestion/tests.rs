@@ -281,7 +281,12 @@ fn a_schedule_target_holds_and_matches_the_task_reports() {
     for worker in ["schedule:nightly", "sched-nightly"] {
         let entry = Entry {
             source: "s".to_string(),
-            report: Report::from_worker(worker, "t", ReportStatus::Done, String::new()),
+            report: Report {
+                worker: worker.to_string(),
+                at: "t".to_string(),
+                status: crate::worker::ReportKind::Worker(ReportStatus::Done),
+                text: String::new(),
+            },
         };
         assert!(filter.matches(&entry));
     }
