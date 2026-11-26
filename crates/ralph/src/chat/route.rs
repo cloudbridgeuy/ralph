@@ -13,7 +13,8 @@ use crate::chat::workers;
 use crate::config::ConfigSnapshot;
 use ralph_core::chat_help::help_with_store;
 use ralph_core::chat_memory::{history_tool_of, CallSource, MemoryCall};
-use ralph_core::chat_stage::{stage_text, StageCommand, STAGE_USAGE};
+use ralph_core::chat_stage::view::{view_lines, StageView};
+use ralph_core::chat_stage::{StageCommand, STAGE_EMPTY_LINE, STAGE_USAGE};
 use ralph_core::chat_status::Route;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::ThreadOp;
@@ -82,14 +83,28 @@ pub fn run_local(
 fn run_stage(command: StageCommand, ctx: &LocalRoute) -> String {
     let store = Store::new(ctx.store.to_path_buf());
     match command {
-        StageCommand::Show => stage::rendered(ctx.store, &ctx.monitor.status(), ctx.thread)
-            .map(|rendered| stage_text(&rendered).to_string()),
+        StageCommand::Show => stage::view(&store, &ctx.monitor.status(), ctx.thread)
+            .map(|view| stage_shown(view, (ctx.columns)(), ctx.display)),
         StageCommand::Add(new) => stage::user_add(&store, new),
         StageCommand::Done(id) => stage::user_done(&store, &id),
         StageCommand::Edit { id, text } => stage::user_edit(&store, &id, &text),
         StageCommand::Usage => Ok(STAGE_USAGE.to_string()),
     }
     .unwrap_or_else(|text| text)
+}
+
+fn stage_shown(view: Option<StageView>, width: usize, display: &Display) -> String {
+    let width = if display.color { width } else { usize::MAX };
+    view.map_or_else(
+        || STAGE_EMPTY_LINE.to_string(),
+        |view| {
+            workers::paint_lines(
+                &view_lines(&view, width),
+                &display.theme.palette,
+                display.color,
+            )
+        },
+    )
 }
 
 fn run_thread(op: Result<ThreadOp, String>, ctx: &LocalRoute) -> String {
@@ -197,9 +212,69 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ansi::{fg, BOLD};
     use crate::chat::thread::thread_dir;
+    use crate::highlight::Highlighter;
+    use crate::markdown::MarkdownTheme;
+    use crate::render::RenderContext;
+    use crate::ui_theme::UiColors;
     use ralph_core::chat_memory::{history_path, parse_tool_call};
+    use ralph_core::chat_stage::view::{stage_view, StageInput, StageView};
+    use ralph_core::chat_stage::{Item, Kind};
+    use ralph_core::chat_status::Status;
     use serde_json::{json, Value};
+
+    fn owed_view() -> StageView {
+        let items = [Item {
+            id: "s1".to_string(),
+            kind: Kind::Owed,
+            reference: None,
+            text: "send the note to the reviewer and link the screenshots".to_string(),
+            created: "2026-01-01T00:00:00Z".to_string(),
+            turn: 0,
+        }];
+        stage_view(&StageInput {
+            items: &items,
+            status: &Status::default(),
+            thread: None,
+            log_len: 0,
+        })
+        .unwrap()
+    }
+
+    fn shown_with(view: Option<StageView>, width: usize, color: bool) -> String {
+        let highlighter = Highlighter::new();
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx: RenderContext::new(&highlighter, color),
+            theme: &theme,
+            color,
+            ui: UiColors::default(),
+        };
+        stage_shown(view, width, &display)
+    }
+
+    #[test]
+    fn stage_show_prints_plain_unwrapped_lines_without_colour() {
+        assert_eq!(
+            shown_with(Some(owed_view()), 40, false),
+            "Stage\n\nOpen\n  ● s1  owed      send the note to the reviewer and link the screenshots · ~30 turns left"
+        );
+    }
+
+    #[test]
+    fn stage_show_paints_tones_and_wraps_to_the_width_with_colour() {
+        let text = shown_with(Some(owed_view()), 40, true);
+        let palette = MarkdownTheme::default().palette;
+        assert!(text.contains(&format!("{BOLD}Stage")), "{text:?}");
+        assert!(text.contains(&format!("{}●", fg(palette.link))), "{text:?}");
+        assert!(text.lines().count() > 4, "{text:?}");
+    }
+
+    #[test]
+    fn an_empty_stage_still_prints_the_empty_line() {
+        assert_eq!(shown_with(None, 80, true), "Stage: empty");
+    }
 
     #[test]
     fn local_answer_routes_to_the_worker_handoff() {

@@ -3,6 +3,7 @@ use crate::json_file::{read_json, write_json};
 use ralph_core::chat_local::notice_record;
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_socket::SocketRequest;
+use ralph_core::chat_stage::view::{stage_view, StageInput, StageView};
 use ralph_core::chat_stage::{
     add, close, edit, expire, next_step_gap, parse_add, parse_done, pending_decisions, render,
     suggestion_after, Actor, AuditRow, Closing, NewItem, Op, Stage,
@@ -55,6 +56,20 @@ pub fn rendered(
     thread: Option<&ThreadName>,
 ) -> Result<String, String> {
     Ok(render(&load(dir)?.items, status, thread))
+}
+
+pub fn view(
+    store: &Store,
+    status: &Status,
+    thread: Option<&ThreadName>,
+) -> Result<Option<StageView>, String> {
+    let log_len = store.log_len().map_err(|error| error.to_string())?;
+    Ok(stage_view(&StageInput {
+        items: &load(store.dir())?.items,
+        status,
+        thread,
+        log_len,
+    }))
 }
 
 pub fn check_next_step(
