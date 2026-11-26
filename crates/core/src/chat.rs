@@ -1,5 +1,6 @@
 use crate::chat_memory::SERVER_NAME;
 use crate::chat_process::ResetReason;
+use crate::chat_tools::{chat_tool_policy, mcptools_ask_rules, ToolRule};
 use crate::stream::IterationCosts;
 use crate::worker::ATTACHMENTS_DIR;
 use serde_json::{json, Map, Value};
@@ -225,32 +226,29 @@ pub fn build_mcp_args(config_path: &Path, config: &Value) -> Vec<String> {
 
 pub const MCPTOOLS_SERVER: &str = "mcptools";
 
-pub const MCPTOOLS_ASK_RULES: [&str; 2] = ["mcp__mcptools__execute", "mcp__mcptools__call_tool"];
-
 pub const MCPTOOLS_BASH_ASK_RULE: &str = "Bash(mcptools:*)";
 
-pub fn server_allow_rule(name: &str) -> String {
-    if name == MCPTOOLS_SERVER {
-        "mcp__mcptools__find_tools".to_string()
-    } else {
-        format!("mcp__{name}__*")
-    }
-}
-
 pub fn mcptools_ask_settings() -> Value {
-    let ask: Vec<&str> = MCPTOOLS_ASK_RULES
-        .into_iter()
-        .chain([MCPTOOLS_BASH_ASK_RULE])
+    let ask: Vec<String> = mcptools_ask_rules()
+        .iter()
+        .map(ToolRule::claude)
+        .chain([MCPTOOLS_BASH_ASK_RULE.to_string()])
         .collect();
     json!({ "permissions": { "ask": ask } })
 }
 
 fn allowed_tools(config: &Value) -> String {
-    config["mcpServers"]
-        .as_object()
-        .into_iter()
-        .flat_map(Map::keys)
-        .map(|name| server_allow_rule(name))
+    let policy = chat_tool_policy(
+        config["mcpServers"]
+            .as_object()
+            .into_iter()
+            .flat_map(Map::keys)
+            .map(String::as_str),
+    );
+    policy
+        .allow
+        .iter()
+        .map(ToolRule::claude)
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -780,8 +778,11 @@ mod tests {
 
     #[test]
     fn server_rules_are_one_wildcard_each_and_discovery_only_for_mcptools() {
-        assert_eq!(server_allow_rule("a"), "mcp__a__*");
-        assert_eq!(server_allow_rule("mcptools"), "mcp__mcptools__find_tools");
+        assert_eq!(ToolRule::allow_for("a").claude(), "mcp__a__*");
+        assert_eq!(
+            ToolRule::allow_for("mcptools").claude(),
+            "mcp__mcptools__find_tools"
+        );
         assert_eq!(
             mcptools_ask_settings(),
             json!({"permissions": {"ask": ["mcp__mcptools__execute", "mcp__mcptools__call_tool", "Bash(mcptools:*)"]}})

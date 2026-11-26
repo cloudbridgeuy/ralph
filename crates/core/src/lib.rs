@@ -54,6 +54,7 @@ pub mod chat_thread_log;
 pub mod chat_thread_model;
 mod chat_thread_root;
 pub mod chat_thread_table;
+pub mod chat_tools;
 pub mod chat_typed;
 pub mod chat_view;
 pub mod chunk;
