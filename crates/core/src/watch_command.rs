@@ -3,6 +3,7 @@ use crate::watch::{watch_id, WatchKind, WatchSpec};
 use crate::watch_request::WatchRequest;
 use crate::watch_store::SavedWatch;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use std::time::Duration;
 
 pub const WATCH_USAGE: &str =
@@ -228,6 +229,38 @@ pub fn stop_message(id: &str, result: StopResult) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WatchRow {
+    pub id: String,
+    pub kind: WatchKind,
+    pub started_at: DateTime<Utc>,
+    pub timeout_secs: Option<u64>,
+    pub timeout_deadline: Option<DateTime<Utc>>,
+    pub wake_deadline: Option<DateTime<Utc>>,
+    pub has_follow_up: bool,
+}
+
+pub fn watch_rows(saved: &[SavedWatch]) -> Vec<WatchRow> {
+    let mut sorted: Vec<&SavedWatch> = saved.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.started_at
+            .cmp(&b.started_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    sorted
+        .into_iter()
+        .map(|watch| WatchRow {
+            id: watch.id.clone(),
+            kind: watch.kind,
+            started_at: watch.started_at,
+            timeout_secs: watch.timeout_secs,
+            timeout_deadline: watch.timeout_deadline,
+            wake_deadline: watch.wake_deadline,
+            has_follow_up: watch.follow_up.is_some(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +468,43 @@ mod tests {
         assert_eq!(stop_message("w1", StopResult::Stopped), "Stopped watch w1.");
         assert!(stop_message("w1", StopResult::RemovedSaved).contains("saved record"));
         assert!(stop_message("w9", StopResult::Unknown).starts_with("No watch w9."));
+    }
+
+    #[test]
+    fn watch_rows_sort_by_start_then_id_and_keep_the_shape() {
+        let mut late = saved("b", "secret-command", WatchKind::Persistent, Some(600));
+        late.started_at = at(10);
+        let mut first = saved("c", "sleep 60", WatchKind::Normal, None);
+        first.started_at = at(0);
+        let mut tie = saved("a", "x", WatchKind::Normal, None);
+        tie.started_at = at(10);
+        let rows = watch_rows(&[late, first, tie]);
+        let ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, ["c", "a", "b"]);
+        let value = serde_json::to_value(&rows[2]).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "id": "b", "kind": "persistent",
+                "started_at": "2023-11-14T22:13:30Z", "timeout_secs": 600,
+                "timeout_deadline": "2023-11-14T22:23:20Z", "wake_deadline": null,
+                "has_follow_up": true,
+            })
+        );
+    }
+
+    #[test]
+    fn watch_rows_drop_command_and_follow_up_text() {
+        let mut watch = saved("a", "curl /Users/alice/x", WatchKind::Normal, None);
+        watch.follow_up = Some("follow-up-text".to_string());
+        let json = serde_json::to_string(&watch_rows(&[watch])).unwrap();
+        for leak in ["curl", "/Users", "follow-up-text"] {
+            assert!(!json.contains(leak), "{leak}");
+        }
+    }
+
+    #[test]
+    fn watch_rows_of_nothing_is_empty() {
+        assert!(watch_rows(&[]).is_empty());
     }
 }
