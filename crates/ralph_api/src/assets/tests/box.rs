@@ -91,3 +91,13 @@ fn box_title_and_aside_reserve_their_own_offsets_so_they_never_overlap() {
     assert_declares(&css, "r-box > .title", "max-width: calc(60% - 2ch);");
     assert_declares(&css, "r-box > .aside", "max-width: calc(40% - 2ch);");
 }
+
+#[test]
+fn the_threads_box_leaves_room_under_the_aside_chips() {
+    let css = css();
+    let body = rule_body(&css, "r-box[flush]").unwrap();
+    let padding = declarations(body, "padding");
+    assert_eq!(padding, ["padding: 10px 0 0;"], "{body}");
+    assert!(!body.contains("padding-top: 0"), "{body}");
+    assert_eq!(css.matches("r-box[flush]").count(), 1);
+}

@@ -255,7 +255,7 @@ fn paint_span(span: &Span, palette: &Palette) -> String {
     wrapped(&open, &span.text)
 }
 
-fn paint_lines(lines: &[Vec<Span>], palette: &Palette, color: bool) -> String {
+pub(super) fn paint_lines(lines: &[Vec<Span>], palette: &Palette, color: bool) -> String {
     if !color {
         return lines_text(lines);
     }

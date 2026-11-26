@@ -698,7 +698,11 @@ fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {
 }
 
 pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
-    let mut workers = store_workers(&tmux_listing(), &store_dir.to_string_lossy());
+    running_workers_in(&tmux_listing(), store_dir)
+}
+
+pub fn running_workers_in(listing: &str, store_dir: &Path) -> Vec<RunningWorker> {
+    let mut workers = store_workers(listing, &store_dir.to_string_lossy());
     workers.extend(
         owned_agy_ids(store_dir)
             .iter()

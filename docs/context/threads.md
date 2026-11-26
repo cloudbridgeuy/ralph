@@ -196,6 +196,8 @@ Limits:
 - Park and revive history is not kept. Only the current state shows.
 - A thread merged before this feature shows `merged, landing unknown`.
 
+The web [Threads screen](ralph-web.md#threads-screen) shows the same threads as a table, read-only.
+
 ## Example
 
 ```bash

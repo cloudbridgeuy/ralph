@@ -249,7 +249,7 @@ impl Route {
             | Route::ListInbox
             | Route::Help
             | Route::Config
-            | Route::Stage(StageCommand::Show | StageCommand::Usage)
+            | Route::Stage(StageCommand::Show | StageCommand::Raw | StageCommand::Usage)
             | Route::Answer(_)
             | Route::History(_)
             | Route::HistoryRefused { .. }

@@ -14,6 +14,7 @@ fn the_stylesheet_styles_every_primitive() {
         "r-error",
         "r-spinner",
         "r-spark",
+        "r-graph",
     ] {
         assert!(css.contains(&format!("\n{tag}")), "{tag}");
     }
@@ -203,4 +204,101 @@ fn the_stylesheet_styles_prose_and_code() {
 #[test]
 fn the_stylesheet_has_no_data_uri() {
     assert!(!css().contains("data:"));
+}
+
+#[test]
+fn graph_tones_use_the_role_tokens_and_dashes_mark_the_parked_lane() {
+    let css = css();
+    assert_declares(&css, "r-graph .ln.plain", "stroke: var(--r-muted);");
+    assert_declares(&css, "r-graph .nd.plain", "stroke: var(--r-ink);");
+    assert_declares(&css, "r-graph .nd.full.plain", "fill: var(--r-ink);");
+    for tone in ["ok", "warn", "bad"] {
+        let stroke = format!("stroke: var(--r-{tone});");
+        assert_declares(&css, &format!("r-graph .ln.{tone}"), &stroke);
+    }
+    assert_declares(&css, "r-graph .nd.warn", "stroke: var(--r-warn);");
+    assert_declares(&css, "r-graph .nd.ok", "stroke: var(--r-ok);");
+    assert_declares(&css, "r-graph .nd.full.ok", "fill: var(--r-ok);");
+    assert_declares(&css, "r-graph .arrow.ok", "fill: var(--r-ok);");
+    assert_declares(&css, "r-graph .ln", "stroke-width: 1.5;");
+    assert_declares(&css, "r-graph .nd", "fill: var(--r-bg);");
+    assert_declares(&css, "r-graph .ln.warn.h", "stroke-dasharray: 2 2;");
+}
+
+fn emitted_graph_class_sets() -> Vec<Vec<String>> {
+    use crate::render::graph_svg;
+    use crate::threads::cells::{lane_cells, Lane};
+    let mut sets: Vec<Vec<String>> = Vec::new();
+    for lane in [
+        Lane::Head,
+        Lane::Open,
+        Lane::Parked,
+        Lane::Merged,
+        Lane::Dropped,
+    ] {
+        let svg = graph_svg(&lane_cells(lane));
+        for chunk in svg.split("class=\"").skip(1) {
+            let classes = chunk.split('"').next().unwrap();
+            let set: Vec<String> = classes.split(' ').map(str::to_string).collect();
+            if !sets.contains(&set) {
+                sets.push(set);
+            }
+        }
+    }
+    sets
+}
+
+fn graph_rule_compounds(css: &str) -> Vec<Vec<String>> {
+    css.lines()
+        .filter(|line| line.starts_with("r-graph .") && line.ends_with(" {"))
+        .map(|line| {
+            let compound = line["r-graph ".len()..line.len() - 2].trim();
+            compound
+                .split('.')
+                .filter(|class| !class.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn the_graph_has_no_clip_rule() {
+    let css = css();
+    assert!(!css.contains("r-graph[clip]"));
+}
+
+#[test]
+fn every_graph_class_the_server_emits_has_a_rule() {
+    let css = css();
+    let emitted = emitted_graph_class_sets();
+    let compounds = graph_rule_compounds(&css);
+    assert!(!emitted.is_empty());
+    for class in emitted.iter().flatten() {
+        assert!(
+            compounds.iter().any(|compound| compound.contains(class)),
+            "no rule for {class}"
+        );
+    }
+}
+
+#[test]
+fn every_graph_rule_matches_a_class_set_the_server_emits() {
+    let css = css();
+    let emitted = emitted_graph_class_sets();
+    let compounds = graph_rule_compounds(&css);
+    assert!(!compounds.is_empty());
+    for compound in compounds {
+        let used = emitted
+            .iter()
+            .any(|set| compound.iter().all(|class| set.contains(class)));
+        assert!(used, "nothing emits {compound:?}");
+    }
+}
+
+#[test]
+fn graph_hollow_nodes_take_the_row_fill() {
+    let css = css();
+    assert!(css.contains("tr:hover r-graph .nd:not(.full)"));
+    assert!(css.contains("tr[aria-selected=\"true\"] r-graph .nd:not(.full)"));
 }

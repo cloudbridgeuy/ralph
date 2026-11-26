@@ -105,7 +105,7 @@ impl Column {
     }
 }
 
-fn ago(at: &str, now: DateTime<Utc>) -> Option<String> {
+pub fn ago(at: &str, now: DateTime<Utc>) -> Option<String> {
     DateTime::parse_from_rfc3339(at)
         .ok()
         .map(|_| format!("{} ago", age(at, now)))

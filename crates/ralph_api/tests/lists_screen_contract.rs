@@ -26,21 +26,22 @@ fn the_nav_lists_the_screens_in_order_and_the_catalogue_last() {
     let html = fetch("/");
     let links = [
         "<a href=\"#/memory\"><span class=\"n\" aria-hidden=\"true\">1</span>memory</a>",
-        "<a href=\"#/config\"><span class=\"n\" aria-hidden=\"true\">2</span>config</a>",
+        "<a href=\"#/threads\"><span class=\"n\" aria-hidden=\"true\">2</span>threads</a>",
         "<a href=\"#/workers\"><span class=\"n\" aria-hidden=\"true\">3</span>workers</a>",
         "<a href=\"#/schedules\"><span class=\"n\" aria-hidden=\"true\">4</span>schedules</a>",
         "<a href=\"#/watches\"><span class=\"n\" aria-hidden=\"true\">5</span>watches</a>",
-        "<a href=\"/catalogue\"><span class=\"n\" aria-hidden=\"true\">6</span>catalogue</a>",
+        "<a href=\"#/config\"><span class=\"n\" aria-hidden=\"true\">6</span>config</a>",
+        "<a href=\"/catalogue\"><span class=\"n\" aria-hidden=\"true\">7</span>catalogue</a>",
     ];
     let at: Vec<usize> = links.iter().map(|link| html.find(link).unwrap()).collect();
     assert!(at.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
 #[test]
-fn the_script_lists_the_three_screens_after_config() {
+fn the_script_lists_the_three_screens_after_threads() {
     let js = fetch("/app.js");
     assert!(js.contains(
-        "const SCREENS = [\"/memory\", \"/config\", \"/workers\", \"/schedules\", \"/watches\"];"
+        "const SCREENS = [\"/memory\", \"/threads\", \"/workers\", \"/schedules\", \"/watches\", \"/config\"];"
     ));
 }
 
@@ -121,7 +122,7 @@ fn the_list_screens_do_not_poll() {
 
 #[test]
 fn the_router_picks_the_list_screens_by_route() {
-    let shown = block(&fetch("/app.js"), "async function show");
+    let shown = block(&fetch("/app.js"), "async function show(");
     assert!(shown.contains("LISTS[state.route]"));
     assert!(shown.contains("drawList(main, list, data)"));
     assert!(shown.contains("listFailure(list.name, error"));

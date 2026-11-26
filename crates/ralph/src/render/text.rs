@@ -3,13 +3,14 @@
 //! This module provides unified rendering for text blocks (prose, code, diff)
 //! used by the stream processor during live execution.
 
-use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
+use ralph_core::code_frame::{Label, Spacing};
 use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
 use ralph_core::shell_format::{format_fence, is_shell_fence};
 
 use ralph_core::stream::blocks::ImageFile;
 
+use super::code_frame::{block_kind, body_width, framed, framed_diff};
 use super::image::{disk_image, render_with_markers, ImageBounds};
 use super::link::mark_links;
 use super::marker::paint_links;
@@ -117,19 +118,20 @@ pub fn render_markdown_with(
     markdown: &MarkdownTheme,
     picture: impl Fn(&ParsedChunk) -> Option<String>,
 ) -> String {
-    parse_chunks(text)
-        .iter()
-        .map(|chunk| {
-            if let Some(drawn) = picture(chunk) {
-                return drawn;
-            }
-            let rendered = render_text_block(ctx, chunk, Some(markdown));
+    let ctx = ctx.refreshed();
+    let mut spacing = Spacing::default();
+    let mut out = String::new();
+    for chunk in parse_chunks(text) {
+        let rendered = picture(&chunk).unwrap_or_else(|| {
+            let rendered = render_text_block(&ctx, &chunk, Some(markdown));
             match chunk.chunk_type {
                 ChunkType::Prose => rendered,
                 _ => rendered + "\n",
             }
-        })
-        .collect()
+        });
+        spacing.append(&mut out, &rendered, block_kind(&ctx, &chunk.chunk_type));
+    }
+    out
 }
 
 // --- Table enhancement (post-processing) ---
@@ -201,33 +203,22 @@ pub(super) fn enhance_tables(rendered: &str) -> String {
     result
 }
 
-/// Render a fenced code block with syntax highlighting.
-///
-/// Renders code blocks with visible fences. Shell fences (`bash`, `sh`, `zsh`, `shell`) are
-/// laid out by `format_fence` and highlighted as `sh`, like a Bash tool call; only the display
-/// changes.
-///
-/// # Arguments
-///
-/// * `ctx` - Render context with highlighter and terminal flag
-/// * `content` - The code content to render
-/// * `language` - Optional language hint for syntax highlighting
-///
-/// # Returns
-///
-/// The rendered code block with opening and closing fences.
 pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Option<&str>) -> String {
     let lang_suffix = language.filter(|l| !l.is_empty()).unwrap_or("");
-    let opening_fence = format!("```{lang_suffix}");
+    let label = if lang_suffix.is_empty() {
+        Label::Bare
+    } else {
+        Label::Language(lang_suffix)
+    };
 
     if ctx.terminal && language == Some("mermaid") {
-        if let Some(diagram) = (ctx.mermaid)(content, ctx.width) {
-            return format!("{opening_fence}\n{diagram}\n```");
+        if let Some(diagram) = (ctx.mermaid)(content, body_width(ctx)) {
+            return framed(ctx, &label, &diagram);
         }
     }
 
     let formatted = (is_shell_fence(language) && !content.contains('\x1b'))
-        .then(|| format_fence(content, ctx.width))
+        .then(|| format_fence(content, body_width(ctx)))
         .flatten();
     let (content, language) = match formatted.as_deref() {
         Some(formatted) => (formatted, Some("sh")),
@@ -236,40 +227,30 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
 
     let highlight = |text: &str| {
         if ctx.terminal {
-            ctx.highlighter.highlight(text, language)
+            ctx.highlighter.highlight_foreground(text, language)
         } else {
             text.to_string()
         }
     };
-    let highlighted_content = if ctx.images.is_some() {
+    let shown = if ctx.images.is_some() {
         apc_in_place(content, highlight)
     } else {
         highlight(content)
     };
 
-    format!("{}\n{}\n```", opening_fence, highlighted_content)
+    if ctx.terminal {
+        framed(ctx, &label, &shown)
+    } else {
+        format!("```{lang_suffix}\n{shown}\n```")
+    }
 }
 
-/// Render a fenced diff block with +/- coloring.
-///
-/// Renders diff blocks with visible fences.
-///
-/// # Arguments
-///
-/// * `ctx` - Render context with highlighter and terminal flag
-/// * `content` - The diff content to render
-///
-/// # Returns
-///
-/// The rendered diff block with opening and closing fences.
 pub fn render_diff_block(ctx: &RenderContext<'_>, content: &str) -> String {
-    let highlighted_content = if ctx.terminal {
-        highlight_with_basic_colors(content, &ctx.diff)
+    if ctx.terminal {
+        framed_diff(ctx, &Label::Language("diff"), content)
     } else {
-        content.to_string()
-    };
-
-    format!("```diff\n{}\n```", highlighted_content)
+        format!("```diff\n{content}\n```")
+    }
 }
 
 fn render_directive_block(
@@ -284,6 +265,7 @@ fn render_directive_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::strip_ansi;
     use crate::highlight::{Highlighter, ThemeConfig};
     use crate::render::Viewport;
 
@@ -399,15 +381,16 @@ mod tests {
         ctx.mermaid = |_, _| Some("DIAGRAM".to_string());
         assert_eq!(
             render_code_block(&ctx, "graph TD\nA-->B", Some("mermaid")),
-            "```mermaid\nDIAGRAM\n```"
+            framed(&ctx, &Label::Language("mermaid"), "DIAGRAM")
         );
         ctx.mermaid = |_, _| None;
         let fallback = render_code_block(&ctx, "graph TD\nA-->B", Some("mermaid"));
         assert_eq!(
             fallback,
-            format!(
-                "```mermaid\n{}\n```",
-                highlighter.highlight("graph TD\nA-->B", Some("mermaid"))
+            framed(
+                &ctx,
+                &Label::Language("mermaid"),
+                &highlighter.highlight_foreground("graph TD\nA-->B", Some("mermaid"))
             )
         );
         let plain = RenderContext::plain(&highlighter);
@@ -439,7 +422,8 @@ mod tests {
         assert!(rendered.contains("[worker A · done]"));
         assert!(!rendered.contains("# Title"));
         assert!(rendered.contains("\x1b["));
-        assert!(rendered.contains("```rust\n"));
+        assert!(rendered.contains("── rust "));
+        assert!(!rendered.contains("```"));
         assert!(!rendered.contains("fn main() {}"));
     }
 
@@ -573,7 +557,7 @@ changed in worker GUZ-628 during turn 6
         };
 
         let result = render_text_block(&ctx, &chunk, Some(&skin));
-        assert!(result.contains("```rust"));
+        assert!(result.contains("── rust "));
         // Content is present (may be interspersed with ANSI codes)
         assert!(result.contains("fn"));
         assert!(result.contains("main"));
@@ -607,7 +591,7 @@ changed in worker GUZ-628 during turn 6
         };
 
         let result = render_text_block(&ctx, &chunk, Some(&skin));
-        assert!(result.contains("```diff"));
+        assert!(result.contains("── diff "));
         // Should contain ANSI codes for diff coloring
         assert!(result.contains("\x1b["));
     }
@@ -732,6 +716,16 @@ changed in worker GUZ-628 during turn 6
         body.strip_suffix("```\n").unwrap().trim_end_matches('\n')
     }
 
+    fn framed_body(frame: &str) -> String {
+        let plain = strip_ansi(frame);
+        let rows: Vec<&str> = plain.lines().collect();
+        rows[2..rows.len() - 1]
+            .iter()
+            .map(|row| row.strip_prefix("  ").unwrap())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn bash_fence_renders_like_bash_tool_call() {
         let (highlighter, _) = create_test_context();
@@ -741,8 +735,13 @@ changed in worker GUZ-628 during turn 6
             ctx.images = None;
             let fence = render_code_block(&ctx, "a && b && c", Some("bash"));
             let tool = crate::render::render_bash_invocation(&ctx, "a && b && c");
-            assert!(fence.starts_with("```bash\n"), "{fence:?}");
-            assert_eq!(fence_body(&fence), bash_tool_body(&tool), "{terminal}");
+            if terminal {
+                let (_, framed) = tool.split_once('\n').unwrap();
+                assert_eq!(framed_body(&fence), framed_body(framed));
+            } else {
+                assert!(fence.starts_with("```bash\n"), "{fence:?}");
+                assert_eq!(fence_body(&fence), bash_tool_body(&tool));
+            }
         }
     }
 

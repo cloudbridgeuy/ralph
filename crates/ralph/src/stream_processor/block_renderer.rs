@@ -2,8 +2,10 @@ use super::render_block::render_block;
 use crate::diff_theme::DiffColors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::markdown::MarkdownTheme;
+use crate::render::code_frame::block_kind;
 use crate::render::RenderContext;
 use crate::tool_theme::ToolColors;
+use ralph_core::code_frame::{BlockKind, Spacing};
 use ralph_core::stream::blocks::OutputBlock;
 
 pub struct BlockRenderer {
@@ -13,6 +15,7 @@ pub struct BlockRenderer {
     pub(super) tool_colors: ToolColors,
     pub(super) highlighting_enabled: bool,
     has_emitted_output: bool,
+    spacing: Spacing,
 }
 
 fn counts(block: &OutputBlock, rendered: &str) -> bool {
@@ -44,6 +47,7 @@ impl BlockRenderer {
             tool_colors,
             highlighting_enabled,
             has_emitted_output: false,
+            spacing: Spacing::default(),
         })
     }
 
@@ -53,6 +57,10 @@ impl BlockRenderer {
 
     pub fn has_emitted_output(&self) -> bool {
         self.has_emitted_output
+    }
+
+    pub fn start_reply(&mut self) {
+        self.spacing = Spacing::default();
     }
 
     pub fn render_context(&self) -> RenderContext<'_> {
@@ -76,6 +84,7 @@ impl BlockRenderer {
         let mut rendered = String::new();
         let mut any_counted = false;
         let mut emitted = self.has_emitted_output;
+        let mut spacing = self.spacing;
         for block in blocks {
             let output = match block {
                 OutputBlock::Separator if !emitted => String::new(),
@@ -85,11 +94,16 @@ impl BlockRenderer {
                 OutputBlock::Separator => emitted,
                 _ => counts(block, &output),
             };
-            rendered.push_str(&output);
+            let kind = match block {
+                OutputBlock::Text(text) => block_kind(&ctx, &text.chunk.chunk_type),
+                _ => BlockKind::Flow,
+            };
+            spacing.append(&mut rendered, &output, kind);
             any_counted |= counted;
             emitted |= counted;
         }
         self.has_emitted_output = emitted;
+        self.spacing = spacing;
         (rendered, any_counted)
     }
 }

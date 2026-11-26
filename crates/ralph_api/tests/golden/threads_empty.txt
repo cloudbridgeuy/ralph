@@ -1,0 +1,18 @@
+{
+  "store": "chat",
+  "rows": [
+    {
+      "kind": "head",
+      "name": "main",
+      "state": "head",
+      "age": null,
+      "base": null,
+      "created": null,
+      "active": null,
+      "messages": 0,
+      "workers": null,
+      "unread": null,
+      "svg": "<r-graph><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path class=\"ln plain\" d=\"M4 12V25\"/><circle class=\"nd plain full\" cx=\"4\" cy=\"12\" r=\"3.25\"/></svg></r-graph>"
+    }
+  ]
+}

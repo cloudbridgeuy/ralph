@@ -12,6 +12,8 @@ mod roles;
 mod route;
 mod server;
 mod tailnet;
+mod threads;
+mod threads_api;
 mod token;
 mod tokens;
 

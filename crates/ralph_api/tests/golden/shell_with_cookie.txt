@@ -24,11 +24,12 @@ X-Content-Type-Options: nosniff
 </header>
 <nav class="nav" aria-label="Screens">
 <a href="#/memory"><span class="n" aria-hidden="true">1</span>memory</a>
-<a href="#/config"><span class="n" aria-hidden="true">2</span>config</a>
+<a href="#/threads"><span class="n" aria-hidden="true">2</span>threads</a>
 <a href="#/workers"><span class="n" aria-hidden="true">3</span>workers</a>
 <a href="#/schedules"><span class="n" aria-hidden="true">4</span>schedules</a>
 <a href="#/watches"><span class="n" aria-hidden="true">5</span>watches</a>
-<a href="/catalogue"><span class="n" aria-hidden="true">6</span>catalogue</a>
+<a href="#/config"><span class="n" aria-hidden="true">6</span>config</a>
+<a href="/catalogue"><span class="n" aria-hidden="true">7</span>catalogue</a>
 </nav>
 <main id="main"></main>
 </body>

@@ -33,7 +33,10 @@ pub(crate) fn written(
     renderer: &mut BlockRenderer,
 ) -> Option<(Stream, String)> {
     match event {
-        TurnEvent::Rule => Some((Stream::Stdout, rule(&rule_skin(ui), width))),
+        TurnEvent::Rule => {
+            renderer.start_reply();
+            Some((Stream::Stdout, rule(&rule_skin(ui), width)))
+        }
         TurnEvent::Warning(message) => Some((Stream::Stderr, warning_line(message))),
         TurnEvent::Blocks(blocks) => Some((Stream::Stdout, renderer.render(blocks))),
         TurnEvent::Stderr(text) => Some((Stream::Stderr, text.clone())),
@@ -46,10 +49,16 @@ pub(crate) trait ReplyWidth: Send + Sync {
     fn rendered(&self, cols: usize);
 }
 
-fn has_prose(blocks: &[OutputBlock]) -> bool {
-    blocks.iter().any(
-        |block| matches!(block, OutputBlock::Text(text) if text.chunk.chunk_type == ChunkType::Prose),
-    )
+fn has_reply_text(blocks: &[OutputBlock]) -> bool {
+    blocks.iter().any(|block| {
+        matches!(
+            block,
+            OutputBlock::Text(text) if matches!(
+                text.chunk.chunk_type,
+                ChunkType::Prose | ChunkType::Code { .. } | ChunkType::Diff
+            )
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +134,7 @@ impl TerminalSink {
         };
         match event {
             TurnEvent::Busy(Wait::Response) => reply_width.begin(),
-            TurnEvent::Blocks(blocks) if has_prose(blocks) => {
+            TurnEvent::Blocks(blocks) if has_reply_text(blocks) => {
                 reply_width.rendered((self.columns)());
             }
             _ => {}
@@ -204,6 +213,33 @@ mod tests {
         })
     }
 
+    #[derive(Default)]
+    struct Widths(Mutex<Vec<usize>>);
+
+    impl ReplyWidth for Widths {
+        fn begin(&self) {}
+
+        fn rendered(&self, cols: usize) {
+            self.0.lock().unwrap().push(cols);
+        }
+    }
+
+    #[test]
+    fn code_only_reply_records_width() {
+        let widths = Arc::new(Widths::default());
+        let sink = TerminalSink::with_highlighting(None, &ThemeConfig::default(), || 77, false)
+            .unwrap()
+            .with_reply_width(widths.clone());
+        for chunk in [
+            ParsedChunk::code("a", None),
+            ParsedChunk::diff("+a"),
+            ParsedChunk::directive("a", "ask", "b"),
+        ] {
+            sink.track(&TurnEvent::Blocks(vec![OutputBlock::text(chunk)]));
+        }
+        assert_eq!(*widths.0.lock().unwrap(), vec![77, 77]);
+    }
+
     #[test]
     fn a_rule_is_the_themed_rule_at_the_width_on_stdout() {
         let expected = rule(&rule_skin(&ui()), 20);
@@ -211,6 +247,22 @@ mod tests {
             written(&TurnEvent::Rule, &ui(), 20, &mut renderer()),
             Some((Stream::Stdout, expected))
         );
+    }
+
+    #[test]
+    fn a_frame_after_a_rule_has_no_row_above() {
+        let code = TurnEvent::Blocks(vec![OutputBlock::text(ParsedChunk::code("a\n", None))]);
+        let mut fresh = BlockRenderer::new(None, true).unwrap();
+        let alone = written(&code, &ui(), 20, &mut fresh);
+        let mut used = BlockRenderer::new(None, true).unwrap();
+        written(
+            &TurnEvent::Blocks(vec![prose("hello\n")]),
+            &ui(),
+            20,
+            &mut used,
+        );
+        written(&TurnEvent::Rule, &ui(), 20, &mut used);
+        assert_eq!(written(&code, &ui(), 20, &mut used), alone);
     }
 
     #[test]
