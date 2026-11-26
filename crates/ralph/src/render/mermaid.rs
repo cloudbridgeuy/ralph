@@ -55,7 +55,7 @@ enum GitLine<'a> {
 
 impl<'a> GitLine<'a> {
     fn parse(line: &'a str) -> Self {
-        let code = line.split_once("%%").map_or(line, |(code, _)| code);
+        let code = strip_inline_comment(line);
         let (verb, rest) = code.split_once(char::is_whitespace).unwrap_or((code, ""));
         match verb {
             "commit" | "merge" | "cherry-pick" => Self::Commit,
@@ -64,6 +64,16 @@ impl<'a> GitLine<'a> {
             _ => Self::Other,
         }
     }
+}
+
+fn strip_inline_comment(line: &str) -> &str {
+    let mut quoted = false;
+    line.char_indices()
+        .find(|&(at, c)| {
+            quoted ^= c == '"';
+            !quoted && line[at..].starts_with("%%")
+        })
+        .map_or(line, |(at, _)| &line[..at])
 }
 
 struct GitSize {
@@ -420,6 +430,24 @@ mod tests {
         assert_eq!(mermaid_precheck(&graph(19), &l), Ok(DiagramKind::GitGraph));
         assert_eq!(
             mermaid_precheck(&graph(20), &l),
+            Err(Refusal::TooManyBranches)
+        );
+    }
+
+    #[test]
+    fn git_graph_branch_limit_keeps_percent_signs_inside_quotes() {
+        let graph = |n: usize| {
+            let branches: String = (1..=n)
+                .map(|i| format!("  branch \"%%{i:02}\"\n"))
+                .collect();
+            format!("gitGraph\n{branches}  branch \"%%01\" %% again\n")
+        };
+        assert_eq!(
+            mermaid_precheck(&graph(19), &limits()),
+            Ok(DiagramKind::GitGraph)
+        );
+        assert_eq!(
+            mermaid_precheck(&graph(20), &limits()),
             Err(Refusal::TooManyBranches)
         );
     }
