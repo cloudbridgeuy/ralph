@@ -353,10 +353,13 @@ function onThreadsKey(event) {
   }
   const rows = Array.from(document.querySelectorAll("r-table.threads tbody tr[data-name]"));
   const at = rows.findIndex((row) => row.getAttribute("aria-selected") === "true");
-  if (event.key === "Enter") {
-    if (at < 0) return;
+  if (event.key === "Enter" || event.key === " ") {
+    const focused = event.target.closest("tr[data-name]");
+    const row = focused || (event.key === "Enter" ? rows[at] : null);
+    if (!row) return;
     event.preventDefault();
-    location.hash = buildHash({ thread: rows[at].dataset.name });
+    if (row !== rows[at]) row.click();
+    if (event.key === "Enter") location.hash = buildHash({ thread: row.dataset.name });
     return;
   }
   const next = threadMove(event.key, rows.length, at);

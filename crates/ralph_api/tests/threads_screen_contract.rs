@@ -351,6 +351,17 @@ fn the_enter_key_opens_the_memory_of_the_selected_thread() {
 }
 
 #[test]
+fn enter_and_space_act_on_the_focused_row_and_enter_falls_back_to_the_selected_row() {
+    let keys = function_body(THREADS_JS, "function onThreadsKey(");
+    assert!(keys.contains("event.target.closest(\"tr[data-name]\")"));
+    assert!(keys.contains("event.key === \" \""));
+    assert!(keys.contains("event.key === \"Enter\""));
+    assert!(keys.contains("row.click();"));
+    assert!(keys.contains("location.hash = buildHash({ thread: row.dataset.name });"));
+    assert!(!keys.contains("rows[at].dataset.name"));
+}
+
+#[test]
 fn the_keyboard_moves_only_over_selectable_rows_and_ignores_modifiers_and_other_keys() {
     let keys = function_body(THREADS_JS, "function onThreadsKey(");
     assert!(

@@ -366,7 +366,7 @@ Each primitive is a hyphenated tag that the server renders as plain HTML. A brow
   - parked: `ralph thread revive <name>`, `ralph thread drop <name>`
   - merged: no chips
   - The chips are text only. The screen runs nothing.
-- Keys: Up and Down move the selection, Home and End go to the first and last thread, Enter opens the memory of the selected thread, and `r` retries after an error. They are ignored in `input`, `button`, `select`, `textarea` and editable fields, on links, and with Ctrl, Meta or Alt.
+- Keys: Up and Down move the selection, Home and End go to the first and last thread, Enter selects the focused row and opens its memory (with no focused row, it opens the selected thread), Space selects the focused row, and `r` retries after an error. They are ignored in `input`, `button`, `select`, `textarea` and editable fields, on links, and with Ctrl, Meta or Alt.
 - States: loading (`r-spinner` after 200 ms), a whole-screen `r-error` "The threads screen did not load." with the status code, the reason and a Retry button (the retry runs the load again and focus moves to the new Retry button; a 503 says that the server is busy), an unknown `thread` (a 404 `r-error` in the detail pane, the table stays and no row is selected, with up to three links to threads that exist), and no threads (an `r-empty` row with `ralph chat --thread <name>`).
 - The server `svg` of each row goes through `setRendered` in `app.js`, the one `innerHTML` sink of the scripts. All other text uses `textContent`.
 - The screen is read-only and makes one request, `GET /api/threads`, for each load. See [Threads route](#threads-route). The command guide is [threads.md](threads.md).
