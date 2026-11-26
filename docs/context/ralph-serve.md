@@ -86,8 +86,8 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 ## Maintenance
 
 - Main and each open thread have their own attachments directory and maintenance host. The host runs queued watches, armed schedules, inbox checks, and configured idle keepalive. Main runs the daily drift check. A successful reply starts the usual memory nap.
-- Each fresh report stays unread. Serve sends one `inbox` frame with envelope id `0` to every greeted client, regardless of the client's attached session. The body carries `thread` (null for main), `report` (worker, status, timestamp `at`, and text), and the session's total `unread` count. Reports that fit the frame travel in full. If a frame would exceed 1 MiB, serve caps each report field at 32 KiB for transport. The inbox retains the original report.
-- `ralph chat --connect` opts in. At its next socket read it displays the session, worker, status, unread count, and report text on one line of up to 240 characters. A push can arrive between replies or during a turn.
+- Each fresh report stays unread. Serve sends one `inbox` frame with envelope id `0` to every greeted client, regardless of the client's attached session. The body carries `thread` (null for main), `report` (`WireReport`: worker, status, timestamp `at`, and text, all strings), and the session's total `unread` count. Reports that fit the frame travel in full. If a frame would exceed 1 MiB, serve caps each report field at 32 KiB for transport. The inbox retains the original report.
+- `ralph chat --connect` opts in. At its next socket read it displays the session, worker, status, unread count, and report text on one line of up to 240 characters. A push can arrive between replies or during a turn. A `blocked` or `question` report also raises the inbox alert. Any other status, one the client does not know included, prints the line only.
 
 ## Limits
 
@@ -106,6 +106,7 @@ Served:
 - Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
 - SIGTERM / SIGHUP: detach and exit 0 at the prompt or mid-request; neither `cancel` nor `shutdown` is sent.
 - Tool blocks: `serve` runs every turn with tool blocks on, so `turn` frames carry `ToolInvocation` and `ToolResult` blocks. The client prints them only when its stdout is a terminal, the same gate as the terminal chat. Piped, it drops them and prints the rest.
+- Inbox alerts: the sound and the notification of [Inbox alerts](ralph-chat.md#worker-inbox), with the same focus check and the idle terminal state. The client reads the `[chat] inbox_alert_*` keys from its own config and obeys `--no-inbox-sound` and `--no-inbox-notification`. If the config does not load, it warns and uses the defaults.
 - Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
 
 Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.

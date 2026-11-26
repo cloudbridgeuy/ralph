@@ -3,6 +3,7 @@ use crate::chat::queue::Queue;
 use crate::chat::switch::ChatExit;
 use crate::chat::term_loop::run_turn;
 use crate::highlight::ThemeConfig;
+use crate::inbox_alert;
 use crate::signal;
 use crate::turn_sink::TerminalSink;
 use ralph_core::cancel::CancelToken;
@@ -12,16 +13,17 @@ use ralph_core::chat_send_it::SendItCommand;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route, Status};
 use ralph_core::chat_switch::SwitchTarget;
 use ralph_core::chat_thread_cmd::ThreadOp;
+use ralph_core::inbox_alert::{inbox_alert, AlertConfig};
 use ralph_core::program_status::{Phase, State};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{truncate_string, OutputBlock};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
-use ralph_core::worker::{blocked_notice, Report};
+use ralph_core::worker::{blocked_notice, Attention, Report, ReportKind};
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
 use ralph_server::chat::serve_proto::{
-    decode_frame, encode_frame, ClientMsg, ServerMsg, ThreadCmd, VERSION,
+    decode_frame, encode_frame, ClientMsg, ServerMsg, ThreadCmd, WireReport, VERSION,
 };
 use ralph_server::chat::session::{At, Proposal, Reply};
 use ralph_server::chat::turn::TurnOutcome;
@@ -46,8 +48,14 @@ enum Step {
     Render(TurnEvent),
     Finished,
     Failed(String),
-    Notice(String),
+    Push(Push),
     Ignored,
+}
+
+#[derive(Debug, PartialEq)]
+struct Push {
+    line: String,
+    needs_user: Option<Report>,
 }
 
 fn on_frame(msg: ServerMsg) -> Step {
@@ -55,7 +63,7 @@ fn on_frame(msg: ServerMsg) -> Step {
         ServerMsg::Turn { event } => Step::Render(event),
         ServerMsg::TurnDone => Step::Finished,
         ServerMsg::Error { message } => Step::Failed(message),
-        _ => push_notice(&msg).map_or(Step::Ignored, Step::Notice),
+        _ => read_push(&msg).map_or(Step::Ignored, Step::Push),
     }
 }
 
@@ -79,13 +87,29 @@ fn remote_event(event: TurnEvent, stdout_is_tty: bool) -> TurnEvent {
     }
 }
 
-fn push_notice(msg: &ServerMsg) -> Option<String> {
+fn needing_user(wire: &WireReport) -> Option<Report> {
+    let status = ReportKind::parse(&wire.status)?;
+    match status.attention() {
+        Attention::NeedsUser => Some(Report {
+            worker: wire.worker.clone(),
+            at: wire.at.clone(),
+            status: wire.status.clone(),
+            text: wire.text.clone(),
+        }),
+        Attention::Informs => None,
+    }
+}
+
+fn read_push(msg: &ServerMsg) -> Option<Push> {
     match msg {
         ServerMsg::Blocked {
             thread,
             worker,
             content,
-        } => Some(blocked_notice(thread.as_deref(), worker, content.as_ref())),
+        } => Some(Push {
+            line: blocked_notice(thread.as_deref(), worker, content.as_ref()),
+            needs_user: None,
+        }),
         ServerMsg::Inbox {
             thread,
             report,
@@ -97,7 +121,10 @@ fn push_notice(msg: &ServerMsg) -> Option<String> {
                 report.worker, report.status, report.text
             );
             let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
-            Some(truncate_string(&strip_controls(&line), 240))
+            Some(Push {
+                line: truncate_string(&strip_controls(&line), 240),
+                needs_user: needing_user(report),
+            })
         }
         _ => None,
     }
@@ -254,10 +281,15 @@ struct RemoteSession {
     attached: RefCell<Option<String>>,
     sink: Box<dyn TurnSink>,
     stdout_is_tty: bool,
+    alert: AlertConfig,
 }
 
 impl RemoteSession {
-    fn connect(socket: &Path, sink: Box<dyn TurnSink>) -> Result<Option<Self>, Box<dyn Error>> {
+    fn connect(
+        socket: &Path,
+        sink: Box<dyn TurnSink>,
+        alert: AlertConfig,
+    ) -> Result<Option<Self>, Box<dyn Error>> {
         let stream = UnixStream::connect(socket)?;
         stream.set_read_timeout(Some(POLL))?;
         let session = Self {
@@ -268,6 +300,7 @@ impl RemoteSession {
             attached: RefCell::new(None),
             sink,
             stdout_is_tty: io::stdout().is_terminal(),
+            alert,
         };
         session.write(&ClientMsg::Hello { proto: VERSION })?;
         let Some(reply) = session.read_reply()? else {
@@ -291,11 +324,22 @@ impl RemoteSession {
             let Some(msg) = self.read_frame(&mut String::new(), None)? else {
                 return Ok(None);
             };
-            if let Some(text) = push_notice(&msg) {
-                notice(text);
+            if let Some(push) = read_push(&msg) {
+                self.show(push);
             } else {
                 return Ok(Some(msg));
             }
+        }
+    }
+
+    fn show(&self, push: Push) {
+        notice(push.line);
+        let Some(report) = push.needs_user.filter(|_| self.alert.enabled()) else {
+            return;
+        };
+        let focus = inbox_alert::focus();
+        if let Some(alert) = inbox_alert(&[&report], focus, State::Idle, &self.alert) {
+            inbox_alert::deliver(&alert);
         }
     }
 
@@ -467,7 +511,7 @@ impl SessionPort for RemoteSession {
                     return Ok(TurnOutcome::Replied);
                 }
                 Step::Failed(message) => return Err(Refused(message).into()),
-                Step::Notice(text) => notice(text),
+                Step::Push(push) => self.show(push),
                 Step::Ignored => {}
             }
         }
@@ -584,11 +628,11 @@ fn handle(remote: &RemoteSession, line: &str) -> Result<Flow, Box<dyn Error>> {
     }
 }
 
-pub(super) fn run(socket: &Path) -> Result<ChatExit, Box<dyn Error>> {
+pub(super) fn run(socket: &Path, alert: AlertConfig) -> Result<ChatExit, Box<dyn Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     let theme = ThemeConfig::from_config_and_env();
     let sink = TerminalSink::new(None, &theme, screen_columns)?;
-    let Some(remote) = RemoteSession::connect(socket, Box::new(sink))? else {
+    let Some(remote) = RemoteSession::connect(socket, Box::new(sink), alert)? else {
         return Ok(ChatExit::Quit);
     };
     if settle(remote.status_line().map(print_or_exit))? == Flow::Exit {
