@@ -1,17 +1,16 @@
 use crate::config::ChatSection;
-use ralph_core::claude_leftovers::{claude_dir, configured_dir};
+use crate::subprocess::Invocation;
+use ralph_core::claude_leftovers::{claude_dir, configured_dir, CLAUDE_CONFIG_DIR_ENV};
 use ralph_core::sanitize::strip_controls;
-use ralph_core::worker::inbox_env;
+use ralph_core::worker::{inbox_env, CLAUDE_COMMAND};
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
 pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
 pub const ASK_PERMISSION_MODE_ENV: &str = "RALPH_ASK_PERMISSION_MODE";
-const CHAT_DISABLE_BACKGROUND_TASKS_ENV: &str = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1";
+const CHAT_DISABLE_BACKGROUND_TASKS_ENV: &str = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS";
 
-/// Shell-quote a string for embedding in a single-quoted argument.
-///
-/// Pure function — no I/O.
 fn shell_quote(value: &str) -> String {
     let escaped = value.replace('\'', "'\"'\"'");
     format!("'{}'", escaped)
@@ -69,7 +68,7 @@ fn isolation_args(
     auto_compact_off: bool,
     isolation: &Isolation,
     mcptools: bool,
-) -> String {
+) -> [String; 4] {
     let mut settings = serde_json::Map::new();
     if auto_compact_off {
         settings.insert("autoCompactEnabled".to_string(), false.into());
@@ -95,19 +94,24 @@ fn isolation_args(
     }
     settings.insert("totalTokensReminder".to_string(), "off".into());
     let json = serde_json::Value::Object(settings).to_string();
-    let settings_arg = format!(" --settings {}", shell_quote(&json));
     let sources = if isolation.user_settings {
         "user,project,local"
     } else {
         "project,local"
     };
-    format!("--setting-sources {sources}{settings_arg}")
+    [
+        "--setting-sources".to_string(),
+        sources.to_string(),
+        "--settings".to_string(),
+        json,
+    ]
 }
 
-fn config_dir_env(config_dir: Option<&Path>, home: Option<&Path>) -> String {
-    configured_dir(config_dir, home)
-        .map(|dir| format!("CLAUDE_CONFIG_DIR={} ", shell_quote(&dir.to_string_lossy())))
-        .unwrap_or_default()
+fn config_dir_env(
+    config_dir: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<(&'static str, OsString)> {
+    configured_dir(config_dir, home).map(|dir| (CLAUDE_CONFIG_DIR_ENV, dir.into()))
 }
 
 pub fn prompt_stdin(prompt: &str) -> String {
@@ -131,7 +135,6 @@ pub fn build_nap_command(model: &str, home: Option<&Path>, config_dir: Option<&P
     memory_command(model, &system, &Isolation::for_nap(config_dir), home)
 }
 
-/// The tag pass: `model` with the labelling prompt as the whole system prompt.
 pub fn build_tag_command(
     model: &str,
     system_prompt: &str,
@@ -148,10 +151,14 @@ fn system_prompt_arg(system_prompt: &str) -> String {
 
 fn memory_command(model: &str, system: &str, isolation: &Isolation, home: Option<&Path>) -> String {
     let model = shell_quote(model);
+    let env = config_dir_env(isolation.config_dir.as_deref(), home)
+        .map(|(key, dir)| format!("{key}={} ", shell_quote(&dir.to_string_lossy())))
+        .unwrap_or_default();
+    let [sources_flag, sources, settings_flag, settings] =
+        isolation_args(home, false, isolation, false);
     format!(
-        "{}claude --verbose --model {model} {system}{} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
-        config_dir_env(isolation.config_dir.as_deref(), home),
-        isolation_args(home, false, isolation, false),
+        "{env}claude --verbose --model {model} {system}{sources_flag} {sources} {settings_flag} {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
+        shell_quote(&settings),
     )
 }
 
@@ -161,70 +168,100 @@ pub fn build_chat_command(
     permission_mode: &str,
     home: Option<&Path>,
     isolation: &Isolation,
-) -> String {
+) -> Invocation {
     let mcptools = extra_args
         .windows(2)
         .any(|args| args[0] == "--permission-prompt-tool" && args[1] == "stdio");
-    let extra = extra_args
-        .iter()
-        .map(|arg| format!(" {}", shell_quote(arg)))
-        .collect::<String>();
-    format!(
-        "{} {}claude --verbose --permission-mode {} {} --append-system-prompt-file {}{} --input-format stream-json --output-format stream-json -p",
-        CHAT_DISABLE_BACKGROUND_TASKS_ENV,
-        config_dir_env(isolation.config_dir.as_deref(), home),
-        permission_mode,
-        isolation_args(home, true, isolation, mcptools),
-        shell_quote(&system_prompt_file.to_string_lossy()),
-        extra
-    )
+    let mut args: Vec<OsString> = ["--verbose", "--permission-mode", permission_mode]
+        .map(OsString::from)
+        .into();
+    args.extend(isolation_args(home, true, isolation, mcptools).map(OsString::from));
+    args.push("--append-system-prompt-file".into());
+    args.push(system_prompt_file.into());
+    args.extend(extra_args.iter().map(OsString::from));
+    args.extend(
+        [
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "-p",
+        ]
+        .map(OsString::from),
+    );
+    let mut env = vec![(CHAT_DISABLE_BACKGROUND_TASKS_ENV, "1".into())];
+    env.extend(config_dir_env(isolation.config_dir.as_deref(), home));
+    Invocation {
+        program: CLAUDE_COMMAND,
+        args,
+        env,
+    }
 }
 
-pub fn with_chat_inbox(command: String, store: &Path) -> io::Result<String> {
+pub fn with_chat_inbox(mut invocation: Invocation, store: &Path) -> io::Result<Invocation> {
     let (key, inbox) = inbox_env(&std::fs::canonicalize(store)?);
-    Ok(format!(
-        "{key}={} {command}",
-        shell_quote(&inbox.to_string_lossy())
-    ))
+    invocation.env.push((key, inbox.into()));
+    Ok(invocation)
 }
 
 pub fn build_command(
     permission_mode: &str,
     config_dir: Option<&Path>,
     home: Option<&Path>,
-) -> String {
-    format!(
-        "{}claude --verbose --permission-mode {} --output-format stream-json -p",
-        config_dir_env(config_dir, home),
-        permission_mode,
-    )
+) -> Invocation {
+    Invocation {
+        program: CLAUDE_COMMAND,
+        args: [
+            "--verbose",
+            "--permission-mode",
+            permission_mode,
+            "--output-format",
+            "stream-json",
+            "-p",
+        ]
+        .map(OsString::from)
+        .into(),
+        env: config_dir_env(config_dir, home).into_iter().collect(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn line(invocation: Invocation) -> String {
+        invocation
+            .env
+            .iter()
+            .map(|(key, value)| format!("{key}={}", value.to_string_lossy()))
+            .chain([invocation.program.to_string()])
+            .chain(
+                invocation
+                    .args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned()),
+            )
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     #[test]
-    fn chat_inbox_command_uses_the_canonical_store_and_quotes_the_path() {
+    fn chat_inbox_variable_names_the_canonical_store() {
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().join("chat's store");
         std::fs::create_dir(&store).unwrap();
         let alias = dir.path().join("alias");
         std::os::unix::fs::symlink(&store, &alias).unwrap();
         let canonical = std::fs::canonicalize(&store).unwrap().join("inbox");
-        assert_eq!(
-            with_chat_inbox("claude -p".to_string(), &alias).unwrap(),
-            format!(
-                "RALPH_INBOX={} claude -p",
-                shell_quote(&canonical.to_string_lossy())
-            )
-        );
+        let invocation = with_chat_inbox(build_command("auto", None, None), &alias).unwrap();
+        assert_eq!(invocation.env, [("RALPH_INBOX", canonical.into())]);
     }
 
     #[test]
     fn chat_inbox_command_rejects_a_missing_store() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(with_chat_inbox("claude -p".to_string(), &dir.path().join("missing")).is_err());
+        let ask = build_command("auto", None, None);
+        assert!(with_chat_inbox(ask, &dir.path().join("missing")).is_err());
     }
 
     #[test]
@@ -237,8 +274,29 @@ mod tests {
     }
 
     #[test]
+    fn a_hostile_permission_mode_is_exactly_one_argument_of_claude() {
+        let hostile = "$(touch /tmp/pwned); id #";
+        let chat = build_chat_command(
+            Path::new("/s/p.md"),
+            &[],
+            hostile,
+            None,
+            &Isolation::default(),
+        );
+        for invocation in [chat, build_command(hostile, None, None)] {
+            assert_eq!(invocation.program, "claude");
+            let flag = invocation
+                .args
+                .iter()
+                .position(|arg| arg == "--permission-mode")
+                .unwrap();
+            assert_eq!(invocation.args[flag + 1], hostile);
+        }
+    }
+
+    #[test]
     fn build_command_is_plain_ask() {
-        let cmd = build_command("bypassPermissions", None, None);
+        let cmd = line(build_command("bypassPermissions", None, None));
         assert!(cmd.contains("--permission-mode bypassPermissions"));
         assert!(cmd.ends_with(" -p"), "{cmd}");
         assert!(!cmd.contains("--agent"));
@@ -322,9 +380,9 @@ mod tests {
     #[test]
     fn isolation_args_turns_auto_memory_off_only_when_asked() {
         let off = r#""autoMemoryEnabled":false"#;
-        let nap = isolation_args(None, false, &Isolation::for_nap(None), false);
+        let nap = isolation_args(None, false, &Isolation::for_nap(None), false).join(" ");
         assert!(nap.contains(off), "{nap}");
-        let chat = isolation_args(None, true, &Isolation::default(), false);
+        let chat = isolation_args(None, true, &Isolation::default(), false).join(" ");
         assert!(!chat.contains("autoMemoryEnabled"), "{chat}");
     }
 
@@ -351,23 +409,23 @@ mod tests {
     #[test]
     fn chat_command_is_fresh_and_isolated() {
         let mcp = vec!["--strict-mcp-config".to_string()];
-        let cmd = build_chat_command(
+        let cmd = line(build_chat_command(
             Path::new("/s/chat-1/system-prompt.md"),
             &mcp,
             "plan",
             Some(Path::new("/home/u")),
             &Isolation::default(),
-        );
+        ));
         assert!(cmd.starts_with("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude "));
         assert!(cmd.contains("--permission-mode plan "));
         assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains(
-            "--append-system-prompt-file '/s/chat-1/system-prompt.md' '--strict-mcp-config'"
+            "--append-system-prompt-file /s/chat-1/system-prompt.md --strict-mcp-config"
         ));
         assert!(cmd.contains("--input-format stream-json --output-format stream-json"));
         assert!(cmd.ends_with(" -p"));
-        assert!(cmd.contains(r#"--settings '{"autoCompactEnabled":false,"#));
+        assert!(cmd.contains(r#"--settings {"autoCompactEnabled":false,"#));
     }
 
     #[test]
@@ -380,17 +438,14 @@ mod tests {
                 user_settings,
                 ..Isolation::default()
             };
-            let cmd = build_chat_command(Path::new("/s/p.md"), &args, mode, None, &isolation);
-            assert!(cmd.contains("'--permission-prompt-tool' 'stdio'"), "{cmd}");
-            assert_eq!(cmd.matches("--settings ").count(), 1);
-            let settings = cmd
-                .split("--settings '")
-                .nth(1)
-                .unwrap()
-                .split('\'')
-                .next()
-                .unwrap();
+            let invocation =
+                build_chat_command(Path::new("/s/p.md"), &args, mode, None, &isolation);
+            let flag = invocation.args.iter().position(|arg| arg == "--settings");
+            let settings = invocation.args[flag.unwrap() + 1].to_str().unwrap();
             let settings: serde_json::Value = serde_json::from_str(settings).unwrap();
+            let cmd = line(invocation);
+            assert!(cmd.contains("--permission-prompt-tool stdio"), "{cmd}");
+            assert_eq!(cmd.matches("--settings ").count(), 1);
             assert_eq!(
                 settings,
                 serde_json::json!({
@@ -418,51 +473,51 @@ mod tests {
         );
         let mut without_discovery = args.clone();
         without_discovery[3] = "mcp__ralph-chat__*".into();
-        let cmd = build_chat_command(
+        let cmd = line(build_chat_command(
             Path::new("/s/p.md"),
             &without_discovery,
             "auto",
             None,
             &Isolation::default(),
-        );
+        ));
         assert!(cmd.contains("mcp__mcptools__execute"));
         let no_mcptools = ralph_core::chat::build_mcp_args(
             Path::new("/s/mcp.json"),
             &serde_json::json!({"mcpServers": {"ralph-chat": {}}}),
         );
-        let cmd = build_chat_command(
+        let cmd = line(build_chat_command(
             Path::new("/s/p.md"),
             &no_mcptools,
             "auto",
             None,
             &Isolation::default(),
-        );
+        ));
         assert!(!cmd.contains("--permission-prompt-tool"));
         assert!(!cmd.contains("mcp__mcptools__"));
     }
 
     #[test]
     fn chat_command_passes_agents_and_keeps_isolation() {
-        let cmd = build_chat_command(
+        let cmd = line(build_chat_command(
             Path::new("/s/p.md"),
             &ralph_core::chat::build_agents_args(),
             "auto",
             Some(Path::new("/home/u")),
             &Isolation::default(),
-        );
-        assert!(cmd.contains("'--agents'"));
+        ));
+        assert!(cmd.contains("--agents"));
         assert!(cmd.contains("--setting-sources project,local"));
     }
 
     #[test]
     fn chat_and_nap_turn_off_the_total_tokens_reminder() {
-        let chat = build_chat_command(
+        let chat = line(build_chat_command(
             Path::new("/s/p.md"),
             &[],
             "auto",
             None,
             &Isolation::default(),
-        );
+        ));
         let nap = build_memory_command("haiku", None, None);
         for cmd in [chat, nap] {
             assert!(cmd.contains(r#""totalTokensReminder":"off""#), "{cmd}");
@@ -475,20 +530,20 @@ mod tests {
     fn prompts_stay_off_every_command_line() {
         let home = Some(Path::new("/home/u"));
         let commands = [
-            build_command("auto", None, home),
+            line(build_command("auto", None, home)),
             build_memory_command("haiku", home, None),
-            build_chat_command(
+            line(build_chat_command(
                 Path::new("/s/p.md"),
                 &[],
                 "auto",
                 home,
                 &Isolation::default(),
-            ),
+            )),
         ];
         for cmd in commands {
             assert!(!cmd.contains("abc123"), "{cmd}");
-            assert!(!cmd.contains("--append-system-prompt '"), "{cmd}");
-            assert!(!cmd.contains("-p '"), "{cmd}");
+            assert!(!cmd.contains("--append-system-prompt "), "{cmd}");
+            assert!(cmd.ends_with(" -p"), "{cmd}");
         }
     }
 
@@ -501,7 +556,7 @@ mod tests {
     #[test]
     fn unset_config_dir_adds_no_env_prefix() {
         assert_eq!(
-            build_command("auto", None, Some(Path::new("/home/u"))),
+            line(build_command("auto", None, Some(Path::new("/home/u")))),
             "claude --verbose --permission-mode auto --output-format stream-json -p"
         );
         assert_eq!(
@@ -509,8 +564,8 @@ mod tests {
             r#"claude --verbose --model 'haiku' --setting-sources project,local --settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}' --tools '' --mcp-config '{"mcpServers":{}}' --strict-mcp-config --output-format stream-json -p"#
         );
         assert_eq!(
-            build_chat_command(Path::new("/s/p.md"), &[], "auto", None, &Isolation::default()),
-            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings '{\"autoCompactEnabled\":false,\"totalTokensReminder\":\"off\"}' --append-system-prompt-file '/s/p.md' --input-format stream-json --output-format stream-json -p"
+            line(build_chat_command(Path::new("/s/p.md"), &[], "auto", None, &Isolation::default())),
+            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings {\"autoCompactEnabled\":false,\"totalTokensReminder\":\"off\"} --append-system-prompt-file /s/p.md --input-format stream-json --output-format stream-json -p"
         );
     }
 
@@ -518,15 +573,21 @@ mod tests {
     fn config_dir_prefixes_every_command_and_moves_the_exclude() {
         let home = Some(Path::new("/home/u"));
         let dir = Some(Path::new("~/alt dir"));
-        let ask = build_command("auto", dir, home);
-        assert!(ask.starts_with("CLAUDE_CONFIG_DIR='/home/u/alt dir' claude --verbose "));
+        let ask = line(build_command("auto", dir, home));
+        assert!(ask.starts_with("CLAUDE_CONFIG_DIR=/home/u/alt dir claude --verbose "));
         let memory = build_memory_command("haiku", home, dir);
         assert!(memory.starts_with("CLAUDE_CONFIG_DIR='/home/u/alt dir' claude "));
         assert!(memory.contains(r#"["/home/u/alt dir/CLAUDE.md"]"#));
         let isolation = Isolation::for_chat(&ChatSection::default(), Path::new("/work"), dir);
-        let chat = build_chat_command(Path::new("/s/p.md"), &[], "auto", home, &isolation);
+        let chat = line(build_chat_command(
+            Path::new("/s/p.md"),
+            &[],
+            "auto",
+            home,
+            &isolation,
+        ));
         assert!(chat.starts_with(
-            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 CLAUDE_CONFIG_DIR='/home/u/alt dir' claude "
+            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 CLAUDE_CONFIG_DIR=/home/u/alt dir claude "
         ));
         assert!(chat.contains(r#""claudeMdExcludes":["/home/u/alt dir/CLAUDE.md"]"#));
         assert!(!chat.contains("/.claude/CLAUDE.md"));
@@ -539,13 +600,14 @@ mod tests {
             &Isolation::for_chat(&chat, Path::new("/work"), None),
             false,
         )
+        .join(" ")
     }
 
     #[test]
     fn default_chat_isolation_is_unchanged() {
         assert_eq!(
             chat_args(ChatSection::default()),
-            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}'"#
+            r#"--setting-sources project,local --settings {"autoCompactEnabled":false,"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}"#
         );
     }
 
@@ -567,7 +629,7 @@ mod tests {
         });
         assert_eq!(
             args,
-            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false,"totalTokensReminder":"off"}'"#
+            r#"--setting-sources project,local --settings {"autoCompactEnabled":false,"totalTokensReminder":"off"}"#
         );
     }
 
@@ -592,7 +654,7 @@ mod tests {
         });
         assert_eq!(
             args,
-            r#"--setting-sources user,project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/work/CLAUDE.md","/work/CLAUDE.local.md","/work/.claude/CLAUDE.md"],"totalTokensReminder":"off"}'"#
+            r#"--setting-sources user,project,local --settings {"autoCompactEnabled":false,"claudeMdExcludes":["/work/CLAUDE.md","/work/CLAUDE.local.md","/work/.claude/CLAUDE.md"],"totalTokensReminder":"off"}"#
         );
     }
 }

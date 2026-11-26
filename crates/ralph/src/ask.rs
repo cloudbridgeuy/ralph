@@ -4,8 +4,8 @@ use crate::turn_sink::TerminalSink;
 use ralph_core::cancel::CancelToken;
 use ralph_server::invoke::{build_command, prompt_stdin};
 use ralph_server::subprocess::{
-    invoke_subprocess_with_spinner_config, Invocation, SpinnerSubprocessConfig,
-    StreamingSubprocessResult, SubprocessError,
+    invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
+    SubprocessError,
 };
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -28,11 +28,11 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
             .map_err(|error| SubprocessError::Theme(error.to_string()))?,
     );
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
-        command: Invocation::shell(build_command(
+        command: build_command(
             &config.permission_mode,
             config.config_dir.as_deref(),
             dirs::home_dir().as_deref(),
-        )),
+        ),
         timeout_secs: Some(config.timeout_secs),
         verbose_tools: config.verbose_tools,
         show_tools: io::stdout().is_terminal(),
