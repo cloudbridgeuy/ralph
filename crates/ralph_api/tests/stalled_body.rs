@@ -85,7 +85,7 @@ fn stall_clients(server: &TestServer, count: usize) -> (Vec<TcpStream>, Vec<u16>
 }
 
 #[test]
-fn stop_returns_when_every_slot_and_one_more_client_stall() {
+fn stop_is_not_blocked_by_stalled_drains() {
     let mut server = TestServer::start();
     let (_stalled, mut statuses) = stall_clients(&server, MAX_HANDLERS + 1);
     statuses.sort_unstable();
