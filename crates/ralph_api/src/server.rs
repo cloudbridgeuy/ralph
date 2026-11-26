@@ -158,14 +158,47 @@ fn spawn_handler(
         let (config, token) = &*shared;
         let mut request = request;
         let response = route(&to_api_request(&mut request, config, token), config, token);
-        match limit_rejected(response, peer, &peers) {
-            (response, Delivery::Drain(guard)) => {
-                respond_then(request, response, move || drop(slot));
-                drop(guard);
-            }
-            (response, Delivery::Close) => respond_and_close(request, response, move || drop(slot)),
-        }
+        let (response, delivery) = limit_rejected(response, peer, &peers);
+        deliver(DeliverOptions {
+            target: request,
+            response,
+            delivery,
+            release: Box::new(move || drop(slot)),
+            on_drain: respond_then,
+            on_close: respond_and_close,
+        });
     });
+}
+
+struct DeliverOptions<T, D, C> {
+    target: T,
+    response: ApiResponse,
+    delivery: Delivery,
+    release: Box<dyn FnOnce()>,
+    on_drain: D,
+    on_close: C,
+}
+
+fn deliver<T, D, C>(options: DeliverOptions<T, D, C>)
+where
+    D: FnOnce(T, ApiResponse, Box<dyn FnOnce()>),
+    C: FnOnce(T, ApiResponse, Box<dyn FnOnce()>),
+{
+    let DeliverOptions {
+        target,
+        response,
+        delivery,
+        release,
+        on_drain,
+        on_close,
+    } = options;
+    match delivery {
+        Delivery::Drain(guard) => {
+            on_drain(target, response, release);
+            drop(guard);
+        }
+        Delivery::Close => on_close(target, response, release),
+    }
 }
 
 fn run_off_loop(request: Request, job: impl FnOnce(Request) + Send + 'static) {
@@ -291,9 +324,50 @@ mod tests {
     use super::*;
     use crate::route::{error, json_ok};
     use serde_json::json;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     fn peer() -> Option<IpAddr> {
         Some(IpAddr::from([100, 64, 0, 9]))
+    }
+
+    fn run_deliver(delivery: Delivery) -> (Vec<&'static str>, usize) {
+        let log = RefCell::new(Vec::new());
+        let released = Rc::new(Cell::new(0));
+        let counter = Rc::clone(&released);
+        deliver(DeliverOptions {
+            target: (),
+            response: error(401, "unauthorized"),
+            delivery,
+            release: Box::new(move || counter.set(counter.get() + 1)),
+            on_drain: |(), _, release: Box<dyn FnOnce()>| {
+                log.borrow_mut().push("drain");
+                release();
+            },
+            on_close: |(), _, release: Box<dyn FnOnce()>| {
+                log.borrow_mut().push("close");
+                release();
+            },
+        });
+        (log.into_inner(), released.get())
+    }
+
+    #[test]
+    fn deliver_drains_a_drain_delivery_and_releases_the_guard_after() {
+        let peers = Arc::new(PeerCounts::default());
+        let guard = PeerCounts::try_enter(&peers, peer().unwrap(), MAX_REJECTED_PER_PEER);
+        assert!(guard.is_some());
+        let (log, released) = run_deliver(Delivery::Drain(guard));
+        assert_eq!(log, ["drain"]);
+        assert_eq!(released, 1);
+        assert!(PeerCounts::try_enter(&peers, peer().unwrap(), 1).is_some());
+    }
+
+    #[test]
+    fn deliver_closes_a_close_delivery() {
+        let (log, released) = run_deliver(Delivery::Close);
+        assert_eq!(log, ["close"]);
+        assert_eq!(released, 1);
     }
 
     #[test]
