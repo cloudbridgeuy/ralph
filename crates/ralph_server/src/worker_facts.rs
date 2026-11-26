@@ -18,22 +18,30 @@ const OWNER_DIRS: [(&str, &str); 5] = [
     ("opencode", OPENCODE_OWNER_DIR),
 ];
 
-/// True only for a regular file. A symlink is never followed, so a link in the
-/// store cannot pull in a file from outside it.
-fn is_file(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
+/// True only for a regular file below `store`. No part of the path under the
+/// store may be a symlink, so a link in the store cannot pull in a file or a
+/// directory from outside it. The store path itself is used as given.
+fn is_file(store: &Path, path: &Path) -> bool {
+    let Ok(below) = path.strip_prefix(store) else {
+        return false;
+    };
+    let mut current = store.to_path_buf();
+    below.components().all(|part| {
+        current.push(part);
+        fs::symlink_metadata(&current).is_ok_and(|meta| !meta.file_type().is_symlink())
+    }) && fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
 }
 
-fn read_file(path: &Path) -> Option<String> {
-    is_file(path).then(|| fs::read_to_string(path).ok())?
+fn read_file(store: &Path, path: &Path) -> Option<String> {
+    is_file(store, path).then(|| fs::read_to_string(path).ok())?
 }
 
 fn ticket_of(store: &Path, id: &str) -> Option<String> {
-    decode_spawn_record(&read_file(&spawn_record_path(store, id))?)?.ticket
+    decode_spawn_record(&read_file(store, &spawn_record_path(store, id))?)?.ticket
 }
 
 fn activity_of(store: &Path, id: &str) -> Option<ActivityState> {
-    ActivityMark::parse(&read_file(&activity_path(store, id))?).map(|mark| mark.state)
+    ActivityMark::parse(&read_file(store, &activity_path(store, id))?).map(|mark| mark.state)
 }
 
 fn last_reports(store: &Path) -> HashMap<String, ReportLine> {
@@ -53,15 +61,15 @@ pub fn worker_facts(store: &Path) -> Vec<WorkerFacts> {
         .flat_map(|(harness, dir)| {
             entry_ids(store, dir)
                 .into_iter()
-                .filter(move |id| is_file(&store.join(dir).join(id)))
+                .filter(move |id| is_file(store, &store.join(dir).join(id)))
                 .map(move |id| (*harness, id))
         })
         .map(|(harness, id)| WorkerFacts {
             harness: harness.to_string(),
-            blocked: read_file(&blocked_path(store, &id)),
-            waiting: is_file(&waiting_path(store, &id)),
-            unreported: is_file(&unreported_path(store, &id)),
-            gone: is_file(&gone_path(store, &id)),
+            blocked: read_file(store, &blocked_path(store, &id)),
+            waiting: is_file(store, &waiting_path(store, &id)),
+            unreported: is_file(store, &unreported_path(store, &id)),
+            gone: is_file(store, &gone_path(store, &id)),
             activity: activity_of(store, &id),
             ticket: ticket_of(store, &id),
             last_report: reports.remove(&id),
@@ -236,5 +244,34 @@ mod tests {
         assert!(real.ticket.is_none());
         assert!(real.blocked.is_none() && real.activity.is_none());
         assert!(!real.waiting && !real.gone);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_directory_in_the_store_is_never_followed() {
+        use std::os::unix::fs::symlink;
+        let outside = tempfile::tempdir().unwrap();
+        owner(outside.path(), ".", "stranger");
+        let record = SpawnRecord {
+            ticket: Some("GUZ-9".to_string()),
+            ..SpawnRecord::default()
+        };
+        touch(
+            &outside.path().join("real"),
+            &encode_spawn_record(&record).unwrap(),
+        );
+        let store = tempfile::tempdir().unwrap();
+        let root = store.path();
+        symlink(outside.path(), root.join(CLAUDE_OWNER_DIR)).unwrap();
+        owner(root, CODEX_OWNER_DIR, "real");
+        let spawn_dir = spawn_record_path(root, "real")
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        symlink(outside.path(), &spawn_dir).unwrap();
+        let facts = worker_facts(root);
+        let ids: Vec<&str> = facts.iter().map(|facts| facts.id.as_str()).collect();
+        assert_eq!(ids, ["real"], "{facts:?}");
+        assert!(find(&facts, "real").ticket.is_none());
     }
 }
