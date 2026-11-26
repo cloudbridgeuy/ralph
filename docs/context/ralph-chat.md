@@ -1046,14 +1046,51 @@ A codex worker appends the same kind of rows with `harness` `codex` and `session
 
 Chat runs a turn through the `ChatBackend` trait (`ralph_server/src/chat/backend.rs`). Each backend reports its `Caps` (`ralph_core::chat_backend`). `Caps` names the harness and gives a `Support` for each capability: `cost`, `cache_tokens`, `cache_ttl`, `context_tokens`, `cancel`, `mcp_tools`, `system_prompt` and `tool_blocks`. `Support` is the same type the worker spec uses (`worker/headless.rs`): `Full`, `Partial(note)` or `None`. `None` means Missing.
 
-`ClaudeBackend` returns `CLAUDE`, which is `Full` for every capability. Claude chat does not change.
+`ClaudeSlot` returns `CLAUDE`, which is `Full` for every capability. Claude chat does not change. `AgySlot` returns `AGY`: `cost` Missing, `cache_ttl` Missing, `cache_tokens` and `context_tokens` `Full`, and `Partial` for `cancel`, `mcp_tools`, `system_prompt` and `tool_blocks`.
 
 A feature that assumes Claude reads `Caps` through a pure function in `ralph_core`. When a capability is Missing, the feature hides or neutralises its output. It never errors.
 
 - Status bar (`process_cell`, `process_variants`): Missing `context_tokens` hides the `ctx` part. Missing `cache_ttl` hides the cache part. Missing `cache_tokens` never marks the cache `!` (write heavy). `cache_ttl_secs(&Caps)` gives the cache window, or `None`.
 - Keepalive (`keepalive_action`): the input carries `cache_ttl_secs`. `None` gives `Skip`. `Some(t)` is the cold-cache limit in place of one hour.
 - Usage rows (`usage_record`, `subagent_records`): `harness` comes from `Caps.harness`. Missing `cost` leaves `cost_usd` and `cost_source` empty, also when the harness reported a cost. Readers of stored rows (worker costs, cache saving) still compare `harness` with `claude`.
-- Limit: only Claude has a backend today. The other capabilities (`cancel`, `mcp_tools`, `system_prompt`, `tool_blocks`) are in `Caps` but no feature reads them yet.
+- Limit: the other capabilities (`cancel`, `mcp_tools`, `system_prompt`, `tool_blocks`) are in `Caps` but no feature reads them yet.
+
+### Harness slots
+
+A harness is the agent CLI a chat runs on. Each harness has one slot: its `ChatBackend` impl. The shared chat code never starts a harness itself. It calls the slot.
+
+- `ChatBackend::spawn(&ChatLaunch, &TurnIo)` returns a `Box<dyn ChatSession>`. `ChatLaunch` holds the store dir and the system prompt. `TurnIo` holds what a turn needs to show output: the sink, the output gate, `show_tools` and the `terminated` check.
+- `ChatSession` has `turn`, `ping`, `is_alive` and `discard`. The turn loop, the memory tree, nap, the queue and the status bar use only this seam.
+- `ClaudeSlot` builds the `claude -p` command and keeps the system prompt in a private file.
+- `AgySlot` (`ralph_server/src/chat/agy.rs`) runs `agy acp` through the long-lived `AcpLive` client. It holds the working dir, model, effort, MCP servers, tool policy and the inlined CLAUDE.md text.
+
+`[chat] harness = "claude"` (default) or `"agy"` picks the slot. Any other value is a config error. To swap: change the key, set `[chat.agy] model` for agy, and restart chat. The memory store carries over. No harness session is resumed: the new slot starts a fresh session from the memory view. See [`[chat]`](../configuration.md#chat---persistent-chat) for the keys.
+
+#### Agy parity
+
+| Feature | claude | agy |
+|---------|--------|-----|
+| chat-mcp tools | yes | yes; tool names use the `mcp_<server>_<tool>` form |
+| Imported MCP servers (`[chat] mcp_servers`) | yes | stdio servers only (an entry with `command`) |
+| Tool permission asks | yes | yes; ACP asks go to the same prompt, and a denied or late ask answers deny |
+| Cancel | yes | session cancel, then a kill after a 3 s grace |
+| Mid-turn queue | yes | yes; the queue editor is shared |
+| CLAUDE.md | claude loads it | inlined into the opening prompt, see below |
+| Skills | yes | plugin not loaded; slash expansion still works |
+| User settings (`[chat] user_settings`) | yes | not read |
+| Subagents (`--agents`) | yes | no |
+| Attachments dir | yes | no |
+| ctx readout | from the usage of the last assistant message | from the ACP `usage_update` `used` |
+| Cost | yes | no; `cost_usd` stays empty |
+| Keepalive ping | yes | no; `ping` is refused and `keepalive_action` skips |
+| Model alias in the status bar | yes | the model from `[chat.agy] model` or `--model` |
+| Retry on outage or quota | yes | outage only, see below |
+
+- CLAUDE.md: the opening prompt gets the system prompt, then the text of each CLAUDE.md. The user file counts only with `[chat] user_claude_md`. The project files run from the git root down to the working dir, and `[chat] project_claude_md = false` leaves them out. An `@path` import must be the whole line, with no spaces. `~/` and absolute paths work. Import depth is 5. A file already on the import path is skipped (cycle guard). Lines inside a fenced code block are never imports. Only `CLAUDE.md` files are read: `CLAUDE.local.md` and `.claude/CLAUDE.md` are not.
+- ctx: `used` from `usage_update` is mapped to the usage of an assistant event. The window is the `[chat] reset_tokens` limit, not the window agy reports. `size` is not used.
+- Start notice: claude-only settings that are set on agy are listed in one start warning (`chat on agy ignores ...`): `[chat] skills`, `[chat] user_settings`, `[claude] config_dir`, subagents and attachments. `[chat.claude] model` is ignored too, with no warning.
+- Notices: agy puts warnings in the reply text, as a line that starts with `⚠`. A quota notice fails the turn with `agy quota reached; resets in <time>` and is not retried. An `API error` notice fails the turn as an outage, and the shared retry runs. An auth or unknown notice fails the turn with no retry.
+- Limit: agy cost is not measured, so `ralph usage` rows for agy chat have no cost.
 
 ## Out of scope (v1)
 
