@@ -30,6 +30,7 @@ mod permissions;
 #[cfg(test)]
 mod recent_history_tests;
 mod redact;
+mod redact_shapes;
 #[cfg(test)]
 mod reset_limits_tests;
 #[cfg(test)]

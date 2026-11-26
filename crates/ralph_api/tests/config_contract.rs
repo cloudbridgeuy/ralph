@@ -89,6 +89,34 @@ fn config_dotted_sensitive_price_key_is_absent_from_the_http_body() {
 }
 
 #[test]
+fn config_windows_and_variable_path_keys_are_absent_from_the_http_body() {
+    for (key, leaks) in [
+        (r"C:\\Users\\alice\\acme", ["alice", "acme", "Users"]),
+        (r"\\\\host\\share", ["host", "share", "host"]),
+        ("D:/x", ["D:", "/x", "D:"]),
+        ("%USERPROFILE%", ["USERPROFILE", "%", "USERPROFILE"]),
+    ] {
+        let server = TestServer::start_with_store(|dir| {
+            write_config(dir, &format!("[wire.prices.\"{key}\"]\ninput = 1\n"))
+        });
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        for leak in leaks {
+            assert!(!reply.body.contains(leak), "{key}: {}", reply.body);
+        }
+        let masked = json_of(&reply)["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["section"] == "wire" && row["key"] == "[redacted-1]")
+            .cloned()
+            .expect(&reply.body);
+        assert_eq!(masked["redacted"], true, "{}", reply.body);
+        assert_eq!(masked["value"], "[redacted]", "{}", reply.body);
+    }
+}
+
+#[test]
 fn config_invalid_is_422_without_paths() {
     let server = TestServer::start_with_store(|dir| write_config(dir, "[chat\nwrap_width = 1\n"));
     let reply = get(&server);

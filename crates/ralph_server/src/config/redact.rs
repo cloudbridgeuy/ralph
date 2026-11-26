@@ -1,3 +1,4 @@
+use super::redact_shapes::text_has_path_shape;
 use serde_json::Value;
 
 pub const REDACTED: &str = "[redacted]";
@@ -112,7 +113,7 @@ pub fn listing(key: &str) -> Listing {
 }
 
 fn text_is_sensitive(text: &str) -> bool {
-    text.contains(['/', '~']) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
+    text_has_path_shape(text) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
 fn key_is_sensitive(key: &str) -> bool {
@@ -329,6 +330,37 @@ mod tests {
     fn an_object_key_inside_an_array_is_sensitive() {
         assert!(redacts("web.font", &json!([{"/Users/x": 1}]), false));
         assert!(redacts("web.font", &json!([{"a": {"~/y": 1}}]), false));
+    }
+
+    #[test]
+    fn windows_and_variable_paths_are_sensitive_in_keys_and_values() {
+        for text in [
+            r"C:\Users\alice\acme",
+            r"\\host\share",
+            "D:/x",
+            "%USERPROFILE%",
+            "$HOME",
+        ] {
+            assert!(redacts("theme.name", &json!(text), false), "{text}");
+            assert!(
+                redacts(&format!("wire.prices.{text}.input"), &json!(1), false),
+                "{text}"
+            );
+            assert_eq!(
+                mask_key(&format!("wire.prices.{text}.input")),
+                "wire.[redacted]",
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn colon_and_percent_without_a_path_shape_stay_visible() {
+        assert!(!redacts("wire.prices.x:1.input", &json!(1), false));
+        assert!(!redacts("theme.name", &json!("x:1"), false));
+        assert!(!redacts("theme.name", &json!("C:foo"), false));
+        assert!(!redacts("theme.name", &json!("tokyo-night"), false));
+        assert!(!redacts("chat.wrap_width", &json!(96), false));
     }
 
     #[test]

@@ -300,4 +300,31 @@ mod tests {
         assert_eq!(masked["redacted"], true, "{raw}");
         assert_eq!(masked["value"], "[redacted]", "{raw}");
     }
+
+    #[test]
+    fn windows_and_variable_path_keys_never_reach_the_body() {
+        for (key, leaks) in [
+            (r"C:\\Users\\alice\\acme", ["alice", "acme", "Users"]),
+            (r"\\\\host\\share", ["host", "share", "host"]),
+            ("D:/x", ["D:", "/x", "D:"]),
+            ("%USERPROFILE%", ["USERPROFILE", "%", "USERPROFILE"]),
+        ] {
+            let (g, s) = setup(None, Some(&format!("[wire.prices.\"{key}\"]\ninput = 1\n")));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            for leak in leaks {
+                assert!(!raw.contains(leak), "{key}: {raw}");
+            }
+            let masked = row(&body(&response), "wire", "[redacted-1]").clone();
+            assert_eq!(masked["redacted"], true, "{raw}");
+            assert_eq!(masked["value"], "[redacted]", "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_colon_price_key_stays_visible() {
+        let (g, s) = setup(None, Some("[wire.prices.\"x:1\"]\ninput = 1\n"));
+        let value = body(&respond(&g, &s, no_env));
+        assert_eq!(row(&value, "wire", "prices.x:1.input")["redacted"], false);
+    }
 }
