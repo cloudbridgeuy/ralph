@@ -2,7 +2,8 @@ use super::permissions::{respond_cancelled, respond_selected, RawPermissionReque
 use super::*;
 use agent_client_protocol::schema::v1::PromptResponse;
 use agent_client_protocol::JsonRpcNotification;
-use ralph_core::worker::{refusal, AgyUsage};
+use ralph_core::stream::{ContentBlock, StreamEvent};
+use ralph_core::worker::{agy_stream_events, refusal, AgyEvent, AgyUsage};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,20 +26,16 @@ pub(super) struct Collected {
 }
 
 pub(super) fn fold(collected: &mut Collected, update: &Value) {
-    match update["sessionUpdate"].as_str() {
-        Some("agent_message_chunk") => {
-            collected
-                .text
-                .push_str(update["content"]["text"].as_str().unwrap_or_default());
+    for event in agy_stream_events(&AgyEvent::Update(update)) {
+        let StreamEvent::Assistant(assistant) = event else {
+            continue;
+        };
+        for block in assistant.message.content {
+            match block {
+                ContentBlock::Text { text } => collected.text.push_str(&text),
+                ContentBlock::ToolUse { name, .. } => collected.tool_calls.push(name),
+            }
         }
-        Some("tool_call") => collected.tool_calls.push(
-            ["name", "title", "kind"]
-                .iter()
-                .find_map(|key| update[*key].as_str())
-                .unwrap_or("tool")
-                .to_string(),
-        ),
-        _ => {}
     }
 }
 

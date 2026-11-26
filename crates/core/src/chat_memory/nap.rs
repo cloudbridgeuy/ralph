@@ -1,6 +1,7 @@
 use super::tree::{entry_line, node_line};
 use super::{Entry, Node, Tree, SUMMARY_BYTES};
 use crate::chunk::{is_fence_close, parse_fence_open};
+use crate::worker::{agy_notice, AgyNotice};
 
 const META_OPENERS: [&str; 14] = [
     "i'm ",
@@ -191,6 +192,49 @@ pub fn nap_summary(exit_code: i32, response: Option<&str>) -> Result<String, Str
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .ok_or_else(|| "memory curator returned an empty summary".into())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgyNapError {
+    Notice(AgyNotice),
+    ToolCall(String),
+    Summary(String),
+}
+
+impl std::fmt::Display for AgyNapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Notice(AgyNotice::Quota {
+                reset_secs: Some(secs),
+            }) => write!(
+                f,
+                "agy quota reached; resets in {}h{}m{}s",
+                secs / 3600,
+                secs % 3600 / 60,
+                secs % 60
+            ),
+            Self::Notice(AgyNotice::Quota { reset_secs: None }) => {
+                write!(f, "agy quota reached")
+            }
+            Self::Notice(AgyNotice::ApiError { .. }) => write!(f, "agy API error"),
+            Self::Notice(AgyNotice::Safety) => {
+                write!(f, "agy blocked the reply with its content safety filters")
+            }
+            Self::Notice(AgyNotice::Other) => write!(f, "agy replied with a warning notice"),
+            Self::ToolCall(name) => write!(f, "agy called tool {name}; the nap allows no tools"),
+            Self::Summary(message) => f.write_str(message),
+        }
+    }
+}
+
+pub fn agy_nap_reply(text: &str, tool_calls: &[String]) -> Result<String, AgyNapError> {
+    if let Some(notice) = agy_notice(text) {
+        return Err(AgyNapError::Notice(notice));
+    }
+    if let Some(name) = tool_calls.first() {
+        return Err(AgyNapError::ToolCall(name.clone()));
+    }
+    nap_summary(0, Some(text)).map_err(AgyNapError::Summary)
 }
 
 #[cfg(test)]
@@ -514,5 +558,36 @@ mod tests {
         assert_eq!(pending(&entries, &store), [n(0, 1), n(1, 2), n(0, 2)]);
         store.insert(n(0, 1), "a".into());
         assert_eq!(pending(&entries, &store), [n(1, 2), n(0, 2)]);
+    }
+
+    #[test]
+    fn nap_summary_rejects_agy_quota_notice() {
+        let text = "\n⚠ Individual quota reached. Resets in 3h0m45s.\n";
+        let error = agy_nap_reply(text, &[]).unwrap_err();
+        assert_eq!(
+            error,
+            AgyNapError::Notice(AgyNotice::Quota {
+                reset_secs: Some(10845)
+            })
+        );
+        assert!(error.to_string().contains("3h0m45s"));
+    }
+
+    #[test]
+    fn agy_nap_with_tool_call_fails() {
+        let error = agy_nap_reply("A summary", &["run_command".to_string()]).unwrap_err();
+        assert_eq!(error, AgyNapError::ToolCall("run_command".into()));
+    }
+
+    #[test]
+    fn agy_nap_reply_unwraps_a_plain_summary() {
+        assert_eq!(
+            agy_nap_reply("\n```markdown\nA summary\n```\n", &[]),
+            Ok("A summary".to_string())
+        );
+        assert!(matches!(
+            agy_nap_reply("  ", &[]),
+            Err(AgyNapError::Summary(_))
+        ));
     }
 }
