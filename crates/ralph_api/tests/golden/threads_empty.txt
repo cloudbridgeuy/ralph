@@ -1,0 +1,56 @@
+{
+  "store": "chat",
+  "head": {
+    "messages": 0
+  },
+  "threads": [],
+  "graph": [
+    {
+      "kind": "head",
+      "name": null,
+      "label_start": 3,
+      "cells": [
+        {
+          "ch": "●",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "#",
+          "tone": "plain"
+        },
+        {
+          "ch": "0",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "m",
+          "tone": "plain"
+        },
+        {
+          "ch": "a",
+          "tone": "plain"
+        },
+        {
+          "ch": "i",
+          "tone": "plain"
+        },
+        {
+          "ch": "n",
+          "tone": "plain"
+        }
+      ]
+    }
+  ]
+}

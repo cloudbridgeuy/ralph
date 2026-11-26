@@ -1,0 +1,811 @@
+{
+  "store": "chat",
+  "head": {
+    "messages": 4
+  },
+  "threads": [
+    {
+      "name": "lint-sweep",
+      "state": "open",
+      "age": null,
+      "base": 2,
+      "created": "2026-01-02T00:00:00Z",
+      "active": "1h ago",
+      "messages": 2,
+      "workers": 1,
+      "unread": 3
+    },
+    {
+      "name": "docs-pass",
+      "state": "parked",
+      "age": "4d ago",
+      "base": 1,
+      "created": "2026-01-01T00:00:00Z",
+      "active": null,
+      "messages": 2,
+      "workers": 0,
+      "unread": 0
+    },
+    {
+      "name": "cache-fix",
+      "state": "merged",
+      "age": "2d ago",
+      "base": 3,
+      "created": "2026-01-04T00:00:00Z",
+      "active": null,
+      "messages": 2,
+      "workers": 0,
+      "unread": 0
+    }
+  ],
+  "graph": [
+    {
+      "kind": "dropped",
+      "name": "old-idea",
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "✕",
+          "tone": "red"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "o",
+          "tone": "plain"
+        },
+        {
+          "ch": "l",
+          "tone": "plain"
+        },
+        {
+          "ch": "d",
+          "tone": "plain"
+        },
+        {
+          "ch": "-",
+          "tone": "plain"
+        },
+        {
+          "ch": "i",
+          "tone": "plain"
+        },
+        {
+          "ch": "d",
+          "tone": "plain"
+        },
+        {
+          "ch": "e",
+          "tone": "plain"
+        },
+        {
+          "ch": "a",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "d",
+          "tone": "red"
+        },
+        {
+          "ch": "r",
+          "tone": "red"
+        },
+        {
+          "ch": "o",
+          "tone": "red"
+        },
+        {
+          "ch": "p",
+          "tone": "red"
+        },
+        {
+          "ch": "p",
+          "tone": "red"
+        },
+        {
+          "ch": "e",
+          "tone": "red"
+        },
+        {
+          "ch": "d",
+          "tone": "red"
+        }
+      ]
+    },
+    {
+      "kind": "thread",
+      "name": "lint-sweep",
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "○",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "│",
+          "tone": "red"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "l",
+          "tone": "plain"
+        },
+        {
+          "ch": "i",
+          "tone": "plain"
+        },
+        {
+          "ch": "n",
+          "tone": "plain"
+        },
+        {
+          "ch": "t",
+          "tone": "plain"
+        },
+        {
+          "ch": "-",
+          "tone": "plain"
+        },
+        {
+          "ch": "s",
+          "tone": "plain"
+        },
+        {
+          "ch": "w",
+          "tone": "plain"
+        },
+        {
+          "ch": "e",
+          "tone": "plain"
+        },
+        {
+          "ch": "e",
+          "tone": "plain"
+        },
+        {
+          "ch": "p",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "o",
+          "tone": "plain"
+        },
+        {
+          "ch": "p",
+          "tone": "plain"
+        },
+        {
+          "ch": "e",
+          "tone": "plain"
+        },
+        {
+          "ch": "n",
+          "tone": "plain"
+        }
+      ]
+    },
+    {
+      "kind": "thread",
+      "name": "docs-pass",
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "○",
+          "tone": "yellow"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "│",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "│",
+          "tone": "red"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "d",
+          "tone": "plain"
+        },
+        {
+          "ch": "o",
+          "tone": "plain"
+        },
+        {
+          "ch": "c",
+          "tone": "plain"
+        },
+        {
+          "ch": "s",
+          "tone": "plain"
+        },
+        {
+          "ch": "-",
+          "tone": "plain"
+        },
+        {
+          "ch": "p",
+          "tone": "plain"
+        },
+        {
+          "ch": "a",
+          "tone": "plain"
+        },
+        {
+          "ch": "s",
+          "tone": "plain"
+        },
+        {
+          "ch": "s",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "p",
+          "tone": "yellow"
+        },
+        {
+          "ch": "a",
+          "tone": "yellow"
+        },
+        {
+          "ch": "r",
+          "tone": "yellow"
+        },
+        {
+          "ch": "k",
+          "tone": "yellow"
+        },
+        {
+          "ch": "e",
+          "tone": "yellow"
+        },
+        {
+          "ch": "d",
+          "tone": "yellow"
+        }
+      ]
+    },
+    {
+      "kind": "head",
+      "name": null,
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": "●",
+          "tone": "plain"
+        },
+        {
+          "ch": "◄",
+          "tone": "green"
+        },
+        {
+          "ch": "┼",
+          "tone": "yellow"
+        },
+        {
+          "ch": "─",
+          "tone": "green"
+        },
+        {
+          "ch": "┼",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "green"
+        },
+        {
+          "ch": "┼",
+          "tone": "red"
+        },
+        {
+          "ch": "─",
+          "tone": "green"
+        },
+        {
+          "ch": "╮",
+          "tone": "green"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "#",
+          "tone": "plain"
+        },
+        {
+          "ch": "4",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "m",
+          "tone": "plain"
+        },
+        {
+          "ch": "a",
+          "tone": "plain"
+        },
+        {
+          "ch": "i",
+          "tone": "plain"
+        },
+        {
+          "ch": "n",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "c",
+          "tone": "plain"
+        },
+        {
+          "ch": "a",
+          "tone": "plain"
+        },
+        {
+          "ch": "c",
+          "tone": "plain"
+        },
+        {
+          "ch": "h",
+          "tone": "plain"
+        },
+        {
+          "ch": "e",
+          "tone": "plain"
+        },
+        {
+          "ch": "-",
+          "tone": "plain"
+        },
+        {
+          "ch": "f",
+          "tone": "plain"
+        },
+        {
+          "ch": "i",
+          "tone": "plain"
+        },
+        {
+          "ch": "x",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "m",
+          "tone": "green"
+        },
+        {
+          "ch": "e",
+          "tone": "green"
+        },
+        {
+          "ch": "r",
+          "tone": "green"
+        },
+        {
+          "ch": "g",
+          "tone": "green"
+        },
+        {
+          "ch": "e",
+          "tone": "green"
+        },
+        {
+          "ch": "d",
+          "tone": "green"
+        },
+        {
+          "ch": " ",
+          "tone": "green"
+        },
+        {
+          "ch": "-",
+          "tone": "green"
+        },
+        {
+          "ch": ">",
+          "tone": "green"
+        },
+        {
+          "ch": " ",
+          "tone": "green"
+        },
+        {
+          "ch": "#",
+          "tone": "green"
+        },
+        {
+          "ch": "4",
+          "tone": "green"
+        }
+      ]
+    },
+    {
+      "kind": "head",
+      "name": null,
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": "●",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "green"
+        },
+        {
+          "ch": "┼",
+          "tone": "yellow"
+        },
+        {
+          "ch": "─",
+          "tone": "green"
+        },
+        {
+          "ch": "┼",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "green"
+        },
+        {
+          "ch": "┼",
+          "tone": "red"
+        },
+        {
+          "ch": "─",
+          "tone": "green"
+        },
+        {
+          "ch": "╯",
+          "tone": "green"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "#",
+          "tone": "plain"
+        },
+        {
+          "ch": "3",
+          "tone": "plain"
+        }
+      ]
+    },
+    {
+      "kind": "head",
+      "name": null,
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": "●",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "red"
+        },
+        {
+          "ch": "┼",
+          "tone": "yellow"
+        },
+        {
+          "ch": "─",
+          "tone": "red"
+        },
+        {
+          "ch": "┴",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "red"
+        },
+        {
+          "ch": "╯",
+          "tone": "red"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "#",
+          "tone": "plain"
+        },
+        {
+          "ch": "2",
+          "tone": "plain"
+        }
+      ]
+    },
+    {
+      "kind": "head",
+      "name": null,
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": "●",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "yellow"
+        },
+        {
+          "ch": "╯",
+          "tone": "yellow"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "#",
+          "tone": "plain"
+        },
+        {
+          "ch": "1",
+          "tone": "plain"
+        }
+      ]
+    },
+    {
+      "kind": "head",
+      "name": null,
+      "label_start": 11,
+      "cells": [
+        {
+          "ch": "●",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": "#",
+          "tone": "plain"
+        },
+        {
+          "ch": "0",
+          "tone": "plain"
+        }
+      ]
+    }
+  ]
+}

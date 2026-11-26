@@ -11,6 +11,8 @@ mod roles;
 mod route;
 mod server;
 mod tailnet;
+#[allow(dead_code, reason = "the threads route uses it in the next commit")]
+mod threads;
 mod token;
 mod tokens;
 
