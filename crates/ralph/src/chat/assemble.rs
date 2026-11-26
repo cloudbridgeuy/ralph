@@ -46,7 +46,7 @@ pub(crate) fn load_settings(
     let cwd = std::env::current_dir()?;
     let global_config = absolute_from(&config_path(), &cwd);
     let store_config = thread::store_config_path(store_dir);
-    let loaded = load_for_chat(&global_config, &store_config);
+    let loaded = load_for_chat(&global_config, &store_config)?;
     let permission_mode = loaded.config.chat_permission_mode(
         permission_mode,
         std::env::var(ralph_server::invoke::CHAT_PERMISSION_MODE_ENV)

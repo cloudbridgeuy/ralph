@@ -501,39 +501,10 @@ fn test_config_path_contains_ralph() {
     assert!(path.to_string_lossy().ends_with("config.toml"));
 }
 
-#[test]
-fn test_default_permission_modes() {
-    let config = AppConfig::new();
-    assert!(config.chat.permission_mode.is_none());
-    assert!(config.ask.permission_mode.is_none());
-}
-
-#[test]
-fn test_load_chat_and_ask_permission_modes_separately() {
-    let temp_dir = TempDir::new().unwrap();
-    let path = temp_dir.path().join("config.toml");
-
-    fs::write(
-        &path,
-        r#"
-        [chat]
-        permission_mode = "plan"
-
-        [ask]
-        permission_mode = "acceptEdits"
-        "#,
-    )
-    .unwrap();
-
-    let config = AppConfig::load_layers(&path, None).unwrap();
-    assert_eq!(config.chat.permission_mode, Some("plan".to_string()));
-    assert_eq!(config.ask.permission_mode, Some("acceptEdits".to_string()));
-}
-
 fn configured(chat: Option<&str>, ask: Option<&str>) -> AppConfig {
     let mut config = AppConfig::new();
-    config.chat.permission_mode = chat.map(str::to_string);
-    config.ask.permission_mode = ask.map(str::to_string);
+    config.chat.claude.permission_mode = chat.map(str::to_string);
+    config.ask.claude.permission_mode = ask.map(str::to_string);
     config
 }
 
@@ -580,11 +551,11 @@ fn an_unknown_permission_mode_is_refused_and_names_its_source() {
     for (result, origin) in [
         (
             config.chat_permission_mode(None, None),
-            "chat.permission_mode",
+            "chat.claude.permission_mode",
         ),
         (
             config.ask_permission_mode(None, None),
-            "ask.permission_mode",
+            "ask.claude.permission_mode",
         ),
         (
             unset.chat_permission_mode(Some("yolo"), None),
@@ -602,6 +573,57 @@ fn an_unknown_permission_mode_is_refused_and_names_its_source() {
         let message = result.unwrap_err().to_string();
         assert!(message.starts_with(&format!("{origin}: ")), "{message}");
         assert!(message.contains("bypassPermissions"), "{message}");
+    }
+}
+
+#[test]
+fn a_removed_permission_mode_key_is_refused_and_names_the_claude_table() {
+    let dir = TempDir::new().unwrap();
+    let empty = write_layer(&dir, "empty.toml", "");
+    for section in ["chat", "ask"] {
+        let content = format!("[{section}]\npermission_mode = \"plan\"\n");
+        let old = write_layer(&dir, "old.toml", &content);
+        for (global, store) in [(&old, None), (&empty, Some(old.as_path()))] {
+            let (result, notices) = AppConfig::load_from(global, store);
+            let message = result.unwrap_err().to_string();
+            assert!(
+                message.contains(&format!("[{section}.claude]")),
+                "{message}"
+            );
+            assert!(message.contains("old.toml"), "{message}");
+            assert!(notices.is_empty());
+        }
+    }
+}
+
+#[test]
+fn the_claude_table_wins_over_the_neutral_permissions() {
+    for (text, chat, ask) in [
+        ("", ClaudeMode::Auto, ClaudeMode::BypassPermissions),
+        (
+            "[chat]\npermissions = \"ask\"\n[ask]\npermissions = \"ask\"\n",
+            ClaudeMode::Auto,
+            ClaudeMode::DontAsk,
+        ),
+        (
+            "[chat]\npermissions = \"yolo\"\n[ask]\npermissions = \"yolo\"\n",
+            ClaudeMode::Auto,
+            ClaudeMode::BypassPermissions,
+        ),
+        (
+            "[ask]\npermissions = 1\n",
+            ClaudeMode::Auto,
+            ClaudeMode::DontAsk,
+        ),
+        (
+            "[chat.claude]\npermission_mode = \"plan\"\n[ask]\npermissions = \"ask\"\n[ask.claude]\npermission_mode = \"manual\"\n",
+            ClaudeMode::Plan,
+            ClaudeMode::Manual,
+        ),
+    ] {
+        let config: AppConfig = toml::from_str(text).unwrap();
+        assert_eq!(config.chat_permission_mode(None, None).unwrap(), chat, "{text}");
+        assert_eq!(config.ask_permission_mode(None, None).unwrap(), ask, "{text}");
     }
 }
 
@@ -710,16 +732,18 @@ fn valid_store_has_no_notice() {
 
 #[test]
 fn store_security_key_yields_a_notice() {
-    let (_dir, global, store) =
-        layer_files("", "[chat]\npermission_mode = \"bypassPermissions\"\n");
+    let (_dir, global, store) = layer_files(
+        "",
+        "[chat.claude]\npermission_mode = \"bypassPermissions\"\n",
+    );
     let (result, notices) = AppConfig::load_from(&global, Some(&store));
     assert!(result.is_ok());
     assert_eq!(notices.len(), 1);
-    assert_eq!(notices[0].key, "security:chat.permission_mode");
+    assert_eq!(notices[0].key, "security:chat.claude.permission_mode");
     assert_eq!(
         notices[0].message,
         format!(
-            "store config {} sets chat.permission_mode; check it before you trust this store",
+            "store config {} sets chat.claude.permission_mode; check it before you trust this store",
             store.display()
         )
     );

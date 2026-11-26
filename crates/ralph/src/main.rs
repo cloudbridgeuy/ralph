@@ -289,6 +289,9 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
     }
     let app_config = ralph_server::config::AppConfig::load()?;
     warn::set_warning_color(theme_config.ui().warning);
+    if let Some(warning) = app_config.ask.permissions_setting().1 {
+        warn(warning);
+    }
     Ok(InvocationConfig {
         prompt: resolve_ask_prompt(args.prompt.as_deref())?,
         timeout_secs: args.timeout,

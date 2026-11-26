@@ -3,13 +3,19 @@ use crate::warn::warn;
 use ralph_core::chat_thread::config_root;
 use ralph_core::worker::{answer_message, merged_grants, parse_grants, Choice, Classes, Grants};
 use ralph_core::worker::{ClaudeMode, PermissionMode, UnknownClaudeMode};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 pub const GRANTS_FILE: &str = "mcptools-grants.json";
 pub const CHAT_DEFAULT_PERMISSION_MODE: ClaudeMode = ClaudeMode::Auto;
-pub const ASK_DEFAULT_PERMISSION_MODE: ClaudeMode = ClaudeMode::BypassPermissions;
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaudeModeSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("{origin}: {error}")]
