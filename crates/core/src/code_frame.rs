@@ -1,15 +1,76 @@
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::ansi::{DIM, RESET};
+use crate::ansi::{truecolor_background, truecolor_foreground, CLEAR_EOL, DIM, RESET};
 use crate::chat_status::truncate_to_width;
 
 const RULE: &str = "─";
 const LEAD: &str = "── ";
 const MARGIN: &str = "  ";
+const TAB: &str = "    ";
+const CSI: &str = "\x1b[";
 const KITTY_OPEN: &str = "\x1b_G";
+const FILL_STEP: Percent = Percent(8);
+const RULE_STEP: Percent = Percent(40);
 
 #[derive(Debug, Clone, Copy)]
 pub struct Columns(pub u16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rgb {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ThemeTones {
+    pub background: Option<Rgb>,
+    pub foreground: Option<Rgb>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Backdrop {
+    Painted,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
+    Shaded { fill: Rgb, rule: Rgb },
+    Open,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Percent(pub u8);
+
+#[derive(Debug, Clone, Copy)]
+enum Tail {
+    Erase,
+    Filled,
+}
+
+pub fn mix(base: Rgb, toward: Rgb, step: Percent) -> Rgb {
+    let step = u32::from(step.0.min(100));
+    let channel = |from: u8, to: u8| {
+        let mixed = (u32::from(from) * (100 - step) + u32::from(to) * step + 50) / 100;
+        u8::try_from(mixed).unwrap_or(u8::MAX)
+    };
+    Rgb {
+        r: channel(base.r, toward.r),
+        g: channel(base.g, toward.g),
+        b: channel(base.b, toward.b),
+    }
+}
+
+pub fn surface(tones: ThemeTones, backdrop: Backdrop) -> Surface {
+    match (backdrop, tones.background, tones.foreground) {
+        (Backdrop::Painted, Some(background), Some(foreground)) => Surface::Shaded {
+            fill: mix(background, foreground, FILL_STEP),
+            rule: mix(background, foreground, RULE_STEP),
+        },
+        _ => Surface::Open,
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Label<'a> {
@@ -38,28 +99,125 @@ fn heading(name: &str, cols: usize) -> String {
     }
 }
 
-pub fn frame_block(label: &Label<'_>, body: &str, cols: Columns) -> String {
+pub fn frame_block(label: &Label<'_>, body: &str, surface: Surface, cols: Columns) -> String {
     let open = rule_line(label, cols);
-    let close = rule_line(&Label::Bare, cols);
-    let rows = body_rows(body);
-    format!("{DIM}{open}{RESET}\n{rows}{DIM}{close}{RESET}\n")
+    match surface {
+        Surface::Open => {
+            let rows = body_rows(body, open_row);
+            let close = rule_line(&Label::Bare, cols);
+            format!("{DIM}{open}{RESET}\n{rows}{DIM}{close}{RESET}\n")
+        }
+        Surface::Shaded { fill, rule } => {
+            let rows = body_rows(body, |content| shaded_row(content, fill, cols));
+            let pad = shaded_row("", fill, cols);
+            let rule = truecolor_foreground(rule.r, rule.g, rule.b);
+            format!("{rule}{open}{RESET}\n{pad}{rows}{pad}")
+        }
+    }
 }
 
-fn body_rows(body: &str) -> String {
+fn body_rows(body: &str, row: impl Fn(&str) -> String) -> String {
     body.split('\n')
         .map(|line| {
             if line.contains(KITTY_OPEN) {
                 format!("{line}\n")
             } else {
-                format!("{MARGIN}{line}\n")
+                row(&line.replace('\t', TAB))
             }
         })
         .collect()
 }
 
+fn open_row(content: &str) -> String {
+    format!("{MARGIN}{content}\n")
+}
+
+fn shaded_row(content: &str, fill: Rgb, cols: Columns) -> String {
+    let background = truecolor_background(fill.r, fill.g, fill.b);
+    let row = format!("{MARGIN}{content}");
+    let tail = match row_tail(&row, cols) {
+        Tail::Erase => CLEAR_EOL,
+        Tail::Filled => "",
+    };
+    let row = reassert_fill(&row, &background);
+    format!("{background}{row}{tail}{RESET}\n")
+}
+
+fn csi_pieces(row: &str) -> impl Iterator<Item = (&str, &str)> {
+    row.split(CSI).enumerate().map(|(index, piece)| {
+        let end = if index == 0 {
+            0
+        } else {
+            piece
+                .find(|c| ('@'..='~').contains(&c))
+                .map_or(piece.len(), |at| at + 1)
+        };
+        piece.split_at(end)
+    })
+}
+
+fn row_tail(row: &str, cols: Columns) -> Tail {
+    let cols = usize::from(cols.0);
+    let end = csi_pieces(row)
+        .flat_map(|(_, text)| text.chars())
+        .filter_map(UnicodeWidthChar::width)
+        .fold(0, |column, width| {
+            if column + width > cols {
+                width
+            } else {
+                column + width
+            }
+        });
+    if cols > 0 && end == cols {
+        Tail::Filled
+    } else {
+        Tail::Erase
+    }
+}
+
+fn reassert_fill(row: &str, background: &str) -> String {
+    csi_pieces(row)
+        .enumerate()
+        .map(|(index, (sequence, text))| {
+            let opener = if index == 0 { "" } else { CSI };
+            let again = match sequence.strip_suffix('m') {
+                Some(codes) if drops_background(codes) => background,
+                _ => "",
+            };
+            format!("{opener}{sequence}{again}{text}")
+        })
+        .collect()
+}
+
+fn drops_background(codes: &str) -> bool {
+    let mut codes = codes.split(';').map(|code| code.parse().unwrap_or(0_u16));
+    let mut dropped = false;
+    while let Some(code) = codes.next() {
+        match code {
+            0 | 49 => dropped = true,
+            40..=47 | 100..=107 => dropped = false,
+            38 | 48 => {
+                match codes.next() {
+                    Some(5) => {
+                        codes.next();
+                    }
+                    Some(2) => {
+                        codes.nth(2);
+                    }
+                    _ => {}
+                }
+                dropped &= code != 48;
+            }
+            _ => {}
+        }
+    }
+    dropped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ansi::{truecolor_background, truecolor_foreground, CLEAR_EOL};
     use unicode_width::UnicodeWidthStr;
 
     const LONG: &str = "averyveryverylonglanguagename";
@@ -87,7 +245,7 @@ mod tests {
 
     #[test]
     fn frame_indents_code_between_rules() {
-        let out = frame_block(&Label::Language("sh"), "a\n\nb", Columns(8));
+        let out = frame_block(&Label::Language("sh"), "a\n\nb", Surface::Open, Columns(8));
         assert_eq!(
             out,
             "\x1b[2m── sh ──\x1b[0m\n  a\n  \n  b\n\x1b[2m────────\x1b[0m\n"
@@ -97,7 +255,168 @@ mod tests {
     #[test]
     fn apc_row_gets_no_margin() {
         let apc = "\x1b_Ga=T;QQ==\x1b\\";
-        let out = frame_block(&Label::Bare, &format!("{apc}\ntail"), Columns(4));
+        let body = format!("{apc}\ntail");
+        let out = frame_block(&Label::Bare, &body, Surface::Open, Columns(4));
         assert!(out.contains(&format!("\n{apc}\n  tail\n")), "{out:?}");
+    }
+
+    const DARK: ThemeTones = ThemeTones {
+        background: Some(Rgb {
+            r: 43,
+            g: 48,
+            b: 59,
+        }),
+        foreground: Some(Rgb {
+            r: 192,
+            g: 197,
+            b: 206,
+        }),
+    };
+    const FILL: Rgb = Rgb {
+        r: 55,
+        g: 60,
+        b: 71,
+    };
+    const SHADED: Surface = Surface::Shaded {
+        fill: FILL,
+        rule: Rgb {
+            r: 103,
+            g: 108,
+            b: 118,
+        },
+    };
+
+    fn fill() -> String {
+        truecolor_background(FILL.r, FILL.g, FILL.b)
+    }
+
+    fn shaded(body: &str, cols: u16) -> Vec<String> {
+        frame_block(&Label::Bare, body, SHADED, Columns(cols))
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn surface_dark_theme_lightens() {
+        assert_eq!(surface(DARK, Backdrop::Painted), SHADED);
+    }
+
+    #[test]
+    fn surface_light_theme_darkens() {
+        let tones = ThemeTones {
+            background: Some(Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            }),
+            foreground: Some(Rgb {
+                r: 55,
+                g: 55,
+                b: 55,
+            }),
+        };
+        let Surface::Shaded { fill, rule } = surface(tones, Backdrop::Painted) else {
+            panic!("light theme must be shaded");
+        };
+        assert_eq!(
+            fill,
+            Rgb {
+                r: 239,
+                g: 239,
+                b: 239
+            }
+        );
+        assert_eq!(
+            rule,
+            Rgb {
+                r: 175,
+                g: 175,
+                b: 175
+            }
+        );
+    }
+
+    #[test]
+    fn surface_disabled_or_missing_tone_is_open() {
+        assert_eq!(surface(DARK, Backdrop::Disabled), Surface::Open);
+        for tones in [
+            ThemeTones {
+                background: None,
+                ..DARK
+            },
+            ThemeTones {
+                foreground: None,
+                ..DARK
+            },
+        ] {
+            assert_eq!(surface(tones, Backdrop::Painted), Surface::Open);
+        }
+    }
+
+    #[test]
+    fn shaded_body_has_pad_rows_and_no_closing_rule() {
+        let rows = shaded("a", 10);
+        let pad = format!("{}  {CLEAR_EOL}{RESET}", fill());
+        assert_eq!(rows.len(), 4, "{rows:?}");
+        assert!(rows[0].contains(&"─".repeat(10)), "{rows:?}");
+        assert_eq!(rows[1], pad);
+        assert_eq!(rows[2], format!("{}  a{CLEAR_EOL}{RESET}", fill()));
+        assert_eq!(rows[3], pad);
+    }
+
+    #[test]
+    fn fill_survives_a_reset_in_code() {
+        let body = format!("a{RESET}b\x1b[mc\x1b[49md");
+        let row = &shaded(&body, 20)[2];
+        let fill = fill();
+        assert!(
+            row.contains(&format!("a{RESET}{fill}b\x1b[m{fill}c\x1b[49m{fill}d")),
+            "{row:?}"
+        );
+    }
+
+    #[test]
+    fn extended_colour_arguments_are_not_a_reset() {
+        let colour = truecolor_foreground(0, 0, 0);
+        let own = truecolor_background(0, 49, 0);
+        let body = format!("{colour}a{own}b");
+        let row = &shaded(&body, 20)[2];
+        assert!(row.contains(&format!("{colour}a{own}b")), "{row:?}");
+    }
+
+    #[test]
+    fn exact_width_row_skips_the_erase() {
+        for body in ["abcd", "abcdefghij", "abcd\x1b[0m"] {
+            let row = &shaded(body, 6)[2];
+            assert!(!row.contains(CLEAR_EOL), "{body:?} {row:?}");
+        }
+        for body in ["abc", "abcde", "abc日"] {
+            let row = &shaded(body, 6)[2];
+            assert!(row.contains(CLEAR_EOL), "{body:?} {row:?}");
+        }
+    }
+
+    #[test]
+    fn tabs_expand_before_the_fill() {
+        let row = &shaded("\tx\ty", 20)[2];
+        assert!(row.contains("      x    y"), "{row:?}");
+        let open = frame_block(&Label::Bare, "\tx", Surface::Open, Columns(8));
+        assert!(open.contains("\n      x\n"), "{open:?}");
+    }
+
+    #[test]
+    fn apc_row_passes_unshaded() {
+        let apc = "\x1b_Ga=T;QQ==\x1b\\";
+        assert_eq!(shaded(apc, 10)[2], apc);
+    }
+
+    #[test]
+    fn no_row_leaks_the_background() {
+        let rows = shaded("a\n\nb", 10);
+        assert!(!rows[0].contains(&fill()), "{rows:?}");
+        for row in &rows {
+            assert!(row.ends_with(RESET), "{row:?}");
+        }
     }
 }

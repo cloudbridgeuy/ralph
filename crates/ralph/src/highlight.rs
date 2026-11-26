@@ -34,7 +34,7 @@
 
 use std::io::IsTerminal;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Theme, ThemeSet};
+use syntect::highlighting::{Color, Theme, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
@@ -45,6 +45,7 @@ use crate::render::pill_style::PillStyle;
 use crate::theme_slots::ResolveColors;
 use crate::tool_theme::ToolColors;
 use crate::ui_theme::UiColors;
+use ralph_core::code_frame::{surface, Backdrop, Rgb, Surface, ThemeTones};
 use ralph_server::config::{RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV};
 
 /// Default theme name used when no theme is specified.
@@ -394,6 +395,26 @@ impl Highlighter {
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    pub fn surface(&self) -> Surface {
+        let tone = |color: Option<Color>| {
+            color.map(|color| Rgb {
+                r: color.r,
+                g: color.g,
+                b: color.b,
+            })
+        };
+        let tones = ThemeTones {
+            background: tone(self.theme.settings.background),
+            foreground: tone(self.theme.settings.foreground),
+        };
+        let backdrop = if self.use_background {
+            Backdrop::Painted
+        } else {
+            Backdrop::Disabled
+        };
+        surface(tones, backdrop)
     }
 
     pub fn highlight(&self, code: &str, language: Option<&str>) -> String {

@@ -19,7 +19,6 @@ mod test_colours {
 pub use test_colours::*;
 
 pub const CR: &str = "\r";
-pub const CLEAR_EOL: &str = "\x1b[K";
 
 fn color_code(color: termimad::crossterm::style::Color) -> String {
     use termimad::crossterm::style::Color;

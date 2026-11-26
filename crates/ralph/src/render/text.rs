@@ -733,7 +733,7 @@ changed in worker GUZ-628 during turn 6
     fn framed_body(frame: &str) -> String {
         let plain = strip_ansi(frame);
         let rows: Vec<&str> = plain.lines().collect();
-        rows[1..rows.len() - 1]
+        rows[2..rows.len() - 1]
             .iter()
             .map(|row| row.strip_prefix("  ").unwrap())
             .collect::<Vec<_>>()

@@ -5,6 +5,15 @@ pub const GREEN: &str = "\x1b[32m";
 pub const YELLOW: &str = "\x1b[33m";
 pub const CYAN: &str = "\x1b[36m";
 pub const RESET: &str = "\x1b[0m";
+pub const CLEAR_EOL: &str = "\x1b[K";
+
+pub fn truecolor_foreground(red: u8, green: u8, blue: u8) -> String {
+    format!("\x1b[38;2;{red};{green};{blue}m")
+}
+
+pub fn truecolor_background(red: u8, green: u8, blue: u8) -> String {
+    format!("\x1b[48;2;{red};{green};{blue}m")
+}
 
 #[cfg(test)]
 mod tests {
