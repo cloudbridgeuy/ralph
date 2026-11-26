@@ -334,7 +334,7 @@ Reports are sent from one place, the status watcher tick (every 500 ms, so a sta
 
 On exit the chat sends `state=clear` with no id: on quit, Ctrl-D, an error or a panic (a drop guard in `chat::run`), and when the terminal is lost (before `process::exit`). After the clear the watcher writes nothing more. A hard kill (SIGKILL) cannot clear the record.
 
-Reports are sent only to Rex: the pure `program_status::status_enabled` is true when `[chat] terminal_status` is on, stdout is a terminal, and `REX_SESSION` is set and not empty (it survives a tmux started inside Rex, where `TERM_PROGRAM` is `tmux`). The chat computes it once at start; the same value tells the inbox alert that Rex owns it. A tmux server started from Rex keeps `REX_SESSION`, so a client attached to it later from another terminal still gets reports and loses ralph's own alert at the prompt. `NO_COLOR` does not affect reports.
+Reports are sent only to Rex: the pure `program_status::status_enabled` is true when `[chat] terminal_status` is on, stdout is a terminal, and `REX_BLOCK` is set and not empty (it survives a tmux started inside Rex, where `TERM_PROGRAM` is `tmux`). The chat computes it once at start; the same value tells the inbox alert that Rex owns it. A tmux server started from Rex keeps `REX_BLOCK`, so a client attached to it later from another terminal still gets reports and loses ralph's own alert at the prompt. `NO_COLOR` does not affect reports.
 
 ## Terminal title
 

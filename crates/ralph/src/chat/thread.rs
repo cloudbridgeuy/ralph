@@ -16,6 +16,7 @@ use ralph_core::chat_thread::{
 use ralph_core::chat_thread_cmd::{
     merge_posted_message, parked_message, revived_message, view_posted_message, OpenOpts,
 };
+use ralph_core::program_status::REX_BLOCK_ENV;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report};
@@ -258,7 +259,7 @@ pub fn open_thread(store: &Path, opts: &OpenOpts) -> Result<String, String> {
         main.to_string_lossy(),
         cwd.to_string_lossy(),
     );
-    let block = std::env::var("REX_BLOCK").ok();
+    let block = std::env::var(REX_BLOCK_ENV).ok();
     let config_dir = std::env::var("RALPH_CONFIG_DIR").ok();
     let spawn = OpenSpawn {
         name,

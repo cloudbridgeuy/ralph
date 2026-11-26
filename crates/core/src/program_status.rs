@@ -2,8 +2,10 @@ use crate::chat_status::Status;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 
 pub const APP: &str = "ralph";
+pub const REX_BLOCK_ENV: &str = "REX_BLOCK";
 const MAX_SEQUENCE_BYTES: usize = 4096;
 const MAX_MSG_BYTES: usize = 2048;
 
@@ -65,8 +67,8 @@ pub enum Phase {
     Prompt,
 }
 
-pub fn status_enabled(config: bool, tty: bool, rex: bool) -> bool {
-    config && tty && rex
+pub fn status_enabled(config: bool, tty: bool, rex_block: Option<&OsStr>) -> bool {
+    config && tty && rex_block.is_some_and(|value| !value.is_empty())
 }
 
 fn unread_msg(unread: usize) -> String {
@@ -155,11 +157,13 @@ mod tests {
     }
 
     #[test]
-    fn status_needs_config_tty_and_rex() {
-        assert!(status_enabled(true, true, true));
-        assert!(!status_enabled(false, true, true));
-        assert!(!status_enabled(true, false, true));
-        assert!(!status_enabled(true, true, false));
+    fn status_needs_config_tty_and_non_empty_rex_block() {
+        let block = Some(OsStr::new("blk-1"));
+        assert!(status_enabled(true, true, block));
+        assert!(!status_enabled(false, true, block));
+        assert!(!status_enabled(true, false, block));
+        assert!(!status_enabled(true, true, None));
+        assert!(!status_enabled(true, true, Some(OsStr::new(""))));
     }
 
     #[test]
