@@ -1,23 +1,11 @@
+use super::live::{decide, Decision, PermissionPolicy};
 use super::permissions::{respond_cancelled, respond_selected, RawPermissionRequest};
 use super::*;
 use agent_client_protocol::schema::v1::PromptResponse;
 use agent_client_protocol::JsonRpcNotification;
 use ralph_core::stream::{ContentBlock, StreamEvent};
-use ralph_core::worker::{agy_stream_events, refusal, AgyEvent, AgyUsage};
+use ralph_core::worker::{agy_stream_events, AgyEvent, AgyUsage};
 use serde_json::Value;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PermissionPolicy {
-    RejectAll,
-}
-
-pub(super) fn decide(policy: PermissionPolicy, request: &Value) -> Option<String> {
-    match policy {
-        PermissionPolicy::RejectAll => refusal(&permission_content(request))
-            .option_id()
-            .map(str::to_string),
-    }
-}
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct Collected {
@@ -87,9 +75,9 @@ pub struct OneShotRequest<'a> {
 struct RawUpdate(Value);
 
 fn answer(request: &RawPermissionRequest, responder: Responder<RequestPermissionResponse>) {
-    match decide(PermissionPolicy::RejectAll, &request.0) {
-        Some(option_id) => respond_selected(responder, option_id),
-        None => respond_cancelled(responder),
+    match decide(&PermissionPolicy::RejectAll, &request.0) {
+        Some(Decision::Select(option_id)) => respond_selected(responder, option_id),
+        Some(Decision::Ask(_)) | None => respond_cancelled(responder),
     }
 }
 
@@ -209,15 +197,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn request(kinds: &[&str]) -> Value {
-        let options: Vec<Value> = kinds
-            .iter()
-            .enumerate()
-            .map(|(index, kind)| json!({"optionId": format!("o{index}"), "name": *kind, "kind": *kind}))
-            .collect();
-        json!({"sessionId": "s", "toolCall": {"toolCallId": "c", "name": "run_command"}, "options": options})
-    }
-
     #[test]
     fn a_receive_timeout_is_a_timed_out_error() {
         let timeout = Duration::from_secs(7);
@@ -233,21 +212,6 @@ mod tests {
             error,
             OneShotError::Failed("agy one-shot ended without a reply".to_string())
         );
-    }
-
-    #[test]
-    fn reject_all_picks_the_reject_once_option() {
-        let chosen = decide(
-            PermissionPolicy::RejectAll,
-            &request(&["allow_once", "reject_once", "allow_always"]),
-        );
-        assert_eq!(chosen.as_deref(), Some("o1"));
-    }
-
-    #[test]
-    fn reject_all_cancels_when_no_reject_option_is_offered() {
-        let chosen = decide(PermissionPolicy::RejectAll, &request(&["allow_once"]));
-        assert_eq!(chosen, None);
     }
 
     #[test]

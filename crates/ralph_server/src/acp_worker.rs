@@ -55,6 +55,7 @@ mod agy_verify;
 mod cancel;
 mod cursor_worker;
 pub(crate) mod journal;
+pub(crate) mod live;
 mod model;
 pub(crate) mod one_shot;
 mod permissions;
