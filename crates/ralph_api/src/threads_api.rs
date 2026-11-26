@@ -107,7 +107,10 @@ mod tests {
         assert_eq!(json["rows"][0]["messages"], 3);
         assert_eq!(json["rows"][1]["name"], "lint-sweep");
         assert_eq!(json["rows"][1]["state"], "open");
-        assert_eq!(json["rows"][1]["cells"][2]["ch"], "○");
+        assert!(json["rows"][1]["svg"]
+            .as_str()
+            .unwrap()
+            .starts_with("<r-graph>"));
         assert!(json.get("graph").is_none());
         let leaked = root.path().to_string_lossy().into_owned();
         assert!(!String::from_utf8(response.body).unwrap().contains(&leaked));

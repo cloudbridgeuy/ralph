@@ -12,20 +12,6 @@
       "messages": 4,
       "workers": null,
       "unread": null,
-      "cells": [
-        {
-          "ch": "●",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        }
-      ],
       "svg": "<r-graph><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path class=\"ln plain\" d=\"M4 12V25\"/><circle class=\"nd plain full\" cx=\"4\" cy=\"12\" r=\"3.25\"/></svg></r-graph>"
     },
     {
@@ -39,20 +25,6 @@
       "messages": 2,
       "workers": 1,
       "unread": 3,
-      "cells": [
-        {
-          "ch": "├",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "plain"
-        },
-        {
-          "ch": "○",
-          "tone": "plain"
-        }
-      ],
       "svg": "<r-graph><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path class=\"ln plain\" d=\"M4 -1V25\"/><path class=\"ln plain h\" d=\"M4 12H8\"/><path class=\"ln plain h\" d=\"M8 12H16\"/><circle class=\"nd plain\" cx=\"20\" cy=\"12\" r=\"3.25\"/></svg></r-graph>"
     },
     {
@@ -66,20 +38,6 @@
       "messages": 2,
       "workers": 0,
       "unread": 0,
-      "cells": [
-        {
-          "ch": "├",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "warn"
-        },
-        {
-          "ch": "○",
-          "tone": "warn"
-        }
-      ],
       "svg": "<r-graph><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path class=\"ln plain\" d=\"M4 -1V25\"/><path class=\"ln plain h\" d=\"M4 12H8\"/><path class=\"ln warn h\" d=\"M8 12H16\"/><circle class=\"nd warn\" cx=\"20\" cy=\"12\" r=\"3.25\"/></svg></r-graph>"
     },
     {
@@ -93,20 +51,6 @@
       "messages": 2,
       "workers": 0,
       "unread": 0,
-      "cells": [
-        {
-          "ch": "├",
-          "tone": "plain"
-        },
-        {
-          "ch": "◄",
-          "tone": "ok"
-        },
-        {
-          "ch": "●",
-          "tone": "ok"
-        }
-      ],
       "svg": "<r-graph><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path class=\"ln plain\" d=\"M4 -1V25\"/><path class=\"ln plain h\" d=\"M4 12H8\"/><path class=\"ln ok h\" d=\"M12 12H16\"/><path class=\"arrow ok\" d=\"M8.5 12L14.5 8.5V15.5Z\"/><circle class=\"nd ok full\" cx=\"20\" cy=\"12\" r=\"3.25\"/></svg></r-graph>"
     },
     {
@@ -120,20 +64,6 @@
       "messages": null,
       "workers": null,
       "unread": null,
-      "cells": [
-        {
-          "ch": "╰",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "bad"
-        },
-        {
-          "ch": "✕",
-          "tone": "bad"
-        }
-      ],
       "svg": "<r-graph><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path class=\"ln plain\" d=\"M4 -1V8Q4 12 8 12\"/><path class=\"ln bad h\" d=\"M8 12H16\"/><path class=\"ln bad\" d=\"M17 9L23 15M23 9L17 15\"/></svg></r-graph>"
     }
   ]

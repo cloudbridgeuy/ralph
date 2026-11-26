@@ -158,12 +158,12 @@ The three memory routes read the chat store in `--store` (`thread=main`, the def
 
 `GET /api/threads` takes no parameters. Only `token` is allowed in the query.
 
-- Body: `{store, rows: [{kind, name, state, age, base, created, active, messages, workers, unread, cells, svg}]}`. `store` is the last path component, as in the other routes. There is no paging.
+- Body: `{store, rows: [{kind, name, state, age, base, created, active, messages, workers, unread, svg}]}`. `store` is the last path component, as in the other routes. There is no paging.
 - Row order is the order of the table in `ralph thread ls`: the head row (`kind` `head`, name `main`), then open, parked and merged threads, then dropped threads sorted by name. `ralph thread log` has a different layout (a graph by fork point); this route does not follow it.
 - `kind` is `head`, `thread` or `dropped`. `state` is `head`, `open`, `parked`, `merged` or `dropped`. `age` is the time since the park or merge, and `null` for the other states.
-- The head row has `messages` (the length of the main log) and nulls for `age`, `base`, `created`, `active`, `workers` and `unread`. A dropped row has only `name`, `kind` and `state`, `cells` and `svg`; the other fields are null.
+- The head row has `messages` (the length of the main log) and nulls for `age`, `base`, `created`, `active`, `workers` and `unread`. A dropped row has only `name`, `kind` and `state` and `svg`; the other fields are null.
 - A thread row has `base` (the fork point), `created` (in UTC as `YYYY-MM-DDTHH:MM:SSZ`; a stored value that does not parse is sent as it is), `active` (the time since the last write to its log, or `null`), `messages`, `workers` (running workers) and `unread` (unread inbox reports). The values come from the same readers as `ralph thread ls`: `Store::log_len`, the mtime of `log.jsonl`, `running_workers` and `Inbox::unread_count`. The code is a second copy of that read in `ralph_server::chat::memory::thread_rows`, and both sort with `sort_rows`.
-- `cells` is one three-cell lane for each row: `[{ch, tone}]`, with the tone `plain`, `ok`, `warn` or `bad`. `svg` is the same lane drawn on the server as an [r-graph](#primitives).
+- `svg` is one three-cell lane for each row, drawn on the server as an [r-graph](#primitives).
 - Read: the thread folders, the length and mtime of each log, `threads/dropped.jsonl`, the worker and inbox counts. Not read: costs, `history.jsonl`, `tags.jsonl`, paths.
 - Each request reads the store again. There is no cache and no lock, and nothing is written.
 - Code: `crates/ralph_api/src/threads_api.rs` (the thin read), `threads/json.rs` (the body), `threads/cells.rs` (the lanes), `render/graph.rs` (the SVG).

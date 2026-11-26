@@ -42,16 +42,8 @@ fn thread_row(row: &ThreadRow, now: DateTime<Utc>) -> Value {
         "messages": row.messages,
         "workers": row.workers,
         "unread": row.unread,
-        "cells": cells_json(state_lane(&row.state)),
         "svg": lane_svg(state_lane(&row.state)),
     })
-}
-
-fn cells_json(lane: Lane) -> Vec<Value> {
-    lane_cells(lane)
-        .iter()
-        .map(|cell| json!({"ch": cell.ch.to_string(), "tone": cell.tone.name()}))
-        .collect()
 }
 
 fn lane_svg(lane: Lane) -> String {
@@ -78,7 +70,6 @@ fn head_row(messages: usize) -> Value {
         "messages": messages,
         "workers": null,
         "unread": null,
-        "cells": cells_json(Lane::Head),
         "svg": lane_svg(Lane::Head),
     })
 }
@@ -95,7 +86,6 @@ fn dropped_row(tombstone: &Tombstone) -> Value {
         "messages": null,
         "workers": null,
         "unread": null,
-        "cells": cells_json(Lane::Dropped),
         "svg": lane_svg(Lane::Dropped),
     })
 }
@@ -271,12 +261,9 @@ mod tests {
         ] {
             assert_eq!(dropped[key], Value::Null, "{key}");
         }
-        assert_eq!(dropped["cells"][2]["ch"], "✕");
-        assert_eq!(dropped["cells"][2]["tone"], "bad");
         let head = &rows(&body)[0];
         assert_eq!(head["messages"], 4);
         assert_eq!(head["base"], Value::Null);
-        assert_eq!(head["cells"][0]["ch"], "●");
     }
 
     #[test]
@@ -294,6 +281,16 @@ mod tests {
             let expected = graph_svg(&lane_cells(lane));
             assert_eq!(row["svg"], expected.as_str(), "{}", row["name"]);
             assert!(expected.starts_with("<r-graph><svg"));
+        }
+    }
+
+    #[test]
+    fn no_row_carries_a_cells_key() {
+        let body = threads_body("chat", &fixture(), now());
+        assert_eq!(rows(&body).len(), 5);
+        for row in rows(&body) {
+            assert!(row.get("cells").is_none(), "{}", row["name"]);
+            assert!(row.get("svg").is_some(), "{}", row["name"]);
         }
     }
 
