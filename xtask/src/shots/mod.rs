@@ -252,10 +252,13 @@ fn capture_current(args: RunArgs) -> Result<(PathBuf, Vec<core::Shot>), BoxError
             .ok_or_else(|| BoxError::from("HOME is not set; pass the path as a flag"))
     };
     let root = resolve(args.root, ".local/share/ralph-shots")?;
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| BoxError::from("the xtask manifest directory has no parent"))?;
     let options = browser::CaptureOptions {
         ralph: args
             .ralph
-            .unwrap_or_else(|| PathBuf::from("target/debug/ralph")),
+            .unwrap_or_else(|| webdriver::default_ralph_path(repo_root)),
         firefox: args
             .firefox
             .unwrap_or_else(|| PathBuf::from(DEFAULT_FIREFOX)),

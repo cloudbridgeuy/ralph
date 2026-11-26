@@ -438,7 +438,7 @@ Subcommands:
 - `compare --baseline D --current D --out D [--tolerance 8]` compares two folders of PNG files. It writes `<out>/report.md` and `<out>/diff/<name>.png` for each changed shot. It prints the report. It exits with an error when the folders are not clean.
 - `approve --baseline D --current D (<NAMES>... | --all)` copies the named shots from current to baseline. It fails with no names and no `--all`, and for a name that is not in current.
 - `seed --out <DIR>` writes the fixture store (see below).
-- `run [--root D] [--ralph PATH] [--firefox PATH] [--screen S] [--theme T]` captures the shots into `<root>/current`. Defaults: root `~/.local/share/ralph-shots`, ralph `target/debug/ralph`, Firefox `/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox`.
+- `run [--root D] [--ralph PATH] [--firefox PATH] [--screen S] [--theme T]` captures the shots into `<root>/current`. Defaults: root `~/.local/share/ralph-shots`, ralph `target/debug/ralph` under the workspace root (not the current directory), Firefox `/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox`.
 - `check` takes the same flags as `run` and `--tolerance 8`. It runs, then compares `<root>/baseline` with `<root>/current` into `<root>/report`.
 
 ### Fixture store
