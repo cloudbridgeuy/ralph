@@ -11,7 +11,6 @@ use serde_json::Value;
 
 pub type AnswerSender = oneshot::Sender<Choice>;
 
-#[allow(dead_code, reason = "the chat session constructs this")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionPolicy {
     RejectAll,
@@ -24,7 +23,6 @@ pub enum Decision {
     Ask(ClaudePermission),
 }
 
-#[allow(dead_code, reason = "the chat session constructs this")]
 pub enum AcpEvent {
     Update(Value),
     Ask(ClaudePermission, AnswerSender),
@@ -43,7 +41,6 @@ pub struct AcpOpen<'a> {
     pub policy: PermissionPolicy,
 }
 
-#[allow(dead_code, reason = "the chat session constructs this")]
 enum Command {
     Prompt(String),
     Cancel,
@@ -316,12 +313,10 @@ impl AcpLive {
         self.events.recv_timeout(wait).ok()
     }
 
-    #[allow(dead_code, reason = "the chat session constructs this")]
     pub fn cancel(&self) {
         self.commands.unbounded_send(Command::Cancel).ok();
     }
 
-    #[allow(dead_code, reason = "the chat session constructs this")]
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }

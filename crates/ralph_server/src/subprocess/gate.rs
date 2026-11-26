@@ -148,7 +148,7 @@ impl OutputGate {
         }
     }
 
-    pub(super) fn request_permission(&self, ask: ClaudePermission, missing: Classes) -> bool {
+    pub(crate) fn request_permission(&self, ask: ClaudePermission, missing: Classes) -> bool {
         let mut state = self.lock();
         if !state.listening {
             return false;
@@ -207,7 +207,7 @@ impl OutputGate {
         Some(apply(state, index, choice))
     }
 
-    pub(super) fn take_answer(&self, deny: bool) -> Option<(ClaudePermission, Choice)> {
+    pub(crate) fn take_answer(&self, deny: bool) -> Option<(ClaudePermission, Choice)> {
         let mut state = self.lock();
         let position = state
             .permissions
@@ -235,7 +235,7 @@ impl OutputGate {
         ))
     }
 
-    pub(super) fn cancel_permission(&self, id: Option<&str>) {
+    pub(crate) fn cancel_permission(&self, id: Option<&str>) {
         let mut state = self.lock();
         state
             .permissions
