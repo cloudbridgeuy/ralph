@@ -1,14 +1,17 @@
 {
   "store": "chat",
-  "head": {
-    "messages": 0
-  },
-  "threads": [],
-  "graph": [
+  "rows": [
     {
       "kind": "head",
-      "name": null,
-      "label_start": 3,
+      "name": "main",
+      "state": "head",
+      "age": null,
+      "base": null,
+      "created": null,
+      "active": null,
+      "messages": 0,
+      "workers": null,
+      "unread": null,
       "cells": [
         {
           "ch": "●",
@@ -20,34 +23,6 @@
         },
         {
           "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "#",
-          "tone": "plain"
-        },
-        {
-          "ch": "0",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "m",
-          "tone": "plain"
-        },
-        {
-          "ch": "a",
-          "tone": "plain"
-        },
-        {
-          "ch": "i",
-          "tone": "plain"
-        },
-        {
-          "ch": "n",
           "tone": "plain"
         }
       ]

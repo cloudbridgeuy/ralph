@@ -1,10 +1,34 @@
 {
   "store": "chat",
-  "head": {
-    "messages": 4
-  },
-  "threads": [
+  "rows": [
     {
+      "kind": "head",
+      "name": "main",
+      "state": "head",
+      "age": null,
+      "base": null,
+      "created": null,
+      "active": null,
+      "messages": 4,
+      "workers": null,
+      "unread": null,
+      "cells": [
+        {
+          "ch": "●",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        },
+        {
+          "ch": " ",
+          "tone": "plain"
+        }
+      ]
+    },
+    {
+      "kind": "thread",
       "name": "lint-sweep",
       "state": "open",
       "age": null,
@@ -13,9 +37,24 @@
       "active": "1h ago",
       "messages": 2,
       "workers": 1,
-      "unread": 3
+      "unread": 3,
+      "cells": [
+        {
+          "ch": "├",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "plain"
+        },
+        {
+          "ch": "○",
+          "tone": "plain"
+        }
+      ]
     },
     {
+      "kind": "thread",
       "name": "docs-pass",
       "state": "parked",
       "age": "4d ago",
@@ -24,9 +63,24 @@
       "active": null,
       "messages": 2,
       "workers": 0,
-      "unread": 0
+      "unread": 0,
+      "cells": [
+        {
+          "ch": "├",
+          "tone": "plain"
+        },
+        {
+          "ch": "─",
+          "tone": "warn"
+        },
+        {
+          "ch": "○",
+          "tone": "warn"
+        }
+      ]
     },
     {
+      "kind": "thread",
       "name": "cache-fix",
       "state": "merged",
       "age": "2d ago",
@@ -35,775 +89,45 @@
       "active": null,
       "messages": 2,
       "workers": 0,
-      "unread": 0
-    }
-  ],
-  "graph": [
-    {
-      "kind": "dropped",
-      "name": "old-idea",
-      "label_start": 11,
+      "unread": 0,
       "cells": [
         {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "✕",
-          "tone": "red"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "o",
-          "tone": "plain"
-        },
-        {
-          "ch": "l",
-          "tone": "plain"
-        },
-        {
-          "ch": "d",
-          "tone": "plain"
-        },
-        {
-          "ch": "-",
-          "tone": "plain"
-        },
-        {
-          "ch": "i",
-          "tone": "plain"
-        },
-        {
-          "ch": "d",
-          "tone": "plain"
-        },
-        {
-          "ch": "e",
-          "tone": "plain"
-        },
-        {
-          "ch": "a",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "d",
-          "tone": "red"
-        },
-        {
-          "ch": "r",
-          "tone": "red"
-        },
-        {
-          "ch": "o",
-          "tone": "red"
-        },
-        {
-          "ch": "p",
-          "tone": "red"
-        },
-        {
-          "ch": "p",
-          "tone": "red"
-        },
-        {
-          "ch": "e",
-          "tone": "red"
-        },
-        {
-          "ch": "d",
-          "tone": "red"
-        }
-      ]
-    },
-    {
-      "kind": "thread",
-      "name": "lint-sweep",
-      "label_start": 11,
-      "cells": [
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "○",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "│",
-          "tone": "red"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "l",
-          "tone": "plain"
-        },
-        {
-          "ch": "i",
-          "tone": "plain"
-        },
-        {
-          "ch": "n",
-          "tone": "plain"
-        },
-        {
-          "ch": "t",
-          "tone": "plain"
-        },
-        {
-          "ch": "-",
-          "tone": "plain"
-        },
-        {
-          "ch": "s",
-          "tone": "plain"
-        },
-        {
-          "ch": "w",
-          "tone": "plain"
-        },
-        {
-          "ch": "e",
-          "tone": "plain"
-        },
-        {
-          "ch": "e",
-          "tone": "plain"
-        },
-        {
-          "ch": "p",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "o",
-          "tone": "plain"
-        },
-        {
-          "ch": "p",
-          "tone": "plain"
-        },
-        {
-          "ch": "e",
-          "tone": "plain"
-        },
-        {
-          "ch": "n",
-          "tone": "plain"
-        }
-      ]
-    },
-    {
-      "kind": "thread",
-      "name": "docs-pass",
-      "label_start": 11,
-      "cells": [
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "○",
-          "tone": "yellow"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "│",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "│",
-          "tone": "red"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "d",
-          "tone": "plain"
-        },
-        {
-          "ch": "o",
-          "tone": "plain"
-        },
-        {
-          "ch": "c",
-          "tone": "plain"
-        },
-        {
-          "ch": "s",
-          "tone": "plain"
-        },
-        {
-          "ch": "-",
-          "tone": "plain"
-        },
-        {
-          "ch": "p",
-          "tone": "plain"
-        },
-        {
-          "ch": "a",
-          "tone": "plain"
-        },
-        {
-          "ch": "s",
-          "tone": "plain"
-        },
-        {
-          "ch": "s",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "p",
-          "tone": "yellow"
-        },
-        {
-          "ch": "a",
-          "tone": "yellow"
-        },
-        {
-          "ch": "r",
-          "tone": "yellow"
-        },
-        {
-          "ch": "k",
-          "tone": "yellow"
-        },
-        {
-          "ch": "e",
-          "tone": "yellow"
-        },
-        {
-          "ch": "d",
-          "tone": "yellow"
-        }
-      ]
-    },
-    {
-      "kind": "head",
-      "name": null,
-      "label_start": 11,
-      "cells": [
-        {
-          "ch": "●",
+          "ch": "├",
           "tone": "plain"
         },
         {
           "ch": "◄",
-          "tone": "green"
+          "tone": "ok"
         },
         {
-          "ch": "┼",
-          "tone": "yellow"
-        },
-        {
-          "ch": "─",
-          "tone": "green"
-        },
-        {
-          "ch": "┼",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "green"
-        },
-        {
-          "ch": "┼",
-          "tone": "red"
-        },
-        {
-          "ch": "─",
-          "tone": "green"
-        },
-        {
-          "ch": "╮",
-          "tone": "green"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "#",
-          "tone": "plain"
-        },
-        {
-          "ch": "4",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "m",
-          "tone": "plain"
-        },
-        {
-          "ch": "a",
-          "tone": "plain"
-        },
-        {
-          "ch": "i",
-          "tone": "plain"
-        },
-        {
-          "ch": "n",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "c",
-          "tone": "plain"
-        },
-        {
-          "ch": "a",
-          "tone": "plain"
-        },
-        {
-          "ch": "c",
-          "tone": "plain"
-        },
-        {
-          "ch": "h",
-          "tone": "plain"
-        },
-        {
-          "ch": "e",
-          "tone": "plain"
-        },
-        {
-          "ch": "-",
-          "tone": "plain"
-        },
-        {
-          "ch": "f",
-          "tone": "plain"
-        },
-        {
-          "ch": "i",
-          "tone": "plain"
-        },
-        {
-          "ch": "x",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "m",
-          "tone": "green"
-        },
-        {
-          "ch": "e",
-          "tone": "green"
-        },
-        {
-          "ch": "r",
-          "tone": "green"
-        },
-        {
-          "ch": "g",
-          "tone": "green"
-        },
-        {
-          "ch": "e",
-          "tone": "green"
-        },
-        {
-          "ch": "d",
-          "tone": "green"
-        },
-        {
-          "ch": " ",
-          "tone": "green"
-        },
-        {
-          "ch": "-",
-          "tone": "green"
-        },
-        {
-          "ch": ">",
-          "tone": "green"
-        },
-        {
-          "ch": " ",
-          "tone": "green"
-        },
-        {
-          "ch": "#",
-          "tone": "green"
-        },
-        {
-          "ch": "4",
-          "tone": "green"
+          "ch": "●",
+          "tone": "ok"
         }
       ]
     },
     {
-      "kind": "head",
-      "name": null,
-      "label_start": 11,
+      "kind": "dropped",
+      "name": "old-idea",
+      "state": "dropped",
+      "age": null,
+      "base": null,
+      "created": null,
+      "active": null,
+      "messages": null,
+      "workers": null,
+      "unread": null,
       "cells": [
         {
-          "ch": "●",
+          "ch": "╰",
           "tone": "plain"
         },
         {
           "ch": "─",
-          "tone": "green"
+          "tone": "bad"
         },
         {
-          "ch": "┼",
-          "tone": "yellow"
-        },
-        {
-          "ch": "─",
-          "tone": "green"
-        },
-        {
-          "ch": "┼",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "green"
-        },
-        {
-          "ch": "┼",
-          "tone": "red"
-        },
-        {
-          "ch": "─",
-          "tone": "green"
-        },
-        {
-          "ch": "╯",
-          "tone": "green"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "#",
-          "tone": "plain"
-        },
-        {
-          "ch": "3",
-          "tone": "plain"
-        }
-      ]
-    },
-    {
-      "kind": "head",
-      "name": null,
-      "label_start": 11,
-      "cells": [
-        {
-          "ch": "●",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "red"
-        },
-        {
-          "ch": "┼",
-          "tone": "yellow"
-        },
-        {
-          "ch": "─",
-          "tone": "red"
-        },
-        {
-          "ch": "┴",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "red"
-        },
-        {
-          "ch": "╯",
-          "tone": "red"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "#",
-          "tone": "plain"
-        },
-        {
-          "ch": "2",
-          "tone": "plain"
-        }
-      ]
-    },
-    {
-      "kind": "head",
-      "name": null,
-      "label_start": 11,
-      "cells": [
-        {
-          "ch": "●",
-          "tone": "plain"
-        },
-        {
-          "ch": "─",
-          "tone": "yellow"
-        },
-        {
-          "ch": "╯",
-          "tone": "yellow"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "#",
-          "tone": "plain"
-        },
-        {
-          "ch": "1",
-          "tone": "plain"
-        }
-      ]
-    },
-    {
-      "kind": "head",
-      "name": null,
-      "label_start": 11,
-      "cells": [
-        {
-          "ch": "●",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": " ",
-          "tone": "plain"
-        },
-        {
-          "ch": "#",
-          "tone": "plain"
-        },
-        {
-          "ch": "0",
-          "tone": "plain"
+          "ch": "✕",
+          "tone": "bad"
         }
       ]
     }

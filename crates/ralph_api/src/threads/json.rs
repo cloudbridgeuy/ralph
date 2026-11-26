@@ -1,5 +1,6 @@
+use crate::threads::cells::{lane_cells, Lane};
 use chrono::{DateTime, Utc};
-use ralph_core::chat_thread_graph::{graph_cells, lanes_from, GraphRow, LaneEnd, RowKind, Tone};
+use ralph_core::chat_thread_log::Tombstone;
 use ralph_core::chat_thread_table::{ago, ThreadRow, ThreadState};
 use ralph_server::chat::memory::ThreadsSnapshot;
 use serde_json::{json, Value};
@@ -19,8 +20,9 @@ fn state_age(state: &ThreadState, now: DateTime<Utc>) -> Option<String> {
     }
 }
 
-fn thread_json(row: &ThreadRow, now: DateTime<Utc>) -> Value {
+fn thread_row(row: &ThreadRow, now: DateTime<Utc>) -> Value {
     json!({
+        "kind": "thread",
         "name": row.name,
         "state": state_name(&row.state),
         "age": state_age(&row.state, now),
@@ -30,50 +32,73 @@ fn thread_json(row: &ThreadRow, now: DateTime<Utc>) -> Value {
         "messages": row.messages,
         "workers": row.workers,
         "unread": row.unread,
+        "cells": cells_json(state_lane(&row.state)),
     })
 }
 
-fn tone_name(tone: Tone) -> &'static str {
-    match tone {
-        Tone::Plain => "plain",
-        Tone::Green => "green",
-        Tone::Yellow => "yellow",
-        Tone::Red => "red",
+fn cells_json(lane: Lane) -> Vec<Value> {
+    lane_cells(lane)
+        .iter()
+        .map(|cell| json!({"ch": cell.ch.to_string(), "tone": cell.tone.name()}))
+        .collect()
+}
+
+fn state_lane(state: &ThreadState) -> Lane {
+    match state {
+        ThreadState::Open => Lane::Open,
+        ThreadState::Parked(_) => Lane::Parked,
+        ThreadState::Merged(_) => Lane::Merged,
     }
 }
 
-fn graph_row_json(row: &GraphRow) -> Value {
-    let (kind, name) = match &row.kind {
-        RowKind::Trunk { .. } => ("head", None),
-        RowKind::Tip {
-            name,
-            end: LaneEnd::Dropped,
-        } => ("dropped", Some(name)),
-        RowKind::Tip { name, .. } => ("thread", Some(name)),
-    };
+fn head_row(messages: usize) -> Value {
     json!({
-        "kind": kind,
-        "name": name,
-        "label_start": row.label_start,
-        "cells": row
-            .cells
-            .iter()
-            .map(|(ch, tone)| json!({"ch": ch.to_string(), "tone": tone_name(*tone)}))
-            .collect::<Vec<_>>(),
+        "kind": "head",
+        "name": "main",
+        "state": "head",
+        "age": null,
+        "base": null,
+        "created": null,
+        "active": null,
+        "messages": messages,
+        "workers": null,
+        "unread": null,
+        "cells": cells_json(Lane::Head),
     })
 }
 
-pub(crate) fn threads_body(store: &str, snapshot: &ThreadsSnapshot, now: DateTime<Utc>) -> Value {
-    let lanes = lanes_from(&snapshot.live, &snapshot.tombstones);
+fn dropped_row(tombstone: &Tombstone) -> Value {
     json!({
-        "store": store,
-        "head": {"messages": snapshot.head_messages},
-        "threads": snapshot.rows.iter().map(|row| thread_json(row, now)).collect::<Vec<_>>(),
-        "graph": graph_cells(Some(snapshot.head_messages), &lanes)
-            .iter()
-            .map(graph_row_json)
-            .collect::<Vec<_>>(),
+        "kind": "dropped",
+        "name": tombstone.name,
+        "state": "dropped",
+        "age": null,
+        "base": null,
+        "created": null,
+        "active": null,
+        "messages": null,
+        "workers": null,
+        "unread": null,
+        "cells": cells_json(Lane::Dropped),
     })
+}
+
+fn dropped_in_name_order(tombstones: &[Tombstone]) -> Vec<&Tombstone> {
+    let mut sorted: Vec<&Tombstone> = tombstones.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    sorted
+}
+
+pub(crate) fn threads_body(store: &str, snapshot: &ThreadsSnapshot, now: DateTime<Utc>) -> Value {
+    let rows: Vec<Value> = std::iter::once(head_row(snapshot.head_messages))
+        .chain(snapshot.rows.iter().map(|row| thread_row(row, now)))
+        .chain(
+            dropped_in_name_order(&snapshot.tombstones)
+                .into_iter()
+                .map(dropped_row),
+        )
+        .collect();
+    json!({"store": store, "rows": rows})
 }
 
 #[cfg(test)]
@@ -81,8 +106,6 @@ mod tests {
     use super::*;
     use crate::render::golden::assert_golden_in;
     use ralph_core::chat_thread::{Merged, Parked, ThreadMeta};
-    use ralph_core::chat_thread_log::Tombstone;
-    use ralph_core::chat_thread_table::{ThreadRow, ThreadState};
 
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-01-07T00:00:00Z")
@@ -188,29 +211,59 @@ mod tests {
         assert_golden_in("", "txt", "threads_empty", &pretty(&body));
     }
 
+    fn rows(body: &Value) -> &Vec<Value> {
+        body["rows"].as_array().unwrap()
+    }
+
     #[test]
-    fn dropped_threads_are_only_in_the_graph() {
+    fn rows_follow_table_order_with_head_first_and_dropped_last() {
         let body = threads_body("chat", &fixture(), now());
-        let names: Vec<&str> = body["threads"]
-            .as_array()
-            .unwrap()
+        let order: Vec<(&str, &str, &str)> = rows(&body)
             .iter()
-            .map(|thread| thread["name"].as_str().unwrap())
+            .map(|row| {
+                (
+                    row["kind"].as_str().unwrap(),
+                    row["name"].as_str().unwrap(),
+                    row["state"].as_str().unwrap(),
+                )
+            })
             .collect();
-        assert_eq!(names, ["lint-sweep", "docs-pass", "cache-fix"]);
-        let dropped = body["graph"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|row| row["kind"] == "dropped")
-            .count();
-        assert_eq!(dropped, 1);
+        assert_eq!(
+            order,
+            [
+                ("head", "main", "head"),
+                ("thread", "lint-sweep", "open"),
+                ("thread", "docs-pass", "parked"),
+                ("thread", "cache-fix", "merged"),
+                ("dropped", "old-idea", "dropped"),
+            ]
+        );
+        assert!(body.get("threads").is_none());
+        assert!(body.get("graph").is_none());
+        assert!(body.get("head").is_none());
+    }
+
+    #[test]
+    fn dropped_rows_are_in_rows_with_null_counts() {
+        let body = threads_body("chat", &fixture(), now());
+        let dropped = &rows(&body)[4];
+        for key in [
+            "age", "base", "created", "active", "messages", "workers", "unread",
+        ] {
+            assert_eq!(dropped[key], Value::Null, "{key}");
+        }
+        assert_eq!(dropped["cells"][2]["ch"], "✕");
+        assert_eq!(dropped["cells"][2]["tone"], "bad");
+        let head = &rows(&body)[0];
+        assert_eq!(head["messages"], 4);
+        assert_eq!(head["base"], Value::Null);
+        assert_eq!(head["cells"][0]["ch"], "●");
     }
 
     #[test]
     fn open_threads_have_null_age() {
         let body = threads_body("chat", &fixture(), now());
-        assert_eq!(body["threads"][0]["age"], Value::Null);
-        assert_eq!(body["threads"][1]["age"], "4d ago");
+        assert_eq!(rows(&body)[1]["age"], Value::Null);
+        assert_eq!(rows(&body)[2]["age"], "4d ago");
     }
 }

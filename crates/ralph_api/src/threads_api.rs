@@ -97,21 +97,18 @@ mod tests {
     }
 
     #[test]
-    fn threads_route_returns_rows_and_graph() {
+    fn threads_route_returns_rows_in_table_order() {
         let root = seeded_store();
         let response = send("GET", "", root.path());
         assert_eq!(response.status, 200);
         assert!(response.headers.contains(&("Cache-Control", "no-store")));
         let json = body(&response);
-        assert_eq!(json["head"]["messages"], 3);
-        assert_eq!(json["threads"][0]["name"], "lint-sweep");
-        assert_eq!(json["threads"][0]["state"], "open");
-        assert_eq!(json["graph"][0]["kind"], "thread");
-        assert!(json["graph"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["kind"] == "head"));
+        assert_eq!(json["rows"][0]["kind"], "head");
+        assert_eq!(json["rows"][0]["messages"], 3);
+        assert_eq!(json["rows"][1]["name"], "lint-sweep");
+        assert_eq!(json["rows"][1]["state"], "open");
+        assert_eq!(json["rows"][1]["cells"][2]["ch"], "○");
+        assert!(json.get("graph").is_none());
         let leaked = root.path().to_string_lossy().into_owned();
         assert!(!String::from_utf8(response.body).unwrap().contains(&leaked));
     }
