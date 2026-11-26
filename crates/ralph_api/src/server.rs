@@ -94,11 +94,10 @@ fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Ar
     let slot = Slot::acquire(active);
     let shared = Arc::clone(shared);
     run_off_loop(request, move |request| {
-        let _slot = slot;
         let (config, token) = &*shared;
         let mut request = request;
         let response = route(&to_api_request(&mut request, config, token), config, token);
-        respond(request, response);
+        respond_then(request, response, move || drop(slot));
     });
 }
 
@@ -139,8 +138,12 @@ impl Drop for Slot {
 }
 
 fn respond(request: Request, response: ApiResponse) {
+    respond_then(request, response, || {});
+}
+
+fn respond_then(request: Request, response: ApiResponse, after_write: impl FnOnce()) {
     warn_if_err(
-        request.respond(to_http_response(response)),
+        request.respond_then(to_http_response(response), after_write),
         "ralph web: could not write a response",
     );
 }

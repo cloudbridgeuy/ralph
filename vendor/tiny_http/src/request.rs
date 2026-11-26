@@ -429,14 +429,23 @@ impl Request {
 
     /// Sends a response to this request.
     #[inline]
-    pub fn respond<R>(mut self, response: Response<R>) -> Result<(), IoError>
+    pub fn respond<R>(self, response: Response<R>) -> Result<(), IoError>
     where
         R: Read,
+    {
+        self.respond_then(response, || {})
+    }
+
+    pub fn respond_then<R, F>(mut self, response: Response<R>, after_write: F) -> Result<(), IoError>
+    where
+        R: Read,
+        F: FnOnce(),
     {
         let res = self.respond_impl(response);
         if let Some(sender) = self.notify_when_responded.take() {
             sender.send(()).unwrap();
         }
+        after_write();
         res
     }
 
@@ -505,7 +514,48 @@ impl<T> ReadWrite for T where T: Read + Write {}
 
 #[cfg(test)]
 mod tests {
-    use super::Request;
+    use super::{new_request, Request};
+    use crate::{HTTPVersion, Header, Method, Response};
+    use std::io::Read;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct FlaggedBody(Arc<AtomicBool>);
+
+    impl Read for FlaggedBody {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.store(true, Ordering::SeqCst);
+            buf.fill(0);
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn respond_then_runs_the_hook_before_the_body_drain() {
+        let body_read = Arc::new(AtomicBool::new(false));
+        let length = Header::from_bytes(&b"Content-Length"[..], &b"2000"[..]).unwrap();
+        let request = new_request(
+            false,
+            Method::Post,
+            "/".to_string(),
+            HTTPVersion(1, 1),
+            vec![length],
+            None,
+            FlaggedBody(Arc::clone(&body_read)),
+            std::io::sink(),
+        )
+        .unwrap();
+        let seen = Arc::clone(&body_read);
+        let read_before_hook = Arc::new(AtomicBool::new(true));
+        let recorded = Arc::clone(&read_before_hook);
+        request
+            .respond_then(Response::empty(204), move || {
+                recorded.store(seen.load(Ordering::SeqCst), Ordering::SeqCst);
+            })
+            .unwrap();
+        assert!(!read_before_hook.load(Ordering::SeqCst));
+        assert!(body_read.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn must_be_send() {

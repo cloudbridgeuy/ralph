@@ -89,26 +89,13 @@ fn stop_returns_when_every_slot_and_one_more_client_stall() {
     let mut server = TestServer::start();
     let (_stalled, mut statuses) = stall_clients(&server, MAX_HANDLERS + 1);
     statuses.sort_unstable();
-    let mut expected = vec![413; MAX_HANDLERS];
-    expected.push(503);
-    assert_eq!(statuses, expected);
+    assert_eq!(statuses.len(), MAX_HANDLERS + 1);
+    assert!(statuses.iter().all(|status| [413, 503].contains(status)));
+    assert!(statuses.iter().filter(|status| **status == 413).count() >= MAX_HANDLERS);
     assert!(
         server.stop_within(BUDGET),
         "serve did not stop within {BUDGET:?}"
     );
-}
-
-#[test]
-fn over_cap_request_gets_503_busy_while_slots_are_stalled() {
-    let server = TestServer::start();
-    let (_stalled, statuses) = stall_clients(&server, MAX_HANDLERS);
-    assert_eq!(statuses, vec![413; MAX_HANDLERS]);
-    let started = Instant::now();
-    let target = format!("/api/health?token={}", server.token());
-    let reply = server.exchange("GET", &target, Host::Own, &[]);
-    assert_eq!(reply.status, 503);
-    assert_eq!(reply.body, r#"{"error":"busy"}"#);
-    assert!(started.elapsed() < BUDGET);
 }
 
 fn start_limited(read: Duration) -> (u16, String, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
@@ -166,6 +153,19 @@ fn poll_until_served(mut probe: impl FnMut() -> u16, deadline: Duration) -> (u16
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+#[test]
+fn rejected_requests_release_their_slots_before_the_body_drain() {
+    let server = TestServer::start();
+    let (_stalled, statuses) = stall_clients(&server, MAX_HANDLERS);
+    assert_eq!(statuses, vec![413; MAX_HANDLERS]);
+    let target = format!("/api/health?token={}", server.token());
+    let (status, _) = poll_until_served(
+        || server.exchange("GET", &target, Host::Own, &[]).status,
+        POLL_DEADLINE,
+    );
+    assert_eq!(status, 200, "slots stayed held during the body drain");
 }
 
 #[test]
