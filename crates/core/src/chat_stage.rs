@@ -12,7 +12,7 @@ pub const STAGE_ADD: &str = "stage_add";
 pub const STAGE_DONE: &str = "stage_done";
 pub const STAGE_EMPTY_LINE: &str = "Stage: empty";
 pub const THREAD_UNRESOLVED: &str = "unresolved, end with /thread merge or drop";
-pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
+pub const STAGE_USAGE: &str = "Usage:\n/stage\n/stage raw\n/stage add <decision|owed|followup> <text>\n/stage done <id>\n/stage edit <id> <text>";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -349,16 +349,23 @@ pub fn edit(stage: Stage, id: &str, text: &str) -> Result<(Stage, Item), String>
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StageVerb {
+    Raw,
     Add,
     Done,
     Edit,
 }
 
 impl Keyword for StageVerb {
-    const ALL: &'static [Self] = &[StageVerb::Add, StageVerb::Done, StageVerb::Edit];
+    const ALL: &'static [Self] = &[
+        StageVerb::Raw,
+        StageVerb::Add,
+        StageVerb::Done,
+        StageVerb::Edit,
+    ];
 
     fn word(self) -> &'static str {
         match self {
+            StageVerb::Raw => "raw",
             StageVerb::Add => "add",
             StageVerb::Done => "done",
             StageVerb::Edit => "edit",
@@ -369,6 +376,7 @@ impl Keyword for StageVerb {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StageCommand {
     Show,
+    Raw,
     Add(NewItem),
     Done(String),
     Edit { id: String, text: String },
@@ -379,6 +387,8 @@ pub fn parse_stage_args(args: &str) -> StageCommand {
     let (verb, rest) = split_word(args);
     let parsed = match (verb, StageVerb::parse(verb)) {
         ("", _) => Ok(StageCommand::Show),
+        (_, Some(StageVerb::Raw)) if rest.is_empty() => Ok(StageCommand::Raw),
+        (_, Some(StageVerb::Raw)) => Err(String::new()),
         (_, Some(StageVerb::Add)) => {
             let (kind, text) = split_word(rest);
             parse_add(&json!({"kind": kind, "text": text})).map(StageCommand::Add)

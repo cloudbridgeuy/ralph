@@ -228,6 +228,10 @@ impl Command {
                     "print the stage as a view for you: what needs you, the open items and what runs (workers, watches, schedule, inbox); starts no turn",
                 ),
                 (
+                    "/stage raw",
+                    "print the exact stage text the model gets with your turn; starts no turn",
+                ),
+                (
                     "/stage add <decision|owed|followup> <text>",
                     "add an item as you; the model sees it in its catch-up; starts no turn",
                 ),

@@ -14,7 +14,7 @@ use crate::config::ConfigSnapshot;
 use ralph_core::chat_help::help_with_store;
 use ralph_core::chat_memory::{history_tool_of, CallSource, MemoryCall};
 use ralph_core::chat_stage::view::{view_lines, StageView};
-use ralph_core::chat_stage::{StageCommand, STAGE_EMPTY_LINE, STAGE_USAGE};
+use ralph_core::chat_stage::{stage_text, StageCommand, STAGE_EMPTY_LINE, STAGE_USAGE};
 use ralph_core::chat_status::Route;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::ThreadOp;
@@ -85,6 +85,8 @@ fn run_stage(command: StageCommand, ctx: &LocalRoute) -> String {
     match command {
         StageCommand::Show => stage::view(&store, &ctx.monitor.status(), ctx.thread)
             .map(|view| stage_shown(view, (ctx.columns)(), ctx.display)),
+        StageCommand::Raw => stage::rendered(ctx.store, &ctx.monitor.status(), ctx.thread)
+            .map(|rendered| stage_text(&rendered).to_string()),
         StageCommand::Add(new) => stage::user_add(&store, new),
         StageCommand::Done(id) => stage::user_done(&store, &id),
         StageCommand::Edit { id, text } => stage::user_edit(&store, &id, &text),
