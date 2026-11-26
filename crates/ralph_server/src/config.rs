@@ -42,7 +42,10 @@ mod wire;
 mod workers;
 pub use agy::AgySection;
 pub use changes::ChangesSection;
-pub use chat_harness::{claude_model_args, ignored_extras, ChatAgySection, ChatClaudeSection};
+pub use chat_harness::{
+    claude_model_args, ignored_extras, resolve_chat_model, ChatAgySection, ChatClaudeSection,
+    ChatModel,
+};
 pub use chat_settings::PromptFiles;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};

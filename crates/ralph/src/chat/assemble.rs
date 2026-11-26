@@ -3,9 +3,11 @@ use crate::config::{load_for_chat, ChatLoad};
 use crate::signal;
 use ralph_core::chat::{CustomPrompt, ReplyImages};
 use ralph_core::chat_process::{run_id, SessionKey};
+use ralph_core::chat_tools::chat_tool_policy;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
 use ralph_core::worker::ATTACHMENTS_DIR;
+use ralph_server::chat::agy::{acp_servers, AgySlot};
 use ralph_server::chat::backend::{ChatBackend, ClaudeSlot};
 use ralph_server::chat::fork::Fork;
 use ralph_server::chat::keepalive::Stamp;
@@ -18,6 +20,7 @@ use ralph_server::chat::snapshots::TurnSnapshots;
 use ralph_server::chat::socket::serve::SocketGuard;
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::turn::Turn;
+use ralph_server::config::{ignored_extras, resolve_chat_model, ChatModel};
 use ralph_server::invoke::Isolation;
 use ralph_server::paths::{absolute_from, config_path};
 use ralph_server::subprocess::OutputGate;
@@ -89,7 +92,8 @@ pub(crate) struct Assembled {
     pub session: Session,
     pub guard: SocketGuard,
     pub skill_dirs: Vec<PathBuf>,
-    pub send_it_warnings: Vec<String>,
+    pub start_warnings: Vec<String>,
+    pub model_args: Vec<String>,
     pub close: CloseGuard,
 }
 
@@ -116,14 +120,38 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
     });
     let run = run_id(std::process::id(), &key, chrono::Utc::now());
     let last_ping: Stamp = Arc::default();
-    let backend: Arc<dyn ChatBackend> = Arc::new(ClaudeSlot {
-        system_prompt_file: wiring.system_prompt_file.clone(),
-        permission_mode: settings.permission_mode.clone(),
-        mcp_args: std::mem::take(&mut wiring.mcp_args),
-        plugin_args: std::mem::take(&mut wiring.plugin_args),
-        model_args: options.model_args,
-        isolation,
-    });
+    let (backend, model_args): (Arc<dyn ChatBackend>, Vec<String>) =
+        match resolve_chat_model(chat_config, options.model_args)? {
+            ChatModel::Claude(model_args) => (
+                Arc::new(ClaudeSlot {
+                    system_prompt_file: wiring.system_prompt_file.clone(),
+                    permission_mode: settings.permission_mode.clone(),
+                    mcp_args: std::mem::take(&mut wiring.mcp_args),
+                    plugin_args: std::mem::take(&mut wiring.plugin_args),
+                    model_args: model_args.clone(),
+                    isolation,
+                }),
+                model_args,
+            ),
+            ChatModel::Agy { model, effort } => {
+                let mcp_config: serde_json::Value =
+                    serde_json::from_slice(&wiring.runtime_files.mcp_config_bytes)?;
+                let names = mcp_config["mcpServers"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|servers| servers.keys().map(String::as_str));
+                (
+                    Arc::new(AgySlot {
+                        cwd: settings.cwd.clone(),
+                        model,
+                        effort,
+                        servers: acp_servers(&mcp_config)?,
+                        policy: chat_tool_policy(names),
+                    }),
+                    Vec::new(),
+                )
+            }
+        };
     let caps = backend.capabilities();
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -159,6 +187,13 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         }
     };
     let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
+    let start_warnings = send_it_warnings
+        .into_iter()
+        .chain(agy_ignored_warning(&ignored_extras(
+            config,
+            chat_config.harness_kind(),
+        )))
+        .collect();
     let send_it = SendIt::new(store_dir, send_it_limits, options.events)?;
     let close = monitor.watches.close_guard();
     monitor.watches.restore();
@@ -208,7 +243,30 @@ pub(crate) fn assemble(options: AssembleOptions) -> Result<Assembled, Box<dyn st
         session,
         guard: wiring.guard,
         skill_dirs: wiring.skill_dirs,
-        send_it_warnings,
+        start_warnings,
+        model_args,
         close,
     })
+}
+
+fn agy_ignored_warning(extras: &[String]) -> Option<String> {
+    (!extras.is_empty()).then(|| format!("chat on agy ignores: {}", extras.join("; ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_extras_means_no_warning() {
+        assert_eq!(agy_ignored_warning(&[]), None);
+    }
+
+    #[test]
+    fn the_extras_are_listed_in_one_warning() {
+        let extras = vec!["a: x".to_string(), "b: y".to_string()];
+        let warning = agy_ignored_warning(&extras).unwrap();
+        assert!(warning.starts_with("chat on agy ignores"));
+        assert!(warning.contains("a: x; b: y"));
+    }
 }

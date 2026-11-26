@@ -1,6 +1,6 @@
 use super::{AppConfig, ChatSection};
 use ralph_core::chat_backend::MemoryHarness;
-use ralph_core::chat_thread_model::build_model_args;
+use ralph_core::chat_thread_model::{build_model_args, validate_thread_model};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -71,6 +71,48 @@ pub fn claude_model_args(chat: &ChatSection, model_args: Vec<String>) -> Vec<Str
     } else {
         model_args
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatModel {
+    Claude(Vec<String>),
+    Agy {
+        model: String,
+        effort: Option<String>,
+    },
+}
+
+fn cli_model(model_args: &[String]) -> Option<&str> {
+    model_args
+        .windows(2)
+        .find(|pair| pair[0] == "--model")
+        .map(|pair| pair[1].as_str())
+}
+
+pub fn resolve_chat_model(
+    chat: &ChatSection,
+    model_args: Vec<String>,
+) -> Result<ChatModel, String> {
+    if chat.harness_kind() != MemoryHarness::Agy {
+        return Ok(ChatModel::Claude(claude_model_args(chat, model_args)));
+    }
+    let model = match cli_model(&model_args) {
+        Some(model) if validate_thread_model(model).is_ok() => {
+            return Err(format!(
+                "--model {model} is a claude model; chat.harness is agy, so use a Gemini model"
+            ))
+        }
+        Some(model) => model.to_string(),
+        None => chat
+            .agy
+            .model
+            .clone()
+            .ok_or_else(|| "chat.agy.model must be set when chat.harness is agy".to_string())?,
+    };
+    Ok(ChatModel::Agy {
+        model,
+        effort: chat.agy.effort.clone(),
+    })
 }
 
 pub fn ignored_extras(config: &AppConfig, harness: MemoryHarness) -> Vec<String> {
@@ -156,6 +198,52 @@ mod tests {
         );
         let cli = vec!["--model".to_string(), "sonnet".to_string()];
         assert_eq!(claude_model_args(&config.chat, cli.clone()), cli);
+    }
+
+    fn cli(model: &str) -> Vec<String> {
+        vec!["--model".to_string(), model.to_string()]
+    }
+
+    const AGY_CHAT: &str = "[chat]\nharness = 'agy'\n[chat.agy]\nmodel = 'gemini-3-flash'\neffort = 'high'\n[chat.claude]\nmodel = 'opus'";
+
+    #[test]
+    fn claude_harness_resolves_the_claude_fallback_and_ignores_agy_settings() {
+        let config =
+            parse("[chat.claude]\nmodel = 'opus'\n[chat.agy]\nmodel = 'gemini-3-flash'").unwrap();
+        assert_eq!(
+            resolve_chat_model(&config.chat, Vec::new()),
+            Ok(ChatModel::Claude(cli("opus")))
+        );
+        assert_eq!(
+            resolve_chat_model(&config.chat, cli("sonnet")),
+            Ok(ChatModel::Claude(cli("sonnet")))
+        );
+    }
+
+    #[test]
+    fn agy_harness_takes_the_cli_model_before_the_configured_one() {
+        let config = parse(AGY_CHAT).unwrap();
+        let agy = |model: &str| ChatModel::Agy {
+            model: model.to_string(),
+            effort: Some("high".to_string()),
+        };
+        assert_eq!(
+            resolve_chat_model(&config.chat, cli("gemini-3-pro")),
+            Ok(agy("gemini-3-pro"))
+        );
+        assert_eq!(
+            resolve_chat_model(&config.chat, Vec::new()),
+            Ok(agy("gemini-3-flash"))
+        );
+    }
+
+    #[test]
+    fn agy_harness_refuses_a_claude_cli_model() {
+        let config = parse(AGY_CHAT).unwrap();
+        for model in ["haiku", "sonnet", "opus", "claude-opus-5"] {
+            let error = resolve_chat_model(&config.chat, cli(model)).unwrap_err();
+            assert!(error.contains("is a claude model"), "{error}");
+        }
     }
 
     #[test]
