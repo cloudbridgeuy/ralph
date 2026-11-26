@@ -4,13 +4,13 @@
 //! used by the stream processor during live execution.
 
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
-use ralph_core::code_frame::Label;
+use ralph_core::code_frame::{Label, Spacing};
 use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
 use ralph_core::shell_format::{format_fence, is_shell_fence};
 
 use ralph_core::stream::blocks::ImageFile;
 
-use super::code_frame::{body_width, framed, framed_diff};
+use super::code_frame::{block_kind, body_width, framed, framed_diff};
 use super::image::{disk_image, render_with_markers, ImageBounds};
 use super::link::mark_links;
 use super::marker::paint_links;
@@ -119,19 +119,19 @@ pub fn render_markdown_with(
     picture: impl Fn(&ParsedChunk) -> Option<String>,
 ) -> String {
     let ctx = ctx.refreshed();
-    parse_chunks(text)
-        .iter()
-        .map(|chunk| {
-            if let Some(drawn) = picture(chunk) {
-                return drawn;
-            }
-            let rendered = render_text_block(&ctx, chunk, Some(markdown));
+    let mut spacing = Spacing::default();
+    let mut out = String::new();
+    for chunk in parse_chunks(text) {
+        let rendered = picture(&chunk).unwrap_or_else(|| {
+            let rendered = render_text_block(&ctx, &chunk, Some(markdown));
             match chunk.chunk_type {
                 ChunkType::Prose => rendered,
                 _ => rendered + "\n",
             }
-        })
-        .collect()
+        });
+        spacing.append(&mut out, &rendered, block_kind(&ctx, &chunk.chunk_type));
+    }
+    out
 }
 
 // --- Table enhancement (post-processing) ---

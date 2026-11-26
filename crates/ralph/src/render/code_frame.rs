@@ -1,4 +1,5 @@
-use ralph_core::code_frame::{frame_block, Columns, Label, MARGIN};
+use ralph_core::chunk::ChunkType;
+use ralph_core::code_frame::{frame_block, BlockKind, Columns, Label, MARGIN};
 
 use super::RenderContext;
 use crate::diff_highlight::highlight_with_basic_colors;
@@ -11,6 +12,13 @@ pub(crate) fn framed(ctx: &RenderContext<'_>, label: &Label<'_>, body: &str) -> 
 pub(crate) fn framed_diff(ctx: &RenderContext<'_>, label: &Label<'_>, diff: &str) -> String {
     let coloured = highlight_with_basic_colors(diff, &ctx.diff);
     framed(ctx, label, without_line_end(&coloured))
+}
+
+pub(crate) fn block_kind(ctx: &RenderContext<'_>, chunk: &ChunkType) -> BlockKind {
+    match chunk {
+        ChunkType::Code { .. } | ChunkType::Diff if ctx.terminal => BlockKind::Frame,
+        _ => BlockKind::Flow,
+    }
 }
 
 pub(crate) fn body_width(ctx: &RenderContext<'_>) -> usize {
@@ -33,6 +41,8 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::{render_code_block, render_diff_block, render_markdown};
     use crate::render::{render_bash_invocation, RenderContext, Viewport};
+    use crate::stream_processor::StreamProcessor;
+    use serde_json::json;
 
     fn highlighter() -> Highlighter {
         Highlighter::with_config(ThemeConfig::default()).unwrap()
@@ -263,5 +273,79 @@ mod tests {
         let ctx = RenderContext::plain(&highlighter);
         let out = render_code_block(&ctx, "fn main() {}", Some("rust"));
         assert_eq!(out, "```rust\nfn main() {}\n```");
+    }
+
+    fn blank_rows_above(out: &str, rule: &str) -> usize {
+        let plain = strip_ansi(out);
+        let (above, _) = plain.split_once(rule).unwrap();
+        above
+            .lines()
+            .rev()
+            .take_while(|row| row.trim().is_empty())
+            .count()
+    }
+
+    fn live(highlight: bool, events: &[serde_json::Value]) -> String {
+        let mut processor = StreamProcessor::with_highlighting(highlight);
+        let mut shown: String = events
+            .iter()
+            .filter_map(|event| processor.process_line(&event.to_string()))
+            .collect();
+        shown.push_str(&processor.finish_rendered().1);
+        shown
+    }
+
+    fn said(text: &str) -> serde_json::Value {
+        json!({"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":text}]}})
+    }
+
+    const TEXT_THEN_FRAME: [&str; 5] = [
+        "# Title\n\n```rust\na\n```\n",
+        "- item\n\n  ```rust\n  a\n  ```\n",
+        "1. step\n```rust\na\n```\n",
+        "Words.\n\n```rust\na\n```\n",
+        "Words:\n```rust\na\n```\n",
+    ];
+
+    #[test]
+    fn markdown_has_one_blank_row_above_a_frame() {
+        let highlighter = highlighter();
+        let ctx = terminal(&highlighter, 40);
+        for text in TEXT_THEN_FRAME {
+            let out = render_markdown(&ctx, text, &MarkdownTheme::default());
+            assert_eq!(blank_rows_above(&out, "── rust "), 1, "{text:?} {out:?}");
+        }
+    }
+
+    #[test]
+    fn a_live_turn_has_one_blank_row_above_a_frame() {
+        for text in TEXT_THEN_FRAME {
+            let out = live(true, &[said(text)]);
+            assert_eq!(blank_rows_above(&out, "── rust "), 1, "{text:?} {out:?}");
+        }
+    }
+
+    #[test]
+    fn a_frame_in_a_later_event_keeps_one_blank_row_above() {
+        let out = live(true, &[said("Words:\n"), said("```rust\na\n```\n")]);
+        assert_eq!(blank_rows_above(&out, "── rust "), 1, "{out:?}");
+    }
+
+    #[test]
+    fn a_frame_that_opens_the_output_has_no_row_above() {
+        let highlighter = highlighter();
+        let text = "```rust\na\n```\n";
+        for out in [
+            render_markdown(&terminal(&highlighter, 40), text, &MarkdownTheme::default()),
+            live(true, &[said(text)]),
+        ] {
+            assert!(strip_ansi(&out).starts_with("── rust "), "{out:?}");
+        }
+    }
+
+    #[test]
+    fn piped_output_gets_no_extra_row() {
+        let out = live(false, &[said("Words:\n```rust\na\n```\n")]);
+        assert_eq!(out, "Words:```rust\na\n```\n");
     }
 }

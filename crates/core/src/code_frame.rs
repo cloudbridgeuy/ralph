@@ -49,6 +49,44 @@ enum Tail {
     Filled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockKind {
+    Frame,
+    Flow,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Spacing {
+    line_ends: Option<usize>,
+}
+
+impl Spacing {
+    pub fn append(&mut self, out: &mut String, block: &str, kind: BlockKind) {
+        if kind == BlockKind::Frame {
+            self.push(out, self.gap_above_frame());
+        }
+        self.push(out, block);
+    }
+
+    fn gap_above_frame(self) -> &'static str {
+        match self.line_ends {
+            Some(0) => "\n\n",
+            Some(1) => "\n",
+            None | Some(_) => "",
+        }
+    }
+
+    fn push(&mut self, out: &mut String, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let body = text.trim_end_matches('\n');
+        let carried = self.line_ends.filter(|_| body.is_empty()).unwrap_or(0);
+        self.line_ends = Some(carried + text.len() - body.len());
+        out.push_str(text);
+    }
+}
+
 pub fn mix(base: Rgb, toward: Rgb, step: Percent) -> Rgb {
     let step = u32::from(step.0.min(100));
     let channel = |from: u8, to: u8| {
@@ -485,5 +523,43 @@ mod tests {
         for row in &rows {
             assert!(row.ends_with(RESET), "{row:?}");
         }
+    }
+
+    fn spaced(blocks: &[(&str, BlockKind)]) -> String {
+        let mut spacing = Spacing::default();
+        let mut out = String::new();
+        for (block, kind) in blocks {
+            spacing.append(&mut out, block, *kind);
+        }
+        out
+    }
+
+    #[test]
+    fn a_frame_gets_a_blank_row_above() {
+        use BlockKind::{Flow, Frame};
+        for above in ["a", "a\n", "a\n\n"] {
+            assert_eq!(
+                spaced(&[(above, Flow), ("F\n", Frame)]),
+                "a\n\nF\n",
+                "{above:?}"
+            );
+        }
+        assert_eq!(spaced(&[("F\n\n", Frame), ("G\n", Frame)]), "F\n\nG\n");
+        assert_eq!(
+            spaced(&[("a\n", Flow), ("\n", Flow), ("F\n", Frame)]),
+            "a\n\nF\n"
+        );
+    }
+
+    #[test]
+    fn nothing_is_added_above_the_first_block_or_flowing_text() {
+        use BlockKind::{Flow, Frame};
+        assert_eq!(spaced(&[("F\n", Frame)]), "F\n");
+        assert_eq!(spaced(&[("", Flow), ("F\n", Frame)]), "F\n");
+        assert_eq!(spaced(&[("a", Flow), ("b\n", Flow)]), "ab\n");
+        assert_eq!(
+            spaced(&[("a\n", Flow), ("", Flow), ("F\n", Frame)]),
+            "a\n\nF\n"
+        );
     }
 }

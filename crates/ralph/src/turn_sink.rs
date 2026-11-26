@@ -33,7 +33,10 @@ pub(crate) fn written(
     renderer: &mut BlockRenderer,
 ) -> Option<(Stream, String)> {
     match event {
-        TurnEvent::Rule => Some((Stream::Stdout, rule(&rule_skin(ui), width))),
+        TurnEvent::Rule => {
+            renderer.start_reply();
+            Some((Stream::Stdout, rule(&rule_skin(ui), width)))
+        }
         TurnEvent::Warning(message) => Some((Stream::Stderr, warning_line(message))),
         TurnEvent::Blocks(blocks) => Some((Stream::Stdout, renderer.render(blocks))),
         TurnEvent::Stderr(text) => Some((Stream::Stderr, text.clone())),
@@ -244,6 +247,22 @@ mod tests {
             written(&TurnEvent::Rule, &ui(), 20, &mut renderer()),
             Some((Stream::Stdout, expected))
         );
+    }
+
+    #[test]
+    fn a_frame_after_a_rule_has_no_row_above() {
+        let code = TurnEvent::Blocks(vec![OutputBlock::text(ParsedChunk::code("a\n", None))]);
+        let mut fresh = BlockRenderer::new(None, true).unwrap();
+        let alone = written(&code, &ui(), 20, &mut fresh);
+        let mut used = BlockRenderer::new(None, true).unwrap();
+        written(
+            &TurnEvent::Blocks(vec![prose("hello\n")]),
+            &ui(),
+            20,
+            &mut used,
+        );
+        written(&TurnEvent::Rule, &ui(), 20, &mut used);
+        assert_eq!(written(&code, &ui(), 20, &mut used), alone);
     }
 
     #[test]
