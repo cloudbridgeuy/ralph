@@ -107,6 +107,27 @@ fn update_events(update: &Value) -> Vec<StreamEvent> {
                 },
             })]
         }
+        Some("usage_update") => update["used"]
+            .as_u64()
+            .map(|used| {
+                vec![StreamEvent::Assistant(AssistantEvent {
+                    message: AssistantMessage {
+                        id: None,
+                        content: Vec::new(),
+                        model: None,
+                        stop_reason: None,
+                        usage: Some(Usage {
+                            input_tokens: used,
+                            output_tokens: 0,
+                            cache_read_input_tokens: None,
+                            cache_creation_input_tokens: None,
+                            cache_creation: None,
+                            output_tokens_details: None,
+                        }),
+                    },
+                })]
+            })
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -267,5 +288,18 @@ mod tests {
             assert_eq!(StopReason::parse(raw), parsed);
             assert_eq!(parsed.as_str(), raw);
         }
+    }
+
+    #[test]
+    fn usage_update_feeds_the_context_readout() {
+        let event = one(json!({"sessionUpdate": "usage_update", "used": 53000, "size": 1000000}));
+        let costs = crate::stream::extract_costs_from_events_or_default(&[event]);
+        assert_eq!(costs.context_tokens, Some(53000));
+    }
+
+    #[test]
+    fn usage_update_without_used_is_ignored() {
+        let update = json!({"sessionUpdate": "usage_update", "size": 1000000});
+        assert!(agy_stream_events(&AgyEvent::Update(&update)).is_empty());
     }
 }
