@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
+use std::path::Path;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -12,6 +14,8 @@ pub enum ShotError {
     UnknownShot(String),
     #[error("name shots to approve or pass --all")]
     NothingSelected,
+    #[error("`{0}` is not a UTF-8 file name")]
+    NonUtf8Name(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +165,25 @@ pub fn stale_names(selected: &[Shot], existing: &[String]) -> Vec<String> {
     restrict_names(existing, selected)
 }
 
+pub fn png_names_from(entries: Vec<OsString>) -> Result<Vec<String>, ShotError> {
+    let mut names = Vec::new();
+    for entry in entries {
+        let is_png = Path::new(&entry)
+            .extension()
+            .is_some_and(|ext| ext == "png");
+        match entry.into_string() {
+            Ok(name) if is_png => names.push(name),
+            Ok(_) => {}
+            Err(raw) if is_png => {
+                return Err(ShotError::NonUtf8Name(raw.to_string_lossy().into_owned()))
+            }
+            Err(_) => {}
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 pub fn stale_diffs(existing: &[String], changed: &[String]) -> Vec<String> {
     let kept = sorted_set(changed);
     existing
@@ -293,6 +316,7 @@ pub struct Classification {
     pub changed: Vec<(String, Change)>,
     pub new: Vec<String>,
     pub missing: Vec<String>,
+    pub unreadable: Vec<String>,
     pub unchanged: Vec<String>,
 }
 
@@ -349,6 +373,7 @@ pub fn classify(
     };
     for name in baseline_set.intersection(&current_set) {
         let Some(measured) = measures.get(*name) else {
+            classification.unreadable.push((*name).clone());
             continue;
         };
         match change_of(measured) {
@@ -363,6 +388,7 @@ pub fn is_clean(classification: &Classification) -> bool {
     classification.changed.is_empty()
         && classification.new.is_empty()
         && classification.missing.is_empty()
+        && classification.unreadable.is_empty()
 }
 
 fn section(title: &str, lines: &[String]) -> String {
@@ -386,10 +412,11 @@ pub fn render_report(classification: &Classification) -> String {
         })
         .collect();
     format!(
-        "# Shots report\n\n{}{}{}## Unchanged ({})\n",
+        "# Shots report\n\n{}{}{}{}## Unchanged ({})\n",
         section("Changed", &changed),
         section("New", &classification.new),
         section("Missing", &classification.missing),
+        section("Unreadable", &classification.unreadable),
         classification.unchanged.len()
     )
 }
@@ -715,6 +742,55 @@ mod tests {
             missing: names(&["m.png"]),
             ..clean
         }));
+    }
+
+    #[test]
+    fn a_common_name_without_a_measure_is_unreadable() {
+        let measures = BTreeMap::from([("a.png".to_string(), pixels(0, 10))]);
+        let c = classify(
+            &names(&["a.png", "b.png"]),
+            &names(&["a.png", "b.png"]),
+            &measures,
+        );
+        assert_eq!(c.unreadable, names(&["b.png"]));
+        assert_eq!(c.unchanged, names(&["a.png"]));
+        assert!(!is_clean(&c));
+    }
+
+    #[test]
+    fn the_report_lists_unreadable_shots() {
+        let c = Classification {
+            unreadable: names(&["b.png"]),
+            ..Classification::default()
+        };
+        let report = render_report(&c);
+        assert!(report.contains("## Unreadable (1)"));
+        assert!(report.contains("- b.png"));
+    }
+
+    #[test]
+    fn png_names_keep_utf8_pngs_and_ignore_other_files() {
+        let entries = vec![OsString::from("a.png"), OsString::from("notes.txt")];
+        assert_eq!(png_names_from(entries), Ok(names(&["a.png"])));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_png_name_is_an_error() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![b'a', 0xff, b'.', b'p', b'n', b'g']);
+        assert!(matches!(
+            png_names_from(vec![bad]),
+            Err(ShotError::NonUtf8Name(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_name_that_is_not_a_png_is_ignored() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![b'a', 0xff, b'.', b't', b'x', b't']);
+        assert_eq!(png_names_from(vec![bad]), Ok(Vec::new()));
     }
 
     #[test]

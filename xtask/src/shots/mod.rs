@@ -186,14 +186,12 @@ fn baseline_names(dir: &Path) -> Result<Vec<String>, BoxError> {
 fn png_names(dir: &Path) -> Result<Vec<String>, BoxError> {
     let entries =
         fs::read_dir(dir).map_err(|error| format!("could not read {}: {error}", dir.display()))?;
-    let mut names: Vec<String> = entries
+    let files = entries
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_file())
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| name.ends_with(".png"))
+        .map(|entry| entry.file_name())
         .collect();
-    names.sort();
-    Ok(names)
+    Ok(core::png_names_from(files)?)
 }
 
 fn compare(args: CompareArgs) -> Result<(), BoxError> {
