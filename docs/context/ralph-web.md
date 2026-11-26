@@ -24,6 +24,9 @@
 | Primitives | `crates/ralph_api/src/render/` | pure HTML builders, one file for each primitive, plus `escape.rs` |
 | Markdown | `crates/ralph_api/src/render/{prose,md_event,md_link,code}.rs` | `render_markdown()`: pulldown-cmark events to HTML inside `<r-prose>`; `code.rs` highlights fenced blocks |
 | Catalogue page | `crates/ralph_api/src/catalogue/` | `page()` builds `/catalogue`; `fixture.rs` parses the fixture |
+| List routes | `crates/ralph_api/src/lists_api.rs` | `workers`, `schedules`, `watches` handlers |
+| List rows | `crates/core/src/{schedule_command,watch_command}.rs`, `crates/core/src/workers_view/web.rs` | pure `task_rows()`, `watch_rows()`, `worker_state_rows()` |
+| Worker facts | `crates/ralph_server/src/worker_facts.rs` | `worker_facts()`: reads the marker files and the spawn record |
 | Fixture | `crates/ralph_api/fixtures/catalogue.json` | sanitised sample data for the catalogue |
 | Fixture generator | `xtask/src/catalogue/` | `core.rs` is pure; `mod.rs` reads and writes files |
 
@@ -127,6 +130,8 @@ Risk:
 | unknown thread, or `node` past the last entry | 404 `{"error":"not found"}` |
 | memory store missing or unreadable | 500 `{"error":"memory unavailable"}`, with no path and no system text |
 | other method on a memory route | 405 with `Allow: GET` |
+| `GET /api/workers`, `GET /api/schedules`, `GET /api/watches` | 200 `{"store","rows"}`; see [Workers, schedules and watches](#workers-schedules-and-watches) |
+| other method on those three routes | 405 with `Allow: GET` |
 | other path | 404 `{"error":"not found"}` |
 
 The 503 is the only answer that does not pass the Host and token checks. The server sends it before `route()` runs, so a request without a token also gets it. The other rows apply in the order shown, after the 503 row.
@@ -319,3 +324,25 @@ The UI has no JavaScript. Each primitive is a hyphenated tag that the server ren
 - `.clip` cuts a cell on one line with a CSS ellipsis on the real column width. `app.js` sends the first line of an entry whole and no longer cuts it at a fixed length.
 - Rows reserve a 2px left bar. Hover fills with `--r-hover` and leaves the text colour alone. `aria-selected="true"` fills with `--r-selected` and shows an accent bar. `.open` shows the accent bar with no fill. These are styles only; the screen sets no row state yet.
 - `.stackable` is opt-in and only the entries table has it. At 760px or narrower it hides the header and turns each row into two lines: `#`, role and time, then the text, clipped at two lines.
+
+## Workers, schedules and watches
+
+`GET /api/workers`, `GET /api/schedules` and `GET /api/watches` take no parameters. Each answers `{"store":"<name>","rows":[...]}`. `store` is the last path component. Rows hold metadata only. Commands, briefs, follow-up text, report text, pending request text, paths, branches and URLs are never returned. Each row says only whether a follow-up exists.
+
+| Route | Row fields |
+|-------|------------|
+| `/api/schedules` | `id`, `kind` (`command` or `worker`), `status` (`proposed`, `pending` or `running`), `at`, `late`, `deadline`, `timeout_secs`, `repeat`, `has_follow_up`; sorted by `at`, then `id` |
+| `/api/watches` | `id`, `kind` (`normal` or `persistent`), `started_at`, `timeout_secs`, `timeout_deadline`, `wake_deadline`, `has_follow_up`; sorted like `/watch` |
+| `/api/workers` | `id`, `harness`, `state`, `tone`, `pending_count`, `ticket`, `last_report_status`, `last_report_at`; sorted by `id` |
+
+Worker state comes from the marker files, in this order: `gone`, `blocked`, `waiting`, `unreported`, then the activity label (`running`, `background`, `idle`, `failed`), then `running`. `tone` is chosen on the server: `running` and `background` are `ok`, `blocked` is `warn`, `waiting` is `info`, `unreported` is `accent`, `idle` and `gone` are `neutral`, `failed` is `bad`. Workers are listed from the store files only. There is no tmux, git, monitor or network lookup, so a worker that exists only as a tmux session does not appear.
+
+| Answer | When |
+|--------|------|
+| 200 with `"rows":[]` | the store exists but the directory for the route does not, or it holds no records |
+| 404 `{"error":"store not found"}` | the store directory is missing |
+| 405 with `Allow: GET` | other method |
+
+An unreadable or corrupt record is skipped and the good rows are returned. The existing readers decide this. Note that `ScheduleStore::load_all` deletes a corrupt schedule file when it reads it, so `GET /api/schedules` can remove such a file. `WatchStore::load_all` does not delete. The readers warn on stderr only, never in the body. There is no 500 for these routes, because the readers return no error.
+
+The shell shows the routes as tabs 3 to 5: `#/workers`, `#/schedules` and `#/watches`; Catalogue is tab 6. Each screen is an `r-table`. State, status, kind and late cells are `r-pill` marks. Workers use the `tone` from the API. Schedules: `pending` is `info`, `running` is `ok`, `proposed` is `neutral`, and a late task has a `bad` pill. Watches: `normal` is `neutral` and `persistent` is `accent`. An empty list gives an `r-empty` ("No live workers", "No scheduled tasks" or "No active watches"). A failed load gives an `r-error` with a retry button. There is no live refresh. The contracts are `crates/ralph_api/tests/lists_contract.rs` and `lists_screen_contract.rs`.
