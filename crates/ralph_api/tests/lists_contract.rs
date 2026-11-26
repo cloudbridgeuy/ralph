@@ -638,3 +638,23 @@ fn workers_planted_ticket_and_report_status_are_not_returned() {
     let row = json_of(&reply)["rows"][0].clone();
     assert_eq!(row["last_report_status"], Value::Null);
 }
+
+#[test]
+fn workers_planted_report_time_is_not_returned() {
+    let server = TestServer::start_with_store(|store| {
+        owner(store, CLAUDE_OWNER_DIR, "alpha");
+        let report = encode_entry(&NewEntry {
+            role: Role::Worker,
+            at: PLANTED.to_string(),
+            text: "[worker alpha · done]\nbody".to_string(),
+        })
+        .unwrap();
+        touch(&store.join("log.jsonl"), &report);
+    });
+    let reply = get_workers(&server);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert!(!reply.body.contains("sk-live"), "{}", reply.body);
+    let row = json_of(&reply)["rows"][0].clone();
+    assert_eq!(row["last_report_status"], "done");
+    assert_eq!(row["last_report_at"], Value::Null);
+}

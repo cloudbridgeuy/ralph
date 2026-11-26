@@ -1,5 +1,7 @@
 use super::ReportLine;
 use crate::worker::{pending_requests, ActivityState};
+use crate::worker_costs::window::instant;
+use chrono::SecondsFormat;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -74,6 +76,12 @@ pub fn ticket_shape(key: &str) -> Option<&str> {
     valid.then_some(key)
 }
 
+/// A report time is returned only when it parses as RFC 3339, and then in the
+/// canonical UTC form. The log holds the raw text, which may be anything.
+fn canonical_instant(at: &str) -> Option<String> {
+    instant(at).map(|at| at.to_rfc3339_opts(SecondsFormat::Secs, true))
+}
+
 pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
     let mut sorted: Vec<&WorkerFacts> = facts.iter().collect();
     sorted.sort_by(|a, b| a.id.cmp(&b.id));
@@ -96,7 +104,10 @@ pub fn worker_state_rows(facts: &[WorkerFacts]) -> Vec<WorkerWebRow> {
                     .and_then(ticket_shape)
                     .map(str::to_string),
                 last_report_status: worker.last_report.as_ref().map(|r| r.status.clone()),
-                last_report_at: worker.last_report.as_ref().map(|r| r.at.clone()),
+                last_report_at: worker
+                    .last_report
+                    .as_ref()
+                    .and_then(|r| canonical_instant(&r.at)),
             }
         })
         .collect()
@@ -125,6 +136,25 @@ mod tests {
         ] {
             assert_eq!(ticket_shape(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn the_report_time_is_returned_only_as_a_canonical_instant() {
+        let at = |text: &str| {
+            let mut worker = facts("w");
+            worker.last_report = Some(ReportLine {
+                status: "done".to_string(),
+                at: text.to_string(),
+                text: "body".to_string(),
+            });
+            worker_state_rows(&[worker])[0].last_report_at.clone()
+        };
+        let canonical = Some("2026-03-01T09:00:00Z".to_string());
+        assert_eq!(at("2026-03-01T09:00:00Z"), canonical);
+        assert_eq!(at("2026-03-01T10:00:00+01:00"), canonical);
+        assert_eq!(at("2026-03-01T09:00:00.123Z"), canonical);
+        assert_eq!(at("sk-live-0123456789abcdef"), None);
+        assert_eq!(at(""), None);
     }
 
     fn facts(id: &str) -> WorkerFacts {
