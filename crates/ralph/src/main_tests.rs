@@ -324,3 +324,14 @@ fn each_memory_harness_gets_its_launch_kind() {
         assert_eq!(command.prompt("p") == "p", harness == "claude", "{harness}");
     }
 }
+
+#[test]
+fn an_unknown_memory_harness_is_refused() {
+    let Err(error) = memory_command("gemini", "m", "rules", claude_invocation) else {
+        panic!("gemini was accepted")
+    };
+    assert_eq!(
+        error.to_string(),
+        "unknown memory harness \"gemini\": use claude, codex or agy"
+    );
+}

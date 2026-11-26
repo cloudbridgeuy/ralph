@@ -607,9 +607,10 @@ fn memory_command(
     model: &str,
     instructions: &str,
     claude: impl FnOnce() -> subprocess::Invocation,
-) -> std::io::Result<MemoryCommand> {
+) -> Result<MemoryCommand, Box<dyn std::error::Error>> {
     use ralph_core::chat_backend::MemoryHarness;
-    let harness = MemoryHarness::parse(harness).unwrap_or(MemoryHarness::Claude);
+    let harness = MemoryHarness::parse(harness)
+        .ok_or_else(|| format!("unknown memory harness {harness:?}: use claude, codex or agy"))?;
     let instructions = (harness.inlines_instructions() && !instructions.is_empty())
         .then(|| instructions.to_string());
     let (launch, codex_model, workdir) = match harness {
@@ -644,7 +645,7 @@ fn curator_command(curator: &Curator) -> Result<MemoryCommand, Box<dyn std::erro
     )?;
     let home = dirs::home_dir();
     let nap = matches!(curator.kind, ralph_core::chat_memory::CallSite::Nap);
-    Ok(memory_command(
+    memory_command(
         &config.nap.harness,
         &config.nap.model,
         &if nap {
@@ -667,7 +668,7 @@ fn curator_command(curator: &Curator) -> Result<MemoryCommand, Box<dyn std::erro
                 )
             }
         },
-    )?)
+    )
 }
 
 fn run_curator_with_command(
