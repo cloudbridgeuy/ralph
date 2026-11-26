@@ -1,7 +1,7 @@
 use super::*;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
-use crate::worker::{Report, ReportKind};
+use crate::worker::{Report, ReportKind, WorkerId};
 use signing::*;
 
 mod block;
@@ -178,7 +178,7 @@ fn a_run_plan_parses_with_typed_steps_actions_and_grants() {
         Step {
             task: "collect evidence".to_string(),
             criterion: Criterion::WorkerDone {
-                worker: "E1".to_string(),
+                worker: WorkerId::parse("E1").unwrap(),
                 verify: None,
             },
         }
@@ -265,9 +265,14 @@ fn at(step: usize) -> Progress {
 }
 
 fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Ticked> {
-    let last: HashMap<String, ReportKind> = known
+    let last: HashMap<WorkerId, ReportKind> = known
         .iter()
-        .map(|(id, status)| (id.to_string(), ReportKind::parse(status).unwrap()))
+        .map(|(id, status)| {
+            (
+                WorkerId::parse(id).unwrap(),
+                ReportKind::parse(status).unwrap(),
+            )
+        })
         .collect();
     let running: Vec<String> = running.iter().map(ToString::to_string).collect();
     start_run(
@@ -288,17 +293,11 @@ fn flagged_stop() -> StopReason {
 }
 
 fn worker_report(worker: &str, status: &str) -> Report {
-    let at = "2026-01-01T00:00:00Z";
-    let text = "text".to_string();
-    match crate::worker::ReportKind::parse(status).unwrap() {
-        crate::worker::ReportKind::Worker(s) => Report::from_worker(worker, at, s, text),
-        crate::worker::ReportKind::Check => Report::check(worker, at, text),
-        crate::worker::ReportKind::Warning => Report::warning(worker, at, text),
-        crate::worker::ReportKind::Watch => Report::watch(worker, at, text),
-        crate::worker::ReportKind::Merged => Report::merged(worker, at, text),
-        crate::worker::ReportKind::View => Report::view(worker, at, text),
-        crate::worker::ReportKind::ThreadClosed => Report::thread_closed(worker, at, text),
-        crate::worker::ReportKind::External => Report::external(worker, at, text),
+    Report {
+        from: crate::worker::Sender::parse(worker).unwrap(),
+        at: "2026-01-01T00:00:00Z".parse().unwrap(),
+        status: crate::worker::ReportKind::parse(status).unwrap(),
+        text: "text".to_string(),
     }
 }
 

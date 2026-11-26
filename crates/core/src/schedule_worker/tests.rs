@@ -35,17 +35,11 @@ fn running(id: &str, started: &str) -> Task {
 }
 
 fn report(worker: &str, at: &str, status: &str) -> Report {
-    match crate::worker::ReportKind::parse(status).unwrap() {
-        crate::worker::ReportKind::Worker(s) => Report::from_worker(worker, at, s, "t".to_string()),
-        crate::worker::ReportKind::Check => Report::check(worker, at, "t".to_string()),
-        crate::worker::ReportKind::Warning => Report::warning(worker, at, "t".to_string()),
-        crate::worker::ReportKind::Watch => Report::watch(worker, at, "t".to_string()),
-        crate::worker::ReportKind::Merged => Report::merged(worker, at, "t".to_string()),
-        crate::worker::ReportKind::View => Report::view(worker, at, "t".to_string()),
-        crate::worker::ReportKind::ThreadClosed => {
-            Report::thread_closed(worker, at, "t".to_string())
-        }
-        crate::worker::ReportKind::External => Report::external(worker, at, "t".to_string()),
+    Report {
+        from: crate::worker::Sender::parse(worker).unwrap(),
+        at: utc(at),
+        status: crate::worker::ReportKind::parse(status).unwrap(),
+        text: "t".to_string(),
     }
 }
 
@@ -235,7 +229,6 @@ fn old_foreign_and_non_report_posts_do_not_end_a_run() {
         report("sched-b", "2026-01-01T09:20:00Z", "done"),
         report("schedule:a", "2026-01-01T09:20:00Z", "done"),
         report("sched-a", "2026-01-01T09:20:00Z", "check"),
-        report("sched-a", "not a time", "done"),
     ];
     let plan = plan_worker_tick(
         &tasks,
@@ -308,8 +301,13 @@ fn command_tasks_are_left_to_the_watch_path() {
 
 #[test]
 fn chat_reports_keep_the_schedule_tag() {
-    let report = chat_report("a", "text".to_string(), "2026-01-01T10:00:00Z");
-    assert_eq!(report.worker, "schedule:a");
+    let report = chat_report(
+        "a",
+        "text".to_string(),
+        "2026-01-01T10:00:00Z".parse().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(report.from.to_string(), "schedule:a");
     assert_eq!(report.status.as_str(), "watch");
     assert_eq!(report.text, "text");
 }
@@ -337,18 +335,18 @@ fn report_texts_name_the_task_and_the_kept_branch() {
 
 #[test]
 fn only_new_scheduled_worker_reports_are_kept() {
-    let known = [report("sched-a", "t1", "done")];
+    let known = [report("sched-a", "2026-01-01T00:00:01Z", "done")];
     let incoming = [
-        report("sched-a", "t1", "done"),
-        report("sched-a", "t2", "question"),
-        report("sched-a", "t2", "question"),
-        report("sched-a", "t3", "check"),
-        report("other", "t4", "done"),
-        report("schedule:a", "t5", "done"),
+        report("sched-a", "2026-01-01T00:00:01Z", "done"),
+        report("sched-a", "2026-01-01T00:00:02Z", "question"),
+        report("sched-a", "2026-01-01T00:00:02Z", "question"),
+        report("sched-a", "2026-01-01T00:00:03Z", "check"),
+        report("other", "2026-01-01T00:00:04Z", "done"),
+        report("schedule:a", "2026-01-01T00:00:05Z", "done"),
     ];
     assert_eq!(
         new_scheduled_reports(&known, &incoming),
-        [report("sched-a", "t2", "question")]
+        [report("sched-a", "2026-01-01T00:00:02Z", "question")]
     );
 }
 

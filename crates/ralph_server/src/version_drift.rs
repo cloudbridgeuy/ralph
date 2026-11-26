@@ -280,13 +280,7 @@ impl DriftRun {
         passed: bool,
         save_failed: bool,
     ) {
-        let entry = drift_entry(
-            agent,
-            &self.version,
-            results,
-            passed,
-            &chrono::Utc::now().to_rfc3339(),
-        );
+        let entry = drift_entry(agent, &self.version, results, passed, chrono::Utc::now());
         let posted = post_alert(agent, &entry, &self.inbox);
         if record_after_post(&entry.outcome, posted, save_failed) {
             verified_agents::save_drift(entry).ok();
@@ -298,9 +292,12 @@ fn post_alert(agent: &str, entry: &DriftEntry, inbox: &Path) -> bool {
     let DriftOutcome::Failed { checks } = &entry.outcome else {
         return false;
     };
+    let Ok(at) = chrono::DateTime::parse_from_rfc3339(&entry.at) else {
+        return false;
+    };
     let old = last_verified_version(&verified_agents::load(), agent);
-    let report = drift_alert(agent, old.as_deref(), &entry.version, checks, &entry.at);
-    Inbox::new(inbox.to_path_buf()).post(&report, 0).is_ok()
+    drift_alert(agent, old.as_deref(), &entry.version, checks, at.to_utc())
+        .is_ok_and(|report| Inbox::new(inbox.to_path_buf()).post(&report, 0).is_ok())
 }
 
 struct EndOwnGroup;
@@ -332,13 +329,7 @@ pub(crate) fn record_manual(
     save_failed: bool,
 ) {
     if let Some(version) = version.filter(|_| !save_failed) {
-        let entry = drift_entry(
-            agent,
-            version,
-            results,
-            passed,
-            &chrono::Utc::now().to_rfc3339(),
-        );
+        let entry = drift_entry(agent, version, results, passed, chrono::Utc::now());
         verified_agents::save_drift(entry).ok();
     }
 }

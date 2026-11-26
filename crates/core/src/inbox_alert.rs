@@ -105,7 +105,7 @@ pub fn inbox_alert(
 fn notification_body(fresh: &[&Report]) -> String {
     fresh
         .iter()
-        .map(|report| format!("{} {}", report.worker, report.status))
+        .map(|report| format!("{} {}", report.from, report.status))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -124,11 +124,12 @@ pub fn osc9(body: &str, in_tmux: bool) -> String {
 mod tests {
     use super::*;
     use crate::worker::ReportStatus;
+    use crate::worker::WorkerId;
 
     fn report(worker: &str, status: &str) -> Report {
         Report::from_worker(
-            worker,
-            "2026-10-12T00:00:00Z",
+            &WorkerId::parse(worker).unwrap(),
+            "2026-10-12T00:00:00Z".parse().unwrap(),
             ReportStatus::parse(status).unwrap(),
             "summary".into(),
         )

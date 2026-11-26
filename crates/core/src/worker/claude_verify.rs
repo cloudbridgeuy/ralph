@@ -289,6 +289,7 @@ pub fn argv_check(
 mod tests {
     use super::*;
     use crate::worker::PermissionSetup;
+    use crate::worker::WorkerId;
     use serde_json::json;
 
     fn feed(fold: &mut ClaudeFold, plan: ClaudePlan, lines: &[Value]) -> Vec<String> {
@@ -397,8 +398,8 @@ mod tests {
 
     fn inbox_report() -> Report {
         Report::from_worker(
-            "w",
-            "t",
+            &WorkerId::parse("w").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Done,
             "verify".to_string(),
         )
@@ -471,8 +472,8 @@ mod tests {
     #[test]
     fn report_fails_when_the_only_report_is_not_done() {
         let blocked = Report::from_worker(
-            "w",
-            "t",
+            &WorkerId::parse("w").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Blocked,
             "verify".to_string(),
         );
@@ -618,13 +619,14 @@ mod tests {
 
     #[test]
     fn parse_reports_keeps_valid_reports_and_skips_the_rest() {
-        let valid = r#"{"worker":"verify","at":"t","status":"done","text":"verify"}"#;
+        let valid =
+            r#"{"worker":"verify","at":"2026-01-01T00:00:00Z","status":"done","text":"verify"}"#;
         let found = parse_reports(&[valid.to_string(), "not json".to_string(), "{}".to_string()]);
         assert_eq!(
             found,
             vec![Report::from_worker(
-                "verify",
-                "t",
+                &WorkerId::parse("verify").unwrap(),
+                "2026-01-01T00:00:00Z".parse().unwrap(),
                 crate::worker::ReportStatus::Done,
                 "verify".into()
             )]
@@ -635,7 +637,9 @@ mod tests {
     fn file(name: &str, status: &str) -> InboxFile {
         (
             name.to_string(),
-            format!(r#"{{"worker":"w","at":"t","status":"{status}","text":"verify"}}"#),
+            format!(
+                r#"{{"worker":"w","at":"2026-01-01T00:00:00Z","status":"{status}","text":"verify"}}"#
+            ),
         )
     }
 

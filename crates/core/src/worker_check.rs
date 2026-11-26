@@ -1,5 +1,7 @@
 use crate::chat_memory::{Entry, Role};
-use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportKind, Startup};
+use crate::worker::{
+    startup_state, ActivityState, HarnessId, Report, ReportKind, Startup, WorkerId,
+};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -54,7 +56,7 @@ pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
     reports
         .iter()
         .filter(|report| report.status.worker_status().is_some())
-        .map(|report| (report.worker.clone(), report.at.clone()))
+        .map(|report| (report.from.to_string(), report.at.to_rfc3339()))
         .collect()
 }
 
@@ -68,12 +70,12 @@ pub fn logged_reports(entries: &[Entry]) -> HashMap<String, String> {
     reports
 }
 
-pub fn logged_states(entries: &[Entry]) -> HashMap<String, ReportKind> {
+pub fn logged_states(entries: &[Entry]) -> HashMap<WorkerId, ReportKind> {
     entries
         .iter()
         .filter(|entry| entry.role == Role::Worker)
         .flat_map(|entry| entry.text.lines().filter_map(message_header))
-        .filter_map(|(id, status)| Some((id.to_string(), worker_report(status)?)))
+        .filter_map(|(id, status)| Some((WorkerId::parse(id).ok()?, worker_report(status)?)))
         .collect()
 }
 
@@ -253,6 +255,7 @@ mod stale_busy;
 mod tests {
     use super::*;
     use crate::worker::ReportStatus;
+    use crate::worker::WorkerId;
 
     fn obs() -> WorkerObservation {
         WorkerObservation {
@@ -729,14 +732,32 @@ mod tests {
     #[test]
     fn last_reports_ignore_check_posts() {
         let reports = [
-            Report::from_worker("w1", "t1", ReportStatus::Done, String::new()),
-            Report::check("w1", "t2", String::new()),
-            Report::check("w2", "t3", String::new()),
-            Report::from_worker("w1", "t4", ReportStatus::Question, String::new()),
+            Report::from_worker(
+                &WorkerId::parse("w1").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                ReportStatus::Done,
+                String::new(),
+            ),
+            Report::check(
+                &WorkerId::parse("w1").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                String::new(),
+            ),
+            Report::check(
+                &WorkerId::parse("w2").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                String::new(),
+            ),
+            Report::from_worker(
+                &WorkerId::parse("w1").unwrap(),
+                "2026-01-01T00:00:04Z".parse().unwrap(),
+                ReportStatus::Question,
+                String::new(),
+            ),
         ];
         let last = last_reports(&reports);
         assert_eq!(last.len(), 1);
-        assert_eq!(last["w1"], "t4");
+        assert_eq!(last["w1"], "2026-01-01T00:00:04+00:00");
     }
 
     fn worker_entry(at: &str, text: &str) -> Entry {

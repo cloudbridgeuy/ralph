@@ -1,5 +1,8 @@
 use crate::chat_answer::AnswerArgs;
-use crate::worker::{deny_line, permission_response, ClaudePermission, Report, ALLOW_ONCE};
+use crate::worker::{
+    deny_line, permission_response, ClaudePermission, Report, WorkerId, ALLOW_ONCE,
+};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -397,7 +400,11 @@ pub fn no_option_message(options: &[PermissionOption]) -> String {
     )
 }
 
-pub fn permission_alert_report(id: &str, at: &str, content: &BlockedContent) -> Report {
+pub fn permission_alert_report(
+    id: &WorkerId,
+    at: DateTime<Utc>,
+    content: &BlockedContent,
+) -> Report {
     let ids: Vec<&str> = content
         .options
         .iter()
@@ -407,7 +414,8 @@ pub fn permission_alert_report(id: &str, at: &str, content: &BlockedContent) -> 
         id,
         at,
         format!(
-            "Worker {id} is waiting for a permission answer on {}: {}. Answer it with reply, request {} and one optionId: {}.",
+            "Worker {} is waiting for a permission answer on {}: {}. Answer it with reply, request {} and one optionId: {}.",
+            id.as_str(),
             content.tool,
             content.summary,
             content.request_id,
@@ -675,7 +683,11 @@ mod tests {
             options: options(),
             pending: Vec::new(),
         };
-        let report = permission_alert_report("A", "t", &content);
+        let report = permission_alert_report(
+            &WorkerId::parse("A").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
+            &content,
+        );
         assert!(report.text.contains("shell"));
         assert!(report.text.contains("request 7"));
         assert!(report.text.contains("allow-once, reject-once"));

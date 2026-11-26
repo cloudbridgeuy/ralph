@@ -93,11 +93,12 @@ pub(super) fn record(dir: &Path) -> Result<String, String> {
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("invalid worker id")?;
-    let at = chrono::Utc::now().to_rfc3339();
+    let at = chrono::Utc::now();
+    let id = WorkerId::parse(id).map_err(|error| error.to_string())?;
     let report = prompt_failure_report(
         "agy",
-        id,
-        &at,
+        &id,
+        at,
         "the chat ended before accepted work finished; its outcome is unknown. Review the work and resend any message that is still needed",
     );
     let name = inbox_file_name(&report, SEQ.fetch_add(1, Ordering::Relaxed));

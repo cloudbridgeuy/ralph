@@ -16,7 +16,7 @@ fn worker_done_accepts_a_verify_command() {
     assert_eq!(
         plan.steps[0].criterion,
         Criterion::WorkerDone {
-            worker: "E1".to_string(),
+            worker: WorkerId::parse("E1").unwrap(),
             verify: Some("cargo test".to_string()),
         }
     );

@@ -457,8 +457,8 @@ fn the_next_tick_takes_the_answered_workers_once() {
         watched: None,
     };
     let flagged = [ralph_core::worker::Report::from_worker(
-        "E1",
-        "2026-01-01T00:00:00Z",
+        &ralph_core::worker::WorkerId::parse("E1").unwrap(),
+        "2026-01-01T00:00:00Z".parse().unwrap(),
         ralph_core::worker::ReportStatus::Question,
         "q".to_string(),
     )];
@@ -677,7 +677,7 @@ fn go_on_a_stopped_worker_step_skips_it_once_the_worker_reported_done() {
     go(&send_it, Some(&hash), true);
     send_it.release(&hash, Some(1)).unwrap();
     let done = ralph_core::worker::ReportKind::parse("done").unwrap();
-    let last = [("GUZ-1".to_string(), done)].into();
+    let last = [(ralph_core::worker::WorkerId::parse("GUZ-1").unwrap(), done)].into();
     let seen = Seen {
         last: &last,
         running: &[],
