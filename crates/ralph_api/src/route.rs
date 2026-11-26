@@ -12,6 +12,7 @@ const TOKENS_PATH: &str = "/tokens.css";
 const RENDER_PATH: &str = "/api/render";
 const CONFIG_PATH: &str = "/api/config";
 const SCHEDULES_PATH: &str = "/api/schedules";
+const WATCHES_PATH: &str = "/api/watches";
 const MEMORY_PATH: &str = "/api/memory";
 const ENTRIES_PATH: &str = "/api/memory/entries";
 const THREADS_PATH: &str = "/api/memory/threads";
@@ -88,6 +89,8 @@ pub(crate) fn route(request: &ApiRequest, config: &ApiConfig, token: &Token) -> 
         (CONFIG_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (SCHEDULES_PATH, "GET") => lists_api::schedules(request, config),
         (SCHEDULES_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
+        (WATCHES_PATH, "GET") => lists_api::watches(request, config),
+        (WATCHES_PATH, _) => with_header(error(405, "method not allowed"), ("Allow", "GET")),
         (MEMORY_PATH | ENTRIES_PATH | THREADS_PATH, _) => {
             with_header(error(405, "method not allowed"), ("Allow", "GET"))
         }
