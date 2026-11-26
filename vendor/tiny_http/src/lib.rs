@@ -319,7 +319,7 @@ impl Server {
                             Some(ref _ssl) => unreachable!(),
                         };
 
-                        Ok(ClientConnection::new(write_closable, read_closable))
+                        Ok(ClientConnection::new(write_closable, read_closable, timeouts.header))
                     }
                     Err(e) => Err(e),
                 };

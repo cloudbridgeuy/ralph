@@ -1,11 +1,14 @@
 use crate::addr::{check_bind, BindError, BindPolicy};
-use crate::admit::{admit, Admission, MAX_HANDLERS};
+use crate::admit::{
+    admit, counted_peer, counts_toward_peer_cap, Admission, PeerCounts, PeerGuard, MAX_HANDLERS,
+    MAX_REJECTED_PER_PEER,
+};
 use crate::render_api::{plan_body, read_outcome, BodyPlan};
 use crate::route::{accepts_body, overloaded, route, ApiConfig, ApiRequest, ApiResponse};
 use crate::token::Token;
 use ralph_server::warn::{warn, warn_if_err};
 use std::io::{Cursor, Read};
-use std::net::{SocketAddr, TcpListener};
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -29,6 +32,7 @@ pub enum ApiError {
 pub struct Limits {
     pub read: Duration,
     pub write: Duration,
+    pub header: Duration,
 }
 
 impl Default for Limits {
@@ -36,6 +40,7 @@ impl Default for Limits {
         Limits {
             read: Duration::from_secs(10),
             write: Duration::from_secs(10),
+            header: Duration::from_secs(10),
         }
     }
 }
@@ -44,6 +49,7 @@ fn timeouts_for(limits: &Limits) -> Timeouts {
     Timeouts {
         read: Some(limits.read),
         write: Some(limits.write),
+        header: Some(limits.header),
     }
 }
 
@@ -74,28 +80,92 @@ pub fn serve(
 ) -> Result<(), ApiError> {
     let shared = Arc::new((config.clone(), token.clone()));
     let active = Arc::new(AtomicUsize::new(0));
+    let peers = Arc::new(PeerCounts::default());
     while !stop() {
         let received = server
             .recv_timeout(POLL)
             .map_err(|error| ApiError::Recv(error.to_string()))?;
         let Some(request) = received else { continue };
         match admit(active.load(Ordering::SeqCst), MAX_HANDLERS) {
-            Admission::Accept => spawn_handler(request, &shared, &active),
-            Admission::Reject => run_off_loop(request, |request| respond(request, overloaded())),
+            Admission::Accept => spawn_handler(request, &shared, &active, &peers),
+            Admission::Reject => {
+                let delivery = overload_delivery(peer_of(&request), &peers);
+                run_off_loop(request, move |request| match delivery {
+                    Delivery::Drain(guard) => reject_overloaded(guard, |after_write| {
+                        respond_then(request, overloaded(), after_write);
+                    }),
+                    Delivery::Close => respond_and_close(request, overloaded(), || ()),
+                });
+            }
         }
     }
     Ok(())
 }
 
-fn spawn_handler(request: Request, shared: &Arc<(ApiConfig, Token)>, active: &Arc<AtomicUsize>) {
+fn reject_overloaded(guard: Option<PeerGuard>, respond: impl FnOnce(Box<dyn FnOnce()>)) {
+    respond(Box::new(|| ()));
+    drop(guard);
+}
+
+fn peer_of(request: &Request) -> Option<IpAddr> {
+    counted_peer(request.remote_addr().map(SocketAddr::ip))
+}
+
+enum Delivery {
+    Drain(Option<PeerGuard>),
+    Close,
+}
+
+fn overload_delivery(peer: Option<IpAddr>, peers: &Arc<PeerCounts>) -> Delivery {
+    match peer {
+        Some(ip) => enter_capped(ip, peers),
+        None => Delivery::Drain(None),
+    }
+}
+
+fn enter_capped(ip: IpAddr, peers: &Arc<PeerCounts>) -> Delivery {
+    let (guard, previous) = PeerCounts::enter(peers, ip);
+    match admit(previous, MAX_REJECTED_PER_PEER) {
+        Admission::Accept => Delivery::Drain(Some(guard)),
+        Admission::Reject => Delivery::Close,
+    }
+}
+
+fn limit_rejected(
+    response: ApiResponse,
+    peer: Option<IpAddr>,
+    peers: &Arc<PeerCounts>,
+) -> (ApiResponse, Delivery) {
+    let Some(ip) = peer.filter(|_| counts_toward_peer_cap(response.status)) else {
+        return (response, Delivery::Drain(None));
+    };
+    match enter_capped(ip, peers) {
+        Delivery::Close => (overloaded(), Delivery::Close),
+        drain => (response, drain),
+    }
+}
+
+fn spawn_handler(
+    request: Request,
+    shared: &Arc<(ApiConfig, Token)>,
+    active: &Arc<AtomicUsize>,
+    peers: &Arc<PeerCounts>,
+) {
     let slot = Slot::acquire(active);
     let shared = Arc::clone(shared);
+    let peers = Arc::clone(peers);
+    let peer = peer_of(&request);
     run_off_loop(request, move |request| {
-        let _slot = slot;
         let (config, token) = &*shared;
         let mut request = request;
         let response = route(&to_api_request(&mut request, config, token), config, token);
-        respond(request, response);
+        match limit_rejected(response, peer, &peers) {
+            (response, Delivery::Drain(guard)) => {
+                respond_then(request, response, move || drop(slot));
+                drop(guard);
+            }
+            (response, Delivery::Close) => respond_and_close(request, response, move || drop(slot)),
+        }
     });
 }
 
@@ -135,9 +205,16 @@ impl Drop for Slot {
     }
 }
 
-fn respond(request: Request, response: ApiResponse) {
+fn respond_then(request: Request, response: ApiResponse, after_write: impl FnOnce()) {
     warn_if_err(
-        request.respond(to_http_response(response)),
+        request.respond_then(to_http_response(response), after_write),
+        "ralph web: could not write a response",
+    );
+}
+
+fn respond_and_close(request: Request, response: ApiResponse, after_write: impl FnOnce()) {
+    warn_if_err(
+        request.respond_and_close(to_http_response(response), after_write),
         "ralph web: could not write a response",
     );
 }
@@ -213,6 +290,93 @@ fn to_http_response(response: ApiResponse) -> Response<Cursor<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::{error, json_ok};
+    use serde_json::json;
+
+    fn peer() -> Option<IpAddr> {
+        Some(IpAddr::from([100, 64, 0, 9]))
+    }
+
+    #[test]
+    fn limit_rejected_closes_the_third_rejection_without_counting_it() {
+        let peers = Arc::new(PeerCounts::default());
+        let mut held = Vec::new();
+        for _ in 0..MAX_REJECTED_PER_PEER {
+            let (response, delivery) = limit_rejected(error(401, "unauthorized"), peer(), &peers);
+            assert_eq!(response.status, 401);
+            assert!(matches!(delivery, Delivery::Drain(Some(_))));
+            held.push(delivery);
+        }
+        let (response, delivery) = limit_rejected(error(403, "forbidden host"), peer(), &peers);
+        assert_eq!(response.status, 503);
+        assert!(matches!(delivery, Delivery::Close));
+        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
+        assert_eq!(previous, MAX_REJECTED_PER_PEER);
+    }
+
+    #[test]
+    fn limit_rejected_never_counts_or_limits_accepted_responses() {
+        let peers = Arc::new(PeerCounts::default());
+        let held: Vec<_> = (0..MAX_REJECTED_PER_PEER)
+            .map(|_| limit_rejected(error(401, "unauthorized"), peer(), &peers))
+            .collect();
+        let (response, delivery) = limit_rejected(json_ok(json!({})), peer(), &peers);
+        assert_eq!(response.status, 200);
+        assert!(matches!(delivery, Delivery::Drain(None)));
+        drop(held);
+    }
+
+    #[test]
+    fn reject_overloaded_holds_the_guard_through_the_drain() {
+        let peers = Arc::new(PeerCounts::default());
+        let ip = IpAddr::from([100, 64, 0, 9]);
+        let (guard, _) = PeerCounts::enter(&peers, ip);
+        let mut held_during_drain = 0;
+        reject_overloaded(Some(guard), |after_write| {
+            after_write();
+            let (probe, previous) = PeerCounts::enter(&peers, ip);
+            held_during_drain = previous;
+            drop(probe);
+        });
+        assert_eq!(held_during_drain, 1);
+        let (_probe, after) = PeerCounts::enter(&peers, ip);
+        assert_eq!(after, 0);
+    }
+
+    #[test]
+    fn overload_delivery_closes_a_peer_at_the_cap_and_holds_nothing() {
+        let peers = Arc::new(PeerCounts::default());
+        let held: Vec<_> = (0..MAX_REJECTED_PER_PEER)
+            .map(|_| overload_delivery(peer(), &peers))
+            .collect();
+        assert!(held
+            .iter()
+            .all(|delivery| matches!(delivery, Delivery::Drain(Some(_)))));
+        assert!(matches!(overload_delivery(peer(), &peers), Delivery::Close));
+        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
+        assert_eq!(previous, MAX_REJECTED_PER_PEER);
+    }
+
+    #[test]
+    fn overload_delivery_never_limits_exempt_peers() {
+        let peers = Arc::new(PeerCounts::default());
+        for _ in 0..5 {
+            assert!(matches!(
+                overload_delivery(None, &peers),
+                Delivery::Drain(None)
+            ));
+        }
+    }
+
+    #[test]
+    fn limit_rejected_ignores_exempt_peers() {
+        let peers = Arc::new(PeerCounts::default());
+        for _ in 0..5 {
+            let (response, delivery) = limit_rejected(error(401, "unauthorized"), None, &peers);
+            assert_eq!(response.status, 401);
+            assert!(matches!(delivery, Delivery::Drain(None)));
+        }
+    }
     use std::io::Read;
 
     #[test]
@@ -220,10 +384,12 @@ mod tests {
         let limits = Limits {
             read: Duration::from_millis(1234),
             write: Duration::from_millis(2345),
+            header: Duration::from_millis(3456),
         };
         let timeouts = timeouts_for(&limits);
         assert_eq!(timeouts.read, Some(limits.read));
         assert_eq!(timeouts.write, Some(limits.write));
+        assert_eq!(timeouts.header, Some(limits.header));
     }
 
     #[test]

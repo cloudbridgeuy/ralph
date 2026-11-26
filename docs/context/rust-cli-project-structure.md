@@ -51,6 +51,14 @@ Local patch in `vendor/tiny_http`: `Server::from_listener_with_timeouts` sets a 
 Local patch in `vendor/tiny_http`: the `EqualReader` drop drain reads through a fixed 8 KiB buffer, so a huge declared `Content-Length` allocates nothing large (GUZ-1755).
 The same drain stops after 64 KiB drained or 2 s since it started, checked between reads, so a slow body cannot hold the handler thread.
 
+Local patch in `vendor/tiny_http`: the `EqualReader` read and drain counters use `saturating_sub`, so a reader that returns more bytes than asked cannot underflow (GUZ-1851).
+
+Local patch in `vendor/tiny_http`: `Timeouts.header` sets a total deadline for the request line and headers. The clock starts at the first request-line byte of each request. A read past the deadline fails with `TimedOut`, so the client gets 408 and a close. `None` keeps the old behaviour (GUZ-1851).
+
+Local patch in `vendor/tiny_http`: `Request::respond_and_close(response, after_write)` writes and flushes the response, then shuts down both directions of the socket. The body drain then reads end of file at once, and the client thread ends the connection. `respond` and `respond_then` do not change. Risk: if the client is still sending, the close can send a TCP reset, and the client may see the reset instead of the response (GUZ-1851).
+
+Local patch in `vendor/tiny_http`: `Request::respond_then` writes and flushes the response, then runs a caller hook, and only then drops the request, which drains the unread body. `respond` calls it with a no-op hook. The hook runs on a write error too (GUZ-1851).
+
 ## Two-Crate Architecture (Functional Core - Imperative Shell)
 
 Separate pure logic from I/O operations using two crates:
