@@ -36,7 +36,7 @@ r-error .what r-pill:first-child {
 }
 
 r-box[flush] {
-  padding: 0;
+  padding: 10px 0 0;
 }
 
 r-box > .title .sub {
