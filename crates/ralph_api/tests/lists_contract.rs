@@ -4,11 +4,17 @@ mod common;
 
 use chrono::{DateTime, Utc};
 use common::{assert_golden, Host, Reply, TestServer};
+use ralph_core::chat_memory::{encode_entry, NewEntry, Role};
 use ralph_core::schedule::{Task, TaskKind, TaskStatus};
 use ralph_core::schedule_repeat::Repeat;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch::{WatchKind, WatchSpec};
 use ralph_core::watch_store::{SavedWatch, WATCHES_DIR};
+use ralph_core::worker::{
+    activity_path, blocked_path, encode_spawn_record, gone_path, spawn_record_path,
+    unreported_path, waiting_path, SpawnRecord, AGY_OWNER_DIR, CLAUDE_OWNER_DIR, CODEX_OWNER_DIR,
+    CURSOR_OWNER_DIR, OPENCODE_OWNER_DIR,
+};
 use ralph_server::schedule_store::ScheduleStore;
 use ralph_server::watch_store::WatchStore;
 use serde_json::{json, Value};
@@ -357,6 +363,176 @@ fn watches_body_matches_the_golden_and_leaks_nothing() {
     }
     assert_golden(
         "lists/watches",
+        &reply.redacting(&[(name.as_str(), "store")]),
+    );
+}
+
+const LEAKY: &str =
+    "curl -H 'Authorization: Bearer ghp_TOKEN' /Users/alice/secret/run.sh sk-live-0123456789abcdef";
+
+fn touch(path: &Path, text: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+fn owner(store: &Path, dir: &str, id: &str) {
+    touch(&store.join(dir).join(id), "");
+}
+
+fn worker_store(store: &Path) {
+    owner(store, CLAUDE_OWNER_DIR, "alpha");
+    owner(store, CURSOR_OWNER_DIR, "bravo");
+    owner(store, AGY_OWNER_DIR, "charlie");
+    owner(store, CODEX_OWNER_DIR, "delta");
+    owner(store, OPENCODE_OWNER_DIR, "echo");
+    owner(store, CLAUDE_OWNER_DIR, "foxtrot");
+    let blocked = json!({
+        "request_id": "r1", "pending": ["r1", "r2"], "tool": "Bash", "summary": LEAKY,
+    });
+    touch(&blocked_path(store, "alpha"), &blocked.to_string());
+    touch(&waiting_path(store, "bravo"), LEAKY);
+    touch(&activity_path(store, "charlie"), "5 failed");
+    touch(&gone_path(store, "delta"), LEAKY);
+    touch(&unreported_path(store, "echo"), LEAKY);
+    let record = SpawnRecord {
+        ticket: Some("GUZ-1".to_string()),
+        repo: Some("/Users/alice/repo".to_string()),
+        lane: Some("/Users/alice/lane".to_string()),
+        base_sha: Some("0123456789abcdef".to_string()),
+        ..SpawnRecord::default()
+    };
+    touch(
+        &spawn_record_path(store, "alpha"),
+        &encode_spawn_record(&record).unwrap(),
+    );
+    let report = encode_entry(&NewEntry {
+        role: Role::Worker,
+        at: "2026-03-01T09:00:00Z".to_string(),
+        text: format!("[worker alpha · done]\nfinished {LEAKY}"),
+    })
+    .unwrap();
+    touch(&store.join("log.jsonl"), &report);
+}
+
+fn get_workers(server: &TestServer) -> Reply {
+    let target = format!("/api/workers?token={}", server.token());
+    server.exchange("GET", &target, Host::Own, &[])
+}
+
+#[test]
+fn workers_200_shape_state_and_order() {
+    let server = TestServer::start_with_store(worker_store);
+    let reply = get_workers(&server);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let value = json_of(&reply);
+    assert_eq!(value["store"], store_name(&server));
+    let rows = value["rows"].as_array().unwrap();
+    let ids: Vec<&str> = rows.iter().map(|row| row["id"].as_str().unwrap()).collect();
+    assert_eq!(
+        ids,
+        ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
+    );
+    assert_eq!(
+        rows[0],
+        json!({
+            "id": "alpha", "harness": "claude", "state": "blocked", "tone": "warn",
+            "pending_count": 2, "ticket": "GUZ-1",
+            "last_report_status": "done", "last_report_at": "2026-03-01T09:00:00Z",
+        })
+    );
+    let states: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row["state"].as_str().unwrap(),
+                row["tone"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("blocked", "warn"),
+            ("waiting", "info"),
+            ("failed", "bad"),
+            ("gone", "neutral"),
+            ("unreported", "accent"),
+            ("running", "ok"),
+        ]
+    );
+    assert_eq!(rows[5]["ticket"], Value::Null);
+}
+
+#[test]
+fn workers_empty_dirs_are_empty_rows() {
+    let server = TestServer::start_with_store(|dir| {
+        for owner_dir in [CLAUDE_OWNER_DIR, CURSOR_OWNER_DIR, AGY_OWNER_DIR] {
+            fs::create_dir_all(dir.join(owner_dir)).unwrap();
+        }
+    });
+    let reply = get_workers(&server);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(json_of(&reply)["rows"], json!([]));
+}
+
+#[test]
+fn workers_missing_store_is_404() {
+    let server = TestServer::start();
+    fs::remove_dir_all(server.store_path()).unwrap();
+    let reply = get_workers(&server);
+    assert_eq!(reply.status, 404, "{}", reply.body);
+    assert_eq!(json_of(&reply), json!({"error": "store not found"}));
+}
+
+#[test]
+fn workers_post_is_405_with_allow() {
+    let server = TestServer::start();
+    let target = format!("/api/workers?token={}", server.token());
+    let reply = server.exchange("POST", &target, Host::Own, &[]);
+    assert_eq!(reply.status, 405);
+    assert!(reply
+        .headers
+        .iter()
+        .any(|(name, value)| name == "Allow" && value == "GET"));
+}
+
+#[test]
+fn workers_without_token_is_401() {
+    let server = TestServer::start();
+    let reply = server.exchange("GET", "/api/workers", Host::Own, &[]);
+    assert_eq!(reply.status, 401);
+    assert_eq!(json_of(&reply), json!({"error": "unauthorized"}));
+}
+
+#[test]
+fn workers_wrong_host_is_403() {
+    let server = TestServer::start();
+    let target = format!("/api/workers?token={}", server.token());
+    let reply = server.exchange("GET", &target, Host::Named("evil.test"), &[]);
+    assert_eq!(reply.status, 403);
+}
+
+#[test]
+fn workers_body_matches_the_golden_and_leaks_nothing() {
+    let server = TestServer::start_with_store(worker_store);
+    let reply = get_workers(&server);
+    let name = store_name(&server);
+    let leaks = [
+        "/Users",
+        "sk-live",
+        "Bearer",
+        "curl",
+        "ghp_TOKEN",
+        "finished",
+        "0123456789abcdef",
+        "Bash",
+        server.store_path().to_str().unwrap(),
+    ];
+    for leak in leaks {
+        assert!(!reply.body.contains(leak), "{leak}");
+    }
+    assert_golden(
+        "lists/workers",
         &reply.redacting(&[(name.as_str(), "store")]),
     );
 }
