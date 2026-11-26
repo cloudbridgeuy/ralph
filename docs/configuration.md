@@ -463,7 +463,7 @@ A `0` for `cache_secs` or `lookup_timeout_ms`, or an unknown `pr_provider` or `v
 
 ### `[mermaid]` - Diagram Rendering
 
-In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, stateDiagram-v2, gitGraph, pie, journey, sankey/sankey-beta, packet/packet-beta, timeline, mindmap, quadrantChart, xychart/xychart-beta, gantt, and requirementDiagram. A block or architecture diagram shows the source. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
+In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, stateDiagram-v2, gitGraph, pie, journey, sankey/sankey-beta, packet/packet-beta, timeline, mindmap, quadrantChart, xychart/xychart-beta, gantt, and requirementDiagram. A block or architecture diagram shows the source. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, output over 4 MiB, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
 
 mermaid-text can drop a transition label on an edge into a composite state. In a gitGraph it refuses `merge` with `id:`, `tag:` or `type:` and a later `checkout` of a branch declared with `order:`, and it never truncates the branch-name row, so long names make the output too wide; each case shows the source. mermaid-text ignores `switch` and would draw later commits on the wrong branch, so ralph also shows the source for a gitGraph that uses it; `checkout` draws.
 
@@ -473,12 +473,12 @@ For pie, journey, sankey, packet, timeline, mindmap, quadrantChart, xychart, gan
 | --- | --- | --- |
 | `timeout_ms` | `500` | Kill the render child after this many milliseconds |
 | `max_rss_mb` | `256` | Kill the child above this resident size (macOS and Linux only; elsewhere only the timeout applies) |
-| `max_input_bytes` | `1048576` | Refuse a block with more source bytes |
+| `max_input_bytes` | `1048576` | Refuse a block with more source bytes, as text and as a `/view` picture |
 | `max_flowchart_edges` | `50` | Refuse a flowchart/graph, stateDiagram, or stateDiagram-v2 with more arrow tokens |
 | `max_class_relations` | `400` | Refuse a classDiagram with more relation tokens (provisional: dense graphs among few classes can exceed the timeout well below 400; the timeout still bounds them) |
 | `picture_timeout_ms` | `3000` | Kill a `/view` picture child after this many milliseconds; the block then draws as text |
 
-Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements; gitGraph up to 16 KB, 200 commits (`commit`, `merge` and `cherry-pick` lines), and 20 branches including `main`; pie, journey, sankey, packet, timeline, mindmap, quadrantChart, xychart, gantt, and requirementDiagram up to 16 KB with 512 bytes per line (after trailing `%%` comments are removed); pie up to 30 slices; journey up to 100 tasks; sankey up to 100 flows; packet up to bit 1023; timeline up to 100 periods and 300 events; mindmap up to 200 nodes and 12 levels; quadrantChart up to 20 points; xychart up to 40 values in each series; gantt up to 100 tasks of 3650 days each; requirementDiagram up to 30 blocks and 60 relations. A config that fails to load prints a warning and uses these defaults.
+Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements; gitGraph up to 16 KB, 200 commits (`commit`, `merge` and `cherry-pick` lines), and 20 branches including `main`; pie, journey, sankey, packet, timeline, mindmap, quadrantChart, xychart, gantt, and requirementDiagram up to 16 KB with 512 bytes per line (after trailing `%%` comments are removed); pie up to 30 slices; journey up to 100 tasks; sankey up to 100 flows; packet up to bit 1023 as text and bit 4095 as a `/view` picture; timeline up to 100 periods and 300 events; mindmap up to 200 nodes and 12 levels; quadrantChart up to 20 points; xychart up to 40 values in each series; gantt up to 100 tasks of 3650 days each; requirementDiagram up to 30 blocks and 60 relations. A config that fails to load prints a warning and uses these defaults.
 
 ### `[mermaid.style]` - Diagram pictures
 
