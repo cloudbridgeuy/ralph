@@ -249,13 +249,14 @@ mod tests {
         link(&blocked_path(root, "real"));
         link(&activity_path(root, "real"));
         link(&waiting_path(root, "real"));
+        link(&unreported_path(root, "real"));
         link(&gone_path(root, "real"));
         let facts = worker_facts(root);
         assert_eq!(facts.len(), 1, "{facts:?}");
         let real = find(&facts, "real");
         assert!(real.ticket.is_none());
         assert!(real.blocked.is_none() && real.activity.is_none());
-        assert!(!real.waiting && !real.gone);
+        assert!(!real.waiting && !real.unreported && !real.gone);
     }
 
     #[cfg(unix)]
