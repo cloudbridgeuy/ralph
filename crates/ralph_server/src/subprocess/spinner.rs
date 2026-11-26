@@ -9,7 +9,7 @@ use crate::disk_files::DiskFiles;
 use ralph_core::cancel::CancelToken;
 use ralph_core::stream::blocks::StreamCollector;
 use ralph_core::stream::blocks::{OutputBlock, VerboseToolsConfig};
-use ralph_core::stream::{is_main_assistant_line, result_is_error};
+use ralph_core::stream::{is_main_assistant_line, result_is_error, ContentBlock, StreamEvent};
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
@@ -124,7 +124,7 @@ pub(super) enum Step {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Display {
+pub enum Display {
     Shown,
     Silent,
 }
@@ -159,7 +159,7 @@ impl Drop for Shown {
     }
 }
 
-pub(super) struct Pump {
+pub struct Pump {
     shown: Option<Shown>,
     collector: StreamCollector,
     codex: Option<ralph_core::worker::ExecStream>,
@@ -171,7 +171,7 @@ pub(super) struct Pump {
 }
 
 impl Pump {
-    pub(super) fn start(config: &SpinnerSubprocessConfig, display: Display) -> Pump {
+    pub fn start(config: &SpinnerSubprocessConfig, display: Display) -> Pump {
         let collector = StreamCollector::new(config.show_tools, config.verbose_tools.clone());
         let shown = (display == Display::Shown).then(|| {
             let mut shown = Shown {
@@ -196,6 +196,52 @@ impl Pump {
     fn stop_spinner(&mut self) {
         if let Some(shown) = self.shown.as_mut() {
             shown.stop();
+        }
+    }
+
+    fn show(&mut self, blocks: Vec<OutputBlock>) {
+        if let (false, Some(shown)) = (blocks.is_empty(), self.shown.as_mut()) {
+            shown.show(blocks);
+            self.last_output_time = Instant::now();
+        }
+    }
+
+    pub fn event(&mut self, event: StreamEvent) {
+        match &event {
+            StreamEvent::Assistant(assistant) => {
+                self.request_at = Some(chrono::Utc::now());
+                let tool_uses = assistant
+                    .message
+                    .content
+                    .iter()
+                    .filter(|block| matches!(block, ContentBlock::ToolUse { .. }))
+                    .count();
+                self.pending_tool_count += tool_uses;
+            }
+            StreamEvent::User(user) => {
+                self.pending_tool_count = self
+                    .pending_tool_count
+                    .saturating_sub(user.message.content.len());
+            }
+            _ => {}
+        }
+        let blocks = self.collector.process_event(event, &DiskFiles);
+        self.show(blocks);
+    }
+
+    pub fn finish_events(mut self, exit_code: i32) -> StreamingSubprocessResult {
+        self.stop_spinner();
+        let (flushed, stream_result) = self.collector.finish(&DiskFiles);
+        if let (false, Some(shown)) = (flushed.is_empty(), self.shown.as_mut()) {
+            shown.show(flushed);
+        }
+        StreamingSubprocessResult {
+            exit_code,
+            stderr: String::new(),
+            stream_result,
+            request_at: self.request_at,
+            cost_before: None,
+            logged_before: None,
         }
     }
 
@@ -237,10 +283,7 @@ impl Pump {
                     self.pending_tool_count = self.pending_tool_count.saturating_sub(1);
                 }
                 let blocks = self.collector.process_line(&line, &DiskFiles);
-                if let (false, Some(shown)) = (blocks.is_empty(), self.shown.as_mut()) {
-                    shown.show(blocks);
-                    self.last_output_time = Instant::now();
-                }
+                self.show(blocks);
                 if let Some(is_error) = result_is_error(&line) {
                     return Ok(Step::Result { is_error });
                 }
@@ -528,6 +571,72 @@ mod tests {
                 TurnEvent::Stderr("oops\n".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn pump_event_counts_tools_and_finishes_without_readers() {
+        use ralph_core::stream::{
+            AssistantEvent, AssistantMessage, ResultEvent, ToolResult, UserEvent, UserMessage,
+        };
+        let assistant = |content| {
+            StreamEvent::Assistant(AssistantEvent {
+                message: AssistantMessage {
+                    id: None,
+                    content: vec![content],
+                    model: None,
+                    stop_reason: None,
+                    usage: None,
+                },
+            })
+        };
+        let sink = Arc::new(Recording::default());
+        let mut pump = Pump::start(&config(&sink), Display::Shown);
+        pump.event(assistant(ContentBlock::ToolUse {
+            id: "t1".into(),
+            name: "Read".into(),
+            input: serde_json::json!({}),
+        }));
+        assert_eq!(pump.pending_tool_count, 1);
+        assert!(pump.request_at.is_some());
+        pump.event(StreamEvent::User(UserEvent {
+            message: UserMessage {
+                id: None,
+                content: vec![ToolResult {
+                    result_type: Some("tool_result".into()),
+                    tool_use_id: Some("t1".into()),
+                    content: Some("ok".into()),
+                    is_error: false,
+                }],
+            },
+        }));
+        assert_eq!(pump.pending_tool_count, 0);
+        pump.event(assistant(ContentBlock::Text {
+            text: "done\n".into(),
+        }));
+        pump.event(StreamEvent::Result(ResultEvent {
+            subtype: Some("success".into()),
+            total_cost_usd: None,
+            cost_usd: None,
+            duration_ms: None,
+            duration_api_ms: None,
+            usage: None,
+            session_id: None,
+            num_turns: None,
+            result: None,
+            terminal_reason: Some("end_turn".into()),
+            model_usage: Default::default(),
+        }));
+        let result = pump.finish_events(0);
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            result.stream_result.costs.terminal_reason.as_deref(),
+            Some("end_turn")
+        );
+        assert!(sink
+            .events()
+            .iter()
+            .any(|event| matches!(event, TurnEvent::Blocks(_))));
     }
 
     #[test]
