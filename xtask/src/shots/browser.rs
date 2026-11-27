@@ -1,4 +1,5 @@
 use super::core::{self, Screen, Shot, Theme};
+use super::lines::{LineSplitter, LINE_CAP};
 use super::mask;
 use super::prefs;
 use super::seed;
@@ -6,7 +7,7 @@ use super::webdriver::{self, Listening};
 use super::BoxError;
 use serde_json::Value;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
@@ -20,6 +21,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const LISTEN_TIMEOUT: Duration = Duration::from_secs(30);
 const STDERR_SETTLE: Duration = Duration::from_millis(200);
 const EXIT_GRACE: Duration = Duration::from_secs(1);
+const READ_RETRY: Duration = Duration::from_millis(50);
 const READY_POLL: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -209,28 +211,38 @@ fn start_ralph(
     Err(start_failure(&mut guard, &reason, &stdout_tail, &stderr_head).into())
 }
 
-fn spawn_line_reader(stdout: ChildStdout, tail: Arc<Mutex<Vec<u8>>>) -> mpsc::Receiver<String> {
+fn spawn_line_reader(mut stdout: ChildStdout, tail: Arc<Mutex<Vec<u8>>>) -> mpsc::Receiver<String> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
+        let mut splitter = LineSplitter::new(LINE_CAP);
+        let mut chunk = [0u8; 4096];
         loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    if let Ok(mut buf) = tail.lock() {
-                        webdriver::push_tail(
-                            &mut buf,
-                            line.as_bytes(),
-                            webdriver::FAILURE_STREAM_CAP,
-                        );
-                    }
-                    let _ = sender.send(line);
+            let count = match stdout.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    sleep(READ_RETRY);
+                    continue;
                 }
+            };
+            for line in splitter.push_bytes(&chunk[..count]) {
+                record_line(&tail, &sender, line);
             }
+        }
+        if let Some(line) = splitter.finish() {
+            record_line(&tail, &sender, line);
         }
     });
     receiver
+}
+
+fn record_line(tail: &Mutex<Vec<u8>>, sender: &mpsc::Sender<String>, line: String) {
+    if let Ok(mut buf) = tail.lock() {
+        webdriver::push_tail(&mut buf, line.as_bytes(), webdriver::FAILURE_STREAM_CAP);
+        webdriver::push_tail(&mut buf, b"\n", webdriver::FAILURE_STREAM_CAP);
+    }
+    let _ = sender.send(line);
 }
 
 fn spawn_stderr_reader(mut stderr: ChildStderr, head: Arc<Mutex<Vec<u8>>>) {

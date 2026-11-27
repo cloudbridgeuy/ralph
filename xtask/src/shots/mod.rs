@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod browser;
 mod core;
+mod lines;
 mod mask;
 mod prefs;
 mod report;
