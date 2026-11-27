@@ -742,6 +742,167 @@ mod tests {
         }
     }
 
+    const PUNCTUATED_SECRETS: [&str; 6] = [
+        "AbCdEf0123456789xyzQ!",
+        "#AbCdEf0123456789xyzQ",
+        "x*AbCdEf0123456789xyzQ",
+        "AbCdEf0123|456789xyzQAbCd",
+        "AbCdEf0123\u{200B}456789xyzQAbCd",
+        "9f86d081-884c7d65-9a2feaa0-c55ad015-a3bf4f1b",
+    ];
+
+    #[test]
+    fn loose_fields_redact_punctuated_and_dashed_secrets() {
+        for text in PUNCTUATED_SECRETS {
+            for key in ["chat.name", "claude.model", "nap.harness", "agy.effort"] {
+                assert_secret(key, text);
+            }
+            assert!(
+                redacts("tickets.linear", &json!([text]), false),
+                "tickets.linear {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn loose_array_items_are_checked_one_by_one() {
+        assert!(redacts(
+            "changes.diff_args",
+            &json!(["--stat", "AbCdEf0123456789xyzQ!"]),
+            false
+        ));
+        assert!(redacts(
+            "mermaid.style.font_family",
+            &json!(["Inter", "x*AbCdEf0123456789xyzQ"]),
+            false
+        ));
+    }
+
+    #[test]
+    fn loose_fields_redact_long_pieces_and_long_values() {
+        assert_secret("chat.name", &"a".repeat(25));
+        assert_secret("chat.name", &format!("x-{}", "b".repeat(25)));
+        assert_secret("claude.model", &["xyz"; 17].join("-"));
+        assert!(!redacts("chat.name", &json!("a".repeat(24)), false));
+    }
+
+    #[test]
+    fn loose_fields_redact_long_hex_runs_split_by_separators() {
+        assert_secret("chat.name", "deadbeef-cafebabe-deadbeef-cafebabe");
+        assert_secret("chat.name", "id-deadbeef-cafebabe-deadbeef-cafebabe");
+        assert!(!redacts("chat.name", &json!("deadbeef-cafebabe"), false));
+        assert!(!redacts(
+            "chat.name",
+            &json!("2024-08-06-2024-08-06"),
+            false
+        ));
+    }
+
+    #[test]
+    fn loose_fields_redact_long_letter_digit_pieces() {
+        assert_secret("chat.name", "AbCdEf0123");
+        assert_secret("chat.name", "ghp-AbCdEf0123");
+        assert!(!redacts("chat.name", &json!("gpt4o-v2"), false));
+    }
+
+    #[test]
+    fn spaces_and_quotes_are_hidden_outside_font_fields() {
+        for (key, text) in [
+            ("chat.name", "my secret words"),
+            ("claude.model", "a b"),
+            ("changes.pager", "delta --side-by-side"),
+            ("changes.diff_args", "--stat --color"),
+            ("chat.worker_base", "\"main\""),
+            ("nap.model", "a,b"),
+            ("chat.name", "a=b"),
+        ] {
+            assert_secret(key, text);
+        }
+    }
+
+    #[test]
+    fn font_fields_allow_names_quotes_commas_and_spaces_only() {
+        for key in [
+            "web.font",
+            "mermaid.style.font_family",
+            "mermaid.style.font_family_mono",
+        ] {
+            assert!(
+                !redacts(
+                    key,
+                    &json!("\"Geist Mono\", ui-monospace, Menlo, monospace"),
+                    false
+                ),
+                "{key}"
+            );
+            assert!(!redacts(key, &json!("Helvetica Neue"), false), "{key}");
+            assert!(redacts(key, &json!("Mono!"), false), "{key}");
+            assert!(redacts(key, &json!("\"Geist Mono\"; x"), false), "{key}");
+            assert!(redacts(key, &json!("a=b"), false), "{key}");
+        }
+        assert_secret("web.font", "\"AbCdEf0123456789xyzQ\", monospace");
+        assert_secret("web.font", &"Mono, ".repeat(25));
+    }
+
+    #[test]
+    fn diff_args_allow_equals_signs_in_flags() {
+        for text in [
+            "--stat",
+            "-U3",
+            "--color=always",
+            "--diff-algorithm=patience",
+        ] {
+            assert!(
+                !redacts("changes.diff_args", &json!([text]), false),
+                "{text}"
+            );
+        }
+        assert_secret("changes.diff_args", "--token=AbCdEf0123456789xyzQ");
+        assert_secret("changes.diff_args", "--git-dir=/Users/me");
+    }
+
+    #[test]
+    fn real_model_and_setting_names_stay_visible() {
+        for (key, text) in [
+            ("claude.model", "claude-opus-4-1-20250805"),
+            ("claude.model", "claude-3-5-sonnet-20241022"),
+            ("codex.model", "gpt-4o-2024-08-06"),
+            ("codex.model", "gpt-4.1-mini"),
+            ("codex.model", "o3-mini-2025-01-31"),
+            ("nap.model", "anthropic.claude-sonnet-4-20250514-v1:0"),
+            ("agy.model", "gemini-2.0-flash-001"),
+            ("chat.name", "ask-me"),
+            ("chat.name", "task-force"),
+            ("chat.name", "x:1"),
+            ("chat.name", "base16-ocean.dark"),
+            ("chat.name", "tokyo-night"),
+            ("chat.edit_mode", "vi"),
+            ("changes.pager", "delta"),
+        ] {
+            assert!(!redacts(key, &json!(text), false), "{key} {text}");
+        }
+    }
+
+    #[test]
+    fn default_config_rows_are_not_redacted_by_shape() {
+        let table = Table::try_from(AppConfig::new()).unwrap();
+        let mut keys = Vec::new();
+        leaf_keys(&table, "", &mut keys);
+        let defaults = serde_json::to_value(&table).unwrap();
+        let mut hidden = Vec::new();
+        for key in keys {
+            let value = key
+                .split('.')
+                .try_fold(&defaults, |node, part| node.get(part))
+                .cloned()
+                .unwrap_or_default();
+            if listing(&key) == Listing::Safe && redacts(&key, &value, false) {
+                hidden.push(key);
+            }
+        }
+        assert!(hidden.is_empty(), "default rows hidden: {hidden:?}");
+    }
+
     #[test]
     fn unlisted_keys_fail_closed() {
         assert_eq!(listing("novel.setting"), Listing::Unlisted);

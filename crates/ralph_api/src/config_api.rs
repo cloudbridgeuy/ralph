@@ -497,4 +497,50 @@ mod tests {
         assert_eq!(found["value"], 40);
         assert_eq!(found["redacted"], false);
     }
+
+    const PUNCTUATED_SECRETS: [&str; 6] = [
+        "AbCdEf0123456789xyzQ!",
+        "#AbCdEf0123456789xyzQ",
+        "x*AbCdEf0123456789xyzQ",
+        "AbCdEf0123|456789xyzQAbCd",
+        "AbCdEf0123\u{200B}456789xyzQAbCd",
+        "9f86d081-884c7d65-9a2feaa0-c55ad015-a3bf4f1b",
+    ];
+
+    #[test]
+    fn punctuated_and_dashed_secrets_in_loose_and_ident_fields_never_reach_the_body() {
+        for secret in PUNCTUATED_SECRETS {
+            for config in [
+                format!("[chat]\nname = \"{secret}\"\n"),
+                format!("[tickets]\nlinear = [\"{secret}\"]\n"),
+            ] {
+                let (g, s) = setup(None, Some(&config));
+                let response = respond(&g, &s, no_env);
+                let raw = text(&response);
+                for leak in ["AbCdEf", "9f86d081", "884c7d65"] {
+                    assert!(!raw.contains(leak), "{config}: {raw}");
+                }
+                let hidden = body(&response)["rows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+                assert!(hidden, "{config}: {raw}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_font_and_a_dated_model_stay_visible_in_the_body() {
+        let (g, s) = setup(None, Some("[claude]\nmodel = \"gpt-4o-2024-08-06\"\n"));
+        let value = body(&respond(&g, &s, no_env));
+        assert_eq!(row(&value, "claude", "model")["value"], "gpt-4o-2024-08-06");
+        let value = body(&respond(&g, &s, no_env));
+        let font = row(&value, "web", "font");
+        assert_eq!(font["redacted"], false);
+        assert_eq!(
+            font["value"],
+            "\"Geist Mono\", ui-monospace, Menlo, monospace"
+        );
+    }
 }

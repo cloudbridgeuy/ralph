@@ -1,10 +1,12 @@
+mod charset;
+
+use charset::{FLAG, FONT, PLAIN};
 use serde_json::Value;
 
 const VIEW_VALUES: &[&str] = &["table", "list"];
 const PR_PROVIDER_VALUES: &[&str] = &["github", "none"];
 const WORD_MAX: usize = 24;
 const NAME_MAX: usize = 40;
-const IDENT_MAX: usize = 64;
 const NUMBER_MAX: usize = 12;
 const KEY_MAX: usize = 40;
 const GRAMMAR_KEY_PREFIXES: [&str; 3] =
@@ -20,6 +22,8 @@ pub enum Class {
     Enum(&'static [&'static str]),
     Free,
     Loose,
+    Font,
+    Flag,
     Number,
 }
 
@@ -29,7 +33,8 @@ pub fn key_class(key: &str) -> Class {
         "workers.pr_provider" => Class::Enum(PR_PROVIDER_VALUES),
         "theme.name" => Class::Name,
         "mermaid.style.palette" | "mermaid.style.curve" => Class::Word,
-        "mermaid.style.font_family" | "mermaid.style.font_family_mono" => Class::Loose,
+        "web.font" | "mermaid.style.font_family" | "mermaid.style.font_family_mono" => Class::Font,
+        "changes.diff_args" => Class::Flag,
         "web.ansi_dark" | "web.ansi_light" => Class::Colour,
         "chat.reset_turns" | "chat.reset_tokens" | "chat.worker_quiet_secs" => Class::Number,
         _ if key == "mermaid.style.config" || key.starts_with("mermaid.style.config.") => {
@@ -81,6 +86,7 @@ pub fn is_word(text: &str) -> bool {
     text.len() <= WORD_MAX
         && text.starts_with(|c: char| c.is_ascii_alphabetic())
         && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && charset::pieces_ok(text)
 }
 
 pub fn is_name(text: &str) -> bool {
@@ -89,14 +95,11 @@ pub fn is_name(text: &str) -> bool {
         && text
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '.' | '(' | ')' | '-'))
+        && charset::pieces_ok(text)
 }
 
 pub fn is_ident(text: &str) -> bool {
-    !text.is_empty()
-        && text.len() <= IDENT_MAX
-        && text
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+    !text.is_empty() && charset::text_ok(PLAIN, text)
 }
 
 pub fn is_key_ident(text: &str) -> bool {
@@ -121,7 +124,9 @@ fn string_shape_ok(class: Class, text: &str) -> bool {
         Class::Ident => is_ident(text),
         Class::Enum(allowed) => allowed.contains(&text),
         Class::Free => is_colour(text) || is_word(text) || is_plain_number(text),
-        Class::Loose => true,
+        Class::Loose => charset::text_ok(PLAIN, text),
+        Class::Font => charset::text_ok(FONT, text),
+        Class::Flag => charset::text_ok(FLAG, text),
         Class::Number => false,
     }
 }
@@ -142,7 +147,7 @@ pub fn value_shape_ok(class: Class, value: &Value) -> bool {
 
 pub fn key_shape_ok(key: &str) -> bool {
     if let Some(rest) = key.strip_prefix("wire.prices.") {
-        return rest.split('.').all(is_ident);
+        return !rest.split('.').any(str::is_empty) && charset::text_ok(PLAIN, rest);
     }
     GRAMMAR_KEY_PREFIXES
         .iter()
@@ -401,11 +406,13 @@ mod tests {
         assert_eq!(key_class("mermaid.style.curve"), Class::Word);
         assert_eq!(key_class("mermaid.style.config"), Class::Free);
         assert_eq!(key_class("mermaid.style.config.flowchart"), Class::Free);
-        assert_eq!(key_class("mermaid.style.font_family"), Class::Loose);
+        assert_eq!(key_class("mermaid.style.font_family"), Class::Font);
+        assert_eq!(key_class("mermaid.style.font_family_mono"), Class::Font);
+        assert_eq!(key_class("changes.diff_args"), Class::Flag);
         assert_eq!(key_class("web.ansi_dark"), Class::Colour);
         assert_eq!(key_class("tickets.linear"), Class::Ident);
         assert_eq!(key_class("workers.view"), Class::Enum(VIEW_VALUES));
-        assert_eq!(key_class("web.font"), Class::Loose);
+        assert_eq!(key_class("web.font"), Class::Font);
         assert_eq!(key_class("claude.model"), Class::Loose);
         assert_eq!(key_class("chat.reset_turns"), Class::Number);
         assert_eq!(key_class("chat.reset_tokens"), Class::Number);
@@ -460,7 +467,7 @@ mod tests {
         assert!(
             !is_ident("") && !is_ident("a b") && !is_ident("a\"b") && !is_ident(&"a".repeat(65))
         );
-        assert!(is_ident(&"a".repeat(64)));
+        assert!(is_ident(&["xyz"; 16].join("-")));
     }
 
     #[test]
@@ -478,7 +485,12 @@ mod tests {
         assert!(value_shape_ok(Class::Colour, &json!(96)));
         assert!(value_shape_ok(Class::Enum(VIEW_VALUES), &json!("list")));
         assert!(!value_shape_ok(Class::Enum(VIEW_VALUES), &json!("grid")));
-        assert!(value_shape_ok(Class::Loose, &json!("anything at all")));
+        assert!(value_shape_ok(Class::Loose, &json!("anything-at-all")));
+        assert!(!value_shape_ok(Class::Loose, &json!("anything at all")));
+        assert!(value_shape_ok(Class::Font, &json!(["Geist Mono", "\"a\""])));
+        assert!(!value_shape_ok(Class::Font, &json!("a=b")));
+        assert!(value_shape_ok(Class::Flag, &json!(["--color=always"])));
+        assert!(!value_shape_ok(Class::Flag, &json!(["a b"])));
     }
 
     #[test]

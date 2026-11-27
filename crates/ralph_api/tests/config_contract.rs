@@ -286,3 +286,47 @@ fn config_text_in_a_numeric_setting_is_absent_from_the_http_body() {
         assert!(hidden, "{config}: {}", reply.body);
     }
 }
+
+#[test]
+fn config_punctuated_and_dashed_secrets_are_absent_from_the_http_body() {
+    for text in [
+        "AbCdEf0123456789xyzQ!",
+        "#AbCdEf0123456789xyzQ",
+        "x*AbCdEf0123456789xyzQ",
+        "AbCdEf0123|456789xyzQAbCd",
+        "AbCdEf0123\u{200B}456789xyzQAbCd",
+        "9f86d081-884c7d65-9a2feaa0-c55ad015-a3bf4f1b",
+    ] {
+        for config in [
+            format!("[chat]\nname = \"{text}\"\n"),
+            format!("[tickets]\nlinear = [\"{text}\"]\n"),
+        ] {
+            let server = TestServer::start_with_store(|dir| write_config(dir, &config));
+            let reply = get(&server);
+            assert_eq!(reply.status, 200, "{}", reply.body);
+            for leak in ["AbCdEf", "9f86d081", "884c7d65"] {
+                assert!(!reply.body.contains(leak), "{config}: {}", reply.body);
+            }
+            let hidden = json_of(&reply)["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+            assert!(hidden, "{config}: {}", reply.body);
+        }
+    }
+}
+
+#[test]
+fn config_the_default_font_stays_visible_in_the_http_body() {
+    let server = TestServer::start_with_store(|dir| write_config(dir, FIXTURE));
+    let reply = get(&server);
+    let value = json_of(&reply);
+    let font = value["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["section"] == "web" && row["key"] == "font")
+        .unwrap();
+    assert_eq!(font["redacted"], false, "{}", reply.body);
+}
