@@ -469,4 +469,33 @@ mod tests {
         assert!(!key_shape_ok(&format!("tickets.{GHP}")));
         assert!(!key_shape_ok("tickets.my secret words"));
     }
+
+    #[test]
+    fn a_percent_pair_needs_a_letter_or_underscore_to_start_the_name() {
+        for text in ["%1x%", "100%2a%", "%9%"] {
+            assert!(!text_has_path_shape(text), "{text}");
+        }
+        for text in ["%a1%", "%_x%", "50%PATH%"] {
+            assert!(text_has_path_shape(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_plain_number_string_has_digits_and_dots_up_to_twelve_characters() {
+        assert!(value_shape_ok(Class::Free, &json!("123456789012")));
+        assert!(value_shape_ok(Class::Free, &json!("1.5")));
+        assert!(!value_shape_ok(Class::Free, &json!("1234567890123")));
+        assert!(!value_shape_ok(Class::Free, &json!("12ab")));
+        assert!(!value_shape_ok(Class::Free, &json!("1e5")));
+        assert!(!value_shape_ok(Class::Free, &json!("1a")));
+    }
+
+    #[test]
+    fn a_name_has_at_most_forty_characters() {
+        let forty = format!("{}a", ["xyz"; 10].join(" "));
+        assert_eq!(forty.len(), 40);
+        assert!(is_name(&forty));
+        assert!(!is_name(&format!("{forty}b")));
+        assert!(!is_name(&["xyz"; 11].join(" ")));
+    }
 }

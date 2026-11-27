@@ -121,6 +121,8 @@ mod tests {
         assert!(text_ok(PLAIN, &words(16)));
         assert!(text_ok(PLAIN, &format!("{}-", words(16))));
         assert!(!text_ok(PLAIN, &words(17)));
+        assert_eq!(format!("{}-x", words(16)).len(), 65);
+        assert!(!text_ok(PLAIN, &format!("{}-x", words(16))));
         assert!(text_ok(FONT, &words(17)));
         assert!(!text_ok(FONT, &words(31)));
         assert!(!text_ok(FLAG, &words(17)));
