@@ -3,12 +3,12 @@ use super::lines::{LineSplitter, LINE_CAP};
 use super::mask;
 use super::prefs;
 use super::seed;
-use super::webdriver::{self, Listening};
+use super::webdriver::{self, FailureKind, Listening, Retry};
 use super::BoxError;
 use serde_json::Value;
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -24,8 +24,10 @@ const EXIT_GRACE: Duration = Duration::from_secs(1);
 const READ_RETRY: Duration = Duration::from_millis(50);
 const READY_POLL: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(250);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const LAUNCH_ATTEMPTS: u32 = 3;
+const ACTIVE_PORT_FILE: &str = "MarionetteActivePort";
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct CaptureOptions {
@@ -49,40 +51,73 @@ struct Marionette {
     next_id: u32,
 }
 
-enum ConnectError {
-    Exited(String),
-    Failed(BoxError),
+struct ConnectError {
+    kind: FailureKind,
+    message: String,
+}
+
+impl ConnectError {
+    fn new(kind: FailureKind, message: impl Into<String>) -> Self {
+        ConnectError {
+            kind,
+            message: message.into(),
+        }
+    }
 }
 
 impl<E: Into<BoxError>> From<E> for ConnectError {
     fn from(error: E) -> Self {
-        ConnectError::Failed(error.into())
+        ConnectError::new(FailureKind::Fatal, error.into().to_string())
     }
 }
 
+fn active_port(profile: &Path) -> Option<u16> {
+    webdriver::parse_active_port(&fs::read_to_string(profile.join(ACTIVE_PORT_FILE)).ok()?)
+}
+
 impl Marionette {
-    fn connect(port: u16, firefox: &mut ChildGuard) -> Result<Self, ConnectError> {
+    fn connect(profile: &Path, firefox: &mut ChildGuard) -> Result<Self, ConnectError> {
         let started = Instant::now();
         let stream = loop {
-            let last_error = match TcpStream::connect(("127.0.0.1", port)) {
-                Ok(stream) => break stream,
-                Err(error) => error,
+            let last_error = match active_port(profile) {
+                Some(port) => match TcpStream::connect(("127.0.0.1", port)) {
+                    Ok(stream) => break stream,
+                    Err(error) => format!("port {port}: {error}"),
+                },
+                None => format!("no {ACTIVE_PORT_FILE} yet"),
             };
             let exit = firefox.0.try_wait()?.map(|status| status.to_string());
             match webdriver::connect_step(exit.as_deref(), started.elapsed(), CONNECT_TIMEOUT) {
                 webdriver::ConnectStep::Wait => sleep(READY_POLL),
-                webdriver::ConnectStep::Exited(status) => return Err(ConnectError::Exited(status)),
+                webdriver::ConnectStep::Exited(status) => {
+                    return Err(ConnectError::new(
+                        FailureKind::Exited,
+                        format!("firefox exited before opening marionette ({status})"),
+                    ))
+                }
                 webdriver::ConnectStep::TimedOut => {
-                    return Err(
-                        format!("firefox did not open marionette on {port}: {last_error}").into(),
-                    )
+                    return Err(ConnectError::new(
+                        FailureKind::TimedOut,
+                        format!(
+                            "no marionette within {}s: {last_error}",
+                            CONNECT_TIMEOUT.as_secs()
+                        ),
+                    ))
                 }
             }
         };
-        stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
+        stream.set_read_timeout(Some(HELLO_TIMEOUT))?;
         stream.set_write_timeout(Some(REPLY_TIMEOUT))?;
         let mut client = Marionette { stream, next_id: 0 };
-        webdriver::validate_hello(&client.read_message()?)?;
+        let hello = client.read_message().map_err(|error| {
+            ConnectError::new(
+                FailureKind::ConnectionLost,
+                format!("no marionette hello: {error}"),
+            )
+        })?;
+        webdriver::validate_hello(&hello)
+            .map_err(|error| ConnectError::new(FailureKind::BadHello, error.to_string()))?;
+        client.stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
         client.call("WebDriver:NewSession", &webdriver::new_session_body())?;
         client.navigate("about:blank")?;
         Ok(client)
@@ -149,10 +184,6 @@ impl Marionette {
         let result = self.call("WebDriver:TakeScreenshot", &webdriver::screenshot_body())?;
         Ok(webdriver::decode_screenshot(&result)?)
     }
-}
-
-fn free_port() -> Result<u16, BoxError> {
-    Ok(TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port())
 }
 
 fn start_ralph(
@@ -322,25 +353,26 @@ fn launch_firefox(
     theme: Theme,
     profile: &Path,
 ) -> Result<(ChildGuard, Marionette), BoxError> {
+    fs::write(profile.join("user.js"), prefs::user_js(theme))?;
+    let mut reasons = Vec::new();
     for attempt in 1..=LAUNCH_ATTEMPTS {
-        let port = free_port()?;
-        fs::write(profile.join("user.js"), prefs::user_js(theme, port))?;
+        match fs::remove_file(profile.join(ACTIVE_PORT_FILE)) {
+            Err(error) if error.kind() != ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
+        }
         let mut child = start_firefox(firefox, profile)?;
-        match Marionette::connect(port, &mut child) {
+        match Marionette::connect(profile, &mut child) {
             Ok(browser) => return Ok((child, browser)),
-            Err(ConnectError::Exited(status)) if attempt < LAUNCH_ATTEMPTS => {
-                println!("firefox exited early ({status}); launching again");
+            Err(error) => {
+                reasons.push(error.message);
+                match webdriver::retry_decision(error.kind, attempt, LAUNCH_ATTEMPTS) {
+                    Retry::Again => println!("firefox launch failed; launching again"),
+                    Retry::GiveUp => return Err(webdriver::format_launch_failure(&reasons).into()),
+                }
             }
-            Err(ConnectError::Exited(status)) => {
-                return Err(format!(
-                "firefox exited before opening marionette ({status}) on {LAUNCH_ATTEMPTS} launches"
-            )
-                .into())
-            }
-            Err(ConnectError::Failed(error)) => return Err(error),
         }
     }
-    Err("firefox was not launched".into())
+    Err(webdriver::format_launch_failure(&reasons).into())
 }
 
 fn capture_theme(

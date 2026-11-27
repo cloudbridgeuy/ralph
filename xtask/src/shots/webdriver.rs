@@ -121,6 +121,44 @@ pub fn connect_step(exit: Option<&str>, elapsed: Duration, timeout: Duration) ->
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureKind {
+    Exited,
+    TimedOut,
+    BadHello,
+    ConnectionLost,
+    Fatal,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Retry {
+    Again,
+    GiveUp,
+}
+
+pub fn retry_decision(kind: FailureKind, attempt: u32, max: u32) -> Retry {
+    if kind != FailureKind::Fatal && attempt < max {
+        Retry::Again
+    } else {
+        Retry::GiveUp
+    }
+}
+
+pub fn parse_active_port(text: &str) -> Option<u16> {
+    text.trim().parse().ok().filter(|port| *port != 0)
+}
+
+pub fn format_launch_failure(reasons: &[String]) -> String {
+    let count = reasons.len();
+    let launches = if count == 1 { "launch" } else { "launches" };
+    let attempts: String = reasons
+        .iter()
+        .enumerate()
+        .map(|(index, reason)| format!("\nattempt {}: {reason}", index + 1))
+        .collect();
+    format!("firefox did not open marionette on {count} {launches}{attempts}")
+}
+
 pub fn new_session_body() -> Value {
     json!({ "capabilities": {} })
 }
@@ -294,6 +332,61 @@ mod tests {
         urls.sort();
         urls.dedup();
         assert_eq!(urls.len(), 7);
+    }
+
+    #[test]
+    fn every_transient_failure_retries_until_the_last_attempt() {
+        for kind in [
+            FailureKind::Exited,
+            FailureKind::TimedOut,
+            FailureKind::BadHello,
+            FailureKind::ConnectionLost,
+        ] {
+            assert_eq!(retry_decision(kind, 1, 3), Retry::Again, "{kind:?}");
+            assert_eq!(retry_decision(kind, 2, 3), Retry::Again, "{kind:?}");
+            assert_eq!(retry_decision(kind, 3, 3), Retry::GiveUp, "{kind:?}");
+            assert_eq!(retry_decision(kind, 4, 3), Retry::GiveUp, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_fatal_failure_never_retries() {
+        assert_eq!(retry_decision(FailureKind::Fatal, 1, 3), Retry::GiveUp);
+    }
+
+    #[test]
+    fn a_single_attempt_budget_never_retries() {
+        assert_eq!(retry_decision(FailureKind::Exited, 1, 1), Retry::GiveUp);
+    }
+
+    #[test]
+    fn the_active_port_file_parses() {
+        assert_eq!(parse_active_port("65280"), Some(65280));
+        assert_eq!(parse_active_port(" 2828\n"), Some(2828));
+    }
+
+    #[test]
+    fn a_bad_active_port_file_is_none() {
+        for text in ["", "\n", "0", "abc", "65536", "-1", "12 34", "28x"] {
+            assert_eq!(parse_active_port(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn launch_failure_lists_every_attempt_in_order() {
+        let text = format_launch_failure(&["exited (1)".into(), "timed out".into()]);
+        assert_eq!(
+            text,
+            "firefox did not open marionette on 2 launches\nattempt 1: exited (1)\nattempt 2: timed out"
+        );
+    }
+
+    #[test]
+    fn launch_failure_names_one_launch_in_the_singular() {
+        assert_eq!(
+            format_launch_failure(&["bad hello".into()]),
+            "firefox did not open marionette on 1 launch\nattempt 1: bad hello"
+        );
     }
 
     #[test]

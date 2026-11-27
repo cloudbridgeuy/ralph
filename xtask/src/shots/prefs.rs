@@ -82,7 +82,7 @@ fn format_pref(name: &str, value: &Pref) -> String {
     }
 }
 
-pub fn user_js(theme: Theme, marionette_port: u16) -> String {
+pub fn user_js(theme: Theme) -> String {
     let scheme = match theme {
         Theme::Dark => 0,
         Theme::Light => 1,
@@ -93,7 +93,7 @@ pub fn user_js(theme: Theme, marionette_port: u16) -> String {
         .collect();
     format!(
         "user_pref(\"layout.css.prefers-color-scheme.content-override\", {scheme});\n\
-         user_pref(\"marionette.port\", {marionette_port});\n{table}"
+         user_pref(\"marionette.port\", 0);\n{table}"
     )
 }
 
@@ -102,16 +102,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_js_sets_scheme_and_port() {
-        let dark = user_js(Theme::Dark, 4444);
+    fn user_js_sets_scheme_and_lets_firefox_pick_the_port() {
+        let dark = user_js(Theme::Dark);
         assert!(dark.contains("prefers-color-scheme.content-override\", 0)"));
-        assert!(dark.contains("marionette.port\", 4444)"));
-        let light = user_js(Theme::Light, 1);
+        assert!(dark.contains("marionette.port\", 0)"));
+        let light = user_js(Theme::Light);
         assert!(light.contains("prefers-color-scheme.content-override\", 1)"));
     }
 
     fn pref_lines(theme: Theme) -> Vec<String> {
-        user_js(theme, 4444).lines().map(str::to_string).collect()
+        user_js(theme).lines().map(str::to_string).collect()
     }
 
     fn pref_names(theme: Theme) -> Vec<String> {
