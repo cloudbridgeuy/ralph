@@ -73,6 +73,7 @@ pub mod kitty_image;
 pub mod licenses;
 pub mod mcp;
 pub mod mermaid_fit;
+pub mod program_resume;
 pub mod program_status;
 pub mod retry;
 pub mod sanitize;
