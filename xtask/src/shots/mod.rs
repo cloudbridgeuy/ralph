@@ -189,11 +189,14 @@ fn baseline_names(dir: &Path) -> Result<Vec<String>, BoxError> {
 fn png_names(dir: &Path) -> Result<Vec<String>, BoxError> {
     let entries =
         fs::read_dir(dir).map_err(|error| format!("could not read {}: {error}", dir.display()))?;
-    let files = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_file())
-        .map(|entry| entry.file_name())
-        .collect();
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("could not read an entry of {}: {error}", dir.display()))?;
+        if entry.path().is_file() {
+            files.push(entry.file_name());
+        }
+    }
     Ok(core::png_names_from(files)?)
 }
 
