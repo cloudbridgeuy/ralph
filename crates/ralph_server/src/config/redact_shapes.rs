@@ -152,7 +152,7 @@ const TOKEN_PREFIXES: [&str; 8] = [
     "ghs_",
     "ghr_",
     "github_pat_",
-    "Bearer ",
+    "bearer ",
 ];
 const AWS_PREFIXES: [&str; 2] = ["AKIA", "ASIA"];
 const AWS_BODY_LEN: usize = 16;
@@ -173,14 +173,18 @@ fn boundary_matches<'a>(text: &'a str, needle: &'a str) -> impl Iterator<Item = 
         .map(|(index, _)| &text[index + needle.len()..])
 }
 
-fn has_token_prefix(text: &str) -> bool {
+fn has_token_prefix(lowered: &str) -> bool {
     TOKEN_PREFIXES
         .iter()
-        .any(|prefix| boundary_matches(text, prefix).next().is_some())
+        .any(|prefix| boundary_matches(lowered, prefix).next().is_some())
 }
 
 fn has_jwt(text: &str) -> bool {
-    boundary_matches(text, "eyJ").any(|rest| rest.matches('.').count() >= 2)
+    let Some((second_last_dot, _)) = text.rmatch_indices('.').nth(1) else {
+        return false;
+    };
+    text.match_indices("eyJ")
+        .any(|(index, _)| at_boundary(text, index) && index + "eyJ".len() <= second_last_dot)
 }
 
 fn has_aws_key_id(text: &str) -> bool {
@@ -195,8 +199,8 @@ fn has_aws_key_id(text: &str) -> bool {
     })
 }
 
-fn has_slack_token(text: &str) -> bool {
-    boundary_matches(text, "xox").any(|rest| {
+fn has_slack_token(lowered: &str) -> bool {
+    boundary_matches(lowered, "xox").any(|rest| {
         let mut chars = rest.chars();
         chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.next() == Some('-')
     })
@@ -314,11 +318,12 @@ fn has_opaque_run(text: &str) -> bool {
 }
 
 pub fn text_has_secret_shape(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
     text.contains("-----BEGIN")
-        || has_token_prefix(text)
+        || has_token_prefix(&lowered)
         || has_jwt(text)
         || has_aws_key_id(text)
-        || has_slack_token(text)
+        || has_slack_token(&lowered)
         || has_opaque_run(text)
 }
 
@@ -564,6 +569,59 @@ mod tests {
         ] {
             assert!(!text_has_secret_shape(text), "{text}");
         }
+    }
+
+    #[test]
+    fn token_prefixes_match_in_any_case() {
+        for text in [
+            "bearer abc",
+            "BEARER abc",
+            "Authorization: bearer xyz",
+            "GHP_secret",
+            "Github_Pat_x",
+            "SK-ant-abc",
+            "XOXB-1-2",
+            "Xoxp-1",
+        ] {
+            assert!(text_has_secret_shape(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn mixed_case_words_that_merely_contain_a_prefix_stay_visible() {
+        for text in [
+            "ask-me",
+            "ASK-ME",
+            "Task-Force",
+            "TASK-FORCE",
+            "xox",
+            "BEARERS",
+            "eyj.a.b",
+        ] {
+            assert!(!text_has_secret_shape(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_jwt_marker_stays_case_exact() {
+        assert!(text_has_secret_shape("eyJhbGciOiJIUzI1NiJ9.eyJzdWIi.sig"));
+        assert!(!text_has_secret_shape("EYJhbGciOi.a.b"));
+    }
+
+    #[test]
+    fn jwt_scan_handles_many_markers_without_dots() {
+        let text = "eyJ ".repeat(50_000);
+        assert!(!text_has_secret_shape(&text));
+        let with_dots = format!("{text}x.y.z");
+        assert!(text_has_secret_shape(&with_dots));
+    }
+
+    #[test]
+    fn a_jwt_needs_two_dots_after_the_marker() {
+        assert!(has_jwt("eyJa.b.c"));
+        assert!(has_jwt("x.y eyJa.b.c"));
+        assert!(!has_jwt("a.b.c eyJx.y"));
+        assert!(!has_jwt("eyJa.b"));
     }
 
     #[test]
