@@ -290,7 +290,12 @@ fn check(args: CheckArgs) -> Result<(), BoxError> {
 
 fn approve(args: ApproveArgs) -> Result<(), BoxError> {
     let current_names = png_names(&args.current)?;
-    let approved = report::select_approvals(&args.names, args.all, &current_names)?;
+    let listed: Vec<String> = core::matrix().iter().map(core::Shot::name).collect();
+    let selection = report::select_approvals(&args.names, args.all, &current_names, &listed)?;
+    for name in &selection.skipped {
+        println!("skipped {name}: not in the shot list");
+    }
+    let approved = selection.approved;
     for name in &approved {
         let image = read_png(&args.current.join(name))?;
         report::require_image_size(name, image.width, image.height)?;

@@ -12,6 +12,8 @@ pub enum ShotError {
     UnknownTheme(String),
     #[error("`{0}` is not among the current shots")]
     UnknownShot(String),
+    #[error("current has no image for: {0}")]
+    MissingShots(String),
     #[error("name shots to approve or pass --all")]
     NothingSelected,
     #[error("`{0}` is not a UTF-8 file name")]

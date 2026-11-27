@@ -128,17 +128,37 @@ pub fn require_image_size(name: &str, width: u32, height: u32) -> Result<(), Sho
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct Approvals {
+    pub approved: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
 pub fn select_approvals(
     names: &[String],
     all: bool,
     current_names: &[String],
-) -> Result<Vec<String>, ShotError> {
+    listed_names: &[String],
+) -> Result<Approvals, ShotError> {
     if all && !names.is_empty() {
         return Err(ShotError::AllWithNames);
     }
     let current = sorted_set(current_names);
     if all {
-        return Ok(current.into_iter().cloned().collect());
+        let listed = sorted_set(listed_names);
+        let missing: Vec<String> = listed
+            .iter()
+            .filter(|name| !current.contains(*name))
+            .map(|name| (*name).clone())
+            .collect();
+        if !missing.is_empty() {
+            return Err(ShotError::MissingShots(missing.join(", ")));
+        }
+        let (approved, skipped) = current
+            .into_iter()
+            .cloned()
+            .partition(|name| listed.contains(name));
+        return Ok(Approvals { approved, skipped });
     }
     if names.is_empty() {
         return Err(ShotError::NothingSelected);
@@ -146,7 +166,10 @@ pub fn select_approvals(
     if let Some(unknown) = names.iter().find(|name| !current.contains(name)) {
         return Err(ShotError::UnknownShot(unknown.clone()));
     }
-    Ok(sorted_set(names).into_iter().cloned().collect())
+    Ok(Approvals {
+        approved: sorted_set(names).into_iter().cloned().collect(),
+        skipped: Vec::new(),
+    })
 }
 
 #[cfg(test)]
@@ -297,7 +320,7 @@ mod tests {
     #[test]
     fn all_with_names_is_an_error() {
         assert_eq!(
-            select_approvals(&names(&["a.png"]), true, &names(&["a.png"])),
+            select_approvals(&names(&["a.png"]), true, &names(&["a.png"]), &[]),
             Err(ShotError::AllWithNames)
         );
     }
@@ -315,23 +338,56 @@ mod tests {
         );
     }
 
+    fn approvals(approved: &[&str], skipped: &[&str]) -> Approvals {
+        Approvals {
+            approved: names(approved),
+            skipped: names(skipped),
+        }
+    }
+
     #[test]
-    fn approvals_accept_all_named_and_reject_unknown() {
+    fn approve_all_takes_every_listed_shot() {
+        let current = names(&["b.png", "a.png"]);
+        let listed = names(&["a.png", "b.png"]);
+        assert_eq!(
+            select_approvals(&[], true, &current, &listed),
+            Ok(approvals(&["a.png", "b.png"], &[]))
+        );
+    }
+
+    #[test]
+    fn approve_all_skips_files_outside_the_shot_list() {
+        let current = names(&["a.png", "extra.png"]);
+        let listed = names(&["a.png"]);
+        assert_eq!(
+            select_approvals(&[], true, &current, &listed),
+            Ok(approvals(&["a.png"], &["extra.png"]))
+        );
+    }
+
+    #[test]
+    fn approve_all_refuses_when_a_listed_shot_is_missing() {
+        let current = names(&["a.png"]);
+        let listed = names(&["a.png", "b.png", "c.png"]);
+        assert_eq!(
+            select_approvals(&[], true, &current, &listed),
+            Err(ShotError::MissingShots("b.png, c.png".to_string()))
+        );
+    }
+
+    #[test]
+    fn named_approvals_ignore_the_shot_list() {
         let current = names(&["b.png", "a.png"]);
         assert_eq!(
-            select_approvals(&[], true, &current),
-            Ok(names(&["a.png", "b.png"]))
+            select_approvals(&names(&["b.png", "b.png"]), false, &current, &[]),
+            Ok(approvals(&["b.png"], &[]))
         );
         assert_eq!(
-            select_approvals(&names(&["b.png", "b.png"]), false, &current),
-            Ok(names(&["b.png"]))
-        );
-        assert_eq!(
-            select_approvals(&names(&["c.png"]), false, &current),
+            select_approvals(&names(&["c.png"]), false, &current, &[]),
             Err(ShotError::UnknownShot("c.png".to_string()))
         );
         assert_eq!(
-            select_approvals(&[], false, &current),
+            select_approvals(&[], false, &current, &[]),
             Err(ShotError::NothingSelected)
         );
     }
