@@ -1,4 +1,19 @@
+use std::io;
+
 pub const LINE_CAP: usize = 8 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReadOutcome {
+    Retry,
+    Stop,
+}
+
+pub fn read_outcome(kind: io::ErrorKind) -> ReadOutcome {
+    match kind {
+        io::ErrorKind::Interrupted => ReadOutcome::Retry,
+        _ => ReadOutcome::Stop,
+    }
+}
 
 pub struct LineSplitter {
     line: Vec<u8>,
@@ -54,6 +69,23 @@ mod tests {
             .collect();
         lines.extend(splitter.finish());
         lines
+    }
+
+    #[test]
+    fn an_interrupted_read_retries() {
+        assert_eq!(read_outcome(io::ErrorKind::Interrupted), ReadOutcome::Retry);
+    }
+
+    #[test]
+    fn any_other_read_error_stops() {
+        for kind in [
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::Other,
+        ] {
+            assert_eq!(read_outcome(kind), ReadOutcome::Stop, "{kind:?}");
+        }
     }
 
     #[test]

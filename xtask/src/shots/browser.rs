@@ -1,5 +1,5 @@
 use super::core::{self, Screen, Shot, Theme};
-use super::lines::{LineSplitter, LINE_CAP};
+use super::lines::{read_outcome, LineSplitter, ReadOutcome, LINE_CAP};
 use super::mask;
 use super::prefs;
 use super::seed;
@@ -21,7 +21,6 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const LISTEN_TIMEOUT: Duration = Duration::from_secs(30);
 const STDERR_SETTLE: Duration = Duration::from_millis(200);
 const EXIT_GRACE: Duration = Duration::from_secs(1);
-const READ_RETRY: Duration = Duration::from_millis(50);
 const READY_POLL: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -263,11 +262,20 @@ fn spawn_line_reader(mut stdout: ChildStdout, tail: Arc<Mutex<Vec<u8>>>) -> mpsc
             let count = match stdout.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(count) => count,
-                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-                Err(_) => {
-                    sleep(READ_RETRY);
-                    continue;
-                }
+                Err(error) => match read_outcome(error.kind()) {
+                    ReadOutcome::Retry => continue,
+                    ReadOutcome::Stop => {
+                        if let Ok(mut buf) = tail.lock() {
+                            let note = format!("stdout read error: {error}");
+                            webdriver::push_tail_line(
+                                &mut buf,
+                                &note,
+                                webdriver::FAILURE_STREAM_CAP,
+                            );
+                        }
+                        break;
+                    }
+                },
             };
             for line in splitter.push_bytes(&chunk[..count]) {
                 record_line(&tail, &sender, line);
