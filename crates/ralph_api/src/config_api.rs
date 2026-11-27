@@ -300,4 +300,354 @@ mod tests {
         assert_eq!(masked["redacted"], true, "{raw}");
         assert_eq!(masked["value"], "[redacted]", "{raw}");
     }
+
+    #[test]
+    fn windows_and_variable_path_keys_never_reach_the_body() {
+        for (key, leaks) in [
+            (r"C:\\Users\\alice\\acme", ["alice", "acme", "Users"]),
+            (r"\\\\host\\share", ["host", "share", "host"]),
+            ("D:/x", ["D:", "/x", "D:"]),
+            ("%USERPROFILE%", ["USERPROFILE", "%", "USERPROFILE"]),
+        ] {
+            let (g, s) = setup(None, Some(&format!("[wire.prices.\"{key}\"]\ninput = 1\n")));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            for leak in leaks {
+                assert!(!raw.contains(leak), "{key}: {raw}");
+            }
+            let masked = row(&body(&response), "wire", "[redacted-1]").clone();
+            assert_eq!(masked["redacted"], true, "{raw}");
+            assert_eq!(masked["value"], "[redacted]", "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_colon_price_key_stays_visible() {
+        let (g, s) = setup(None, Some("[wire.prices.\"x:1\"]\ninput = 1\n"));
+        let value = body(&respond(&g, &s, no_env));
+        assert_eq!(row(&value, "wire", "prices.x:1.input")["redacted"], false);
+    }
+
+    #[test]
+    fn bare_secrets_in_tight_fields_never_reach_the_body() {
+        for (config, leak) in [
+            ("[mermaid.style.colors]\nx = \"ghp_SECRET\"\n", "ghp_SECRET"),
+            (
+                "[mermaid.style.config]\nnote = \"correct horse staple\"\n",
+                "horse",
+            ),
+            ("[tickets]\nlinear = [\"my secret ticket\"]\n", "secret"),
+            ("[wire.prices.\"hunter2 secret\"]\ninput = 1\n", "hunter2"),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let hidden = body(&response)["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+            assert!(hidden, "{config}: {raw}");
+        }
+    }
+
+    #[test]
+    fn opaque_secrets_in_loose_fields_never_reach_the_body() {
+        for (config, leak) in [
+            (
+                concat!(
+                    "[claude]\nmodel = \"gh",
+                    "p_AbCdEf0123456789AbCdEf0123456789abcd\"\n"
+                ),
+                "AbCdEf",
+            ),
+            ("[chat]\nname = \"Bearer abc123\"\n", "abc123"),
+            (
+                concat!(
+                    "[chat]\nname = \"xo",
+                    "xb-123456789012-1234567890123-AbCdEf0123456789AbCdEf01\"\n"
+                ),
+                "AbCdEf",
+            ),
+            (
+                "[web]\nfont = \"aGVsbG8gd29ybGQgc2VjcmV0MTI1\"\n",
+                "aGVsbG8",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let hidden = body(&response)["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+            assert!(hidden, "{config}: {raw}");
+        }
+    }
+
+    fn assert_key_absent_and_masked(config: &str, leak: &str, section: &str) {
+        let (g, s) = setup(None, Some(config));
+        let response = respond(&g, &s, no_env);
+        assert_eq!(response.status, 200, "{config}");
+        let raw = text(&response);
+        assert!(!raw.contains(leak), "{config}: {raw}");
+        let masked = row(&body(&response), section, "[redacted-1]").clone();
+        assert_eq!(masked["redacted"], true, "{raw}");
+        assert_eq!(masked["value"], "[redacted]", "{raw}");
+    }
+
+    #[test]
+    fn free_text_map_keys_never_reach_the_body() {
+        for (config, leak, section) in [
+            (
+                "[mermaid.style.colors]\n\"hunter2 secret\" = \"#fff\"\n",
+                "hunter2",
+                "mermaid",
+            ),
+            (
+                "[theme.status]\n\"my password is hunter2\" = \"red\"\n",
+                "password",
+                "theme",
+            ),
+            (
+                "[mermaid.style.config.flowchart]\n\"correct horse battery staple\" = 30\n",
+                "horse",
+                "mermaid",
+            ),
+            (
+                "[claude.permissions]\n\"secret words\" = true\n",
+                "secret words",
+                "claude",
+            ),
+            (
+                "[chat.reset_turns]\n\"secret words\" = 1\n",
+                "secret words",
+                "chat",
+            ),
+        ] {
+            assert_key_absent_and_masked(config, leak, section);
+        }
+    }
+
+    #[test]
+    fn split_and_punctuated_opaque_tokens_never_reach_the_body() {
+        for (config, leak) in [
+            ("[chat]\nname = \"pass:AbCdEf0123456789xyzQ\"\n", "AbCdEf"),
+            ("[chat]\nname = \"AbCdEf0123456789xyzQ.\"\n", "AbCdEf"),
+            (
+                "[chat]\nname = \"Zx9k2Lq-8vB3mN0pQrS-7tUwXyZ1aB2cD3e\"\n",
+                "Zx9k2Lq",
+            ),
+            (
+                "[chat]\nname = \"550e8400-e29b-41d4-a716-446655440000\"\n",
+                "550e8400",
+            ),
+            (
+                "[wire.prices.\"AbCdEf0123456.789xyzQAbCd\"]\ninput = 1\n",
+                "AbCdEf",
+            ),
+            ("[theme]\nname = \"AbCdEf0123.456789xyzQAbCd\"\n", "AbCdEf"),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let raw = text(&respond(&g, &s, no_env));
+            assert!(!raw.contains(leak), "{config}: {raw}");
+        }
+    }
+
+    #[test]
+    fn a_dated_model_name_stays_visible_in_the_body() {
+        let (g, s) = setup(
+            None,
+            Some("[claude]\nmodel = \"claude-opus-4-1-20250805\"\n"),
+        );
+        let value = body(&respond(&g, &s, no_env));
+        assert_eq!(
+            row(&value, "claude", "model")["value"],
+            "claude-opus-4-1-20250805"
+        );
+    }
+
+    #[test]
+    fn text_in_a_numeric_setting_never_reaches_the_body() {
+        for (config, leak) in [
+            (
+                "[chat]\nreset_turns = \"my password is hunter2\"\n",
+                "hunter2",
+            ),
+            ("[chat]\nreset_tokens = [\"my secret words\"]\n", "secret"),
+            (
+                "[chat]\nworker_quiet_secs = \"my password is hunter2\"\n",
+                "hunter2",
+            ),
+            (
+                "[chat.reset_turns]\nx = \"my password is hunter2\"\n",
+                "hunter2",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            assert_eq!(response.status, 200, "{config}");
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let hidden = body(&response)["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+            assert!(hidden, "{config}: {raw}");
+        }
+    }
+
+    #[test]
+    fn a_number_in_a_numeric_setting_stays_visible_in_the_body() {
+        let (g, s) = setup(None, Some("[chat]\nreset_turns = 40\n"));
+        let value = body(&respond(&g, &s, no_env));
+        let found = row(&value, "chat", "reset_turns");
+        assert_eq!(found["value"], 40);
+        assert_eq!(found["redacted"], false);
+    }
+
+    const PUNCTUATED_SECRETS: [&str; 6] = [
+        "AbCdEf0123456789xyzQ!",
+        "#AbCdEf0123456789xyzQ",
+        "x*AbCdEf0123456789xyzQ",
+        "AbCdEf0123|456789xyzQAbCd",
+        "AbCdEf0123\u{200B}456789xyzQAbCd",
+        "9f86d081-884c7d65-9a2feaa0-c55ad015-a3bf4f1b",
+    ];
+
+    #[test]
+    fn punctuated_and_dashed_secrets_in_loose_and_ident_fields_never_reach_the_body() {
+        for secret in PUNCTUATED_SECRETS {
+            for config in [
+                format!("[chat]\nname = \"{secret}\"\n"),
+                format!("[tickets]\nlinear = [\"{secret}\"]\n"),
+            ] {
+                let (g, s) = setup(None, Some(&config));
+                let response = respond(&g, &s, no_env);
+                let raw = text(&response);
+                for leak in ["AbCdEf", "9f86d081", "884c7d65"] {
+                    assert!(!raw.contains(leak), "{config}: {raw}");
+                }
+                let hidden = body(&response)["rows"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+                assert!(hidden, "{config}: {raw}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_font_and_a_dated_model_stay_visible_in_the_body() {
+        let (g, s) = setup(None, Some("[claude]\nmodel = \"gpt-4o-2024-08-06\"\n"));
+        let value = body(&respond(&g, &s, no_env));
+        assert_eq!(row(&value, "claude", "model")["value"], "gpt-4o-2024-08-06");
+        let value = body(&respond(&g, &s, no_env));
+        let font = row(&value, "web", "font");
+        assert_eq!(font["redacted"], false);
+        assert_eq!(
+            font["value"],
+            "\"Geist Mono\", ui-monospace, Menlo, monospace"
+        );
+    }
+
+    #[test]
+    fn upper_case_secret_flags_never_reach_the_body() {
+        for (config, leak) in [
+            ("[changes]\ndiff_args = [\"GH_TOKEN=abc123\"]\n", "abc123"),
+            ("[changes]\ndiff_args = [\"PASSWORD=hunter2\"]\n", "hunter2"),
+            (
+                "[changes]\ndiff_args = [\"--stat\", \"API_KEY=hunter2\"]\n",
+                "hunter2",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let raw = text(&respond(&g, &s, no_env));
+            assert!(!raw.contains(leak), "{config}: {raw}");
+        }
+    }
+
+    #[test]
+    fn opaque_map_keys_never_reach_the_body() {
+        for (config, leak, section) in [
+            (
+                concat!("[theme.status]\n\"gh", "p_AbCdEf0123456789AbCdEf0123456789abcd\" = \"red\"\n"),
+                "ghp_AbCdEf",
+                "theme",
+            ),
+            (
+                "[mermaid.style.colors]\n\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b\" = \"#fff\"\n",
+                "9f86d081",
+                "mermaid",
+            ),
+            (
+                "[mermaid.style.config.x]\n\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b.a1b2c3d4e5f60718293a4b5c6d7e8f9012345678\" = 1\n",
+                "a1b2c3d4",
+                "mermaid",
+            ),
+            (
+                "[theme.status]\n\"QWERTYUIOPASDFGHJKLZXCVBNMQWERTYUIOPASDF\" = \"red\"\n",
+                "QWERTYUIOP",
+                "theme",
+            ),
+        ] {
+            assert_key_absent_and_masked(config, leak, section);
+        }
+    }
+
+    #[test]
+    fn opaque_keys_and_values_inside_an_array_of_tables_never_reach_the_body() {
+        for (config, leak) in [
+            (
+                concat!(
+                    "[[mermaid.style.config.arr]]\n\"gh",
+                    "p_AbCdEf0123456789AbCdEf0123456789abcd\" = 1\n"
+                ),
+                "ghp_AbCdEf",
+            ),
+            (
+                "[[mermaid.style.config.arr]]\nnote = \"AbCdEf0123456789AbCdEf0123456789abcd\"\n",
+                "AbCdEf0123",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let array = row(&body(&response), "mermaid", "style.config.arr").clone();
+            assert_eq!(array["redacted"], true, "{raw}");
+            assert_eq!(array["value"], "[redacted]", "{raw}");
+        }
+    }
+
+    #[test]
+    fn code_theme_names_stay_visible_in_the_body() {
+        let config = "[theme.assistant]\ncode = \"Monokai Extended\"\n[theme.agent]\ncode = \"Solarized (dark)\"\n";
+        let (g, s) = setup(None, Some(config));
+        let value = body(&respond(&g, &s, no_env));
+        let assistant = row(&value, "theme", "assistant.code");
+        assert_eq!(assistant["value"], "Monokai Extended");
+        assert_eq!(assistant["redacted"], false);
+        let agent = row(&value, "theme", "agent.code");
+        assert_eq!(agent["value"], "Solarized (dark)");
+        assert_eq!(agent["redacted"], false);
+        let (g, s) = setup(None, Some("[theme]\nagent = \"Solarized (dark)\"\n"));
+        let legacy = body(&respond(&g, &s, no_env));
+        assert_eq!(row(&legacy, "theme", "agent")["value"], "Solarized (dark)");
+    }
+
+    #[test]
+    fn a_token_in_a_code_theme_field_never_reaches_the_body() {
+        let (g, s) = setup(
+            None,
+            Some("[theme.assistant]\ncode = \"AbCdEf0123456789AbCdEf0123456789abcd\"\n"),
+        );
+        let raw = text(&respond(&g, &s, no_env));
+        assert!(!raw.contains("AbCdEf0123"), "{raw}");
+    }
 }

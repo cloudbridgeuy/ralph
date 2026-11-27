@@ -1,3 +1,4 @@
+use super::redact_shapes::{key_class, key_shape_ok, text_has_path_shape, value_shape_ok};
 use serde_json::Value;
 
 pub const REDACTED: &str = "[redacted]";
@@ -93,7 +94,10 @@ const SAFE_KEYS: &[&str] = &[
 
 const SAFE_PREFIXES: &[&str] = &["theme.", "mermaid.style.", "wire.prices.", "tickets."];
 
-const VALUE_MARKERS: [&str; 4] = ["://", "@", "key=", "token="];
+const DECLARED_NESTED_KEYS: &[&str] =
+    &["chat.claude.permission_mode", "ask.claude.permission_mode"];
+
+const VALUE_MARKERS: [&str; 5] = ["@", "key=", "token=", "password=", "secret="];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Listing {
@@ -118,15 +122,26 @@ pub fn listing(key: &str) -> Listing {
 }
 
 fn text_is_sensitive(text: &str) -> bool {
-    text.contains(['/', '~']) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
+    let lowered = text.to_ascii_lowercase();
+    text_has_path_shape(text) || VALUE_MARKERS.iter().any(|marker| lowered.contains(marker))
+}
+
+fn has_free_key_tail(key: &str) -> bool {
+    listing(key) != Listing::Safe
+        && key.split('.').count() > 2
+        && !DECLARED_NESTED_KEYS.contains(&key)
 }
 
 fn key_is_sensitive(key: &str) -> bool {
-    key.split('.').any(text_is_sensitive)
+    key.split('.').any(text_is_sensitive) || !key_shape_ok(key)
+}
+
+fn key_needs_mask(key: &str) -> bool {
+    key_is_sensitive(key) || has_free_key_tail(key)
 }
 
 pub fn mask_key(key: &str) -> String {
-    if !key_is_sensitive(key) {
+    if !key_needs_mask(key) {
         return key.to_string();
     }
     match key.split_once('.') {
@@ -147,199 +162,12 @@ fn value_is_sensitive(value: &Value) -> bool {
 }
 
 pub fn redacts(key: &str, value: &Value, from_env: bool) -> bool {
-    from_env || listing(key) != Listing::Safe || key_is_sensitive(key) || value_is_sensitive(value)
+    from_env
+        || listing(key) != Listing::Safe
+        || key_is_sensitive(key)
+        || value_is_sensitive(value)
+        || !value_shape_ok(key_class(key), value)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::AppConfig;
-    use serde_json::json;
-    use toml::{Table, Value as Toml};
-
-    fn leaf_keys(table: &Table, prefix: &str, keys: &mut Vec<String>) {
-        for (name, value) in table {
-            let key = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}.{name}")
-            };
-            match value {
-                Toml::Table(inner) => leaf_keys(inner, &key, keys),
-                _ => keys.push(key),
-            }
-        }
-    }
-
-    #[test]
-    fn every_default_leaf_key_is_listed() {
-        let table = Table::try_from(AppConfig::new()).unwrap();
-        let mut keys = Vec::new();
-        leaf_keys(&table, "", &mut keys);
-        assert!(!keys.is_empty());
-        let unlisted: Vec<&String> = keys
-            .iter()
-            .filter(|key| listing(key) == Listing::Unlisted)
-            .collect();
-        assert!(unlisted.is_empty(), "unlisted keys: {unlisted:?}");
-    }
-
-    const SCHEMA_SOURCES: [&str; 11] = [
-        include_str!("../config.rs"),
-        include_str!("agy.rs"),
-        include_str!("changes.rs"),
-        include_str!("claude.rs"),
-        include_str!("codex.rs"),
-        include_str!("cursor.rs"),
-        include_str!("opencode.rs"),
-        include_str!("usage.rs"),
-        include_str!("web.rs"),
-        include_str!("wire.rs"),
-        include_str!("workers.rs"),
-    ];
-
-    fn section_field_keys(source: &str) -> Vec<String> {
-        let mut section: Option<String> = None;
-        let mut keys = Vec::new();
-        for line in source.lines() {
-            if let Some(rest) = line.strip_prefix("pub struct ") {
-                section = rest
-                    .split(|c: char| !c.is_alphanumeric())
-                    .next()
-                    .and_then(|name| name.strip_suffix("Section"))
-                    .map(str::to_lowercase);
-                continue;
-            }
-            let Some(section) = &section else { continue };
-            let field = line
-                .trim()
-                .strip_prefix("pub ")
-                .and_then(|r| r.split_once(": "))
-                .filter(|(name, _)| name.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
-            if let Some((name, ty)) = field {
-                let ty = ty.trim_end_matches(',');
-                if !ty.ends_with("Section") && !ty.ends_with("Theme") {
-                    keys.push(format!("{section}.{name}"));
-                }
-            }
-        }
-        keys
-    }
-
-    #[test]
-    fn every_declared_section_field_has_a_listing() {
-        let keys: Vec<String> = SCHEMA_SOURCES
-            .iter()
-            .flat_map(|source| section_field_keys(source))
-            .collect();
-        assert!(keys.len() > 50, "scan found {} fields", keys.len());
-        let missing: Vec<&String> = keys
-            .iter()
-            .filter(|key| listing(key) == Listing::Unlisted)
-            .collect();
-        assert!(missing.is_empty(), "fields with no listing: {missing:?}");
-    }
-
-    #[test]
-    fn listed_secret_keys_are_redacted_whatever_the_value() {
-        for key in REDACT_KEYS {
-            assert!(redacts(key, &json!("plain"), false), "{key}");
-        }
-    }
-
-    #[test]
-    fn permission_and_sandbox_keys_are_redacted() {
-        for key in [
-            "claude.permissions",
-            "codex.sandbox",
-            "agy.permissions",
-            "cursor.permissions",
-            "chat.permissions",
-            "chat.claude.permission_mode",
-            "ask.claude.permission_mode",
-            "ask.permissions",
-        ] {
-            assert_eq!(listing(key), Listing::Redact, "{key}");
-        }
-    }
-
-    #[test]
-    fn env_values_are_always_redacted() {
-        assert!(redacts("chat.wrap_width", &json!("72"), true));
-    }
-
-    #[test]
-    fn safe_keys_keep_plain_values() {
-        assert!(!redacts("chat.wrap_width", &json!(96), false));
-        assert!(!redacts("theme.name", &json!("tokyo-night"), false));
-        assert!(!redacts(
-            "web.font",
-            &json!("\"Geist Mono\", monospace"),
-            false
-        ));
-    }
-
-    #[test]
-    fn sensitive_looking_values_are_redacted_on_safe_keys() {
-        for text in [
-            "/Users/x",
-            "~/notes",
-            "https://example.com",
-            "a@b",
-            "key=1",
-            "token=1",
-        ] {
-            assert!(redacts("theme.name", &json!(text), false), "{text}");
-        }
-        assert!(redacts("web.ansi_dark", &json!(["#fff", "/etc"]), false));
-    }
-
-    #[test]
-    fn safe_keys_redact_paths_anywhere_in_the_value() {
-        for (key, value) in [
-            (
-                "changes.diff_args",
-                json!(["--git-dir=/Users/me/work/.git"]),
-            ),
-            ("chat.name", json!("work in ~/me")),
-            ("web.font", json!("a/b")),
-            ("chat.worker_base", json!("--base=/Users/me")),
-            ("mermaid.style.node", json!(["x", "y=/etc/z"])),
-        ] {
-            assert!(redacts(key, &value, false), "{key}");
-        }
-    }
-
-    #[test]
-    fn mask_key_collapses_the_tail_when_any_segment_is_sensitive() {
-        assert_eq!(mask_key("chat.wrap_width"), "chat.wrap_width");
-        assert_eq!(
-            mask_key("wire.prices./Users/me/srv.input"),
-            "wire.[redacted]"
-        );
-        assert_eq!(
-            mask_key("wire.prices./Users/alice/acme.corp.input"),
-            "wire.[redacted]"
-        );
-        assert_eq!(mask_key("a.b@c.d"), "a.[redacted]");
-        assert_eq!(mask_key("/etc.x"), "[redacted]");
-    }
-
-    #[test]
-    fn sensitive_key_segments_redact_the_value() {
-        assert!(redacts("wire.prices./Users/me/srv.input", &json!(1), false));
-        assert!(!redacts("wire.prices.gpt.input", &json!(1), false));
-    }
-
-    #[test]
-    fn an_object_key_inside_an_array_is_sensitive() {
-        assert!(redacts("web.font", &json!([{"/Users/x": 1}]), false));
-        assert!(redacts("web.font", &json!([{"a": {"~/y": 1}}]), false));
-    }
-
-    #[test]
-    fn unlisted_keys_fail_closed() {
-        assert_eq!(listing("novel.setting"), Listing::Unlisted);
-        assert!(redacts("novel.setting", &json!(1), false));
-    }
-}
+mod tests;
