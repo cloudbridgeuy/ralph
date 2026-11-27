@@ -9,6 +9,7 @@ mod lines;
 mod mask;
 mod prefs;
 mod report;
+mod retry;
 mod seed;
 mod seed_spec;
 mod webdriver;

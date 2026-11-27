@@ -2,8 +2,9 @@ use super::core::{self, Screen, Shot, Theme};
 use super::lines::{read_outcome, LineSplitter, ReadOutcome, LINE_CAP};
 use super::mask;
 use super::prefs;
+use super::retry::{self, FailureKind, Retry};
 use super::seed;
-use super::webdriver::{self, FailureKind, Listening, Retry};
+use super::webdriver::{self, Listening};
 use super::BoxError;
 use serde_json::Value;
 use std::fs;
@@ -391,7 +392,7 @@ fn launch_firefox(
             Ok(browser) => return Ok((child, browser)),
             Err(error) => {
                 reasons.push(error.message);
-                match webdriver::retry_decision(error.kind, attempt, LAUNCH_ATTEMPTS) {
+                match retry::retry_decision(error.kind, attempt, LAUNCH_ATTEMPTS) {
                     Retry::Again => println!("firefox launch failed; launching again"),
                     Retry::GiveUp => return Err(webdriver::format_launch_failure(&reasons).into()),
                 }
