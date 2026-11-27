@@ -336,6 +336,23 @@ On exit the chat sends `state=clear` with no id: on quit, Ctrl-D, an error or a 
 
 Reports are sent only to Rex: the pure `program_status::rex_pane` returns `Some(RexPane)` when `[chat] terminal_status` is on, stdout is a terminal, and `REX_BLOCK` is set and not empty (it survives a tmux started inside Rex, where `TERM_PROGRAM` is `tmux`). The chat computes it once at start; `TermStatus` sends OSC 7501 reports only through `RexPane::report`, and the same capability tells the inbox alert that Rex owns it. A tmux server started from Rex keeps `REX_BLOCK`, so a client attached to it later from another terminal still gets reports and loses ralph's own alert at the prompt. `NO_COLOR` does not affect reports.
 
+## Program resume
+
+`ralph chat` tells the terminal how to run it again, with OSC 7577 (Program Resume Protocol). A terminal that restores its panes then runs that command in the same directory.
+
+| Point | Behaviour |
+|---|---|
+| Gate | `[chat] program_resume` is on, stdout is a terminal, and `OSC7577_TOKEN` holds 22 to 64 characters of `A-Z a-z 0-9 _ -`. A bad token prints a warning that does not show it |
+| Report | At start and after `/thread switch` or `/thread main`, by the process that runs the chat |
+| Main chat | `ralph chat --store <main store> [--name N]` plus the chat flags of this run |
+| Thread | `ralph chat --store <main store> --thread <T> [--model M] [--name N]` plus the chat flags |
+| Clear | Only when you close the chat at the prompt. SIGHUP, SIGTERM and every other exit keep the record |
+| Limits | A value that is not UTF-8 or holds a control character, or a report over 2048 bytes, prints a warning and sends clear |
+
+A report never merges, drops or clears a thread. The sequence is written to stdout with no tmux passthrough. Programs that the chat starts inherit `OSC7577_TOKEN`, and the chat does not report again after they exit. A hangup that reads as Ctrl-D before the signal arrives counts as your close.
+
+Code: `crates/core/src/program_resume.rs` (`gate()`, `ResumeTarget::argv()`, `encode()`, `action_on_leave()`), `crates/ralph/src/program_resume.rs` (`Resumer`).
+
 ## Terminal title
 
 At start the chat sets the terminal window title to `ralph · <name>` (see [Session name](#session-name)); in a thread chat `<name>` reads `<session name> · <thread>`. It first pushes the old title with `ESC [ 22 ; 0 t`, then sets the new one with `ESC ] 2 ; ralph · <name> BEL`. On exit it pops the old title with `ESC [ 23 ; 0 t`. The pure builders are `term_title::title_start` and `term_title::title_end`; the name is stripped of control characters again before it goes into the sequence. There is no tmux passthrough wrap.

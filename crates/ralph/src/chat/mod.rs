@@ -60,6 +60,7 @@ use crate::config::{ConfigSnapshot, FileState, MermaidStyleExt, ThemeWarnings};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;
 use crate::markdown::{MarkdownTheme, RolePalette, ThemeRole};
+use crate::program_resume::Resumer;
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::signal;
 use crate::theme_slots::ResolveColors;
@@ -71,9 +72,11 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::store_in_use_message;
 use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
+use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_view::{resolve_view_target, view_host};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
+use ralph_core::program_resume::{ChatFlags, Departure, ResumeSetting, ResumeTarget};
 use ralph_core::program_status::{
     rex_pane, RexBlock, RexPane, StatusSetting, Stdout, REX_BLOCK_ENV,
 };
@@ -152,6 +155,25 @@ fn alert_config(
         notification: chat.inbox_alert_notification && !args.no_inbox_notification,
         unknown_focus: chat.inbox_alert_unknown_focus,
         terminal_status,
+    }
+}
+
+fn resume_target(
+    thread: Option<ThreadName>,
+    model: Option<String>,
+    flags: ChatFlags,
+) -> ResumeTarget {
+    match thread {
+        Some(name) => ResumeTarget::Thread { name, model, flags },
+        None => ResumeTarget::Main(flags),
+    }
+}
+
+fn departure(exit: &Result<ChatExit, Box<dyn std::error::Error>>, terminated: bool) -> Departure {
+    match exit {
+        Ok(ChatExit::Closed) if !terminated => Departure::UserQuit,
+        Ok(ChatExit::Switch(..)) => Departure::Switch,
+        _ => Departure::Restart,
     }
 }
 
@@ -283,6 +305,29 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         model_args,
         close: _close,
     } = assembled;
+    let switch_argv = SwitchArgv {
+        store: thread::config_root(&store_dir),
+        recent_history_tokens: args.recent_history_tokens,
+        wrap_width: args.wrap_width,
+        skills: args.skills.clone(),
+        permission_mode: args.permission_mode.clone(),
+        worktree_dir: args.worktree_dir.clone(),
+        no_inbox_sound: args.no_inbox_sound,
+        no_inbox_notification: args.no_inbox_notification,
+        skip_summary: args.skip_summary,
+    };
+    let resumer = Resumer::from_env(ResumeSetting::from_bool(chat_config.program_resume));
+    resumer.publish(&resume_target(
+        thread.clone(),
+        args.model.clone(),
+        ChatFlags {
+            switch: SwitchArgv {
+                store: canonical_store(switch_argv.store.clone()),
+                ..switch_argv.clone()
+            },
+            name: args.name.clone(),
+        },
+    ));
     let monitor = Arc::clone(&session.core);
     let suggestions = session.turn.suggestions.clone();
     let run = session.turn.run.clone();
@@ -481,17 +526,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         idle: &idle,
         store_dir: &store_dir,
         thread: args.thread.as_ref(),
-        switch_argv: SwitchArgv {
-            store: thread::config_root(&store_dir),
-            recent_history_tokens: args.recent_history_tokens,
-            wrap_width: args.wrap_width,
-            skills: args.skills.clone(),
-            permission_mode: args.permission_mode.clone(),
-            worktree_dir: args.worktree_dir.clone(),
-            no_inbox_sound: args.no_inbox_sound,
-            no_inbox_notification: args.no_inbox_notification,
-            skip_summary: args.skip_summary,
-        },
+        switch_argv,
         shell: cell::ShellState::default(),
         keys: &keys,
         cell_limits,
@@ -528,6 +563,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         scope.spawn(|| watch.run());
         let exit = lp.run();
         done.store(true, Ordering::SeqCst);
+        resumer.leave(departure(&exit, signal::is_terminated()));
         exit
     })
 }

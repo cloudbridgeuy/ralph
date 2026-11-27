@@ -20,6 +20,7 @@ mod input_theme;
 mod licenses;
 pub mod markdown;
 mod mermaid_guard;
+mod program_resume;
 pub mod prompt_source;
 pub mod render;
 mod serve;
