@@ -72,7 +72,9 @@ use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
-use ralph_core::program_status::status_enabled;
+use ralph_core::program_status::{
+    rex_pane, RexBlock, RexPane, StatusSetting, Stdout, REX_BLOCK_ENV,
+};
 use ralph_server::chat::host::spawn_session_host;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::monitor::ready_ids;
@@ -96,11 +98,19 @@ use std::sync::Arc;
 pub(crate) use switch::ChatExit;
 
 pub(crate) const STORE_ENV: &str = "RALPH_CHAT_STORE";
-const REX_SESSION_ENV: &str = "REX_SESSION";
 const PROMPT_ROWS: usize = 256;
 pub(crate) use ralph_server::config::{
     CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, WRAP_WIDTH_ENV,
 };
+
+fn resolve_rex_pane(
+    setting: StatusSetting,
+    stdout: Stdout,
+    env: impl FnOnce(&str) -> Option<String>,
+) -> Option<RexPane> {
+    let block = env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse);
+    rex_pane(setting, stdout, block.as_ref())
+}
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
     let highlighter = Highlighter::with_config(config.clone()).unwrap_or_else(|e| {
@@ -110,7 +120,11 @@ fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
     (highlighter, MarkdownTheme::from_config(Some(config)))
 }
 
-fn alert_config(args: &ChatArgs, chat: &ChatSection, terminal_status: bool) -> AlertConfig {
+fn alert_config(
+    args: &ChatArgs,
+    chat: &ChatSection,
+    terminal_status: Option<RexPane>,
+) -> AlertConfig {
     AlertConfig {
         sound: chat.inbox_alert_sound && !args.no_inbox_sound,
         notification: chat.inbox_alert_notification && !args.no_inbox_notification,
@@ -128,7 +142,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             },
             |config| config.chat,
         );
-        return remote::run(socket, alert_config(&args, &chat, false));
+        return remote::run(socket, alert_config(&args, &chat, None));
     }
     if let Some(ChatCommand::History(history)) = args.command {
         print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
@@ -212,14 +226,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         Arc::clone(&resize),
         ralph_server::config::effective_grants(&config.chat, &store_dir),
     )?;
-    let terminal_status = status_enabled(
-        chat_config.terminal_status,
-        std::io::stdout().is_terminal(),
-        std::env::var_os(REX_SESSION_ENV).is_some_and(|value| !value.is_empty()),
+    let rex = resolve_rex_pane(
+        StatusSetting::from_bool(chat_config.terminal_status),
+        Stdout::from_is_terminal(std::io::stdout().is_terminal()),
+        |key| std::env::var(key).ok(),
     );
-    let alert = alert_config(&args, chat_config, terminal_status);
+    let alert = alert_config(&args, chat_config, rex);
     let term = Arc::new(TermStatus::new(
-        terminal_status,
+        rex,
         chat_config.terminal_title && std::io::stdout().is_terminal(),
     ));
     let assembled = assemble(AssembleOptions {
@@ -492,6 +506,42 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         done.store(true, Ordering::SeqCst);
         exit
     })
+}
+
+#[cfg(test)]
+mod rex_status_tests {
+    use super::resolve_rex_pane;
+    use ralph_core::program_status::{StatusSetting, Stdout};
+
+    #[test]
+    fn rex_pane_with_rex_block_enables_terminal_status() {
+        let env = |key: &str| match key {
+            "REX_BLOCK" => Some("blk-1".to_string()),
+            "REX_SERVER" => Some("/tmp/rex.sock".to_string()),
+            "TERM_PROGRAM" => Some("rex".to_string()),
+            _ => None,
+        };
+        assert!(resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, env).is_some());
+    }
+
+    #[test]
+    fn empty_or_missing_rex_block_disables_terminal_status() {
+        let empty = |key: &str| (key == "REX_BLOCK").then(String::new);
+        assert_eq!(
+            resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, empty),
+            None
+        );
+
+        let missing = |key: &str| match key {
+            "REX_SERVER" => Some("/tmp/rex.sock".to_string()),
+            "TERM_PROGRAM" => Some("rex".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, missing),
+            None
+        );
+    }
 }
 
 #[cfg(test)]

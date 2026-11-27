@@ -292,7 +292,7 @@ fn pair_session(timeout: Duration) -> (RemoteSession, UnixStream) {
             sound: false,
             notification: false,
             unknown_focus: UnknownFocus::Silent,
-            terminal_status: false,
+            terminal_status: None,
         },
     };
     (session, server)

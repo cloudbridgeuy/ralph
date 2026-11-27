@@ -873,7 +873,7 @@ pub fn running_line(plan: &RunPlan, driving: &Driving) -> String {
 }
 
 pub fn blocked_alert(notice: &str, config: &AlertConfig) -> Option<Alert> {
-    (config.enabled() && !config.terminal_status).then(|| Alert {
+    (config.enabled() && config.terminal_status.is_none()).then(|| Alert {
         sound: config.sound,
         notification: config.notification.then(|| notice.to_string()),
     })
