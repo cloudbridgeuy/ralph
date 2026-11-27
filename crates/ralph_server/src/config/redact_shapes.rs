@@ -6,6 +6,9 @@ const WORD_MAX: usize = 24;
 const NAME_MAX: usize = 40;
 const IDENT_MAX: usize = 64;
 const NUMBER_MAX: usize = 12;
+const KEY_MAX: usize = 40;
+const GRAMMAR_KEY_PREFIXES: [&str; 3] =
+    ["theme.", "mermaid.style.colors.", "mermaid.style.config."];
 const COLOUR_FUNCTIONS: [&str; 4] = ["rgb", "rgba", "hsl", "hsla"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +97,14 @@ pub fn is_ident(text: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
 }
 
+pub fn is_key_ident(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= KEY_MAX
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+}
+
 fn is_plain_number(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= NUMBER_MAX
@@ -116,14 +127,21 @@ pub fn value_shape_ok(class: Class, value: &Value) -> bool {
     match value {
         Value::String(text) => string_shape_ok(class, text),
         Value::Array(items) => items.iter().all(|item| value_shape_ok(class, item)),
-        Value::Object(map) => map.values().all(|item| value_shape_ok(class, item)),
+        Value::Object(map) => map
+            .iter()
+            .all(|(key, item)| is_key_ident(key) && value_shape_ok(class, item)),
         _ => true,
     }
 }
 
 pub fn key_shape_ok(key: &str) -> bool {
-    key.strip_prefix("wire.prices.")
-        .is_none_or(|rest| rest.split('.').all(is_ident))
+    if let Some(rest) = key.strip_prefix("wire.prices.") {
+        return rest.split('.').all(is_ident);
+    }
+    GRAMMAR_KEY_PREFIXES
+        .iter()
+        .find_map(|prefix| key.strip_prefix(prefix))
+        .is_none_or(|rest| rest.split('.').all(is_key_ident))
 }
 
 const TOKEN_PREFIXES: [&str; 8] = [
@@ -377,6 +395,46 @@ mod tests {
         assert!(key_shape_ok("chat.wrap_width"));
         assert!(!key_shape_ok("wire.prices.a b.input"));
         assert!(!key_shape_ok("wire.prices..input"));
+    }
+
+    #[test]
+    fn grammar_keys_need_ident_segments_under_theme_and_mermaid_maps() {
+        for key in [
+            "theme.status.base_bg",
+            "theme.name",
+            "theme.assistant.code",
+            "mermaid.style.colors.accent",
+            "mermaid.style.config.flowchart.nodeSpacing",
+            "mermaid.style.font_size",
+        ] {
+            assert!(key_shape_ok(key), "{key}");
+        }
+        for key in [
+            "mermaid.style.colors.hunter2 secret",
+            "theme.status.my password is hunter2",
+            "mermaid.style.config.flowchart.correct horse battery staple",
+            "mermaid.style.colors.a\"b",
+            "mermaid.style.colors.ghp:x",
+            "mermaid.style.colors.",
+        ] {
+            assert!(!key_shape_ok(key), "{key}");
+        }
+        assert!(!key_shape_ok(&format!("theme.status.{}", "a".repeat(41))));
+        assert!(key_shape_ok(&format!("theme.status.{}", "a".repeat(40))));
+    }
+
+    #[test]
+    fn value_shape_checks_object_keys_inside_arrays_and_objects() {
+        assert!(!value_shape_ok(
+            Class::Free,
+            &json!([{"correct horse battery": 1}])
+        ));
+        assert!(!value_shape_ok(Class::Free, &json!({"a": [{"b c": 1}]})));
+        assert!(!value_shape_ok(Class::Loose, &json!([{"x y": 1}])));
+        assert!(value_shape_ok(
+            Class::Free,
+            &json!([{"nodeSpacing": 1, "curve_x": "basis"}])
+        ));
     }
 
     #[test]

@@ -90,6 +90,9 @@ const SAFE_KEYS: &[&str] = &[
 
 const SAFE_PREFIXES: &[&str] = &["theme.", "mermaid.style.", "wire.prices.", "tickets."];
 
+const DECLARED_NESTED_KEYS: &[&str] =
+    &["chat.claude.permission_mode", "ask.claude.permission_mode"];
+
 const VALUE_MARKERS: [&str; 4] = ["://", "@", "key=", "token="];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,12 +123,22 @@ fn text_is_sensitive(text: &str) -> bool {
         || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
+fn has_free_key_tail(key: &str) -> bool {
+    listing(key) != Listing::Safe
+        && key.split('.').count() > 2
+        && !DECLARED_NESTED_KEYS.contains(&key)
+}
+
 fn key_is_sensitive(key: &str) -> bool {
     key.split('.').any(text_is_sensitive) || !key_shape_ok(key)
 }
 
+fn key_needs_mask(key: &str) -> bool {
+    key_is_sensitive(key) || has_free_key_tail(key)
+}
+
 pub fn mask_key(key: &str) -> String {
-    if !key_is_sensitive(key) {
+    if !key_needs_mask(key) {
         return key.to_string();
     }
     match key.split_once('.') {
@@ -414,6 +427,94 @@ mod tests {
         ] {
             assert!(!redacts(key, &value, false), "{key} {value}");
         }
+    }
+
+    #[test]
+    fn free_text_map_keys_redact_the_row_and_mask_the_key() {
+        for key in [
+            "mermaid.style.colors.hunter2 secret",
+            "theme.status.my password is hunter2",
+            "mermaid.style.config.flowchart.correct horse battery staple",
+        ] {
+            let value = if key.contains("flowchart") {
+                json!(30)
+            } else {
+                json!("#fff")
+            };
+            assert!(redacts(key, &value, false), "{key}");
+            let masked = mask_key(key);
+            assert!(masked.ends_with(".[redacted]"), "{masked}");
+            assert!(
+                !masked.contains("secret") && !masked.contains("horse"),
+                "{masked}"
+            );
+        }
+    }
+
+    #[test]
+    fn real_theme_and_mermaid_keys_stay_visible() {
+        for key in [
+            "theme.status.base_bg",
+            "mermaid.style.colors.node",
+            "mermaid.style.colors.edge",
+            "mermaid.style.font_size",
+            "mermaid.style.config.flowchart.nodeSpacing",
+        ] {
+            assert_eq!(mask_key(key), key);
+        }
+        assert!(!redacts(
+            "mermaid.style.config.flowchart.nodeSpacing",
+            &json!(30),
+            false
+        ));
+    }
+
+    #[test]
+    fn user_chosen_keys_below_non_safe_rows_are_masked() {
+        for key in [
+            "chat.reset_turns.secret words",
+            "chat.editor.secret words",
+            "workers.shell.secret words",
+            "claude.permissions.secret words",
+            "codex.sandbox.secret",
+            "novel.setting.x",
+        ] {
+            assert_eq!(
+                mask_key(key),
+                format!("{}.[redacted]", key.split('.').next().unwrap()),
+                "{key}"
+            );
+            assert!(redacts(key, &json!(1), false), "{key}");
+        }
+    }
+
+    #[test]
+    fn declared_non_safe_field_names_stay_visible() {
+        for key in [
+            "claude.permissions",
+            "codex.sandbox",
+            "chat.editor",
+            "workers.shell",
+            "chat.claude.permission_mode",
+            "ask.claude.permission_mode",
+            "novel.setting",
+        ] {
+            assert_eq!(mask_key(key), key, "{key}");
+        }
+    }
+
+    #[test]
+    fn object_keys_inside_a_mermaid_config_array_follow_the_key_grammar() {
+        assert!(redacts(
+            "mermaid.style.config",
+            &json!({"x": [{"correct horse battery": 1}]}),
+            false
+        ));
+        assert!(!redacts(
+            "mermaid.style.config",
+            &json!({"x": [{"nodeSpacing": 1}]}),
+            false
+        ));
     }
 
     #[test]

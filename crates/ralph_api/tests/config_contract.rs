@@ -225,3 +225,38 @@ fn config_wrong_host_is_403() {
     let reply = server.exchange("GET", &target, Host::Named("evil.test"), &[]);
     assert_eq!(reply.status, 403);
 }
+
+#[test]
+fn config_free_text_map_keys_are_absent_from_the_http_body() {
+    for (config, leak, section) in [
+        (
+            "[mermaid.style.colors]\n\"hunter2 secret\" = \"#fff\"\n",
+            "hunter2",
+            "mermaid",
+        ),
+        (
+            "[claude.permissions]\n\"secret words\" = true\n",
+            "secret words",
+            "claude",
+        ),
+        (
+            "[chat.reset_turns]\n\"secret words\" = 1\n",
+            "secret words",
+            "chat",
+        ),
+    ] {
+        let server = TestServer::start_with_store(|dir| write_config(dir, config));
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert!(!reply.body.contains(leak), "{}", reply.body);
+        let masked = json_of(&reply)["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["section"] == section && row["key"] == "[redacted-1]")
+            .unwrap()
+            .clone();
+        assert_eq!(masked["redacted"], true, "{}", reply.body);
+        assert_eq!(masked["value"], "[redacted]", "{}", reply.body);
+    }
+}

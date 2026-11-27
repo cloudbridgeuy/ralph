@@ -376,6 +376,50 @@ mod tests {
         }
     }
 
+    fn assert_key_absent_and_masked(config: &str, leak: &str, section: &str) {
+        let (g, s) = setup(None, Some(config));
+        let response = respond(&g, &s, no_env);
+        assert_eq!(response.status, 200, "{config}");
+        let raw = text(&response);
+        assert!(!raw.contains(leak), "{config}: {raw}");
+        let masked = row(&body(&response), section, "[redacted-1]").clone();
+        assert_eq!(masked["redacted"], true, "{raw}");
+        assert_eq!(masked["value"], "[redacted]", "{raw}");
+    }
+
+    #[test]
+    fn free_text_map_keys_never_reach_the_body() {
+        for (config, leak, section) in [
+            (
+                "[mermaid.style.colors]\n\"hunter2 secret\" = \"#fff\"\n",
+                "hunter2",
+                "mermaid",
+            ),
+            (
+                "[theme.status]\n\"my password is hunter2\" = \"red\"\n",
+                "password",
+                "theme",
+            ),
+            (
+                "[mermaid.style.config.flowchart]\n\"correct horse battery staple\" = 30\n",
+                "horse",
+                "mermaid",
+            ),
+            (
+                "[claude.permissions]\n\"secret words\" = true\n",
+                "secret words",
+                "claude",
+            ),
+            (
+                "[chat.reset_turns]\n\"secret words\" = 1\n",
+                "secret words",
+                "chat",
+            ),
+        ] {
+            assert_key_absent_and_masked(config, leak, section);
+        }
+    }
+
     #[test]
     fn a_dated_model_name_stays_visible_in_the_body() {
         let (g, s) = setup(
