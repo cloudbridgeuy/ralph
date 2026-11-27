@@ -229,6 +229,11 @@ impl Pump {
         self.show(blocks);
     }
 
+    pub fn flush_prose(&mut self) {
+        let blocks = self.collector.flush_streamed(&DiskFiles);
+        self.show(blocks);
+    }
+
     pub fn finish_events(mut self, exit_code: i32) -> StreamingSubprocessResult {
         self.stop_spinner();
         let (flushed, stream_result) = self.collector.finish(&DiskFiles);

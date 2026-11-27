@@ -21,6 +21,7 @@ use super::Files;
 pub struct StreamCollector {
     events: Vec<StreamEvent>,
     chunk_buffer: StreamingChunkBuffer,
+    streamed_len: usize,
     current_message_id: Option<String>,
     collected_chunks: Vec<ParsedChunk>,
     parse_errors: Vec<(String, String)>,
@@ -59,6 +60,7 @@ impl StreamCollector {
         Self {
             events: Vec::new(),
             chunk_buffer: StreamingChunkBuffer::with_prose_threshold(usize::MAX),
+            streamed_len: 0,
             current_message_id: None,
             collected_chunks: Vec::new(),
             parse_errors: Vec::new(),
@@ -237,9 +239,53 @@ impl StreamCollector {
         blocks
     }
 
-    fn flush_pending_chunks(&mut self, files: &dyn Files) -> Vec<OutputBlock> {
+    pub fn flush_streamed(&mut self, files: &dyn Files) -> Vec<OutputBlock> {
+        let chunks = self.chunk_buffer.finish();
+        let shown = self.emit_chunks(chunks, files);
+        for block in self.output_blocks.split_off(self.streamed_len) {
+            self.append_streamed(block);
+        }
+        self.streamed_len = self.output_blocks.len();
+        shown.into_iter().filter_map(trim_streamed).collect()
+    }
+
+    fn append_streamed(&mut self, mut block: OutputBlock) {
+        if let Some(prev) = self.output_blocks.last_mut().and_then(prose_mut) {
+            match prose_mut(&mut block) {
+                Some(next) => return prev.push_str(next),
+                None => prev.truncate(prev.trim_end_matches('\n').len()),
+            }
+        } else if let Some(next) = prose_mut(&mut block) {
+            *next = next.trim_start_matches('\n').to_string();
+            if next.is_empty() {
+                return;
+            }
+        }
+        self.output_blocks.push(block);
+    }
+
+    pub fn flush_pending_chunks(&mut self, files: &dyn Files) -> Vec<OutputBlock> {
         let chunks = self.chunk_buffer.finish();
         self.emit_chunks(chunks, files)
+    }
+}
+
+fn prose_mut(block: &mut OutputBlock) -> Option<&mut String> {
+    match block {
+        OutputBlock::Text(text) if text.chunk.chunk_type == ChunkType::Prose => {
+            Some(&mut text.chunk.content)
+        }
+        _ => None,
+    }
+}
+
+fn trim_streamed(block: OutputBlock) -> Option<OutputBlock> {
+    match block {
+        OutputBlock::Text(mut text) if text.chunk.chunk_type == ChunkType::Prose => {
+            text.chunk.content = text.chunk.content.trim_matches('\n').to_string();
+            (!text.chunk.content.is_empty()).then_some(OutputBlock::Text(text))
+        }
+        other => Some(other),
     }
 }
 
@@ -429,11 +475,54 @@ mod tests {
             .iter()
             .map(AgyEvent::Update)
             .chain(std::iter::once(done));
-        for event in events.flat_map(|event| stream.events(&event)) {
-            collector.process_event(event, &files);
+        for event in events {
+            for stream_event in stream.events(&event) {
+                collector.process_event(stream_event, &files);
+            }
+            collector.flush_streamed(&files);
         }
         let (_, result) = collector.finish(&files);
+
         super::super::output_block::extract_response_text(&result.output_blocks).unwrap()
+    }
+
+    #[test]
+    fn agy_lines_are_shown_before_the_turn_ends() {
+        use crate::worker::{AgyEvent, AgyStream};
+        use serde_json::json;
+
+        let files = FakeFiles(HashMap::new());
+        let mut collector = StreamCollector::new(true, VerboseToolsConfig::default());
+        let mut stream = AgyStream::default();
+        let shown: Vec<_> = ["1. first story.\n", "2. second", " story.\n3. third"]
+            .iter()
+            .map(|text| json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}))
+            .flat_map(|update| {
+                let mut blocks: Vec<_> = stream
+                    .events(&AgyEvent::Update(&update))
+                    .into_iter()
+                    .flat_map(|event| collector.process_event(event, &files))
+                    .collect();
+                blocks.extend(collector.flush_streamed(&files));
+                blocks
+            })
+            .collect();
+        let text = super::super::output_block::extract_response_text(&shown).unwrap();
+        assert!(text.contains("2. second story."), "{text}");
+        assert!(!text.contains("3. third"), "{text}");
+    }
+
+    #[test]
+    fn agy_multi_line_reply_is_stored_as_the_raw_text() {
+        let raw = "Intro line.\n\nSecond paragraph\nstill second.\n\n- one\n- two\n\n```rust\nfn a() {}\n\nfn b() {}\n```\n\nDone.";
+        let chunks: Vec<String> = raw
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(7)
+            .map(|piece| piece.iter().collect())
+            .collect();
+        let refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
+        assert_eq!(agy_reply(&refs), raw);
     }
 
     #[test]
