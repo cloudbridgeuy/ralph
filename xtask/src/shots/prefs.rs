@@ -9,6 +9,7 @@ enum Pref {
 }
 
 const PREFS: &[(&str, Pref)] = &[
+    // A transient macOS overlay scrollbar made memory-dark-390 flaky; classic scrollbars keep shots stable.
     ("ui.useOverlayScrollbars", Pref::Int(0)),
     (
         "datareporting.policy.dataSubmissionEnabled",

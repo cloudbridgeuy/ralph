@@ -132,11 +132,13 @@ impl Marionette {
             if byte[0] == b':' {
                 break;
             }
+            // 9 digits hold any length up to the 64 MiB cap, and stop a runaway digit stream before the ':'.
             if prefix.len() >= webdriver::MAX_LENGTH_DIGITS {
                 return Err(webdriver::WebdriverError::BadFrameLength(prefix).into());
             }
             prefix.push(char::from(byte[0]));
         }
+        // parse_length rejects frames over 64 MiB so a bad length cannot allocate without bound; a real reply is far smaller.
         let mut body = vec![0u8; webdriver::parse_length(&prefix)?];
         self.stream.read_exact(&mut body)?;
         Ok(serde_json::from_slice(&body)?)
