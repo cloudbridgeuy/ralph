@@ -164,6 +164,14 @@ pub fn merge_timed_out(existing: &[String], selected: &[String], fresh: &[String
     merged
 }
 
+pub fn add_timed_out(existing: &[String], name: &str) -> Vec<String> {
+    let mut added = existing.to_vec();
+    added.push(name.to_string());
+    added.sort();
+    added.dedup();
+    added
+}
+
 pub fn select_approvals(
     names: &[String],
     all: bool,
@@ -480,6 +488,32 @@ mod tests {
         assert_eq!(
             merge_timed_out(&existing, &selected, &names(&["c.png", "c.png"])),
             names(&["b.png", "c.png"])
+        );
+    }
+
+    #[test]
+    fn add_timed_out_keeps_existing_entries_and_sorts() {
+        assert_eq!(
+            add_timed_out(&names(&["b.png", "d.png"]), "c.png"),
+            names(&["b.png", "c.png", "d.png"])
+        );
+        assert_eq!(add_timed_out(&[], "a.png"), names(&["a.png"]));
+    }
+
+    #[test]
+    fn add_timed_out_is_idempotent() {
+        let once = add_timed_out(&names(&["a.png"]), "b.png");
+        assert_eq!(add_timed_out(&once, "b.png"), once);
+        assert_eq!(add_timed_out(&once, "a.png"), once);
+    }
+
+    #[test]
+    fn a_marker_written_per_shot_survives_a_later_merge() {
+        let marked = add_timed_out(&add_timed_out(&[], "b.png"), "a.png");
+        assert_eq!(marked, names(&["a.png", "b.png"]));
+        assert_eq!(
+            merge_timed_out(&marked, &names(&["c.png"]), &names(&["b.png"])),
+            names(&["a.png", "b.png"])
         );
     }
 

@@ -434,6 +434,11 @@ fn launch_firefox(
     Err(webdriver::format_launch_failure(&reasons).into())
 }
 
+fn record_timed_out_now(out: &Path, name: &str) -> Result<(), BoxError> {
+    fs::create_dir_all(out)?;
+    super::record_timed_out(out, name)
+}
+
 fn capture_group(
     browser: &mut Marionette,
     theme: Theme,
@@ -451,6 +456,7 @@ fn capture_group(
         browser.navigate("about:blank")?;
         browser.navigate(&webdriver::shot_url(&listening.base, shot.screen))?;
         if !browser.wait_ready(shot.screen)? {
+            record_timed_out_now(out, &shot.name())?;
             timed_out.push(shot.name());
         }
         browser.mask(shot.screen)?;

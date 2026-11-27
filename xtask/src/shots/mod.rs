@@ -273,6 +273,13 @@ fn write_timed_out(current: &Path, names: &[String]) -> Result<(), BoxError> {
     Ok(())
 }
 
+fn record_timed_out(current: &Path, name: &str) -> Result<(), BoxError> {
+    write_timed_out(
+        current,
+        &report::add_timed_out(&read_timed_out(current)?, name),
+    )
+}
+
 fn capture_current(args: RunArgs) -> Result<(PathBuf, Vec<core::Shot>), BoxError> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let resolve = |given, under_home| {
