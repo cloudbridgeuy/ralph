@@ -100,8 +100,7 @@ impl AgyStream {
         if end == 0 {
             return Vec::new();
         }
-        let mut ready: String = self.held.drain(..end).collect();
-        ready.pop();
+        let ready: String = self.held.drain(..end).collect();
         vec![assistant(ContentBlock::Text { text: ready })]
     }
 
@@ -400,7 +399,7 @@ mod stream_tests {
         let mut stream = AgyStream::default();
         assert!(stream.events(&AgyEvent::Update(&chunk("PING-"))).is_empty());
         let ready = stream.events(&AgyEvent::Update(&chunk("1\nrest")));
-        assert_eq!(text_of(ready), ["PING-1"]);
+        assert_eq!(text_of(ready), ["PING-1\n"]);
     }
 
     #[test]
@@ -417,18 +416,18 @@ mod stream_tests {
     fn an_open_fence_waits_for_its_close() {
         let mut stream = AgyStream::default();
         let opened = stream.events(&AgyEvent::Update(&chunk("intro\n```rust\nfn a() {}\n")));
-        assert_eq!(text_of(opened), ["intro"]);
+        assert_eq!(text_of(opened), ["intro\n"]);
         let closed = stream.events(&AgyEvent::Update(&chunk("```\nafter\n")));
-        assert_eq!(text_of(closed), ["```rust\nfn a() {}\n```\nafter"]);
+        assert_eq!(text_of(closed), ["```rust\nfn a() {}\n```\nafter\n"]);
     }
 
     #[test]
     fn trailing_table_rows_wait_for_the_next_line() {
         let mut stream = AgyStream::default();
         let rows = stream.events(&AgyEvent::Update(&chunk("head\n| a | b |\n|---|---|\n")));
-        assert_eq!(text_of(rows), ["head"]);
+        assert_eq!(text_of(rows), ["head\n"]);
         let ended = stream.events(&AgyEvent::Update(&chunk("| 1 | 2 |\nnext\n")));
-        assert_eq!(text_of(ended), ["| a | b |\n|---|---|\n| 1 | 2 |\nnext"]);
+        assert_eq!(text_of(ended), ["| a | b |\n|---|---|\n| 1 | 2 |\nnext\n"]);
     }
 
     #[test]
@@ -439,6 +438,6 @@ mod stream_tests {
         let events = stream.events(&AgyEvent::Update(&usage));
         assert!(text_of(events).is_empty());
         let ready = stream.events(&AgyEvent::Update(&chunk("rupt\n")));
-        assert_eq!(text_of(ready), ["interrupt"]);
+        assert_eq!(text_of(ready), ["interrupt\n"]);
     }
 }

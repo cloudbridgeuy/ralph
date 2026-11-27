@@ -200,8 +200,8 @@ impl AgySession {
                 Some(AcpEvent::Update(update)) => {
                     for event in stream.events(&AgyEvent::Update(&update)) {
                         pump.event(event);
+                        pump.flush_prose();
                     }
-                    pump.flush_prose();
                 }
                 Some(AcpEvent::Ask(mut ask, sender)) => {
                     self.asks += 1;
@@ -223,6 +223,7 @@ impl AgySession {
                         usage: usage.as_ref(),
                     }) {
                         pump.event(event);
+                        pump.flush_prose();
                     }
                     return Ok(if cancel_sent.is_some() {
                         Ended::Interrupted { kill: false }

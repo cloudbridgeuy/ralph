@@ -230,7 +230,7 @@ impl Pump {
     }
 
     pub fn flush_prose(&mut self) {
-        let blocks = self.collector.flush_pending_chunks(&DiskFiles);
+        let blocks = self.collector.flush_streamed(&DiskFiles);
         self.show(blocks);
     }
 
