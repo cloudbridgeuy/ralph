@@ -1,6 +1,6 @@
 use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
 pub use crate::chat_thread_root::{config_root, fork_of};
-use crate::program_status::RexBlock;
+use crate::program_status::{rex_split_argv, RexBlock, RexSplit};
 use crate::worker::{shell_quote, Report};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -347,18 +347,15 @@ pub fn open_launch(spawn: OpenSpawn) -> OpenLaunch {
     ]
     .map(str::to_string);
     let command: Vec<String> = config.into_iter().flatten().chain(chat).collect();
-    match spawn.block.map(RexBlock::as_str) {
+    match spawn.block {
         Some(block) => {
             let label = format!("thread {}", spawn.name);
-            let split = ["split", "-b", block, "--label", &label, "-c", spawn.cwd];
-            OpenLaunch::Rex(
-                split
-                    .map(str::to_string)
-                    .into_iter()
-                    .chain(["--interactive", "--"].map(str::to_string))
-                    .chain(command)
-                    .collect(),
-            )
+            let split = RexSplit {
+                block,
+                label: &label,
+                cwd: spawn.cwd,
+            };
+            OpenLaunch::Rex(rex_split_argv(split, command))
         }
         None => {
             let quoted: Vec<String> = command.iter().map(|word| shell_quote(word)).collect();

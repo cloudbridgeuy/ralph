@@ -18,6 +18,7 @@ use ralph_core::chat_stage::{stage_text, StageCommand, STAGE_EMPTY_LINE, STAGE_U
 use ralph_core::chat_status::Route;
 use ralph_core::chat_thread::ThreadName;
 use ralph_core::chat_thread_cmd::ThreadOp;
+use ralph_core::chat_view::ViewHost;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::worker::{TicketKeys, HANDOFF_TIMEOUT};
@@ -53,6 +54,7 @@ pub struct LocalRoute<'a> {
     pub config: &'a ConfigSnapshot,
     pub columns: Columns,
     pub resize: &'a Resize,
+    pub view_host: Option<&'a ViewHost>,
 }
 
 pub fn run_local(
@@ -180,7 +182,7 @@ fn run_shown(route: Route, ctx: &LocalRoute, out: &mut dyn Write) -> io::Result<
         }
         Route::Help => write!(out, "{}", help_with_store((ctx.columns)(), ctx.store))?,
         Route::Config => config::print(ctx.config),
-        Route::View(args) => view::run(&args, ctx.display),
+        Route::View(args) => view::run(&args, ctx.display, ctx.view_host),
         Route::Rerender(n) => rerender::run(&n, ctx.store, ctx.reply_display, ctx.resize),
         Route::History(call) => {
             let text = history_call(ctx.store, &call, CallSource::Slash)
@@ -355,6 +357,7 @@ mod tests {
             config: &snapshot,
             columns: || 80,
             resize: &Resize::default(),
+            view_host: None,
         };
         let mut out = Vec::new();
         let route = route_input(

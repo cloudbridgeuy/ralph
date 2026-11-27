@@ -20,6 +20,7 @@ mod refusal;
 mod remote;
 mod rerender;
 mod resize;
+mod rex;
 mod route;
 mod schedule;
 pub(crate) use ralph_server::chat::tag_store;
@@ -35,13 +36,13 @@ mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
 pub(crate) mod thread_cmd;
-mod view;
+pub(crate) mod view;
 mod workers;
 
 use crate::chat::assemble::{assemble, load_settings, AssembleOptions, Assembled, TurnOutput};
 use crate::chat::client_monitor::{client_events, client_sink, watch_headless, watch_input};
 use crate::chat::editor::build_editor;
-use crate::chat::inbox::Display;
+pub(crate) use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::prompt::ChatPrompt;
 use crate::chat::resize::{Resize, Watch};
@@ -70,6 +71,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::store_in_use_message;
 use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
+use ralph_core::chat_view::{resolve_view_target, view_host};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{
@@ -81,7 +83,7 @@ use ralph_server::chat::monitor::ready_ids;
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
-use ralph_server::config::{AppConfig, ChatSection};
+use ralph_server::config::{AppConfig, ChatSection, ThemeSection};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
 use ralph_server::paths::absolute_from;
 use ralph_server::warn::{warn, warn_if_err};
@@ -108,8 +110,11 @@ fn resolve_rex_pane(
     stdout: Stdout,
     env: impl FnOnce(&str) -> Option<String>,
 ) -> Option<RexPane> {
-    let block = env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse);
-    rex_pane(setting, stdout, block.as_ref())
+    rex_pane(setting, stdout, rex_block(env).as_ref())
+}
+
+fn rex_block(env: impl FnOnce(&str) -> Option<String>) -> Option<RexBlock> {
+    env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse)
 }
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
@@ -118,6 +123,23 @@ fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
         Highlighter::new()
     });
     (highlighter, MarkdownTheme::from_config(Some(config)))
+}
+
+pub(crate) fn agent_style(
+    theme: &ThemeConfig,
+    section: &ThemeSection,
+) -> (Highlighter, MarkdownTheme) {
+    let agent = section.agent();
+    let highlighter =
+        Highlighter::with_config(theme.clone().merge_cli(agent.code.as_deref(), false))
+            .unwrap_or_else(|e| {
+                warn(format!("Failed to load agent theme: {e}"));
+                Highlighter::new()
+            });
+    (
+        highlighter,
+        MarkdownTheme::new(agent.palette(ThemeRole::Agent).0),
+    )
 }
 
 fn alert_config(
@@ -190,6 +212,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let diff_colors = *theme_config.diff();
     let tool_colors = *theme_config.tools();
     let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());
+    let (view_target, view_warning) = resolve_view_target(chat_config.view.as_deref());
+    let view_host = view_host(
+        view_target,
+        Stdout::from_is_terminal(std::io::stdout().is_terminal()),
+        view::rex_host(rex_block(|name| std::env::var(name).ok()), &store_dir),
+    );
     let setting_warnings: Vec<String> = config
         .theme
         .deprecations()
@@ -198,16 +226,10 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .chain(config.changes.warnings())
         .chain(config.mermaid.style.warnings())
         .chain(edit_mode_warning)
+        .chain(view_warning)
         .collect();
     setting_warnings.iter().for_each(warn);
-    let agent = config.theme.agent();
-    let agent_highlighter =
-        Highlighter::with_config(theme_config.clone().merge_cli(agent.code.as_deref(), false))
-            .unwrap_or_else(|e| {
-                warn(format!("Failed to load agent theme: {e}"));
-                Highlighter::new()
-            });
-    let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
+    let (agent_highlighter, agent_theme) = agent_style(&theme_config, &config.theme);
     let (reply_highlighter, reply_theme) = reply_style(&theme_config);
     let prompt_files = chat_config.prompt_files(dirs::home_dir().as_deref());
     let (custom_prompt, prompt_warnings) = load_custom_prompt(&prompt_files);
@@ -426,6 +448,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         config: &config_snapshot,
         columns: prompt::screen_columns,
         resize: &resize,
+        view_host: view_host.as_ref(),
     };
     let keys = Keys {
         gate: &turn.gate,

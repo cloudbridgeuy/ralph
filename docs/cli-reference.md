@@ -21,6 +21,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 |---------|-------------|
 | `themes` | List available syntax highlighting themes |
 | `licenses` | Print the licence notices of the bundled syntax grammars ([details](#ralph-licenses)) |
+| `view` | Show a markdown file with chat rendering, in a pager ([details](#ralph-view)) |
 | `ask` | Send a single-shot prompt to the LLM ([details](context/ralph-ask.md)) |
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
 | `thread` | List, log, pull, merge, park, revive or drop chat threads ([guide](context/threads.md), [details](context/ralph-chat.md#threads)) |
@@ -82,6 +83,31 @@ ralph licenses
 ### Description
 
 ralph bundles syntax grammars curated by the [bat](https://github.com/sharkdp/bat) project through the [two-face](https://github.com/CosmicHorrorDev/two-face) crate. Many of their licences (MIT, BSD, Apache-2.0) require the notice to ship with the binary. The command prints a short header, then one block per grammar: its licence path (for example `syntaxes/02_Extra/TypeScript/LICENSE`), a blank line and the licence text. The text comes from two-face at run time, so it always matches the grammars in the binary. After the grammars, the command prints the notice and the SIL Open Font License of the bundled Geist Mono font. Output is plain text with no colour and no pager.
+
+---
+
+## ralph view
+
+Show a markdown file with the rendering of the chat `/view` command: highlighted code, tables, links and, in a terminal that draws them, images and mermaid pictures.
+
+### Usage
+
+```
+ralph view [--store <DIR>] <FILE>
+```
+
+### Description
+
+`<FILE>` is a `.md` or `.markdown` file of at most 2 MiB; a leading `~/` is the home folder. ralph removes control characters from the file text before it renders it. `--store <DIR>` adds that chat store's `config.toml` over the global file. The command reads `[chat] wrap_width`, `[chat] view_pager` and the theme settings. It starts no model and writes nothing to a store.
+
+In a terminal the rendered text goes to the standard input of `[chat] view_pager`, default `less -r`. `-r` keeps images; `less -R` shows their data as text. The value is split on spaces and takes no quotes. `view_pager = "none"` prints the text and waits for `q` or Ctrl-C. `PAGER` is not read.
+
+| Case | Result |
+|------|--------|
+| Output is not a terminal | Prints and exits |
+| The pager cannot start | Prints, says why, and waits for `q` |
+| The pager exits with an error | Says why, waits for `q`, exits with code 1 |
+| The file or the config cannot be used | Says why, waits for `q` in a terminal, exits with code 1 |
 
 ---
 

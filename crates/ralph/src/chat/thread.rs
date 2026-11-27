@@ -16,7 +16,6 @@ use ralph_core::chat_thread::{
 use ralph_core::chat_thread_cmd::{
     merge_posted_message, parked_message, revived_message, view_posted_message, OpenOpts,
 };
-use ralph_core::program_status::{RexBlock, REX_BLOCK_ENV};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, Report};
@@ -259,10 +258,7 @@ pub fn open_thread(store: &Path, opts: &OpenOpts) -> Result<String, String> {
         main.to_string_lossy(),
         cwd.to_string_lossy(),
     );
-    let block = std::env::var(REX_BLOCK_ENV)
-        .ok()
-        .as_deref()
-        .and_then(RexBlock::parse);
+    let block = super::rex_block(|name| std::env::var(name).ok());
     let config_dir = std::env::var("RALPH_CONFIG_DIR").ok();
     let spawn = OpenSpawn {
         name,
@@ -274,16 +270,9 @@ pub fn open_thread(store: &Path, opts: &OpenOpts) -> Result<String, String> {
     };
     match open_launch(spawn) {
         OpenLaunch::Manual(text) => Ok(text),
-        OpenLaunch::Rex(argv) => match std::process::Command::new("rex").args(&argv).output() {
-            Ok(out) if out.status.success() => {
-                Ok(format!("opened thread {name} in a new Rex block"))
-            }
-            Ok(out) => Err(format!(
-                "rex split failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )),
-            Err(e) => Err(format!("could not run rex: {e}")),
-        },
+        OpenLaunch::Rex(argv) => {
+            super::rex::split(&argv).map(|()| format!("opened thread {name} in a new Rex block"))
+        }
     }
 }
 

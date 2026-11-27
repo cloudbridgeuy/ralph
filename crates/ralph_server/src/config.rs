@@ -424,6 +424,10 @@ pub struct ChatSection {
     pub empty_submit: Option<String>,
     #[serde(default)]
     pub empty_prompt: Option<String>,
+    #[serde(default)]
+    pub view_pager: Option<String>,
+    #[serde(default)]
+    pub view: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -497,6 +501,8 @@ impl Default for ChatSection {
             edit_mode: None,
             empty_submit: None,
             empty_prompt: None,
+            view_pager: None,
+            view: None,
         }
     }
 }
