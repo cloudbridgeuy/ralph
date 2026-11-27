@@ -20,6 +20,7 @@ mod refusal;
 mod remote;
 mod rerender;
 mod resize;
+mod rex;
 mod route;
 mod schedule;
 pub(crate) use ralph_server::chat::tag_store;
@@ -108,8 +109,11 @@ fn resolve_rex_pane(
     stdout: Stdout,
     env: impl FnOnce(&str) -> Option<String>,
 ) -> Option<RexPane> {
-    let block = env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse);
-    rex_pane(setting, stdout, block.as_ref())
+    rex_pane(setting, stdout, rex_block(env).as_ref())
+}
+
+fn rex_block(env: impl FnOnce(&str) -> Option<String>) -> Option<RexBlock> {
+    env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse)
 }
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
