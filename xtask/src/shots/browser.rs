@@ -25,6 +25,7 @@ const READ_RETRY: Duration = Duration::from_millis(50);
 const READY_POLL: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const END_SESSION_TIMEOUT: Duration = Duration::from_secs(2);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const LAUNCH_ATTEMPTS: u32 = 3;
 const ACTIVE_PORT_FILE: &str = "MarionetteActivePort";
@@ -148,6 +149,15 @@ impl Marionette {
             .write_all(webdriver::command_frame(id, name, params).as_bytes())?;
         let reply = self.read_message()?;
         Ok(webdriver::command_result(&reply, id)?)
+    }
+
+    fn end_session(&mut self) {
+        let _ = self.stream.set_read_timeout(Some(END_SESSION_TIMEOUT));
+        let _ = self.stream.set_write_timeout(Some(END_SESSION_TIMEOUT));
+        let _ = self.call(
+            "WebDriver:DeleteSession",
+            &Value::Object(Default::default()),
+        );
     }
 
     fn navigate(&mut self, url: &str) -> Result<(), BoxError> {
@@ -375,17 +385,13 @@ fn launch_firefox(
     Err(webdriver::format_launch_failure(&reasons).into())
 }
 
-fn capture_theme(
-    options: &CaptureOptions,
+fn capture_group(
+    browser: &mut Marionette,
+    theme: Theme,
     listening: &Listening,
     group: &[Shot],
-    scratch: &Path,
     out: &Path,
 ) -> Result<Vec<String>, BoxError> {
-    let theme = group[0].theme;
-    let profile = scratch.join(format!("profile-{}", theme.name()));
-    fs::create_dir_all(&profile)?;
-    let (_firefox, mut browser) = launch_firefox(&options.firefox, theme, &profile)?;
     if !webdriver::scheme_matches(theme, &browser.execute(webdriver::SCHEME_SCRIPT)?) {
         return Err(format!("the browser did not switch to the {} scheme", theme.name()).into());
     }
@@ -405,6 +411,22 @@ fn capture_theme(
         println!("captured {}", shot.name());
     }
     Ok(timed_out)
+}
+
+fn capture_theme(
+    options: &CaptureOptions,
+    listening: &Listening,
+    group: &[Shot],
+    scratch: &Path,
+    out: &Path,
+) -> Result<Vec<String>, BoxError> {
+    let theme = group[0].theme;
+    let profile = scratch.join(format!("profile-{}", theme.name()));
+    fs::create_dir_all(&profile)?;
+    let (_firefox, mut browser) = launch_firefox(&options.firefox, theme, &profile)?;
+    let result = capture_group(&mut browser, theme, listening, group, out);
+    browser.end_session();
+    result
 }
 
 pub fn capture(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxError> {
