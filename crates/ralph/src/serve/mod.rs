@@ -8,6 +8,7 @@ use crate::chat::thread::open::model_args;
 use crate::chat::thread::{claim_closed, config_root, thread_dir};
 use crate::chat::STORE_ENV;
 use crate::cli::ServeArgs;
+use crate::program_resume::Resumer;
 use crate::signal;
 use blocked::read_blocked;
 use clients::Clients;
@@ -15,12 +16,14 @@ use open::{open_session, Sessions};
 use ralph_core::chat_process::SessionKey;
 use ralph_core::chat_socket::{serve_socket_path, StoreKey};
 use ralph_core::chat_thread::ThreadName;
+use ralph_core::program_resume::{Departure, ResumeSetting, ResumeTarget};
 use ralph_core::serve::{serve_refusal, serve_store_gate};
 use ralph_core::serve_supervisor::{Effect, Input, Supervisor};
 use ralph_server::chat::claim::ChatClaim;
 use ralph_server::chat::memory::Store;
 use ralph_server::chat::serve_proto::{blocked_pushes, BlockedMap};
 use ralph_server::chat::serve_socket::ServeSocket;
+use ralph_server::config::{AppConfig, ChatSection};
 use ralph_server::warn::warn;
 use ralph_server::wire::store::default_runtime_root;
 use ralph_server::workers::canonical_store;
@@ -49,6 +52,8 @@ struct Host {
 pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     serve_store_gate(std::env::var(STORE_ENV).ok().as_deref())?;
     signal::init_serve()?;
+    let hangup = Arc::new(AtomicBool::new(false));
+    let armed = signal::arm_terminate(&hangup);
     let requested = std::env::current_dir()?.join(&args.store);
     std::fs::create_dir_all(&requested)?;
     let store_dir = canonical_store(requested);
@@ -67,6 +72,15 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let root = default_runtime_root()?;
     let path = serve_socket_path(&root, &StoreKey::of(&store_dir));
     let socket = ServeSocket::bind(&root, &path)?;
+    let chat = AppConfig::load().map_or_else(
+        |error| {
+            warn(format!("Using the default chat settings: {error}"));
+            ChatSection::default()
+        },
+        |config| config.chat,
+    );
+    let resumer = Resumer::from_env(ResumeSetting::from_bool(chat.program_resume));
+    resumer.publish(&ResumeTarget::Serve { store: store_dir });
     eprintln!("ralph serve: listening on {}", path.display());
     let mut draining_since = None;
     let mut seen = BlockedMap::new();
@@ -114,6 +128,11 @@ pub fn run(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    resumer.leave(if armed.is_some() && !hangup.load(Ordering::SeqCst) {
+        Departure::UserQuit
+    } else {
+        Departure::Restart
+    });
     Ok(())
 }
 

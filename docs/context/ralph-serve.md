@@ -83,6 +83,10 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 
 SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It moves to Draining. An idle session starts closing at once. Closing stops its maintenance host and waits for any tick, keepalive ping, or scheduled worker start already in progress. A session in a turn gets its turn cancelled (`Cancel`), and it closes only after the turn ends and its `turn_done` or `error` frame is written (`TurnDone` then `Close`). `serve` exits when every session is closed (main releases the `CHAT` lease and the runtime dir goes). If a session does not close within 5 s (`DRAIN_BOUND` in `crates/ralph/src/serve/mod.rs`), `serve` warns and exits anyway, so a stuck turn or maintenance task cannot hang shutdown. While it drains, `hello`, `send` and thread operations get `error` `ralph serve is shutting down`. A second stop does nothing.
 
+## Program resume
+
+When stdout is a terminal, `serve` reports `ralph serve --store <store>` with OSC 7577 after it binds the socket. The gate, the `[chat] program_resume` key and the limits are the ones of [ralph chat](ralph-chat.md#program-resume). A client `shutdown` or Ctrl-C clears the record after the drain. SIGTERM and SIGHUP keep it, and so does an exit with an error. If the SIGTERM and SIGHUP handler cannot be installed, the record is kept.
+
 ## Maintenance
 
 - Main and each open thread have their own attachments directory and maintenance host. The host runs queued watches, armed schedules, inbox checks, and configured idle keepalive. Main runs the daily drift check. A successful reply starts the usual memory nap.
