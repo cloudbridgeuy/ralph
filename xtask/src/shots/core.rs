@@ -171,10 +171,6 @@ fn selected_names(selected: &[Shot]) -> BTreeSet<String> {
     selected.iter().map(Shot::name).collect()
 }
 
-pub fn stale_names(selected: &[Shot], existing: &[String]) -> Vec<String> {
-    restrict_names(existing, selected)
-}
-
 pub fn png_names_from(entries: Vec<OsString>) -> Result<Vec<String>, ShotError> {
     let mut names = Vec::new();
     for entry in entries {
@@ -345,7 +341,7 @@ mod tests {
     fn a_memory_run_touches_only_memory_names() {
         let existing = names(&["memory-dark-1440.png", "threads-dark-1440.png"]);
         assert_eq!(
-            stale_names(&memory_shots(), &existing),
+            restrict_names(&existing, &memory_shots()),
             names(&["memory-dark-1440.png"])
         );
     }
@@ -354,7 +350,7 @@ mod tests {
     fn a_full_run_clears_every_matrix_name_and_keeps_others() {
         let existing = names(&["memory-dark-1440.png", "threads-light-390.png", "notes.png"]);
         assert_eq!(
-            stale_names(&matrix(), &existing),
+            restrict_names(&existing, &matrix()),
             names(&["memory-dark-1440.png", "threads-light-390.png"])
         );
     }

@@ -352,7 +352,7 @@ fn start_firefox(firefox: &Path, profile: &Path) -> Result<ChildGuard, BoxError>
 
 fn clear_stale(dir: &Path, shots: &[Shot]) -> Result<(), BoxError> {
     fs::create_dir_all(dir)?;
-    for name in core::stale_names(shots, &super::png_names(dir)?) {
+    for name in core::restrict_names(&super::png_names(dir)?, shots) {
         fs::remove_file(dir.join(name))?;
     }
     Ok(())
