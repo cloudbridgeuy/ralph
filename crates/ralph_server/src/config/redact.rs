@@ -91,7 +91,7 @@ const SAFE_PREFIXES: &[&str] = &["theme.", "mermaid.style.", "wire.prices.", "ti
 const DECLARED_NESTED_KEYS: &[&str] =
     &["chat.claude.permission_mode", "ask.claude.permission_mode"];
 
-const VALUE_MARKERS: [&str; 4] = ["://", "@", "key=", "token="];
+const VALUE_MARKERS: [&str; 6] = ["://", "@", "key=", "token=", "password=", "secret="];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Listing {
@@ -116,7 +116,8 @@ pub fn listing(key: &str) -> Listing {
 }
 
 fn text_is_sensitive(text: &str) -> bool {
-    text_has_path_shape(text) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
+    let lowered = text.to_ascii_lowercase();
+    text_has_path_shape(text) || VALUE_MARKERS.iter().any(|marker| lowered.contains(marker))
 }
 
 fn has_free_key_tail(key: &str) -> bool {
@@ -840,6 +841,30 @@ mod tests {
         }
         assert_secret("web.font", "\"AbCdEf0123456789xyzQ\", monospace");
         assert_secret("web.font", &"Mono, ".repeat(25));
+    }
+
+    #[test]
+    fn secret_markers_match_in_any_case_in_flag_arguments() {
+        for text in [
+            "GH_TOKEN=abc123",
+            "API_KEY=hunter2",
+            "PASSWORD=hunter2",
+            "SECRET=x",
+            "--password=hunter2",
+            "--secret=x",
+            "Token=abc",
+            "--api-key=abc",
+        ] {
+            assert!(
+                redacts("changes.diff_args", &json!([text]), false),
+                "{text}"
+            );
+        }
+        assert!(!redacts(
+            "changes.diff_args",
+            &json!(["--word-diff=color", "--diff-algorithm=patience"]),
+            false
+        ));
     }
 
     #[test]

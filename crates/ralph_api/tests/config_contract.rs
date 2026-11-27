@@ -336,3 +336,16 @@ fn config_the_default_font_stays_visible_in_the_http_body() {
         .unwrap();
     assert_eq!(font["redacted"], false, "{}", reply.body);
 }
+
+#[test]
+fn config_upper_case_secret_flags_are_absent_from_the_http_body() {
+    for (config, leak) in [
+        ("[changes]\ndiff_args = [\"GH_TOKEN=abc123\"]\n", "abc123"),
+        ("[changes]\ndiff_args = [\"SECRET=hunter2\"]\n", "hunter2"),
+    ] {
+        let server = TestServer::start_with_store(|dir| write_config(dir, config));
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert!(!reply.body.contains(leak), "{config}: {}", reply.body);
+    }
+}

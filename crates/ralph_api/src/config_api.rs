@@ -549,4 +549,20 @@ mod tests {
             "\"Geist Mono\", ui-monospace, Menlo, monospace"
         );
     }
+
+    #[test]
+    fn upper_case_secret_flags_never_reach_the_body() {
+        for (config, leak) in [
+            ("[changes]\ndiff_args = [\"GH_TOKEN=abc123\"]\n", "abc123"),
+            ("[changes]\ndiff_args = [\"PASSWORD=hunter2\"]\n", "hunter2"),
+            (
+                "[changes]\ndiff_args = [\"--stat\", \"API_KEY=hunter2\"]\n",
+                "hunter2",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let raw = text(&respond(&g, &s, no_env));
+            assert!(!raw.contains(leak), "{config}: {raw}");
+        }
+    }
 }
