@@ -91,7 +91,7 @@ const SAFE_PREFIXES: &[&str] = &["theme.", "mermaid.style.", "wire.prices.", "ti
 const DECLARED_NESTED_KEYS: &[&str] =
     &["chat.claude.permission_mode", "ask.claude.permission_mode"];
 
-const VALUE_MARKERS: [&str; 6] = ["://", "@", "key=", "token=", "password=", "secret="];
+const VALUE_MARKERS: [&str; 5] = ["@", "key=", "token=", "password=", "secret="];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Listing {
