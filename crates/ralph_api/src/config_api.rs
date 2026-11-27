@@ -421,6 +421,31 @@ mod tests {
     }
 
     #[test]
+    fn split_and_punctuated_opaque_tokens_never_reach_the_body() {
+        for (config, leak) in [
+            ("[chat]\nname = \"pass:AbCdEf0123456789xyzQ\"\n", "AbCdEf"),
+            ("[chat]\nname = \"AbCdEf0123456789xyzQ.\"\n", "AbCdEf"),
+            (
+                "[chat]\nname = \"Zx9k2Lq-8vB3mN0pQrS-7tUwXyZ1aB2cD3e\"\n",
+                "Zx9k2Lq",
+            ),
+            (
+                "[chat]\nname = \"550e8400-e29b-41d4-a716-446655440000\"\n",
+                "550e8400",
+            ),
+            (
+                "[wire.prices.\"AbCdEf0123456.789xyzQAbCd\"]\ninput = 1\n",
+                "AbCdEf",
+            ),
+            ("[theme]\nname = \"AbCdEf0123.456789xyzQAbCd\"\n", "AbCdEf"),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let raw = text(&respond(&g, &s, no_env));
+            assert!(!raw.contains(leak), "{config}: {raw}");
+        }
+    }
+
+    #[test]
     fn a_dated_model_name_stays_visible_in_the_body() {
         let (g, s) = setup(
             None,

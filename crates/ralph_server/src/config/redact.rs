@@ -130,7 +130,7 @@ fn has_free_key_tail(key: &str) -> bool {
 }
 
 fn key_is_sensitive(key: &str) -> bool {
-    key.split('.').any(text_is_sensitive) || !key_shape_ok(key)
+    key.split('.').any(text_is_sensitive) || text_has_secret_shape(key) || !key_shape_ok(key)
 }
 
 fn key_needs_mask(key: &str) -> bool {
@@ -656,6 +656,28 @@ mod tests {
         assert_secret("chat.name", "tok_AbCdEf0123456789xyzQ");
         assert_secret("chat.name", "myapp-AbCdEf0123456789");
         assert_secret("agy.model", "token AbCdEf0123456789");
+    }
+
+    #[test]
+    fn punctuated_and_split_secrets_are_redacted_in_loose_fields() {
+        for text in [
+            "pass:AbCdEf0123456789xyzQ",
+            "AbCdEf0123456789xyzQ.",
+            "Zx9k2Lq-8vB3mN0pQrS-7tUwXyZ1aB2cD3e",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ] {
+            assert_secret("chat.name", text);
+        }
+        assert_secret("theme.name", "AbCdEf0123.456789xyzQAbCd");
+        assert_secret("tickets.linear", "AbCdEf0123.456789xyzQAbCd");
+    }
+
+    #[test]
+    fn a_dotted_opaque_price_key_is_redacted_and_masked() {
+        let key = "wire.prices.AbCdEf0123456.789xyzQAbCd.input";
+        assert!(redacts(key, &json!(1), false));
+        assert_eq!(mask_key(key), "wire.[redacted]");
+        assert!(!redacts("wire.prices.gpt-4.1-mini.input", &json!(1), false));
     }
 
     #[test]

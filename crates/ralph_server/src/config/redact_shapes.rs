@@ -158,6 +158,7 @@ const AWS_PREFIXES: [&str; 2] = ["AKIA", "ASIA"];
 const AWS_BODY_LEN: usize = 16;
 const OPAQUE_MIN: usize = 20;
 const OPAQUE_AFTER_PREFIX_MIN: usize = 16;
+const UUID_PART_LENS: [usize; 5] = [8, 4, 4, 4, 12];
 
 fn at_boundary(text: &str, index: usize) -> bool {
     !text[..index]
@@ -220,9 +221,87 @@ fn underscore_prefixed_run(segment: &str) -> bool {
     })
 }
 
+fn is_hard_separator(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\'' | '`' | ',' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+        )
+}
+
+fn is_joiner(c: char) -> bool {
+    matches!(c, '-' | '.' | ':')
+}
+
+fn is_piece_separator(c: char) -> bool {
+    is_hard_separator(c) || is_joiner(c)
+}
+
+fn char_class(c: char) -> u8 {
+    if c.is_ascii_uppercase() {
+        0
+    } else if c.is_ascii_lowercase() {
+        1
+    } else if c.is_ascii_digit() {
+        2
+    } else {
+        3
+    }
+}
+
+fn class_changes(text: &str) -> usize {
+    text.chars()
+        .zip(text.chars().skip(1))
+        .filter(|(a, b)| char_class(*a) != char_class(*b))
+        .count()
+}
+
+fn is_noisy_piece(piece: &str) -> bool {
+    !piece.is_empty()
+        && piece.chars().all(|c| c.is_ascii_alphanumeric())
+        && (piece.chars().any(|c| c.is_ascii_digit())
+            || piece
+                .chars()
+                .zip(piece.chars().skip(1))
+                .any(|(a, b)| !a.is_ascii_uppercase() && b.is_ascii_uppercase()))
+}
+
+fn is_mixed_case_with_digits(text: &str) -> bool {
+    text.chars().any(|c| c.is_ascii_uppercase())
+        && text.chars().any(|c| c.is_ascii_lowercase())
+        && text.chars().any(|c| c.is_ascii_digit())
+}
+
+fn is_dense_run(text: &str) -> bool {
+    class_changes(text) * 5 >= text.len() * 2
+}
+
+fn is_uuid(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    parts.len() == UUID_PART_LENS.len()
+        && parts
+            .iter()
+            .zip(UUID_PART_LENS)
+            .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+fn has_joined_opaque_run(token: &str) -> bool {
+    if token.split(['.', ':']).any(is_uuid) {
+        return true;
+    }
+    let pieces: Vec<&str> = token.split(is_joiner).collect();
+    pieces.split(|piece| !is_noisy_piece(piece)).any(|run| {
+        let joined = run.concat();
+        run.len() >= 2
+            && joined.len() >= OPAQUE_MIN
+            && is_mixed_case_with_digits(&joined)
+            && is_dense_run(&joined)
+    })
+}
+
 fn has_opaque_run(text: &str) -> bool {
     let mut previous = "";
-    for segment in text.split(|c: char| c == '-' || c.is_whitespace()) {
+    for segment in text.split(is_piece_separator) {
         if is_opaque_run(segment, OPAQUE_MIN)
             || underscore_prefixed_run(segment)
             || (is_alphabetic_word(previous) && is_opaque_run(segment, OPAQUE_AFTER_PREFIX_MIN))
@@ -231,7 +310,7 @@ fn has_opaque_run(text: &str) -> bool {
         }
         previous = segment;
     }
-    false
+    text.split(is_hard_separator).any(has_joined_opaque_run)
 }
 
 pub fn text_has_secret_shape(text: &str) -> bool {
@@ -435,6 +514,56 @@ mod tests {
             Class::Free,
             &json!([{"nodeSpacing": 1, "curve_x": "basis"}])
         ));
+    }
+
+    #[test]
+    fn punctuated_opaque_tokens_are_detected() {
+        for text in [
+            "pass:AbCdEf0123456789xyzQ",
+            "AbCdEf0123456789xyzQ.",
+            "\"AbCdEf0123456789xyzQ\"",
+            "(AbCdEf0123456789xyzQ)",
+            "a,AbCdEf0123456789xyzQ;",
+        ] {
+            assert!(text_has_secret_shape(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn split_opaque_tokens_are_detected_when_joined() {
+        for text in [
+            "Zx9k2Lq-8vB3mN0pQrS-7tUwXyZ1aB2cD3e",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "550E8400-E29B-41D4-A716-446655440000",
+            "id:550e8400-e29b-41d4-a716-446655440000",
+            "AbCdEf0123.456789xyzQAbCd",
+            "wire.prices.AbCdEf0123456.789xyzQAbCd.input",
+            "AbCdEf0123:456789xyzQAbCd",
+        ] {
+            assert!(text_has_secret_shape(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn joined_runs_that_read_as_names_stay_visible() {
+        for text in [
+            "claude-opus-4-1-20250805",
+            "gpt-4.1-mini",
+            "gpt-4o-2024-08-06",
+            "GPT-4o-2024-08-06-Preview",
+            "base16-ocean.dark",
+            "1.2.3",
+            "v1.2.3-beta.4",
+            "ClaudeOpus41-Preview-Latest",
+            "Tokyo-Night-Storm-2024-Edition",
+            "2024-08-06T12:30:45.123Z",
+            "ask-me",
+            "task-force",
+            "550e8400-e29b-41d4-a716",
+            "wire.prices.claude-opus-4-1-20250805.cache_read",
+        ] {
+            assert!(!text_has_secret_shape(text), "{text}");
+        }
     }
 
     #[test]
