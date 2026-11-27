@@ -45,9 +45,9 @@ impl TermStatus {
     }
 
     pub(super) fn send(&self, report: &Report) {
-        if !self.status.is_on() {
+        let TerminalStatus::On(_) = &self.status else {
             return;
-        }
+        };
         let Some(bytes) = frame(report, self.in_tmux) else {
             return;
         };
@@ -74,7 +74,7 @@ impl TermStatus {
         if take_title_restore(&mut sent) {
             let _ = write_terminal(title_end());
         }
-        if self.status.is_on() && !sent.closed {
+        if matches!(self.status, TerminalStatus::On(_)) && !sent.closed {
             let clear = Report {
                 state: State::Clear,
                 msg: None,

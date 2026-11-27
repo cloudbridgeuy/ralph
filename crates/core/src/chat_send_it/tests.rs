@@ -1,6 +1,8 @@
 use super::*;
 use crate::inbox_alert::UnknownFocus;
-use crate::program_status::{Kind, Report as ProgramReport, State};
+use crate::program_status::{
+    Kind, Report as ProgramReport, RexBlock, State, StatusOff, TerminalStatus,
+};
 use crate::worker::{Report, ReportKind, WorkerId};
 use signing::*;
 
@@ -100,7 +102,7 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
         sound: true,
         notification: true,
         unknown_focus: UnknownFocus::Alert,
-        terminal_status: false,
+        terminal_status: TerminalStatus::Off(StatusOff::NotInRex),
     };
     assert_eq!(
         blocked_alert("send-it stopped", &config),
@@ -112,7 +114,7 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
     let quiet = AlertConfig {
         sound: false,
         notification: false,
-        ..config
+        ..config.clone()
     };
     assert_eq!(blocked_alert("send-it stopped", &quiet), None);
     let sound_only = AlertConfig {
@@ -134,7 +136,7 @@ fn a_blocked_alert_is_left_to_the_terminal_when_it_sends_status() {
         sound: true,
         notification: true,
         unknown_focus: UnknownFocus::Alert,
-        terminal_status: true,
+        terminal_status: TerminalStatus::On(RexBlock::parse("blk-1").unwrap()),
     };
     assert_eq!(blocked_alert("send-it stopped", &rex), None);
 }

@@ -118,28 +118,22 @@ pub enum StatusOff {
     NotInRex,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalStatus {
-    On,
+    On(RexBlock),
     Off(StatusOff),
 }
 
-impl TerminalStatus {
-    pub fn is_on(self) -> bool {
-        matches!(self, Self::On)
-    }
-}
-
-pub fn status_enabled(
+pub fn terminal_status(
     setting: StatusSetting,
     stdout: Stdout,
-    rex: Option<&RexBlock>,
+    rex: Option<RexBlock>,
 ) -> TerminalStatus {
     match (setting, stdout, rex) {
         (StatusSetting::Disabled, _, _) => TerminalStatus::Off(StatusOff::Disabled),
         (_, Stdout::NotTty, _) => TerminalStatus::Off(StatusOff::NotTty),
         (_, _, None) => TerminalStatus::Off(StatusOff::NotInRex),
-        (StatusSetting::Enabled, Stdout::Tty, Some(_)) => TerminalStatus::On,
+        (StatusSetting::Enabled, Stdout::Tty, Some(block)) => TerminalStatus::On(block),
     }
 }
 
@@ -232,19 +226,19 @@ mod tests {
     fn status_needs_config_tty_and_non_empty_rex_block() {
         let block = RexBlock::parse("blk-1").unwrap();
         assert_eq!(
-            status_enabled(StatusSetting::Enabled, Stdout::Tty, Some(&block)),
-            TerminalStatus::On
+            terminal_status(StatusSetting::Enabled, Stdout::Tty, Some(block.clone())),
+            TerminalStatus::On(block.clone())
         );
         assert_eq!(
-            status_enabled(StatusSetting::Disabled, Stdout::Tty, Some(&block)),
+            terminal_status(StatusSetting::Disabled, Stdout::Tty, Some(block.clone())),
             TerminalStatus::Off(StatusOff::Disabled)
         );
         assert_eq!(
-            status_enabled(StatusSetting::Enabled, Stdout::NotTty, Some(&block)),
+            terminal_status(StatusSetting::Enabled, Stdout::NotTty, Some(block)),
             TerminalStatus::Off(StatusOff::NotTty)
         );
         assert_eq!(
-            status_enabled(StatusSetting::Enabled, Stdout::Tty, None),
+            terminal_status(StatusSetting::Enabled, Stdout::Tty, None),
             TerminalStatus::Off(StatusOff::NotInRex)
         );
         assert_eq!(RexBlock::parse(""), None);

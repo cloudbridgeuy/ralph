@@ -1,4 +1,4 @@
-use crate::program_status::{tmux_wrap, Kind, State};
+use crate::program_status::{tmux_wrap, Kind, State, TerminalStatus};
 use crate::worker::Report;
 use serde::{Deserialize, Serialize};
 
@@ -22,12 +22,12 @@ pub enum UnknownFocus {
     Silent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlertConfig {
     pub sound: bool,
     pub notification: bool,
     pub unknown_focus: UnknownFocus,
-    pub terminal_status: bool,
+    pub terminal_status: TerminalStatus,
 }
 
 impl AlertConfig {
@@ -95,7 +95,8 @@ pub fn inbox_alert(
         Focus::Hidden => true,
         Focus::Unknown => config.unknown_focus == UnknownFocus::Alert,
     };
-    let terminal_owns = config.terminal_status && terminal == State::Blocked(Kind::Question);
+    let terminal_owns = matches!(config.terminal_status, TerminalStatus::On(_))
+        && terminal == State::Blocked(Kind::Question);
     (alert && !terminal_owns && !fresh.is_empty() && config.enabled()).then(|| Alert {
         sound: config.sound,
         notification: config.notification.then(|| notification_body(fresh)),
@@ -140,7 +141,7 @@ mod tests {
             sound: true,
             notification: true,
             unknown_focus,
-            terminal_status: false,
+            terminal_status: TerminalStatus::Off(crate::program_status::StatusOff::NotInRex),
         }
     }
 
@@ -326,7 +327,9 @@ mod tests {
         let reports = [report("a", "done")];
         let fresh: Vec<&Report> = reports.iter().collect();
         let rex = AlertConfig {
-            terminal_status: true,
+            terminal_status: TerminalStatus::On(
+                crate::program_status::RexBlock::parse("blk-1").unwrap(),
+            ),
             ..config(UnknownFocus::Alert)
         };
         assert_eq!(
@@ -344,7 +347,9 @@ mod tests {
         let reports = [report("a", "done")];
         let fresh: Vec<&Report> = reports.iter().collect();
         let rex = AlertConfig {
-            terminal_status: true,
+            terminal_status: TerminalStatus::On(
+                crate::program_status::RexBlock::parse("blk-1").unwrap(),
+            ),
             ..config(UnknownFocus::Alert)
         };
         for terminal in [State::Working, State::Idle, State::Done] {

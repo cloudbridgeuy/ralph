@@ -73,7 +73,7 @@ use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{
-    status_enabled, RexBlock, StatusOff, StatusSetting, Stdout, TerminalStatus, REX_BLOCK_ENV,
+    terminal_status, RexBlock, StatusOff, StatusSetting, Stdout, TerminalStatus, REX_BLOCK_ENV,
 };
 use ralph_server::chat::host::spawn_session_host;
 use ralph_server::chat::memory::Store;
@@ -103,13 +103,13 @@ pub(crate) use ralph_server::config::{
     CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, WRAP_WIDTH_ENV,
 };
 
-fn terminal_status_enabled(
+fn resolve_terminal_status(
     setting: StatusSetting,
     stdout: Stdout,
     env: impl FnOnce(&str) -> Option<String>,
 ) -> TerminalStatus {
     let block = env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse);
-    status_enabled(setting, stdout, block.as_ref())
+    terminal_status(setting, stdout, block)
 }
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
@@ -129,7 +129,7 @@ fn alert_config(
         sound: chat.inbox_alert_sound && !args.no_inbox_sound,
         notification: chat.inbox_alert_notification && !args.no_inbox_notification,
         unknown_focus: chat.inbox_alert_unknown_focus,
-        terminal_status: terminal_status.is_on(),
+        terminal_status,
     }
 }
 
@@ -229,14 +229,14 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         Arc::clone(&resize),
         ralph_server::config::effective_grants(&config.chat, &store_dir),
     )?;
-    let terminal_status = terminal_status_enabled(
+    let status = resolve_terminal_status(
         StatusSetting::from_bool(chat_config.terminal_status),
         Stdout::from_is_terminal(std::io::stdout().is_terminal()),
         |key| std::env::var(key).ok(),
     );
-    let alert = alert_config(&args, chat_config, terminal_status);
+    let alert = alert_config(&args, chat_config, status.clone());
     let term = Arc::new(TermStatus::new(
-        terminal_status,
+        status,
         chat_config.terminal_title && std::io::stdout().is_terminal(),
     ));
     let assembled = assemble(AssembleOptions {
@@ -254,7 +254,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             reply_images,
             show_tools: io::stdout().is_terminal(),
         },
-        events: client_events(alert, Arc::clone(&term)),
+        events: client_events(alert.clone(), Arc::clone(&term)),
     })?;
     let Assembled {
         session,
@@ -513,8 +513,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod rex_status_tests {
-    use super::terminal_status_enabled;
-    use ralph_core::program_status::{StatusOff, StatusSetting, Stdout, TerminalStatus};
+    use super::resolve_terminal_status;
+    use ralph_core::program_status::{RexBlock, StatusOff, StatusSetting, Stdout, TerminalStatus};
 
     #[test]
     fn rex_pane_with_rex_block_enables_terminal_status() {
@@ -525,8 +525,8 @@ mod rex_status_tests {
             _ => None,
         };
         assert_eq!(
-            terminal_status_enabled(StatusSetting::Enabled, Stdout::Tty, env),
-            TerminalStatus::On
+            resolve_terminal_status(StatusSetting::Enabled, Stdout::Tty, env),
+            TerminalStatus::On(RexBlock::parse("blk-1").unwrap())
         );
     }
 
@@ -534,7 +534,7 @@ mod rex_status_tests {
     fn empty_or_missing_rex_block_disables_terminal_status() {
         let empty = |key: &str| (key == "REX_BLOCK").then(String::new);
         assert_eq!(
-            terminal_status_enabled(StatusSetting::Enabled, Stdout::Tty, empty),
+            resolve_terminal_status(StatusSetting::Enabled, Stdout::Tty, empty),
             TerminalStatus::Off(StatusOff::NotInRex)
         );
 
@@ -544,7 +544,7 @@ mod rex_status_tests {
             _ => None,
         };
         assert_eq!(
-            terminal_status_enabled(StatusSetting::Enabled, Stdout::Tty, missing),
+            resolve_terminal_status(StatusSetting::Enabled, Stdout::Tty, missing),
             TerminalStatus::Off(StatusOff::NotInRex)
         );
     }
