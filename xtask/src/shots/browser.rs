@@ -200,7 +200,7 @@ fn start_ralph(
         .into());
     }
     fs::create_dir_all(cwd)?;
-    let mut child = Command::new(ralph)
+    let child = Command::new(ralph)
         .current_dir(cwd)
         .args(["web", "--store"])
         .arg(store)
@@ -215,9 +215,9 @@ fn start_ralph(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("could not start {}: {error}", ralph.display()))?;
-    let stdout = child.stdout.take().ok_or("ralph web has no stdout")?;
-    let stderr = child.stderr.take().ok_or("ralph web has no stderr")?;
     let mut guard = ChildGuard(child);
+    let stdout = guard.0.stdout.take().ok_or("ralph web has no stdout")?;
+    let stderr = guard.0.stderr.take().ok_or("ralph web has no stderr")?;
     let stderr_head = Arc::new(Mutex::new(Vec::new()));
     spawn_stderr_reader(stderr, Arc::clone(&stderr_head));
     let stdout_tail = Arc::new(Mutex::new(Vec::new()));
