@@ -89,14 +89,6 @@ fn report(status: &str) -> Report {
 }
 
 #[test]
-fn only_question_and_blocked_reports_flag_a_worker() {
-    assert!(worker_flagged(&[report("done"), report("question")]));
-    assert!(worker_flagged(&[report("blocked")]));
-    assert!(!worker_flagged(&[report("done"), report("check")]));
-    assert!(!worker_flagged(&[]));
-}
-
-#[test]
 fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
     let config = AlertConfig {
         sound: true,
@@ -472,7 +464,7 @@ fn new_stop_notices_name_the_step() {
     );
     assert!(flagged_stop()
         .notice(&run, None)
-        .contains("a worker asked a question"));
+        .contains("worker GUZ-1 needs you"));
     assert_eq!(
         StopReason::JudgeRounds {
             step: 4,
@@ -927,7 +919,7 @@ fn a_kept_stop_names_the_step_and_how_to_resume() {
     };
     assert_eq!(
         flagged_stop().notice(&Run::default(), Some(&kept)),
-        "send-it stopped at step 2/4: a worker asked a question or is blocked."
+        "send-it stopped at step 2/4: worker GUZ-1 needs you."
     );
     assert_eq!(
         StopReason::Off.notice(&Run::default(), Some(&kept)),

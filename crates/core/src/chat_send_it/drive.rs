@@ -469,19 +469,38 @@ fn is_off(line: &str) -> bool {
     Command::SendIt.args(line.trim()).map(parse_send_it_args) == Some(SendItCommand::Off)
 }
 
-fn unanswered_flag<'a>(ended: &Ended<'a>, file: &RunFile) -> Option<&'a Report> {
+fn needs_user(report: &Report, awaited: Option<&WorkerId>) -> Option<StopCause> {
+    match step_move(report, awaited) {
+        StepMove::Stop(cause) => Some(cause),
+        StepMove::Complete | StepMove::Hold | StepMove::Fail => None,
+    }
+}
+
+fn awaited_worker(plan: &RunPlan, progress: Progress) -> Option<&WorkerId> {
+    match plan.steps.get(progress.step).map(|step| &step.criterion) {
+        Some(Criterion::WorkerDone { worker, .. }) => Some(worker),
+        Some(
+            Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. } | Criterion::Judge { .. },
+        )
+        | None => None,
+    }
+}
+
+fn unanswered_flag<'a>(
+    ended: &Ended<'a>,
+    file: &'a RunFile,
+    progress: Progress,
+) -> Option<(StopCause, &'a Report)> {
     let may_reply = file.plan.allowed.contains(&Action::Reply);
-    ended
-        .unread
-        .iter()
-        .find(|report| flagged(report))
-        .or_else(|| {
-            ended
-                .drained
-                .iter()
-                .filter(|report| flagged(report))
-                .find(|report| !(may_reply && ended.answered.contains(&report.from)))
-        })
+    let awaited = awaited_worker(&file.plan, progress);
+    let cause = |report: &'a Report| needs_user(report, awaited).map(|cause| (cause, report));
+    ended.unread.iter().find_map(cause).or_else(|| {
+        ended
+            .drained
+            .iter()
+            .filter(|report| !(may_reply && ended.answered.contains(&report.from)))
+            .find_map(cause)
+    })
 }
 
 fn current_plan<'a>(
@@ -497,7 +516,11 @@ fn current_plan<'a>(
     }
 }
 
-fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason> {
+fn admitted<'a>(
+    ended: &Ended<'a>,
+    hash: &str,
+    progress: Progress,
+) -> Result<&'a RunFile, StopReason> {
     let file = current_plan(
         ended
             .file
@@ -516,12 +539,17 @@ fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason
     } else if ended.asked {
         Some(StopReason::NeedsYou)
     } else {
-        unanswered_flag(ended, file).map(StopReason::flagged_by)
+        unanswered_flag(ended, file, progress)
+            .map(|(cause, report)| StopReason::stopped_by(cause, report))
     };
     stop.map_or(Ok(file), Err)
 }
 
-fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
+fn events<'a>(
+    awaiting: &Awaiting,
+    ended: &Ended<'a>,
+    awaited: Option<&WorkerId>,
+) -> Vec<Event<'a>> {
     match awaiting {
         Awaiting::Turn => Vec::new(),
         Awaiting::Verdict => vec![Event::Verdict(ended.step_result)],
@@ -534,7 +562,9 @@ fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
                 ended
                     .drained
                     .iter()
-                    .filter(|report| report.from == *source && !flagged(report))
+                    .filter(|report| {
+                        report.from == *source && needs_user(report, awaited).is_none()
+                    })
                     .map(Event::Report),
             )
             .collect(),
@@ -571,12 +601,17 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         met,
         notice: None,
     };
-    let file = match admitted(ended, &driving.hash) {
+    let file = match admitted(ended, &driving.hash, driving.progress) {
         Ok(file) => file,
         Err(reason) => return finish(counted, driving.progress, Next::Stop(reason), None),
     };
     let plan = &file.plan;
-    let (progress, decided) = fold(plan, driving.progress, &events(&driving.awaiting, ended));
+    let awaited = awaited_worker(plan, driving.progress);
+    let (progress, decided) = fold(
+        plan,
+        driving.progress,
+        &events(&driving.awaiting, ended, awaited),
+    );
     let settled_report = matches!(driving.awaiting, Awaiting::Report(_)) && decided != Next::Wait;
     let run = if settled_report {
         Run {
