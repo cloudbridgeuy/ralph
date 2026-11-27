@@ -1,6 +1,7 @@
 use super::SERVER_NAME;
-use crate::chat::{select_servers, server_allow_rule};
+use crate::chat::select_servers;
 use crate::chat_memory::SERVER_NAME as CHAT_SERVER_NAME;
+use crate::chat_tools::ToolRule;
 use serde_json::{json, Map, Value};
 
 pub fn merged_mcp_config(imported: &Map<String, Value>, own: &Value) -> Value {
@@ -51,7 +52,7 @@ pub fn join_start_warnings(warnings: &[String]) -> Option<String> {
 
 pub fn allowed_tools(copied: &[String]) -> String {
     std::iter::once(own_tool_names())
-        .chain(copied.iter().map(|name| server_allow_rule(name)))
+        .chain(copied.iter().map(|name| ToolRule::allow_for(name).claude()))
         .collect::<Vec<_>>()
         .join(",")
 }

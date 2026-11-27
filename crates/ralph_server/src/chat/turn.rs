@@ -1,5 +1,5 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
-use crate::chat::backend::{ChatBackend, ChatSession};
+use crate::chat::backend::{ChatBackend, ChatLaunch, ChatSession, TurnIo};
 use crate::chat::fork::{fork_view, Fork};
 use crate::chat::memory::{usage_path, NapWait, Store, NAP_WAIT_LIMIT};
 use crate::chat::skills::{ensure_runtime_files, RuntimeFiles};
@@ -7,22 +7,17 @@ use crate::chat::socket::serve::SocketHandle;
 use crate::chat::stage;
 use crate::chat::suggestion::SuggestionCell;
 use crate::history_log;
-use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::ledger;
-use crate::private_file::write_private;
 use crate::subprocess::spawn_detached;
-use crate::subprocess::{
-    recorded, OutputGate, SpinnerSubprocessConfig, StreamingSubprocessResult, SubprocessError,
-};
+use crate::subprocess::{recorded, OutputGate, StreamingSubprocessResult, SubprocessError};
 use crate::timing;
 use crate::watches::locked;
 use crate::workers::usage_store;
 use chrono::{DateTime, Utc};
 use ralph_core::cancel::CancelToken;
 use ralph_core::chat::{
-    build_agents_args, build_attachments_args, build_nap_args, build_tag_args, hit_blocking_limit,
-    reset_reason, turn_prompt, turn_system_prompt, CustomPrompt, ReplyImages, ResetLimits,
-    VIEW_LINES,
+    build_nap_args, build_tag_args, hit_blocking_limit, reset_reason, turn_prompt,
+    turn_system_prompt, CustomPrompt, ReplyImages, ResetLimits, VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_local::{turn_texts, unseen_lines};
@@ -37,11 +32,9 @@ use ralph_core::chat_stage::{next_mark, stage_due, stage_text, StageMark};
 use ralph_core::chat_status::Status;
 use ralph_core::chat_suggestion::{from_reply, Suggestion};
 use ralph_core::chat_thread::Scope;
-use ralph_core::sanitize::strip_controls;
-use ralph_core::stream::blocks::{extract_response_text, OutputBlock, VerboseToolsConfig};
+use ralph_core::stream::blocks::{extract_response_text, OutputBlock};
 use ralph_core::stream::IterationMetadata;
 use ralph_core::turn_event::{TurnEvent, TurnSink, Wait};
-use ralph_core::worker::ClaudeMode;
 use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::{self};
@@ -132,7 +125,7 @@ struct TurnRequest<'a> {
 }
 
 struct Launch {
-    config: SpinnerSubprocessConfig,
+    system: String,
     split: ViewSplit,
     first_prompt: String,
     reset: Option<ResetReason>,
@@ -144,17 +137,11 @@ pub struct Turn {
     pub store: Store,
     pub store_dir: PathBuf,
     pub fork: Option<Fork>,
-    pub mcp_args: Vec<String>,
     pub runtime_files: RuntimeFiles,
     pub socket: SocketHandle,
-    pub system_prompt_file: PathBuf,
-    pub permission_mode: ClaudeMode,
-    pub plugin_args: Vec<String>,
-    pub model_args: Vec<String>,
     pub skills: Vec<ChatSkill>,
     pub custom_prompt: CustomPrompt,
     pub reply_images: ReplyImages,
-    pub isolation: Isolation,
     pub backend: Arc<dyn ChatBackend>,
     pub session: Arc<Mutex<Option<Box<dyn ChatSession>>>>,
     pub process_turns: AtomicU64,
@@ -579,7 +566,19 @@ impl Turn {
         launch: &mut Option<Launch>,
     ) -> Result<Box<dyn ChatSession>, SubprocessError> {
         let mut spawned = self.launch(pre_log_len, input)?;
-        let live = self.backend.spawn(&spawned.config)?;
+        let io = TurnIo {
+            sink: Arc::clone(&self.sink),
+            gate: Some(Arc::clone(&self.gate)),
+            show_tools: self.show_tools,
+            terminated: self.terminated,
+        };
+        let live = self.backend.spawn(
+            &ChatLaunch {
+                store_dir: &self.store_dir,
+                system: &spawned.system,
+            },
+            &io,
+        )?;
         spawned.reset = locked(&self.reset).take();
         *launch = Some(spawned);
         Ok(live)
@@ -614,37 +613,8 @@ impl Turn {
             input.sent,
         );
         let system = turn_system_prompt(&self.custom_prompt, self.reply_images, &split.older);
-        write_system_prompt(&self.system_prompt_file, &system)?;
-        let args = [
-            self.mcp_args.to_vec(),
-            build_attachments_args(&self.store_dir),
-            build_agents_args(),
-            self.plugin_args.to_vec(),
-            self.model_args.to_vec(),
-        ]
-        .concat();
-        let config = SpinnerSubprocessConfig {
-            command: with_chat_inbox(
-                build_chat_command(
-                    &self.system_prompt_file,
-                    &args,
-                    self.permission_mode,
-                    dirs::home_dir().as_deref(),
-                    &self.isolation,
-                ),
-                &self.store_dir,
-            )?,
-            timeout_secs: None,
-            verbose_tools: VerboseToolsConfig::new(),
-            show_tools: self.show_tools,
-            terminated: self.terminated,
-            sink: Arc::clone(&self.sink),
-            gate: Some(Arc::clone(&self.gate)),
-            interrupt: None,
-            stdin: None,
-        };
         Ok(Launch {
-            config,
+            system,
             split,
             first_prompt,
             reset: None,
@@ -656,10 +626,6 @@ impl Turn {
             .iter()
             .try_for_each(|(role, text)| self.store.append(*role, text))
     }
-}
-
-fn write_system_prompt(path: &Path, system: &str) -> io::Result<PathBuf> {
-    write_private(path.to_path_buf(), strip_controls(system).as_bytes())
 }
 
 fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {

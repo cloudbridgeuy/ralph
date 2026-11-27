@@ -241,7 +241,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         store_root: store_root.clone(),
         settings: &settings,
         fork,
-        model_args: model_args.clone(),
+        model_args,
         skills: &args.skills,
         worktree_dir: args.worktree_dir.clone(),
         custom_prompt,
@@ -257,7 +257,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         session,
         guard,
         skill_dirs,
-        send_it_warnings,
+        start_warnings,
+        model_args,
         close: _close,
     } = assembled;
     let monitor = Arc::clone(&session.core);
@@ -338,7 +339,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .chain(editor_warning)
         .chain(tuning.quiet_warning.clone())
         .chain(tuning.reset_warnings.clone())
-        .chain(send_it_warnings)
+        .chain(start_warnings)
         .chain(empty_warning)
         .collect();
     late_warnings.iter().for_each(warn);

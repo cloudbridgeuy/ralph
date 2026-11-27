@@ -3,7 +3,7 @@ use ralph_core::chat::resolve_watch_timeout;
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::claude_leftovers::configured_dir;
-use ralph_server::config::{AppConfig, ConfigError};
+use ralph_server::config::{ignored_extras, AppConfig, ConfigError};
 use std::path::Path;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -66,7 +66,16 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .collect();
     Ok(CheckReport {
         errors,
-        notes: config.theme.deprecations(),
+        notes: config
+            .theme
+            .deprecations()
+            .into_iter()
+            .chain(
+                ignored_extras(&config, chat.harness_kind())
+                    .into_iter()
+                    .map(|extra| format!("chat.harness agy ignores {extra}")),
+            )
+            .collect(),
     })
 }
 
@@ -191,6 +200,15 @@ mod tests {
             errors("[chat]\nwatch_timeout_secs = 0\n"),
             ["watch_timeout_secs must be above 0."]
         );
+    }
+
+    #[test]
+    fn an_agy_chat_reports_ignored_extras_as_notes() {
+        let agy = "[chat]\nharness = 'agy'\n[chat.agy]\nmodel = 'gemini-3-flash'\n";
+        let report = check(agy, "c").unwrap();
+        assert!(report.errors.is_empty());
+        assert_eq!(report.notes.len(), 2);
+        assert!(check("", "c").unwrap().notes.is_empty());
     }
 
     #[test]

@@ -148,7 +148,7 @@ impl OutputGate {
         }
     }
 
-    pub(super) fn request_permission(&self, ask: ClaudePermission, missing: Classes) -> bool {
+    pub(crate) fn request_permission(&self, ask: ClaudePermission, missing: Classes) -> bool {
         let mut state = self.lock();
         if !state.listening {
             return false;
@@ -207,26 +207,35 @@ impl OutputGate {
         Some(apply(state, index, choice))
     }
 
-    pub(super) fn permission_reply(&self, deny: bool) -> Option<String> {
+    pub(crate) fn take_answer(&self, deny: bool) -> Option<(ClaudePermission, Choice)> {
         let mut state = self.lock();
         let position = state
             .permissions
             .iter()
             .position(|p| deny || p.answer.is_some())?;
         let pending = state.permissions.remove(position);
-        let option = if deny || !state.listening {
-            "deny"
+        let choice = if deny || !state.listening {
+            Choice::Deny
         } else {
-            pending.answer.as_deref().unwrap_or("deny")
+            pending
+                .answer
+                .as_deref()
+                .and_then(Choice::from_option)
+                .unwrap_or(Choice::Deny)
         };
+        Some((pending.ask, choice))
+    }
+
+    pub(super) fn permission_reply(&self, deny: bool) -> Option<String> {
+        let (ask, choice) = self.take_answer(deny)?;
         Some(permission_response(
-            &pending.ask.content.request_id,
-            option,
-            &pending.ask.input,
+            &ask.content.request_id,
+            choice.option_id(),
+            &ask.input,
         ))
     }
 
-    pub(super) fn cancel_permission(&self, id: Option<&str>) {
+    pub(crate) fn cancel_permission(&self, id: Option<&str>) {
         let mut state = self.lock();
         state
             .permissions
@@ -390,6 +399,22 @@ mod tests {
         let reply: serde_json::Value =
             serde_json::from_str(&gate.permission_reply(false).unwrap()).unwrap();
         assert_eq!(reply["response"]["response"]["behavior"], "deny");
+    }
+
+    #[test]
+    fn take_answer_returns_the_choice_without_claude_json() {
+        let gate = OutputGate::new();
+        gate.listen(true);
+        gate.pause();
+        let input = serde_json::json!({"allowWrites":true});
+        assert!(gate.request_permission(ask("r", input.clone()), Classes::default()));
+        assert!(gate.take_answer(false).is_none());
+        let token = gate.lock().permissions[0].token.clone();
+        gate.answer_permission(&token, "allow_once");
+        let (taken, choice) = gate.take_answer(false).unwrap();
+        assert_eq!(choice, Choice::AllowOnce);
+        assert_eq!(taken.input, input);
+        assert!(gate.take_answer(true).is_none());
     }
 
     #[test]
