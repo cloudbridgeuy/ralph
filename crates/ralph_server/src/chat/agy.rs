@@ -12,7 +12,7 @@ use ralph_core::chat_tools::ToolPolicy;
 use ralph_core::claude_md::append_claude_md;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{extract_response_text, VerboseToolsConfig};
-use ralph_core::worker::{agy_notice, agy_stream_events, AgyEvent, Choice, Classes};
+use ralph_core::worker::{agy_notice, AgyEvent, AgyStream, Choice, Classes};
 use serde_json::{json, Value};
 use std::io;
 use std::path::PathBuf;
@@ -181,6 +181,7 @@ impl AgySession {
         let gate = self.config.gate.clone();
         let mut pending: Vec<(String, AnswerSender)> = Vec::new();
         let mut cancel_sent: Option<Instant> = None;
+        let mut stream = AgyStream::default();
         loop {
             let requested = cancel.is_cancelled() || (self.config.terminated)();
             match cancel_step(requested, cancel_sent.map(|at| at.elapsed())) {
@@ -197,7 +198,7 @@ impl AgySession {
                 }
                 None => {}
                 Some(AcpEvent::Update(update)) => {
-                    for event in agy_stream_events(&AgyEvent::Update(&update)) {
+                    for event in stream.events(&AgyEvent::Update(&update)) {
                         pump.event(event);
                     }
                 }
@@ -216,7 +217,7 @@ impl AgySession {
                     }
                 }
                 Some(AcpEvent::Done { stop_reason, usage }) => {
-                    for event in agy_stream_events(&AgyEvent::Done {
+                    for event in stream.events(&AgyEvent::Done {
                         stop_reason,
                         usage: usage.as_ref(),
                     }) {
@@ -341,12 +342,13 @@ mod tests {
             stdin: None,
         };
         let mut pump = Pump::start(&config, Display::Silent);
-        for event in agy_stream_events(&AgyEvent::Update(
+        let mut stream = AgyStream::default();
+        for event in stream.events(&AgyEvent::Update(
             &json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}),
         )) {
             pump.event(event);
         }
-        for event in agy_stream_events(&AgyEvent::Done {
+        for event in stream.events(&AgyEvent::Done {
             stop_reason: StopReason::EndTurn,
             usage: None,
         }) {

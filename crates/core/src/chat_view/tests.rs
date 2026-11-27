@@ -139,3 +139,168 @@ fn hidden_entries_show_only_for_a_dot_prefix() {
     let dotted = view_path_completion(&view_path_query("/view .", 7).unwrap(), &entries);
     assert_eq!(dotted.values, [".git/", ".notes.md"]);
 }
+
+fn pager(program: &str, args: &[&str]) -> ViewPager {
+    ViewPager::Command(PagerCommand {
+        program: program.to_string(),
+        args: args.iter().map(|arg| arg.to_string()).collect(),
+    })
+}
+
+#[test]
+fn view_pager_defaults_to_less_raw() {
+    assert_eq!(resolve_view_pager(None), (pager("less", &["-r"]), None));
+}
+
+#[test]
+fn view_pager_none_prints_direct() {
+    assert_eq!(
+        resolve_view_pager(Some(" none ")),
+        (ViewPager::Direct, None)
+    );
+}
+
+#[test]
+fn view_pager_splits_the_program_from_its_arguments() {
+    assert_eq!(
+        resolve_view_pager(Some(" bat  --paging=always -p ")),
+        (pager("bat", &["--paging=always", "-p"]), None)
+    );
+}
+
+#[test]
+fn an_empty_view_pager_warns_and_uses_the_default() {
+    for empty in ["", "  "] {
+        let (resolved, warning) = resolve_view_pager(Some(empty));
+        assert_eq!(resolved, pager("less", &["-r"]), "{empty:?}");
+        assert!(warning.is_some_and(|w| w.contains("view_pager")));
+    }
+}
+
+#[test]
+fn output_that_is_not_a_terminal_is_printed_without_pager_or_wait() {
+    for resolved in [ViewPager::Direct, pager("less", &["-r"])] {
+        for stdin_tty in [true, false] {
+            assert_eq!(show_plan(&resolved, stdin_tty, Stdout::NotTty), Show::Print);
+        }
+    }
+}
+
+#[test]
+fn direct_output_waits_only_when_keys_can_be_read() {
+    let direct = ViewPager::Direct;
+    assert_eq!(show_plan(&direct, true, Stdout::Tty), Show::PrintAndWait);
+    assert_eq!(show_plan(&direct, false, Stdout::Tty), Show::Print);
+    let less = pager("less", &["-r"]);
+    for stdin_tty in [true, false] {
+        let plan = show_plan(&less, stdin_tty, Stdout::Tty);
+        assert!(
+            matches!(plan, Show::Page(command) if command.program == "less"),
+            "{plan:?}"
+        );
+    }
+}
+
+#[test]
+fn q_and_ctrl_c_quit_the_wait() {
+    for key in [&b"q"[..], b"qq", b"\x03"] {
+        assert!(quits(key), "{key:?}");
+    }
+    for key in [&b""[..], b"x", b"\r", b"\x1b[B", b"\x1bq"] {
+        assert!(!quits(key), "{key:?}");
+    }
+}
+
+fn host() -> ViewHost {
+    ViewHost {
+        block: RexBlock::parse("block:1").unwrap(),
+        exe: "/bin/ralph".to_string(),
+        cwd: "/w d".to_string(),
+        store: "/w d/.ralph".to_string(),
+    }
+}
+
+#[test]
+fn view_target_defaults_to_inline() {
+    assert_eq!(ViewTarget::default(), ViewTarget::Inline);
+    for configured in [None, Some("inline")] {
+        assert_eq!(
+            resolve_view_target(configured),
+            (ViewTarget::Inline, None),
+            "{configured:?}"
+        );
+    }
+}
+
+#[test]
+fn view_target_reads_rex_pane() {
+    assert_eq!(
+        resolve_view_target(Some(" rex-pane ")),
+        (ViewTarget::RexPane, None)
+    );
+}
+
+#[test]
+fn unknown_view_target_warns_and_stays_inline() {
+    let (target, warning) = resolve_view_target(Some("tab"));
+    assert_eq!(target, ViewTarget::Inline);
+    assert!(warning.is_some_and(|w| w.contains("\"tab\"")));
+}
+
+#[test]
+fn only_rex_pane_on_a_terminal_gets_a_view_host() {
+    assert_eq!(
+        view_host(ViewTarget::RexPane, Stdout::Tty, Some(host())),
+        Some(host())
+    );
+    assert_eq!(view_host(ViewTarget::RexPane, Stdout::Tty, None), None);
+    for (target, stdout) in [
+        (ViewTarget::Inline, Stdout::Tty),
+        (ViewTarget::Inline, Stdout::NotTty),
+        (ViewTarget::RexPane, Stdout::NotTty),
+    ] {
+        assert_eq!(view_host(target, stdout, Some(host())), None);
+    }
+}
+
+#[test]
+fn view_split_runs_ralph_view_on_the_absolute_path_with_the_chat_store() {
+    assert_eq!(
+        view_split_argv(&host(), Path::new("/docs/my notes.md")),
+        [
+            "split",
+            "-b",
+            "block:1",
+            "--label",
+            "view my notes.md",
+            "-c",
+            "/w d",
+            "--interactive",
+            "--",
+            "/bin/ralph",
+            "view",
+            "--store",
+            "/w d/.ralph",
+            "/docs/my notes.md",
+        ]
+    );
+}
+
+#[test]
+fn view_split_argv_sets_no_environment_variable() {
+    let argv = view_split_argv(&host(), Path::new("/a.md"));
+    assert!(
+        !argv
+            .iter()
+            .any(|word| ["env", "-e", "--env"].contains(&word.as_str()) || word.contains("RALPH_")),
+        "{argv:?}"
+    );
+}
+
+#[test]
+fn a_failed_split_notice_is_one_line() {
+    assert_eq!(
+        view_split_notice("rex split failed: no room\nsecond line"),
+        "/view: rex split failed: no room; showing inline"
+    );
+}

@@ -409,4 +409,45 @@ mod tests {
 
         assert!(blocks.contains(&OutputBlock::Separator), "{blocks:?}");
     }
+
+    fn agy_reply(chunks: &[&str]) -> String {
+        use crate::worker::{AgyEvent, AgyStream, StopReason};
+        use serde_json::json;
+
+        let files = FakeFiles(HashMap::new());
+        let mut collector = StreamCollector::new(true, VerboseToolsConfig::default());
+        let mut stream = AgyStream::default();
+        let done = AgyEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: None,
+        };
+        let updates: Vec<_> = chunks
+            .iter()
+            .map(|text| json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}))
+            .collect();
+        let events = updates
+            .iter()
+            .map(AgyEvent::Update)
+            .chain(std::iter::once(done));
+        for event in events.flat_map(|event| stream.events(&event)) {
+            collector.process_event(event, &files);
+        }
+        let (_, result) = collector.finish(&files);
+        super::super::output_block::extract_response_text(&result.output_blocks).unwrap()
+    }
+
+    #[test]
+    fn agy_chunks_split_at_a_token_boundary_join_without_a_newline() {
+        assert_eq!(agy_reply(&["PING-", "1"]), "PING-1");
+    }
+
+    #[test]
+    fn agy_chunks_split_mid_word_join_without_a_newline() {
+        assert_eq!(agy_reply(&["inter", "rupt now"]), "interrupt now");
+    }
+
+    #[test]
+    fn agy_chunks_read_the_same_as_one_chunk() {
+        assert_eq!(agy_reply(&["a\nb", "\n\nc"]), agy_reply(&["a\nb\n\nc"]));
+    }
 }

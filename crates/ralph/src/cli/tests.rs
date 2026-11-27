@@ -785,3 +785,17 @@ fn test_cli_web_tailscale_flag() {
     };
     assert!(!web.tailscale);
 }
+
+#[test]
+fn view_takes_a_file_and_an_optional_store() {
+    let view = |argv: &[&str]| match Cli::try_parse_from(argv).unwrap().command {
+        Some(Commands::View(view)) => view,
+        other => panic!("expected view, got {other:?}"),
+    };
+    let bare = view(&["ralph", "view", "my notes.md"]);
+    assert_eq!(bare.file, "my notes.md");
+    assert!(bare.store.is_none());
+    let stored = view(&["ralph", "view", "--store", "/s", "a.md"]);
+    assert_eq!(stored.store, Some(std::path::PathBuf::from("/s")));
+    assert!(Cli::try_parse_from(["ralph", "view"]).is_err());
+}

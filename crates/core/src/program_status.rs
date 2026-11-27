@@ -79,6 +79,31 @@ impl RexBlock {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RexSplit<'a> {
+    pub block: &'a RexBlock,
+    pub label: &'a str,
+    pub cwd: &'a str,
+}
+
+pub fn rex_split_argv(split: RexSplit<'_>, command: Vec<String>) -> Vec<String> {
+    [
+        "split",
+        "-b",
+        split.block.as_str(),
+        "--label",
+        split.label,
+        "-c",
+        split.cwd,
+        "--interactive",
+        "--",
+    ]
+    .map(str::to_string)
+    .into_iter()
+    .chain(command)
+    .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusSetting {
     Enabled,
@@ -471,6 +496,34 @@ mod tests {
         assert_eq!(
             report_for(Phase::Turn, &after),
             expect(State::Working, None)
+        );
+    }
+
+    #[test]
+    fn a_rex_split_anchors_on_the_block_and_runs_the_command_interactively() {
+        let block = RexBlock::parse("block:1").unwrap();
+        let split = RexSplit {
+            block: &block,
+            label: "view a b.md",
+            cwd: "/w d",
+        };
+        let command = ["ralph", "view", "/w d/a b.md"].map(str::to_string);
+        assert_eq!(
+            rex_split_argv(split, command.to_vec()),
+            [
+                "split",
+                "-b",
+                "block:1",
+                "--label",
+                "view a b.md",
+                "-c",
+                "/w d",
+                "--interactive",
+                "--",
+                "ralph",
+                "view",
+                "/w d/a b.md",
+            ]
         );
     }
 }
