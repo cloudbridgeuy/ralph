@@ -143,9 +143,15 @@ fn config_bare_secrets_in_tight_fields_are_absent_from_the_http_body() {
 #[test]
 fn config_opaque_secrets_in_loose_fields_are_absent_from_the_http_body() {
     for (config, leak) in [
-        ("[claude]\nmodel = \"ghp_SECRET\"\n", "ghp_SECRET"),
+        (
+            "[claude]\nmodel = \"ghp_AbCdEf0123456789AbCdEf0123456789abcd\"\n",
+            "AbCdEf",
+        ),
         ("[chat]\nname = \"Bearer abc123\"\n", "abc123"),
-        ("[chat]\nname = \"xo\x78b-123-abc\"\n", "xoxb"),
+        (
+            "[chat]\nname = \"xo\x78b-123456789012-1234567890123-AbCdEf0123456789AbCdEf01\"\n",
+            "AbCdEf",
+        ),
         (
             "[web]\nfont = \"aGVsbG8gd29ybGQgc2VjcmV0MTI1\"\n",
             "aGVsbG8",

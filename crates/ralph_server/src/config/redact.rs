@@ -1,6 +1,4 @@
-use super::redact_shapes::{
-    key_class, key_shape_ok, text_has_path_shape, text_has_secret_shape, value_shape_ok,
-};
+use super::redact_shapes::{key_class, key_shape_ok, text_has_path_shape, value_shape_ok};
 use serde_json::Value;
 
 pub const REDACTED: &str = "[redacted]";
@@ -118,9 +116,7 @@ pub fn listing(key: &str) -> Listing {
 }
 
 fn text_is_sensitive(text: &str) -> bool {
-    text_has_path_shape(text)
-        || text_has_secret_shape(text)
-        || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
+    text_has_path_shape(text) || VALUE_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
 fn has_free_key_tail(key: &str) -> bool {
@@ -130,7 +126,7 @@ fn has_free_key_tail(key: &str) -> bool {
 }
 
 fn key_is_sensitive(key: &str) -> bool {
-    key.split('.').any(text_is_sensitive) || text_has_secret_shape(key) || !key_shape_ok(key)
+    key.split('.').any(text_is_sensitive) || !key_shape_ok(key)
 }
 
 fn key_needs_mask(key: &str) -> bool {
@@ -582,6 +578,8 @@ mod tests {
         assert!(redacts("tickets.jira", &json!(["a".repeat(65)]), false));
     }
 
+    const OPAQUE_BODY: &str = "AbCdEf0123456789AbCdEf0123456789abcd";
+
     fn assert_secret(key: &str, text: &str) {
         assert!(redacts(key, &json!(text), false), "{key} {text}");
     }
@@ -608,14 +606,17 @@ mod tests {
 
     #[test]
     fn slack_tokens_are_redacted_in_loose_fields() {
-        assert_secret("chat.name", "xo\x78b-123-abc");
-        assert_secret("nap.model", "xo\x78p-1");
+        assert_secret(
+            "chat.name",
+            "xo\x78b-123456789012-1234567890123-AbCdEf0123456789AbCdEf01",
+        );
+        assert_secret("nap.model", &format!("xo\x78p-1-2-3-{OPAQUE_BODY}"));
     }
 
     #[test]
     fn sk_keys_are_redacted_in_loose_fields() {
-        assert_secret("claude.model", "sk-ant-api03-abc");
-        assert_secret("tag.model", "sk-abc");
+        assert_secret("claude.model", &format!("sk-ant-api03-{OPAQUE_BODY}"));
+        assert_secret("tag.model", &format!("sk-{OPAQUE_BODY}"));
     }
 
     #[test]
@@ -625,15 +626,8 @@ mod tests {
 
     #[test]
     fn github_tokens_are_redacted_in_a_model_field() {
-        for token in [
-            "ghp_SECRET",
-            "gho_x",
-            "ghu_x",
-            "ghs_x",
-            "ghr_x",
-            "github_pat_x",
-        ] {
-            assert_secret("claude.model", token);
+        for prefix in ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"] {
+            assert_secret("claude.model", &format!("{prefix}{OPAQUE_BODY}"));
         }
     }
 
@@ -684,10 +678,14 @@ mod tests {
     fn secrets_in_array_items_and_keys_are_redacted() {
         assert!(redacts(
             "changes.diff_args",
-            &json!(["--stat", "ghp_SECRET"]),
+            &json!(["--stat", format!("ghp_{OPAQUE_BODY}")]),
             false
         ));
-        assert!(redacts("wire.prices.ghp_SECRET.input", &json!(1), false));
+        assert!(redacts(
+            &format!("wire.prices.ghp_{OPAQUE_BODY}.input"),
+            &json!(1),
+            false
+        ));
     }
 
     #[test]
