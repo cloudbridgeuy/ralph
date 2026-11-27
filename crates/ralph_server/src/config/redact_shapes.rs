@@ -20,6 +20,7 @@ pub enum Class {
     Enum(&'static [&'static str]),
     Free,
     Loose,
+    Number,
 }
 
 pub fn key_class(key: &str) -> Class {
@@ -30,6 +31,7 @@ pub fn key_class(key: &str) -> Class {
         "mermaid.style.palette" | "mermaid.style.curve" => Class::Word,
         "mermaid.style.font_family" | "mermaid.style.font_family_mono" => Class::Loose,
         "web.ansi_dark" | "web.ansi_light" => Class::Colour,
+        "chat.reset_turns" | "chat.reset_tokens" | "chat.worker_quiet_secs" => Class::Number,
         _ if key == "mermaid.style.config" || key.starts_with("mermaid.style.config.") => {
             Class::Free
         }
@@ -120,10 +122,14 @@ fn string_shape_ok(class: Class, text: &str) -> bool {
         Class::Enum(allowed) => allowed.contains(&text),
         Class::Free => is_colour(text) || is_word(text) || is_plain_number(text),
         Class::Loose => true,
+        Class::Number => false,
     }
 }
 
 pub fn value_shape_ok(class: Class, value: &Value) -> bool {
+    if class == Class::Number {
+        return value.is_number();
+    }
     match value {
         Value::String(text) => string_shape_ok(class, text),
         Value::Array(items) => items.iter().all(|item| value_shape_ok(class, item)),
@@ -401,6 +407,9 @@ mod tests {
         assert_eq!(key_class("workers.view"), Class::Enum(VIEW_VALUES));
         assert_eq!(key_class("web.font"), Class::Loose);
         assert_eq!(key_class("claude.model"), Class::Loose);
+        assert_eq!(key_class("chat.reset_turns"), Class::Number);
+        assert_eq!(key_class("chat.reset_tokens"), Class::Number);
+        assert_eq!(key_class("chat.worker_quiet_secs"), Class::Number);
     }
 
     #[test]
@@ -470,6 +479,23 @@ mod tests {
         assert!(value_shape_ok(Class::Enum(VIEW_VALUES), &json!("list")));
         assert!(!value_shape_ok(Class::Enum(VIEW_VALUES), &json!("grid")));
         assert!(value_shape_ok(Class::Loose, &json!("anything at all")));
+    }
+
+    #[test]
+    fn the_number_class_accepts_only_numbers() {
+        assert!(value_shape_ok(Class::Number, &json!(1)));
+        assert!(value_shape_ok(Class::Number, &json!(2.5)));
+        for value in [
+            json!("1"),
+            json!("my password is hunter2"),
+            json!(["my secret words"]),
+            json!([1]),
+            json!({"a": 1}),
+            json!(true),
+            json!(null),
+        ] {
+            assert!(!value_shape_ok(Class::Number, &value), "{value}");
+        }
     }
 
     #[test]

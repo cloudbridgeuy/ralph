@@ -457,4 +457,44 @@ mod tests {
             "claude-opus-4-1-20250805"
         );
     }
+
+    #[test]
+    fn text_in_a_numeric_setting_never_reaches_the_body() {
+        for (config, leak) in [
+            (
+                "[chat]\nreset_turns = \"my password is hunter2\"\n",
+                "hunter2",
+            ),
+            ("[chat]\nreset_tokens = [\"my secret words\"]\n", "secret"),
+            (
+                "[chat]\nworker_quiet_secs = \"my password is hunter2\"\n",
+                "hunter2",
+            ),
+            (
+                "[chat.reset_turns]\nx = \"my password is hunter2\"\n",
+                "hunter2",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            assert_eq!(response.status, 200, "{config}");
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let hidden = body(&response)["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["redacted"] == true && row["value"] == "[redacted]");
+            assert!(hidden, "{config}: {raw}");
+        }
+    }
+
+    #[test]
+    fn a_number_in_a_numeric_setting_stays_visible_in_the_body() {
+        let (g, s) = setup(None, Some("[chat]\nreset_turns = 40\n"));
+        let value = body(&respond(&g, &s, no_env));
+        let found = row(&value, "chat", "reset_turns");
+        assert_eq!(found["value"], 40);
+        assert_eq!(found["redacted"], false);
+    }
 }

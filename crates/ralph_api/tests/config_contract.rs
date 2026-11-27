@@ -260,3 +260,29 @@ fn config_free_text_map_keys_are_absent_from_the_http_body() {
         assert_eq!(masked["value"], "[redacted]", "{}", reply.body);
     }
 }
+
+#[test]
+fn config_text_in_a_numeric_setting_is_absent_from_the_http_body() {
+    for (config, leak) in [
+        (
+            "[chat]\nreset_turns = \"my password is hunter2\"\n",
+            "hunter2",
+        ),
+        ("[chat]\nreset_tokens = [\"my secret words\"]\n", "secret"),
+        (
+            "[chat]\nworker_quiet_secs = \"my password is hunter2\"\n",
+            "hunter2",
+        ),
+    ] {
+        let server = TestServer::start_with_store(|dir| write_config(dir, config));
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert!(!reply.body.contains(leak), "{config}: {}", reply.body);
+        let hidden = json_of(&reply)["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["section"] == "chat" && row["redacted"] == true);
+        assert!(hidden, "{config}: {}", reply.body);
+    }
+}

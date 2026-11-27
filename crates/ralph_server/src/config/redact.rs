@@ -712,6 +712,36 @@ mod tests {
         assert!(!redacts("chat.wrap_width", &json!(1), false));
     }
 
+    const NUMERIC_SETTINGS: [&str; 3] = [
+        "chat.reset_turns",
+        "chat.reset_tokens",
+        "chat.worker_quiet_secs",
+    ];
+
+    #[test]
+    fn numeric_settings_redact_text_arrays_and_tables() {
+        for key in NUMERIC_SETTINGS {
+            for value in [
+                json!("my password is hunter2"),
+                json!("hunter2"),
+                json!(["my secret words"]),
+                json!({"hunter2": 1}),
+                json!(true),
+            ] {
+                assert!(redacts(key, &value, false), "{key} {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn numeric_settings_keep_numbers_visible() {
+        for key in NUMERIC_SETTINGS {
+            for value in [json!(40), json!(250_000), json!(2.5)] {
+                assert!(!redacts(key, &value, false), "{key} {value}");
+            }
+        }
+    }
+
     #[test]
     fn unlisted_keys_fail_closed() {
         assert_eq!(listing("novel.setting"), Listing::Unlisted);
