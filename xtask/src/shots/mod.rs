@@ -257,10 +257,11 @@ fn capture_current(args: RunArgs) -> Result<(PathBuf, Vec<core::Shot>), BoxError
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| BoxError::from("the xtask manifest directory has no parent"))?;
+    let target_dir = std::env::var("CARGO_TARGET_DIR").ok();
     let options = browser::CaptureOptions {
         ralph: args
             .ralph
-            .unwrap_or_else(|| webdriver::default_ralph_path(repo_root)),
+            .unwrap_or_else(|| core::default_ralph_path(repo_root, target_dir.as_deref())),
         firefox: args
             .firefox
             .unwrap_or_else(|| PathBuf::from(DEFAULT_FIREFOX)),

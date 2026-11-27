@@ -275,10 +275,6 @@ pub fn resolve_path(
     given.or_else(|| home.map(|home| home.join(under_home)))
 }
 
-pub fn default_ralph_path(root: &Path) -> PathBuf {
-    root.join("target/debug/ralph")
-}
-
 pub fn child_env(dir: &Path, path: Option<&str>, tmpdir: Option<&str>) -> Vec<(String, String)> {
     let under = |sub: &str| dir.join(sub).display().to_string();
     let passed = [("PATH", path), ("TMPDIR", tmpdir)]
@@ -670,14 +666,6 @@ mod tests {
             Some(PathBuf::from("/home/u/.local/bin/g"))
         );
         assert_eq!(resolve_path(None, None, ".a"), None);
-    }
-
-    #[test]
-    fn the_default_ralph_path_is_under_the_given_root() {
-        assert_eq!(
-            default_ralph_path(Path::new("/repo")),
-            PathBuf::from("/repo/target/debug/ralph")
-        );
     }
 
     const ALLOWLIST: [&str; 7] = [

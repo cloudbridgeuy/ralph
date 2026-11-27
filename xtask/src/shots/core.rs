@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -169,6 +169,13 @@ pub fn sorted_set(names: &[String]) -> BTreeSet<&String> {
 
 fn selected_names(selected: &[Shot]) -> BTreeSet<String> {
     selected.iter().map(Shot::name).collect()
+}
+
+pub fn default_ralph_path(root: &Path, target_dir: Option<&str>) -> PathBuf {
+    let target = target_dir
+        .filter(|dir| !dir.is_empty())
+        .map_or_else(|| root.join("target"), |dir| root.join(dir));
+    target.join("debug").join("ralph")
 }
 
 pub fn png_names_from(entries: Vec<OsString>) -> Result<Vec<String>, ShotError> {
@@ -346,6 +353,38 @@ mod tests {
         assert_eq!(
             restrict_names(&existing, &matrix()),
             names(&["memory-dark-1440.png", "threads-light-390.png"])
+        );
+    }
+
+    #[test]
+    fn the_default_ralph_path_is_under_the_workspace_target() {
+        assert_eq!(
+            default_ralph_path(Path::new("/repo"), None),
+            PathBuf::from("/repo/target/debug/ralph")
+        );
+    }
+
+    #[test]
+    fn an_absolute_target_dir_replaces_the_workspace_target() {
+        assert_eq!(
+            default_ralph_path(Path::new("/repo"), Some("/cache/t")),
+            PathBuf::from("/cache/t/debug/ralph")
+        );
+    }
+
+    #[test]
+    fn a_relative_target_dir_resolves_against_the_root() {
+        assert_eq!(
+            default_ralph_path(Path::new("/repo"), Some("out")),
+            PathBuf::from("/repo/out/debug/ralph")
+        );
+    }
+
+    #[test]
+    fn an_empty_target_dir_counts_as_unset() {
+        assert_eq!(
+            default_ralph_path(Path::new("/repo"), Some("")),
+            PathBuf::from("/repo/target/debug/ralph")
         );
     }
 
