@@ -5,7 +5,7 @@ use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{
     describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT, OUTPUT_HEADER,
 };
-use crate::worker::{hex_encode, HarnessId, Report, WorkerId};
+use crate::worker::{hex_encode, HarnessId, Report, Sender, WorkerId};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -729,7 +729,7 @@ pub enum StopReason {
     TurnCap,
     CostCap,
     Unmet { step: usize },
-    WorkerFlagged { worker: String, line: String },
+    WorkerFlagged { worker: Sender, line: String },
     JudgeRounds { step: usize, evidence: String },
     CheckFailed { step: usize, detail: Option<String> },
     CheckNotStarted { step: usize, error: String },

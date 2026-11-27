@@ -131,7 +131,7 @@ fn header_of(block: &str) -> &str {
 #[test]
 fn a_flagged_stop_block_names_the_worker_and_how_to_answer_it() {
     let reason = StopReason::WorkerFlagged {
-        worker: "E1".to_string(),
+        worker: Sender::parse("E1").unwrap(),
         line: "Keep the old flag name?".to_string(),
     };
     let block = stopped_block(&reason, 2, 4, 0.61, &[]);

@@ -50,6 +50,44 @@ pub enum Next {
     Done,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopCause {
+    NeedsUser { worker: Sender },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepMove {
+    Complete,
+    Hold,
+    Fail,
+    Stop(StopCause),
+}
+
+pub fn step_move(report: &Report, awaited: Option<&WorkerId>) -> StepMove {
+    let from_awaited = awaited.is_some_and(|id| report.from.worker() == Some(id));
+    let unmet = if from_awaited {
+        StepMove::Fail
+    } else {
+        StepMove::Hold
+    };
+    match report.status {
+        ReportKind::Worker(ReportStatus::Blocked | ReportStatus::Question) => {
+            StepMove::Stop(StopCause::NeedsUser {
+                worker: report.from.clone(),
+            })
+        }
+        ReportKind::Worker(ReportStatus::Done) if from_awaited => StepMove::Complete,
+        ReportKind::Worker(ReportStatus::Done) => StepMove::Hold,
+        ReportKind::Check
+        | ReportKind::Warning
+        | ReportKind::Watch
+        | ReportKind::Merged
+        | ReportKind::View
+        | ReportKind::ThreadClosed
+        | ReportKind::External => unmet,
+    }
+}
+
 pub(super) fn granted_limits(plan: &RunPlan) -> Limits {
     plan.grants
         .iter()
@@ -149,13 +187,14 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             };
             (progress, next)
         }
-        (Event::Report(report), Criterion::WorkerDone { worker, .. })
-            if report.from.worker() == Some(worker) =>
-        {
-            if report.status == ReportKind::Worker(ReportStatus::Done) {
-                done_reported(plan, progress, &step.criterion)
-            } else {
-                unmet
+        (Event::Report(report), Criterion::WorkerDone { worker, .. }) => {
+            match step_move(report, Some(worker)) {
+                StepMove::Complete => done_reported(plan, progress, &step.criterion),
+                StepMove::Fail => unmet,
+                StepMove::Hold => (progress, Next::Wait),
+                StepMove::Stop(cause) => {
+                    (progress, Next::Stop(StopReason::stopped_by(cause, report)))
+                }
             }
         }
         (

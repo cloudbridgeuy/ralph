@@ -16,6 +16,7 @@ mod render;
 mod resume;
 mod signing;
 mod steer;
+mod step_move;
 mod template;
 mod verify;
 mod verify_check;
@@ -287,7 +288,7 @@ fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Tic
 
 fn flagged_stop() -> StopReason {
     StopReason::WorkerFlagged {
-        worker: "GUZ-1".to_string(),
+        worker: Sender::parse("GUZ-1").unwrap(),
         line: "text".to_string(),
     }
 }
@@ -624,7 +625,7 @@ fn a_failed_typed_asked_or_flagged_turn_stops_the_run() {
     assert_eq!(
         tick(&state, &ended).next,
         Next::Stop(StopReason::WorkerFlagged {
-            worker: "X9".to_string(),
+            worker: Sender::parse("X9").unwrap(),
             line: "text".to_string()
         })
     );

@@ -91,7 +91,7 @@ fn a_flagged_stop_names_the_worker_and_its_first_report_line() {
     assert_eq!(
         ticked.next,
         Next::Stop(StopReason::WorkerFlagged {
-            worker: "GUZ-1606".to_string(),
+            worker: Sender::parse("GUZ-1606").unwrap(),
             line: "Keep the old flag name or rename it?".to_string(),
         })
     );
