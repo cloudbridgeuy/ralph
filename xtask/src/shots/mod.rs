@@ -250,6 +250,28 @@ fn compare_selected(args: CompareArgs, selected: Option<&[core::Shot]>) -> Resul
 
 const DEFAULT_FIREFOX: &str = "/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox";
 
+const TIMED_OUT_FILE: &str = ".timed-out";
+
+fn read_timed_out(current: &Path) -> Result<Vec<String>, BoxError> {
+    match fs::read_to_string(current.join(TIMED_OUT_FILE)) {
+        Ok(text) => Ok(report::parse_timed_out(&text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn write_timed_out(current: &Path, names: &[String]) -> Result<(), BoxError> {
+    let path = current.join(TIMED_OUT_FILE);
+    if names.is_empty() {
+        return match fs::remove_file(&path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+            _ => Ok(()),
+        };
+    }
+    fs::write(path, report::render_timed_out(names))?;
+    Ok(())
+}
+
 fn capture_current(args: RunArgs) -> Result<(PathBuf, Vec<core::Shot>), BoxError> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let resolve = |given, under_home| {
@@ -275,6 +297,9 @@ fn capture_current(args: RunArgs) -> Result<(PathBuf, Vec<core::Shot>), BoxError
     let selected = core::filter(core::matrix(), options.screen, options.theme);
     let current = root.join("current");
     let timed_out = browser::capture(&options, &current)?;
+    let selected_names: Vec<String> = selected.iter().map(core::Shot::name).collect();
+    let merged = report::merge_timed_out(&read_timed_out(&current)?, &selected_names, &timed_out);
+    write_timed_out(&current, &merged)?;
     if !timed_out.is_empty() {
         println!("timed out waiting for ready: {}", timed_out.join(", "));
     }
@@ -295,8 +320,13 @@ fn check(args: CheckArgs) -> Result<(), BoxError> {
 
 fn approve(args: ApproveArgs) -> Result<(), BoxError> {
     let current_names = png_names(&args.current)?;
+    let timed_out = read_timed_out(&args.current)?;
     let listed: Vec<String> = core::matrix().iter().map(core::Shot::name).collect();
-    let selection = report::select_approvals(&args.names, args.all, &current_names, &listed)?;
+    let selection =
+        report::select_approvals(&args.names, args.all, &current_names, &listed, &timed_out)?;
+    for name in &selection.warned {
+        println!("warning: {name} timed out waiting for ready; approving it as named");
+    }
     for name in &selection.skipped {
         println!("skipped {name}: not in the shot list");
     }

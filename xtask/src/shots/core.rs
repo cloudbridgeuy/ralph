@@ -22,6 +22,8 @@ pub enum ShotError {
     AllWithNames,
     #[error("`{0}` has a zero-size image")]
     EmptyImage(String),
+    #[error("timed out waiting for ready: {0}; run again, or name them to approve")]
+    TimedOutShots(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

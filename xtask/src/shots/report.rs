@@ -132,6 +132,32 @@ pub fn require_image_size(name: &str, width: u32, height: u32) -> Result<(), Sho
 pub struct Approvals {
     pub approved: Vec<String>,
     pub skipped: Vec<String>,
+    pub warned: Vec<String>,
+}
+
+pub fn parse_timed_out(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub fn render_timed_out(names: &[String]) -> String {
+    names.iter().map(|name| format!("{name}\n")).collect()
+}
+
+pub fn merge_timed_out(existing: &[String], selected: &[String], fresh: &[String]) -> Vec<String> {
+    let selected = sorted_set(selected);
+    let mut merged: Vec<String> = existing
+        .iter()
+        .filter(|name| !selected.contains(name))
+        .chain(fresh)
+        .cloned()
+        .collect();
+    merged.sort();
+    merged.dedup();
+    merged
 }
 
 pub fn select_approvals(
@@ -139,6 +165,7 @@ pub fn select_approvals(
     all: bool,
     current_names: &[String],
     listed_names: &[String],
+    timed_out: &[String],
 ) -> Result<Approvals, ShotError> {
     if all && !names.is_empty() {
         return Err(ShotError::AllWithNames);
@@ -154,11 +181,24 @@ pub fn select_approvals(
         if !missing.is_empty() {
             return Err(ShotError::MissingShots(missing.join(", ")));
         }
-        let (approved, skipped) = current
+        let (approved, skipped): (Vec<String>, Vec<String>) = current
             .into_iter()
             .cloned()
             .partition(|name| listed.contains(name));
-        return Ok(Approvals { approved, skipped });
+        let timed_out = sorted_set(timed_out);
+        let refused: Vec<String> = approved
+            .iter()
+            .filter(|name| timed_out.contains(name))
+            .cloned()
+            .collect();
+        if !refused.is_empty() {
+            return Err(ShotError::TimedOutShots(refused.join(", ")));
+        }
+        return Ok(Approvals {
+            approved,
+            skipped,
+            warned: Vec::new(),
+        });
     }
     if names.is_empty() {
         return Err(ShotError::NothingSelected);
@@ -166,9 +206,17 @@ pub fn select_approvals(
     if let Some(unknown) = names.iter().find(|name| !current.contains(name)) {
         return Err(ShotError::UnknownShot(unknown.clone()));
     }
+    let approved: Vec<String> = sorted_set(names).into_iter().cloned().collect();
+    let timed_out = sorted_set(timed_out);
+    let warned = approved
+        .iter()
+        .filter(|name| timed_out.contains(name))
+        .cloned()
+        .collect();
     Ok(Approvals {
-        approved: sorted_set(names).into_iter().cloned().collect(),
+        approved,
         skipped: Vec::new(),
+        warned,
     })
 }
 
@@ -320,7 +368,7 @@ mod tests {
     #[test]
     fn all_with_names_is_an_error() {
         assert_eq!(
-            select_approvals(&names(&["a.png"]), true, &names(&["a.png"]), &[]),
+            select_approvals(&names(&["a.png"]), true, &names(&["a.png"]), &[], &[]),
             Err(ShotError::AllWithNames)
         );
     }
@@ -342,6 +390,7 @@ mod tests {
         Approvals {
             approved: names(approved),
             skipped: names(skipped),
+            warned: Vec::new(),
         }
     }
 
@@ -350,7 +399,7 @@ mod tests {
         let current = names(&["b.png", "a.png"]);
         let listed = names(&["a.png", "b.png"]);
         assert_eq!(
-            select_approvals(&[], true, &current, &listed),
+            select_approvals(&[], true, &current, &listed, &[]),
             Ok(approvals(&["a.png", "b.png"], &[]))
         );
     }
@@ -360,7 +409,7 @@ mod tests {
         let current = names(&["a.png", "extra.png"]);
         let listed = names(&["a.png"]);
         assert_eq!(
-            select_approvals(&[], true, &current, &listed),
+            select_approvals(&[], true, &current, &listed, &[]),
             Ok(approvals(&["a.png"], &["extra.png"]))
         );
     }
@@ -370,7 +419,7 @@ mod tests {
         let current = names(&["a.png"]);
         let listed = names(&["a.png", "b.png", "c.png"]);
         assert_eq!(
-            select_approvals(&[], true, &current, &listed),
+            select_approvals(&[], true, &current, &listed, &[]),
             Err(ShotError::MissingShots("b.png, c.png".to_string()))
         );
     }
@@ -379,16 +428,69 @@ mod tests {
     fn named_approvals_ignore_the_shot_list() {
         let current = names(&["b.png", "a.png"]);
         assert_eq!(
-            select_approvals(&names(&["b.png", "b.png"]), false, &current, &[]),
+            select_approvals(&names(&["b.png", "b.png"]), false, &current, &[], &[]),
             Ok(approvals(&["b.png"], &[]))
         );
         assert_eq!(
-            select_approvals(&names(&["c.png"]), false, &current, &[]),
+            select_approvals(&names(&["c.png"]), false, &current, &[], &[]),
             Err(ShotError::UnknownShot("c.png".to_string()))
         );
         assert_eq!(
-            select_approvals(&[], false, &current, &[]),
+            select_approvals(&[], false, &current, &[], &[]),
             Err(ShotError::NothingSelected)
+        );
+    }
+
+    #[test]
+    fn timed_out_names_round_trip() {
+        let list = names(&["a.png", "b.png"]);
+        assert_eq!(render_timed_out(&list), "a.png\nb.png\n");
+        assert_eq!(parse_timed_out(&render_timed_out(&list)), list);
+        assert_eq!(render_timed_out(&[]), "");
+        assert_eq!(parse_timed_out("\n a.png \n\nb.png\n"), list);
+        assert!(parse_timed_out("").is_empty());
+    }
+
+    #[test]
+    fn merge_keeps_entries_outside_the_selection() {
+        let existing = names(&["a.png", "b.png"]);
+        let selected = names(&["a.png", "c.png"]);
+        assert_eq!(
+            merge_timed_out(&existing, &selected, &names(&["c.png"])),
+            names(&["b.png", "c.png"])
+        );
+        assert_eq!(
+            merge_timed_out(&existing, &selected, &[]),
+            names(&["b.png"])
+        );
+        assert_eq!(
+            merge_timed_out(&existing, &selected, &names(&["c.png", "c.png"])),
+            names(&["b.png", "c.png"])
+        );
+    }
+
+    #[test]
+    fn approve_all_refuses_a_timed_out_shot() {
+        let current = names(&["a.png", "b.png"]);
+        let listed = names(&["a.png", "b.png"]);
+        assert_eq!(
+            select_approvals(&[], true, &current, &listed, &names(&["b.png", "z.png"])),
+            Err(ShotError::TimedOutShots("b.png".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_named_approval_of_a_timed_out_shot_is_allowed_with_a_warning() {
+        let current = names(&["a.png", "b.png"]);
+        let selection =
+            select_approvals(&names(&["b.png"]), false, &current, &[], &names(&["b.png"]));
+        assert_eq!(
+            selection,
+            Ok(Approvals {
+                approved: names(&["b.png"]),
+                skipped: Vec::new(),
+                warned: names(&["b.png"]),
+            })
         );
     }
 
