@@ -10,7 +10,7 @@ struct Sent {
     title_open: bool,
 }
 
-fn frame(pane: &RexPane, report: &Report, in_tmux: bool) -> Option<String> {
+fn frame(pane: RexPane, report: &Report, in_tmux: bool) -> Option<String> {
     let sequence = pane.report(report).ok()?;
     Some(if in_tmux {
         tmux_wrap(&sequence)
@@ -45,7 +45,7 @@ impl TermStatus {
     }
 
     pub(super) fn send(&self, report: &Report) {
-        let Some(pane) = &self.rex else {
+        let Some(pane) = self.rex else {
             return;
         };
         let Some(bytes) = frame(pane, report, self.in_tmux) else {
@@ -74,7 +74,7 @@ impl TermStatus {
         if take_title_restore(&mut sent) {
             let _ = write_terminal(title_end());
         }
-        if let Some(pane) = &self.rex {
+        if let Some(pane) = self.rex {
             if !sent.closed {
                 let clear = Report {
                     state: State::Clear,
@@ -106,7 +106,7 @@ mod tests {
         rex_pane(
             StatusSetting::Enabled,
             Stdout::Tty,
-            RexBlock::parse("blk-1"),
+            RexBlock::parse("blk-1").as_ref(),
         )
         .unwrap()
     }
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn frame_is_the_plain_sequence_outside_tmux() {
         assert_eq!(
-            frame(&test_pane(), &working(), false).as_deref(),
+            frame(test_pane(), &working(), false).as_deref(),
             Some("\x1b]7501;state=working:app=ralph\x07")
         );
     }
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn frame_wraps_the_sequence_inside_tmux() {
         assert_eq!(
-            frame(&test_pane(), &working(), true).as_deref(),
+            frame(test_pane(), &working(), true).as_deref(),
             Some("\x1bPtmux;\x1b\x1b]7501;state=working:app=ralph\x07\x1b\\")
         );
     }

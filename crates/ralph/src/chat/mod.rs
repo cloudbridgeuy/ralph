@@ -73,7 +73,7 @@ use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{
-    rex_pane, RexBlock, RexPane, StatusOff, StatusSetting, Stdout, REX_BLOCK_ENV,
+    rex_pane, RexBlock, RexPane, StatusSetting, Stdout, REX_BLOCK_ENV,
 };
 use ralph_server::chat::host::spawn_session_host;
 use ralph_server::chat::memory::Store;
@@ -107,9 +107,9 @@ fn resolve_rex_pane(
     setting: StatusSetting,
     stdout: Stdout,
     env: impl FnOnce(&str) -> Option<String>,
-) -> Result<RexPane, StatusOff> {
+) -> Option<RexPane> {
     let block = env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse);
-    rex_pane(setting, stdout, block)
+    rex_pane(setting, stdout, block.as_ref())
 }
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
@@ -230,9 +230,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         StatusSetting::from_bool(chat_config.terminal_status),
         Stdout::from_is_terminal(std::io::stdout().is_terminal()),
         |key| std::env::var(key).ok(),
-    )
-    .ok();
-    let alert = alert_config(&args, chat_config, rex.clone());
+    );
+    let alert = alert_config(&args, chat_config, rex);
     let term = Arc::new(TermStatus::new(
         rex,
         chat_config.terminal_title && std::io::stdout().is_terminal(),
@@ -252,7 +251,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             reply_images,
             show_tools: io::stdout().is_terminal(),
         },
-        events: client_events(alert.clone(), Arc::clone(&term)),
+        events: client_events(alert, Arc::clone(&term)),
     })?;
     let Assembled {
         session,
@@ -512,7 +511,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod rex_status_tests {
     use super::resolve_rex_pane;
-    use ralph_core::program_status::{RexBlock, StatusOff, StatusSetting, Stdout};
+    use ralph_core::program_status::{StatusSetting, Stdout};
 
     #[test]
     fn rex_pane_with_rex_block_enables_terminal_status() {
@@ -522,8 +521,7 @@ mod rex_status_tests {
             "TERM_PROGRAM" => Some("rex".to_string()),
             _ => None,
         };
-        let pane = resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, env).unwrap();
-        assert_eq!(pane.block(), &RexBlock::parse("blk-1").unwrap());
+        assert!(resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, env).is_some());
     }
 
     #[test]
@@ -531,7 +529,7 @@ mod rex_status_tests {
         let empty = |key: &str| (key == "REX_BLOCK").then(String::new);
         assert_eq!(
             resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, empty),
-            Err(StatusOff::NotInRex)
+            None
         );
 
         let missing = |key: &str| match key {
@@ -541,7 +539,7 @@ mod rex_status_tests {
         };
         assert_eq!(
             resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, missing),
-            Err(StatusOff::NotInRex)
+            None
         );
     }
 }

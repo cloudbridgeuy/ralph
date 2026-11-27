@@ -114,7 +114,7 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
     let quiet = AlertConfig {
         sound: false,
         notification: false,
-        ..config.clone()
+        ..config
     };
     assert_eq!(blocked_alert("send-it stopped", &quiet), None);
     let sound_only = AlertConfig {
@@ -132,7 +132,8 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
 
 #[test]
 fn a_blocked_alert_is_left_to_the_terminal_when_it_sends_status() {
-    let pane = rex_pane(StatusSetting::Enabled, Stdout::Tty, RexBlock::parse("b")).ok();
+    let b = RexBlock::parse("b");
+    let pane = rex_pane(StatusSetting::Enabled, Stdout::Tty, b.as_ref());
     let rex = AlertConfig {
         sound: true,
         notification: true,

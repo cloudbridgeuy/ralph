@@ -22,7 +22,7 @@ pub enum UnknownFocus {
     Silent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlertConfig {
     pub sound: bool,
     pub notification: bool,
@@ -140,7 +140,7 @@ mod tests {
         crate::program_status::rex_pane(
             crate::program_status::StatusSetting::Enabled,
             crate::program_status::Stdout::Tty,
-            crate::program_status::RexBlock::parse("blk-1"),
+            crate::program_status::RexBlock::parse("blk-1").as_ref(),
         )
         .unwrap()
     }

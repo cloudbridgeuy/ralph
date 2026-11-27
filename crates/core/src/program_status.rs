@@ -112,38 +112,20 @@ impl Stdout {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusOff {
-    Disabled,
-    NotTty,
-    NotInRex,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RexPane {
-    block: RexBlock,
-}
+pub struct RexPane(());
 
 impl RexPane {
-    pub fn block(&self) -> &RexBlock {
-        &self.block
-    }
-
-    pub fn report(&self, report: &Report) -> Result<String, TooLong> {
+    pub fn report(self, report: &Report) -> Result<String, TooLong> {
         encode(report)
     }
 }
 
-pub fn rex_pane(
-    setting: StatusSetting,
-    stdout: Stdout,
-    rex: Option<RexBlock>,
-) -> Result<RexPane, StatusOff> {
-    match (setting, stdout, rex) {
-        (StatusSetting::Disabled, _, _) => Err(StatusOff::Disabled),
-        (_, Stdout::NotTty, _) => Err(StatusOff::NotTty),
-        (_, _, None) => Err(StatusOff::NotInRex),
-        (StatusSetting::Enabled, Stdout::Tty, Some(block)) => Ok(RexPane { block }),
-    }
+pub fn rex_pane(setting: StatusSetting, stdout: Stdout, rex: Option<&RexBlock>) -> Option<RexPane> {
+    matches!(
+        (setting, stdout, rex),
+        (StatusSetting::Enabled, Stdout::Tty, Some(_))
+    )
+    .then_some(RexPane(()))
 }
 
 fn unread_msg(unread: usize) -> String {
@@ -234,24 +216,21 @@ mod tests {
     #[test]
     fn rex_pane_needs_config_tty_and_non_empty_rex_block() {
         let block = RexBlock::parse("blk-1").unwrap();
-        let pane = rex_pane(StatusSetting::Enabled, Stdout::Tty, Some(block.clone())).unwrap();
-        assert_eq!(pane.block(), &block);
+        let pane = rex_pane(StatusSetting::Enabled, Stdout::Tty, Some(&block)).unwrap();
+        assert_eq!(std::mem::size_of::<RexPane>(), 0);
         assert_eq!(
             pane.report(&report(State::Working, None)).unwrap(),
             "\x1b]7501;state=working:app=ralph\x07"
         );
         assert_eq!(
-            rex_pane(StatusSetting::Disabled, Stdout::Tty, Some(block.clone())),
-            Err(StatusOff::Disabled)
+            rex_pane(StatusSetting::Disabled, Stdout::Tty, Some(&block)),
+            None
         );
         assert_eq!(
-            rex_pane(StatusSetting::Enabled, Stdout::NotTty, Some(block)),
-            Err(StatusOff::NotTty)
+            rex_pane(StatusSetting::Enabled, Stdout::NotTty, Some(&block)),
+            None
         );
-        assert_eq!(
-            rex_pane(StatusSetting::Enabled, Stdout::Tty, None),
-            Err(StatusOff::NotInRex)
-        );
+        assert_eq!(rex_pane(StatusSetting::Enabled, Stdout::Tty, None), None);
         assert_eq!(RexBlock::parse(""), None);
     }
 
