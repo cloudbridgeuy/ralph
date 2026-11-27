@@ -369,7 +369,9 @@ fn clear_stale(dir: &Path, shots: &[Shot]) -> Result<(), BoxError> {
     for name in core::restrict_names(&super::png_names(dir)?, shots) {
         fs::remove_file(dir.join(name))?;
     }
-    Ok(())
+    let selected: Vec<String> = shots.iter().map(Shot::name).collect();
+    let kept = super::report::merge_timed_out(&super::read_timed_out(dir)?, &selected, &[]);
+    super::write_timed_out(dir, &kept)
 }
 
 fn launch_firefox(
@@ -449,6 +451,7 @@ pub fn capture(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxE
 
 fn capture_all(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxError> {
     let shots = core::filter(core::matrix(), options.screen, options.theme);
+    clear_stale(out, &shots)?;
     let scratch = tempfile::tempdir()?;
     let store = scratch.path().join("store");
     seed::seed(&store)?;
@@ -456,7 +459,6 @@ fn capture_all(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxE
     fs::create_dir_all(&home)?;
     let (_ralph, listening) =
         start_ralph(&options.ralph, &store, &home, &scratch.path().join("cwd"))?;
-    clear_stale(out, &shots)?;
     let mut timed_out = Vec::new();
     for theme in Theme::ALL {
         let group: Vec<Shot> = shots
