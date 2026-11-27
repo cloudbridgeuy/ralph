@@ -41,6 +41,7 @@ const SAFE_KEYS: &[&str] = &[
     "chat.inbox_alert_sound",
     "chat.inbox_alert_unknown_focus",
     "chat.keepalive_hours",
+    "chat.program_resume",
     "chat.project_claude_md",
     "chat.recent_history_tokens",
     "chat.reset_tokens",

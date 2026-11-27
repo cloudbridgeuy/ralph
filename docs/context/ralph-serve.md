@@ -83,6 +83,12 @@ Every reply carries the request `id`. A failure replies `{"type":"error","messag
 
 SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It moves to Draining. An idle session starts closing at once. Closing stops its maintenance host and waits for any tick, keepalive ping, or scheduled worker start already in progress. A session in a turn gets its turn cancelled (`Cancel`), and it closes only after the turn ends and its `turn_done` or `error` frame is written (`TurnDone` then `Close`). `serve` exits when every session is closed (main releases the `CHAT` lease and the runtime dir goes). If a session does not close within 5 s (`DRAIN_BOUND` in `crates/ralph/src/serve/mod.rs`), `serve` warns and exits anyway, so a stuck turn or maintenance task cannot hang shutdown. While it drains, `hello`, `send` and thread operations get `error` `ralph serve is shutting down`. A second stop does nothing.
 
+## Program resume
+
+`ralph chat --connect` reports `ralph chat --connect <absolute socket>`, plus `--no-inbox-sound` and `--no-inbox-notification` when set, before it connects. Ctrl-D, and Ctrl-C while it waits for `serve`, clear the record. SIGTERM, SIGHUP and an error keep it.
+
+When stdout is a terminal, `serve` reports `ralph serve --store <store>` with OSC 7577 after it binds the socket. The gate, the `[chat] program_resume` key and the limits are the ones of [ralph chat](ralph-chat.md#program-resume). A client `shutdown` or Ctrl-C clears the record after the drain. SIGTERM and SIGHUP keep it, and so does an exit with an error. If the SIGTERM and SIGHUP handler cannot be installed, the record is kept.
+
 ## Maintenance
 
 - Main and each open thread have their own attachments directory and maintenance host. The host runs queued watches, armed schedules, inbox checks, and configured idle keepalive. Main runs the daily drift check. A successful reply starts the usual memory nap.
@@ -103,10 +109,11 @@ Served:
 - `/answer <worker> <request> <option>`: one `answer` frame for the attached key. All three words are required, else the usage line prints. The frame takes the same answer-file path as the `reply` tool, so a stale or unknown request is refused by the host. The connection thread waits up to the 30 s handoff timeout. An `error` leaves the chat open. The terminal chat prints `/answer is only served over --connect`.
 - `/thread switch|main|open [--model]|pull|park|revive|drop|merge [--view]`: one `thread` frame. The reply text is printed. The attached thread changes only after a `done` reply.
 - Ctrl-C: `cancel` for the attached key, sent on a second connection.
-- Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
+- Ctrl-D: detach. The client closes its connection. `shutdown` is never sent. This is a user quit: it clears the resume record.
 - SIGTERM / SIGHUP: detach and exit 0 at the prompt or mid-request; neither `cancel` nor `shutdown` is sent.
 - Tool blocks: `serve` runs every turn with tool blocks on, so `turn` frames carry `ToolInvocation` and `ToolResult` blocks. The client prints them only when its stdout is a terminal, the same gate as the terminal chat. Piped, it drops them and prints the rest.
 - Inbox alerts: the sound and the notification of [Inbox alerts](ralph-chat.md#worker-inbox), with the same focus check and the idle terminal state. The client reads the `[chat] inbox_alert_*` keys from its own config and obeys `--no-inbox-sound` and `--no-inbox-notification`. If the config does not load, it warns and uses the defaults.
+- Dial: while the socket is missing, refuses connections or closes before the `hello` reply, the client tries again, from 250 ms doubling to 5 s. It prints one waiting notice. Ctrl-C quits and clears the resume record. SIGTERM / SIGHUP quits and keeps it. Any other dial error, an `error` reply to `hello` included, ends the client.
 - Attach: the client sends `status` and prints `<key>: <state>, <n> unread[, blocked: <ids>]`. The terminal status line (OSC) is not sent.
 
 Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it, inbox, hold, shell, cost.
@@ -114,9 +121,20 @@ Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it
 Errors:
 
 - An `error` frame (`main is busy`, `ralph serve is shutting down`) is printed. The prompt returns.
-- A closed connection or I/O error ends the client.
+- A connection that drops during a line is dialled again, see below. On the first connect, a drop between the `hello` reply and the `status` reply ends the client. So does any other I/O error.
+
+Reconnect:
+
+A drop shows at the next line you send. There is no idle poll. The client waits as for the first dial, sends `hello`, and for a thread sends `switch` and `status`. If the thread is not open, it sends `main`, stays on main and says that `/thread open <T>` opens it. It never opens a thread itself. Ctrl-C while it waits quits and clears the resume record. SIGTERM / SIGHUP quits and keeps it.
+
+| Drop | Attachment | The line | Printed |
+|---|---|---|---|
+| the write failed | restored | sent once more | `reconnected` |
+| the write failed | fell back to main | not sent | `reconnected, thread not open, not sent` |
+| closed or reset after the write | any | not sent | `reply lost, not sent again` |
+| second drop of the same line | any | not sent | `reply lost, not sent again` |
 
 Limits:
 
 - No re-bind of a running turn. A re-attach during a turn gets `<key> is busy`. That turn's events are lost.
-- A re-attach always goes to main.
+- A new client always attaches to main. After a `serve` restart no thread is open, so a thread client lands on main.

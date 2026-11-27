@@ -401,6 +401,8 @@ pub struct ChatSection {
     pub terminal_status: bool,
     #[serde(default = "default_true")]
     pub terminal_title: bool,
+    #[serde(default = "default_true")]
+    pub program_resume: bool,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default = "default_true")]
@@ -490,6 +492,7 @@ impl Default for ChatSection {
             status_powerline: false,
             terminal_status: true,
             terminal_title: true,
+            program_resume: true,
             name: None,
             auto_hold: true,
             auto_continue: true,

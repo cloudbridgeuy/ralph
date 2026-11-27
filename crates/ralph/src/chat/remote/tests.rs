@@ -199,26 +199,151 @@ fn wait_step_cancels_once_and_exits_when_terminated() {
 }
 
 #[test]
-fn prompt_step_exits_on_ctrl_d_or_termination() {
+fn prompt_step_sends_lines_and_ignores_other_signals() {
     assert_eq!(
         prompt_step(Signal::Success("hi".into()), false),
         PromptStep::Send("hi".into())
     );
-    assert_eq!(prompt_step(Signal::CtrlD, false), PromptStep::Exit);
     assert_eq!(prompt_step(Signal::CtrlC, false), PromptStep::Continue);
     assert_eq!(
         prompt_step(Signal::ExternalBreak(String::new()), false),
         PromptStep::Continue
     );
+}
+
+#[test]
+fn ctrl_d_on_connect_is_a_user_quit() {
     assert_eq!(
-        prompt_step(Signal::ExternalBreak("draft".into()), true),
-        PromptStep::Exit
+        prompt_step(Signal::CtrlD, false),
+        PromptStep::Exit(Departure::UserQuit)
     );
-    assert_eq!(prompt_step(Signal::CtrlC, true), PromptStep::Exit);
-    assert_eq!(prompt_step(Signal::CtrlD, true), PromptStep::Exit);
+}
+
+#[test]
+fn a_signal_on_connect_is_not_a_user_quit() {
+    for signal in [
+        Signal::CtrlC,
+        Signal::CtrlD,
+        Signal::ExternalBreak("draft".into()),
+        Signal::Success("hi".into()),
+    ] {
+        assert_eq!(
+            prompt_step(signal, true),
+            PromptStep::Exit(Departure::Restart)
+        );
+    }
+}
+
+#[test]
+fn a_missing_or_refused_socket_is_retried() {
+    for kind in [
+        io::ErrorKind::NotFound,
+        io::ErrorKind::ConnectionRefused,
+        io::ErrorKind::UnexpectedEof,
+        io::ErrorKind::ConnectionReset,
+        io::ErrorKind::BrokenPipe,
+        io::ErrorKind::NotConnected,
+    ] {
+        assert_eq!(
+            dial_step(kind, 0),
+            DialStep::Retry(DIAL_FIRST_DELAY),
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn other_dial_errors_fail_at_once() {
+    for kind in [
+        io::ErrorKind::PermissionDenied,
+        io::ErrorKind::InvalidInput,
+        io::ErrorKind::InvalidData,
+        io::ErrorKind::Other,
+    ] {
+        assert_eq!(dial_step(kind, 0), DialStep::Fail, "{kind:?}");
+    }
+}
+
+#[test]
+fn the_dial_delay_doubles_up_to_the_cap() {
+    let millis = |failures| match dial_step(io::ErrorKind::NotFound, failures) {
+        DialStep::Retry(delay) => delay.as_millis(),
+        DialStep::Fail => 0,
+    };
+    let delays = [0, 1, 2, 3, 4, 5, 6, u32::MAX].map(millis);
+    assert_eq!(delays, [250, 500, 1000, 2000, 4000, 5000, 5000, 5000]);
+}
+
+fn loss_of(error: Box<dyn Error>) -> Option<Loss> {
+    error.downcast_ref::<Loss>().copied()
+}
+
+#[test]
+fn a_failed_write_is_unsent() {
+    let (session, server) = pair_session(Duration::from_millis(20));
+    drop(server);
+    let error = session.write(&ClientMsg::Shutdown).unwrap_err();
+    assert_eq!(loss_of(error), Some(Loss::Unsent));
+}
+
+#[test]
+fn a_closed_read_is_unanswered() {
+    let (session, server) = pair_session(Duration::from_millis(20));
+    drop(server);
+    let error = session
+        .read_frame_with(&mut String::new(), None, || false)
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(loss_of(error), Some(Loss::Unanswered));
+}
+
+#[test]
+fn only_an_unsent_line_on_a_restored_attachment_is_resent() {
+    use AfterReconnect::{NotResent, Resend};
+    use Reattach::{FellBackToMain, Restored};
+    for (loss, reattach, expected) in [
+        (Loss::Unsent, Restored, Resend),
+        (Loss::Unsent, FellBackToMain, NotResent),
+        (Loss::Unanswered, Restored, NotResent),
+        (Loss::Unanswered, FellBackToMain, NotResent),
+    ] {
+        assert_eq!(after_reconnect(loss, reattach), expected);
+    }
+}
+
+#[test]
+fn a_thread_that_is_not_open_falls_back_to_main() {
+    let (session, mut server) = pair_session(Duration::from_millis(20));
+    *session.attached.borrow_mut() = Some("side".into());
+    let done = ServerMsg::Done {
+        message: "attached".into(),
+    };
+    let closed = ServerMsg::Error {
+        message: "side is not open".into(),
+    };
+    for (id, reply) in [&done, &closed, &done].into_iter().enumerate() {
+        server
+            .write_all(encode_frame(id as u64, reply).as_bytes())
+            .unwrap();
+    }
+    let reattach = session.reattach(|| false).unwrap();
+    assert_eq!(reattach, Some(Reattach::FellBackToMain));
+    assert_eq!(*session.attached.borrow(), None);
+    let sent: Vec<ClientMsg> = BufReader::new(server)
+        .lines()
+        .take(3)
+        .map(|line| decode_frame(&line.unwrap()).unwrap().body)
+        .collect();
+    let side = || "side".to_string();
     assert_eq!(
-        prompt_step(Signal::Success("hi".into()), true),
-        PromptStep::Exit
+        sent,
+        [
+            ClientMsg::Thread(ThreadCmd::Switch { name: side() }),
+            ClientMsg::Status {
+                thread: Some(side())
+            },
+            ClientMsg::Thread(ThreadCmd::Main),
+        ]
     );
 }
 

@@ -1,6 +1,5 @@
 use crate::chat::prompt::screen_columns;
 use crate::chat::queue::Queue;
-use crate::chat::switch::ChatExit;
 use crate::chat::term_loop::run_turn;
 use crate::highlight::ThemeConfig;
 use crate::inbox_alert;
@@ -15,11 +14,13 @@ use ralph_core::chat_status::{route_input, EmptySubmit, Route, Status};
 use ralph_core::chat_switch::SwitchTarget;
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::inbox_alert::{inbox_alert, AlertConfig};
+use ralph_core::program_resume::Departure;
 use ralph_core::program_status::{Phase, State};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{truncate_string, OutputBlock};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
 use ralph_core::worker::{blocked_notice, Attention, Report, ReportKind, Sender};
+use ralph_server::backoff::wait_unless;
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
@@ -43,6 +44,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(100);
+const DIAL_FIRST_DELAY: Duration = Duration::from_millis(250);
+const DIAL_DELAY_CAP: Duration = Duration::from_secs(5);
 
 #[derive(Debug, PartialEq)]
 enum Step {
@@ -245,16 +248,16 @@ fn wait_step(terminated: bool, cancelled: bool, sent: bool) -> WaitStep {
 enum PromptStep {
     Send(String),
     Continue,
-    Exit,
+    Exit(Departure),
 }
 
 fn prompt_step(signal: Signal, terminated: bool) -> PromptStep {
     if terminated {
-        return PromptStep::Exit;
+        return PromptStep::Exit(Departure::Restart);
     }
     match signal {
         Signal::Success(line) => PromptStep::Send(line),
-        Signal::CtrlD => PromptStep::Exit,
+        Signal::CtrlD => PromptStep::Exit(Departure::UserQuit),
         _ => PromptStep::Continue,
     }
 }
@@ -274,6 +277,152 @@ fn read_prompt_until<T>(
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DialStep {
+    Retry(Duration),
+    Fail,
+}
+
+fn dial_step(kind: io::ErrorKind, failures: u32) -> DialStep {
+    use io::ErrorKind::{
+        BrokenPipe, ConnectionRefused, ConnectionReset, NotConnected, NotFound, UnexpectedEof,
+    };
+    match kind {
+        NotFound | ConnectionRefused | UnexpectedEof | ConnectionReset | BrokenPipe
+        | NotConnected => DialStep::Retry(
+            DIAL_FIRST_DELAY
+                .saturating_mul(2u32.saturating_pow(failures))
+                .min(DIAL_DELAY_CAP),
+        ),
+        _ => DialStep::Fail,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Loss {
+    Unsent,
+    Unanswered,
+}
+
+impl fmt::Display for Loss {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ralph serve closed the connection")
+    }
+}
+
+impl Error for Loss {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reattach {
+    Restored,
+    FellBackToMain,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AfterReconnect {
+    Resend,
+    NotResent,
+}
+
+fn after_reconnect(loss: Loss, reattach: Reattach) -> AfterReconnect {
+    match (loss, reattach) {
+        (Loss::Unsent, Reattach::Restored) => AfterReconnect::Resend,
+        _ => AfterReconnect::NotResent,
+    }
+}
+
+fn try_read(
+    reader: &mut BufReader<UnixStream>,
+    line: &mut String,
+) -> Result<Option<ServerMsg>, Box<dyn Error>> {
+    match reader.read_line(line) {
+        Ok(0) => Err(Loss::Unanswered.into()),
+        Ok(_) if line.ends_with('\n') => {
+            let frame = decode_frame::<ServerMsg>(line.trim_end())?;
+            line.clear();
+            Ok(Some(frame.body))
+        }
+        Ok(_) => Ok(None),
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(e) if e.kind() == io::ErrorKind::ConnectionReset => Err(Loss::Unanswered.into()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn greet(
+    socket: &Path,
+    stop: impl Fn() -> bool,
+) -> Result<Option<BufReader<UnixStream>>, Box<dyn Error>> {
+    let mut stream = UnixStream::connect(socket)?;
+    stream.set_read_timeout(Some(POLL))?;
+    stream.write_all(encode_frame(1, &ClientMsg::Hello { proto: VERSION }).as_bytes())?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    while !stop() {
+        match try_read(&mut reader, &mut line)? {
+            Some(ServerMsg::Hello { .. }) => return Ok(Some(reader)),
+            Some(ServerMsg::Error { message }) => return Err(message.into()),
+            Some(_) => return Err("ralph serve did not answer the hello".into()),
+            None => {}
+        }
+    }
+    Ok(None)
+}
+
+enum Dialed<T> {
+    Up(T),
+    UserQuit,
+    Terminated,
+}
+
+fn error_kind(error: &(dyn Error + 'static)) -> Option<io::ErrorKind> {
+    if error.is::<Loss>() {
+        return Some(io::ErrorKind::UnexpectedEof);
+    }
+    error.downcast_ref::<io::Error>().map(io::Error::kind)
+}
+
+fn dial<T>(
+    socket: &Path,
+    mut attempt: impl FnMut(&dyn Fn() -> bool) -> Result<Option<T>, Box<dyn Error>>,
+) -> Result<Dialed<T>, Box<dyn Error>> {
+    let cancel = CancelToken::default();
+    let _armed = signal::arm(&cancel);
+    let stop = || cancel.is_cancelled() || signal::is_terminated();
+    let mut failures = 0;
+    while !stop() {
+        let error = match attempt(&stop) {
+            Ok(Some(up)) => return Ok(Dialed::Up(up)),
+            Ok(None) => continue,
+            Err(error) => error,
+        };
+        let step = error_kind(&*error).map_or(DialStep::Fail, |kind| dial_step(kind, failures));
+        let DialStep::Retry(delay) = step else {
+            return Err(error);
+        };
+        if failures == 0 {
+            notice(format!(
+                "waiting for ralph serve at {}. Ctrl-C quits.",
+                socket.display()
+            ));
+        }
+        failures = failures.saturating_add(1);
+        wait_unless(stop, delay);
+    }
+    Ok(if signal::is_terminated() {
+        Dialed::Terminated
+    } else {
+        Dialed::UserQuit
+    })
+}
+
 struct RemoteSession {
     socket: PathBuf,
     stream: RefCell<BufReader<UnixStream>>,
@@ -286,43 +435,40 @@ struct RemoteSession {
 }
 
 impl RemoteSession {
-    fn connect(
+    fn greeted(
         socket: &Path,
+        reader: BufReader<UnixStream>,
         sink: Box<dyn TurnSink>,
         alert: AlertConfig,
-    ) -> Result<Option<Self>, Box<dyn Error>> {
-        let stream = UnixStream::connect(socket)?;
-        stream.set_read_timeout(Some(POLL))?;
-        let session = Self {
+    ) -> Self {
+        Self {
             socket: socket.to_path_buf(),
-            stream: RefCell::new(BufReader::new(stream)),
-            next_id: Cell::new(1),
+            stream: RefCell::new(reader),
+            next_id: Cell::new(2),
             turns: Cell::new(0),
             attached: RefCell::new(None),
             sink,
             stdout_is_tty: io::stdout().is_terminal(),
             alert,
-        };
-        session.write(&ClientMsg::Hello { proto: VERSION })?;
-        let Some(reply) = session.read_reply()? else {
-            session.end_session();
-            return Ok(None);
-        };
-        match reply {
-            ServerMsg::Hello { .. } => Ok(Some(session)),
-            ServerMsg::Error { message } => Err(message.into()),
-            _ => Err("ralph serve did not answer the hello".into()),
         }
     }
 
     fn ask(&self, msg: &ClientMsg) -> Result<Option<ServerMsg>, Box<dyn Error>> {
-        self.write(msg)?;
-        self.read_reply()
+        self.ask_until(msg, signal::is_terminated)
     }
 
-    fn read_reply(&self) -> Result<Option<ServerMsg>, Box<dyn Error>> {
+    fn ask_until(
+        &self,
+        msg: &ClientMsg,
+        stop: impl Fn() -> bool,
+    ) -> Result<Option<ServerMsg>, Box<dyn Error>> {
+        self.write(msg)?;
+        self.read_reply(stop)
+    }
+
+    fn read_reply(&self, stop: impl Fn() -> bool) -> Result<Option<ServerMsg>, Box<dyn Error>> {
         loop {
-            let Some(msg) = self.read_frame(&mut String::new(), None)? else {
+            let Some(msg) = self.read_frame_with(&mut String::new(), None, &stop)? else {
                 return Ok(None);
             };
             if let Some(push) = read_push(&msg) {
@@ -331,6 +477,35 @@ impl RemoteSession {
                 return Ok(Some(msg));
             }
         }
+    }
+
+    fn reattach(&self, stop: impl Fn() -> bool) -> Result<Option<Reattach>, Box<dyn Error>> {
+        let Some(name) = self.attached.borrow().clone() else {
+            return Ok(Some(Reattach::Restored));
+        };
+        let switch = ClientMsg::Thread(ThreadCmd::Switch { name: name.clone() });
+        if self.ask_until(&switch, &stop)?.is_none() {
+            return Ok(None);
+        }
+        let status = ClientMsg::Status {
+            thread: Some(name.clone()),
+        };
+        match self.ask_until(&status, &stop)? {
+            None => return Ok(None),
+            Some(ServerMsg::Status { turns, .. }) => {
+                self.turns.set(turns);
+                return Ok(Some(Reattach::Restored));
+            }
+            Some(ServerMsg::Error { .. }) => {}
+            Some(_) => return Err("ralph serve did not answer the status request".into()),
+        }
+        let main = ClientMsg::Thread(ThreadCmd::Main);
+        if self.ask_until(&main, &stop)?.is_none() {
+            return Ok(None);
+        }
+        self.attached.take();
+        println!("thread {name} is not open, now on main. /thread open {name} opens it");
+        Ok(Some(Reattach::FellBackToMain))
     }
 
     fn show(&self, push: Push) {
@@ -407,12 +582,16 @@ impl RemoteSession {
         }
     }
 
-    fn write(&self, msg: &ClientMsg) -> io::Result<()> {
+    fn write(&self, msg: &ClientMsg) -> Result<(), Box<dyn Error>> {
         let id = self.next_id.replace(self.next_id.get() + 1);
         self.stream
             .borrow_mut()
             .get_mut()
             .write_all(encode_frame(id, msg).as_bytes())
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected => Loss::Unsent.into(),
+                _ => e.into(),
+            })
     }
 
     fn read_frame(
@@ -434,22 +613,8 @@ impl RemoteSession {
             if terminated() {
                 return Ok(None);
             }
-            match self.stream.borrow_mut().read_line(line) {
-                Ok(0) => return Err("ralph serve closed the connection".into()),
-                Ok(_) if line.ends_with('\n') => {
-                    let frame = decode_frame::<ServerMsg>(line.trim_end())?;
-                    line.clear();
-                    return Ok(Some(frame.body));
-                }
-                Ok(_) => {}
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::WouldBlock
-                            | io::ErrorKind::TimedOut
-                            | io::ErrorKind::Interrupted
-                    ) => {}
-                Err(e) => return Err(e.into()),
+            if let Some(msg) = try_read(&mut self.stream.borrow_mut(), line)? {
+                return Ok(Some(msg));
             }
             let (cancelled, sent) = match cancel.as_ref() {
                 Some((token, sent)) => (token.is_cancelled(), **sent),
@@ -549,8 +714,12 @@ impl SessionPort for RemoteSession {
     }
 
     fn end_session(&self) {
+        let closed = self.stream.borrow().get_ref().shutdown(Shutdown::Both);
         warn_if_err(
-            self.stream.borrow().get_ref().shutdown(Shutdown::Both),
+            closed.or_else(|e| match e.kind() {
+                io::ErrorKind::NotConnected => Ok(()),
+                _ => Err(e),
+            }),
             "Failed to close the connection",
         );
     }
@@ -629,34 +798,84 @@ fn handle(remote: &RemoteSession, line: &str) -> Result<Flow, Box<dyn Error>> {
     }
 }
 
-pub(super) fn run(socket: &Path, alert: AlertConfig) -> Result<ChatExit, Box<dyn Error>> {
+fn reconnect(remote: &RemoteSession) -> Result<Dialed<Reattach>, Box<dyn Error>> {
+    dial(&remote.socket, |stop| {
+        let Some(reader) = greet(&remote.socket, stop)? else {
+            return Ok(None);
+        };
+        *remote.stream.borrow_mut() = reader;
+        remote.reattach(stop)
+    })
+}
+
+fn deliver(remote: &RemoteSession, line: &str) -> Result<Option<Departure>, Box<dyn Error>> {
+    let mut resent = false;
+    loop {
+        let error = match settle(handle(remote, line)) {
+            Ok(Flow::Continue) => return Ok(None),
+            Ok(Flow::Exit) => return Ok(Some(Departure::Restart)),
+            Err(error) => error,
+        };
+        let Some(&seen) = error.downcast_ref::<Loss>() else {
+            return Err(error);
+        };
+        let reattach = match reconnect(remote)? {
+            Dialed::Up(reattach) => reattach,
+            Dialed::UserQuit => return Ok(Some(Departure::UserQuit)),
+            Dialed::Terminated => return Ok(Some(Departure::Restart)),
+        };
+        let loss = if resent { Loss::Unanswered } else { seen };
+        if after_reconnect(loss, reattach) == AfterReconnect::NotResent {
+            println!(
+                "{}",
+                match loss {
+                    Loss::Unsent => "reconnected, thread not open, not sent",
+                    Loss::Unanswered => "reply lost, not sent again",
+                }
+            );
+            return Ok(None);
+        }
+        println!("reconnected");
+        resent = true;
+    }
+}
+
+pub(super) fn run(socket: &Path, alert: AlertConfig) -> Result<Departure, Box<dyn Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     let theme = ThemeConfig::from_config_and_env();
     let sink = TerminalSink::new(None, &theme, screen_columns)?;
-    let Some(remote) = RemoteSession::connect(socket, Box::new(sink), alert)? else {
-        return Ok(ChatExit::Quit);
+    let reader = match dial(socket, |stop| greet(socket, stop))? {
+        Dialed::Up(reader) => reader,
+        Dialed::UserQuit => return Ok(Departure::UserQuit),
+        Dialed::Terminated => return Ok(Departure::Restart),
     };
+    let remote = RemoteSession::greeted(socket, reader, Box::new(sink), alert);
     if settle(remote.status_line().map(print_or_exit))? == Flow::Exit {
         remote.end_session();
-        return Ok(ChatExit::Quit);
+        return Ok(Departure::Restart);
     }
     let break_flag = Arc::new(AtomicBool::new(false));
     let _term_break = signal::arm_terminate(&break_flag);
     let mut editor = Reedline::create().with_break_signal(Arc::clone(&break_flag));
     let prompt = DefaultPrompt::default();
+    let mut departure = Departure::Restart;
     while let Some(sig) = read_prompt_until(|| editor.read_line(&prompt), signal::is_terminated)? {
         match prompt_step(sig, signal::is_terminated()) {
             PromptStep::Send(line) => {
-                if settle(handle(&remote, &line))? == Flow::Exit {
+                if let Some(how) = deliver(&remote, &line)? {
+                    departure = how;
                     break;
                 }
             }
             PromptStep::Continue => {}
-            PromptStep::Exit => break,
+            PromptStep::Exit(how) => {
+                departure = how;
+                break;
+            }
         }
     }
     remote.end_session();
-    Ok(ChatExit::Quit)
+    Ok(departure)
 }
 
 #[cfg(test)]

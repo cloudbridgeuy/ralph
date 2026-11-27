@@ -188,6 +188,19 @@ fn chat_terminal_status_defaults_on_and_can_be_disabled() {
 }
 
 #[test]
+fn chat_program_resume_defaults_on_and_can_be_disabled() {
+    assert!(AppConfig::new().chat.program_resume);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(&path, "[chat]\nprogram_resume = false\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(!config.chat.program_resume);
+    fs::write(&path, "[chat]\nedit_mode = \"vi\"\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(config.chat.program_resume);
+}
+
+#[test]
 fn chat_name_and_terminal_title_parse_with_defaults() {
     let defaults = AppConfig::new().chat;
     assert_eq!(defaults.name, None);
