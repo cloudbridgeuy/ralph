@@ -2,6 +2,7 @@ use super::*;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::{Report, ReportKind, WorkerId};
+use drive::{awaiting_report, hold};
 use signing::*;
 
 mod block;
@@ -321,7 +322,7 @@ fn start_sends_the_first_step_with_its_criterion() {
 fn a_turn_end_waits_on_the_step_criterion() {
     let run = spent(1, 0.5);
     for (step, next) in [
-        (0, Next::Hold("E1".to_string())),
+        (0, hold("E1")),
         (1, Next::Watch("gh pr checks --watch".to_string())),
         (2, Next::Check("cargo xtask lint".to_string())),
         (3, Next::Judge),
@@ -337,7 +338,7 @@ fn a_turn_end_waits_on_the_step_criterion() {
 fn caps_stop_at_a_turn_end_and_grants_lift_them() {
     let plan = plan();
     for (run, next) in [
-        (spent(3, 0.5), Next::Hold("E1".to_string())),
+        (spent(3, 0.5), hold("E1")),
         (spent(30, 0.5), Next::Stop(StopReason::TurnCap)),
         (spent(1, 4.0), Next::Stop(StopReason::CostCap)),
     ] {
@@ -347,7 +348,7 @@ fn caps_stop_at_a_turn_end_and_grants_lift_them() {
     granted.grants = vec![Grant::CostCap { usd: 10.0 }];
     assert_eq!(
         advance(&granted, at(0), Event::TurnEnded(&spent(1, 4.0))).1,
-        Next::Hold("E1".to_string())
+        hold("E1")
     );
     assert_eq!(
         advance(&granted, at(0), Event::TurnEnded(&spent(3, 1.0))).1,
@@ -519,7 +520,7 @@ fn ended(file: &RunFile) -> Ended<'_> {
         step_result: None,
         drained: &[],
         unread: &[],
-        answered: &[],
+        answered: Box::leak(Box::default()),
         watched: None,
         refused: None,
     }
@@ -557,18 +558,15 @@ fn a_step_turn_counts_its_cost_and_waits_on_the_criterion() {
     assert_eq!(
         ticked,
         Ticked {
-            driving: driving(0, Awaiting::Report("E1".to_string()), spent(2, 0.75)),
-            next: Next::Hold("E1".to_string()),
+            driving: driving(0, awaiting_report("E1"), spent(2, 0.75)),
+            next: hold("E1"),
             met: None,
             notice: None,
         }
     );
     let check = tick(&driving(2, Awaiting::Turn, Run::default()), &ended(&file));
     assert_eq!(check.next, Next::Check("cargo xtask lint".to_string()));
-    assert_eq!(
-        check.driving.awaiting,
-        Awaiting::Report("watch:send-it-3".to_string())
-    );
+    assert_eq!(check.driving.awaiting, Awaiting::check(2));
     let judge = tick(&driving(3, Awaiting::Turn, Run::default()), &ended(&file));
     assert_eq!(
         (judge.next, judge.driving.awaiting),
@@ -655,7 +653,7 @@ fn a_refused_tool_stops_the_run_before_any_other_turn_stop() {
 #[test]
 fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
     let file = approved(plan());
-    let state = driving(0, Awaiting::Report("E1".to_string()), Run::default());
+    let state = driving(0, awaiting_report("E1"), Run::default());
     let done = [worker_report("X9", "done"), worker_report("E1", "done")];
     let ticked = tick(
         &state,
@@ -671,7 +669,7 @@ fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
     );
     assert_eq!(
         (ticked.driving.progress, ticked.driving.awaiting),
-        (at(1), Awaiting::Report("watch:send-it-2".to_string()))
+        (at(1), Awaiting::check(1))
     );
     let other = [worker_report("X9", "done")];
     let held = tick(
@@ -681,17 +679,13 @@ fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
             ..ended(&file)
         },
     );
-    assert_eq!((held.next, held.met), (Next::Hold("E1".to_string()), None));
+    assert_eq!((held.next, held.met), (hold("E1"), None));
 }
 
 #[test]
 fn the_watched_outcome_settles_a_check_step() {
     let file = approved(plan());
-    let state = driving(
-        2,
-        Awaiting::Report("watch:send-it-3".to_string()),
-        Run::default(),
-    );
+    let state = driving(2, Awaiting::check(2), Run::default());
     let passed = WatchOutcome::Exited(0);
     let failed = WatchOutcome::Exited(2);
     for (watched, next) in [
@@ -710,11 +704,7 @@ fn the_watched_outcome_settles_a_check_step() {
 #[test]
 fn a_report_turn_that_settles_its_step_adds_cost_but_no_turn() {
     let file = approved(plan());
-    let state = driving(
-        2,
-        Awaiting::Report("watch:send-it-3".to_string()),
-        spent(1, 0.25),
-    );
+    let state = driving(2, Awaiting::check(2), spent(1, 0.25));
     let passed = WatchOutcome::Exited(0);
     let ticked = tick(
         &state,
@@ -732,7 +722,7 @@ fn a_settling_report_turn_one_below_the_turn_cap_still_sends() {
     let file = approved(plan());
     let done = [worker_report("E1", "done")];
     let ticked = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(29, 0.0)),
+        &driving(0, awaiting_report("E1"), spent(29, 0.0)),
         &Ended {
             drained: &done,
             ..ended(&file)
@@ -746,11 +736,7 @@ fn a_settling_report_turn_one_below_the_turn_cap_still_sends() {
 fn a_report_turn_that_settles_nothing_counts() {
     let file = approved(plan());
     let ticked = tick(
-        &driving(
-            2,
-            Awaiting::Report("watch:send-it-3".to_string()),
-            spent(1, 0.25),
-        ),
+        &driving(2, Awaiting::check(2), spent(1, 0.25)),
         &ended(&file),
     );
     assert_eq!(ticked.next, Next::Check("cargo xtask lint".to_string()));
@@ -762,7 +748,7 @@ fn caps_stop_before_a_send_but_not_before_the_finish() {
     let file = approved(plan());
     let done = [worker_report("E1", "done")];
     let capped = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(30, 0.0)),
+        &driving(0, awaiting_report("E1"), spent(30, 0.0)),
         &Ended {
             drained: &done,
             ..ended(&file)

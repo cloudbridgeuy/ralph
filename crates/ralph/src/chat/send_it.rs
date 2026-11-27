@@ -161,7 +161,11 @@ fn route(send_it: &SendIt, ticked: Ticked, monitor: &Monitor) -> Driven {
             }
             None => stopped(send_it, StopReason::PlanChanged(None), &driving),
         },
-        Next::Hold(worker) => Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None),
+        Next::Hold(worker) => Driven::keep(
+            driving,
+            Route::Hold(HoldFilter::Source(worker.to_string())),
+            None,
+        ),
         Next::Watch(command) | Next::Check(command) => {
             if let Some(plan) = &plan {
                 send_it.show(running_line(plan, &driving));

@@ -16,8 +16,9 @@ use ralph_core::chat_send_it::{
     Ticked, Trust,
 };
 use ralph_core::watch::WatchOutcome;
-use ralph_core::worker::{hex_encode, Report};
+use ralph_core::worker::{hex_encode, Report, Sender};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -51,7 +52,7 @@ pub struct SendIt {
     live: Arc<Mutex<Option<String>>>,
     refused: Arc<Mutex<Option<String>>>,
     judged: Arc<Mutex<Option<StepResult>>>,
-    answered: Arc<Mutex<Vec<String>>>,
+    answered: Arc<Mutex<HashSet<Sender>>>,
     out: Out,
 }
 
@@ -124,8 +125,8 @@ impl SendIt {
         *locked(&self.refused) = Some(tool);
     }
 
-    pub fn answer(&self, worker: String) {
-        locked(&self.answered).push(worker);
+    pub fn answer(&self, worker: Sender) {
+        locked(&self.answered).insert(worker);
     }
 
     pub fn record(&self, result: StepResult) {

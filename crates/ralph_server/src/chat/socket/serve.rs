@@ -24,7 +24,7 @@ use ralph_core::schedule_request::{
 };
 use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
-use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command};
+use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command, Sender};
 use serde_json::Value;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -314,7 +314,11 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
             }
             workers
                 .reply(id, text, *interrupt, request.as_deref())
-                .inspect(|_| send_it.answer(id.clone()))
+                .inspect(|_| {
+                    if let Ok(sender) = Sender::parse(id) {
+                        send_it.answer(sender);
+                    }
+                })
         }
         Command::Close { id, abandon, force } => {
             workers.close(id, *abandon, *force).inspect(|_| {

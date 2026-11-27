@@ -65,7 +65,7 @@ fn a_judged_met_step_keeps_its_evidence_and_a_later_plain_met_step_drops_it() {
     );
     let report = [worker_report("E1", "done")];
     let plain_met = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(1, 0.1)),
+        &driving(0, awaiting_report("E1"), spent(1, 0.1)),
         &Ended {
             drained: &report,
             ..ended(&file)

@@ -91,7 +91,7 @@ fn the_final_met_line_is_not_shown_when_the_run_is_done() {
     assert!(finished.met.is_some());
     assert_eq!(finished.shown_met(), None);
     let mid = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(1, 0.1)),
+        &driving(0, awaiting_report("E1"), spent(1, 0.1)),
         &Ended {
             drained: &[worker_report("E1", "done")],
             ..ended(&file)

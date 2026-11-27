@@ -1,5 +1,8 @@
 use super::*;
-use crate::worker::{branch_name, worktree_for_branch, ReportKind, ReportStatus, WorkerId};
+use crate::worker::{
+    branch_name, worktree_for_branch, ReportKind, ReportStatus, WatchId, WorkerId,
+};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +44,7 @@ pub enum Event<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Next {
     Send(String),
-    Hold(String),
+    Hold(WorkerId),
     Watch(String),
     Check(String),
     Judge,
@@ -115,7 +118,7 @@ pub fn step_line(plan: &RunPlan, index: usize, step: &Step) -> String {
 
 fn wait_on(criterion: &Criterion) -> Next {
     match criterion {
-        Criterion::WorkerDone { worker, .. } => Next::Hold(worker.to_string()),
+        Criterion::WorkerDone { worker, .. } => Next::Hold(worker.clone()),
         Criterion::WatchPasses { command } => Next::Watch(command.clone()),
         Criterion::CheckPasses { command } => Next::Check(command.clone()),
         Criterion::Judge { .. } => Next::Judge,
@@ -250,7 +253,13 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
 pub enum Awaiting {
     Turn,
     Verdict,
-    Report(String),
+    Report(Sender),
+}
+
+impl Awaiting {
+    pub fn check(step: usize) -> Self {
+        Awaiting::Report(Sender::Watch(WatchId::check(step)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -274,7 +283,7 @@ pub struct Ended<'a> {
     pub step_result: Option<&'a StepResult>,
     pub drained: &'a [Report],
     pub unread: &'a [Report],
-    pub answered: &'a [String],
+    pub answered: &'a HashSet<Sender>,
     pub watched: Option<&'a WatchOutcome>,
     pub refused: Option<&'a str>,
 }
@@ -347,8 +356,8 @@ pub fn resolve_check(
 fn awaiting(next: &Next, progress: Progress) -> Awaiting {
     match next {
         Next::Judge => Awaiting::Verdict,
-        Next::Hold(worker) => Awaiting::Report(worker.clone()),
-        Next::Watch(_) | Next::Check(_) => Awaiting::Report(check_watch_id(progress.step)),
+        Next::Hold(worker) => Awaiting::Report(Sender::Worker(worker.clone())),
+        Next::Watch(_) | Next::Check(_) => Awaiting::check(progress.step),
         _ => Awaiting::Turn,
     }
 }
@@ -363,7 +372,7 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
                 done_reported(plan, progress, &step.criterion)
             }
             known if known.is_some() || seen.running.iter().any(|id| id == worker.as_str()) => {
-                (progress, Next::Hold(worker.to_string()))
+                (progress, Next::Hold(worker.clone()))
             }
             _ => advance(plan, progress, Event::Start),
         },
@@ -471,7 +480,7 @@ fn unanswered_flag<'a>(ended: &Ended<'a>, file: &RunFile) -> Option<&'a Report> 
                 .drained
                 .iter()
                 .filter(|report| flagged(report))
-                .find(|report| !(may_reply && ended.answered.contains(&report.from.to_string())))
+                .find(|report| !(may_reply && ended.answered.contains(&report.from)))
         })
 }
 
@@ -525,7 +534,7 @@ fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
                 ended
                     .drained
                     .iter()
-                    .filter(|report| report.from.to_string() == *source && !flagged(report))
+                    .filter(|report| report.from == *source && !flagged(report))
                     .map(Event::Report),
             )
             .collect(),
@@ -604,7 +613,7 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
 }
 
 pub fn awaits_check(driving: &Driving) -> bool {
-    matches!(&driving.awaiting, Awaiting::Report(source) if is_check_watch_id(source))
+    matches!(&driving.awaiting, Awaiting::Report(Sender::Watch(id)) if is_check_watch_id(id.as_str()))
 }
 
 pub fn settle_check(
