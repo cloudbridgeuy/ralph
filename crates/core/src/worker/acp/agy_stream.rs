@@ -66,6 +66,54 @@ pub fn agy_stream_events(event: &AgyEvent) -> Vec<StreamEvent> {
     }
 }
 
+#[derive(Default)]
+pub struct AgyStream {
+    held: String,
+}
+
+impl AgyStream {
+    pub fn events(&mut self, event: &AgyEvent) -> Vec<StreamEvent> {
+        if let AgyEvent::Update(update) = event {
+            if update["sessionUpdate"].as_str() == Some("agent_message_chunk") {
+                return self.hold(update["content"]["text"].as_str().unwrap_or_default());
+            }
+        }
+        let breaks_text = match event {
+            AgyEvent::Update(update) => matches!(
+                update["sessionUpdate"].as_str(),
+                Some("tool_call" | "tool_call_update")
+            ),
+            AgyEvent::Done { .. } => true,
+        };
+        let mut events = if breaks_text {
+            self.release()
+        } else {
+            Vec::new()
+        };
+        events.extend(agy_stream_events(event));
+        events
+    }
+
+    fn hold(&mut self, text: &str) -> Vec<StreamEvent> {
+        self.held.push_str(text);
+        let Some(end) = self.held.rfind('\n') else {
+            return Vec::new();
+        };
+        let mut ready: String = self.held.drain(..=end).collect();
+        ready.pop();
+        vec![assistant(ContentBlock::Text { text: ready })]
+    }
+
+    fn release(&mut self) -> Vec<StreamEvent> {
+        if self.held.is_empty() {
+            return Vec::new();
+        }
+        vec![assistant(ContentBlock::Text {
+            text: std::mem::take(&mut self.held),
+        })]
+    }
+}
+
 fn update_events(update: &Value) -> Vec<StreamEvent> {
     match update["sessionUpdate"].as_str() {
         Some("agent_message_chunk") => update["content"]["text"]
@@ -301,5 +349,57 @@ mod tests {
     fn usage_update_without_used_is_ignored() {
         let update = json!({"sessionUpdate": "usage_update", "size": 1000000});
         assert!(agy_stream_events(&AgyEvent::Update(&update)).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    fn text_of(events: Vec<StreamEvent>) -> Vec<String> {
+        events
+            .into_iter()
+            .flat_map(|event| match event {
+                StreamEvent::Assistant(assistant) => assistant.message.content,
+                other => panic!("{other:?}"),
+            })
+            .map(|block| match block {
+                ContentBlock::Text { text } => text,
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    fn chunk(text: &str) -> Value {
+        json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
+    }
+
+    #[test]
+    fn a_partial_line_waits_for_its_end() {
+        let mut stream = AgyStream::default();
+        assert!(stream.events(&AgyEvent::Update(&chunk("PING-"))).is_empty());
+        let ready = stream.events(&AgyEvent::Update(&chunk("1\nrest")));
+        assert_eq!(text_of(ready), ["PING-1"]);
+    }
+
+    #[test]
+    fn a_tool_call_releases_the_held_line() {
+        let mut stream = AgyStream::default();
+        stream.events(&AgyEvent::Update(&chunk("done")));
+        let call = json!({"sessionUpdate": "tool_call", "toolCallId": "t1", "name": "Read"});
+        let events = stream.events(&AgyEvent::Update(&call));
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert_eq!(text_of(events[..1].to_vec()), ["done"]);
+    }
+
+    #[test]
+    fn a_usage_update_keeps_the_line_open() {
+        let mut stream = AgyStream::default();
+        stream.events(&AgyEvent::Update(&chunk("inter")));
+        let usage = json!({"sessionUpdate": "usage_update", "used": 5});
+        let events = stream.events(&AgyEvent::Update(&usage));
+        assert!(text_of(events).is_empty());
+        let ready = stream.events(&AgyEvent::Update(&chunk("rupt\n")));
+        assert_eq!(text_of(ready), ["interrupt"]);
     }
 }
