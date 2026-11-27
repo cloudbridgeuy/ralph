@@ -8,11 +8,12 @@ const PR_PROVIDER_VALUES: &[&str] = &["github", "none"];
 const WORD_MAX: usize = 24;
 const NAME_MAX: usize = 40;
 const NUMBER_MAX: usize = 12;
-const GRAMMAR_KEY_PREFIXES: [&str; 4] = [
+const GRAMMAR_KEY_PREFIXES: [&str; 5] = [
     "theme.",
     "mermaid.style.colors.",
     "mermaid.style.config.",
     "wire.prices.",
+    "tickets.",
 ];
 const COLOUR_FUNCTIONS: [&str; 4] = ["rgb", "rgba", "hsl", "hsla"];
 
@@ -459,5 +460,13 @@ mod tests {
         assert_eq!(key_class("theme.assistant.heading1"), Class::Colour);
         assert_eq!(key_class("theme.agent.border"), Class::Colour);
         assert_eq!(key_class("theme.agent.codex"), Class::Colour);
+    }
+
+    #[test]
+    fn ticket_provider_keys_use_the_shared_key_check() {
+        assert!(key_shape_ok("tickets.linear"));
+        assert!(key_shape_ok("tickets.jira"));
+        assert!(!key_shape_ok(&format!("tickets.{GHP}")));
+        assert!(!key_shape_ok("tickets.my secret words"));
     }
 }

@@ -879,3 +879,15 @@ fn secrets_in_code_theme_fields_stay_redacted() {
         );
     }
 }
+
+#[test]
+fn opaque_ticket_keys_are_redacted_and_masked() {
+    for key in [
+        format!("tickets.{KEY_GHP}"),
+        "tickets.my secret words".to_string(),
+    ] {
+        assert!(redacts(&key, &json!(["GUZ"]), false), "{key}");
+        assert_eq!(mask_key(&key), "tickets.[redacted]", "{key}");
+    }
+    assert_eq!(mask_key("tickets.linear"), "tickets.linear");
+}
