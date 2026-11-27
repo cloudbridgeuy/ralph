@@ -83,27 +83,6 @@ pub fn culprit_path<'a, E: PartialEq>(
         .map_or(fallback, |(path, _)| path)
 }
 
-const SECURITY_KEYS: [&str; 18] = [
-    "chat.claude.permission_mode",
-    "chat.permissions",
-    "chat.mcp_servers",
-    "chat.user_settings",
-    "chat.prompt_file",
-    "chat.append_prompt_files",
-    "chat.skills",
-    "agy.permissions",
-    "codex.permissions",
-    "codex.sandbox",
-    "cursor.permissions",
-    "claude.permissions",
-    "claude.config_dir",
-    "chat.editor",
-    "chat.user_claude_md",
-    "chat.empty_prompt",
-    "changes.diff_args",
-    "usage.ledger",
-];
-
 pub fn removed_permission_mode(layer: &Table) -> Option<&'static str> {
     ["ask", "chat"].into_iter().find(|section| {
         layer
@@ -111,16 +90,6 @@ pub fn removed_permission_mode(layer: &Table) -> Option<&'static str> {
             .and_then(Value::as_table)
             .is_some_and(|table| table.contains_key("permission_mode"))
     })
-}
-
-pub fn security_keys(layer: &Table) -> Vec<&'static str> {
-    SECURITY_KEYS
-        .into_iter()
-        .filter(|key| {
-            let path: Vec<String> = key.split('.').map(str::to_string).collect();
-            lookup(layer, &path).is_some()
-        })
-        .collect()
 }
 
 fn lookup<'a>(table: &'a Table, path: &[String]) -> Option<&'a Value> {
@@ -297,70 +266,6 @@ mod tests {
             culprit_path(&[], Path::new("/f"), &"x".to_string(), error_by_key),
             Path::new("/f")
         );
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_chat_permissions() {
-        let layer = table("[chat]\npermissions = \"yolo\"\n");
-        assert_eq!(security_keys(&layer), ["chat.permissions"]);
-    }
-
-    #[test]
-    fn security_keys_finds_each_listed_key() {
-        for key in SECURITY_KEYS {
-            let (section, leaf) = key.split_once('.').unwrap();
-            let layer = table(&format!("[{section}]\n{leaf} = 1\n"));
-            assert_eq!(security_keys(&layer), [key]);
-        }
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_codex_sandbox() {
-        let layer = table("[codex]\nsandbox = \"danger-full-access\"\n");
-        assert_eq!(security_keys(&layer), ["codex.sandbox"]);
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_claude_config_dir() {
-        let layer = table("[claude]\nconfig_dir = \"/x\"\n");
-        assert_eq!(security_keys(&layer), ["claude.config_dir"]);
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_changes_diff_args() {
-        let layer = table("[changes]\ndiff_args = [\"--stat\"]\n");
-        assert_eq!(security_keys(&layer), ["changes.diff_args"]);
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_chat_empty_prompt() {
-        let layer = table("[chat]\nempty_prompt = \"go on\"\n");
-        assert_eq!(security_keys(&layer), ["chat.empty_prompt"]);
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_chat_user_claude_md() {
-        let layer = table("[chat]\nuser_claude_md = true\n");
-        assert_eq!(security_keys(&layer), ["chat.user_claude_md"]);
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_chat_editor() {
-        let layer = table("[chat]\neditor = [\"vim\"]\n");
-        assert_eq!(security_keys(&layer), ["chat.editor"]);
-    }
-
-    #[test]
-    fn security_keys_flags_a_store_usage_ledger() {
-        let layer = table("[usage]\nledger = \"/data/usage.jsonl\"\n");
-        assert_eq!(security_keys(&layer), ["usage.ledger"]);
-    }
-
-    #[test]
-    fn security_keys_ignores_other_keys_and_empty_tables() {
-        assert!(security_keys(&Table::new()).is_empty());
-        let layer = table("theme = 1\n[chat]\nwrap_width = 1\n[codex]\nmodel = \"x\"\n");
-        assert!(security_keys(&layer).is_empty());
     }
 
     #[test]

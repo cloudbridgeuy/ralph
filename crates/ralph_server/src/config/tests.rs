@@ -731,22 +731,14 @@ fn valid_store_has_no_notice() {
 }
 
 #[test]
-fn store_security_key_yields_a_notice() {
+fn store_prompt_files_and_skills_yield_no_notice() {
     let (_dir, global, store) = layer_files(
         "",
-        "[chat.claude]\npermission_mode = \"bypassPermissions\"\n",
+        "[chat]\nappend_prompt_files = [\"a.md\"]\nskills = [\"s\"]\n",
     );
     let (result, notices) = AppConfig::load_from(&global, Some(&store));
-    assert!(result.is_ok());
-    assert_eq!(notices.len(), 1);
-    assert_eq!(notices[0].key, "security:chat.claude.permission_mode");
-    assert_eq!(
-        notices[0].message,
-        format!(
-            "store config {} sets chat.claude.permission_mode; check it before you trust this store",
-            store.display()
-        )
-    );
+    assert_eq!(result.unwrap().chat.skills.len(), 1);
+    assert_eq!(notices, []);
 }
 
 #[test]
@@ -796,7 +788,7 @@ fn store_bad_claude_shell_keeps_store_keys() {
 }
 
 #[test]
-fn agy_permissions_are_known_and_security_sensitive() {
+fn agy_permissions_are_known() {
     let text = "[agy]\npermissions = \"yolo\"\n";
     let parsed = AppConfig::parse_reporting_unknown(text, "config.toml");
     assert!(parsed.is_ok());
@@ -808,10 +800,6 @@ fn agy_permissions_are_known_and_security_sensitive() {
     assert!(table.is_ok());
     let Ok(table) = table else { return };
     assert_eq!(table["agy"]["permissions"].as_str(), Some("yolo"));
-    let parsed = text.parse::<toml::Table>();
-    assert!(parsed.is_ok());
-    let Ok(parsed) = parsed else { return };
-    assert!(super::layers::security_keys(&parsed).contains(&"agy.permissions"));
 }
 
 #[test]
