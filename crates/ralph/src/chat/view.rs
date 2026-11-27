@@ -7,6 +7,7 @@ use ralph_core::chat_view::{rebase_images, view_refusal, FileKind, ViewArgs, MAX
 use ralph_core::chunk::{ChunkType, ParsedChunk};
 use ralph_core::kitty::ASSUMED_CELL_PX;
 use ralph_core::mermaid_fit::Room;
+use ralph_core::sanitize::strip_controls;
 use ralph_server::disk_files::resolve;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -69,7 +70,7 @@ fn load(path: &Path) -> Result<(String, PathBuf), String> {
         .map_err(cannot)?;
     let absolute = std::path::absolute(path).map_err(cannot)?;
     let dir = absolute.parent().map(Path::to_path_buf).unwrap_or_default();
-    Ok((text, dir))
+    Ok((strip_controls(&text).into_owned(), dir))
 }
 
 #[cfg(test)]
@@ -96,6 +97,25 @@ mod tests {
         let (rust, _) = walked.split_once("── sh ").unwrap();
         assert!(rust.contains("\x1b[38;"), "{rust:?}");
         assert!(!rust.contains("fn main() {}"), "{rust:?}");
+    }
+
+    fn loaded(source: &str) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.md");
+        std::fs::write(&path, source).unwrap();
+        load(&path).unwrap().0
+    }
+
+    #[test]
+    fn a_viewed_file_loses_its_control_bytes() {
+        let text = loaded("a\x1b]0;t\x07b\r\n\tc\u{9b}2J\x7f\n");
+        assert_eq!(text, "a]0;tb\n\tc2J\n");
+    }
+
+    #[test]
+    fn text_after_an_unfinished_escape_stays() {
+        let text = loaded("head\x1b_Gunfinished\n\ntail\n");
+        assert!(text.ends_with("unfinished\n\ntail\n"), "{text:?}");
     }
 
     #[test]
