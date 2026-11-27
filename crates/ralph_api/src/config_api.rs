@@ -565,4 +565,54 @@ mod tests {
             assert!(!raw.contains(leak), "{config}: {raw}");
         }
     }
+
+    #[test]
+    fn opaque_map_keys_never_reach_the_body() {
+        for (config, leak, section) in [
+            (
+                "[theme.status]\n\"ghp_AbCdEf0123456789AbCdEf0123456789abcd\" = \"red\"\n",
+                "ghp_AbCdEf",
+                "theme",
+            ),
+            (
+                "[mermaid.style.colors]\n\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b\" = \"#fff\"\n",
+                "9f86d081",
+                "mermaid",
+            ),
+            (
+                "[mermaid.style.config.x]\n\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b.a1b2c3d4e5f60718293a4b5c6d7e8f9012345678\" = 1\n",
+                "a1b2c3d4",
+                "mermaid",
+            ),
+            (
+                "[theme.status]\n\"QWERTYUIOPASDFGHJKLZXCVBNMQWERTYUIOPASDF\" = \"red\"\n",
+                "QWERTYUIOP",
+                "theme",
+            ),
+        ] {
+            assert_key_absent_and_masked(config, leak, section);
+        }
+    }
+
+    #[test]
+    fn opaque_keys_and_values_inside_an_array_of_tables_never_reach_the_body() {
+        for (config, leak) in [
+            (
+                "[[mermaid.style.config.arr]]\n\"ghp_AbCdEf0123456789AbCdEf0123456789abcd\" = 1\n",
+                "ghp_AbCdEf",
+            ),
+            (
+                "[[mermaid.style.config.arr]]\nnote = \"AbCdEf0123456789AbCdEf0123456789abcd\"\n",
+                "AbCdEf0123",
+            ),
+        ] {
+            let (g, s) = setup(None, Some(config));
+            let response = respond(&g, &s, no_env);
+            let raw = text(&response);
+            assert!(!raw.contains(leak), "{config}: {raw}");
+            let array = row(&body(&response), "mermaid", "style.config.arr").clone();
+            assert_eq!(array["redacted"], true, "{raw}");
+            assert_eq!(array["value"], "[redacted]", "{raw}");
+        }
+    }
 }

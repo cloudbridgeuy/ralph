@@ -8,9 +8,12 @@ const PR_PROVIDER_VALUES: &[&str] = &["github", "none"];
 const WORD_MAX: usize = 24;
 const NAME_MAX: usize = 40;
 const NUMBER_MAX: usize = 12;
-const KEY_MAX: usize = 40;
-const GRAMMAR_KEY_PREFIXES: [&str; 3] =
-    ["theme.", "mermaid.style.colors.", "mermaid.style.config."];
+const GRAMMAR_KEY_PREFIXES: [&str; 4] = [
+    "theme.",
+    "mermaid.style.colors.",
+    "mermaid.style.config.",
+    "wire.prices.",
+];
 const COLOUR_FUNCTIONS: [&str; 4] = ["rgb", "rgba", "hsl", "hsla"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,14 +105,6 @@ pub fn is_ident(text: &str) -> bool {
     !text.is_empty() && charset::text_ok(PLAIN, text)
 }
 
-pub fn is_key_ident(text: &str) -> bool {
-    !text.is_empty()
-        && text.len() <= KEY_MAX
-        && text
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-}
-
 fn is_plain_number(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= NUMBER_MAX
@@ -140,19 +135,16 @@ pub fn value_shape_ok(class: Class, value: &Value) -> bool {
         Value::Array(items) => items.iter().all(|item| value_shape_ok(class, item)),
         Value::Object(map) => map
             .iter()
-            .all(|(key, item)| is_key_ident(key) && value_shape_ok(class, item)),
+            .all(|(key, item)| is_ident(key) && value_shape_ok(class, item)),
         _ => true,
     }
 }
 
 pub fn key_shape_ok(key: &str) -> bool {
-    if let Some(rest) = key.strip_prefix("wire.prices.") {
-        return !rest.split('.').any(str::is_empty) && charset::text_ok(PLAIN, rest);
-    }
     GRAMMAR_KEY_PREFIXES
         .iter()
         .find_map(|prefix| key.strip_prefix(prefix))
-        .is_none_or(|rest| rest.split('.').all(is_key_ident))
+        .is_none_or(|rest| !rest.split('.').any(str::is_empty) && is_ident(rest))
 }
 
 fn is_variable_start(c: char) -> bool {
@@ -354,13 +346,13 @@ mod tests {
             "theme.status.my password is hunter2",
             "mermaid.style.config.flowchart.correct horse battery staple",
             "mermaid.style.colors.a\"b",
-            "mermaid.style.colors.ghp:x",
             "mermaid.style.colors.",
         ] {
             assert!(!key_shape_ok(key), "{key}");
         }
-        assert!(!key_shape_ok(&format!("theme.status.{}", "a".repeat(41))));
-        assert!(key_shape_ok(&format!("theme.status.{}", "a".repeat(40))));
+        assert!(!key_shape_ok(&format!("theme.status.{}", "a".repeat(25))));
+        assert!(key_shape_ok(&format!("theme.status.{}", "a".repeat(24))));
+        assert!(key_shape_ok("mermaid.style.colors.ghp:x"));
     }
 
     #[test]
@@ -391,5 +383,71 @@ mod tests {
         ] {
             assert!(!text_has_path_shape(text), "{text}");
         }
+    }
+
+    const GHP: &str = "ghp_AbCdEf0123456789AbCdEf0123456789abcd";
+    const HEX40: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b";
+    const LETTERS40: &str = "QWERTYUIOPASDFGHJKLZXCVBNMQWERTYUIOPASDF";
+
+    #[test]
+    fn opaque_row_key_segments_are_not_key_shaped() {
+        for key in [
+            format!("theme.status.{GHP}"),
+            format!("mermaid.style.colors.{HEX40}"),
+            format!("mermaid.style.config.x.{HEX40}.{HEX40}"),
+            format!("theme.status.{LETTERS40}"),
+            format!("wire.prices.{GHP}.input"),
+        ] {
+            assert!(!key_shape_ok(&key), "{key}");
+        }
+    }
+
+    #[test]
+    fn opaque_object_keys_fail_at_any_depth() {
+        for value in [
+            json!({ GHP: 1 }),
+            json!([{ GHP: 1 }]),
+            json!({"a": [{"b": {HEX40: "x"}}]}),
+            json!([{ LETTERS40: 1 }]),
+        ] {
+            assert!(!value_shape_ok(Class::Free, &value), "{value}");
+            assert!(!value_shape_ok(Class::Colour, &value), "{value}");
+        }
+    }
+
+    #[test]
+    fn real_keys_stay_key_shaped() {
+        for key in [
+            "theme.status.base_bg",
+            "theme.assistant.code",
+            "theme.diff.add_fg",
+            "mermaid.style.colors.accent",
+            "mermaid.style.config.flowchart.nodeSpacing",
+            "mermaid.style.config.themeVariables.fontSize",
+            "wire.prices.claude-opus-4-1-20250805.input",
+            "wire.prices.gpt-4o-2024-08-06.output",
+            "wire.prices.gpt-4.1-mini.input",
+            "wire.prices.o3-mini-2025-01-31.input",
+        ] {
+            assert!(key_shape_ok(key), "{key}");
+        }
+        assert!(value_shape_ok(
+            Class::Free,
+            &json!([{"flowchart": {"font_size": 14}}])
+        ));
+    }
+
+    #[test]
+    fn a_dotted_key_counts_as_one_string_against_the_cap() {
+        let sixty_four = format!("{}-", ["xyz"; 16].join("-"));
+        assert_eq!(sixty_four.len(), 64);
+        assert!(key_shape_ok(&format!("mermaid.style.colors.{sixty_four}")));
+        assert!(!key_shape_ok(&format!(
+            "mermaid.style.colors.{sixty_four}x"
+        )));
+        let dotted = ["abcdefghijklmnopqrst"; 3].join(".");
+        assert_eq!(dotted.len(), 62);
+        assert!(key_shape_ok(&format!("mermaid.style.config.{dotted}")));
+        assert!(!key_shape_ok(&format!("mermaid.style.config.{dotted}.ab")));
     }
 }

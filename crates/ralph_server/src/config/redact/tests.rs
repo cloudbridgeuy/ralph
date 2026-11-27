@@ -807,3 +807,53 @@ fn unlisted_keys_fail_closed() {
     assert_eq!(listing("novel.setting"), Listing::Unlisted);
     assert!(redacts("novel.setting", &json!(1), false));
 }
+
+const KEY_GHP: &str = "ghp_AbCdEf0123456789AbCdEf0123456789abcd";
+const KEY_HEX: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b";
+const KEY_LETTERS: &str = "QWERTYUIOPASDFGHJKLZXCVBNMQWERTYUIOPASDF";
+
+#[test]
+fn opaque_row_keys_are_redacted_and_masked() {
+    for key in [
+        format!("theme.status.{KEY_GHP}"),
+        format!("mermaid.style.colors.{KEY_HEX}"),
+        format!("mermaid.style.config.x.{KEY_HEX}.{KEY_HEX}"),
+        format!("theme.status.{KEY_LETTERS}"),
+    ] {
+        assert!(redacts(&key, &json!("red"), false), "{key}");
+        let masked = mask_key(&key);
+        assert!(masked.ends_with(REDACTED), "{key}");
+        assert!(
+            !masked.contains("AbCdEf") && !masked.contains("9f86"),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn opaque_object_keys_in_arrays_and_tables_are_redacted() {
+    for value in [
+        json!([{ KEY_GHP: 1 }]),
+        json!({"a": [{"b": { KEY_HEX: 1 }}]}),
+        json!([{ KEY_LETTERS: "red" }]),
+    ] {
+        assert!(
+            redacts("mermaid.style.config.arr", &value, false),
+            "{value}"
+        );
+    }
+    assert!(redacts(
+        "mermaid.style.config.arr",
+        &json!([{ KEY_GHP: 1 }]),
+        false
+    ));
+}
+
+#[test]
+fn real_object_keys_in_arrays_stay_visible() {
+    assert!(!redacts(
+        "mermaid.style.config.arr",
+        &json!([{"flowchart": {"font_size": 14, "curve": "basis"}}]),
+        false
+    ));
+}

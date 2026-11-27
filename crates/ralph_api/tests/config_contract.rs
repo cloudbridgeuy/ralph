@@ -349,3 +349,66 @@ fn config_upper_case_secret_flags_are_absent_from_the_http_body() {
         assert!(!reply.body.contains(leak), "{config}: {}", reply.body);
     }
 }
+
+#[test]
+fn config_opaque_map_keys_are_absent_from_the_http_body() {
+    for (config, leak, section) in [
+        (
+            "[theme.status]\n\"ghp_AbCdEf0123456789AbCdEf0123456789abcd\" = \"red\"\n",
+            "ghp_AbCdEf",
+            "theme",
+        ),
+        (
+            "[mermaid.style.colors]\n\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b\" = \"#fff\"\n",
+            "9f86d081",
+            "mermaid",
+        ),
+        (
+            "[mermaid.style.config.x]\n\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b.a1b2c3d4e5f60718293a4b5c6d7e8f9012345678\" = 1\n",
+            "a1b2c3d4",
+            "mermaid",
+        ),
+    ] {
+        let server = TestServer::start_with_store(|dir| write_config(dir, config));
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert!(!reply.body.contains(leak), "{}", reply.body);
+        let masked = json_of(&reply)["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["section"] == section && row["key"] == "[redacted-1]")
+            .unwrap()
+            .clone();
+        assert_eq!(masked["redacted"], true, "{}", reply.body);
+        assert_eq!(masked["value"], "[redacted]", "{}", reply.body);
+    }
+}
+
+#[test]
+fn config_opaque_keys_and_values_in_an_array_of_tables_are_absent_from_the_http_body() {
+    for (config, leak) in [
+        (
+            "[[mermaid.style.config.arr]]\n\"ghp_AbCdEf0123456789AbCdEf0123456789abcd\" = 1\n",
+            "ghp_AbCdEf",
+        ),
+        (
+            "[[mermaid.style.config.arr]]\nnote = \"AbCdEf0123456789AbCdEf0123456789abcd\"\n",
+            "AbCdEf0123",
+        ),
+    ] {
+        let server = TestServer::start_with_store(|dir| write_config(dir, config));
+        let reply = get(&server);
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert!(!reply.body.contains(leak), "{}", reply.body);
+        let array = json_of(&reply)["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["section"] == "mermaid" && row["key"] == "style.config.arr")
+            .unwrap()
+            .clone();
+        assert_eq!(array["redacted"], true, "{}", reply.body);
+        assert_eq!(array["value"], "[redacted]", "{}", reply.body);
+    }
+}
