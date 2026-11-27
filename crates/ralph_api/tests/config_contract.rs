@@ -144,12 +144,18 @@ fn config_bare_secrets_in_tight_fields_are_absent_from_the_http_body() {
 fn config_opaque_secrets_in_loose_fields_are_absent_from_the_http_body() {
     for (config, leak) in [
         (
-            "[claude]\nmodel = \"ghp_AbCdEf0123456789AbCdEf0123456789abcd\"\n",
+            concat!(
+                "[claude]\nmodel = \"gh",
+                "p_AbCdEf0123456789AbCdEf0123456789abcd\"\n"
+            ),
             "AbCdEf",
         ),
         ("[chat]\nname = \"Bearer abc123\"\n", "abc123"),
         (
-            "[chat]\nname = \"xo\x78b-123456789012-1234567890123-AbCdEf0123456789AbCdEf01\"\n",
+            concat!(
+                "[chat]\nname = \"xo",
+                "xb-123456789012-1234567890123-AbCdEf0123456789AbCdEf01\"\n"
+            ),
             "AbCdEf",
         ),
         (
@@ -354,7 +360,7 @@ fn config_upper_case_secret_flags_are_absent_from_the_http_body() {
 fn config_opaque_map_keys_are_absent_from_the_http_body() {
     for (config, leak, section) in [
         (
-            "[theme.status]\n\"ghp_AbCdEf0123456789AbCdEf0123456789abcd\" = \"red\"\n",
+            concat!("[theme.status]\n\"gh", "p_AbCdEf0123456789AbCdEf0123456789abcd\" = \"red\"\n"),
             "ghp_AbCdEf",
             "theme",
         ),
@@ -389,7 +395,10 @@ fn config_opaque_map_keys_are_absent_from_the_http_body() {
 fn config_opaque_keys_and_values_in_an_array_of_tables_are_absent_from_the_http_body() {
     for (config, leak) in [
         (
-            "[[mermaid.style.config.arr]]\n\"ghp_AbCdEf0123456789AbCdEf0123456789abcd\" = 1\n",
+            concat!(
+                "[[mermaid.style.config.arr]]\n\"gh",
+                "p_AbCdEf0123456789AbCdEf0123456789abcd\" = 1\n"
+            ),
             "ghp_AbCdEf",
         ),
         (

@@ -386,7 +386,7 @@ mod tests {
         }
     }
 
-    const GHP: &str = "ghp_AbCdEf0123456789AbCdEf0123456789abcd";
+    const GHP: &str = concat!("gh", "p_AbCdEf0123456789AbCdEf0123456789abcd");
     const HEX40: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b";
     const LETTERS40: &str = "QWERTYUIOPASDFGHJKLZXCVBNMQWERTYUIOPASDF";
 

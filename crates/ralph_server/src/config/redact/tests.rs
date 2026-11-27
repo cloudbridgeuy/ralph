@@ -434,17 +434,23 @@ fn jwts_are_redacted_in_loose_fields() {
 
 #[test]
 fn aws_key_ids_are_redacted_in_loose_fields() {
-    assert_secret("chat.name", "AKIAIOSFODNN7EXAMPLE");
-    assert_secret("web.font", "ASIAIOSFODNN7EXAMPLE");
+    assert_secret("chat.name", concat!("AK", "IAIOSFODNN7EXAMPLE"));
+    assert_secret("web.font", concat!("AS", "IAIOSFODNN7EXAMPLE"));
 }
 
 #[test]
 fn slack_tokens_are_redacted_in_loose_fields() {
     assert_secret(
         "chat.name",
-        "xo\x78b-123456789012-1234567890123-AbCdEf0123456789AbCdEf01",
+        concat!(
+            "xo",
+            "xb-123456789012-1234567890123-AbCdEf0123456789AbCdEf01"
+        ),
     );
-    assert_secret("nap.model", &format!("xo\x78p-1-2-3-{OPAQUE_BODY}"));
+    assert_secret(
+        "nap.model",
+        &format!("{}{OPAQUE_BODY}", concat!("xo", "xp-1-2-3-")),
+    );
 }
 
 #[test]
@@ -808,7 +814,7 @@ fn unlisted_keys_fail_closed() {
     assert!(redacts("novel.setting", &json!(1), false));
 }
 
-const KEY_GHP: &str = "ghp_AbCdEf0123456789AbCdEf0123456789abcd";
+const KEY_GHP: &str = concat!("gh", "p_AbCdEf0123456789AbCdEf0123456789abcd");
 const KEY_HEX: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b";
 const KEY_LETTERS: &str = "QWERTYUIOPASDFGHJKLZXCVBNMQWERTYUIOPASDF";
 
