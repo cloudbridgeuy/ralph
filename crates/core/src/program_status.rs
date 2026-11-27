@@ -4,6 +4,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 pub const APP: &str = "ralph";
+pub const REX_BLOCK_ENV: &str = "REX_BLOCK";
 const MAX_SEQUENCE_BYTES: usize = 4096;
 const MAX_MSG_BYTES: usize = 2048;
 
@@ -65,8 +66,66 @@ pub enum Phase {
     Prompt,
 }
 
-pub fn status_enabled(config: bool, tty: bool, rex: bool) -> bool {
-    config && tty && rex
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RexBlock(String);
+
+impl RexBlock {
+    pub fn parse(raw: &str) -> Option<Self> {
+        (!raw.is_empty()).then(|| Self(raw.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusSetting {
+    Enabled,
+    Disabled,
+}
+
+impl StatusSetting {
+    pub fn from_bool(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stdout {
+    Tty,
+    NotTty,
+}
+
+impl Stdout {
+    pub fn from_is_terminal(is_terminal: bool) -> Self {
+        if is_terminal {
+            Self::Tty
+        } else {
+            Self::NotTty
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RexPane(());
+
+impl RexPane {
+    pub fn report(self, report: &Report) -> Result<String, TooLong> {
+        encode(report)
+    }
+}
+
+pub fn rex_pane(setting: StatusSetting, stdout: Stdout, rex: Option<&RexBlock>) -> Option<RexPane> {
+    matches!(
+        (setting, stdout, rex),
+        (StatusSetting::Enabled, Stdout::Tty, Some(_))
+    )
+    .then_some(RexPane(()))
 }
 
 fn unread_msg(unread: usize) -> String {
@@ -111,7 +170,7 @@ fn bounded(sequence: String) -> Result<String, TooLong> {
     }
 }
 
-pub fn encode(report: &Report) -> Result<String, TooLong> {
+fn encode(report: &Report) -> Result<String, TooLong> {
     let kind = report
         .state
         .kind()
@@ -155,11 +214,24 @@ mod tests {
     }
 
     #[test]
-    fn status_needs_config_tty_and_rex() {
-        assert!(status_enabled(true, true, true));
-        assert!(!status_enabled(false, true, true));
-        assert!(!status_enabled(true, false, true));
-        assert!(!status_enabled(true, true, false));
+    fn rex_pane_needs_config_tty_and_non_empty_rex_block() {
+        let block = RexBlock::parse("blk-1").unwrap();
+        let pane = rex_pane(StatusSetting::Enabled, Stdout::Tty, Some(&block)).unwrap();
+        assert_eq!(std::mem::size_of::<RexPane>(), 0);
+        assert_eq!(
+            pane.report(&report(State::Working, None)).unwrap(),
+            "\x1b]7501;state=working:app=ralph\x07"
+        );
+        assert_eq!(
+            rex_pane(StatusSetting::Disabled, Stdout::Tty, Some(&block)),
+            None
+        );
+        assert_eq!(
+            rex_pane(StatusSetting::Enabled, Stdout::NotTty, Some(&block)),
+            None
+        );
+        assert_eq!(rex_pane(StatusSetting::Enabled, Stdout::Tty, None), None);
+        assert_eq!(RexBlock::parse(""), None);
     }
 
     #[test]

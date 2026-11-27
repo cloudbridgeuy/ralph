@@ -77,7 +77,7 @@ impl StreamCollector {
             return Vec::new();
         }
         match parse_stream_line(trimmed) {
-            ParsedLine::Event(event) => self.handle_event(event, files),
+            ParsedLine::Event(event) => self.process_event(event, files),
             ParsedLine::Empty => Vec::new(),
             ParsedLine::Error { line: _, error } => {
                 self.parse_errors.push((trimmed.to_string(), error));
@@ -125,7 +125,7 @@ impl StreamCollector {
         self.pending_snapshots.len()
     }
 
-    fn handle_event(&mut self, event: StreamEvent, files: &dyn Files) -> Vec<OutputBlock> {
+    pub fn process_event(&mut self, event: StreamEvent, files: &dyn Files) -> Vec<OutputBlock> {
         let mut out = Vec::new();
 
         match &event {
@@ -276,6 +276,68 @@ mod tests {
 
     fn feed(collector: &mut StreamCollector, files: &FakeFiles, line: &str) -> Vec<OutputBlock> {
         collector.process_line(line, files)
+    }
+
+    #[test]
+    fn agy_events_render_like_claude_lines() {
+        use crate::worker::{agy_stream_events, AgyEvent, AgyUsage, StopReason};
+        use serde_json::json;
+
+        let updates = [
+            json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Reading it.\n"}}),
+            json!({"sessionUpdate": "tool_call", "toolCallId": "t1", "name": "Read", "rawInput": {"file_path": "a.rs"}}),
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed", "rawOutput": {"output": "fn main() {}"}}),
+        ];
+        let usage = AgyUsage {
+            total: 150,
+            input: 120,
+            output: 30,
+            read: Some(30),
+            write: None,
+            thought: None,
+        };
+        let files = FakeFiles(HashMap::new());
+
+        let mut agy = StreamCollector::new(true, VerboseToolsConfig::default());
+        let mut agy_blocks = Vec::new();
+        let done = AgyEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: Some(&usage),
+        };
+        let events = updates
+            .iter()
+            .flat_map(|update| agy_stream_events(&AgyEvent::Update(update)))
+            .chain(agy_stream_events(&done));
+        for event in events {
+            agy_blocks.extend(agy.process_event(event, &files));
+        }
+        let (flushed, agy_result) = agy.finish(&files);
+        agy_blocks.extend(flushed);
+
+        let lines = [
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Reading it.\n"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"a.rs"}}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"fn main() {}","is_error":false}]}}"#,
+            r#"{"type":"result","subtype":"success","terminal_reason":"end_turn","usage":{"input_tokens":90,"output_tokens":30,"cache_read_input_tokens":30,"cache_creation_input_tokens":0}}"#,
+        ];
+        let mut claude = StreamCollector::new(true, VerboseToolsConfig::default());
+        let mut claude_blocks = Vec::new();
+        for line in lines {
+            claude_blocks.extend(feed(&mut claude, &files, line));
+        }
+        let (flushed, claude_result) = claude.finish(&files);
+        claude_blocks.extend(flushed);
+
+        assert!(!agy_blocks.is_empty());
+        assert_eq!(format!("{agy_blocks:?}"), format!("{claude_blocks:?}"));
+        assert_eq!(agy_result.costs.cost_usd, None);
+        let usage = agy_result.costs.usage.unwrap();
+        assert_eq!(usage.cache_read_input_tokens, Some(30));
+        assert_eq!(usage.input_tokens, 90);
+        assert_eq!(
+            agy_result.costs.terminal_reason,
+            claude_result.costs.terminal_reason
+        );
     }
 
     #[test]

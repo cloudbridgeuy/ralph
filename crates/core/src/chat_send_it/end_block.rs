@@ -61,10 +61,12 @@ pub(super) fn first_line(text: &str) -> String {
 }
 
 impl StopReason {
-    pub(super) fn flagged_by(report: &Report) -> Self {
-        StopReason::WorkerFlagged {
-            worker: report.from.to_string(),
-            line: first_line(&report.text),
+    pub(super) fn stopped_by(cause: StopCause, report: &Report) -> Self {
+        match cause {
+            StopCause::NeedsUser { worker } => StopReason::WorkerFlagged {
+                worker,
+                line: first_line(&report.text),
+            },
         }
     }
 }
@@ -298,7 +300,7 @@ fn stop_view(
         ),
         StopReason::WorkerFlagged { worker, line } => {
             let said = if line.is_empty() {
-                worker.clone()
+                worker.to_string()
             } else {
                 format!("{worker}: \"{line}\"")
             };

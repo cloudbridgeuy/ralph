@@ -15,6 +15,7 @@ use toml::Table;
 
 mod agy;
 mod changes;
+mod chat_harness;
 mod chat_settings;
 mod claude;
 mod codex;
@@ -43,6 +44,10 @@ mod wire;
 mod workers;
 pub use agy::AgySection;
 pub use changes::ChangesSection;
+pub use chat_harness::{
+    claude_model_args, ignored_extras, resolve_chat_model, ChatAgySection, ChatClaudeSection,
+    ChatModel,
+};
 pub use chat_settings::PromptFiles;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
@@ -78,22 +83,6 @@ impl Notice {
     pub fn is_store_fallback(&self) -> bool {
         self.key.starts_with(STORE_FALLBACK_KEY)
     }
-}
-
-fn security_notices(store: &Path) -> Vec<Notice> {
-    let Ok(table) = read_layer(store) else {
-        return Vec::new();
-    };
-    layers::security_keys(&table)
-        .into_iter()
-        .map(|key| Notice {
-            key: format!("security:{key}"),
-            message: format!(
-                "store config {} sets {key}; check it before you trust this store",
-                store.display()
-            ),
-        })
-        .collect()
 }
 
 static STORE_LAYER: OnceLock<PathBuf> = OnceLock::new();
@@ -346,6 +335,12 @@ impl AskSection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSection {
+    #[serde(default = "chat_harness::default_chat_harness")]
+    pub harness: String,
+    #[serde(default)]
+    pub claude: ChatClaudeSection,
+    #[serde(default)]
+    pub agy: ChatAgySection,
     #[serde(default = "default_mcp_servers")]
     pub mcp_servers: Vec<String>,
     #[serde(default)]
@@ -392,8 +387,6 @@ pub struct ChatSection {
     pub worker_base: Option<String>,
     #[serde(default)]
     pub worktree_dir: Option<String>,
-    #[serde(default)]
-    pub claude: ClaudeModeSection,
     #[serde(default)]
     pub permissions: Option<toml::Value>,
     #[serde(default = "default_true")]
@@ -460,6 +453,9 @@ fn default_mcp_servers() -> Vec<String> {
 impl Default for ChatSection {
     fn default() -> Self {
         Self {
+            harness: chat_harness::default_chat_harness(),
+            claude: ChatClaudeSection::default(),
+            agy: ChatAgySection::default(),
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
             prompt_file: None,
@@ -483,7 +479,6 @@ impl Default for ChatSection {
             cell_output_bytes: None,
             worker_base: None,
             worktree_dir: None,
-            claude: ClaudeModeSection::default(),
             permissions: None,
             inbox_alert_sound: true,
             inbox_alert_notification: false,
@@ -642,7 +637,6 @@ impl AppConfig {
                 }
                 Err(global_error) => (Err(global_error), Vec::new()),
             },
-            (Ok(config), Some(store_path)) => (Ok(config), security_notices(store_path)),
             (result, _) => (result, Vec::new()),
         }
     }
@@ -704,6 +698,12 @@ impl AppConfig {
     }
 
     fn check_values(&self, path: &str) -> Result<(), ConfigError> {
+        if let Some(message) = chat_harness::harness_error(&self.chat) {
+            return Err(ConfigError::InvalidMemory {
+                path: path.to_string(),
+                message,
+            });
+        }
         for (name, harness, model) in [
             ("nap", &self.nap.harness, &self.nap.model),
             ("tag", &self.tag.harness, &self.tag.model),

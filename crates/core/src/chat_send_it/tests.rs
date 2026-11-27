@@ -1,7 +1,10 @@
 use super::*;
 use crate::inbox_alert::UnknownFocus;
-use crate::program_status::{Kind, Report as ProgramReport, State};
+use crate::program_status::{
+    rex_pane, Kind, Report as ProgramReport, RexBlock, State, StatusSetting, Stdout,
+};
 use crate::worker::{Report, ReportKind, WorkerId};
+use drive::{awaiting_report, hold};
 use signing::*;
 
 mod block;
@@ -16,6 +19,7 @@ mod render;
 mod resume;
 mod signing;
 mod steer;
+mod step_move;
 mod template;
 mod verify;
 mod verify_check;
@@ -87,20 +91,12 @@ fn report(status: &str) -> Report {
 }
 
 #[test]
-fn only_question_and_blocked_reports_flag_a_worker() {
-    assert!(worker_flagged(&[report("done"), report("question")]));
-    assert!(worker_flagged(&[report("blocked")]));
-    assert!(!worker_flagged(&[report("done"), report("check")]));
-    assert!(!worker_flagged(&[]));
-}
-
-#[test]
 fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
     let config = AlertConfig {
         sound: true,
         notification: true,
         unknown_focus: UnknownFocus::Alert,
-        terminal_status: false,
+        terminal_status: None,
     };
     assert_eq!(
         blocked_alert("send-it stopped", &config),
@@ -130,11 +126,13 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
 
 #[test]
 fn a_blocked_alert_is_left_to_the_terminal_when_it_sends_status() {
+    let b = RexBlock::parse("b");
+    let pane = rex_pane(StatusSetting::Enabled, Stdout::Tty, b.as_ref());
     let rex = AlertConfig {
         sound: true,
         notification: true,
         unknown_focus: UnknownFocus::Alert,
-        terminal_status: true,
+        terminal_status: pane,
     };
     assert_eq!(blocked_alert("send-it stopped", &rex), None);
 }
@@ -287,7 +285,7 @@ fn start(file: &RunFile, known: &[(&str, &str)], running: &[&str]) -> Option<Tic
 
 fn flagged_stop() -> StopReason {
     StopReason::WorkerFlagged {
-        worker: "GUZ-1".to_string(),
+        worker: Sender::parse("GUZ-1").unwrap(),
         line: "text".to_string(),
     }
 }
@@ -320,7 +318,7 @@ fn start_sends_the_first_step_with_its_criterion() {
 fn a_turn_end_waits_on_the_step_criterion() {
     let run = spent(1, 0.5);
     for (step, next) in [
-        (0, Next::Hold("E1".to_string())),
+        (0, hold("E1")),
         (1, Next::Watch("gh pr checks --watch".to_string())),
         (2, Next::Check("cargo xtask lint".to_string())),
         (3, Next::Judge),
@@ -336,7 +334,7 @@ fn a_turn_end_waits_on_the_step_criterion() {
 fn caps_stop_at_a_turn_end_and_grants_lift_them() {
     let plan = plan();
     for (run, next) in [
-        (spent(3, 0.5), Next::Hold("E1".to_string())),
+        (spent(3, 0.5), hold("E1")),
         (spent(30, 0.5), Next::Stop(StopReason::TurnCap)),
         (spent(1, 4.0), Next::Stop(StopReason::CostCap)),
     ] {
@@ -346,7 +344,7 @@ fn caps_stop_at_a_turn_end_and_grants_lift_them() {
     granted.grants = vec![Grant::CostCap { usd: 10.0 }];
     assert_eq!(
         advance(&granted, at(0), Event::TurnEnded(&spent(1, 4.0))).1,
-        Next::Hold("E1".to_string())
+        hold("E1")
     );
     assert_eq!(
         advance(&granted, at(0), Event::TurnEnded(&spent(3, 1.0))).1,
@@ -470,7 +468,7 @@ fn new_stop_notices_name_the_step() {
     );
     assert!(flagged_stop()
         .notice(&run, None)
-        .contains("a worker asked a question"));
+        .contains("worker GUZ-1 needs you"));
     assert_eq!(
         StopReason::JudgeRounds {
             step: 4,
@@ -518,7 +516,7 @@ fn ended(file: &RunFile) -> Ended<'_> {
         step_result: None,
         drained: &[],
         unread: &[],
-        answered: &[],
+        answered: Box::leak(Box::default()),
         watched: None,
         refused: None,
     }
@@ -556,18 +554,15 @@ fn a_step_turn_counts_its_cost_and_waits_on_the_criterion() {
     assert_eq!(
         ticked,
         Ticked {
-            driving: driving(0, Awaiting::Report("E1".to_string()), spent(2, 0.75)),
-            next: Next::Hold("E1".to_string()),
+            driving: driving(0, awaiting_report("E1"), spent(2, 0.75)),
+            next: hold("E1"),
             met: None,
             notice: None,
         }
     );
     let check = tick(&driving(2, Awaiting::Turn, Run::default()), &ended(&file));
     assert_eq!(check.next, Next::Check("cargo xtask lint".to_string()));
-    assert_eq!(
-        check.driving.awaiting,
-        Awaiting::Report("watch:send-it-3".to_string())
-    );
+    assert_eq!(check.driving.awaiting, Awaiting::check(2));
     let judge = tick(&driving(3, Awaiting::Turn, Run::default()), &ended(&file));
     assert_eq!(
         (judge.next, judge.driving.awaiting),
@@ -624,7 +619,7 @@ fn a_failed_typed_asked_or_flagged_turn_stops_the_run() {
     assert_eq!(
         tick(&state, &ended).next,
         Next::Stop(StopReason::WorkerFlagged {
-            worker: "X9".to_string(),
+            worker: Sender::parse("X9").unwrap(),
             line: "text".to_string()
         })
     );
@@ -654,7 +649,7 @@ fn a_refused_tool_stops_the_run_before_any_other_turn_stop() {
 #[test]
 fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
     let file = approved(plan());
-    let state = driving(0, Awaiting::Report("E1".to_string()), Run::default());
+    let state = driving(0, awaiting_report("E1"), Run::default());
     let done = [worker_report("X9", "done"), worker_report("E1", "done")];
     let ticked = tick(
         &state,
@@ -670,7 +665,7 @@ fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
     );
     assert_eq!(
         (ticked.driving.progress, ticked.driving.awaiting),
-        (at(1), Awaiting::Report("watch:send-it-2".to_string()))
+        (at(1), Awaiting::check(1))
     );
     let other = [worker_report("X9", "done")];
     let held = tick(
@@ -680,17 +675,13 @@ fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
             ..ended(&file)
         },
     );
-    assert_eq!((held.next, held.met), (Next::Hold("E1".to_string()), None));
+    assert_eq!((held.next, held.met), (hold("E1"), None));
 }
 
 #[test]
 fn the_watched_outcome_settles_a_check_step() {
     let file = approved(plan());
-    let state = driving(
-        2,
-        Awaiting::Report("watch:send-it-3".to_string()),
-        Run::default(),
-    );
+    let state = driving(2, Awaiting::check(2), Run::default());
     let passed = WatchOutcome::Exited(0);
     let failed = WatchOutcome::Exited(2);
     for (watched, next) in [
@@ -709,11 +700,7 @@ fn the_watched_outcome_settles_a_check_step() {
 #[test]
 fn a_report_turn_that_settles_its_step_adds_cost_but_no_turn() {
     let file = approved(plan());
-    let state = driving(
-        2,
-        Awaiting::Report("watch:send-it-3".to_string()),
-        spent(1, 0.25),
-    );
+    let state = driving(2, Awaiting::check(2), spent(1, 0.25));
     let passed = WatchOutcome::Exited(0);
     let ticked = tick(
         &state,
@@ -731,7 +718,7 @@ fn a_settling_report_turn_one_below_the_turn_cap_still_sends() {
     let file = approved(plan());
     let done = [worker_report("E1", "done")];
     let ticked = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(29, 0.0)),
+        &driving(0, awaiting_report("E1"), spent(29, 0.0)),
         &Ended {
             drained: &done,
             ..ended(&file)
@@ -745,11 +732,7 @@ fn a_settling_report_turn_one_below_the_turn_cap_still_sends() {
 fn a_report_turn_that_settles_nothing_counts() {
     let file = approved(plan());
     let ticked = tick(
-        &driving(
-            2,
-            Awaiting::Report("watch:send-it-3".to_string()),
-            spent(1, 0.25),
-        ),
+        &driving(2, Awaiting::check(2), spent(1, 0.25)),
         &ended(&file),
     );
     assert_eq!(ticked.next, Next::Check("cargo xtask lint".to_string()));
@@ -761,7 +744,7 @@ fn caps_stop_before_a_send_but_not_before_the_finish() {
     let file = approved(plan());
     let done = [worker_report("E1", "done")];
     let capped = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(30, 0.0)),
+        &driving(0, awaiting_report("E1"), spent(30, 0.0)),
         &Ended {
             drained: &done,
             ..ended(&file)
@@ -940,7 +923,7 @@ fn a_kept_stop_names_the_step_and_how_to_resume() {
     };
     assert_eq!(
         flagged_stop().notice(&Run::default(), Some(&kept)),
-        "send-it stopped at step 2/4: a worker asked a question or is blocked."
+        "send-it stopped at step 2/4: worker GUZ-1 needs you."
     );
     assert_eq!(
         StopReason::Off.notice(&Run::default(), Some(&kept)),

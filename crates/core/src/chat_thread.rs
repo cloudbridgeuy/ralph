@@ -1,5 +1,6 @@
 use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
 pub use crate::chat_thread_root::{config_root, fork_of};
+use crate::program_status::RexBlock;
 use crate::worker::{shell_quote, Report};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -322,7 +323,7 @@ pub struct OpenSpawn<'a> {
     pub exe: &'a str,
     pub main: &'a str,
     pub cwd: &'a str,
-    pub block: Option<&'a str>,
+    pub block: Option<&'a RexBlock>,
     pub config_dir: Option<&'a str>,
 }
 
@@ -346,7 +347,7 @@ pub fn open_launch(spawn: OpenSpawn) -> OpenLaunch {
     ]
     .map(str::to_string);
     let command: Vec<String> = config.into_iter().flatten().chain(chat).collect();
-    match spawn.block.filter(|block| !block.is_empty()) {
+    match spawn.block.map(RexBlock::as_str) {
         Some(block) => {
             let label = format!("thread {}", spawn.name);
             let split = ["split", "-b", block, "--label", &label, "-c", spawn.cwd];
@@ -807,7 +808,7 @@ mod tests {
         );
     }
 
-    fn spawn<'a>(auth: &'a ThreadName, block: Option<&'a str>) -> OpenSpawn<'a> {
+    fn spawn<'a>(auth: &'a ThreadName, block: Option<&'a RexBlock>) -> OpenSpawn<'a> {
         OpenSpawn {
             name: auth,
             exe: "/bin/ralph",
@@ -821,9 +822,10 @@ mod tests {
     #[test]
     fn open_splits_a_rex_block_running_the_thread_on_the_main_store() {
         let auth = name("auth");
+        let block = RexBlock::parse("block:1").unwrap();
         let words = |argv: &[&str]| -> Vec<String> { argv.iter().map(|w| w.to_string()).collect() };
         assert_eq!(
-            open_launch(spawn(&auth, Some("block:1"))),
+            open_launch(spawn(&auth, Some(&block))),
             OpenLaunch::Rex(words(&[
                 "split",
                 "-b",
@@ -844,7 +846,7 @@ mod tests {
         );
         let configured = OpenSpawn {
             config_dir: Some("/cfg"),
-            ..spawn(&auth, Some("block:1"))
+            ..spawn(&auth, Some(&block))
         };
         let OpenLaunch::Rex(argv) = open_launch(configured) else {
             panic!("expected rex");
@@ -858,9 +860,9 @@ mod tests {
     #[test]
     fn open_outside_rex_prints_the_command_to_run() {
         let auth = name("auth");
-        for block in [None, Some("")] {
+        for block in [None, RexBlock::parse("")] {
             assert_eq!(
-                open_launch(spawn(&auth, block)),
+                open_launch(spawn(&auth, block.as_ref())),
                 OpenLaunch::Manual(
                     "not in a Rex block, so /thread open opens nothing; run this in another terminal:\n  '/bin/ralph' 'chat' '--thread' 'auth' '--store' '/s/chat'"
                         .to_string()

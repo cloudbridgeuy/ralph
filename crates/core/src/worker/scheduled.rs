@@ -5,7 +5,8 @@ use super::{
     McptoolsDecision, PermissionMode, PermissionOption, Report, SandboxMode, WorkerId, ALLOW_ONCE,
     SERVER_NAME, WORKER_PROMPT,
 };
-use crate::chat::{MCPTOOLS_ASK_RULES, MCPTOOLS_SERVER};
+use crate::chat::MCPTOOLS_SERVER;
+use crate::chat_tools::{mcptools_ask_rules, ToolRule};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -38,7 +39,7 @@ const WORKER_TOOLS: [&str; 2] = [REPORT_TOOL, "set_status"];
 pub fn scheduled_disallowed_args(copied: &[String]) -> Vec<String> {
     let mut args = disallowed_tool_args();
     if copied.iter().any(|name| name == MCPTOOLS_SERVER) {
-        args.extend(MCPTOOLS_ASK_RULES.map(str::to_string));
+        args.extend(mcptools_ask_rules().iter().map(ToolRule::claude));
     }
     args
 }

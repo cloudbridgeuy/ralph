@@ -3108,9 +3108,12 @@ name = "xtask"
 version = "0.4.0"
 dependencies = [
  "anstream",
+ "base64 0.22.1",
  "chrono",
  "clap",
+ "png",
  "ralph_core",
+ "ralph_server",
  "serde_json",
  "tempfile",
  "thiserror",

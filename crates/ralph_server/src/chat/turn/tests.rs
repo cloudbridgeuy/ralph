@@ -2,8 +2,7 @@ use super::*;
 use crate::disk_files::DiskFiles;
 use ralph_core::chat_backend::CLAUDE;
 use ralph_core::chunk::{ChunkType, ParsedChunk};
-use ralph_core::stream::blocks::{StreamCollector, StreamProcessorResult};
-use std::os::unix::fs::PermissionsExt;
+use ralph_core::stream::blocks::{StreamCollector, StreamProcessorResult, VerboseToolsConfig};
 use std::time::Duration;
 
 #[test]
@@ -18,20 +17,6 @@ fn background_runs_use_the_executable_the_client_gave() {
 fn background_runs_fail_without_an_executable() {
     let store = std::env::temp_dir();
     assert!(background_command(None, Vec::new(), &store).is_err());
-}
-
-#[test]
-fn system_prompt_file_holds_the_old_argument_bytes_privately() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("system-prompt.md");
-    let system = "rules\0 it's \"$HOME\"\n  ñ trailing \n";
-    write_system_prompt(&path, &system.repeat(3)).unwrap();
-    write_system_prompt(&path, system).unwrap();
-    let bytes = std::fs::read(&path).unwrap();
-    assert_eq!(bytes, b"rules it's \"$HOME\"\n  \xc3\xb1 trailing \n");
-    assert_eq!(bytes, strip_controls(system).as_bytes());
-    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600);
 }
 
 fn finished(session_id: Option<&str>, model: Option<&str>) -> StreamingSubprocessResult {

@@ -42,6 +42,7 @@ use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::turn::{draft_after, TurnOutcome};
 use ralph_server::warn::warn_if_err;
 use reedline::{EditCommand, Reedline};
+use std::collections::HashSet;
 use std::error::Error;
 use std::io;
 use std::path::Path;
@@ -534,7 +535,7 @@ impl TerminalLoop<'_> {
                 step_result: None,
                 drained: &drained,
                 unread: &unread,
-                answered: &[],
+                answered: &HashSet::new(),
                 watched: None,
                 refused: None,
             };

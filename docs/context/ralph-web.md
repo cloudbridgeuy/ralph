@@ -426,3 +426,91 @@ Worker state comes from the marker files, in this order: `gone`, `blocked`, `wai
 An unreadable or corrupt record is skipped and the good rows are returned. The readers decide this. `GET /api/schedules` and `GET /api/watches` use `ScheduleStore::read_all` and `WatchStore::read_all`, which never write: a corrupt file stays on disk. The chat uses the `load_all` readers, which still delete a corrupt record. The readers warn on stderr only, never in the body. There is no 500 for these routes, because the readers return no error.
 
 The shell shows the routes as tabs 3 to 5: `#/workers`, `#/schedules` and `#/watches`; config is tab 6 and Catalogue is tab 7. Each screen is an `r-table`. State, status, kind and late cells are `r-pill` marks. Workers use the `tone` from the API. Schedules: `pending` is `info`, `running` is `ok`, `proposed` is `neutral`, and a late task has a `bad` pill. Watches: `normal` is `neutral` and `persistent` is `accent`. An empty list gives an `r-empty` ("No live workers", "No scheduled tasks" or "No active watches"). A failed load gives an `r-error` with a retry button. There is no live refresh. The contracts are `crates/ralph_api/tests/lists_contract.rs` and `lists_screen_contract.rs`.
+
+## Screenshot check (shots)
+
+`cargo xtask shots` takes screenshots of the shell and compares them with approved baselines. It runs on one machine, by hand. It is not in CI. No `cargo test` starts a browser or a server. The code is in `xtask/src/shots/`.
+
+Subcommands:
+
+- `list [--screen S] [--theme T]` prints the shot names. It runs nothing.
+- `diff <BASELINE> <CURRENT> [--out diff.png] [--tolerance 8]` compares two PNG files and writes a diff image. It fails on a size mismatch.
+- `compare --baseline D --current D --out D [--tolerance 8]` compares two folders of PNG files. It writes `<out>/report.md` and `<out>/diff/<name>.png` for each changed shot. It prints the report. It exits with an error when the folders are not clean.
+- `approve --baseline D --current D (<NAMES>... | --all)` copies the named shots from current to baseline. It fails with no names and no `--all`, and for a name that is not in current. `--all` approves only the listed shots (the 26 names of the matrix). It prints a `skipped` note for each other file in current and does not copy it. It copies nothing and fails when a listed shot is missing from current. The error names the missing shots.
+- `seed --out <DIR>` writes the fixture store (see below).
+- `run` and `check` write the name of each shot that times out waiting for ready to `<current>/.timed-out` as it times out, one name per line, so a later error cannot leave a timed-out PNG unmarked. The file is not a PNG, so the stale and `png_names` logic ignores it. A capture with no timeouts removes the file. A partial `--screen` or `--theme` run replaces the entries inside its selection and keeps the others. `approve --all` copies nothing and fails, naming the shots, when it would approve a shot listed in that file. `approve <NAME>` of a listed shot is allowed and prints a warning.
+- `run [--root D] [--ralph PATH] [--firefox PATH] [--screen S] [--theme T]` captures the shots into `<root>/current`. Defaults: root `~/.local/share/ralph-shots`, ralph `target/debug/ralph` under the workspace root (not the current directory) or, when `CARGO_TARGET_DIR` is set and not empty, `<CARGO_TARGET_DIR>/debug/ralph` (a relative value resolves against the current directory, as Cargo does; `build.target-dir` in a cargo config is not read, so pass `--ralph <PATH>` in that case), Firefox `/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox`.
+- `check` takes the same flags as `run` and `--tolerance 8`. It runs, then compares `<root>/baseline` with `<root>/current` into `<root>/report`.
+
+### Fixture store
+
+`shots seed` writes a store of neutral, made-up data. Every time derives from one pinned instant, `2026-03-02T12:00:00Z`, so two seeds give equal stores. It refuses an `--out` folder that has any entry. Pass a missing or empty folder. `run` seeds a temporary store and starts `ralph web --store <it> --port 0` on it. Each screen gets:
+
+- Memory: 40 log entries on 20 topics and 6 summary nodes.
+- Threads: 5 threads, one in each state (open, parked, merged, closed, auto-merge).
+- Workers: 8 workers, one in each state (running, background, idle, failed, blocked, waiting, unreported, gone).
+- Schedules: 8 tasks, one of each kind.
+- Watches: 4 watches (plain, timeout, wake, persistent).
+- Config: a `config.toml` with the `tokyo-night` theme, `wrap_width = 100` and `cell_output_limit = 40`.
+- Catalogue: no store data.
+
+The threads screen prints relative times (`4s ago`, `269d ago`) that depend on the wall clock. Before each capture, the browser step rewrites every text node in `#main` that matches `<digits><unit> ago` to `--`, waits one settle, and rewrites again. The threads screen has no refresh timer. The code is `xtask/src/shots/mask.rs`. Other screens have no relative times.
+
+### Server environment
+
+The `ralph web` child starts with `env_clear`, so nothing from the caller reaches it except two values. The child gets only these variables:
+
+- `PATH` and `TMPDIR`, copied from the caller when set.
+- `HOME`, set to `home` in the temporary directory.
+- `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_CACHE_HOME`, set to `config`, `data` and `cache` under that `home`.
+- `RALPH_CONFIG_DIR`, set to `config/ralph` under that `home`.
+
+No `RALPH_*` variable (except `RALPH_CONFIG_DIR`) and no `NO_COLOR` from the caller reach the server. The config screen shows no value from the real global config. The working directory is `cwd` in the temporary directory.
+
+### Partial runs
+
+`--screen` and `--theme` limit `run` and `check` to the matching shots. A partial `run` deletes and replaces only the PNG files of the selected shots in `<root>/current`. It leaves other files there. `check --screen S` compares only the selected names in baseline and current. Shots outside the selection are not listed as New or Missing. `check --screen S` also removes the diff images of shots outside the selection.
+
+### Baselines
+
+The root is `~/.local/share/ralph-shots/` and lies outside the repo. It holds three folders: `baseline` (approved), `current` (the last run) and `report`. The matrix has 26 PNG files: six screens (memory, threads, workers, schedules, watches, config) in two themes (dark, light) and two widths (1440 and 390), plus `catalogue-1440.png` and `catalogue-390.png`. Names are `<screen>-<theme>-<width>.png` and `catalogue-<width>.png`. The catalogue has no theme in its name and is taken in the dark theme. The window is 1200 px high.
+
+### Browser
+
+The browser is Firefox Developer Edition. `run` starts it headless with `--marionette` and drives it over the built-in Marionette socket. The tool needs no geckodriver.
+
+- There is one Firefox session for each theme. Each session gets its own profile whose `user.js` sets `layout.css.prefers-color-scheme.content-override` (0 dark, 1 light) and `marionette.port` set to `0`. Firefox picks the port and writes it to `MarionetteActivePort` in the profile. The tool reads the port from that file. The run stops with an error if the browser does not report the expected scheme.
+- For each shot the window is resized, the page goes to `about:blank`, then to the screen URL. The first navigation of a session carries the per-run token.
+- Ready wait: a screen is ready when `document.readyState` is `complete`, there is no `.r-spinner`, and `#main` has child nodes. The catalogue is ready at `readyState` `complete`. The wait polls every 100 ms for up to 10 s, then settles 250 ms and takes the shot.
+- The profile is quiet. Telemetry, update checks, first-run and welcome pages, safe browsing and prefetch are off. `ui.useOverlayScrollbars` is `0`, so shots show classic scrollbars and not overlay scrollbars.
+- Timeouts: the listen line from `ralph web` must arrive within 30 s. The connect and the hello each have a 10 s limit. Each later Marionette read and write has a 60 s limit.
+- Launch retries: `run` tries to launch Firefox up to 3 times for each theme. It retries when Firefox exits early, when the connect times out, when the hello is bad, when the connection is lost, and when the Marionette `NewSession` or the first navigation fails. It stops with an error after the third failure and lists the reason of each attempt.
+- `--theme` does not change the catalogue. The catalogue has no theme in its name, so it is still captured in the dark session.
+- Before `run` stops Firefox, it sends `DeleteSession` to end the Marionette session. Then it kills the process.
+- Printed errors hide the per-run token. Each `token=<value>` shows as `token=<redacted>`.
+- A shot that never became ready is still saved. `run` prints `timed out waiting for ready:` and the names. Treat a name in that list as suspect: the PNG may show a spinner.
+
+### Diff rule
+
+A pixel is changed when any channel differs by more than 8 (of 255). A shot is changed when more than 0.1% of its pixels changed. A size mismatch counts as changed. The diff image dims unchanged pixels and paints changed pixels red. The report lists Changed, New (in current only), Missing (in baseline only) and Unchanged. Only an empty Changed, New and Missing list is clean.
+
+### Human approval
+
+1. Run `cargo xtask shots check`.
+2. Open `~/.local/share/ralph-shots/report/report.md` and the PNG files in `report/diff/`. Look at the current shot as well.
+3. If a change is wanted, run `cargo xtask shots approve --baseline ~/.local/share/ralph-shots/baseline --current ~/.local/share/ralph-shots/current <NAMES>` or add `--all`.
+
+Never approve with `--all` before you read the report.
+
+### Rebuild a baseline from scratch
+
+1. Run `cargo build -p ralph`.
+2. Run `cargo xtask shots run`.
+3. Review each PNG in `~/.local/share/ralph-shots/current`.
+4. Approve with the `approve --all` form above.
+
+### Limits
+
+- Baselines are valid on the machine that made them. Fonts and anti-aliasing differ between machines and cause noise above the threshold. Rebuild the baseline on a new machine.
+- At 390 px the shell overflows. The full-page shots are wider than 390 px.
+- The tool needs a built ralph and an installed Firefox Developer Edition. It does not check the version of either.

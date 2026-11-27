@@ -1,3 +1,6 @@
+use ralph_core::code_frame::Label;
+
+use crate::render::code_frame::framed;
 use crate::render::tool_renderers::context::{ansi, RenderContext};
 
 pub fn render_script_invocation(
@@ -18,7 +21,12 @@ pub fn render_script_invocation(
     let code = code.trim_end_matches('\n');
     let body = match (code.is_empty(), ctx.terminal) {
         (true, _) => String::new(),
-        (false, true) => format!("{}\n", ctx.highlighter.highlight(code, Some("javascript"))),
+        (false, true) => {
+            let highlighted = ctx
+                .highlighter
+                .highlight_foreground(code, Some("javascript"));
+            framed(ctx, &Label::Language("javascript"), &highlighted)
+        }
         (false, false) => format!("{code}\n"),
     };
     let header = match ctx.terminal {
@@ -38,7 +46,10 @@ pub fn render_script_invocation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::highlight::Highlighter;
+    use crate::ansi::truecolor_background;
+    use crate::frame::strip_ansi;
+    use crate::highlight::{Highlighter, ThemeConfig};
+    use crate::render::Viewport;
     use crate::tool_theme::test_colors;
 
     #[test]
@@ -77,14 +88,25 @@ mod tests {
     }
 
     #[test]
-    fn terminal_context_highlights_and_keeps_line_count() {
-        let highlighter = Highlighter::new();
-        let ctx = RenderContext::terminal(&highlighter).with_tools(test_colors());
+    fn terminal_script_body_sits_in_the_shaded_code_frame() {
+        let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
+        let ctx = RenderContext::terminal(&highlighter)
+            .with_viewport(Viewport::fixed(24, 24))
+            .with_tools(test_colors());
         let out = render_script_invocation(&ctx, "const a = 1;\nreturn a;\n", true, false, None);
         assert!(out.starts_with("\x1b[94m▶ mcptools execute"));
-        assert!(out.contains("[writes]"));
-        assert!(out.contains('\x1b'));
-        assert_eq!(out.lines().count(), 3);
+        assert_eq!(
+            strip_ansi(&out),
+            format!(
+                "▶ mcptools execute [writes]\n── javascript {}\n  \n  const a = 1;\n  return a;\n  \n",
+                "─".repeat(10)
+            )
+        );
+        let fill = truecolor_background(55, 60, 71);
+        assert!(
+            out.lines().skip(2).all(|row| row.starts_with(&fill)),
+            "{out:?}"
+        );
     }
 
     #[test]
