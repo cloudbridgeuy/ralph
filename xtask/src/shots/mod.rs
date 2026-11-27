@@ -318,6 +318,15 @@ fn check(args: CheckArgs) -> Result<(), BoxError> {
     compare_selected(compare_args, filtered.then_some(selected.as_slice()))
 }
 
+fn copy_atomically(source: &Path, baseline: &Path, name: &str) -> Result<(), BoxError> {
+    let temp = baseline.join(report::temp_copy_name(name));
+    let result = fs::copy(source, &temp).and_then(|_| fs::rename(&temp, baseline.join(name)));
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    Ok(result?)
+}
+
 fn approve(args: ApproveArgs) -> Result<(), BoxError> {
     let current_names = png_names(&args.current)?;
     let timed_out = read_timed_out(&args.current)?;
@@ -337,7 +346,7 @@ fn approve(args: ApproveArgs) -> Result<(), BoxError> {
     }
     fs::create_dir_all(&args.baseline)?;
     for name in &approved {
-        fs::copy(args.current.join(name), args.baseline.join(name))?;
+        copy_atomically(&args.current.join(name), &args.baseline, name)?;
         println!("approved {name}");
     }
     Ok(())

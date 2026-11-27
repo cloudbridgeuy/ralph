@@ -135,6 +135,10 @@ pub struct Approvals {
     pub warned: Vec<String>,
 }
 
+pub fn temp_copy_name(name: &str) -> String {
+    format!("{name}.tmp")
+}
+
 pub fn parse_timed_out(text: &str) -> Vec<String> {
     text.lines()
         .map(str::trim)
@@ -439,6 +443,16 @@ mod tests {
             select_approvals(&[], false, &current, &[], &[]),
             Err(ShotError::NothingSelected)
         );
+    }
+
+    #[test]
+    fn the_temp_copy_name_is_not_a_png() {
+        assert_eq!(temp_copy_name("a-dark-1440.png"), "a-dark-1440.png.tmp");
+        let listed = crate::shots::core::png_names_from(vec![
+            temp_copy_name("a.png").into(),
+            "b.png".into(),
+        ]);
+        assert_eq!(listed, Ok(names(&["b.png"])));
     }
 
     #[test]
