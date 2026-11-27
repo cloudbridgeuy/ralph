@@ -1,8 +1,21 @@
 use crate::diff_theme::DiffColors;
 use crate::highlight::Highlighter;
 use crate::tool_theme::ToolColors;
+use crate::ui_theme::UiColors;
+use ralph_core::mermaid_file::Miss;
+use std::path::{Path, PathBuf};
+use syntect::highlighting::Theme;
 
 pub use crate::ansi;
+
+pub type SaveDiagram = fn(&str, &Theme, &UiColors, &Path) -> Option<PathBuf>;
+
+#[derive(Clone, Copy)]
+pub struct Diagrams<'a> {
+    pub dir: &'a Path,
+    pub ui: UiColors,
+    pub save: SaveDiagram,
+}
 
 #[derive(Clone, Copy)]
 pub struct RenderContext<'a> {
@@ -10,7 +23,8 @@ pub struct RenderContext<'a> {
     pub terminal: bool,
     pub width: usize,
     pub viewport: Viewport,
-    pub mermaid: fn(&str, usize) -> Option<String>,
+    pub mermaid: fn(&str, usize) -> Result<String, Miss>,
+    pub diagrams: Option<Diagrams<'a>>,
     pub images: Option<crate::render::ImageSettings>,
     pub diff: DiffColors,
     pub tools: ToolColors,
@@ -63,6 +77,7 @@ impl<'a> RenderContext<'a> {
             width: viewport.width(terminal),
             viewport,
             mermaid: crate::mermaid_guard::render,
+            diagrams: None,
             images: crate::render::image::enabled(),
             diff: DiffColors::default(),
             tools: ToolColors::default(),
@@ -85,6 +100,15 @@ impl<'a> RenderContext<'a> {
 
     pub fn with_diff(mut self, diff: DiffColors) -> Self {
         self.diff = diff;
+        self
+    }
+
+    pub fn with_diagrams(mut self, dir: &'a Path, ui: UiColors) -> Self {
+        self.diagrams = Some(Diagrams {
+            dir,
+            ui,
+            save: crate::mermaid_guard::full_size,
+        });
         self
     }
 

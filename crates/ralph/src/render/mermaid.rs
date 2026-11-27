@@ -216,13 +216,12 @@ pub fn picture_precheck(source: &str, limits: &MermaidSection) -> Result<(), Ref
     }
 }
 
-pub fn fits_width(output: &str, width: usize) -> bool {
+pub fn widest(output: &str) -> usize {
     output
         .lines()
         .map(UnicodeWidthStr::width)
         .max()
         .unwrap_or(0)
-        <= width
 }
 
 #[cfg(test)]
@@ -487,9 +486,10 @@ mod tests {
 
     #[test]
     fn width_post_check_uses_display_width() {
-        assert!(fits_width("abcd\nab", 4));
-        assert!(!fits_width("abcde", 4));
-        assert!(fits_width("\u{2500}\u{2500}", 2));
-        assert!(!fits_width("\u{4e2d}\u{4e2d}", 3));
+        assert_eq!(widest("abcd\nab"), 4);
+        assert_eq!(widest("abcde"), 5);
+        assert_eq!(widest("\u{2500}\u{2500}"), 2);
+        assert_eq!(widest("\u{4e2d}\u{4e2d}"), 4);
+        assert_eq!(widest(""), 0);
     }
 }

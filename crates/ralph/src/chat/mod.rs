@@ -72,6 +72,7 @@ use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
+use ralph_core::mermaid_file::DIAGRAMS_DIR;
 use ralph_core::program_status::{
     rex_pane, RexBlock, RexPane, StatusSetting, Stdout, REX_BLOCK_ENV,
 };
@@ -391,10 +392,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         empty_submit,
         sent_style,
     };
+    let diagrams_dir = store_dir.join(DIAGRAMS_DIR);
     let inbox_display = |color| Display {
         ctx: RenderContext::new(&agent_highlighter, color)
             .with_diff(diff_colors)
-            .with_tools(tool_colors),
+            .with_tools(tool_colors)
+            .with_diagrams(&diagrams_dir, *theme_config.ui()),
         theme: &agent_theme,
         color,
         ui: *theme_config.ui(),
@@ -402,7 +405,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let reply_display = Display {
         ctx: RenderContext::new(&reply_highlighter, color)
             .with_diff(diff_colors)
-            .with_tools(tool_colors),
+            .with_tools(tool_colors)
+            .with_diagrams(&diagrams_dir, *theme_config.ui()),
         theme: &reply_theme,
         color,
         ui: *theme_config.ui(),
