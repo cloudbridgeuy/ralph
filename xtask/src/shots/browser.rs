@@ -1,5 +1,7 @@
 use super::core::{self, Screen, Shot, Theme};
-use super::lines::{read_outcome, LineSplitter, ReadOutcome, LINE_CAP};
+use super::lines::{
+    read_outcome, Action, LineSplitter, ReadEvent, ReadOutcome, ReaderState, LINE_CAP,
+};
 use super::mask;
 use super::prefs;
 use super::retry::{self, FailureKind, Retry};
@@ -12,6 +14,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -22,6 +25,8 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const LISTEN_TIMEOUT: Duration = Duration::from_secs(30);
 const STDERR_SETTLE: Duration = Duration::from_millis(200);
 const EXIT_GRACE: Duration = Duration::from_secs(1);
+const MAX_READ_FAILURES: u32 = 20;
+const READ_RETRY_PAUSE: Duration = Duration::from_millis(50);
 const READY_POLL: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,12 +43,13 @@ pub struct CaptureOptions {
     pub theme: Option<Theme>,
 }
 
-struct ChildGuard(Child);
+struct ChildGuard(Child, Arc<AtomicBool>);
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+        self.1.store(true, Ordering::Relaxed);
     }
 }
 
@@ -233,19 +239,20 @@ fn start_ralph(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("could not start {}: {error}", ralph.display()))?;
-    let mut guard = ChildGuard(child);
+    let mut guard = ChildGuard(child, Arc::default());
     let stdout = guard.0.stdout.take().ok_or("ralph web has no stdout")?;
     let stderr = guard.0.stderr.take().ok_or("ralph web has no stderr")?;
     let stderr_head = Arc::new(Mutex::new(Vec::new()));
     spawn_stderr_reader(stderr, Arc::clone(&stderr_head));
     let stdout_tail = Arc::new(Mutex::new(Vec::new()));
-    let lines = spawn_line_reader(stdout, Arc::clone(&stdout_tail));
+    let lines = spawn_line_reader(stdout, Arc::clone(&stdout_tail), Arc::clone(&guard.1));
     let started = Instant::now();
     let mut read = Vec::new();
     let reason = loop {
         let left = LISTEN_TIMEOUT.saturating_sub(started.elapsed());
         match lines.recv_timeout(left) {
-            Ok(line) => {
+            Ok(Err(note)) => break note,
+            Ok(Ok(line)) => {
                 read.push(line);
                 if let Some(listening) = webdriver::find_listening(&read) {
                     return Ok((guard, listening));
@@ -260,32 +267,47 @@ fn start_ralph(
     Err(start_failure(&mut guard, &reason, &stdout_tail, &stderr_head).into())
 }
 
-fn spawn_line_reader(mut stdout: ChildStdout, tail: Arc<Mutex<Vec<u8>>>) -> mpsc::Receiver<String> {
+fn spawn_line_reader(
+    mut stdout: ChildStdout,
+    tail: Arc<Mutex<Vec<u8>>>,
+    stop: Arc<AtomicBool>,
+) -> mpsc::Receiver<Result<String, String>> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut splitter = LineSplitter::new(LINE_CAP);
+        let mut state = ReaderState::new(MAX_READ_FAILURES);
         let mut chunk = [0u8; 4096];
         loop {
-            let count = match stdout.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(count) => count,
-                Err(error) => match read_outcome(error.kind()) {
-                    ReadOutcome::Retry => continue,
-                    ReadOutcome::Stop => {
-                        if let Ok(mut buf) = tail.lock() {
-                            let note = format!("stdout read error: {error}");
-                            webdriver::push_tail_line(
-                                &mut buf,
-                                &note,
-                                webdriver::FAILURE_STREAM_CAP,
-                            );
-                        }
-                        break;
-                    }
-                },
+            let (event, count, error) = match stdout.read(&mut chunk) {
+                Ok(0) => (ReadEvent::Eof, 0, None),
+                Ok(count) => (ReadEvent::Data, count, None),
+                Err(error) => (ReadEvent::Failed(error.kind()), 0, Some(error)),
             };
-            for line in splitter.push_bytes(&chunk[..count]) {
-                record_line(&tail, &sender, line);
+            let step = state.next(event);
+            if let (true, Some(error)) = (step.note, error) {
+                let note = format!("stdout read error: {error}");
+                if let Ok(mut buf) = tail.lock() {
+                    webdriver::push_tail_line(&mut buf, &note, webdriver::FAILURE_STREAM_CAP);
+                }
+                let _ = sender.send(Err(note));
+            }
+            match step.action {
+                Action::Process => {
+                    for line in splitter.push_bytes(&chunk[..count]) {
+                        record_line(&tail, &sender, line);
+                    }
+                }
+                Action::Retry => {}
+                Action::Backoff => sleep(READ_RETRY_PAUSE),
+                // Dropping the pipe would give ralph web EPIPE on its next
+                // stdout write, so keep it open until the guard stops the child.
+                Action::Hold => {
+                    while !stop.load(Ordering::Relaxed) {
+                        sleep(READ_RETRY_PAUSE);
+                    }
+                    return;
+                }
+                Action::End => break,
             }
         }
         if let Some(line) = splitter.finish() {
@@ -295,11 +317,11 @@ fn spawn_line_reader(mut stdout: ChildStdout, tail: Arc<Mutex<Vec<u8>>>) -> mpsc
     receiver
 }
 
-fn record_line(tail: &Mutex<Vec<u8>>, sender: &mpsc::Sender<String>, line: String) {
+fn record_line(tail: &Mutex<Vec<u8>>, sender: &mpsc::Sender<Result<String, String>>, line: String) {
     if let Ok(mut buf) = tail.lock() {
         webdriver::push_tail_line(&mut buf, &line, webdriver::FAILURE_STREAM_CAP);
     }
-    let _ = sender.send(line);
+    let _ = sender.send(Ok(line));
 }
 
 fn spawn_stderr_reader(mut stderr: ChildStderr, head: Arc<Mutex<Vec<u8>>>) {
@@ -372,7 +394,7 @@ fn start_firefox(firefox: &Path, profile: &Path) -> Result<ChildGuard, BoxError>
         .stderr(Stdio::null())
         .spawn()
         .map_err(|error| format!("could not start {}: {error}", firefox.display()))?;
-    Ok(ChildGuard(child))
+    Ok(ChildGuard(child, Arc::default()))
 }
 
 fn clear_stale(dir: &Path, shots: &[Shot]) -> Result<(), BoxError> {

@@ -15,6 +15,68 @@ pub fn read_outcome(kind: io::ErrorKind) -> ReadOutcome {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReadEvent {
+    Data,
+    Eof,
+    Failed(io::ErrorKind),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Action {
+    Process,
+    Retry,
+    Backoff,
+    Hold,
+    End,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Step {
+    pub action: Action,
+    pub note: bool,
+}
+
+pub struct ReaderState {
+    failures: u32,
+    noted: bool,
+    max_failures: u32,
+}
+
+impl ReaderState {
+    pub fn new(max_failures: u32) -> Self {
+        ReaderState {
+            failures: 0,
+            noted: false,
+            max_failures,
+        }
+    }
+
+    pub fn next(&mut self, event: ReadEvent) -> Step {
+        let (action, note) = match event {
+            ReadEvent::Data => {
+                self.failures = 0;
+                (Action::Process, false)
+            }
+            ReadEvent::Eof => (Action::End, false),
+            ReadEvent::Failed(kind) => match read_outcome(kind) {
+                ReadOutcome::Retry => (Action::Retry, false),
+                ReadOutcome::Stop => {
+                    self.failures = self.failures.saturating_add(1);
+                    let note = !self.noted;
+                    self.noted = true;
+                    if self.failures > self.max_failures {
+                        (Action::Hold, note)
+                    } else {
+                        (Action::Backoff, note)
+                    }
+                }
+            },
+        };
+        Step { action, note }
+    }
+}
+
 pub struct LineSplitter {
     line: Vec<u8>,
     discarding: bool,
@@ -72,6 +134,103 @@ mod tests {
             .collect();
         lines.extend(splitter.finish());
         lines
+    }
+
+    fn failed() -> ReadEvent {
+        ReadEvent::Failed(io::ErrorKind::PermissionDenied)
+    }
+
+    #[test]
+    fn data_is_processed() {
+        let mut state = ReaderState::new(3);
+        assert_eq!(
+            state.next(ReadEvent::Data),
+            Step {
+                action: Action::Process,
+                note: false
+            }
+        );
+    }
+
+    #[test]
+    fn eof_ends_the_reader() {
+        let mut state = ReaderState::new(3);
+        assert_eq!(state.next(ReadEvent::Eof).action, Action::End);
+    }
+
+    #[test]
+    fn an_interrupted_read_retries_without_a_note() {
+        let mut state = ReaderState::new(3);
+        assert_eq!(
+            state.next(ReadEvent::Failed(io::ErrorKind::Interrupted)),
+            Step {
+                action: Action::Retry,
+                note: false
+            }
+        );
+    }
+
+    #[test]
+    fn repeated_errors_record_one_note() {
+        let mut state = ReaderState::new(10);
+        let notes = (0..5).filter(|_| state.next(failed()).note).count();
+        assert_eq!(notes, 1);
+    }
+
+    #[test]
+    fn the_first_error_notes_and_backs_off() {
+        let mut state = ReaderState::new(3);
+        assert_eq!(
+            state.next(failed()),
+            Step {
+                action: Action::Backoff,
+                note: true
+            }
+        );
+    }
+
+    #[test]
+    fn errors_past_the_cap_hold_the_pipe() {
+        let mut state = ReaderState::new(2);
+        assert_eq!(state.next(failed()).action, Action::Backoff);
+        assert_eq!(state.next(failed()).action, Action::Backoff);
+        assert_eq!(state.next(failed()).action, Action::Hold);
+    }
+
+    #[test]
+    fn after_an_error_the_action_is_never_end_until_eof() {
+        let mut state = ReaderState::new(2);
+        for _ in 0..6 {
+            let action = state.next(failed()).action;
+            assert_ne!(action, Action::End);
+        }
+        assert_ne!(
+            state
+                .next(ReadEvent::Failed(io::ErrorKind::Interrupted))
+                .action,
+            Action::End
+        );
+        assert_ne!(state.next(ReadEvent::Data).action, Action::End);
+        assert_eq!(state.next(ReadEvent::Eof).action, Action::End);
+    }
+
+    #[test]
+    fn data_resets_the_failure_count_but_not_the_note() {
+        let mut state = ReaderState::new(1);
+        assert!(state.next(failed()).note);
+        assert_eq!(state.next(ReadEvent::Data).action, Action::Process);
+        let step = state.next(failed());
+        assert_eq!(step.action, Action::Backoff);
+        assert!(!step.note);
+    }
+
+    #[test]
+    fn an_interrupted_read_does_not_count_as_a_failure() {
+        let mut state = ReaderState::new(1);
+        for _ in 0..5 {
+            state.next(ReadEvent::Failed(io::ErrorKind::Interrupted));
+        }
+        assert_eq!(state.next(failed()).action, Action::Backoff);
     }
 
     #[test]
