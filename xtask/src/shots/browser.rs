@@ -298,10 +298,15 @@ fn record_line(tail: &Mutex<Vec<u8>>, sender: &mpsc::Sender<String>, line: Strin
 fn spawn_stderr_reader(mut stderr: ChildStderr, head: Arc<Mutex<Vec<u8>>>) {
     thread::spawn(move || {
         let mut chunk = [0u8; 1024];
-        while let Ok(count) = stderr.read(&mut chunk) {
-            if count == 0 {
-                break;
-            }
+        loop {
+            let count = match stderr.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(error) => match read_outcome(error.kind()) {
+                    ReadOutcome::Retry => continue,
+                    ReadOutcome::Stop => break,
+                },
+            };
             if let Ok(mut buf) = head.lock() {
                 webdriver::push_head(&mut buf, &chunk[..count], webdriver::FAILURE_STREAM_CAP);
             }
