@@ -119,8 +119,14 @@ impl Marionette {
         webdriver::validate_hello(&hello)
             .map_err(|error| ConnectError::new(FailureKind::BadHello, error.to_string()))?;
         client.stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
-        client.call("WebDriver:NewSession", &webdriver::new_session_body())?;
-        client.navigate("about:blank")?;
+        client
+            .call("WebDriver:NewSession", &webdriver::new_session_body())
+            .map_err(|error| {
+                ConnectError::new(FailureKind::SessionFailed, format!("new session: {error}"))
+            })?;
+        client.navigate("about:blank").map_err(|error| {
+            ConnectError::new(FailureKind::NavigateFailed, format!("navigate: {error}"))
+        })?;
         Ok(client)
     }
 

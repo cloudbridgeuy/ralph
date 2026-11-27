@@ -4,6 +4,8 @@ pub enum FailureKind {
     TimedOut,
     BadHello,
     ConnectionLost,
+    SessionFailed,
+    NavigateFailed,
     Fatal,
 }
 
@@ -32,6 +34,8 @@ mod tests {
             FailureKind::TimedOut,
             FailureKind::BadHello,
             FailureKind::ConnectionLost,
+            FailureKind::SessionFailed,
+            FailureKind::NavigateFailed,
         ] {
             assert_eq!(retry_decision(kind, 1, 3), Retry::Again, "{kind:?}");
             assert_eq!(retry_decision(kind, 2, 3), Retry::Again, "{kind:?}");

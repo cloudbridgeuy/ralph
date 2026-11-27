@@ -484,7 +484,7 @@ The browser is Firefox Developer Edition. `run` starts it headless with `--mario
 - Ready wait: a screen is ready when `document.readyState` is `complete`, there is no `.r-spinner`, and `#main` has child nodes. The catalogue is ready at `readyState` `complete`. The wait polls every 100 ms for up to 10 s, then settles 250 ms and takes the shot.
 - The profile is quiet. Telemetry, update checks, first-run and welcome pages, safe browsing and prefetch are off. `ui.useOverlayScrollbars` is `0`, so shots show classic scrollbars and not overlay scrollbars.
 - Timeouts: the listen line from `ralph web` must arrive within 30 s. The connect and the hello each have a 10 s limit. Each later Marionette read and write has a 60 s limit.
-- Launch retries: `run` tries to launch Firefox up to 3 times for each theme. It retries when Firefox exits early, when the connect times out, when the hello is bad, and when the connection is lost. It stops with an error after the third failure and lists the reason of each attempt.
+- Launch retries: `run` tries to launch Firefox up to 3 times for each theme. It retries when Firefox exits early, when the connect times out, when the hello is bad, when the connection is lost, and when the Marionette `NewSession` or the first navigation fails. It stops with an error after the third failure and lists the reason of each attempt.
 - `--theme` does not change the catalogue. The catalogue has no theme in its name, so it is still captured in the dark session.
 - Before `run` stops Firefox, it sends `DeleteSession` to end the Marionette session. Then it kills the process.
 - Printed errors hide the per-run token. Each `token=<value>` shows as `token=<redacted>`.
