@@ -194,7 +194,7 @@ pub fn stale_diffs(existing: &[String], changed: &[String]) -> Vec<String> {
     let kept = sorted_set(changed);
     existing
         .iter()
-        .filter(|name| name.ends_with(".png") && !kept.contains(name))
+        .filter(|name| !kept.contains(name))
         .cloned()
         .collect()
 }
@@ -325,12 +325,6 @@ mod tests {
     fn no_diff_is_stale_when_every_one_still_changed() {
         let existing = names(&["a.png"]);
         assert!(stale_diffs(&existing, &names(&["a.png", "z.png"])).is_empty());
-    }
-
-    #[test]
-    fn only_png_diffs_are_stale() {
-        let existing = names(&["a.png", "notes.txt"]);
-        assert_eq!(stale_diffs(&existing, &[]), names(&["a.png"]));
     }
 
     fn memory_shots() -> Vec<Shot> {
