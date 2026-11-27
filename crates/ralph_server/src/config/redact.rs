@@ -844,6 +844,49 @@ mod tests {
     }
 
     #[test]
+    fn text_is_sensitive_flags_each_marker_and_path_shape() {
+        for text in [
+            "https://x",
+            "a@b",
+            "key=1",
+            "token=1",
+            "password=1",
+            "secret=1",
+            "KEY=1",
+            "Token=1",
+            "PASSWORD=1",
+            "SECRET=1",
+            "~",
+            "a~b",
+            "/x",
+            r"a\b",
+            "%A%",
+            "$A",
+        ] {
+            assert!(text_is_sensitive(text), "{text}");
+        }
+        for text in ["tokyo-night", "--color=always", "x:1", "monkey", "secrets"] {
+            assert!(!text_is_sensitive(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn value_is_sensitive_walks_strings_arrays_and_object_keys() {
+        for value in [
+            json!("a@b"),
+            json!(["a", "a@b"]),
+            json!({"a@b": 1}),
+            json!({"k": "a@b"}),
+            json!({"k": [{"j": "~"}]}),
+        ] {
+            assert!(value_is_sensitive(&value), "{value}");
+        }
+        for value in [json!("a"), json!(1), json!(true), json!({"k": ["v", 2]})] {
+            assert!(!value_is_sensitive(&value), "{value}");
+        }
+    }
+
+    #[test]
     fn secret_markers_match_in_any_case_in_flag_arguments() {
         for text in [
             "GH_TOKEN=abc123",

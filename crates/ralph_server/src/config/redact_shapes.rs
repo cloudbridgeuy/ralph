@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn unix_and_drive_slash_paths_have_a_path_shape() {
-        for text in ["/Users/x", "~/notes", "D:/x", "a/b"] {
+        for text in ["/Users/x", "~/notes", "D:/x", "a/b", "~", "a~b"] {
             assert!(text_has_path_shape(text), "{text}");
         }
     }
@@ -275,6 +275,7 @@ mod tests {
     #[test]
     fn word_name_and_ident_grammars_bound_length_and_charset() {
         assert!(is_word("basis") && is_word("step-after") && is_word("monotoneX"));
+        assert!(!is_word("AbCdEf0123") && !is_word("a-AbCdEf0123"));
         assert!(!is_word("a_b") && !is_word("a b") && !is_word("1a") && !is_word(&"a".repeat(25)));
         assert!(
             is_name("tokyo-night") && is_name("Solarized (dark)") && is_name("base16-ocean.dark")
