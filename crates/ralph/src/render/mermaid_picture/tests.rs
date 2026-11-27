@@ -25,8 +25,24 @@ fn request(source: &str, style: PictureStyle) -> PictureRequest {
     PictureRequest {
         source: source.to_string(),
         style,
-        room: ROOM,
+        target: Target::Pane(ROOM),
     }
+}
+
+fn file_png(source: &str, scale: f64) -> Pixmap {
+    let request = PictureRequest {
+        source: source.to_string(),
+        style: style(),
+        target: Target::File { scale },
+    };
+    Pixmap::decode_png(&rasterize(&request, fontdb::Database::new()).unwrap()).unwrap()
+}
+
+fn chain(nodes: usize) -> String {
+    let edges: String = (0..nodes)
+        .map(|i| format!("  N{i} --> N{}\n", i + 1))
+        .collect();
+    format!("flowchart TD\n{edges}")
 }
 
 #[test]
@@ -36,7 +52,7 @@ fn options_carry_the_style_and_the_room() {
         .as_object()
         .cloned()
         .unwrap();
-    let built = options(&picked, &ROOM);
+    let built = options(&picked, &Target::Pane(ROOM));
     let colors = built.colors.unwrap();
     assert_eq!(colors.bg, picked.colors.bg);
     assert_eq!(colors.series, picked.colors.series);
@@ -104,4 +120,25 @@ fn a_diagram_too_big_for_readable_text_is_refused() {
 fn a_source_that_is_not_a_diagram_is_refused() {
     let refused = rasterize(&request("hello there", style()), fontdb::Database::new());
     assert!(refused.is_err());
+}
+
+#[test]
+fn file_target_ignores_the_size_gate() {
+    let source = chain(40);
+    assert!(rasterize(&request(&source, style()), fontdb::Database::new()).is_err());
+    assert!(file_png(&source, 1.0).height() > 800);
+}
+
+#[test]
+fn file_target_scales_the_drawing() {
+    let source = "flowchart LR\n  A --> B\n";
+    let (one, two) = (file_png(source, 1.0), file_png(source, 2.0));
+    assert!(two.width().abs_diff(2 * one.width()) <= 1);
+    assert!(two.height().abs_diff(2 * one.height()) <= 1);
+}
+
+#[test]
+fn file_target_lays_out_wider_than_a_phone_pane() {
+    let built = options(&style(), &Target::File { scale: 2.0 });
+    assert_eq!(built.max_width, Some(FILE_LAYOUT_WIDTH));
 }
