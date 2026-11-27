@@ -87,12 +87,12 @@ fn stream_section(name: &str, text: &str) -> String {
 }
 
 pub fn format_start_failure(status: &str, stdout: &str, stderr: &str) -> String {
-    format!(
+    redact_token(&format!(
         "ralph web did not start ({})\n{}\n{}",
         bounded(status, 100),
         stream_section("stderr", stderr),
         stream_section("stdout", stdout)
-    )
+    ))
 }
 
 pub fn token_url(listening: &Listening) -> String {
@@ -159,6 +159,26 @@ pub fn format_launch_failure(reasons: &[String]) -> String {
     format!("firefox did not open marionette on {count} {launches}{attempts}")
 }
 
+const TOKEN_MARK: &str = "token=";
+const TOKEN_END: [char; 5] = ['&', '"', '\'', '\\', ' '];
+
+pub fn redact_token(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(TOKEN_MARK) {
+        let value = at + TOKEN_MARK.len();
+        out.push_str(&rest[..value]);
+        out.push_str("<redacted>");
+        let after = &rest[value..];
+        let end = after
+            .find(|c: char| c.is_whitespace() || TOKEN_END.contains(&c))
+            .unwrap_or(after.len());
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn new_session_body() -> Value {
     json!({ "capabilities": {} })
 }
@@ -193,22 +213,24 @@ pub fn validate_hello(hello: &Value) -> Result<(), WebdriverError> {
     if hello["applicationType"] == "gecko" && hello["marionetteProtocol"] == 3 {
         Ok(())
     } else {
-        Err(WebdriverError::BadHello(hello.to_string()))
+        Err(WebdriverError::BadHello(redact_token(&hello.to_string())))
     }
 }
 
 pub fn command_result(message: &Value, id: u32) -> Result<Value, WebdriverError> {
     let parts = message.as_array().filter(|parts| parts.len() == 4);
     let Some([kind, got, error, result]) = parts.map(Vec::as_slice) else {
-        return Err(WebdriverError::BadReply(message.to_string()));
+        return Err(WebdriverError::BadReply(redact_token(&message.to_string())));
     };
     if kind != 1 || got != id {
-        return Err(WebdriverError::BadReply(message.to_string()));
+        return Err(WebdriverError::BadReply(redact_token(&message.to_string())));
     }
     if error.is_null() {
         Ok(result.clone())
     } else {
-        Err(WebdriverError::CommandFailed(error.to_string()))
+        Err(WebdriverError::CommandFailed(redact_token(
+            &error.to_string(),
+        )))
     }
 }
 
@@ -387,6 +409,79 @@ mod tests {
             format_launch_failure(&["bad hello".into()]),
             "firefox did not open marionette on 1 launch\nattempt 1: bad hello"
         );
+    }
+
+    #[test]
+    fn redacts_a_token_in_the_middle_of_text() {
+        assert_eq!(
+            redact_token("open http://127.0.0.1:9/?token=abc123 failed"),
+            "open http://127.0.0.1:9/?token=<redacted> failed"
+        );
+    }
+
+    #[test]
+    fn redacts_every_occurrence() {
+        assert_eq!(
+            redact_token("a?token=one b?token=two&x=1 c?token=three"),
+            "a?token=<redacted> b?token=<redacted>&x=1 c?token=<redacted>"
+        );
+    }
+
+    #[test]
+    fn redacts_a_token_at_the_end_of_the_string() {
+        assert_eq!(redact_token("url ?token=secret"), "url ?token=<redacted>");
+        assert_eq!(redact_token("?token=secret\n"), "?token=<redacted>\n");
+    }
+
+    #[test]
+    fn text_without_a_token_is_unchanged() {
+        for text in ["", "no secrets here", "token without equals", "tokens=1"] {
+            assert_eq!(redact_token(text), text);
+        }
+    }
+
+    #[test]
+    fn redacts_quoted_and_json_escaped_forms() {
+        assert_eq!(
+            redact_token("\"http://h/?token=abc\" and 'http://h/?token=def'"),
+            "\"http://h/?token=<redacted>\" and 'http://h/?token=<redacted>'"
+        );
+        assert_eq!(
+            redact_token("{\"url\":\"http://h/?token=abc\\\"}"),
+            "{\"url\":\"http://h/?token=<redacted>\\\"}"
+        );
+    }
+
+    #[test]
+    fn an_empty_token_value_stays_marked() {
+        assert_eq!(redact_token("?token= x"), "?token=<redacted> x");
+    }
+
+    #[test]
+    fn a_redacted_marker_is_stable() {
+        let once = redact_token("?token=abc");
+        assert_eq!(redact_token(&once), once);
+    }
+
+    #[test]
+    fn start_failures_never_show_the_token() {
+        let text = format_start_failure(
+            "killed",
+            "ralph web listening on http://127.0.0.1:4242/?token=s3cret\n",
+            "stderr ?token=other",
+        );
+        assert!(
+            !text.contains("s3cret") && !text.contains("other"),
+            "{text}"
+        );
+        assert!(text.contains("token=<redacted>"));
+    }
+
+    #[test]
+    fn command_errors_never_show_the_token() {
+        let reply = json!([1, 3, {"message": "bad url http://h/?token=s3cret"}, null]);
+        let error = command_result(&reply, 3).unwrap_err().to_string();
+        assert!(!error.contains("s3cret"), "{error}");
     }
 
     #[test]

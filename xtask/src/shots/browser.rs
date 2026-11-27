@@ -430,6 +430,10 @@ fn capture_theme(
 }
 
 pub fn capture(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxError> {
+    capture_all(options, out).map_err(|error| webdriver::redact_token(&error.to_string()).into())
+}
+
+fn capture_all(options: &CaptureOptions, out: &Path) -> Result<Vec<String>, BoxError> {
     let shots = core::filter(core::matrix(), options.screen, options.theme);
     let scratch = tempfile::tempdir()?;
     let store = scratch.path().join("store");
