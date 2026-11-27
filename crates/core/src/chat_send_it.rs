@@ -5,7 +5,7 @@ use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{
     describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT, OUTPUT_HEADER,
 };
-use crate::worker::{hex_encode, HarnessId, Report, WorkerId};
+use crate::worker::{hex_encode, HarnessId, Report, Sender, WorkerId};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -701,7 +701,6 @@ pub fn parse_step_result(args: &Value) -> Result<StepResult, String> {
     }
 }
 
-const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
 const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -729,7 +728,7 @@ pub enum StopReason {
     TurnCap,
     CostCap,
     Unmet { step: usize },
-    WorkerFlagged { worker: String, line: String },
+    WorkerFlagged { worker: Sender, line: String },
     JudgeRounds { step: usize, evidence: String },
     CheckFailed { step: usize, detail: Option<String> },
     CheckNotStarted { step: usize, error: String },
@@ -790,9 +789,7 @@ impl StopReason {
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Unmet { step } => format!("step {step} missed its exit criterion"),
-            StopReason::WorkerFlagged { .. } => {
-                "a worker asked a question or is blocked".to_string()
-            }
+            StopReason::WorkerFlagged { worker, .. } => format!("worker {worker} needs you"),
             StopReason::JudgeRounds { step, evidence } => format!(
                 "step {step} was still not met after the last judge round: {}",
                 evidence.trim_end_matches('.')
@@ -821,14 +818,6 @@ impl StopReason {
             None => format!("send-it stopped: {why}."),
         }
     }
-}
-
-fn flagged(report: &Report) -> bool {
-    FLAGGED_STATUSES.contains(&report.status.as_str())
-}
-
-pub fn worker_flagged(reports: &[Report]) -> bool {
-    reports.iter().any(flagged)
 }
 
 pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {

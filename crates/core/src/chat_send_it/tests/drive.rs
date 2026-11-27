@@ -1,4 +1,6 @@
 use super::*;
+use crate::worker::Sender;
+use std::collections::HashSet;
 
 fn replying(allowed: bool) -> RunFile {
     let mut plan = plan();
@@ -16,11 +18,19 @@ fn state(file: &RunFile, step: usize, awaiting: Awaiting) -> Driving {
 }
 
 fn held(file: &RunFile) -> Driving {
-    state(file, 0, Awaiting::Report("E1".to_string()))
+    state(file, 0, awaiting_report("E1"))
 }
 
-fn answered_ids(ids: &[&str]) -> Vec<String> {
-    ids.iter().map(ToString::to_string).collect()
+fn answered_ids(ids: &[&str]) -> HashSet<Sender> {
+    ids.iter().map(|id| Sender::parse(id).unwrap()).collect()
+}
+
+pub(super) fn awaiting_report(id: &str) -> Awaiting {
+    Awaiting::Report(Sender::parse(id).unwrap())
+}
+
+pub(super) fn hold(id: &str) -> Next {
+    Next::Hold(WorkerId::parse(id).unwrap())
 }
 
 fn is_flagged(next: &Next) -> bool {
@@ -40,7 +50,7 @@ fn an_answered_question_the_plan_allows_keeps_the_held_run_holding() {
             ..ended(&file)
         },
     );
-    assert_eq!(ticked.next, Next::Hold("E1".to_string()));
+    assert_eq!(ticked.next, hold("E1"));
 }
 
 #[test]
@@ -143,11 +153,7 @@ fn a_resumed_worker_step_whose_worker_reported_done_moves_to_the_next_step() {
         started.driving,
         Driving {
             briefed: false,
-            ..driving(
-                1,
-                Awaiting::Report("watch:send-it-2".to_string()),
-                Run::default()
-            )
+            ..driving(1, Awaiting::check(1), Run::default())
         }
     );
     assert_eq!(
@@ -170,12 +176,12 @@ fn a_resumed_worker_step_with_a_known_or_running_worker_holds_and_does_not_resen
         (&[][..], &["E1"][..]),
     ] {
         let started = start(&stopped_on(1), known, running).unwrap();
-        assert_eq!(started.next, Next::Hold("E1".to_string()));
+        assert_eq!(started.next, hold("E1"));
         assert_eq!(
             started.driving,
             Driving {
                 briefed: false,
-                ..driving(0, Awaiting::Report("E1".to_string()), Run::default())
+                ..driving(0, awaiting_report("E1"), Run::default())
             }
         );
         assert_eq!(started.met, None);
@@ -197,10 +203,7 @@ fn a_resumed_check_step_runs_the_check_first_and_a_failure_stops_the_run() {
     let file = stopped_on(3);
     let started = start(&file, &[], &[]).unwrap();
     assert_eq!(started.next, Next::Check("cargo xtask lint".to_string()));
-    assert_eq!(
-        started.driving.awaiting,
-        Awaiting::Report("watch:send-it-3".to_string())
-    );
+    assert_eq!(started.driving.awaiting, Awaiting::check(2));
     let failed = WatchOutcome::Exited(1);
     let stopped = tick(
         &started.driving,
@@ -250,10 +253,7 @@ fn a_run_whose_first_step_is_a_check_starts_by_running_it() {
         started.next,
         Next::Watch("gh pr checks --watch".to_string())
     );
-    assert_eq!(
-        started.driving.awaiting,
-        Awaiting::Report("watch:send-it-1".to_string())
-    );
+    assert_eq!(started.driving.awaiting, Awaiting::check(0));
     assert_eq!(started.met, None);
 }
 
@@ -291,7 +291,7 @@ fn only_the_generated_check_shape_is_a_check_watch_id() {
 fn checking(file: &RunFile, step: usize, run: Run) -> Driving {
     Driving {
         run,
-        ..state(file, step, Awaiting::Report(check_watch_id(step)))
+        ..state(file, step, Awaiting::check(step))
     }
 }
 
@@ -346,10 +346,7 @@ fn a_passing_watch_chains_into_a_following_check_without_a_turn() {
         TRUST,
     );
     assert_eq!(settled.next, Next::Check("cargo xtask lint".to_string()));
-    assert_eq!(
-        settled.driving.awaiting,
-        Awaiting::Report("watch:send-it-3".to_string())
-    );
+    assert_eq!(settled.driving.awaiting, Awaiting::check(2));
     assert_eq!(settled.driving.run, Run::default());
 }
 
@@ -599,7 +596,7 @@ fn a_run_that_starts_with_a_check_briefs_the_first_step_it_sends() {
     let settled = settle_check(
         &Driving {
             progress: at(1),
-            awaiting: Awaiting::Report(check_watch_id(1)),
+            awaiting: Awaiting::check(1),
             ..started.driving
         },
         Some(&file),
@@ -651,7 +648,7 @@ fn a_tick_that_sends_first_after_a_hold_briefs_it() {
         &["E1"],
     )
     .unwrap();
-    assert_eq!(resumed.next, Next::Hold("E1".to_string()));
+    assert_eq!(resumed.next, hold("E1"));
     assert!(!resumed.driving.briefed);
     let done = [worker_report("E1", "done")];
     let ticked = tick(
@@ -680,7 +677,7 @@ fn a_run_already_briefed_sends_later_steps_bare() {
     let settled = settle_check(
         &Driving {
             progress: at(2),
-            awaiting: Awaiting::Report(check_watch_id(2)),
+            awaiting: Awaiting::check(2),
             ..started.driving
         },
         Some(&file),
@@ -745,7 +742,7 @@ fn check_output_that_contains_the_follow_up_header_text_is_kept() {
 fn a_held_worker_report_turn_is_briefed_once_for_an_unbriefed_run() {
     let file = stopped_on(1);
     let held = start(&file, &[], &["E1"]).unwrap();
-    assert_eq!(held.next, Next::Hold("E1".to_string()));
+    assert_eq!(held.next, hold("E1"));
     assert!(!held.driving.briefed);
     let report = "[E1] done: opened the PR";
     let (driving, text) = briefed_turn(&file.plan, held.driving, report);
@@ -761,4 +758,28 @@ fn a_held_worker_report_turn_is_briefed_once_for_an_unbriefed_run() {
 #[test]
 fn the_judge_echo_is_one_short_line() {
     assert_eq!(judge_echo(&plan(), at(3)), "send-it 4/4 · judge ...");
+}
+
+#[test]
+fn a_held_step_awaits_its_worker_as_a_sender() {
+    let file = approved(plan());
+    let ticked = tick(&driving(0, Awaiting::Turn, Run::default()), &ended(&file));
+    assert_eq!(
+        (ticked.next, ticked.driving.awaiting),
+        (
+            Next::Hold(WorkerId::parse("E1").unwrap()),
+            Awaiting::Report(Sender::parse("E1").unwrap())
+        )
+    );
+}
+
+#[test]
+fn a_check_step_awaits_its_check_watch_as_a_sender() {
+    let file = approved(plan());
+    let ticked = tick(&driving(2, Awaiting::Turn, Run::default()), &ended(&file));
+    assert_eq!(ticked.driving.awaiting, Awaiting::check(2));
+    assert_eq!(
+        Awaiting::check(2),
+        Awaiting::Report(Sender::parse("watch:send-it-3").unwrap())
+    );
 }

@@ -339,7 +339,7 @@ fn ended() -> Ended<'static> {
         step_result: None,
         drained: &[],
         unread: &[],
-        answered: &[],
+        answered: Box::leak(Box::default()),
         watched: None,
         refused: None,
     }
@@ -466,7 +466,7 @@ fn the_next_tick_takes_the_answered_workers_once() {
         drained: &flagged,
         ..ended()
     };
-    send_it.answer("E1".to_string());
+    send_it.answer(ralph_core::worker::Sender::parse("E1").unwrap());
     assert_eq!(
         tick(&send_it, &active, with_question()).next,
         Next::Check("cargo xtask lint".to_string())
@@ -854,7 +854,7 @@ fn a_settled_check_logs_its_notice_once_and_before_its_met_line() {
     send_it.propose(&args).unwrap();
     let hash = send_it.status(80).shown.unwrap();
     let mut driving = go(&send_it, Some(&hash), true).1.unwrap().driving;
-    driving.awaiting = Awaiting::Report("watch:send-it-1".to_string());
+    driving.awaiting = Awaiting::check(0);
     driving.progress.verify = VerifyMode::Observe;
     driving.progress.verifying = true;
     let mut sending = Some(Active {
@@ -890,7 +890,7 @@ fn a_settled_last_check_logs_only_the_done_notice() {
     send_it.propose(&plan_args()).unwrap();
     let hash = send_it.status(80).shown.unwrap();
     let mut driving = go(&send_it, Some(&hash), true).1.unwrap().driving;
-    driving.awaiting = Awaiting::Report("watch:send-it-1".to_string());
+    driving.awaiting = Awaiting::check(0);
     driving.progress.verify = VerifyMode::Observe;
     driving.progress.verifying = true;
     let mut sending = Some(Active {
