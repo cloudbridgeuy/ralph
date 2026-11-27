@@ -119,21 +119,30 @@ pub enum StatusOff {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminalStatus {
-    On(RexBlock),
-    Off(StatusOff),
+pub struct RexPane {
+    block: RexBlock,
 }
 
-pub fn terminal_status(
+impl RexPane {
+    pub fn block(&self) -> &RexBlock {
+        &self.block
+    }
+
+    pub fn report(&self, report: &Report) -> Result<String, TooLong> {
+        encode(report)
+    }
+}
+
+pub fn rex_pane(
     setting: StatusSetting,
     stdout: Stdout,
     rex: Option<RexBlock>,
-) -> TerminalStatus {
+) -> Result<RexPane, StatusOff> {
     match (setting, stdout, rex) {
-        (StatusSetting::Disabled, _, _) => TerminalStatus::Off(StatusOff::Disabled),
-        (_, Stdout::NotTty, _) => TerminalStatus::Off(StatusOff::NotTty),
-        (_, _, None) => TerminalStatus::Off(StatusOff::NotInRex),
-        (StatusSetting::Enabled, Stdout::Tty, Some(block)) => TerminalStatus::On(block),
+        (StatusSetting::Disabled, _, _) => Err(StatusOff::Disabled),
+        (_, Stdout::NotTty, _) => Err(StatusOff::NotTty),
+        (_, _, None) => Err(StatusOff::NotInRex),
+        (StatusSetting::Enabled, Stdout::Tty, Some(block)) => Ok(RexPane { block }),
     }
 }
 
@@ -179,7 +188,7 @@ fn bounded(sequence: String) -> Result<String, TooLong> {
     }
 }
 
-pub fn encode(report: &Report) -> Result<String, TooLong> {
+fn encode(report: &Report) -> Result<String, TooLong> {
     let kind = report
         .state
         .kind()
@@ -223,23 +232,25 @@ mod tests {
     }
 
     #[test]
-    fn status_needs_config_tty_and_non_empty_rex_block() {
+    fn rex_pane_needs_config_tty_and_non_empty_rex_block() {
         let block = RexBlock::parse("blk-1").unwrap();
+        let pane = rex_pane(StatusSetting::Enabled, Stdout::Tty, Some(block.clone())).unwrap();
+        assert_eq!(pane.block(), &block);
         assert_eq!(
-            terminal_status(StatusSetting::Enabled, Stdout::Tty, Some(block.clone())),
-            TerminalStatus::On(block.clone())
+            pane.report(&report(State::Working, None)).unwrap(),
+            "\x1b]7501;state=working:app=ralph\x07"
         );
         assert_eq!(
-            terminal_status(StatusSetting::Disabled, Stdout::Tty, Some(block.clone())),
-            TerminalStatus::Off(StatusOff::Disabled)
+            rex_pane(StatusSetting::Disabled, Stdout::Tty, Some(block.clone())),
+            Err(StatusOff::Disabled)
         );
         assert_eq!(
-            terminal_status(StatusSetting::Enabled, Stdout::NotTty, Some(block)),
-            TerminalStatus::Off(StatusOff::NotTty)
+            rex_pane(StatusSetting::Enabled, Stdout::NotTty, Some(block)),
+            Err(StatusOff::NotTty)
         );
         assert_eq!(
-            terminal_status(StatusSetting::Enabled, Stdout::Tty, None),
-            TerminalStatus::Off(StatusOff::NotInRex)
+            rex_pane(StatusSetting::Enabled, Stdout::Tty, None),
+            Err(StatusOff::NotInRex)
         );
         assert_eq!(RexBlock::parse(""), None);
     }

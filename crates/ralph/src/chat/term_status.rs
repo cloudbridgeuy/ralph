@@ -1,5 +1,5 @@
 use crate::inbox_alert::{write_terminal, TMUX_PANE_ENV};
-use ralph_core::program_status::{encode, tmux_wrap, Report, State, TerminalStatus};
+use ralph_core::program_status::{tmux_wrap, Report, RexPane, State};
 use ralph_core::term_title::{title_end, title_start};
 use std::sync::{Arc, Mutex};
 
@@ -10,8 +10,8 @@ struct Sent {
     title_open: bool,
 }
 
-fn frame(report: &Report, in_tmux: bool) -> Option<String> {
-    let sequence = encode(report).ok()?;
+fn frame(pane: &RexPane, report: &Report, in_tmux: bool) -> Option<String> {
+    let sequence = pane.report(report).ok()?;
     Some(if in_tmux {
         tmux_wrap(&sequence)
     } else {
@@ -28,16 +28,16 @@ fn take_title_restore(sent: &mut Sent) -> bool {
 }
 
 pub(super) struct TermStatus {
-    status: TerminalStatus,
+    rex: Option<RexPane>,
     title_enabled: bool,
     in_tmux: bool,
     sent: Mutex<Sent>,
 }
 
 impl TermStatus {
-    pub(super) fn new(status: TerminalStatus, title_enabled: bool) -> Self {
+    pub(super) fn new(rex: Option<RexPane>, title_enabled: bool) -> Self {
         Self {
-            status,
+            rex,
             title_enabled,
             in_tmux: std::env::var_os(TMUX_PANE_ENV).is_some(),
             sent: Mutex::new(Sent::default()),
@@ -45,10 +45,10 @@ impl TermStatus {
     }
 
     pub(super) fn send(&self, report: &Report) {
-        let TerminalStatus::On(_) = &self.status else {
+        let Some(pane) = &self.rex else {
             return;
         };
-        let Some(bytes) = frame(report, self.in_tmux) else {
+        let Some(bytes) = frame(pane, report, self.in_tmux) else {
             return;
         };
         let mut sent = ralph_server::watches::locked(&self.sent);
@@ -74,15 +74,17 @@ impl TermStatus {
         if take_title_restore(&mut sent) {
             let _ = write_terminal(title_end());
         }
-        if matches!(self.status, TerminalStatus::On(_)) && !sent.closed {
-            let clear = Report {
-                state: State::Clear,
-                msg: None,
-            };
-            if let Some(bytes) = frame(&clear, self.in_tmux) {
-                let _ = write_terminal(&bytes);
+        if let Some(pane) = &self.rex {
+            if !sent.closed {
+                let clear = Report {
+                    state: State::Clear,
+                    msg: None,
+                };
+                if let Some(bytes) = frame(pane, &clear, self.in_tmux) {
+                    let _ = write_terminal(&bytes);
+                }
+                sent.closed = true;
             }
-            sent.closed = true;
         }
     }
 }
@@ -98,7 +100,16 @@ impl Drop for ClearOnDrop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::program_status::State;
+    use ralph_core::program_status::{rex_pane, RexBlock, State, StatusSetting, Stdout};
+
+    fn test_pane() -> RexPane {
+        rex_pane(
+            StatusSetting::Enabled,
+            Stdout::Tty,
+            RexBlock::parse("blk-1"),
+        )
+        .unwrap()
+    }
 
     fn working() -> Report {
         Report {
@@ -110,7 +121,7 @@ mod tests {
     #[test]
     fn frame_is_the_plain_sequence_outside_tmux() {
         assert_eq!(
-            frame(&working(), false).as_deref(),
+            frame(&test_pane(), &working(), false).as_deref(),
             Some("\x1b]7501;state=working:app=ralph\x07")
         );
     }
@@ -118,7 +129,7 @@ mod tests {
     #[test]
     fn frame_wraps_the_sequence_inside_tmux() {
         assert_eq!(
-            frame(&working(), true).as_deref(),
+            frame(&test_pane(), &working(), true).as_deref(),
             Some("\x1bPtmux;\x1b\x1b]7501;state=working:app=ralph\x07\x1b\\")
         );
     }

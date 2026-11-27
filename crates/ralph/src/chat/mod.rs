@@ -73,7 +73,7 @@ use ralph_core::chat_switch::SwitchArgv;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{
-    terminal_status, RexBlock, StatusOff, StatusSetting, Stdout, TerminalStatus, REX_BLOCK_ENV,
+    rex_pane, RexBlock, RexPane, StatusOff, StatusSetting, Stdout, REX_BLOCK_ENV,
 };
 use ralph_server::chat::host::spawn_session_host;
 use ralph_server::chat::memory::Store;
@@ -103,13 +103,13 @@ pub(crate) use ralph_server::config::{
     CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, WRAP_WIDTH_ENV,
 };
 
-fn resolve_terminal_status(
+fn resolve_rex_pane(
     setting: StatusSetting,
     stdout: Stdout,
     env: impl FnOnce(&str) -> Option<String>,
-) -> TerminalStatus {
+) -> Result<RexPane, StatusOff> {
     let block = env(REX_BLOCK_ENV).as_deref().and_then(RexBlock::parse);
-    terminal_status(setting, stdout, block)
+    rex_pane(setting, stdout, block)
 }
 
 fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
@@ -123,7 +123,7 @@ fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
 fn alert_config(
     args: &ChatArgs,
     chat: &ChatSection,
-    terminal_status: TerminalStatus,
+    terminal_status: Option<RexPane>,
 ) -> AlertConfig {
     AlertConfig {
         sound: chat.inbox_alert_sound && !args.no_inbox_sound,
@@ -142,10 +142,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
             },
             |config| config.chat,
         );
-        return remote::run(
-            socket,
-            alert_config(&args, &chat, TerminalStatus::Off(StatusOff::Disabled)),
-        );
+        return remote::run(socket, alert_config(&args, &chat, None));
     }
     if let Some(ChatCommand::History(history)) = args.command {
         print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;
@@ -229,14 +226,15 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         Arc::clone(&resize),
         ralph_server::config::effective_grants(&config.chat, &store_dir),
     )?;
-    let status = resolve_terminal_status(
+    let rex = resolve_rex_pane(
         StatusSetting::from_bool(chat_config.terminal_status),
         Stdout::from_is_terminal(std::io::stdout().is_terminal()),
         |key| std::env::var(key).ok(),
-    );
-    let alert = alert_config(&args, chat_config, status.clone());
+    )
+    .ok();
+    let alert = alert_config(&args, chat_config, rex.clone());
     let term = Arc::new(TermStatus::new(
-        status,
+        rex,
         chat_config.terminal_title && std::io::stdout().is_terminal(),
     ));
     let assembled = assemble(AssembleOptions {
@@ -513,8 +511,8 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod rex_status_tests {
-    use super::resolve_terminal_status;
-    use ralph_core::program_status::{RexBlock, StatusOff, StatusSetting, Stdout, TerminalStatus};
+    use super::resolve_rex_pane;
+    use ralph_core::program_status::{RexBlock, StatusOff, StatusSetting, Stdout};
 
     #[test]
     fn rex_pane_with_rex_block_enables_terminal_status() {
@@ -524,18 +522,16 @@ mod rex_status_tests {
             "TERM_PROGRAM" => Some("rex".to_string()),
             _ => None,
         };
-        assert_eq!(
-            resolve_terminal_status(StatusSetting::Enabled, Stdout::Tty, env),
-            TerminalStatus::On(RexBlock::parse("blk-1").unwrap())
-        );
+        let pane = resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, env).unwrap();
+        assert_eq!(pane.block(), &RexBlock::parse("blk-1").unwrap());
     }
 
     #[test]
     fn empty_or_missing_rex_block_disables_terminal_status() {
         let empty = |key: &str| (key == "REX_BLOCK").then(String::new);
         assert_eq!(
-            resolve_terminal_status(StatusSetting::Enabled, Stdout::Tty, empty),
-            TerminalStatus::Off(StatusOff::NotInRex)
+            resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, empty),
+            Err(StatusOff::NotInRex)
         );
 
         let missing = |key: &str| match key {
@@ -544,8 +540,8 @@ mod rex_status_tests {
             _ => None,
         };
         assert_eq!(
-            resolve_terminal_status(StatusSetting::Enabled, Stdout::Tty, missing),
-            TerminalStatus::Off(StatusOff::NotInRex)
+            resolve_rex_pane(StatusSetting::Enabled, Stdout::Tty, missing),
+            Err(StatusOff::NotInRex)
         );
     }
 }

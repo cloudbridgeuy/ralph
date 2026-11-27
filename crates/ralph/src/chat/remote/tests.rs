@@ -1,6 +1,6 @@
 use super::*;
 use ralph_core::inbox_alert::UnknownFocus;
-use ralph_core::program_status::{Report, State, StatusOff, TerminalStatus};
+use ralph_core::program_status::{Report, State};
 use ralph_core::stream::blocks::{
     OutputBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
@@ -292,7 +292,7 @@ fn pair_session(timeout: Duration) -> (RemoteSession, UnixStream) {
             sound: false,
             notification: false,
             unknown_focus: UnknownFocus::Silent,
-            terminal_status: TerminalStatus::Off(StatusOff::Disabled),
+            terminal_status: None,
         },
     };
     (session, server)

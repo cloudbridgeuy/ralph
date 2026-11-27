@@ -1,7 +1,7 @@
 use crate::chat_help::{wrap, Command};
 use crate::chat_spec::Keyword;
 use crate::inbox_alert::{Alert, AlertConfig};
-use crate::program_status::{Kind, Report as ProgramReport, State, TerminalStatus};
+use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{
     describe, watch_id, WatchKind, WatchOutcome, WatchSpec, NO_OUTPUT, OUTPUT_HEADER,
 };
@@ -873,7 +873,7 @@ pub fn running_line(plan: &RunPlan, driving: &Driving) -> String {
 }
 
 pub fn blocked_alert(notice: &str, config: &AlertConfig) -> Option<Alert> {
-    (config.enabled() && matches!(config.terminal_status, TerminalStatus::Off(_))).then(|| Alert {
+    (config.enabled() && config.terminal_status.is_none()).then(|| Alert {
         sound: config.sound,
         notification: config.notification.then(|| notice.to_string()),
     })
