@@ -1,11 +1,13 @@
 use crate::config::MermaidStyleExt;
-use crate::render::mermaid::{fits_width, mermaid_precheck, picture_precheck};
-use crate::render::mermaid_picture::PictureRequest;
+use crate::render::mermaid::{mermaid_precheck, picture_precheck, widest};
+use crate::render::mermaid_picture::{PictureRequest, Target};
 use crate::ui_theme::UiColors;
+use ralph_core::mermaid_file::{diagram_name, Miss};
 use ralph_core::mermaid_fit::Room;
 use ralph_server::config::{AppConfig, MermaidSection};
 use ralph_server::warn::warn;
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
@@ -13,6 +15,7 @@ use std::time::{Duration, Instant};
 use syntect::highlighting::Theme;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const FILE_SCALE: f64 = 2.0;
 
 #[cfg(target_os = "macos")]
 fn rss_bytes(pid: u32) -> Option<u64> {
@@ -120,9 +123,9 @@ fn limits() -> &'static MermaidSection {
     })
 }
 
-pub fn render(source: &str, width: usize) -> Option<String> {
+pub fn render(source: &str, width: usize) -> Result<String, Miss> {
     let limits = limits();
-    mermaid_precheck(source, limits).ok()?;
+    mermaid_precheck(source, limits).map_err(|_| Miss::NoText)?;
     let width_arg = width.to_string();
     let output = run_guarded(Guarded {
         args: &["--width", &width_arg],
@@ -130,9 +133,13 @@ pub fn render(source: &str, width: usize) -> Option<String> {
         timeout_ms: limits.timeout_ms,
         max_rss_mb: limits.max_rss_mb,
         stdout_cap: TEXT_STDOUT_CAP,
-    })?;
-    let output = String::from_utf8(output).ok()?;
-    fits_width(&output, width).then_some(output.trim_end().to_string())
+    })
+    .ok_or(Miss::NoText)?;
+    let output = String::from_utf8(output).map_err(|_| Miss::NoText)?;
+    match widest(&output) {
+        needs if needs > width => Err(Miss::TooWide { needs, has: width }),
+        _ => Ok(output.trim_end().to_string()),
+    }
 }
 
 pub fn picture(source: &str, theme: &Theme, ui: &UiColors, room: Room) -> Option<Vec<u8>> {
@@ -141,7 +148,7 @@ pub fn picture(source: &str, theme: &Theme, ui: &UiColors, room: Room) -> Option
     let request = PictureRequest {
         source: source.to_string(),
         style: limits.style.resolve(theme, ui).0,
-        room,
+        target: Target::Pane(room),
     };
     let png = run_guarded(Guarded {
         args: &["--picture"],
@@ -151,6 +158,38 @@ pub fn picture(source: &str, theme: &Theme, ui: &UiColors, room: Room) -> Option
         stdout_cap: PICTURE_STDOUT_CAP,
     })?;
     (!png.is_empty()).then_some(png)
+}
+
+pub fn full_size(source: &str, theme: &Theme, ui: &UiColors, dir: &Path) -> Option<PathBuf> {
+    let limits = limits();
+    picture_precheck(source, limits).ok()?;
+    let target = Target::File { scale: FILE_SCALE };
+    let style = limits.style.resolve(theme, ui).0;
+    let name = diagram_name(source, &serde_json::to_vec(&(&style, &target)).ok()?);
+    let path = dir.join(&name);
+    if path.is_file() {
+        return Some(path);
+    }
+    let request = PictureRequest {
+        source: source.to_string(),
+        style,
+        target,
+    };
+    let png = run_guarded(Guarded {
+        args: &["--picture"],
+        input: serde_json::to_vec(&request).ok()?,
+        timeout_ms: limits.picture_timeout_ms,
+        max_rss_mb: limits.max_rss_mb,
+        stdout_cap: PICTURE_STDOUT_CAP,
+    })
+    .filter(|png| !png.is_empty())?;
+    std::fs::create_dir_all(dir).ok()?;
+    let partial = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let saved = std::fs::write(&partial, &png).and_then(|()| std::fs::rename(&partial, &path));
+    if saved.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    saved.ok().map(|()| path)
 }
 
 #[cfg(test)]

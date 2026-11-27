@@ -6,6 +6,7 @@
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use ralph_core::code_frame::{Label, Spacing};
 use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
+use ralph_core::mermaid_file::miss_note;
 use ralph_core::shell_format::{format_fence, is_shell_fence};
 
 use ralph_core::stream::blocks::ImageFile;
@@ -211,9 +212,17 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
         Label::Language(lang_suffix)
     };
 
+    let mut note = String::new();
     if ctx.terminal && language == Some("mermaid") {
-        if let Some(diagram) = (ctx.mermaid)(content, body_width(ctx)) {
-            return framed(ctx, &label, &diagram);
+        match (ctx.mermaid)(content, body_width(ctx)) {
+            Ok(diagram) => return framed(ctx, &label, &diagram),
+            Err(miss) => {
+                if let Some(diagrams) = ctx.diagrams {
+                    let theme = ctx.highlighter.theme();
+                    let saved = (diagrams.save)(content, theme, &diagrams.ui, diagrams.dir);
+                    note = miss_note(miss, saved.as_deref());
+                }
+            }
         }
     }
 
@@ -239,7 +248,7 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
     };
 
     if ctx.terminal {
-        framed(ctx, &label, &shown)
+        note + &framed(ctx, &label, &shown)
     } else {
         format!("```{lang_suffix}\n{shown}\n```")
     }
@@ -267,7 +276,10 @@ mod tests {
     use super::*;
     use crate::frame::strip_ansi;
     use crate::highlight::{Highlighter, ThemeConfig};
+    use crate::render::tool_renderers::{Diagrams, SaveDiagram};
     use crate::render::Viewport;
+    use ralph_core::mermaid_file::{miss_note, Miss};
+    use std::path::Path;
 
     fn create_test_context() -> (Highlighter, MarkdownTheme) {
         let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
@@ -374,16 +386,74 @@ mod tests {
         assert_eq!(render_text_block(&ctx, &chunk, None), expected);
     }
 
+    const TOO_WIDE: Miss = Miss::TooWide {
+        needs: 114,
+        has: 46,
+    };
+
+    fn too_wide_with_store(highlighter: &Highlighter, save: SaveDiagram) -> String {
+        let mut ctx = RenderContext::terminal(highlighter);
+        ctx.mermaid = |_, _| Err(TOO_WIDE);
+        ctx.diagrams = Some(Diagrams {
+            dir: Path::new("/s/diagrams"),
+            ui: crate::ui_theme::UiColors::default(),
+            save,
+        });
+        render_code_block(&ctx, "graph TD\nA-->B", Some("mermaid"))
+    }
+
+    fn source_frame(highlighter: &Highlighter) -> String {
+        framed(
+            &RenderContext::terminal(highlighter),
+            &Label::Language("mermaid"),
+            &highlighter.highlight_foreground("graph TD\nA-->B", Some("mermaid")),
+        )
+    }
+
+    #[test]
+    fn too_wide_mermaid_with_a_store_shows_note_path_and_source() {
+        let (highlighter, _) = create_test_context();
+        let shown = too_wide_with_store(&highlighter, |_, _, _, dir| Some(dir.join("abc.png")));
+        let note = miss_note(TOO_WIDE, Some(Path::new("/s/diagrams/abc.png")));
+        assert_eq!(shown, note + &source_frame(&highlighter));
+    }
+
+    #[test]
+    fn a_failed_full_size_picture_still_shows_note_and_source() {
+        let (highlighter, _) = create_test_context();
+        let shown = too_wide_with_store(&highlighter, |_, _, _, _| None);
+        assert_eq!(
+            shown,
+            miss_note(TOO_WIDE, None) + &source_frame(&highlighter)
+        );
+    }
+
+    #[test]
+    fn a_fitting_mermaid_never_saves_a_file() {
+        let (highlighter, _) = create_test_context();
+        let mut ctx = RenderContext::terminal(&highlighter);
+        ctx.mermaid = |_, _| Ok("DIAGRAM".to_string());
+        ctx.diagrams = Some(Diagrams {
+            dir: Path::new("/s/diagrams"),
+            ui: crate::ui_theme::UiColors::default(),
+            save: |_, _, _, _| panic!("saved a diagram that fits"),
+        });
+        assert_eq!(
+            render_code_block(&ctx, "graph TD", Some("mermaid")),
+            framed(&ctx, &Label::Language("mermaid"), "DIAGRAM")
+        );
+    }
+
     #[test]
     fn mermaid_block_uses_renderer_and_falls_back_to_highlight() {
         let (highlighter, _) = create_test_context();
         let mut ctx = RenderContext::terminal(&highlighter);
-        ctx.mermaid = |_, _| Some("DIAGRAM".to_string());
+        ctx.mermaid = |_, _| Ok("DIAGRAM".to_string());
         assert_eq!(
             render_code_block(&ctx, "graph TD\nA-->B", Some("mermaid")),
             framed(&ctx, &Label::Language("mermaid"), "DIAGRAM")
         );
-        ctx.mermaid = |_, _| None;
+        ctx.mermaid = |_, _| Err(Miss::NoText);
         let fallback = render_code_block(&ctx, "graph TD\nA-->B", Some("mermaid"));
         assert_eq!(
             fallback,

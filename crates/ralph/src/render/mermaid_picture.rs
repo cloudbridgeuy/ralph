@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 pub type Rgba = [u8; 4];
 
+pub const FILE_LAYOUT_WIDTH: f64 = 1600.0;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PictureColors {
     pub bg: Rgba,
@@ -38,17 +40,27 @@ pub struct PictureStyle {
 pub struct PictureRequest {
     pub source: String,
     pub style: PictureStyle,
-    pub room: Room,
+    pub target: Target,
 }
 
-pub fn options(style: &PictureStyle, room: &Room) -> bezel::Options {
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Target {
+    Pane(Room),
+    File { scale: f64 },
+}
+
+pub fn options(style: &PictureStyle, target: &Target) -> bezel::Options {
     let colors = &style.colors;
+    let max_width = match target {
+        Target::Pane(room) => layout_width(room, style.font_size),
+        Target::File { .. } => FILE_LAYOUT_WIDTH,
+    };
     bezel::Options {
         font_family: Some(css_families(&style.font_family)),
         font_family_mono: Some(css_families(&style.font_family_mono)),
         font_size: style.font_size,
         responsive: Some(false),
-        max_width: Some(layout_width(room, style.font_size)),
+        max_width: Some(max_width),
         auto_direction: style.auto_direction,
         padding: Some(style.padding),
         links: false,
@@ -81,17 +93,24 @@ pub fn rasterize(request: &PictureRequest, mut fonts: fontdb::Database) -> Resul
     let style = &request.style;
     let drawing = bezel::render(
         &request.source,
-        &options(style, &request.room),
+        &options(style, &request.target),
         &bezel::Metrics,
     )
     .map_err(|error| error.to_string())?;
-    let fit = picture_fit(
-        (drawing.width, drawing.height),
-        style.font_size,
-        &request.room,
-        style.min_text_ratio,
-    )
-    .ok_or("the diagram text would be too small to read")?;
+    let (width_px, height_px) = match &request.target {
+        Target::Pane(room) => picture_fit(
+            (drawing.width, drawing.height),
+            style.font_size,
+            room,
+            style.min_text_ratio,
+        )
+        .map(|fit| (fit.width_px, fit.height_px))
+        .ok_or("the diagram text would be too small to read")?,
+        Target::File { scale } => {
+            let pixels = |length: f64| (length * scale).round().max(1.0) as u32;
+            (pixels(drawing.width), pixels(drawing.height))
+        }
+    };
     let installed = installed_families(&fonts);
     let sans = first_installed(&style.font_family, &installed).map(str::to_string);
     if let Some(mono) = first_installed(&style.font_family_mono, &installed) {
@@ -107,14 +126,14 @@ pub fn rasterize(request: &PictureRequest, mut fonts: fontdb::Database) -> Resul
         ..usvg::Options::default()
     };
     let tree = usvg::Tree::from_str(&drawing.svg, &parse).map_err(|error| error.to_string())?;
-    let mut pixmap = Pixmap::new(fit.width_px, fit.height_px).ok_or("the picture has no pixels")?;
+    let mut pixmap = Pixmap::new(width_px, height_px).ok_or("the picture has no pixels")?;
     if let Some([r, g, b, a]) = style.background {
         pixmap.fill(Color::from_rgba8(r, g, b, a));
     }
     let size = tree.size();
     let transform = Transform::from_scale(
-        fit.width_px as f32 / size.width(),
-        fit.height_px as f32 / size.height(),
+        width_px as f32 / size.width(),
+        height_px as f32 / size.height(),
     );
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     pixmap.encode_png().map_err(|error| error.to_string())

@@ -246,7 +246,7 @@ mod tests {
     fn shell_and_mermaid_width_excludes_the_margin() {
         let highlighter = highlighter();
         let mut ctx = terminal(&highlighter, 12);
-        ctx.mermaid = |_, width| Some(width.to_string());
+        ctx.mermaid = |_, width| Ok(width.to_string());
         let diagram = render_code_block(&ctx, "graph TD", Some("mermaid"));
         assert!(strip_ansi(&diagram).contains("\n  10\n"), "{diagram:?}");
         for out in [
