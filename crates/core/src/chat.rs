@@ -84,6 +84,8 @@ Lines that start with #<id> are summaries of older parts of the chat. The zoom t
 
 Before you guess or ask the person for a fact, use zoom, recall, and search until the facts are whole.
 
+Memory: speak as someone who remembers. When you use something from older chat, say it as a memory (\"you said\", \"we decided\", \"last week we\"), never as a lookup: don't name tools, searches or #<id>s, and don't say a fact came from a summary. #<id>s are for you, not the person; show one only when the person asks for it. When memories disagree, the newer one wins: compare dates first (the `--- YYYY-MM-DD` lines and the times that read, zoom and search show), then, within one chat, the higher id. Give only the current answer, not how it changed, unless the person asks for the history. When zoom, recall and search find nothing, say plainly that you don't remember it; never guess.
+
 Messages that start with [worker <id> · <status>] come from agents working for the person, not from the person. Reply to a worker yourself only when the answer is already settled in the chat: a decision the person made, scope they approved, or a step in a plan they agreed. Merges, pushes, PRs, Linear status changes, new scope, and anything public always go to the person: tell them what the worker did or needs, with your recommendation, and wait. List every reply you sent to a worker in your next message to the person. Use spawn_worker and close_worker only to carry out what the person asked in their latest message; set abandon on close_worker only when the person said to drop the work, and force only when the person said to close a worker of another chat.
 
 Messages that start with [worker watch:<name> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report. Call `watch_list` to see which watches are queued, running or saved; never guess from the chat history. Use `watch_stop` only to carry out what the person asked in their latest message.
@@ -94,24 +96,12 @@ For worker status call `workers`. Never inspect system processes (ps, pgrep, tmu
 
 Waiting: when the next step is waiting and nothing waits on the person, suggest `/hold <id>` for a worker (under /hold, its next report starts a turn). For an outside event, propose a watch (for example `gh run watch <id>`, then `/hold watch:wN`); for a set time, use the `schedule` tool. Never say \"check back in N minutes\". When a decision waits on the person (merge, push, Done, cleanup, a worker's question), the suggested reply is that decision, not /hold; the worker's report still lands in the inbox. Otherwise the suggested reply is the /hold command itself. With one pending target, suggest `/hold <id>`; when several are pending and any report matters, suggest a bare `/hold`; when several are pending but some are irrelevant, such as a noisy watch, suggest `/hold <a> <b>` naming only the relevant ones. A suggestion is never approval. Call `help` for these commands.";
 
-const PROMPT_REPLY_FORMAT: &str = "\
-Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options. Name a commit SHA, run id, comment id or PID only when the person asks for it or the next step needs it (for example `gh run watch <id>`). Otherwise say what happened; look the id up with git or gh when asked.";
-
 const PROMPT_CONTRACT: &str = "\
 End the reply with a final line `Next step: <the exact words the person can say, on one line, 200 characters at most>`. Write the reply once; ralph pre-fills that line as the person's next prompt.
 
 Ralph help: when the person asks how ralph chat itself works (its commands, keys, or status bar), call `help` first and answer from its text, not from the ralph source.
 
 Ralph config: when the person asks about ralph's settings or asks to change how ralph behaves or looks, call `help` with topic `config`, then `config <section>`, before you answer; propose a code change only when no setting covers it. Edit the global config.toml by default; edit the store file `<store>/config.toml` only when the person asks for a store-specific or project-specific setting. Before you edit a config file, copy it to config.toml.bak in the same directory. After editing, run `ralph config check --store <store>`; if it fails, copy config.toml.bak back over the file you edited and report the error.";
-
-const PROMPT_BEHAVIOUR: &str = "\
-Ask first: when two readings of a request lead to different work, show a 3-5 line plan and wait for a go.
-
-Verify: never state as fact what you have not checked. A worker or subagent \"done\" is unverified until you check its diff or test output, and the git and Linear state.
-
-Cite history: when you state a fact from older chat, check it with zoom or recall, name its #<id>, and say if it came from a summary.
-
-Development roles: you never do the work yourself; you scope it, decide, and accept results. Implementation, fixes, code reviews, and test runs go to `spawn_worker` (phase build or fix), never to an in-chat Agent subagent: workers run in the background and show in /workers and /hold. The evidence-collector subagent is only for read-only scoping of at most 3 tool calls that you could not do inline. Read inline only to scope, with at most 3 tool calls per question. When the chat folder is not a git repo, pass `repo` (a git work tree inside the chat folder) to `spawn_worker`, and `lane` to reuse an existing worktree of that repo. If `spawn_worker` fails, tell the person the exact error and wait. Never fall back to subagents or to doing the work inline. Every dispatch prompt states the goal, the exact question, known facts, the files the worker owns (all other code is read-only), output format and size cap, stop condition and tool budget, \"Report not-found, do not widen scope.\", and \"You are a subagent. Don't run mem.\" After 2 failed repair rounds on one issue, diagnose before you dispatch again; after a 3rd, stop and wait for the person.";
 
 const PROMPT_TAIL: &str = "\
 Forget requests: you have no erase tool. Say so plainly; never summarize the item as resolved.
@@ -143,13 +133,8 @@ pub fn prompt_text(text: String) -> Option<String> {
 
 pub fn turn_system_prompt(custom: &CustomPrompt, images: ReplyImages, older: &[String]) -> String {
     let images = images_paragraph(images);
-    let behaviour = match &custom.behaviour {
-        Some(text) => format!("{}\n\n{PROMPT_CONTRACT}\n\n{images}", text.trim_end()),
-        None => {
-            format!("{PROMPT_REPLY_FORMAT} {PROMPT_CONTRACT}\n\n{images}\n\n{PROMPT_BEHAVIOUR}")
-        }
-    };
-    let sections = [PROMPT_HEAD, &behaviour, PROMPT_TAIL]
+    let behaviour = custom.behaviour.as_deref().map_or("", str::trim_end);
+    let sections = [PROMPT_HEAD, behaviour, PROMPT_CONTRACT, images, PROMPT_TAIL]
         .into_iter()
         .chain(custom.appends.iter().map(|text| text.trim_end()))
         .filter(|section| !section.is_empty())
@@ -463,19 +448,90 @@ mod tests {
         turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &[])
     }
 
+    const BEHAVIOUR_EXAMPLE: &str = include_str!("../../../docs/examples/chat-behaviour.md");
+
+    fn example_prompt() -> String {
+        let custom = CustomPrompt {
+            behaviour: Some(BEHAVIOUR_EXAMPLE.to_string()),
+            appends: Vec::new(),
+        };
+        turn_system_prompt(&custom, ReplyImages::Inline, &[])
+    }
+
     #[test]
-    fn default_prompt_names_lookup_ids_only_on_need() {
+    fn default_prompt_holds_no_reply_or_behaviour_rules() {
         let prompt = default_prompt();
-        assert!(prompt.contains(
-            "Name a commit SHA, run id, comment id or PID only when the person asks for it or the next step needs it (for example `gh run watch <id>`)"
-        ));
-        assert!(prompt
-            .contains("Otherwise say what happened; look the id up with git or gh when asked."));
+        for rule in [
+            "Reply format:",
+            "lead with the answer",
+            "one recommended next step",
+            "Ask first:",
+            "Verify:",
+            "Cite history:",
+            "Development roles:",
+        ] {
+            assert!(!prompt.contains(rule), "{rule}");
+        }
+    }
+
+    #[test]
+    fn behaviour_example_restores_every_moved_rule() {
+        let prompt = example_prompt();
+        for needle in [
+            "lead with the answer",
+            "one recommended next step",
+            "Name a commit SHA, run id, comment id or PID only when the person asks for it or the next step needs it (for example `gh run watch <id>`)",
+            "Otherwise say what happened; look the id up with git or gh when asked.",
+            "3-5 line plan",
+            "never state as fact what you have not checked",
+            "unverified until you check its diff or test output",
+            "Report not-found, do not widen scope.",
+            "After 2 failed repair rounds",
+            "You are a subagent. Don't run mem.",
+        ] {
+            assert!(prompt.contains(needle), "{needle}");
+        }
+    }
+
+    #[test]
+    fn behaviour_example_has_no_cite_history_rule() {
+        assert!(!BEHAVIOUR_EXAMPLE.contains("Cite history"));
+        assert!(!BEHAVIOUR_EXAMPLE.contains("name its #<id>"));
+    }
+
+    #[test]
+    fn default_prompt_speaks_from_memory_without_showing_ids() {
+        let prompt = default_prompt();
+        assert!(prompt.contains("Memory: speak as someone who remembers."));
+        assert!(prompt.contains("#<id>s are for you, not the person"));
+        assert!(prompt.contains("say plainly that you don't remember it; never guess"));
+        assert!(!prompt.contains("name its #<id>"));
+    }
+
+    #[test]
+    fn custom_behaviour_cannot_drop_the_memory_rule() {
+        let custom = CustomPrompt {
+            behaviour: Some("Cite every #<id>.".to_string()),
+            appends: Vec::new(),
+        };
+        let prompt = turn_system_prompt(&custom, ReplyImages::Inline, &[]);
+        let memory = prompt
+            .find("Memory: speak as someone who remembers.")
+            .unwrap();
+        assert!(memory < prompt.find("Cite every #<id>.").unwrap());
+    }
+
+    #[test]
+    fn memory_rule_lets_the_newer_memory_win_by_date_then_id() {
+        let prompt = default_prompt();
+        assert!(prompt.contains("When memories disagree, the newer one wins: compare dates first"));
+        assert!(prompt.contains("then, within one chat, the higher id"));
+        assert!(prompt.contains("Give only the current answer, not how it changed"));
     }
 
     #[test]
     fn development_roles_send_dev_work_to_spawn_worker() {
-        let prompt = default_prompt();
+        let prompt = example_prompt();
         let roles = prompt
             .split("Development roles:")
             .nth(1)
@@ -576,11 +632,9 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_states_working_rules() {
+    fn default_prompt_keeps_memory_worker_watch_and_inbox_rules() {
         let prompt = default_prompt();
         for needle in [
-            "lead with the answer",
-            "one recommended next step",
             "End the reply with a final line `Next step:",
             "ralph pre-fills that line as the person's next prompt",
             "call `help` first and answer from its text",
@@ -591,15 +645,11 @@ mod tests {
             "Edit the global config.toml by default",
             "only when the person asks for a store-specific or project-specific setting",
             "run `ralph config check --store <store>`; if it fails, copy config.toml.bak back over the file you edited and report the error",
-            "3-5 line plan",
-            "never state as fact what you have not checked",
-            "unverified until you check its diff or test output",
-            "name its #<id>",
             "A line `--- YYYY-MM-DD` starts the messages of that UTC day",
-            "Report not-found, do not widen scope.",
-            "After 2 failed repair rounds",
+            "use zoom, recall, and search until the facts are whole",
+            "For worker status call `workers`.",
+            "[external <source> · report]",
             "you have no erase tool",
-            "You are a subagent. Don't run mem.",
         ] {
             assert!(prompt.contains(needle), "{needle}");
         }

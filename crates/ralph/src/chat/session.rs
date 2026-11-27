@@ -116,10 +116,7 @@ pub(crate) fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<Stri
                 Some(text) => (Some(text), None),
                 None => (
                     None,
-                    Some(format!(
-                        "Prompt file {} is empty; using the default reply rules",
-                        path.display()
-                    )),
+                    Some(format!("Prompt file {} is empty; skipped", path.display())),
                 ),
             },
             Err(warning) => (None, Some(warning)),
