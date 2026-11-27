@@ -34,6 +34,9 @@ impl LineSplitter {
         let mut done = Vec::new();
         for &byte in chunk {
             if byte == b'\n' {
+                if self.line.last() == Some(&b'\r') {
+                    self.line.pop();
+                }
                 done.push(String::from_utf8_lossy(&self.line).into_owned());
                 self.line.clear();
                 self.discarding = false;
@@ -128,6 +131,27 @@ mod tests {
     fn eof_after_a_newline_adds_nothing() {
         assert_eq!(split(64, &[b"one\n"]), ["one"]);
         assert!(split(64, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_crlf_ending_yields_the_line_without_the_cr() {
+        assert_eq!(split(64, &[b"a\r\nb\r\n"]), ["a", "b"]);
+        assert_eq!(split(64, &[b"a\r", b"\nb\n"]), ["a", "b"]);
+    }
+
+    #[test]
+    fn a_lone_cr_inside_a_line_is_kept() {
+        assert_eq!(split(64, &[b"a\rb\n"]), ["a\rb"]);
+    }
+
+    #[test]
+    fn a_cr_at_eof_without_a_newline_is_kept() {
+        assert_eq!(split(64, &[b"a\r"]), ["a\r"]);
+    }
+
+    #[test]
+    fn a_bare_crlf_is_an_empty_line() {
+        assert_eq!(split(64, &[b"\r\n"]), [""]);
     }
 
     #[test]
