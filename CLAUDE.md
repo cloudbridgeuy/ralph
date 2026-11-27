@@ -27,6 +27,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `ralph config <check|show> [--store <DIR>]` - check `config.toml` for errors, or print the merged config with each value's source ([CLI reference](docs/cli-reference.md#ralph-config))
 - `ralph worker verify <agy|cursor|codex|claude|opencode|claude-tmux> [--live]` - check an installed worker agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))
 - `ralph upgrade [--check] [--force]` - install the latest GitHub release over the running binary ([details](docs/context/release-process.md#upgrade-an-install))
+- `ralph view <FILE> [--store <DIR>]` - show a markdown file with chat rendering, in a pager ([CLI reference](docs/cli-reference.md#ralph-view))
 - `ralph themes` - list syntax highlighting themes ([CLI reference](docs/cli-reference.md))
 - `ralph licenses` - print the licence notices of the bundled syntax grammars and fonts ([CLI reference](docs/cli-reference.md#ralph-licenses))
 

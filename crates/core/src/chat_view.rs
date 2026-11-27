@@ -1,5 +1,6 @@
 use crate::chat_hold::{command_args, HoldCompletion};
 use crate::kitty::{parse_image_markers, Segment};
+use crate::program_status::Stdout;
 use std::ops::Range;
 use std::path::Path;
 
@@ -7,6 +8,10 @@ const VIEW: &str = "/view";
 pub const VIEW_USAGE: &str = "Usage: /view <file.md>";
 pub const MAX_VIEW_BYTES: u64 = 2 * 1024 * 1024;
 const MARKDOWN_EXTENSIONS: [&str; 2] = ["md", "markdown"];
+const DEFAULT_PAGER: &str = "less";
+const DEFAULT_PAGER_ARG: &str = "-r";
+const NO_PAGER: &str = "none";
+const CTRL_C: u8 = 0x03;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ViewArgs {
@@ -109,6 +114,68 @@ pub fn view_path_completion(query: &PathQuery, entries: &[DirEntry]) -> HoldComp
         span: query.span.clone(),
         values,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PagerCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ViewPager {
+    Direct,
+    Command(PagerCommand),
+}
+
+fn default_pager() -> ViewPager {
+    ViewPager::Command(PagerCommand {
+        program: DEFAULT_PAGER.to_string(),
+        args: vec![DEFAULT_PAGER_ARG.to_string()],
+    })
+}
+
+pub fn resolve_view_pager(config: Option<&str>) -> (ViewPager, Option<String>) {
+    let Some(configured) = config else {
+        return (default_pager(), None);
+    };
+    let mut words = configured.split_whitespace().map(str::to_string);
+    match words.next() {
+        None => (
+            default_pager(),
+            Some(format!(
+                "[chat] view_pager is empty; using \"{DEFAULT_PAGER} {DEFAULT_PAGER_ARG}\""
+            )),
+        ),
+        Some(_) if configured.trim() == NO_PAGER => (ViewPager::Direct, None),
+        Some(program) => (
+            ViewPager::Command(PagerCommand {
+                program,
+                args: words.collect(),
+            }),
+            None,
+        ),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Show<'a> {
+    Print,
+    PrintAndWait,
+    Page(&'a PagerCommand),
+}
+
+pub fn show_plan(pager: &ViewPager, stdin_tty: bool, stdout: Stdout) -> Show<'_> {
+    match (stdout, pager) {
+        (Stdout::NotTty, _) => Show::Print,
+        (Stdout::Tty, ViewPager::Command(command)) => Show::Page(command),
+        (Stdout::Tty, ViewPager::Direct) if stdin_tty => Show::PrintAndWait,
+        (Stdout::Tty, ViewPager::Direct) => Show::Print,
+    }
+}
+
+pub fn quits(key: &[u8]) -> bool {
+    matches!(key.first(), Some(&(b'q' | CTRL_C)))
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ const REDACT_KEYS: &[&str] = &[
     "chat.send_it_verify",
     "chat.mcp_servers",
     "chat.empty_prompt",
+    "chat.view_pager",
 ];
 
 const SAFE_KEYS: &[&str] = &[

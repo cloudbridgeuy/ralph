@@ -2,6 +2,7 @@ use super::{MermaidStyleExt, ThemeWarnings};
 use ralph_core::chat::resolve_watch_timeout;
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
+use ralph_core::chat_view::resolve_view_pager;
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_server::config::{ignored_extras, AppConfig, ConfigError};
 use std::path::Path;
@@ -58,6 +59,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(chat.empty_submit_setting().1)
         .chain(chat.editor_setting().1)
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)
+        .chain(resolve_view_pager(chat.view_pager.as_deref()).1)
         .chain(config.claude.shell_setting().1)
         .chain(config.workers.shell_setting().1)
         .chain(config.agy.permissions_setting().1)
@@ -167,6 +169,14 @@ mod tests {
             errors("[wire.prices]\n[workers.x]\ny = 1\n"),
             ["unknown key: workers.x"]
         );
+    }
+
+    #[test]
+    fn config_check_reports_an_empty_view_pager() {
+        assert!(errors("[chat]\nview_pager = \"none\"\n").is_empty());
+        let reported = errors("[chat]\nview_pager = \" \"\n");
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(reported[0].contains("view_pager"), "{reported:?}");
     }
 
     #[test]

@@ -120,6 +120,13 @@ from source) unless --force. Running chats and workers keep the old build until 
     )]
     Usage(UsageArgs),
 
+    #[command(
+        about = "Show a markdown file with chat rendering, in a pager.",
+        long_about = "Renders a .md or .markdown file as `/view` does and sends it to `[chat] view_pager` \
+(default `less -r`; `none` prints and waits for q). Output that is not a terminal is printed with no pager."
+    )]
+    View(ViewCommandArgs),
+
     #[command(hide = true)]
     Serve(ServeArgs),
 
@@ -143,6 +150,14 @@ from source) unless --force. Running chats and workers keep the old build until 
 
     #[command(hide = true)]
     HookBridge(HookBridgeArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ViewCommandArgs {
+    #[arg(help = "The .md or .markdown file to show")]
+    pub file: String,
+    #[arg(long, help = "Also read config.toml from this chat store")]
+    pub store: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]

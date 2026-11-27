@@ -10,7 +10,7 @@ use ralph_core::mermaid_fit::Room;
 use ralph_core::sanitize::strip_controls;
 use ralph_server::disk_files::resolve;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn run(args: &ViewArgs, display: &Display) {
     let ViewArgs::File(typed) = args else {
@@ -18,12 +18,12 @@ pub fn run(args: &ViewArgs, display: &Display) {
         return;
     };
     match load(&resolve(typed)) {
-        Ok((text, dir)) => print!("{}", render(display, &rebase_images(&text, &dir))),
+        Ok(text) => print!("{}", render(display, &text)),
         Err(message) => println!("{message}"),
     }
 }
 
-pub(super) fn render(display: &Display, text: &str) -> String {
+pub(crate) fn render(display: &Display, text: &str) -> String {
     render_markdown_with(&display.ctx, text, display.theme, |chunk| {
         picture(&display.ctx, chunk, &display.ui)
     })
@@ -57,7 +57,7 @@ fn kind(path: &Path) -> FileKind {
     }
 }
 
-fn load(path: &Path) -> Result<(String, PathBuf), String> {
+pub(crate) fn load(path: &Path) -> Result<String, String> {
     if let Some(refusal) = view_refusal(path, kind(path)) {
         return Err(refusal);
     }
@@ -70,7 +70,7 @@ fn load(path: &Path) -> Result<(String, PathBuf), String> {
         .map_err(cannot)?;
     let absolute = std::path::absolute(path).map_err(cannot)?;
     let dir = absolute.parent().map(Path::to_path_buf).unwrap_or_default();
-    Ok((strip_controls(&text).into_owned(), dir))
+    Ok(rebase_images(&strip_controls(&text), &dir))
 }
 
 #[cfg(test)]
@@ -103,7 +103,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("doc.md");
         std::fs::write(&path, source).unwrap();
-        load(&path).unwrap().0
+        load(&path).unwrap()
     }
 
     #[test]

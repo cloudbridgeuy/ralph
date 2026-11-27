@@ -1,7 +1,7 @@
 use std::mem::MaybeUninit;
 
 const STDIN: libc::c_int = libc::STDIN_FILENO;
-pub(super) const POLL_MS: libc::c_int = 50;
+pub(crate) const POLL_MS: libc::c_int = 50;
 const READ_CHUNK: usize = 256;
 
 pub(super) fn partial_mode(mut mode: libc::termios) -> libc::termios {

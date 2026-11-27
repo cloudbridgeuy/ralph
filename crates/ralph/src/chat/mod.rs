@@ -35,13 +35,13 @@ mod term_status;
 pub(crate) mod terminal;
 pub(crate) mod thread;
 pub(crate) mod thread_cmd;
-mod view;
+pub(crate) mod view;
 mod workers;
 
 use crate::chat::assemble::{assemble, load_settings, AssembleOptions, Assembled, TurnOutput};
 use crate::chat::client_monitor::{client_events, client_sink, watch_headless, watch_input};
 use crate::chat::editor::build_editor;
-use crate::chat::inbox::Display;
+pub(crate) use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::prompt::ChatPrompt;
 use crate::chat::resize::{Resize, Watch};
@@ -81,7 +81,7 @@ use ralph_server::chat::monitor::ready_ids;
 use ralph_server::chat::suggestion::SuggestionCell;
 use ralph_server::chat::workers_remote::RemoteStatus;
 use ralph_server::chat::{memory, name};
-use ralph_server::config::{AppConfig, ChatSection};
+use ralph_server::config::{AppConfig, ChatSection, ThemeSection};
 use ralph_server::cursor_owner::{acp_alive_ids, resumable_ids};
 use ralph_server::paths::absolute_from;
 use ralph_server::warn::{warn, warn_if_err};
@@ -118,6 +118,23 @@ fn reply_style(config: &ThemeConfig) -> (Highlighter, MarkdownTheme) {
         Highlighter::new()
     });
     (highlighter, MarkdownTheme::from_config(Some(config)))
+}
+
+pub(crate) fn agent_style(
+    theme: &ThemeConfig,
+    section: &ThemeSection,
+) -> (Highlighter, MarkdownTheme) {
+    let agent = section.agent();
+    let highlighter =
+        Highlighter::with_config(theme.clone().merge_cli(agent.code.as_deref(), false))
+            .unwrap_or_else(|e| {
+                warn(format!("Failed to load agent theme: {e}"));
+                Highlighter::new()
+            });
+    (
+        highlighter,
+        MarkdownTheme::new(agent.palette(ThemeRole::Agent).0),
+    )
 }
 
 fn alert_config(
@@ -200,14 +217,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .chain(edit_mode_warning)
         .collect();
     setting_warnings.iter().for_each(warn);
-    let agent = config.theme.agent();
-    let agent_highlighter =
-        Highlighter::with_config(theme_config.clone().merge_cli(agent.code.as_deref(), false))
-            .unwrap_or_else(|e| {
-                warn(format!("Failed to load agent theme: {e}"));
-                Highlighter::new()
-            });
-    let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
+    let (agent_highlighter, agent_theme) = agent_style(&theme_config, &config.theme);
     let (reply_highlighter, reply_theme) = reply_style(&theme_config);
     let prompt_files = chat_config.prompt_files(dirs::home_dir().as_deref());
     let (custom_prompt, prompt_warnings) = load_custom_prompt(&prompt_files);

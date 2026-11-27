@@ -139,3 +139,74 @@ fn hidden_entries_show_only_for_a_dot_prefix() {
     let dotted = view_path_completion(&view_path_query("/view .", 7).unwrap(), &entries);
     assert_eq!(dotted.values, [".git/", ".notes.md"]);
 }
+
+fn pager(program: &str, args: &[&str]) -> ViewPager {
+    ViewPager::Command(PagerCommand {
+        program: program.to_string(),
+        args: args.iter().map(|arg| arg.to_string()).collect(),
+    })
+}
+
+#[test]
+fn view_pager_defaults_to_less_raw() {
+    assert_eq!(resolve_view_pager(None), (pager("less", &["-r"]), None));
+}
+
+#[test]
+fn view_pager_none_prints_direct() {
+    assert_eq!(
+        resolve_view_pager(Some(" none ")),
+        (ViewPager::Direct, None)
+    );
+}
+
+#[test]
+fn view_pager_splits_the_program_from_its_arguments() {
+    assert_eq!(
+        resolve_view_pager(Some(" bat  --paging=always -p ")),
+        (pager("bat", &["--paging=always", "-p"]), None)
+    );
+}
+
+#[test]
+fn an_empty_view_pager_warns_and_uses_the_default() {
+    for empty in ["", "  "] {
+        let (resolved, warning) = resolve_view_pager(Some(empty));
+        assert_eq!(resolved, pager("less", &["-r"]), "{empty:?}");
+        assert!(warning.is_some_and(|w| w.contains("view_pager")));
+    }
+}
+
+#[test]
+fn output_that_is_not_a_terminal_is_printed_without_pager_or_wait() {
+    for resolved in [ViewPager::Direct, pager("less", &["-r"])] {
+        for stdin_tty in [true, false] {
+            assert_eq!(show_plan(&resolved, stdin_tty, Stdout::NotTty), Show::Print);
+        }
+    }
+}
+
+#[test]
+fn direct_output_waits_only_when_keys_can_be_read() {
+    let direct = ViewPager::Direct;
+    assert_eq!(show_plan(&direct, true, Stdout::Tty), Show::PrintAndWait);
+    assert_eq!(show_plan(&direct, false, Stdout::Tty), Show::Print);
+    let less = pager("less", &["-r"]);
+    for stdin_tty in [true, false] {
+        let plan = show_plan(&less, stdin_tty, Stdout::Tty);
+        assert!(
+            matches!(plan, Show::Page(command) if command.program == "less"),
+            "{plan:?}"
+        );
+    }
+}
+
+#[test]
+fn q_and_ctrl_c_quit_the_wait() {
+    for key in [&b"q"[..], b"qq", b"\x03"] {
+        assert!(quits(key), "{key:?}");
+    }
+    for key in [&b""[..], b"x", b"\r", b"\x1b[B", b"\x1bq"] {
+        assert!(!quits(key), "{key:?}");
+    }
+}

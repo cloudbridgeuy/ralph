@@ -33,6 +33,7 @@ mod turn_sink;
 mod ui_theme;
 mod upgrade;
 mod usage_cmd;
+mod view_cmd;
 
 pub mod stream_processor;
 mod version;
@@ -93,6 +94,7 @@ fn main() -> ExitCode {
         Commands::Worker(args) => execute_worker(args),
         Commands::Upgrade(args) => upgrade::run(args),
         Commands::Usage(args) => usage_cmd::run(args),
+        Commands::View(args) => return view_cmd::run(args),
         Commands::Serve(args) => serve::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
