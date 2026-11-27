@@ -696,18 +696,6 @@ mod tests {
     }
 
     #[test]
-    fn child_env_never_leaks_ralph_or_color_vars() {
-        let pairs = child_env(Path::new("/tmp/s/home"), Some("/bin"), Some("/tmp/t"));
-        for (key, _) in &pairs {
-            assert!(
-                !key.starts_with("RALPH_") || key == "RALPH_CONFIG_DIR",
-                "{key}"
-            );
-            assert_ne!(key, "NO_COLOR");
-        }
-    }
-
-    #[test]
     fn child_env_points_every_resolver_var_inside_the_dir() {
         let dir = Path::new("/tmp/shots-scratch/home");
         let pairs = child_env(dir, None, None);

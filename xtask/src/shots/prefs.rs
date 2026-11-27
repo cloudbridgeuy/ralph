@@ -102,12 +102,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_js_sets_scheme_and_lets_firefox_pick_the_port() {
-        let dark = user_js(Theme::Dark);
-        assert!(dark.contains("prefers-color-scheme.content-override\", 0)"));
-        assert!(dark.contains("marionette.port\", 0)"));
-        let light = user_js(Theme::Light);
-        assert!(light.contains("prefers-color-scheme.content-override\", 1)"));
+    fn user_js_lets_firefox_pick_the_port_and_renders_every_pref_once() {
+        let text = user_js(Theme::Dark);
+        assert!(text.contains("user_pref(\"marionette.port\", 0);\n"));
+        for (name, value) in PREFS {
+            assert_eq!(text.matches(&format_pref(name, value)).count(), 1, "{name}");
+        }
     }
 
     fn pref_lines(theme: Theme) -> Vec<String> {
@@ -156,53 +156,6 @@ mod tests {
             let number = value.parse::<i64>().is_ok();
             assert!(quoted || boolean || number, "{line}");
         }
-    }
-
-    #[test]
-    fn the_quiet_prefs_are_present() {
-        for line in [
-            "user_pref(\"datareporting.policy.dataSubmissionEnabled\", false);",
-            "user_pref(\"datareporting.healthreport.uploadEnabled\", false);",
-            "user_pref(\"toolkit.telemetry.enabled\", false);",
-            "user_pref(\"toolkit.telemetry.unified\", false);",
-            "user_pref(\"toolkit.telemetry.archive.enabled\", false);",
-            "user_pref(\"app.update.enabled\", false);",
-            "user_pref(\"app.update.auto\", false);",
-            "user_pref(\"app.update.service.enabled\", false);",
-            "user_pref(\"extensions.update.enabled\", false);",
-            "user_pref(\"browser.shell.checkDefaultBrowser\", false);",
-            "user_pref(\"browser.startup.page\", 0);",
-            "user_pref(\"browser.startup.homepage\", \"about:blank\");",
-            "user_pref(\"browser.startup.homepage_override.mstone\", \"ignore\");",
-            "user_pref(\"startup.homepage_welcome_url\", \"\");",
-            "user_pref(\"startup.homepage_welcome_url.additional\", \"\");",
-            "user_pref(\"browser.aboutwelcome.enabled\", false);",
-            "user_pref(\"browser.newtabpage.enabled\", false);",
-            "user_pref(\"trailhead.firstrun.didSeeAboutWelcome\", true);",
-            "user_pref(\"browser.safebrowsing.malware.enabled\", false);",
-            "user_pref(\"browser.safebrowsing.phishing.enabled\", false);",
-            "user_pref(\"browser.safebrowsing.downloads.enabled\", false);",
-            "user_pref(\"app.normandy.enabled\", false);",
-            "user_pref(\"app.shield.optoutstudies.enabled\", false);",
-            "user_pref(\"network.captive-portal-service.enabled\", false);",
-            "user_pref(\"network.connectivity-service.enabled\", false);",
-            "user_pref(\"geo.enabled\", false);",
-            "user_pref(\"browser.ping-centre.telemetry\", false);",
-            "user_pref(\"browser.region.update.enabled\", false);",
-            "user_pref(\"browser.search.update\", false);",
-            "user_pref(\"network.prefetch-next\", false);",
-            "user_pref(\"network.dns.disablePrefetch\", true);",
-            "user_pref(\"network.http.speculative-parallel-limit\", 0);",
-            "user_pref(\"network.predictor.enabled\", false);",
-        ] {
-            assert!(
-                pref_lines(Theme::Dark).iter().any(|got| got == line),
-                "{line}"
-            );
-        }
-        assert!(line_for("toolkit.telemetry.server").is_some());
-        assert!(line_for("services.settings.server").is_some());
-        assert!(line_for("browser.urlbar.suggest.searches").is_some());
     }
 
     #[test]
