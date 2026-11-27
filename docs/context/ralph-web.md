@@ -436,7 +436,7 @@ Subcommands:
 - `list [--screen S] [--theme T]` prints the shot names. It runs nothing.
 - `diff <BASELINE> <CURRENT> [--out diff.png] [--tolerance 8]` compares two PNG files and writes a diff image. It fails on a size mismatch.
 - `compare --baseline D --current D --out D [--tolerance 8]` compares two folders of PNG files. It writes `<out>/report.md` and `<out>/diff/<name>.png` for each changed shot. It prints the report. It exits with an error when the folders are not clean.
-- `approve --baseline D --current D (<NAMES>... | --all)` copies the named shots from current to baseline. It fails with no names and no `--all`, and for a name that is not in current.
+- `approve --baseline D --current D (<NAMES>... | --all)` copies the named shots from current to baseline. It fails with no names and no `--all`, and for a name that is not in current. `--all` approves only the listed shots (the 26 names of the matrix). It prints a `skipped` note for each other file in current and does not copy it. It copies nothing and fails when a listed shot is missing from current. The error names the missing shots.
 - `seed --out <DIR>` writes the fixture store (see below).
 - `run [--root D] [--ralph PATH] [--firefox PATH] [--screen S] [--theme T]` captures the shots into `<root>/current`. Defaults: root `~/.local/share/ralph-shots`, ralph `target/debug/ralph` under the workspace root (not the current directory), Firefox `/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox`.
 - `check` takes the same flags as `run` and `--tolerance 8`. It runs, then compares `<root>/baseline` with `<root>/current` into `<root>/report`.
@@ -468,7 +468,7 @@ No `RALPH_*` variable (except `RALPH_CONFIG_DIR`) and no `NO_COLOR` from the cal
 
 ### Partial runs
 
-`--screen` and `--theme` limit `run` and `check` to the matching shots. A partial `run` deletes and replaces only the PNG files of the selected shots in `<root>/current`. It leaves other files there. `check --screen S` compares only the selected names in baseline and current. Shots outside the selection are not listed as New or Missing.
+`--screen` and `--theme` limit `run` and `check` to the matching shots. A partial `run` deletes and replaces only the PNG files of the selected shots in `<root>/current`. It leaves other files there. `check --screen S` compares only the selected names in baseline and current. Shots outside the selection are not listed as New or Missing. `check --screen S` also removes the diff images of shots outside the selection.
 
 ### Baselines
 
@@ -478,11 +478,15 @@ The root is `~/.local/share/ralph-shots/` and lies outside the repo. It holds th
 
 The browser is Firefox Developer Edition. `run` starts it headless with `--marionette` and drives it over the built-in Marionette socket. The tool needs no geckodriver.
 
-- There is one Firefox session for each theme. Each session gets its own profile whose `user.js` sets `layout.css.prefers-color-scheme.content-override` (0 dark, 1 light) and a free `marionette.port`. The run stops with an error if the browser does not report the expected scheme.
+- There is one Firefox session for each theme. Each session gets its own profile whose `user.js` sets `layout.css.prefers-color-scheme.content-override` (0 dark, 1 light) and `marionette.port` set to `0`. Firefox picks the port and writes it to `MarionetteActivePort` in the profile. The tool reads the port from that file. The run stops with an error if the browser does not report the expected scheme.
 - For each shot the window is resized, the page goes to `about:blank`, then to the screen URL. The first navigation of a session carries the per-run token.
 - Ready wait: a screen is ready when `document.readyState` is `complete`, there is no `.r-spinner`, and `#main` has child nodes. The catalogue is ready at `readyState` `complete`. The wait polls every 100 ms for up to 10 s, then settles 250 ms and takes the shot.
 - The profile is quiet. Telemetry, update checks, first-run and welcome pages, safe browsing and prefetch are off. `ui.useOverlayScrollbars` is `0`, so shots show classic scrollbars and not overlay scrollbars.
-- Timeouts: the listen line from `ralph web` must arrive within 30 s. Firefox must open Marionette within 30 s. Each Marionette read and write has a 60 s limit.
+- Timeouts: the listen line from `ralph web` must arrive within 30 s. The connect and the hello each have a 10 s limit. Each later Marionette read and write has a 60 s limit.
+- Launch retries: `run` tries to launch Firefox up to 3 times for each theme. It retries when Firefox exits early, when the connect times out, when the hello is bad, and when the connection is lost. It stops with an error after the third failure and lists the reason of each attempt.
+- `--theme` does not change the catalogue. The catalogue has no theme in its name, so it is still captured in the dark session.
+- Before `run` stops Firefox, it sends `DeleteSession` to end the Marionette session. Then it kills the process.
+- Printed errors hide the per-run token. Each `token=<value>` shows as `token=<redacted>`.
 - A shot that never became ready is still saved. `run` prints `timed out waiting for ready:` and the names. Treat a name in that list as suspect: the PNG may show a spinner.
 
 ### Diff rule
