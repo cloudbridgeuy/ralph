@@ -16,7 +16,7 @@ fn observing(file: &RunFile) -> Driving {
             verifying: true,
             ..at(0)
         },
-        ..driving(0, Awaiting::Report(WATCH_ID.to_string()), Run::default())
+        ..driving(0, awaiting_report(WATCH_ID), Run::default())
     }
 }
 

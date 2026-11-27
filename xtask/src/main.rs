@@ -13,6 +13,7 @@ mod catalogue;
 mod lint;
 mod prelude;
 mod release;
+mod shots;
 
 /// Development tasks for the ralph repository
 #[derive(Debug, Parser)]
@@ -60,6 +61,9 @@ enum Commands {
 
     /// Prepare a release commit and tag
     Release(release::ReleaseCommand),
+
+    /// Screenshot-check the ralph web UI
+    Shots(shots::ShotsCommand),
 }
 
 #[tokio::main]
@@ -78,6 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Release(release_cmd) => {
             release::run(release_cmd, cli.global).await?;
+        }
+        Commands::Shots(shots_cmd) => {
+            shots::run(shots_cmd)?;
         }
     }
 

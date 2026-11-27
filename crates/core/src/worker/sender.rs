@@ -1,4 +1,5 @@
 use super::{WorkerId, WorkerIdError};
+use crate::chat_send_it::check_watch_id;
 use crate::chat_thread::{ThreadName, THREAD_REPORT_PREFIX};
 use crate::inbox_post::{validate_source, EXTERNAL_REPORT_PREFIX};
 use crate::schedule::SCHEDULE_ID_PREFIX;
@@ -18,6 +19,10 @@ impl WatchId {
             .any(|name| !name.is_empty())
             .then(|| Self(text.to_string()))
             .ok_or_else(|| SenderError::Watch(text.to_string()))
+    }
+
+    pub(crate) fn check(step: usize) -> Self {
+        Self(check_watch_id(step))
     }
 
     pub fn as_str(&self) -> &str {
