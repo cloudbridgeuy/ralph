@@ -199,27 +199,39 @@ fn wait_step_cancels_once_and_exits_when_terminated() {
 }
 
 #[test]
-fn prompt_step_exits_on_ctrl_d_or_termination() {
+fn prompt_step_sends_lines_and_ignores_other_signals() {
     assert_eq!(
         prompt_step(Signal::Success("hi".into()), false),
         PromptStep::Send("hi".into())
     );
-    assert_eq!(prompt_step(Signal::CtrlD, false), PromptStep::Exit);
     assert_eq!(prompt_step(Signal::CtrlC, false), PromptStep::Continue);
     assert_eq!(
         prompt_step(Signal::ExternalBreak(String::new()), false),
         PromptStep::Continue
     );
+}
+
+#[test]
+fn ctrl_d_on_connect_is_a_user_quit() {
     assert_eq!(
-        prompt_step(Signal::ExternalBreak("draft".into()), true),
-        PromptStep::Exit
+        prompt_step(Signal::CtrlD, false),
+        PromptStep::Exit(Departure::UserQuit)
     );
-    assert_eq!(prompt_step(Signal::CtrlC, true), PromptStep::Exit);
-    assert_eq!(prompt_step(Signal::CtrlD, true), PromptStep::Exit);
-    assert_eq!(
-        prompt_step(Signal::Success("hi".into()), true),
-        PromptStep::Exit
-    );
+}
+
+#[test]
+fn a_signal_on_connect_is_not_a_user_quit() {
+    for signal in [
+        Signal::CtrlC,
+        Signal::CtrlD,
+        Signal::ExternalBreak("draft".into()),
+        Signal::Success("hi".into()),
+    ] {
+        assert_eq!(
+            prompt_step(signal, true),
+            PromptStep::Exit(Departure::Restart)
+        );
+    }
 }
 
 #[test]

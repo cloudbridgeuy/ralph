@@ -1,6 +1,5 @@
 use crate::chat::prompt::screen_columns;
 use crate::chat::queue::Queue;
-use crate::chat::switch::ChatExit;
 use crate::chat::term_loop::run_turn;
 use crate::highlight::ThemeConfig;
 use crate::inbox_alert;
@@ -15,6 +14,7 @@ use ralph_core::chat_status::{route_input, EmptySubmit, Route, Status};
 use ralph_core::chat_switch::SwitchTarget;
 use ralph_core::chat_thread_cmd::ThreadOp;
 use ralph_core::inbox_alert::{inbox_alert, AlertConfig};
+use ralph_core::program_resume::Departure;
 use ralph_core::program_status::{Phase, State};
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{truncate_string, OutputBlock};
@@ -245,16 +245,16 @@ fn wait_step(terminated: bool, cancelled: bool, sent: bool) -> WaitStep {
 enum PromptStep {
     Send(String),
     Continue,
-    Exit,
+    Exit(Departure),
 }
 
 fn prompt_step(signal: Signal, terminated: bool) -> PromptStep {
     if terminated {
-        return PromptStep::Exit;
+        return PromptStep::Exit(Departure::Restart);
     }
     match signal {
         Signal::Success(line) => PromptStep::Send(line),
-        Signal::CtrlD => PromptStep::Exit,
+        Signal::CtrlD => PromptStep::Exit(Departure::UserQuit),
         _ => PromptStep::Continue,
     }
 }
@@ -629,21 +629,22 @@ fn handle(remote: &RemoteSession, line: &str) -> Result<Flow, Box<dyn Error>> {
     }
 }
 
-pub(super) fn run(socket: &Path, alert: AlertConfig) -> Result<ChatExit, Box<dyn Error>> {
+pub(super) fn run(socket: &Path, alert: AlertConfig) -> Result<Departure, Box<dyn Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     let theme = ThemeConfig::from_config_and_env();
     let sink = TerminalSink::new(None, &theme, screen_columns)?;
     let Some(remote) = RemoteSession::connect(socket, Box::new(sink), alert)? else {
-        return Ok(ChatExit::Quit);
+        return Ok(Departure::Restart);
     };
     if settle(remote.status_line().map(print_or_exit))? == Flow::Exit {
         remote.end_session();
-        return Ok(ChatExit::Quit);
+        return Ok(Departure::Restart);
     }
     let break_flag = Arc::new(AtomicBool::new(false));
     let _term_break = signal::arm_terminate(&break_flag);
     let mut editor = Reedline::create().with_break_signal(Arc::clone(&break_flag));
     let prompt = DefaultPrompt::default();
+    let mut departure = Departure::Restart;
     while let Some(sig) = read_prompt_until(|| editor.read_line(&prompt), signal::is_terminated)? {
         match prompt_step(sig, signal::is_terminated()) {
             PromptStep::Send(line) => {
@@ -652,11 +653,14 @@ pub(super) fn run(socket: &Path, alert: AlertConfig) -> Result<ChatExit, Box<dyn
                 }
             }
             PromptStep::Continue => {}
-            PromptStep::Exit => break,
+            PromptStep::Exit(how) => {
+                departure = how;
+                break;
+            }
         }
     }
     remote.end_session();
-    Ok(ChatExit::Quit)
+    Ok(departure)
 }
 
 #[cfg(test)]

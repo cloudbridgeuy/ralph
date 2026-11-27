@@ -98,6 +98,7 @@ use session::resolve_store;
 use session::{chat_dir, load_custom_prompt, print_history, store_dir};
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub(crate) use switch::ChatExit;
@@ -177,16 +178,27 @@ fn departure(exit: &Result<ChatExit, Box<dyn std::error::Error>>, terminated: bo
     }
 }
 
+fn run_connected(args: &ChatArgs, socket: &Path) -> Result<ChatExit, Box<dyn std::error::Error>> {
+    let chat = AppConfig::load().map_or_else(
+        |error| {
+            warn(format!("Using the default chat settings: {error}"));
+            ChatSection::default()
+        },
+        |config| config.chat,
+    );
+    let resumer = Resumer::from_env(ResumeSetting::from_bool(chat.program_resume));
+    resumer.publish(&ResumeTarget::Connect {
+        socket: std::path::absolute(socket).unwrap_or_else(|_| socket.to_path_buf()),
+        no_inbox_sound: args.no_inbox_sound,
+        no_inbox_notification: args.no_inbox_notification,
+    });
+    resumer.leave(remote::run(socket, alert_config(args, &chat, None))?);
+    Ok(ChatExit::Quit)
+}
+
 pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     if let Some(socket) = &args.connect {
-        let chat = AppConfig::load().map_or_else(
-            |error| {
-                warn(format!("Using the default inbox alerts: {error}"));
-                ChatSection::default()
-            },
-            |config| config.chat,
-        );
-        return remote::run(socket, alert_config(&args, &chat, None));
+        return run_connected(&args, socket);
     }
     if let Some(ChatCommand::History(history)) = args.command {
         print_history(&chat_dir(args.store, args.thread.as_ref())?, &history)?;

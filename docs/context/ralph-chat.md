@@ -346,6 +346,7 @@ Reports are sent only to Rex: the pure `program_status::rex_pane` returns `Some(
 | Report | At start and after `/thread switch` or `/thread main`, by the process that runs the chat |
 | Main chat | `ralph chat --store <main store> [--name N]` plus the chat flags of this run |
 | Thread | `ralph chat --store <main store> --thread <T> [--model M] [--name N]` plus the chat flags |
+| Connect | `ralph chat --connect <socket>`; see [ralph serve](ralph-serve.md#program-resume) |
 | Clear | Only when you close the chat at the prompt. SIGHUP, SIGTERM and every other exit keep the record |
 | Limits | A value that is not UTF-8 or holds a control character, or a report over 2048 bytes, prints a warning and sends clear |
 

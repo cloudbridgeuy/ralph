@@ -85,6 +85,8 @@ SIGINT, SIGTERM, SIGHUP or a client `shutdown` feed `Stop` to the supervisor. It
 
 ## Program resume
 
+`ralph chat --connect` reports `ralph chat --connect <absolute socket>`, plus `--no-inbox-sound` and `--no-inbox-notification` when set, before it connects. Ctrl-D clears the record. SIGTERM, SIGHUP and an error keep it.
+
 When stdout is a terminal, `serve` reports `ralph serve --store <store>` with OSC 7577 after it binds the socket. The gate, the `[chat] program_resume` key and the limits are the ones of [ralph chat](ralph-chat.md#program-resume). A client `shutdown` or Ctrl-C clears the record after the drain. SIGTERM and SIGHUP keep it, and so does an exit with an error. If the SIGTERM and SIGHUP handler cannot be installed, the record is kept.
 
 ## Maintenance
@@ -107,7 +109,7 @@ Served:
 - `/answer <worker> <request> <option>`: one `answer` frame for the attached key. All three words are required, else the usage line prints. The frame takes the same answer-file path as the `reply` tool, so a stale or unknown request is refused by the host. The connection thread waits up to the 30 s handoff timeout. An `error` leaves the chat open. The terminal chat prints `/answer is only served over --connect`.
 - `/thread switch|main|open [--model]|pull|park|revive|drop|merge [--view]`: one `thread` frame. The reply text is printed. The attached thread changes only after a `done` reply.
 - Ctrl-C: `cancel` for the attached key, sent on a second connection.
-- Ctrl-D: detach. The client closes its connection. `shutdown` is never sent.
+- Ctrl-D: detach. The client closes its connection. `shutdown` is never sent. This is a user quit: it clears the resume record.
 - SIGTERM / SIGHUP: detach and exit 0 at the prompt or mid-request; neither `cancel` nor `shutdown` is sent.
 - Tool blocks: `serve` runs every turn with tool blocks on, so `turn` frames carry `ToolInvocation` and `ToolResult` blocks. The client prints them only when its stdout is a terminal, the same gate as the terminal chat. Piped, it drops them and prints the rest.
 - Inbox alerts: the sound and the notification of [Inbox alerts](ralph-chat.md#worker-inbox), with the same focus check and the idle terminal state. The client reads the `[chat] inbox_alert_*` keys from its own config and obeys `--no-inbox-sound` and `--no-inbox-notification`. If the config does not load, it warns and uses the defaults.
