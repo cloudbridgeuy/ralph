@@ -34,7 +34,7 @@ pub fn key_class(key: &str) -> Class {
     match key {
         "workers.view" => Class::Enum(VIEW_VALUES),
         "workers.pr_provider" => Class::Enum(PR_PROVIDER_VALUES),
-        "theme.name" => Class::Name,
+        "theme.name" | "theme.agent" | "theme.assistant.code" | "theme.agent.code" => Class::Name,
         "mermaid.style.palette" | "mermaid.style.curve" => Class::Word,
         "web.font" | "mermaid.style.font_family" | "mermaid.style.font_family_mono" => Class::Font,
         "changes.diff_args" => Class::Flag,
@@ -449,5 +449,15 @@ mod tests {
         assert_eq!(dotted.len(), 62);
         assert!(key_shape_ok(&format!("mermaid.style.config.{dotted}")));
         assert!(!key_shape_ok(&format!("mermaid.style.config.{dotted}.ab")));
+    }
+
+    #[test]
+    fn code_theme_fields_are_names() {
+        for key in ["theme.assistant.code", "theme.agent.code", "theme.agent"] {
+            assert_eq!(key_class(key), Class::Name, "{key}");
+        }
+        assert_eq!(key_class("theme.assistant.heading1"), Class::Colour);
+        assert_eq!(key_class("theme.agent.border"), Class::Colour);
+        assert_eq!(key_class("theme.agent.codex"), Class::Colour);
     }
 }

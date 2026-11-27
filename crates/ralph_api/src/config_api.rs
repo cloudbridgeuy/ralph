@@ -615,4 +615,30 @@ mod tests {
             assert_eq!(array["value"], "[redacted]", "{raw}");
         }
     }
+
+    #[test]
+    fn code_theme_names_stay_visible_in_the_body() {
+        let config = "[theme.assistant]\ncode = \"Monokai Extended\"\n[theme.agent]\ncode = \"Solarized (dark)\"\n";
+        let (g, s) = setup(None, Some(config));
+        let value = body(&respond(&g, &s, no_env));
+        let assistant = row(&value, "theme", "assistant.code");
+        assert_eq!(assistant["value"], "Monokai Extended");
+        assert_eq!(assistant["redacted"], false);
+        let agent = row(&value, "theme", "agent.code");
+        assert_eq!(agent["value"], "Solarized (dark)");
+        assert_eq!(agent["redacted"], false);
+        let (g, s) = setup(None, Some("[theme]\nagent = \"Solarized (dark)\"\n"));
+        let legacy = body(&respond(&g, &s, no_env));
+        assert_eq!(row(&legacy, "theme", "agent")["value"], "Solarized (dark)");
+    }
+
+    #[test]
+    fn a_token_in_a_code_theme_field_never_reaches_the_body() {
+        let (g, s) = setup(
+            None,
+            Some("[theme.assistant]\ncode = \"AbCdEf0123456789AbCdEf0123456789abcd\"\n"),
+        );
+        let raw = text(&respond(&g, &s, no_env));
+        assert!(!raw.contains("AbCdEf0123"), "{raw}");
+    }
 }

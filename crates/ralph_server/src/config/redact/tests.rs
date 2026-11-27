@@ -857,3 +857,25 @@ fn real_object_keys_in_arrays_stay_visible() {
         false
     ));
 }
+
+#[test]
+fn code_theme_names_stay_visible() {
+    for (key, text) in [
+        ("theme.assistant.code", "Monokai Extended"),
+        ("theme.agent.code", "Solarized (dark)"),
+        ("theme.agent", "Solarized (dark)"),
+    ] {
+        assert!(!redacts(key, &json!(text), false), "{key} {text}");
+    }
+}
+
+#[test]
+fn secrets_in_code_theme_fields_stay_redacted() {
+    for key in ["theme.assistant.code", "theme.agent.code", "theme.agent"] {
+        assert!(redacts(key, &json!(KEY_GHP), false), "{key}");
+        assert!(
+            redacts(key, &json!("AbCdEf0123456789AbCdEf012345678"), false),
+            "{key}"
+        );
+    }
+}
