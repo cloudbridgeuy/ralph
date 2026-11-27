@@ -2,6 +2,7 @@ use super::core::{Screen, Theme, Width};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde_json::{json, Value};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
@@ -124,6 +125,13 @@ pub fn connect_step(exit: Option<&str>, elapsed: Duration, timeout: Duration) ->
         None if elapsed >= timeout => ConnectStep::TimedOut,
         None => ConnectStep::Wait,
     }
+}
+
+pub fn moz_env_names(names: Vec<OsString>) -> Vec<OsString> {
+    names
+        .into_iter()
+        .filter(|name| name.as_encoded_bytes().starts_with(b"MOZ_"))
+        .collect()
 }
 
 pub fn parse_active_port(text: &str) -> Option<u16> {
@@ -332,6 +340,31 @@ mod tests {
         urls.sort();
         urls.dedup();
         assert_eq!(urls.len(), 7);
+    }
+
+    #[test]
+    fn only_names_with_the_moz_prefix_are_removed() {
+        let names: Vec<OsString> = [
+            "MOZ_HEADLESS",
+            "MOZ_DISABLE_CONTENT_SANDBOX",
+            "MOZ_",
+            "MOZILLA_FIVE_HOME",
+            "moz_lower",
+            "XMOZ_A",
+            "HOME",
+            "PATH",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        assert_eq!(
+            moz_env_names(names),
+            vec![
+                OsString::from("MOZ_HEADLESS"),
+                OsString::from("MOZ_DISABLE_CONTENT_SANDBOX"),
+                OsString::from("MOZ_"),
+            ]
+        );
     }
 
     #[test]

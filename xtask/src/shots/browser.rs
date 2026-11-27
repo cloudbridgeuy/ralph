@@ -361,7 +361,11 @@ fn start_failure(
 }
 
 fn start_firefox(firefox: &Path, profile: &Path) -> Result<ChildGuard, BoxError> {
-    let child = Command::new(firefox)
+    let mut command = Command::new(firefox);
+    for name in webdriver::moz_env_names(std::env::vars_os().map(|(name, _)| name).collect()) {
+        command.env_remove(name);
+    }
+    let child = command
         .args(["--headless", "--no-remote", "--marionette", "--profile"])
         .arg(profile)
         .stdout(Stdio::null())
