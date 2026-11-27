@@ -128,7 +128,7 @@ Code fences render through `render_code_block` (`render/text.rs`). Shell fences 
 
 ## Code Frames
 
-On a terminal, code fences, diff fences, `Edit` and `NotebookEdit` result diffs and multi-line Bash calls print as frames, not as fence lines. Pipes and chat with `NO_COLOR` keep the raw ```` ``` ```` text, and the stored text never changes.
+On a terminal, code fences, diff fences, `Edit` and `NotebookEdit` result diffs, multi-line Bash calls and `mcptools execute` scripts of any length print as frames, not as fence lines. Pipes and chat with `NO_COLOR` keep the raw ```` ``` ```` text, and the stored text never changes.
 
 - Look: a rule that carries the language (`── rust ───`) or the file path, one blank row above and below the body, and a 2 column left margin. Tabs print as 4 spaces. A fence or diff frame has at least one blank row above it when text or another frame comes first in the same reply, and none when it opens the reply; a turn rule starts a new reply. `Spacing` adds the row for printed replies, reprints and `/view`. Tool call frames get no added row.
 - Shading: the fill is the syntax theme background moved 8% toward the theme foreground, and the rule colour is 40%. The fill is painted behind every character (highlighting sets the foreground only) and `ESC[K` fills the rest of the row. With `[theme] no_background` or a theme without both colours, there is no fill: a dim rule or the file ink, the margin, and a closing rule.
