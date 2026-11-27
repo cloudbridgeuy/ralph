@@ -121,9 +121,20 @@ Not served (prints `<line> is not served over --connect`): `/thread ls`, send-it
 Errors:
 
 - An `error` frame (`main is busy`, `ralph serve is shutting down`) is printed. The prompt returns.
-- After the first connect, a closed connection or I/O error ends the client.
+- A connection that drops during a line is dialled again, see below. On the first connect, a drop between the `hello` reply and the `status` reply ends the client. So does any other I/O error.
+
+Reconnect:
+
+A drop shows at the next line you send. There is no idle poll. The client waits as for the first dial, sends `hello`, and for a thread sends `switch` and `status`. If the thread is not open, it sends `main`, stays on main and says that `/thread open <T>` opens it. It never opens a thread itself. Ctrl-C while it waits quits and clears the resume record. SIGTERM / SIGHUP quits and keeps it.
+
+| Drop | Attachment | The line | Printed |
+|---|---|---|---|
+| the write failed | restored | sent once more | `reconnected` |
+| the write failed | fell back to main | not sent | `reconnected, thread not open, not sent` |
+| closed or reset after the write | any | not sent | `reply lost, not sent again` |
+| second drop of the same line | any | not sent | `reply lost, not sent again` |
 
 Limits:
 
 - No re-bind of a running turn. A re-attach during a turn gets `<key> is busy`. That turn's events are lost.
-- A re-attach always goes to main.
+- A new client always attaches to main. After a `serve` restart no thread is open, so a thread client lands on main.

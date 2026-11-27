@@ -274,6 +274,79 @@ fn the_dial_delay_doubles_up_to_the_cap() {
     assert_eq!(delays, [250, 500, 1000, 2000, 4000, 5000, 5000, 5000]);
 }
 
+fn loss_of(error: Box<dyn Error>) -> Option<Loss> {
+    error.downcast_ref::<Loss>().copied()
+}
+
+#[test]
+fn a_failed_write_is_unsent() {
+    let (session, server) = pair_session(Duration::from_millis(20));
+    drop(server);
+    let error = session.write(&ClientMsg::Shutdown).unwrap_err();
+    assert_eq!(loss_of(error), Some(Loss::Unsent));
+}
+
+#[test]
+fn a_closed_read_is_unanswered() {
+    let (session, server) = pair_session(Duration::from_millis(20));
+    drop(server);
+    let error = session
+        .read_frame_with(&mut String::new(), None, || false)
+        .map(|_| ())
+        .unwrap_err();
+    assert_eq!(loss_of(error), Some(Loss::Unanswered));
+}
+
+#[test]
+fn only_an_unsent_line_on_a_restored_attachment_is_resent() {
+    use AfterReconnect::{NotResent, Resend};
+    use Reattach::{FellBackToMain, Restored};
+    for (loss, reattach, expected) in [
+        (Loss::Unsent, Restored, Resend),
+        (Loss::Unsent, FellBackToMain, NotResent),
+        (Loss::Unanswered, Restored, NotResent),
+        (Loss::Unanswered, FellBackToMain, NotResent),
+    ] {
+        assert_eq!(after_reconnect(loss, reattach), expected);
+    }
+}
+
+#[test]
+fn a_thread_that_is_not_open_falls_back_to_main() {
+    let (session, mut server) = pair_session(Duration::from_millis(20));
+    *session.attached.borrow_mut() = Some("side".into());
+    let done = ServerMsg::Done {
+        message: "attached".into(),
+    };
+    let closed = ServerMsg::Error {
+        message: "side is not open".into(),
+    };
+    for (id, reply) in [&done, &closed, &done].into_iter().enumerate() {
+        server
+            .write_all(encode_frame(id as u64, reply).as_bytes())
+            .unwrap();
+    }
+    let reattach = session.reattach(|| false).unwrap();
+    assert_eq!(reattach, Some(Reattach::FellBackToMain));
+    assert_eq!(*session.attached.borrow(), None);
+    let sent: Vec<ClientMsg> = BufReader::new(server)
+        .lines()
+        .take(3)
+        .map(|line| decode_frame(&line.unwrap()).unwrap().body)
+        .collect();
+    let side = || "side".to_string();
+    assert_eq!(
+        sent,
+        [
+            ClientMsg::Thread(ThreadCmd::Switch { name: side() }),
+            ClientMsg::Status {
+                thread: Some(side())
+            },
+            ClientMsg::Thread(ThreadCmd::Main),
+        ]
+    );
+}
+
 #[test]
 fn read_prompt_until_stops_on_interrupted_when_terminated() {
     let mut calls = 0;
