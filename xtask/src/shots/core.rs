@@ -171,10 +171,10 @@ fn selected_names(selected: &[Shot]) -> BTreeSet<String> {
     selected.iter().map(Shot::name).collect()
 }
 
-pub fn default_ralph_path(root: &Path, target_dir: Option<&str>) -> PathBuf {
+pub fn default_ralph_path(root: &Path, cwd: &Path, target_dir: Option<&str>) -> PathBuf {
     let target = target_dir
         .filter(|dir| !dir.is_empty())
-        .map_or_else(|| root.join("target"), |dir| root.join(dir));
+        .map_or_else(|| root.join("target"), |dir| cwd.join(dir));
     target.join("debug").join("ralph")
 }
 
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn the_default_ralph_path_is_under_the_workspace_target() {
         assert_eq!(
-            default_ralph_path(Path::new("/repo"), None),
+            default_ralph_path(Path::new("/repo"), Path::new("/work"), None),
             PathBuf::from("/repo/target/debug/ralph")
         );
     }
@@ -367,23 +367,23 @@ mod tests {
     #[test]
     fn an_absolute_target_dir_replaces_the_workspace_target() {
         assert_eq!(
-            default_ralph_path(Path::new("/repo"), Some("/cache/t")),
+            default_ralph_path(Path::new("/repo"), Path::new("/work"), Some("/cache/t")),
             PathBuf::from("/cache/t/debug/ralph")
         );
     }
 
     #[test]
-    fn a_relative_target_dir_resolves_against_the_root() {
+    fn a_relative_target_dir_resolves_against_the_cwd() {
         assert_eq!(
-            default_ralph_path(Path::new("/repo"), Some("out")),
-            PathBuf::from("/repo/out/debug/ralph")
+            default_ralph_path(Path::new("/repo"), Path::new("/work"), Some("out")),
+            PathBuf::from("/work/out/debug/ralph")
         );
     }
 
     #[test]
     fn an_empty_target_dir_counts_as_unset() {
         assert_eq!(
-            default_ralph_path(Path::new("/repo"), Some("")),
+            default_ralph_path(Path::new("/repo"), Path::new("/work"), Some("")),
             PathBuf::from("/repo/target/debug/ralph")
         );
     }
