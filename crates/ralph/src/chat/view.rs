@@ -1,26 +1,61 @@
 use crate::chat::inbox::Display;
+use crate::chat::rex;
 use crate::mermaid_guard;
 use crate::render::image::{draw_png, ImageBounds};
 use crate::render::{render_markdown_with, RenderContext};
 use crate::ui_theme::UiColors;
-use ralph_core::chat_view::{rebase_images, view_refusal, FileKind, ViewArgs, MAX_VIEW_BYTES};
+use ralph_core::chat_view::{
+    rebase_images, view_refusal, view_split_argv, view_split_notice, FileKind, ViewArgs, ViewHost,
+    MAX_VIEW_BYTES,
+};
 use ralph_core::chunk::{ChunkType, ParsedChunk};
 use ralph_core::kitty::ASSUMED_CELL_PX;
 use ralph_core::mermaid_fit::Room;
+use ralph_core::program_status::RexBlock;
 use ralph_core::sanitize::strip_controls;
 use ralph_server::disk_files::resolve;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub fn run(args: &ViewArgs, display: &Display) {
+pub(crate) struct Viewed {
+    pub text: String,
+    pub file: PathBuf,
+}
+
+pub(super) fn rex_host(block: Option<RexBlock>, store: &Path) -> Option<ViewHost> {
+    Some(ViewHost {
+        block: block?,
+        exe: std::env::current_exe().ok()?.to_string_lossy().into_owned(),
+        cwd: std::env::current_dir().ok()?.to_string_lossy().into_owned(),
+        store: std::path::absolute(store)
+            .ok()?
+            .to_string_lossy()
+            .into_owned(),
+    })
+}
+
+pub fn run(args: &ViewArgs, display: &Display, host: Option<&ViewHost>) {
     let ViewArgs::File(typed) = args else {
         println!("{}", ralph_core::chat_view::VIEW_USAGE);
         return;
     };
     match load(&resolve(typed)) {
-        Ok(text) => print!("{}", render(display, &text)),
+        Ok(viewed) => show(&viewed, display, host),
         Err(message) => println!("{message}"),
     }
+}
+
+fn show(viewed: &Viewed, display: &Display, host: Option<&ViewHost>) {
+    if let Some(host) = host {
+        match rex::split(&view_split_argv(host, &viewed.file)) {
+            Ok(()) => {
+                println!("opened {} in a new Rex block", viewed.file.display());
+                return;
+            }
+            Err(error) => println!("{}", view_split_notice(&error)),
+        }
+    }
+    print!("{}", render(display, &viewed.text));
 }
 
 pub(crate) fn render(display: &Display, text: &str) -> String {
@@ -57,7 +92,7 @@ fn kind(path: &Path) -> FileKind {
     }
 }
 
-pub(crate) fn load(path: &Path) -> Result<String, String> {
+pub(crate) fn load(path: &Path) -> Result<Viewed, String> {
     if let Some(refusal) = view_refusal(path, kind(path)) {
         return Err(refusal);
     }
@@ -70,7 +105,10 @@ pub(crate) fn load(path: &Path) -> Result<String, String> {
         .map_err(cannot)?;
     let absolute = std::path::absolute(path).map_err(cannot)?;
     let dir = absolute.parent().map(Path::to_path_buf).unwrap_or_default();
-    Ok(rebase_images(&strip_controls(&text), &dir))
+    Ok(Viewed {
+        text: rebase_images(&strip_controls(&text), &dir),
+        file: absolute,
+    })
 }
 
 #[cfg(test)]
@@ -103,7 +141,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("doc.md");
         std::fs::write(&path, source).unwrap();
-        load(&path).unwrap()
+        load(&path).unwrap().text
     }
 
     #[test]

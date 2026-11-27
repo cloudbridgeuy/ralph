@@ -71,6 +71,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::store_in_use_message;
 use ralph_core::chat_status::orphan_hint;
 use ralph_core::chat_switch::SwitchArgv;
+use ralph_core::chat_view::{resolve_view_target, view_host};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::{
@@ -211,6 +212,12 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
     let diff_colors = *theme_config.diff();
     let tool_colors = *theme_config.tools();
     let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());
+    let (view_target, view_warning) = resolve_view_target(chat_config.view.as_deref());
+    let view_host = view_host(
+        view_target,
+        Stdout::from_is_terminal(std::io::stdout().is_terminal()),
+        view::rex_host(rex_block(|name| std::env::var(name).ok()), &store_dir),
+    );
     let setting_warnings: Vec<String> = config
         .theme
         .deprecations()
@@ -219,6 +226,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         .chain(config.changes.warnings())
         .chain(config.mermaid.style.warnings())
         .chain(edit_mode_warning)
+        .chain(view_warning)
         .collect();
     setting_warnings.iter().for_each(warn);
     let (agent_highlighter, agent_theme) = agent_style(&theme_config, &config.theme);
@@ -440,6 +448,7 @@ pub fn run(args: ChatArgs) -> Result<ChatExit, Box<dyn std::error::Error>> {
         config: &config_snapshot,
         columns: prompt::screen_columns,
         resize: &resize,
+        view_host: view_host.as_ref(),
     };
     let keys = Keys {
         gate: &turn.gate,

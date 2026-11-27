@@ -45,7 +45,7 @@ fn open(args: &ViewCommandArgs) -> Result<(String, ViewPager), String> {
     pager_warning.iter().for_each(warn);
     let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     enable_images(detect(color));
-    let text = view::load(&resolve(&args.file))?;
+    let viewed = view::load(&resolve(&args.file))?;
     let (highlighter, markdown) = agent_style(&theme_config, &config.theme);
     let display = Display {
         ctx: RenderContext::new(&highlighter, color)
@@ -55,7 +55,7 @@ fn open(args: &ViewCommandArgs) -> Result<(String, ViewPager), String> {
         color,
         ui: *theme_config.ui(),
     };
-    Ok((view::render(&display, &text), pager))
+    Ok((view::render(&display, &viewed.text), pager))
 }
 
 fn show(text: &str, pager: &ViewPager) -> Result<(), String> {

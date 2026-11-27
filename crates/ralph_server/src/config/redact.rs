@@ -53,6 +53,7 @@ const SAFE_KEYS: &[&str] = &[
     "chat.terminal_title",
     "chat.user_claude_md",
     "chat.user_settings",
+    "chat.view",
     "chat.watch_timeout_secs",
     "chat.worker_base",
     "chat.worker_check_secs",

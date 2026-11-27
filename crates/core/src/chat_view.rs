@@ -1,6 +1,6 @@
 use crate::chat_hold::{command_args, HoldCompletion};
 use crate::kitty::{parse_image_markers, Segment};
-use crate::program_status::Stdout;
+use crate::program_status::{rex_split_argv, RexBlock, RexSplit, Stdout};
 use std::ops::Range;
 use std::path::Path;
 
@@ -176,6 +176,56 @@ pub fn show_plan(pager: &ViewPager, stdin_tty: bool, stdout: Stdout) -> Show<'_>
 
 pub fn quits(key: &[u8]) -> bool {
     matches!(key.first(), Some(&(b'q' | CTRL_C)))
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ViewTarget {
+    #[default]
+    Inline,
+    RexPane,
+}
+
+pub fn resolve_view_target(config: Option<&str>) -> (ViewTarget, Option<String>) {
+    match config.map(str::trim) {
+        None | Some("inline") => (ViewTarget::Inline, None),
+        Some("rex-pane") => (ViewTarget::RexPane, None),
+        Some(other) => (
+            ViewTarget::Inline,
+            Some(format!(
+                "[chat] view = {other:?} is not \"inline\" or \"rex-pane\"; using \"inline\""
+            )),
+        ),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewHost {
+    pub block: RexBlock,
+    pub exe: String,
+    pub cwd: String,
+    pub store: String,
+}
+
+pub fn view_host(target: ViewTarget, stdout: Stdout, found: Option<ViewHost>) -> Option<ViewHost> {
+    found.filter(|_| target == ViewTarget::RexPane && stdout == Stdout::Tty)
+}
+
+pub fn view_split_argv(host: &ViewHost, file: &Path) -> Vec<String> {
+    let name = file.file_name().unwrap_or(file.as_os_str());
+    let label = format!("view {}", name.to_string_lossy());
+    let file = file.to_string_lossy();
+    let command = [&host.exe, "view", "--store", &host.store, &file].map(str::to_string);
+    let split = RexSplit {
+        block: &host.block,
+        label: &label,
+        cwd: &host.cwd,
+    };
+    rex_split_argv(split, command.to_vec())
+}
+
+pub fn view_split_notice(error: &str) -> String {
+    let first = error.lines().next().unwrap_or_default();
+    format!("/view: {first}; showing inline")
 }
 
 #[cfg(test)]
