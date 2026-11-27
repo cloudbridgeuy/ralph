@@ -282,8 +282,7 @@ fn spawn_line_reader(mut stdout: ChildStdout, tail: Arc<Mutex<Vec<u8>>>) -> mpsc
 
 fn record_line(tail: &Mutex<Vec<u8>>, sender: &mpsc::Sender<String>, line: String) {
     if let Ok(mut buf) = tail.lock() {
-        webdriver::push_tail(&mut buf, line.as_bytes(), webdriver::FAILURE_STREAM_CAP);
-        webdriver::push_tail(&mut buf, b"\n", webdriver::FAILURE_STREAM_CAP);
+        webdriver::push_tail_line(&mut buf, &line, webdriver::FAILURE_STREAM_CAP);
     }
     let _ = sender.send(line);
 }

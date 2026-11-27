@@ -69,6 +69,11 @@ pub fn push_tail(buf: &mut Vec<u8>, chunk: &[u8], cap: usize) {
     buf.drain(..excess);
 }
 
+pub fn push_tail_line(buf: &mut Vec<u8>, line: &str, cap: usize) {
+    push_tail(buf, redact_token(line).as_bytes(), cap);
+    push_tail(buf, b"\n", cap);
+}
+
 fn bounded(text: &str, cap: usize) -> &str {
     let mut end = text.len().min(cap);
     while !text.is_char_boundary(end) {
@@ -802,6 +807,31 @@ mod tests {
         assert!(text.contains("exit status: 1"));
         assert!(text.contains("no stderr"));
         assert!(text.contains("no stdout"));
+    }
+
+    fn tail_text(lines: &[&str], cap: usize) -> String {
+        let mut buf = Vec::new();
+        for line in lines {
+            push_tail_line(&mut buf, line, cap);
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    #[test]
+    fn a_front_cut_inside_a_token_value_leaks_nothing() {
+        let tail = tail_text(&["listening on http://127.0.0.1:9/?token=S3CR3TV4LU3"], 14);
+        assert!(!tail.contains("V4LU3") && !tail.contains("R3T"), "{tail}");
+    }
+
+    #[test]
+    fn a_tail_line_with_several_tokens_redacts_each() {
+        let tail = tail_text(&["a?token=one b?token=two&x=1"], 200);
+        assert_eq!(tail, "a?token=<redacted> b?token=<redacted>&x=1\n");
+    }
+
+    #[test]
+    fn tail_lines_without_a_token_are_kept_as_written() {
+        assert_eq!(tail_text(&["one", "two"], 200), "one\ntwo\n");
     }
 
     #[test]
