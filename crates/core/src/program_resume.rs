@@ -1,12 +1,15 @@
+use crate::chat_switch::{switch_argv, SwitchArgv, SwitchTarget};
+use crate::chat_thread::ThreadName;
 use crate::program_status::{Stdout, TooLong};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use sha2::{Digest, Sha256};
-use std::ffi::OsStr;
-use std::path::Path;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
 pub const TOKEN_ENV: &str = "OSC7577_TOKEN";
 const MAX_SEQUENCE_BYTES: usize = 2048;
+const PROGRAM: &str = "ralph";
 
 pub struct ResumeToken(String);
 
@@ -54,6 +57,80 @@ pub fn gate(
         (_, _, None) => Err(Off::NoToken),
         (_, _, Some(raw)) => ResumeToken::parse(raw).ok_or(Off::BadToken),
     }
+}
+
+pub struct ChatFlags {
+    pub switch: SwitchArgv,
+    pub name: Option<String>,
+}
+
+pub enum ResumeTarget {
+    Serve {
+        store: PathBuf,
+    },
+    Main(ChatFlags),
+    Thread {
+        name: ThreadName,
+        model: Option<String>,
+        flags: ChatFlags,
+    },
+    Connect {
+        socket: PathBuf,
+        no_inbox_sound: bool,
+        no_inbox_notification: bool,
+    },
+}
+
+impl ResumeTarget {
+    pub fn argv(&self) -> Result<Argv, Unreportable> {
+        let words = match self {
+            Self::Serve { store } => vec!["serve".into(), "--store".into(), store.into()],
+            Self::Main(flags) => chat_words(flags, &SwitchTarget::Main, None),
+            Self::Thread { name, model, flags } => {
+                chat_words(flags, &SwitchTarget::Thread(name.clone()), model.as_deref())
+            }
+            Self::Connect {
+                socket,
+                no_inbox_sound,
+                no_inbox_notification,
+            } => connect_words(socket, *no_inbox_sound, *no_inbox_notification),
+        };
+        std::iter::once(OsString::from(PROGRAM))
+            .chain(words)
+            .map(|word| reportable(&word))
+            .collect::<Result<_, _>>()
+            .map(Argv)
+    }
+}
+
+fn chat_words(flags: &ChatFlags, target: &SwitchTarget, model: Option<&str>) -> Vec<OsString> {
+    let mut words = switch_argv(&flags.switch, target);
+    if let Some(model) = model {
+        words.extend(["--model".into(), model.into()]);
+    }
+    words.extend(
+        flags
+            .name
+            .iter()
+            .map(|name| format!("--name={name}").into()),
+    );
+    words
+}
+
+fn connect_words(socket: &Path, no_sound: bool, no_notification: bool) -> Vec<OsString> {
+    let flags = [
+        (no_sound, "--no-inbox-sound"),
+        (no_notification, "--no-inbox-notification"),
+    ];
+    ["chat".into(), "--connect".into(), socket.into()]
+        .into_iter()
+        .chain(
+            flags
+                .into_iter()
+                .filter(|(on, _)| *on)
+                .map(|(_, flag)| flag.into()),
+        )
+        .collect()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -135,6 +212,8 @@ pub fn action_on_leave(departure: Departure) -> Option<Action<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
 
     const SPEC_TOKEN: &str = "dummy-token-replace-me";
     const SPEC_TIME: u64 = 1_795_543_200;
@@ -244,6 +323,115 @@ mod tests {
         let sized = |argv| encoded(1, Action::Resume { argv, cwd: None });
         assert!(sized(&fits).unwrap().len() <= 2048);
         assert_eq!(sized(&over), Err(TooLong));
+    }
+
+    fn switch(store: &str) -> SwitchArgv {
+        SwitchArgv {
+            store: PathBuf::from(store),
+            recent_history_tokens: None,
+            wrap_width: None,
+            skills: Vec::new(),
+            permission_mode: None,
+            worktree_dir: None,
+            no_inbox_sound: false,
+            no_inbox_notification: false,
+            skip_summary: false,
+        }
+    }
+
+    fn flags(name: Option<&str>) -> ChatFlags {
+        ChatFlags {
+            switch: switch("/main/store"),
+            name: name.map(str::to_string),
+        }
+    }
+
+    fn words(target: &ResumeTarget) -> Vec<String> {
+        target.argv().unwrap().0
+    }
+
+    #[test]
+    fn an_argument_with_a_control_character_is_unreportable() {
+        for bad in ["a\nb", "a\x1bb", "a\x07b"] {
+            assert!(ResumeTarget::Main(flags(Some(bad))).argv().is_err());
+            assert!(Cwd::parse(Path::new(bad)).is_err());
+        }
+        let raw = PathBuf::from(OsString::from_vec(vec![b'/', 0xff]));
+        assert!(Cwd::parse(&raw).is_err());
+        assert!(ResumeTarget::Serve { store: raw }.argv().is_err());
+    }
+
+    #[test]
+    fn serve_resumes_with_its_absolute_store() {
+        let target = ResumeTarget::Serve {
+            store: PathBuf::from("/main/store"),
+        };
+        assert_eq!(words(&target), ["ralph", "serve", "--store", "/main/store"]);
+    }
+
+    #[test]
+    fn main_chat_replays_its_flags() {
+        let flags = ChatFlags {
+            switch: SwitchArgv {
+                wrap_width: Some(80),
+                skills: vec![PathBuf::from("/s1")],
+                skip_summary: true,
+                ..switch("/main/store")
+            },
+            name: Some("-review".to_string()),
+        };
+        assert_eq!(
+            words(&ResumeTarget::Main(flags)),
+            [
+                "ralph",
+                "chat",
+                "--store",
+                "/main/store",
+                "--wrap-width",
+                "80",
+                "--skill",
+                "/s1",
+                "--skip-summary",
+                "--name=-review",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_thread_resumes_with_its_name_and_model() {
+        let target = ResumeTarget::Thread {
+            name: ThreadName::parse("side").unwrap(),
+            model: Some("opus".to_string()),
+            flags: flags(None),
+        };
+        assert_eq!(
+            words(&target),
+            [
+                "ralph",
+                "chat",
+                "--store",
+                "/main/store",
+                "--thread",
+                "side",
+                "--model",
+                "opus",
+            ]
+        );
+    }
+
+    #[test]
+    fn connect_resumes_with_the_socket_and_inbox_flags() {
+        let connect = |quiet| ResumeTarget::Connect {
+            socket: PathBuf::from("/run/serve.sock"),
+            no_inbox_sound: quiet,
+            no_inbox_notification: quiet,
+        };
+        let plain = ["ralph", "chat", "--connect", "/run/serve.sock"];
+        assert_eq!(words(&connect(false)), plain);
+        assert_eq!(
+            words(&connect(true)),
+            [&plain[..], &["--no-inbox-sound", "--no-inbox-notification"]].concat()
+        );
     }
 
     #[test]
