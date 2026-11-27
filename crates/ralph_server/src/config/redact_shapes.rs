@@ -625,6 +625,56 @@ mod tests {
     }
 
     #[test]
+    fn aws_key_ids_without_digits_are_caught_by_the_aws_rule_alone() {
+        for text in [
+            "AKIAABCDEFGHIJKLMNOP",
+            "ASIAABCDEFGHIJKLMNOP",
+            "id AKIAABCDEFGHIJKLMNOP",
+        ] {
+            assert!(text_has_secret_shape(text), "{text}");
+        }
+        for text in [
+            "AKIAABCDEFGHIJKLMNO",
+            "AKIAabcdefghijklmnop",
+            "AKIAABCDEFGHIJKLMNO-",
+        ] {
+            assert!(!text_has_secret_shape(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn underscore_prefixed_runs_under_twenty_characters_are_caught() {
+        assert!(text_has_secret_shape("x_AbCdEf0123456789"));
+        assert!(text_has_secret_shape("x_AbCdEf012345678a"));
+        assert!(!text_has_secret_shape("x_AbCdEf012345678"));
+        assert!(!text_has_secret_shape("x1_AbCdEf0123456789"));
+    }
+
+    #[test]
+    fn opaque_min_is_twenty() {
+        assert!(!text_has_secret_shape("AbCdEf0123456789xyz"));
+        assert!(text_has_secret_shape("AbCdEf0123456789xyzQ"));
+    }
+
+    #[test]
+    fn opaque_after_prefix_min_is_sixteen() {
+        assert!(!text_has_secret_shape("token AbCdEf012345678"));
+        assert!(text_has_secret_shape("token AbCdEf0123456789"));
+        assert!(!text_has_secret_shape("token1 AbCdEf0123456789"));
+    }
+
+    #[test]
+    fn markers_inside_a_longer_word_are_not_secrets() {
+        assert!(text_has_secret_shape("a eyJa.b.c"));
+        assert!(!text_has_secret_shape("aeyJa.b.c"));
+        assert!(text_has_secret_shape("a AKIAABCDEFGHIJKLMNOP"));
+        assert!(!text_has_secret_shape("aAKIAABCDEFGHIJKLMNOP"));
+        assert!(text_has_secret_shape("a xo\x78b-1"));
+        assert!(!text_has_secret_shape("axo\x78b-1"));
+        assert!(text_has_secret_shape("(xo\x78b-1)"));
+    }
+
+    #[test]
     fn each_secret_shape_is_detected() {
         for text in [
             "Bearer abc",
