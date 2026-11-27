@@ -3,7 +3,7 @@ use ralph_core::chat::resolve_watch_timeout;
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::claude_leftovers::configured_dir;
-use ralph_server::config::{AppConfig, ConfigError};
+use ralph_server::config::{ignored_extras, AppConfig, ConfigError};
 use std::path::Path;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -42,6 +42,16 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(config.changes.warnings())
         .chain(config.mermaid.style.warnings())
         .chain(chat.permissions_setting().1)
+        .chain(config.ask.permissions_setting().1)
+        .chain(
+            [
+                config.chat_permission_mode(None, None),
+                config.ask_permission_mode(None, None),
+            ]
+            .into_iter()
+            .filter_map(Result::err)
+            .map(|error| error.to_string()),
+        )
         .chain(chat.worker_quiet_setting().1)
         .chain(chat.reset_limits_setting().1)
         .chain(chat.send_it_setting().1)
@@ -56,7 +66,16 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .collect();
     Ok(CheckReport {
         errors,
-        notes: config.theme.deprecations(),
+        notes: config
+            .theme
+            .deprecations()
+            .into_iter()
+            .chain(
+                ignored_extras(&config, chat.harness_kind())
+                    .into_iter()
+                    .map(|extra| format!("chat.harness agy ignores {extra}")),
+            )
+            .collect(),
     })
 }
 
@@ -184,6 +203,15 @@ mod tests {
     }
 
     #[test]
+    fn an_agy_chat_reports_ignored_extras_as_notes() {
+        let agy = "[chat]\nharness = 'agy'\n[chat.agy]\nmodel = 'gemini-3-flash'\n";
+        let report = check(agy, "c").unwrap();
+        assert!(report.errors.is_empty());
+        assert_eq!(report.notes.len(), 2);
+        assert!(check("", "c").unwrap().notes.is_empty());
+    }
+
+    #[test]
     fn legacy_agent_is_a_note_only() {
         let report = check("[theme]\nagent = \"x\"\n", "c").unwrap();
         assert!(report.errors.is_empty());
@@ -202,6 +230,38 @@ mod tests {
         assert!(check("[chat]\nemphasis_icons = \"yes\"\n", "c").is_err());
         assert!(errors("[chat]\nemphasis_round = true\n").is_empty());
         assert!(errors("[chat]\nemphasis_icons = true\n").is_empty());
+    }
+
+    #[test]
+    fn a_bad_claude_permission_mode_is_an_error_for_chat_and_ask() {
+        for section in ["chat", "ask"] {
+            let bad = errors(&format!("[{section}.claude]\npermission_mode = \"yolo\"\n"));
+            let origin = format!("{section}.claude.permission_mode: ");
+            assert_eq!(bad.len(), 1, "{bad:?}");
+            assert!(bad[0].starts_with(&origin), "{bad:?}");
+            let good = format!("[{section}.claude]\npermission_mode = \"plan\"\n");
+            assert!(errors(&good).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_bad_ask_permissions_value_is_an_error() {
+        assert_eq!(
+            errors("[ask]\npermissions = \"always\"\n"),
+            ["[ask] permissions must be \"ask\" or \"yolo\"; using \"ask\""]
+        );
+    }
+
+    #[test]
+    fn a_removed_permission_mode_key_fails_and_names_the_claude_table() {
+        for section in ["chat", "ask"] {
+            let content = format!("[{section}]\npermission_mode = \"plan\"\n");
+            let message = check(&content, "c").unwrap_err().to_string();
+            assert!(
+                message.contains(&format!("[{section}.claude]")),
+                "{message}"
+            );
+        }
     }
 
     #[test]

@@ -214,7 +214,7 @@ impl Ledger {
     pub fn drop_worker(&mut self, worker: &str) -> Vec<Entry> {
         let (dropped, kept): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
             .into_iter()
-            .partition(|e| e.report.worker == worker);
+            .partition(|e| e.report.from.to_string() == worker);
         self.entries = kept;
         dropped
     }
@@ -274,7 +274,7 @@ pub fn unread_turn(selection: Selection, reports: &[Report]) -> Result<UnreadTur
 pub fn drop_log_line(entry: &Entry, now: DateTime<Utc>) -> String {
     serde_json::json!({
         "timestamp": now.to_rfc3339(),
-        "worker": entry.report.worker,
+        "worker": entry.report.from,
         "status": entry.report.status,
         "text": entry.report.text,
     })
@@ -304,9 +304,9 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
         .map(|(i, e)| {
             [
                 format!("#{}", i + 1),
-                e.report.worker.clone(),
+                e.report.from.to_string(),
                 e.report.status.to_string(),
-                age(&e.report.at, now),
+                age(&e.report.at.to_rfc3339(), now),
             ]
         })
         .collect();
@@ -333,11 +333,17 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
 mod tests {
     use super::*;
     use crate::worker::ReportStatus;
+    use crate::worker::WorkerId;
 
     fn arrival(source: &str) -> (String, Report) {
         (
             source.to_string(),
-            Report::from_worker("A", "t", ReportStatus::Done, source.to_string()),
+            Report::from_worker(
+                &WorkerId::parse("A").unwrap(),
+                chrono::DateTime::UNIX_EPOCH,
+                ReportStatus::Done,
+                source.to_string(),
+            ),
         )
     }
 
@@ -352,7 +358,12 @@ mod tests {
     fn entry(worker: &str, at: &str) -> Entry {
         Entry {
             source: worker.to_string(),
-            report: Report::from_worker(worker, at, ReportStatus::Done, String::new()),
+            report: Report::from_worker(
+                &WorkerId::parse(worker).unwrap(),
+                at.parse().unwrap(),
+                ReportStatus::Done,
+                String::new(),
+            ),
         }
     }
 
@@ -364,13 +375,16 @@ mod tests {
     fn drop_worker_removes_only_that_workers_entries_in_order() {
         let mut ledger = Ledger::default();
         ledger.ingest(vec![
-            ("1".to_string(), entry("A", "t1").report),
-            ("2".to_string(), entry("B", "t2").report),
-            ("3".to_string(), entry("A", "t3").report),
+            ("1".to_string(), entry("A", "2026-01-01T00:00:01Z").report),
+            ("2".to_string(), entry("B", "2026-01-01T00:00:02Z").report),
+            ("3".to_string(), entry("A", "2026-01-01T00:00:03Z").report),
         ]);
         let dropped = ledger.drop_worker("A");
-        let times: Vec<&str> = dropped.iter().map(|e| e.report.at.as_str()).collect();
-        assert_eq!(times, ["t1", "t3"]);
+        let times: Vec<String> = dropped.iter().map(|e| e.report.at.to_string()).collect();
+        assert_eq!(
+            times,
+            ["2026-01-01 00:00:01 UTC", "2026-01-01 00:00:03 UTC"]
+        );
         assert_eq!(sources(&ledger), ["2"]);
         assert!(ledger.drop_worker("A").is_empty());
     }
@@ -503,8 +517,7 @@ mod tests {
 
     #[test]
     fn old_ledger_drops_read_entries_and_ignores_unknown_fields() {
-        let report =
-            |t: &str| serde_json::json!({"worker": "A", "at": "t", "status": "done", "text": t});
+        let report = |t: &str| serde_json::json!({"worker": "A", "at": "2026-01-01T00:00:00Z", "status": "done", "text": t});
         let old = serde_json::json!({
             "next_id": 4,
             "entries": [
@@ -537,7 +550,10 @@ mod tests {
 
     #[test]
     fn drop_log_line_has_no_id() {
-        let line = drop_log_line(&entry("A", "t"), "2026-01-02T03:04:05Z".parse().unwrap());
+        let line = drop_log_line(
+            &entry("A", "2026-01-01T00:00:00Z"),
+            "2026-01-02T03:04:05Z".parse().unwrap(),
+        );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&line).unwrap(),
             serde_json::json!({
@@ -579,8 +595,11 @@ mod tests {
     fn take_closes_removes_only_thread_closed_reports() {
         use crate::chat_thread::{AutoMode, ThreadName};
         use crate::chat_thread_auto::{split_close_reports, thread_closed_report};
-        let closed =
-            thread_closed_report(&ThreadName::parse("side").unwrap(), AutoMode::Merge, "t");
+        let closed = thread_closed_report(
+            &ThreadName::parse("side").unwrap(),
+            AutoMode::Merge,
+            chrono::DateTime::UNIX_EPOCH,
+        );
         let mut ledger = Ledger::default();
         ledger.ingest(vec![
             arrival("a"),
@@ -598,8 +617,7 @@ mod tests {
 
     #[test]
     fn ledger_with_one_malformed_entry_keeps_the_good_entries() {
-        let report =
-            |t: &str| serde_json::json!({"worker": "A", "at": "t", "status": "done", "text": t});
+        let report = |t: &str| serde_json::json!({"worker": "A", "at": "2026-01-01T00:00:00Z", "status": "done", "text": t});
         let raw = serde_json::json!({
             "entries": [
                 {"source": "a", "report": report("a")},
@@ -618,7 +636,7 @@ mod tests {
         let entry = |source: &str, status: &str| {
             serde_json::json!({
                 "source": source,
-                "report": {"worker": "A", "at": "t", "status": status, "text": source},
+                "report": {"worker": "A", "at": "2026-01-01T00:00:00Z", "status": status, "text": source},
             })
         };
         let raw = serde_json::json!({
@@ -632,8 +650,7 @@ mod tests {
 
     #[test]
     fn decode_reports_each_skipped_entry() {
-        let report =
-            |t: &str| serde_json::json!({"worker": "A", "at": "t", "status": "done", "text": t});
+        let report = |t: &str| serde_json::json!({"worker": "A", "at": "2026-01-01T00:00:00Z", "status": "done", "text": t});
         let raw = serde_json::json!({
             "entries": [
                 {"source": "bad1", "report": {"worker": "A"}},
@@ -716,6 +733,34 @@ mod tests {
             | DecodeError::BadMessage(_) => false,
         });
         assert!(match decode_message(br#"{"worker":"A"}"#).unwrap_err() {
+            DecodeError::BadMessage(_) => true,
+            DecodeError::NotJson(_)
+            | DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadEntry(_) => false,
+        });
+    }
+
+    #[test]
+    fn inbox_message_with_malformed_sender_is_rejected() {
+        let message =
+            br#"{"worker":"bad id!","at":"2026-01-01T00:00:00Z","status":"done","text":"hi"}"#;
+        assert!(match decode_message(message).unwrap_err() {
+            DecodeError::BadMessage(_) => true,
+            DecodeError::NotJson(_)
+            | DecodeError::MissingEntries
+            | DecodeError::EntriesNotArray
+            | DecodeError::BadEntry(_) => false,
+        });
+    }
+
+    #[test]
+    fn inbox_message_at_is_utc_with_z_and_nanos_or_rejected() {
+        let message = br#"{"worker":"A","at":"2026-01-01T01:00:00.123456789+01:00","status":"done","text":"hi"}"#;
+        let value = serde_json::to_value(decode_message(message).unwrap()).unwrap();
+        assert_eq!(value["at"], "2026-01-01T00:00:00.123456789Z");
+        let message = br#"{"worker":"A","at":"t1","status":"done","text":"hi"}"#;
+        assert!(match decode_message(message).unwrap_err() {
             DecodeError::BadMessage(_) => true,
             DecodeError::NotJson(_)
             | DecodeError::MissingEntries

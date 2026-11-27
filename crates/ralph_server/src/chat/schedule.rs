@@ -74,10 +74,12 @@ pub fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) {
                 let report = start_failure_report(
                     &ralph_core::schedule::watch_id(&task.id),
                     &error.to_string(),
-                    &now.to_rfc3339(),
+                    now,
                 );
                 warn_if_err(
-                    inbox.post(&report, 0),
+                    report
+                        .map_err(std::io::Error::other)
+                        .and_then(|report| inbox.post(&report, 0)),
                     format!("posting schedule {}", task.id),
                 );
                 store.remove(&task.id);

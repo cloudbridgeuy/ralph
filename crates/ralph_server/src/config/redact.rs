@@ -27,7 +27,11 @@ const SAFE_KEYS: &[&str] = &[
     "chat.cell_output_limit",
     "chat.edit_mode",
     "chat.emphasis",
+    "chat.agy.effort",
+    "chat.agy.model",
+    "chat.claude.model",
     "chat.emphasis_icons",
+    "chat.harness",
     "chat.emphasis_round",
     "chat.empty_submit",
     "chat.hold_progress",
@@ -133,7 +137,9 @@ fn value_is_sensitive(value: &Value) -> bool {
     match value {
         Value::String(text) => text_is_sensitive(text),
         Value::Array(items) => items.iter().any(value_is_sensitive),
-        Value::Object(map) => map.values().any(value_is_sensitive),
+        Value::Object(map) => map
+            .iter()
+            .any(|(key, value)| text_is_sensitive(key) || value_is_sensitive(value)),
         _ => false,
     }
 }
@@ -247,8 +253,9 @@ mod tests {
             "agy.permissions",
             "cursor.permissions",
             "chat.permissions",
-            "chat.permission_mode",
-            "ask.permission_mode",
+            "chat.claude.permission_mode",
+            "ask.claude.permission_mode",
+            "ask.permissions",
         ] {
             assert_eq!(listing(key), Listing::Redact, "{key}");
         }
@@ -320,6 +327,12 @@ mod tests {
     fn sensitive_key_segments_redact_the_value() {
         assert!(redacts("wire.prices./Users/me/srv.input", &json!(1), false));
         assert!(!redacts("wire.prices.gpt.input", &json!(1), false));
+    }
+
+    #[test]
+    fn an_object_key_inside_an_array_is_sensitive() {
+        assert!(redacts("web.font", &json!([{"/Users/x": 1}]), false));
+        assert!(redacts("web.font", &json!([{"a": {"~/y": 1}}]), false));
     }
 
     #[test]

@@ -1,5 +1,8 @@
 use super::*;
-use crate::worker::{branch_name, worktree_for_branch, ReportKind, ReportStatus};
+use crate::worker::{
+    branch_name, worktree_for_branch, ReportKind, ReportStatus, WatchId, WorkerId,
+};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +28,7 @@ impl Default for Progress {
 }
 
 pub struct Seen<'a> {
-    pub last: &'a HashMap<String, ReportKind>,
+    pub last: &'a HashMap<WorkerId, ReportKind>,
     pub running: &'a [String],
 }
 
@@ -41,13 +44,51 @@ pub enum Event<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Next {
     Send(String),
-    Hold(String),
+    Hold(WorkerId),
     Watch(String),
     Check(String),
     Judge,
     Wait,
     Stop(StopReason),
     Done,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopCause {
+    NeedsUser { worker: Sender },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepMove {
+    Complete,
+    Hold,
+    Fail,
+    Stop(StopCause),
+}
+
+pub fn step_move(report: &Report, awaited: Option<&WorkerId>) -> StepMove {
+    let from_awaited = awaited.is_some_and(|id| report.from.worker() == Some(id));
+    let unmet = if from_awaited {
+        StepMove::Fail
+    } else {
+        StepMove::Hold
+    };
+    match report.status {
+        ReportKind::Worker(ReportStatus::Blocked | ReportStatus::Question) => {
+            StepMove::Stop(StopCause::NeedsUser {
+                worker: report.from.clone(),
+            })
+        }
+        ReportKind::Worker(ReportStatus::Done) if from_awaited => StepMove::Complete,
+        ReportKind::Worker(ReportStatus::Done) => StepMove::Hold,
+        ReportKind::Check
+        | ReportKind::Warning
+        | ReportKind::Watch
+        | ReportKind::Merged
+        | ReportKind::View
+        | ReportKind::ThreadClosed
+        | ReportKind::External => unmet,
+    }
 }
 
 pub(super) fn granted_limits(plan: &RunPlan) -> Limits {
@@ -149,13 +190,14 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
             };
             (progress, next)
         }
-        (Event::Report(report), Criterion::WorkerDone { worker, .. })
-            if report.worker == *worker =>
-        {
-            if report.status == ReportKind::Worker(ReportStatus::Done) {
-                done_reported(plan, progress, &step.criterion)
-            } else {
-                unmet
+        (Event::Report(report), Criterion::WorkerDone { worker, .. }) => {
+            match step_move(report, Some(worker)) {
+                StepMove::Complete => done_reported(plan, progress, &step.criterion),
+                StepMove::Fail => unmet,
+                StepMove::Hold => (progress, Next::Wait),
+                StepMove::Stop(cause) => {
+                    (progress, Next::Stop(StopReason::stopped_by(cause, report)))
+                }
             }
         }
         (
@@ -211,7 +253,13 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
 pub enum Awaiting {
     Turn,
     Verdict,
-    Report(String),
+    Report(Sender),
+}
+
+impl Awaiting {
+    pub fn check(step: usize) -> Self {
+        Awaiting::Report(Sender::Watch(WatchId::check(step)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,7 +283,7 @@ pub struct Ended<'a> {
     pub step_result: Option<&'a StepResult>,
     pub drained: &'a [Report],
     pub unread: &'a [Report],
-    pub answered: &'a [String],
+    pub answered: &'a HashSet<Sender>,
     pub watched: Option<&'a WatchOutcome>,
     pub refused: Option<&'a str>,
 }
@@ -280,7 +328,7 @@ pub fn verify_spec(step: usize, command: &str, cwd: PathBuf) -> WatchSpec {
 
 pub fn verify_worker(plan: &RunPlan, progress: Progress) -> Option<&str> {
     match plan.steps.get(progress.step).map(|step| &step.criterion) {
-        Some(Criterion::WorkerDone { worker, .. }) if progress.verifying => Some(worker),
+        Some(Criterion::WorkerDone { worker, .. }) if progress.verifying => Some(worker.as_str()),
         _ => None,
     }
 }
@@ -308,8 +356,8 @@ pub fn resolve_check(
 fn awaiting(next: &Next, progress: Progress) -> Awaiting {
     match next {
         Next::Judge => Awaiting::Verdict,
-        Next::Hold(worker) => Awaiting::Report(worker.clone()),
-        Next::Watch(_) | Next::Check(_) => Awaiting::Report(check_watch_id(progress.step)),
+        Next::Hold(worker) => Awaiting::Report(Sender::Worker(worker.clone())),
+        Next::Watch(_) | Next::Check(_) => Awaiting::check(progress.step),
         _ => Awaiting::Turn,
     }
 }
@@ -323,7 +371,7 @@ fn probe(plan: &RunPlan, progress: Progress, seen: &Seen) -> (Progress, Next) {
             Some(ReportKind::Worker(ReportStatus::Done)) => {
                 done_reported(plan, progress, &step.criterion)
             }
-            known if known.is_some() || seen.running.contains(worker) => {
+            known if known.is_some() || seen.running.iter().any(|id| id == worker.as_str()) => {
                 (progress, Next::Hold(worker.clone()))
             }
             _ => advance(plan, progress, Event::Start),
@@ -421,19 +469,38 @@ fn is_off(line: &str) -> bool {
     Command::SendIt.args(line.trim()).map(parse_send_it_args) == Some(SendItCommand::Off)
 }
 
-fn unanswered_flag<'a>(ended: &Ended<'a>, file: &RunFile) -> Option<&'a Report> {
+fn needs_user(report: &Report, awaited: Option<&WorkerId>) -> Option<StopCause> {
+    match step_move(report, awaited) {
+        StepMove::Stop(cause) => Some(cause),
+        StepMove::Complete | StepMove::Hold | StepMove::Fail => None,
+    }
+}
+
+fn awaited_worker(plan: &RunPlan, progress: Progress) -> Option<&WorkerId> {
+    match plan.steps.get(progress.step).map(|step| &step.criterion) {
+        Some(Criterion::WorkerDone { worker, .. }) => Some(worker),
+        Some(
+            Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. } | Criterion::Judge { .. },
+        )
+        | None => None,
+    }
+}
+
+fn unanswered_flag<'a>(
+    ended: &Ended<'a>,
+    file: &'a RunFile,
+    progress: Progress,
+) -> Option<(StopCause, &'a Report)> {
     let may_reply = file.plan.allowed.contains(&Action::Reply);
-    ended
-        .unread
-        .iter()
-        .find(|report| flagged(report))
-        .or_else(|| {
-            ended
-                .drained
-                .iter()
-                .filter(|report| flagged(report))
-                .find(|report| !(may_reply && ended.answered.contains(&report.worker)))
-        })
+    let awaited = awaited_worker(&file.plan, progress);
+    let cause = |report: &'a Report| needs_user(report, awaited).map(|cause| (cause, report));
+    ended.unread.iter().find_map(cause).or_else(|| {
+        ended
+            .drained
+            .iter()
+            .filter(|report| !(may_reply && ended.answered.contains(&report.from)))
+            .find_map(cause)
+    })
 }
 
 fn current_plan<'a>(
@@ -449,7 +516,11 @@ fn current_plan<'a>(
     }
 }
 
-fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason> {
+fn admitted<'a>(
+    ended: &Ended<'a>,
+    hash: &str,
+    progress: Progress,
+) -> Result<&'a RunFile, StopReason> {
     let file = current_plan(
         ended
             .file
@@ -468,12 +539,17 @@ fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason
     } else if ended.asked {
         Some(StopReason::NeedsYou)
     } else {
-        unanswered_flag(ended, file).map(StopReason::flagged_by)
+        unanswered_flag(ended, file, progress)
+            .map(|(cause, report)| StopReason::stopped_by(cause, report))
     };
     stop.map_or(Ok(file), Err)
 }
 
-fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
+fn events<'a>(
+    awaiting: &Awaiting,
+    ended: &Ended<'a>,
+    awaited: Option<&WorkerId>,
+) -> Vec<Event<'a>> {
     match awaiting {
         Awaiting::Turn => Vec::new(),
         Awaiting::Verdict => vec![Event::Verdict(ended.step_result)],
@@ -486,7 +562,9 @@ fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
                 ended
                     .drained
                     .iter()
-                    .filter(|report| report.worker == *source && !flagged(report))
+                    .filter(|report| {
+                        report.from == *source && needs_user(report, awaited).is_none()
+                    })
                     .map(Event::Report),
             )
             .collect(),
@@ -523,12 +601,17 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
         met,
         notice: None,
     };
-    let file = match admitted(ended, &driving.hash) {
+    let file = match admitted(ended, &driving.hash, driving.progress) {
         Ok(file) => file,
         Err(reason) => return finish(counted, driving.progress, Next::Stop(reason), None),
     };
     let plan = &file.plan;
-    let (progress, decided) = fold(plan, driving.progress, &events(&driving.awaiting, ended));
+    let awaited = awaited_worker(plan, driving.progress);
+    let (progress, decided) = fold(
+        plan,
+        driving.progress,
+        &events(&driving.awaiting, ended, awaited),
+    );
     let settled_report = matches!(driving.awaiting, Awaiting::Report(_)) && decided != Next::Wait;
     let run = if settled_report {
         Run {
@@ -565,7 +648,7 @@ pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
 }
 
 pub fn awaits_check(driving: &Driving) -> bool {
-    matches!(&driving.awaiting, Awaiting::Report(source) if is_check_watch_id(source))
+    matches!(&driving.awaiting, Awaiting::Report(Sender::Watch(id)) if is_check_watch_id(id.as_str()))
 }
 
 pub fn settle_check(
@@ -596,7 +679,9 @@ pub fn settle_check(
     let source = check_watch_id(driving.progress.step);
     let decided = match decided {
         Next::Stop(StopReason::CheckFailed { step, .. }) => {
-            let report = reports.iter().find(|report| report.worker == source);
+            let report = reports
+                .iter()
+                .find(|report| report.from.to_string() == source);
             Next::Stop(StopReason::CheckFailed {
                 step,
                 detail: Some(check_detail(outcome, report)),
@@ -626,7 +711,9 @@ fn would_block(progress: Progress, outcome: &WatchOutcome, reports: &[Report]) -
         && *outcome != WatchOutcome::Exited(0))
     .then(|| {
         let source = check_watch_id(progress.step);
-        let report = reports.iter().find(|report| report.worker == source);
+        let report = reports
+            .iter()
+            .find(|report| report.from.to_string() == source);
         would_block_line(progress.step, &check_detail(outcome, report))
     })
 }

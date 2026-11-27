@@ -33,7 +33,7 @@ impl Listener {
     pub(crate) fn accept(
         &self,
         timeouts: Timeouts,
-    ) -> std::io::Result<(Connection, Option<SocketAddr>)> {
+    ) -> std::io::Result<Option<(Connection, Option<SocketAddr>)>> {
         let (conn, addr) = match self {
             Self::Tcp(l) => l
                 .accept()
@@ -41,8 +41,21 @@ impl Listener {
             #[cfg(unix)]
             Self::Unix(l) => l.accept().map(|(conn, _)| (Connection::from(conn), None))?,
         };
-        conn.set_timeouts(timeouts)?;
-        Ok((conn, addr))
+        Ok(apply_timeouts(conn, timeouts, Connection::set_timeouts).map(|conn| (conn, addr)))
+    }
+}
+
+fn apply_timeouts(
+    conn: Connection,
+    timeouts: Timeouts,
+    set: impl FnOnce(&Connection, Timeouts) -> std::io::Result<()>,
+) -> Option<Connection> {
+    match set(&conn, timeouts) {
+        Ok(()) => Some(conn),
+        Err(e) => {
+            log::warn!("Dropping connection, setting timeouts failed: {}", e);
+            None
+        }
     }
 }
 impl From<TcpListener> for Listener {
@@ -227,7 +240,7 @@ mod tests {
     fn accepted_tcp(timeouts: Timeouts) -> TcpStream {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        match Listener::from(listener).accept(timeouts).unwrap().0 {
+        match Listener::from(listener).accept(timeouts).unwrap().unwrap().0 {
             Connection::Tcp(stream) => stream,
             #[cfg(unix)]
             Connection::Unix(_) => unreachable!(),
@@ -246,6 +259,26 @@ mod tests {
             stream.write_timeout().unwrap(),
             Some(Duration::from_secs(9))
         );
+    }
+
+    fn tcp_connection() -> Connection {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        Connection::from(listener.accept().unwrap().0)
+    }
+
+    #[test]
+    fn a_failed_timeout_setter_drops_the_connection() {
+        let kept = apply_timeouts(tcp_connection(), Timeouts::default(), |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::InvalidInput))
+        });
+        assert!(kept.is_none());
+    }
+
+    #[test]
+    fn a_successful_timeout_setter_keeps_the_connection() {
+        let kept = apply_timeouts(tcp_connection(), Timeouts::default(), |_, _| Ok(()));
+        assert!(kept.is_some());
     }
 
     #[test]

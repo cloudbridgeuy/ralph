@@ -12,12 +12,12 @@ pub(crate) enum Stream {
     Https(SslStream),
 }
 
-impl Clone for Stream {
-    fn clone(&self) -> Self {
+impl Stream {
+    fn try_clone(&self) -> IoResult<Stream> {
         match self {
-            Stream::Http(tcp_stream) => Stream::Http(tcp_stream.try_clone().unwrap()),
+            Stream::Http(tcp_stream) => tcp_stream.try_clone().map(Stream::Http),
             #[cfg(any(feature = "ssl-openssl", feature = "ssl-rustls"))]
-            Stream::Https(ssl_stream) => Stream::Https(ssl_stream.clone()),
+            Stream::Https(ssl_stream) => Ok(Stream::Https(ssl_stream.clone())),
         }
     }
 }
@@ -89,13 +89,18 @@ pub struct RefinedTcpStream {
 }
 
 impl RefinedTcpStream {
-    pub(crate) fn new<S>(stream: S) -> (RefinedTcpStream, RefinedTcpStream)
+    pub(crate) fn new<S>(stream: S) -> IoResult<(RefinedTcpStream, RefinedTcpStream)>
     where
         S: Into<Stream>,
     {
-        let stream: Stream = stream.into();
+        Self::split_with(stream.into(), Stream::try_clone)
+    }
 
-        let (read, write) = (stream.clone(), stream);
+    fn split_with(
+        stream: Stream,
+        try_clone: impl FnOnce(&Stream) -> IoResult<Stream>,
+    ) -> IoResult<(RefinedTcpStream, RefinedTcpStream)> {
+        let (read, write) = (try_clone(&stream)?, stream);
 
         let read = RefinedTcpStream {
             stream: read,
@@ -109,15 +114,22 @@ impl RefinedTcpStream {
             close_write: true,
         };
 
-        (read, write)
+        Ok((read, write))
     }
 
-    pub(crate) fn handle(&self) -> RefinedTcpStream {
-        RefinedTcpStream {
-            stream: self.stream.clone(),
+    pub(crate) fn handle(&self) -> IoResult<RefinedTcpStream> {
+        self.handle_with(Stream::try_clone)
+    }
+
+    fn handle_with(
+        &self,
+        try_clone: impl FnOnce(&Stream) -> IoResult<Stream>,
+    ) -> IoResult<RefinedTcpStream> {
+        Ok(RefinedTcpStream {
+            stream: try_clone(&self.stream)?,
             close_read: false,
             close_write: false,
-        }
+        })
     }
 
     pub(crate) fn shutdown_both(&mut self) {
@@ -160,5 +172,48 @@ impl Write for RefinedTcpStream {
 
     fn flush(&mut self) -> IoResult<()> {
         self.stream.flush()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{RefinedTcpStream, Stream};
+    use crate::connection::Connection;
+    use std::io::{Error, ErrorKind, Result as IoResult};
+    use std::net::{TcpListener, TcpStream};
+
+    fn server_stream() -> Stream {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        Stream::from(Connection::from(server))
+    }
+
+    fn failing_clone(_: &Stream) -> IoResult<Stream> {
+        Err(Error::from(ErrorKind::OutOfMemory))
+    }
+
+    #[test]
+    fn split_returns_the_clone_error() {
+        let err = RefinedTcpStream::split_with(server_stream(), failing_clone)
+            .err()
+            .unwrap();
+        assert_eq!(err.kind(), ErrorKind::OutOfMemory);
+    }
+
+    #[test]
+    fn split_returns_both_halves_when_the_clone_works() {
+        let (read, write) = RefinedTcpStream::split_with(server_stream(), Stream::try_clone)
+            .ok()
+            .unwrap();
+        assert!(read.close_read && !read.close_write);
+        assert!(write.close_write && !write.close_read);
+    }
+
+    #[test]
+    fn handle_returns_the_clone_error() {
+        let (read, _write) = RefinedTcpStream::new(server_stream()).ok().unwrap();
+        let err = read.handle_with(failing_clone).err().unwrap();
+        assert_eq!(err.kind(), ErrorKind::OutOfMemory);
     }
 }

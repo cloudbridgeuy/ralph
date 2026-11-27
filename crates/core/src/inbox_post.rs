@@ -1,7 +1,8 @@
 use crate::chat_name::is_format_char;
 use crate::chat_thread::MAX_NAME_CHARS;
 use crate::sanitize::forbidden_control;
-use crate::worker::Report;
+use crate::worker::{Report, SourceName};
+use chrono::{DateTime, Utc};
 
 pub const EXTERNAL_REPORT_PREFIX: &str = "external:";
 pub const MAX_TEXT_BYTES: usize = 65536;
@@ -61,13 +62,9 @@ pub(crate) fn mark_untrusted(text: &str) -> String {
         .join("\n")
 }
 
-pub fn external_report(source: &str, at: &str, bytes: &[u8]) -> Result<Report, String> {
-    validate_source(source)?;
-    Ok(Report::external(
-        &format!("{EXTERNAL_REPORT_PREFIX}{source}"),
-        at,
-        decode_text(bytes)?,
-    ))
+pub fn external_report(source: &str, at: DateTime<Utc>, bytes: &[u8]) -> Result<Report, String> {
+    let source = SourceName::parse(source).map_err(|error| error.to_string())?;
+    Ok(Report::external(&source, at, decode_text(bytes)?))
 }
 
 pub fn check_store(is_dir: bool, has_log: bool, has_lock: bool) -> Result<(), String> {
@@ -102,41 +99,47 @@ mod tests {
 
     #[test]
     fn report_has_prefixed_worker_and_report_status() {
-        let r = external_report("ci", "2026-01-01T00:00:00Z", b"all green").unwrap();
-        assert_eq!(r.worker, "external:ci");
+        let r =
+            external_report("ci", "2026-01-01T00:00:00Z".parse().unwrap(), b"all green").unwrap();
+        assert_eq!(r.from.to_string(), "external:ci");
         assert_eq!(r.status.as_str(), "report");
         assert_eq!(r.text, "all green");
-        assert_eq!(r.at, "2026-01-01T00:00:00Z");
+        assert_eq!(
+            r.at,
+            "2026-01-01T00:00:00Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
     }
 
     #[test]
     fn report_rejects_bad_source() {
-        assert!(external_report("external:x", "t", b"hi").is_err());
+        assert!(external_report("external:x", chrono::DateTime::UNIX_EPOCH, b"hi").is_err());
     }
 
     #[test]
     fn report_accepts_exactly_the_cap() {
         let bytes = vec![b'a'; MAX_TEXT_BYTES];
-        assert!(external_report("ci", "t", &bytes).is_ok());
+        assert!(external_report("ci", chrono::DateTime::UNIX_EPOCH, &bytes).is_ok());
     }
 
     #[test]
     fn report_refuses_over_the_cap() {
         let bytes = vec![b'a'; MAX_TEXT_BYTES + 1];
-        let err = external_report("ci", "t", &bytes).unwrap_err();
+        let err = external_report("ci", chrono::DateTime::UNIX_EPOCH, &bytes).unwrap_err();
         assert!(err.contains("65536"), "{err}");
     }
 
     #[test]
     fn report_refuses_non_utf8() {
-        let err = external_report("ci", "t", &[0xff, 0xfe]).unwrap_err();
+        let err = external_report("ci", chrono::DateTime::UNIX_EPOCH, &[0xff, 0xfe]).unwrap_err();
         assert!(err.contains("UTF-8"), "{err}");
     }
 
     #[test]
     fn report_refuses_empty_and_blank() {
-        assert!(external_report("ci", "t", b"").is_err());
-        assert!(external_report("ci", "t", b" \n\t").is_err());
+        assert!(external_report("ci", chrono::DateTime::UNIX_EPOCH, b"").is_err());
+        assert!(external_report("ci", chrono::DateTime::UNIX_EPOCH, b" \n\t").is_err());
     }
 
     #[test]
@@ -165,7 +168,7 @@ mod tests {
             ("a\0b", "0000"),
         ] {
             assert_eq!(
-                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                external_report("ci", chrono::DateTime::UNIX_EPOCH, bad.as_bytes()).unwrap_err(),
                 format!("The report contains the refused character U+{code}."),
                 "{bad:?}"
             );
@@ -174,13 +177,13 @@ mod tests {
 
     #[test]
     fn report_turns_crlf_into_lf() {
-        let r = external_report("ci", "t", b"a\r\nb").unwrap();
+        let r = external_report("ci", chrono::DateTime::UNIX_EPOCH, b"a\r\nb").unwrap();
         assert_eq!(r.text, "a\nb");
     }
 
     #[test]
     fn report_keeps_tabs_and_newlines() {
-        let r = external_report("ci", "t", b"a\tb\nc").unwrap();
+        let r = external_report("ci", chrono::DateTime::UNIX_EPOCH, b"a\tb\nc").unwrap();
         assert_eq!(r.text, "a\tb\nc");
     }
 
@@ -191,7 +194,7 @@ mod tests {
             ("a\u{2029}b", "2029"),
         ] {
             assert_eq!(
-                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                external_report("ci", chrono::DateTime::UNIX_EPOCH, bad.as_bytes()).unwrap_err(),
                 format!("The report contains the refused character U+{code}."),
                 "{bad:?}"
             );
@@ -207,7 +210,7 @@ mod tests {
             ("a\u{200b}b", "200B"),
         ] {
             assert_eq!(
-                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                external_report("ci", chrono::DateTime::UNIX_EPOCH, bad.as_bytes()).unwrap_err(),
                 format!("The report contains the refused character U+{code}."),
                 "{bad:?}"
             );
@@ -216,17 +219,17 @@ mod tests {
 
     #[test]
     fn report_strips_one_leading_bom() {
-        let r = external_report("ci", "t", b"\xEF\xBB\xBFhi").unwrap();
+        let r = external_report("ci", chrono::DateTime::UNIX_EPOCH, b"\xEF\xBB\xBFhi").unwrap();
         assert_eq!(r.text, "hi");
         for bad in ["\u{FEFF}\u{FEFF}hi", "a\u{FEFF}b"] {
             assert_eq!(
-                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                external_report("ci", chrono::DateTime::UNIX_EPOCH, bad.as_bytes()).unwrap_err(),
                 "The report contains the refused character U+FEFF.",
                 "{bad:?}"
             );
         }
         assert_eq!(
-            external_report("ci", "t", b"\xEF\xBB\xBF").unwrap_err(),
+            external_report("ci", chrono::DateTime::UNIX_EPOCH, b"\xEF\xBB\xBF").unwrap_err(),
             "The report is empty."
         );
     }
@@ -234,7 +237,7 @@ mod tests {
     #[test]
     fn report_accepts_joiners() {
         for ok in ["👨\u{200d}👩\u{200d}👧", "a\u{200c}b"] {
-            let r = external_report("ci", "t", ok.as_bytes()).unwrap();
+            let r = external_report("ci", chrono::DateTime::UNIX_EPOCH, ok.as_bytes()).unwrap();
             assert_eq!(r.text, ok);
         }
     }
@@ -260,7 +263,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                external_report("ci", chrono::DateTime::UNIX_EPOCH, bad.as_bytes()).unwrap_err(),
                 want,
                 "{bad:?}"
             );

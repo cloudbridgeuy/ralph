@@ -193,3 +193,5 @@ Terms that only make sense in the context of the project should be defined in th
 | --------- | -------------------------------------------- |
 | **ralph** | Main binary crate - the main cli application |
 | **nap** | Background summary pass that compresses the chat memory tree |
+| **harness** | The agent CLI a chat or worker runs on: claude, agy, ... |
+| **slot** | One harness's `ChatBackend` impl that plugs into the shared chat seam ([details](docs/context/ralph-chat.md#harness-slots)) |

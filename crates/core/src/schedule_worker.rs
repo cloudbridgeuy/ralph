@@ -2,7 +2,9 @@ use crate::schedule::{
     format_span, watch_id, Task, TaskKind, TaskStatus, SCHEDULE_ID_PREFIX,
     WORKER_DEFAULT_TIMEOUT_SECS,
 };
-use crate::worker::{Attention, HarnessId, Report, ReportKind, WorkerId, WorkerIdError};
+use crate::worker::{
+    Attention, HarnessId, Report, ReportKind, SenderError, WatchId, WorkerId, WorkerIdError,
+};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
 use std::time::Duration;
 
@@ -117,8 +119,8 @@ fn report_end(task: &Task, reports: &[Report]) -> Option<WorkerEnd> {
     let started = started_at(task);
     reports
         .iter()
-        .filter(|report| report.worker == worker)
-        .filter(|report| DateTime::parse_from_rfc3339(&report.at).is_ok_and(|at| at >= started))
+        .filter(|report| report.from.to_string() == worker)
+        .filter(|report| report.at >= started)
         .filter_map(|report| report.status.worker_status())
         .next_back()
         .map(|status| match ReportKind::Worker(status).attention() {
@@ -194,8 +196,8 @@ pub fn plan_worker_tick<'a>(
     }
 }
 
-pub fn chat_report(task_id: &str, text: String, at: &str) -> Report {
-    Report::watch(&watch_id(task_id), at, text)
+pub fn chat_report(task_id: &str, text: String, at: DateTime<Utc>) -> Result<Report, SenderError> {
+    WatchId::parse(&watch_id(task_id)).map(|watch| Report::watch(&watch, at, text))
 }
 
 pub fn start_failure_text(task_id: &str, error: &str) -> String {
@@ -226,12 +228,15 @@ pub fn vanished_text(task: &Task) -> String {
 pub fn new_scheduled_reports(known: &[Report], incoming: &[Report]) -> Vec<Report> {
     let mut fresh: Vec<Report> = Vec::new();
     for report in incoming {
-        let relevant =
-            report.worker.starts_with(WORKER_ID_PREFIX) && report.status.worker_status().is_some();
+        let relevant = report
+            .from
+            .worker()
+            .is_some_and(|id| id.as_str().starts_with(WORKER_ID_PREFIX))
+            && report.status.worker_status().is_some();
         let seen = known
             .iter()
             .chain(&fresh)
-            .any(|old| old.worker == report.worker && old.at == report.at);
+            .any(|old| old.from == report.from && old.at == report.at);
         if relevant && !seen {
             fresh.push(report.clone());
         }

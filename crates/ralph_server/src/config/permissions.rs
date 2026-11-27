@@ -1,26 +1,45 @@
 use crate::config::{AppConfig, ChatSection};
 use crate::warn::warn;
 use ralph_core::chat_thread::config_root;
-use ralph_core::worker::PermissionMode;
 use ralph_core::worker::{answer_message, merged_grants, parse_grants, Choice, Classes, Grants};
+use ralph_core::worker::{ClaudeMode, PermissionMode, UnknownClaudeMode};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 pub const GRANTS_FILE: &str = "mcptools-grants.json";
-pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
-pub const ASK_DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
+pub const CHAT_DEFAULT_PERMISSION_MODE: ClaudeMode = ClaudeMode::Auto;
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaudeModeSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{origin}: {error}")]
+pub struct PermissionModeError {
+    origin: &'static str,
+    error: UnknownClaudeMode,
+}
 
 pub fn resolve_permission_mode(
     flag: Option<&str>,
-    env: Option<&str>,
-    config: Option<&str>,
-    default: &str,
-) -> String {
-    flag.or(env.filter(|value| !value.is_empty()))
-        .or(config)
-        .unwrap_or(default)
-        .to_string()
+    (env_name, env): (&'static str, Option<&str>),
+    (config_key, config): (&'static str, Option<&str>),
+    default: ClaudeMode,
+) -> Result<ClaudeMode, PermissionModeError> {
+    flag.map(|value| ("--permission-mode", value))
+        .or(env
+            .filter(|value| !value.is_empty())
+            .map(|value| (env_name, value)))
+        .or(config.map(|value| (config_key, value)))
+        .map_or(Ok(default), |(origin, value)| {
+            value
+                .parse()
+                .map_err(|error| PermissionModeError { origin, error })
+        })
 }
 
 pub fn permission_setting(

@@ -84,7 +84,7 @@ fn plain(line: &str) -> Step {
 fn inbox_step(status: &str) -> Result<Step, String> {
     let frame = serde_json::json!({"v": VERSION, "id": 0, "body": {
         "type": "inbox", "thread": null, "unread": 1,
-        "report": {"worker": "w1", "status": status, "at": "now", "text": "hi"}
+        "report": {"worker": "w1", "status": status, "at": "1970-01-01T00:00:00Z", "text": "hi"}
     }});
     decode_frame::<ServerMsg>(&frame.to_string()).map(|frame| on_frame(frame.body))
 }
@@ -97,7 +97,12 @@ fn an_inbox_push_that_needs_the_user_carries_the_report_to_alert_on() {
             inbox_step(name),
             Ok(Step::Push(Push {
                 line: format!("main/w1 {name} (1 unread): hi"),
-                needs_user: Some(WorkerReport::from_worker("w1", "now", status, "hi".into())),
+                needs_user: Some(WorkerReport::from_worker(
+                    &ralph_core::worker::WorkerId::parse("w1").unwrap(),
+                    chrono::DateTime::UNIX_EPOCH,
+                    status,
+                    "hi".into()
+                )),
             }))
         );
     }
@@ -287,7 +292,7 @@ fn pair_session(timeout: Duration) -> (RemoteSession, UnixStream) {
             sound: false,
             notification: false,
             unknown_focus: UnknownFocus::Silent,
-            terminal_status: false,
+            terminal_status: None,
         },
     };
     (session, server)

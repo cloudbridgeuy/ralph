@@ -300,3 +300,11 @@ fn only_a_check_or_watch_step_carries_the_run_by_ralph_note() {
     assert!(!text[..text.find("2. check · wait for CI").unwrap()]
         .contains("ralph runs this check alone"));
 }
+
+#[test]
+fn a_worker_criterion_with_a_malformed_worker_id_is_rejected() {
+    let good = serde_json::json!({"kind": "worker_done", "worker": "E1"});
+    assert!(serde_json::from_value::<Criterion>(good).is_ok());
+    let bad = serde_json::json!({"kind": "worker_done", "worker": "bad id!"});
+    assert!(serde_json::from_value::<Criterion>(bad).is_err());
+}

@@ -1,4 +1,4 @@
-use crate::program_status::{tmux_wrap, Kind, State};
+use crate::program_status::{tmux_wrap, Kind, RexPane, State};
 use crate::worker::Report;
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +27,7 @@ pub struct AlertConfig {
     pub sound: bool,
     pub notification: bool,
     pub unknown_focus: UnknownFocus,
-    pub terminal_status: bool,
+    pub terminal_status: Option<RexPane>,
 }
 
 impl AlertConfig {
@@ -95,7 +95,8 @@ pub fn inbox_alert(
         Focus::Hidden => true,
         Focus::Unknown => config.unknown_focus == UnknownFocus::Alert,
     };
-    let terminal_owns = config.terminal_status && terminal == State::Blocked(Kind::Question);
+    let terminal_owns =
+        config.terminal_status.is_some() && terminal == State::Blocked(Kind::Question);
     (alert && !terminal_owns && !fresh.is_empty() && config.enabled()).then(|| Alert {
         sound: config.sound,
         notification: config.notification.then(|| notification_body(fresh)),
@@ -105,7 +106,7 @@ pub fn inbox_alert(
 fn notification_body(fresh: &[&Report]) -> String {
     fresh
         .iter()
-        .map(|report| format!("{} {}", report.worker, report.status))
+        .map(|report| format!("{} {}", report.from, report.status))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -124,14 +125,24 @@ pub fn osc9(body: &str, in_tmux: bool) -> String {
 mod tests {
     use super::*;
     use crate::worker::ReportStatus;
+    use crate::worker::WorkerId;
 
     fn report(worker: &str, status: &str) -> Report {
         Report::from_worker(
-            worker,
-            "2026-10-12T00:00:00Z",
+            &WorkerId::parse(worker).unwrap(),
+            "2026-10-12T00:00:00Z".parse().unwrap(),
             ReportStatus::parse(status).unwrap(),
             "summary".into(),
         )
+    }
+
+    fn test_rex_pane() -> RexPane {
+        crate::program_status::rex_pane(
+            crate::program_status::StatusSetting::Enabled,
+            crate::program_status::Stdout::Tty,
+            crate::program_status::RexBlock::parse("blk-1").as_ref(),
+        )
+        .unwrap()
     }
 
     fn config(unknown_focus: UnknownFocus) -> AlertConfig {
@@ -139,7 +150,7 @@ mod tests {
             sound: true,
             notification: true,
             unknown_focus,
-            terminal_status: false,
+            terminal_status: None,
         }
     }
 
@@ -325,7 +336,7 @@ mod tests {
         let reports = [report("a", "done")];
         let fresh: Vec<&Report> = reports.iter().collect();
         let rex = AlertConfig {
-            terminal_status: true,
+            terminal_status: Some(test_rex_pane()),
             ..config(UnknownFocus::Alert)
         };
         assert_eq!(
@@ -343,7 +354,7 @@ mod tests {
         let reports = [report("a", "done")];
         let fresh: Vec<&Report> = reports.iter().collect();
         let rex = AlertConfig {
-            terminal_status: true,
+            terminal_status: Some(test_rex_pane()),
             ..config(UnknownFocus::Alert)
         };
         for terminal in [State::Working, State::Idle, State::Done] {

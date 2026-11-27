@@ -57,6 +57,8 @@ Local patch in `vendor/tiny_http`: `Timeouts.header` sets a total deadline for t
 
 Local patch in `vendor/tiny_http`: `Request::respond_and_close(response, after_write)` writes and flushes the response, then shuts down both directions of the socket. The body drain then reads end of file at once, and the client thread ends the connection. `respond` and `respond_then` do not change. Risk: if the client is still sending, the close can send a TCP reset, and the client may see the reset instead of the response (GUZ-1851).
 
+Local patch in `vendor/tiny_http`: a failed socket clone drops the connection and logs a warning. It does not panic. Each plain connection uses 3 file descriptors. Every accept error waits 50 ms and retries until close. The log is throttled: it shows the first error of a streak and every 100th. A failed `set_timeouts` or socket clone after accept drops only that connection and logs a warning (GUZ-1918).
+
 Local patch in `vendor/tiny_http`: `Request::respond_then` writes and flushes the response, then runs a caller hook, and only then drops the request, which drains the unread body. `respond` calls it with a no-op hook. The hook runs on a write error too (GUZ-1851).
 
 ## Two-Crate Architecture (Functional Core - Imperative Shell)

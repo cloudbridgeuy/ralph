@@ -299,3 +299,39 @@ fn curator_error_marks_only_a_timeout_as_timed_out() {
     assert!(!failed.timed_out);
     assert_eq!(failed.message, "boom");
 }
+
+fn claude_invocation() -> subprocess::Invocation {
+    subprocess::Invocation {
+        program: "claude",
+        args: Vec::new(),
+        env: Vec::new(),
+    }
+}
+
+#[test]
+fn each_memory_harness_gets_its_launch_kind() {
+    for (harness, program) in [
+        ("claude", Some("claude")),
+        ("codex", Some("codex")),
+        ("agy", None),
+    ] {
+        let command = memory_command(harness, "m", "rules", claude_invocation).unwrap();
+        let launched = match &command.launch {
+            MemoryLaunch::OneShot(invocation) => Some(invocation.program),
+            MemoryLaunch::Session(_) => None,
+        };
+        assert_eq!(launched, program, "{harness}");
+        assert_eq!(command.prompt("p") == "p", harness == "claude", "{harness}");
+    }
+}
+
+#[test]
+fn an_unknown_memory_harness_is_refused() {
+    let Err(error) = memory_command("gemini", "m", "rules", claude_invocation) else {
+        panic!("gemini was accepted")
+    };
+    assert_eq!(
+        error.to_string(),
+        "unknown memory harness \"gemini\": use claude, codex or agy"
+    );
+}

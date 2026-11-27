@@ -37,16 +37,29 @@ pub(crate) struct PeerGuard {
 }
 
 impl PeerCounts {
-    pub(crate) fn enter(counts: &Arc<PeerCounts>, ip: IpAddr) -> (PeerGuard, usize) {
+    pub(crate) fn try_enter(counts: &Arc<PeerCounts>, ip: IpAddr, cap: usize) -> Option<PeerGuard> {
         let mut map = counts.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let entry = map.entry(ip).or_insert(0);
-        let previous = *entry;
-        *entry += 1;
-        let guard = PeerGuard {
-            counts: Arc::clone(counts),
-            ip,
-        };
-        (guard, previous)
+        let current = map.get(&ip).copied().unwrap_or(0);
+        match admit(current, cap) {
+            Admission::Reject => None,
+            Admission::Accept => {
+                map.insert(ip, current + 1);
+                Some(PeerGuard {
+                    counts: Arc::clone(counts),
+                    ip,
+                })
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn count(&self, ip: IpAddr) -> usize {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&ip)
+            .copied()
+            .unwrap_or(0)
     }
 
     #[cfg(test)]
@@ -111,50 +124,56 @@ mod tests {
     }
 
     #[test]
-    fn below_cap_is_allowed_and_at_cap_is_limited() {
+    fn try_enter_increments_below_the_cap() {
         let counts = Arc::new(PeerCounts::default());
         let ip = peer(1);
-        let (first, before_first) = PeerCounts::enter(&counts, ip);
-        assert_eq!(
-            admit(before_first, MAX_REJECTED_PER_PEER),
-            Admission::Accept
-        );
-        let (second, before_second) = PeerCounts::enter(&counts, ip);
-        assert_eq!(
-            admit(before_second, MAX_REJECTED_PER_PEER),
-            Admission::Accept
-        );
-        let (third, before_third) = PeerCounts::enter(&counts, ip);
-        assert_eq!(before_third, MAX_REJECTED_PER_PEER);
-        assert_eq!(
-            admit(before_third, MAX_REJECTED_PER_PEER),
-            Admission::Reject
-        );
-        drop((first, second, third));
+        let first = PeerCounts::try_enter(&counts, ip, MAX_REJECTED_PER_PEER);
+        assert!(first.is_some());
+        assert_eq!(counts.count(ip), 1);
+        let second = PeerCounts::try_enter(&counts, ip, MAX_REJECTED_PER_PEER);
+        assert!(second.is_some());
+        assert_eq!(counts.count(ip), 2);
+    }
+
+    #[test]
+    fn try_enter_at_the_cap_returns_none_and_leaves_the_count() {
+        let counts = Arc::new(PeerCounts::default());
+        let ip = peer(1);
+        let held: Vec<_> = (0..MAX_REJECTED_PER_PEER)
+            .map(|_| PeerCounts::try_enter(&counts, ip, MAX_REJECTED_PER_PEER))
+            .collect();
+        assert!(held.iter().all(Option::is_some));
+        assert!(PeerCounts::try_enter(&counts, ip, MAX_REJECTED_PER_PEER).is_none());
+        assert_eq!(counts.count(ip), MAX_REJECTED_PER_PEER);
+    }
+
+    #[test]
+    fn try_enter_with_a_zero_cap_tracks_nothing() {
+        let counts = Arc::new(PeerCounts::default());
+        assert!(PeerCounts::try_enter(&counts, peer(1), 0).is_none());
+        assert_eq!(counts.tracked(), 0);
     }
 
     #[test]
     fn dropping_guards_restores_the_count_and_removes_the_entry() {
         let counts = Arc::new(PeerCounts::default());
         let ip = peer(1);
-        let (first, _) = PeerCounts::enter(&counts, ip);
-        let (second, _) = PeerCounts::enter(&counts, ip);
+        let first = PeerCounts::try_enter(&counts, ip, MAX_REJECTED_PER_PEER);
+        let second = PeerCounts::try_enter(&counts, ip, MAX_REJECTED_PER_PEER);
         drop(first);
-        let (third, before) = PeerCounts::enter(&counts, ip);
-        assert_eq!(before, 1);
-        drop((second, third));
+        assert_eq!(counts.count(ip), 1);
+        drop(second);
+        assert_eq!(counts.count(ip), 0);
         assert_eq!(counts.tracked(), 0);
-        let (_again, before_again) = PeerCounts::enter(&counts, ip);
-        assert_eq!(before_again, 0);
     }
 
     #[test]
     fn peers_are_counted_independently() {
         let counts = Arc::new(PeerCounts::default());
-        let (_a1, _) = PeerCounts::enter(&counts, peer(1));
-        let (_a2, _) = PeerCounts::enter(&counts, peer(1));
-        let (b, before_b) = PeerCounts::enter(&counts, peer(2));
-        assert_eq!(before_b, 0);
+        let _a1 = PeerCounts::try_enter(&counts, peer(1), MAX_REJECTED_PER_PEER);
+        let _a2 = PeerCounts::try_enter(&counts, peer(1), MAX_REJECTED_PER_PEER);
+        let b = PeerCounts::try_enter(&counts, peer(2), MAX_REJECTED_PER_PEER);
+        assert!(b.is_some());
         assert_eq!(counts.tracked(), 2);
         drop(b);
         assert_eq!(counts.tracked(), 1);

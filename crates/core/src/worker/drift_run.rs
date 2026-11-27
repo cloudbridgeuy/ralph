@@ -1,7 +1,8 @@
 use crate::worker::{
-    CheckResult, DriftEntry, DriftOutcome, Report, Verdict, VerifiedAgents, FREE_VERIFY_LIMIT,
-    INBOX_DIR,
+    CheckResult, DriftEntry, DriftOutcome, Report, Verdict, VerifiedAgents, WorkerId,
+    WorkerIdError, FREE_VERIFY_LIMIT, INBOX_DIR,
 };
+use chrono::{DateTime, SecondsFormat, Utc};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -76,7 +77,7 @@ pub fn drift_entry(
     version: &str,
     results: &[CheckResult],
     passed: bool,
-    at: &str,
+    at: DateTime<Utc>,
 ) -> DriftEntry {
     DriftEntry {
         agent: agent.to_string(),
@@ -88,7 +89,7 @@ pub fn drift_entry(
                 checks: failing_checks(results, false),
             }
         },
-        at: at.to_string(),
+        at: at.to_rfc3339_opts(SecondsFormat::AutoSi, true),
     }
 }
 
@@ -106,17 +107,18 @@ pub fn drift_alert(
     old: Option<&str>,
     new: &str,
     checks: &[String],
-    at: &str,
-) -> Report {
-    Report::warning(
-        &format!("drift-{agent}"),
+    at: DateTime<Utc>,
+) -> Result<Report, WorkerIdError> {
+    let sender = WorkerId::parse(&format!("drift-{agent}"))?;
+    Ok(Report::warning(
+        &sender,
         at,
         format!(
             "{agent} {new} is installed but failed `ralph worker verify {agent}`. Last verified version: {}. Failing checks: {}. Running {agent} workers keep the old binary until restart.",
             old.unwrap_or("none"),
             checks.join(", ")
         ),
-    )
+    ))
 }
 
 pub fn known_fail_warning(agent: &str, version: &str, checks: &[String]) -> String {
@@ -218,7 +220,13 @@ mod tests {
     fn a_passed_spec_maps_to_a_passed_entry() {
         let results = [CheckResult::pass("initialize", "ok")];
         assert_eq!(
-            drift_entry("codex", "0.170.0", &results, true, "2026-11-03T00:00:00Z"),
+            drift_entry(
+                "codex",
+                "0.170.0",
+                &results,
+                true,
+                "2026-11-03T00:00:00Z".parse().unwrap()
+            ),
             DriftEntry {
                 agent: "codex".to_string(),
                 version: "0.170.0".to_string(),
@@ -235,7 +243,14 @@ mod tests {
             CheckResult::fail("thread/start", "boom"),
         ];
         assert_eq!(
-            drift_entry("codex", "0.170.0", &results, false, "t").outcome,
+            drift_entry(
+                "codex",
+                "0.170.0",
+                &results,
+                false,
+                chrono::DateTime::UNIX_EPOCH
+            )
+            .outcome,
             DriftOutcome::Failed {
                 checks: checks(&["thread/start"])
             }
@@ -262,11 +277,17 @@ mod tests {
             Some("0.165.0"),
             "0.170.0",
             &checks(&["initialize", "thread/start"]),
-            "2026-11-03T00:00:00Z",
-        );
-        assert_eq!(report.worker, "drift-codex");
+            "2026-11-03T00:00:00Z".parse().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(report.from.to_string(), "drift-codex");
         assert_eq!(report.status.as_str(), "warning");
-        assert_eq!(report.at, "2026-11-03T00:00:00Z");
+        assert_eq!(
+            report.at,
+            "2026-11-03T00:00:00Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
         assert_eq!(
             report.text,
             "codex 0.170.0 is installed but failed `ralph worker verify codex`. Last verified version: 0.165.0. Failing checks: initialize, thread/start. Running codex workers keep the old binary until restart."
@@ -275,7 +296,14 @@ mod tests {
 
     #[test]
     fn the_alert_says_none_when_nothing_was_verified() {
-        let report = drift_alert("codex", None, "0.170.0", &checks(&["time limit"]), "t");
+        let report = drift_alert(
+            "codex",
+            None,
+            "0.170.0",
+            &checks(&["time limit"]),
+            chrono::DateTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert!(report
             .text
             .contains("Last verified version: none. Failing checks: time limit."));
@@ -316,7 +344,13 @@ mod tests {
     #[test]
     fn a_recorded_lock_failure_is_a_known_fail_naming_the_lock() {
         let results = [CheckResult::fail(LOCK_CHECK, "/s/drift-codex.lock: broken")];
-        let entry = drift_entry("codex", "0.170.0", &results, false, "t");
+        let entry = drift_entry(
+            "codex",
+            "0.170.0",
+            &results,
+            false,
+            chrono::DateTime::UNIX_EPOCH,
+        );
         let drift = record_outcome(&DriftRecord::default(), entry);
         assert_eq!(
             drift_action("codex", "0.170.0", &VerifiedAgents::default(), &drift),

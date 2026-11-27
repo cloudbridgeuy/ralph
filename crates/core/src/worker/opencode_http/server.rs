@@ -1,4 +1,5 @@
-use crate::worker::Report;
+use crate::worker::{Report, WorkerId};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -112,7 +113,7 @@ impl OpencodeRecord {
     }
 }
 
-pub fn opencode_failure_report(id: &str, at: &str, problem: &str) -> Report {
+pub fn opencode_failure_report(id: &WorkerId, at: DateTime<Utc>, problem: &str) -> Report {
     Report::ralph_blocked(id, at, format!("The opencode turn failed: {problem}."))
 }
 
@@ -234,8 +235,12 @@ mod tests {
 
     #[test]
     fn failure_report_blocks_with_the_problem() {
-        let report = opencode_failure_report("GUZ-1", "now", SERVER_STOPPED);
-        assert_eq!(report.worker, "GUZ-1");
+        let report = opencode_failure_report(
+            &WorkerId::parse("GUZ-1").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
+            SERVER_STOPPED,
+        );
+        assert_eq!(report.from.to_string(), "GUZ-1");
         assert_eq!(report.status.as_str(), "blocked");
         assert_eq!(
             report.text,

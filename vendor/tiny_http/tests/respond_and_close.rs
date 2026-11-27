@@ -20,7 +20,7 @@ fn respond_and_close_sends_the_response_then_ends_the_connection_without_a_drain
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
     client
-        .write_all(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\nabc")
+        .write_all(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\n")
         .unwrap();
     let mut received = Vec::new();
     client.read_to_end(&mut received).unwrap();

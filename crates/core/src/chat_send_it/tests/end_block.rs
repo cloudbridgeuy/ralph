@@ -65,7 +65,7 @@ fn a_judged_met_step_keeps_its_evidence_and_a_later_plain_met_step_drops_it() {
     );
     let report = [worker_report("E1", "done")];
     let plain_met = tick(
-        &driving(0, Awaiting::Report("E1".to_string()), spent(1, 0.1)),
+        &driving(0, awaiting_report("E1"), spent(1, 0.1)),
         &Ended {
             drained: &report,
             ..ended(&file)
@@ -91,7 +91,7 @@ fn a_flagged_stop_names_the_worker_and_its_first_report_line() {
     assert_eq!(
         ticked.next,
         Next::Stop(StopReason::WorkerFlagged {
-            worker: "GUZ-1606".to_string(),
+            worker: Sender::parse("GUZ-1606").unwrap(),
             line: "Keep the old flag name or rename it?".to_string(),
         })
     );

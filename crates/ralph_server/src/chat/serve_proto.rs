@@ -119,8 +119,10 @@ pub struct WireReport {
 impl From<InboxReport> for WireReport {
     fn from(report: InboxReport) -> Self {
         Self {
-            worker: report.worker,
-            at: report.at,
+            worker: report.from.to_string(),
+            at: report
+                .at
+                .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
             status: report.status.as_str().to_string(),
             text: report.text,
         }
@@ -751,8 +753,8 @@ mod tests {
     fn a_wire_report_keeps_every_field_and_writes_the_status_string() {
         for kind in ReportKind::ALL {
             let report = InboxReport {
-                worker: "w1".into(),
-                at: "now".into(),
+                from: ralph_core::worker::Sender::parse("w1").unwrap(),
+                at: "2026-01-01T00:00:00.5Z".parse().unwrap(),
                 status: kind,
                 text: "body".into(),
             };
@@ -760,7 +762,7 @@ mod tests {
                 WireReport::from(report),
                 WireReport {
                     worker: "w1".into(),
-                    at: "now".into(),
+                    at: "2026-01-01T00:00:00.500Z".into(),
                     status: kind.as_str().into(),
                     text: "body".into(),
                 }
@@ -780,7 +782,11 @@ mod tests {
 
     #[test]
     fn inbox_push_preserves_large_reports_that_fit_in_one_frame() {
-        let report = InboxReport::external("w", "now", "a".repeat(MAX_FRAME_BYTES / 2));
+        let report = InboxReport::external(
+            &ralph_core::worker::SourceName::parse("w").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
+            "a".repeat(MAX_FRAME_BYTES / 2),
+        );
         let sent = WireReport::from(report.clone());
         let frame = inbox_frame(&SessionKey::Main, report, 1);
         assert!(matches!(frame, ServerMsg::Inbox { report: received, .. } if received == sent));
@@ -789,7 +795,12 @@ mod tests {
     #[test]
     fn inbox_push_stays_within_the_frame_limit_for_escaped_and_multibyte_text() {
         let field = "\u{0000}".repeat(MAX_FRAME_BYTES / 5);
-        let report = InboxReport::external(&field, &field, "🦀".repeat(MAX_FRAME_BYTES / 4));
+        let report = InboxReport {
+            from: ralph_core::worker::Sender::parse("w").unwrap(),
+            at: chrono::DateTime::UNIX_EPOCH,
+            status: ReportKind::External,
+            text: format!("{field}{}", "🦀".repeat(MAX_FRAME_BYTES / 4)),
+        };
         let line = encode_frame(0, &inbox_frame(&SessionKey::Main, report, 1));
         assert!(line.len() <= MAX_FRAME_BYTES);
         let body = decode_frame::<ServerMsg>(&line).unwrap().body;

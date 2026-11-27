@@ -203,6 +203,19 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
     Ok(kind)
 }
 
+pub fn picture_precheck(source: &str, limits: &MermaidSection) -> Result<(), Refusal> {
+    if source.len() > limits.max_input_bytes {
+        return Err(Refusal::TooLarge);
+    }
+    let Ok(cleaned) = bezel::preprocess::preprocess(source) else {
+        return Ok(());
+    };
+    match bezel::detect::detect(&cleaned.text) {
+        Some(bezel::Kind::Packet) => packet::picture::check(&cleaned.text),
+        _ => Ok(()),
+    }
+}
+
 pub fn fits_width(output: &str, width: usize) -> bool {
     output
         .lines()

@@ -11,8 +11,8 @@ pub const RALPH_THEME_ENV: &str = "RALPH_THEME";
 pub const RALPH_NO_BACKGROUND_ENV: &str = "RALPH_NO_BACKGROUND";
 
 const ENV_KEYS: [(&str, &str); 9] = [
-    ("ask.permission_mode", ASK_PERMISSION_MODE_ENV),
-    ("chat.permission_mode", CHAT_PERMISSION_MODE_ENV),
+    ("ask.claude.permission_mode", ASK_PERMISSION_MODE_ENV),
+    ("chat.claude.permission_mode", CHAT_PERMISSION_MODE_ENV),
     ("chat.wrap_width", WRAP_WIDTH_ENV),
     ("chat.cell_output_limit", CELL_OUTPUT_LIMIT_ENV),
     ("chat.cell_output_bytes", CELL_OUTPUT_BYTES_ENV),

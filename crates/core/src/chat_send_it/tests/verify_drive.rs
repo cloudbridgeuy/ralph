@@ -40,7 +40,7 @@ fn failed_check(driving: &Driving, file: &RunFile, outcome: &WatchOutcome) -> Ti
 fn waiting_on_check(mode: VerifyMode, file: &RunFile) -> Driving {
     Driving {
         progress: verifying(mode),
-        ..driving(0, Awaiting::Report(WATCH_ID.to_string()), Run::default())
+        ..driving(0, awaiting_report(WATCH_ID), Run::default())
     }
     .with_hash_of(file)
 }

@@ -24,7 +24,7 @@ use ralph_core::schedule_request::{
 };
 use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
-use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command};
+use ralph_core::worker::{command_allowed, parse_command, refused_tool, Command, Sender};
 use serde_json::Value;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -314,7 +314,11 @@ fn run_command(shared: &Shared, request: &SocketRequest) -> Result<String, Strin
             }
             workers
                 .reply(id, text, *interrupt, request.as_deref())
-                .inspect(|_| send_it.answer(id.clone()))
+                .inspect(|_| {
+                    if let Ok(sender) = Sender::parse(id) {
+                        send_it.answer(sender);
+                    }
+                })
         }
         Command::Close { id, abandon, force } => {
             workers.close(id, *abandon, *force).inspect(|_| {
@@ -415,11 +419,12 @@ mod tests {
     use super::*;
     use ralph_core::chat_send_it::{Limits, VerifyMode};
     use ralph_core::chat_socket::{sidecar_name, socket_file_name};
+    use ralph_core::worker::ClaudeMode;
     use serde_json::{json, Value};
     use std::path::PathBuf;
 
     fn workers() -> Workers {
-        Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None)
+        Workers::new("/s".into(), "/bin/ralph".into(), ClaudeMode::Auto, None)
     }
 
     fn shared(dir: &Path) -> Shared {

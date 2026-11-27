@@ -60,7 +60,7 @@ The resolved prompt, with control characters dropped, goes to `claude -p` on its
 
 ## Permission Modes
 
-The `--permission-mode` flag sets `claude --permission-mode`. `ask` has its own setting, default `bypassPermissions`: the user is present, watching, and can stop the run with Ctrl+C. Chat and its workers use `[chat] permission_mode` and `RALPH_CHAT_PERMISSION_MODE`, default `auto`, which do not change ask. Choices are claude's: `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` (see `claude --help`).
+The `--permission-mode` flag sets `claude --permission-mode`. `ask` has its own setting, default `bypassPermissions`: the user is present, watching, and can stop the run with Ctrl+C. Chat and its workers use `[chat.claude] permission_mode` and `RALPH_CHAT_PERMISSION_MODE`, default `auto`, which do not change ask. Choices are claude's: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `manual`, `dontAsk`, `plan` (see `claude --help`). An unknown value stops `ask` before claude starts, and so does a config file that does not load.
 
 ```bash
 ralph ask --permission-mode plan 'Analyze this code'
@@ -70,12 +70,12 @@ ralph ask --permission-mode plan 'Analyze this code'
 
 1. CLI flag (`--permission-mode`)
 2. Environment variable (`RALPH_ASK_PERMISSION_MODE`, ignored when empty)
-3. `[ask] permission_mode` in `~/.config/ralph/config.toml`
-4. Default (`bypassPermissions`)
+3. `[ask.claude] permission_mode` in `~/.config/ralph/config.toml`
+4. `[ask] permissions`: `"yolo"` (default) gives `bypassPermissions`, `"ask"` gives `dontAsk`
 
 Config file example:
 ```toml
-[ask]
+[ask.claude]
 permission_mode = "acceptEdits"
 ```
 

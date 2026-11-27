@@ -1,6 +1,8 @@
 use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
 pub use crate::chat_thread_root::{config_root, fork_of};
+use crate::program_status::RexBlock;
 use crate::worker::{shell_quote, Report};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -208,12 +210,8 @@ pub fn digest_with(
     ))
 }
 
-pub fn merged_report(name: &ThreadName, digest: &str, at: &str) -> Report {
-    Report::merged(
-        &format!("{THREAD_REPORT_PREFIX}{name}"),
-        at,
-        digest.to_string(),
-    )
+pub fn merged_report(name: &ThreadName, digest: &str, at: DateTime<Utc>) -> Report {
+    Report::merged(name, at, digest.to_string())
 }
 
 pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<String, String> {
@@ -234,12 +232,8 @@ pub fn view_block(name: &ThreadName, base: usize, lines: &[String]) -> Result<St
     Ok(block)
 }
 
-pub fn view_report(name: &ThreadName, block: &str, at: &str) -> Report {
-    Report::view(
-        &format!("{THREAD_REPORT_PREFIX}{name}"),
-        at,
-        block.to_string(),
-    )
+pub fn view_report(name: &ThreadName, block: &str, at: DateTime<Utc>) -> Report {
+    Report::view(name, at, block.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,7 +323,7 @@ pub struct OpenSpawn<'a> {
     pub exe: &'a str,
     pub main: &'a str,
     pub cwd: &'a str,
-    pub block: Option<&'a str>,
+    pub block: Option<&'a RexBlock>,
     pub config_dir: Option<&'a str>,
 }
 
@@ -353,7 +347,7 @@ pub fn open_launch(spawn: OpenSpawn) -> OpenLaunch {
     ]
     .map(str::to_string);
     let command: Vec<String> = config.into_iter().flatten().chain(chat).collect();
-    match spawn.block.filter(|block| !block.is_empty()) {
+    match spawn.block.map(RexBlock::as_str) {
         Some(block) => {
             let label = format!("thread {}", spawn.name);
             let split = ["split", "-b", block, "--label", &label, "-c", spawn.cwd];
@@ -716,13 +710,22 @@ mod tests {
 
     #[test]
     fn a_merged_report_reads_as_a_thread_message() {
-        let report = merged_report(&name("auth"), "Picked x. #auth:0", "2026-11-03T10:00:00Z");
-        assert_eq!(report.worker, "thread:auth");
+        let report = merged_report(
+            &name("auth"),
+            "Picked x. #auth:0",
+            "2026-11-03T10:00:00Z".parse().unwrap(),
+        );
+        assert_eq!(report.from.to_string(), "thread:auth");
         assert_eq!(report.status.as_str(), "merged");
-        assert_eq!(report.at, "2026-11-03T10:00:00Z");
+        assert_eq!(
+            report.at,
+            "2026-11-03T10:00:00Z"
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .unwrap()
+        );
         let worker = Report::from_worker(
-            "GUZ-1",
-            "t",
+            &crate::worker::WorkerId::parse("GUZ-1").unwrap(),
+            chrono::DateTime::UNIX_EPOCH,
             crate::worker::ReportStatus::Done,
             "ok".to_string(),
         );
@@ -805,7 +808,7 @@ mod tests {
         );
     }
 
-    fn spawn<'a>(auth: &'a ThreadName, block: Option<&'a str>) -> OpenSpawn<'a> {
+    fn spawn<'a>(auth: &'a ThreadName, block: Option<&'a RexBlock>) -> OpenSpawn<'a> {
         OpenSpawn {
             name: auth,
             exe: "/bin/ralph",
@@ -819,9 +822,10 @@ mod tests {
     #[test]
     fn open_splits_a_rex_block_running_the_thread_on_the_main_store() {
         let auth = name("auth");
+        let block = RexBlock::parse("block:1").unwrap();
         let words = |argv: &[&str]| -> Vec<String> { argv.iter().map(|w| w.to_string()).collect() };
         assert_eq!(
-            open_launch(spawn(&auth, Some("block:1"))),
+            open_launch(spawn(&auth, Some(&block))),
             OpenLaunch::Rex(words(&[
                 "split",
                 "-b",
@@ -842,7 +846,7 @@ mod tests {
         );
         let configured = OpenSpawn {
             config_dir: Some("/cfg"),
-            ..spawn(&auth, Some("block:1"))
+            ..spawn(&auth, Some(&block))
         };
         let OpenLaunch::Rex(argv) = open_launch(configured) else {
             panic!("expected rex");
@@ -856,9 +860,9 @@ mod tests {
     #[test]
     fn open_outside_rex_prints_the_command_to_run() {
         let auth = name("auth");
-        for block in [None, Some("")] {
+        for block in [None, RexBlock::parse("")] {
             assert_eq!(
-                open_launch(spawn(&auth, block)),
+                open_launch(spawn(&auth, block.as_ref())),
                 OpenLaunch::Manual(
                     "not in a Rex block, so /thread open opens nothing; run this in another terminal:\n  '/bin/ralph' 'chat' '--thread' 'auth' '--store' '/s/chat'"
                         .to_string()
@@ -900,10 +904,10 @@ mod tests {
 
     #[test]
     fn a_view_report_reads_as_thread_view_in_main() {
-        let report = view_report(&name("auth"), "block", "t");
+        let report = view_report(&name("auth"), "block", chrono::DateTime::UNIX_EPOCH);
         assert_eq!(
-            (report.worker.as_str(), report.at.as_str()),
-            ("thread:auth", "t")
+            (report.from.to_string().as_str(), report.at),
+            ("thread:auth", chrono::DateTime::UNIX_EPOCH)
         );
         assert_eq!(
             crate::worker::chat_message(&[report]),

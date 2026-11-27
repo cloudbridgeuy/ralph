@@ -446,7 +446,7 @@ impl Request {
     {
         let res = self.respond_impl(response);
         if let Some(sender) = self.notify_when_responded.take() {
-            sender.send(()).unwrap();
+            let _ = sender.send(());
         }
         after_write();
         res
@@ -464,7 +464,7 @@ impl Request {
             }
         }
         if let Some(sender) = self.notify_when_responded.take() {
-            sender.send(()).unwrap();
+            let _ = sender.send(());
         }
         after_write();
         res
@@ -544,7 +544,7 @@ mod tests {
     use crate::{HTTPVersion, Header, Method, Response};
     use std::io::Read;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc};
 
     struct FlaggedBody(Arc<AtomicBool>);
 
@@ -581,6 +581,43 @@ mod tests {
             .unwrap();
         assert!(!read_before_hook.load(Ordering::SeqCst));
         assert!(body_read.load(Ordering::SeqCst));
+    }
+
+    fn bodiless_request_with_dropped_receiver() -> Request {
+        let request = new_request(
+            false,
+            Method::Get,
+            "/".to_string(),
+            HTTPVersion(1, 1),
+            vec![],
+            None,
+            std::io::empty(),
+            std::io::sink(),
+        )
+        .unwrap();
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        request.with_notify_sender(sender)
+    }
+
+    #[test]
+    fn respond_then_survives_a_dropped_notify_receiver() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let hook = Arc::clone(&ran);
+        bodiless_request_with_dropped_receiver()
+            .respond_then(Response::empty(204), move || hook.store(true, Ordering::SeqCst))
+            .unwrap();
+        assert!(ran.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn respond_and_close_survives_a_dropped_notify_receiver() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let hook = Arc::clone(&ran);
+        bodiless_request_with_dropped_receiver()
+            .respond_and_close(Response::empty(204), move || hook.store(true, Ordering::SeqCst))
+            .unwrap();
+        assert!(ran.load(Ordering::SeqCst));
     }
 
     #[test]

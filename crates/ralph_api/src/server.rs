@@ -124,10 +124,9 @@ fn overload_delivery(peer: Option<IpAddr>, peers: &Arc<PeerCounts>) -> Delivery 
 }
 
 fn enter_capped(ip: IpAddr, peers: &Arc<PeerCounts>) -> Delivery {
-    let (guard, previous) = PeerCounts::enter(peers, ip);
-    match admit(previous, MAX_REJECTED_PER_PEER) {
-        Admission::Accept => Delivery::Drain(Some(guard)),
-        Admission::Reject => Delivery::Close,
+    match PeerCounts::try_enter(peers, ip, MAX_REJECTED_PER_PEER) {
+        Some(guard) => Delivery::Drain(Some(guard)),
+        None => Delivery::Close,
     }
 }
 
@@ -159,14 +158,47 @@ fn spawn_handler(
         let (config, token) = &*shared;
         let mut request = request;
         let response = route(&to_api_request(&mut request, config, token), config, token);
-        match limit_rejected(response, peer, &peers) {
-            (response, Delivery::Drain(guard)) => {
-                respond_then(request, response, move || drop(slot));
-                drop(guard);
-            }
-            (response, Delivery::Close) => respond_and_close(request, response, move || drop(slot)),
-        }
+        let (response, delivery) = limit_rejected(response, peer, &peers);
+        deliver(DeliverOptions {
+            target: request,
+            response,
+            delivery,
+            release: Box::new(move || drop(slot)),
+            on_drain: respond_then,
+            on_close: respond_and_close,
+        });
     });
+}
+
+struct DeliverOptions<T, D, C> {
+    target: T,
+    response: ApiResponse,
+    delivery: Delivery,
+    release: Box<dyn FnOnce()>,
+    on_drain: D,
+    on_close: C,
+}
+
+fn deliver<T, D, C>(options: DeliverOptions<T, D, C>)
+where
+    D: FnOnce(T, ApiResponse, Box<dyn FnOnce()>),
+    C: FnOnce(T, ApiResponse, Box<dyn FnOnce()>),
+{
+    let DeliverOptions {
+        target,
+        response,
+        delivery,
+        release,
+        on_drain,
+        on_close,
+    } = options;
+    match delivery {
+        Delivery::Drain(guard) => {
+            on_drain(target, response, release);
+            drop(guard);
+        }
+        Delivery::Close => on_close(target, response, release),
+    }
 }
 
 fn run_off_loop(request: Request, job: impl FnOnce(Request) + Send + 'static) {
@@ -292,9 +324,53 @@ mod tests {
     use super::*;
     use crate::route::{error, json_ok};
     use serde_json::json;
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
     fn peer() -> Option<IpAddr> {
         Some(IpAddr::from([100, 64, 0, 9]))
+    }
+
+    fn run_deliver(delivery: Delivery, during_drain: impl FnOnce()) -> (Vec<&'static str>, usize) {
+        let log = RefCell::new(Vec::new());
+        let released = Rc::new(Cell::new(0));
+        let counter = Rc::clone(&released);
+        deliver(DeliverOptions {
+            target: (),
+            response: error(401, "unauthorized"),
+            delivery,
+            release: Box::new(move || counter.set(counter.get() + 1)),
+            on_drain: |(), _, release: Box<dyn FnOnce()>| {
+                log.borrow_mut().push("drain");
+                during_drain();
+                release();
+            },
+            on_close: |(), _, release: Box<dyn FnOnce()>| {
+                log.borrow_mut().push("close");
+                release();
+            },
+        });
+        (log.into_inner(), released.get())
+    }
+
+    #[test]
+    fn deliver_drains_a_drain_delivery_and_releases_the_guard_after() {
+        let peers = Arc::new(PeerCounts::default());
+        let guard = PeerCounts::try_enter(&peers, peer().unwrap(), MAX_REJECTED_PER_PEER);
+        assert!(guard.is_some());
+        let (log, released) = run_deliver(Delivery::Drain(guard), || {
+            assert!(PeerCounts::try_enter(&peers, peer().unwrap(), 1).is_none());
+        });
+        assert_eq!(log, ["drain"]);
+        assert_eq!(released, 1);
+        assert!(PeerCounts::try_enter(&peers, peer().unwrap(), 1).is_some());
+    }
+
+    #[test]
+    fn deliver_closes_a_close_delivery() {
+        let (log, released) = run_deliver(Delivery::Close, || {});
+        assert_eq!(log, ["close"]);
+        assert_eq!(released, 1);
     }
 
     #[test]
@@ -310,8 +386,7 @@ mod tests {
         let (response, delivery) = limit_rejected(error(403, "forbidden host"), peer(), &peers);
         assert_eq!(response.status, 503);
         assert!(matches!(delivery, Delivery::Close));
-        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
-        assert_eq!(previous, MAX_REJECTED_PER_PEER);
+        assert!(PeerCounts::try_enter(&peers, peer().unwrap(), MAX_REJECTED_PER_PEER).is_none());
     }
 
     #[test]
@@ -330,17 +405,15 @@ mod tests {
     fn reject_overloaded_holds_the_guard_through_the_drain() {
         let peers = Arc::new(PeerCounts::default());
         let ip = IpAddr::from([100, 64, 0, 9]);
-        let (guard, _) = PeerCounts::enter(&peers, ip);
-        let mut held_during_drain = 0;
-        reject_overloaded(Some(guard), |after_write| {
+        let guard = PeerCounts::try_enter(&peers, ip, 1);
+        assert!(guard.is_some());
+        let mut held_during_drain = false;
+        reject_overloaded(guard, |after_write| {
             after_write();
-            let (probe, previous) = PeerCounts::enter(&peers, ip);
-            held_during_drain = previous;
-            drop(probe);
+            held_during_drain = PeerCounts::try_enter(&peers, ip, 1).is_none();
         });
-        assert_eq!(held_during_drain, 1);
-        let (_probe, after) = PeerCounts::enter(&peers, ip);
-        assert_eq!(after, 0);
+        assert!(held_during_drain);
+        assert!(PeerCounts::try_enter(&peers, ip, 1).is_some());
     }
 
     #[test]
@@ -353,8 +426,7 @@ mod tests {
             .iter()
             .all(|delivery| matches!(delivery, Delivery::Drain(Some(_)))));
         assert!(matches!(overload_delivery(peer(), &peers), Delivery::Close));
-        let (_probe, previous) = PeerCounts::enter(&peers, peer().unwrap());
-        assert_eq!(previous, MAX_REJECTED_PER_PEER);
+        assert!(PeerCounts::try_enter(&peers, peer().unwrap(), MAX_REJECTED_PER_PEER).is_none());
     }
 
     #[test]

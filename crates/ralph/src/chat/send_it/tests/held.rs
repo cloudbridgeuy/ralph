@@ -30,7 +30,7 @@ pub(in crate::chat) fn monitor(dir: &Path) -> Monitor {
         workers: Workers::new(
             dir.to_path_buf(),
             PathBuf::from("ralph"),
-            String::new(),
+            ClaudeMode::Auto,
             None,
         ),
         check: Mutex::new(CheckState::seeded(&store)),

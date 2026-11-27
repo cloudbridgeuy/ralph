@@ -275,7 +275,8 @@ mod tests {
     fn a_close_report_is_never_drained_into_a_turn() {
         let dir = tempfile::tempdir().unwrap();
         let monitor = monitor(dir.path());
-        let closed = thread_closed_report(&name("auth"), AutoMode::Merge, "t");
+        let closed =
+            thread_closed_report(&name("auth"), AutoMode::Merge, chrono::DateTime::UNIX_EPOCH);
         monitor.inbox.post(&closed, 0).unwrap();
         assert!(monitor.drain(Selection::All).unwrap().is_empty());
     }

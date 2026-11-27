@@ -285,4 +285,19 @@ mod tests {
         let value = body(&config(&get_request(), &handler_config(&g2, &s2, no_env)));
         assert!(!text_contains_row(&value, "wrap_width"));
     }
+
+    #[test]
+    fn dotted_sensitive_price_key_never_reaches_the_body() {
+        let (g, s) = setup(
+            None,
+            Some("[wire.prices.\"/Users/alice/acme.corp\"]\ninput = 1\n"),
+        );
+        let response = respond(&g, &s, no_env);
+        let raw = text(&response);
+        assert!(!raw.contains("corp"), "{raw}");
+        assert!(!raw.contains("/Users"), "{raw}");
+        let masked = row(&body(&response), "wire", "[redacted-1]").clone();
+        assert_eq!(masked["redacted"], true, "{raw}");
+        assert_eq!(masked["value"], "[redacted]", "{raw}");
+    }
 }
