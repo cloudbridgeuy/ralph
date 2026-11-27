@@ -96,10 +96,11 @@ impl AgyStream {
 
     fn hold(&mut self, text: &str) -> Vec<StreamEvent> {
         self.held.push_str(text);
-        let Some(end) = self.held.rfind('\n') else {
+        let end = safe_end(&self.held);
+        if end == 0 {
             return Vec::new();
-        };
-        let mut ready: String = self.held.drain(..=end).collect();
+        }
+        let mut ready: String = self.held.drain(..end).collect();
         ready.pop();
         vec![assistant(ContentBlock::Text { text: ready })]
     }
@@ -112,6 +113,26 @@ impl AgyStream {
             text: std::mem::take(&mut self.held),
         })]
     }
+}
+
+fn safe_end(held: &str) -> usize {
+    let mut fenced = false;
+    let mut offset = 0;
+    let mut safe = 0;
+    for line in held.split_inclusive('\n') {
+        if !line.ends_with('\n') {
+            break;
+        }
+        offset += line.len();
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            fenced = !fenced;
+        }
+        if !fenced && !trimmed.starts_with('|') {
+            safe = offset;
+        }
+    }
+    safe
 }
 
 fn update_events(update: &Value) -> Vec<StreamEvent> {
@@ -390,6 +411,24 @@ mod stream_tests {
         let events = stream.events(&AgyEvent::Update(&call));
         assert_eq!(events.len(), 2, "{events:?}");
         assert_eq!(text_of(events[..1].to_vec()), ["done"]);
+    }
+
+    #[test]
+    fn an_open_fence_waits_for_its_close() {
+        let mut stream = AgyStream::default();
+        let opened = stream.events(&AgyEvent::Update(&chunk("intro\n```rust\nfn a() {}\n")));
+        assert_eq!(text_of(opened), ["intro"]);
+        let closed = stream.events(&AgyEvent::Update(&chunk("```\nafter\n")));
+        assert_eq!(text_of(closed), ["```rust\nfn a() {}\n```\nafter"]);
+    }
+
+    #[test]
+    fn trailing_table_rows_wait_for_the_next_line() {
+        let mut stream = AgyStream::default();
+        let rows = stream.events(&AgyEvent::Update(&chunk("head\n| a | b |\n|---|---|\n")));
+        assert_eq!(text_of(rows), ["head"]);
+        let ended = stream.events(&AgyEvent::Update(&chunk("| 1 | 2 |\nnext\n")));
+        assert_eq!(text_of(ended), ["| a | b |\n|---|---|\n| 1 | 2 |\nnext"]);
     }
 
     #[test]

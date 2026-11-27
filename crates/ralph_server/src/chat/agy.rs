@@ -201,6 +201,7 @@ impl AgySession {
                     for event in stream.events(&AgyEvent::Update(&update)) {
                         pump.event(event);
                     }
+                    pump.flush_prose();
                 }
                 Some(AcpEvent::Ask(mut ask, sender)) => {
                     self.asks += 1;

@@ -237,7 +237,7 @@ impl StreamCollector {
         blocks
     }
 
-    fn flush_pending_chunks(&mut self, files: &dyn Files) -> Vec<OutputBlock> {
+    pub fn flush_pending_chunks(&mut self, files: &dyn Files) -> Vec<OutputBlock> {
         let chunks = self.chunk_buffer.finish();
         self.emit_chunks(chunks, files)
     }
@@ -434,6 +434,32 @@ mod tests {
         }
         let (_, result) = collector.finish(&files);
         super::super::output_block::extract_response_text(&result.output_blocks).unwrap()
+    }
+
+    #[test]
+    fn agy_lines_are_shown_before_the_turn_ends() {
+        use crate::worker::{AgyEvent, AgyStream};
+        use serde_json::json;
+
+        let files = FakeFiles(HashMap::new());
+        let mut collector = StreamCollector::new(true, VerboseToolsConfig::default());
+        let mut stream = AgyStream::default();
+        let shown: Vec<_> = ["1. first story.\n", "2. second", " story.\n3. third"]
+            .iter()
+            .map(|text| json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}))
+            .flat_map(|update| {
+                let mut blocks: Vec<_> = stream
+                    .events(&AgyEvent::Update(&update))
+                    .into_iter()
+                    .flat_map(|event| collector.process_event(event, &files))
+                    .collect();
+                blocks.extend(collector.flush_pending_chunks(&files));
+                blocks
+            })
+            .collect();
+        let text = super::super::output_block::extract_response_text(&shown).unwrap();
+        assert!(text.contains("2. second story."), "{text}");
+        assert!(!text.contains("3. third"), "{text}");
     }
 
     #[test]
