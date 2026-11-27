@@ -13,7 +13,7 @@ pub struct Layout<'a> {
     pub git_root: &'a Path,
     pub cwd: &'a Path,
     pub user_dir: Option<&'a Path>,
-    pub project: bool,
+    pub excludes: &'a [PathBuf],
 }
 
 pub fn git_root(cwd: &Path, is_root: &impl Fn(&Path) -> bool) -> PathBuf {
@@ -23,18 +23,25 @@ pub fn git_root(cwd: &Path, is_root: &impl Fn(&Path) -> bool) -> PathBuf {
         .to_path_buf()
 }
 
+pub fn chat_project_excludes(cwd: &Path) -> Vec<PathBuf> {
+    let [memory, dot_claude, local] = PROJECT_FILES;
+    [memory, local, dot_claude]
+        .map(|name| cwd.join(name))
+        .into()
+}
+
 pub fn claude_md_paths(layout: &Layout) -> Vec<PathBuf> {
     let user = layout.user_dir.map(|dir| dir.join(FILE_NAME));
     let mut dirs: Vec<&Path> = layout
         .cwd
         .ancestors()
         .take_while(|dir| dir.starts_with(layout.git_root))
-        .filter(|_| layout.project)
         .collect();
     dirs.reverse();
     let project = dirs
         .into_iter()
-        .flat_map(|dir| PROJECT_FILES.map(|name| dir.join(name)));
+        .flat_map(|dir| PROJECT_FILES.map(|name| dir.join(name)))
+        .filter(|path| !layout.excludes.contains(path));
     user.into_iter().chain(project).collect()
 }
 
@@ -143,13 +150,17 @@ mod tests {
         })
     }
 
-    fn layout<'a>(project: bool, user_dir: Option<&'a Path>) -> Layout<'a> {
+    fn layout<'a>(excludes: &'a [PathBuf], user_dir: Option<&'a Path>) -> Layout<'a> {
         Layout {
             git_root: Path::new("/r"),
             cwd: Path::new("/r/a/b"),
             user_dir,
-            project,
+            excludes,
         }
+    }
+
+    fn paths_of(list: &[&str]) -> Vec<PathBuf> {
+        list.iter().map(PathBuf::from).collect()
     }
 
     #[test]
@@ -228,7 +239,7 @@ mod tests {
             git_root: Path::new("/r"),
             cwd: Path::new("/r/a"),
             user_dir: Some(Path::new("/h/.claude")),
-            project: true,
+            excludes: &[],
         };
         let expected: Vec<PathBuf> = [
             "/h/.claude/CLAUDE.md",
@@ -246,12 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn project_off_drops_dot_claude_and_local_files() {
-        let paths = claude_md_paths(&layout(false, Some(Path::new("/h/.claude"))));
-        assert!(paths.iter().all(|path| path.starts_with("/h/.claude")));
-    }
-
-    #[test]
     fn missing_project_files_are_skipped() {
         let map = files(&[("/r/CLAUDE.local.md", "mine")]);
         let text = run(
@@ -262,16 +267,47 @@ mod tests {
     }
 
     #[test]
-    fn project_off_leaves_only_the_user_file() {
-        let paths = claude_md_paths(&layout(false, Some(Path::new("/h/.claude"))));
-        assert_eq!(paths, vec![PathBuf::from("/h/.claude/CLAUDE.md")]);
+    fn the_exclude_list_is_the_cwd_files_as_exact_paths() {
+        assert_eq!(
+            chat_project_excludes(Path::new("/r/a/b")),
+            paths_of(&[
+                "/r/a/b/CLAUDE.md",
+                "/r/a/b/CLAUDE.local.md",
+                "/r/a/b/.claude/CLAUDE.md",
+            ])
+        );
     }
 
     #[test]
-    fn both_flags_off_inline_nothing() {
-        let paths = claude_md_paths(&layout(false, None));
-        assert!(paths.is_empty());
-        assert_eq!(run(&HashMap::new(), &[]), "");
+    fn project_off_drops_only_the_cwd_files() {
+        let excludes = chat_project_excludes(Path::new("/r/a/b"));
+        let paths = claude_md_paths(&layout(&excludes, None));
+        assert_eq!(
+            paths,
+            paths_of(&[
+                "/r/CLAUDE.md",
+                "/r/.claude/CLAUDE.md",
+                "/r/CLAUDE.local.md",
+                "/r/a/CLAUDE.md",
+                "/r/a/.claude/CLAUDE.md",
+                "/r/a/CLAUDE.local.md",
+            ])
+        );
+    }
+
+    #[test]
+    fn project_on_excludes_nothing() {
+        let paths = claude_md_paths(&layout(&[], None));
+        assert_eq!(paths.len(), 9);
+        assert!(paths.contains(&PathBuf::from("/r/a/b/CLAUDE.local.md")));
+    }
+
+    #[test]
+    fn user_off_keeps_the_project_files() {
+        let on = claude_md_paths(&layout(&[], Some(Path::new("/h/.claude"))));
+        let off = claude_md_paths(&layout(&[], None));
+        assert_eq!(on[0], PathBuf::from("/h/.claude/CLAUDE.md"));
+        assert_eq!(&on[1..], &off[..]);
     }
 
     #[test]

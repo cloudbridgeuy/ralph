@@ -5,7 +5,9 @@ use ralph_core::chat::{CustomPrompt, ReplyImages};
 use ralph_core::chat_process::{run_id, SessionKey};
 use ralph_core::chat_tools::chat_tool_policy;
 use ralph_core::claude_leftovers::claude_dir;
-use ralph_core::claude_md::{claude_md_paths, git_root, inline_claude_md, Layout, Loaded};
+use ralph_core::claude_md::{
+    chat_project_excludes, claude_md_paths, git_root, inline_claude_md, Layout, Loaded,
+};
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::turn_event::TurnSink;
 use ralph_core::worker::ATTACHMENTS_DIR;
@@ -259,11 +261,16 @@ fn agy_claude_md(config: &ralph_server::config::AppConfig, cwd: &Path) -> String
         .filter(|_| config.chat.user_claude_md)
         .map(|home| claude_dir(config.claude.config_dir.as_deref(), home));
     let root = git_root(cwd, &|dir| dir.join(".git").exists());
+    let excludes = if config.chat.project_claude_md {
+        Vec::new()
+    } else {
+        chat_project_excludes(cwd)
+    };
     let paths = claude_md_paths(&Layout {
         git_root: &root,
         cwd,
         user_dir: user_dir.as_deref(),
-        project: config.chat.project_claude_md,
+        excludes: &excludes,
     });
     inline_claude_md(&paths, home.as_deref(), &|path| {
         let path = path.canonicalize().ok()?;

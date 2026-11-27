@@ -1075,7 +1075,7 @@ A harness is the agent CLI a chat runs on. Each harness has one slot: its `ChatB
 | Tool permission asks | yes | yes; ACP asks go to the same prompt, and a denied or late ask answers deny |
 | Cancel | yes | session cancel, then a kill after a 3 s grace |
 | Mid-turn queue | yes | yes; the queue editor is shared |
-| CLAUDE.md | claude loads it | inlined into the opening prompt (CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md; claudeMdExcludes not applied yet), see below |
+| CLAUDE.md | claude loads it | inlined into the opening prompt (CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md; the chat's exact-path excludes apply), see below |
 | Skills | yes | plugin not loaded; slash expansion still works |
 | User settings (`[chat] user_settings`) | yes | not read |
 | Subagents (`--agents`) | yes | no |
@@ -1086,7 +1086,7 @@ A harness is the agent CLI a chat runs on. Each harness has one slot: its `ChatB
 | Model alias in the status bar | yes | the model from `[chat.agy] model` or `--model` |
 | Retry on outage or quota | yes | outage only, see below |
 
-- CLAUDE.md: the opening prompt gets the system prompt, then the text of each CLAUDE.md. The user file counts only with `[chat] user_claude_md`. The project files run from the git root down to the working dir, and `[chat] project_claude_md = false` leaves them out. An `@path` import must be the whole line, with no spaces. `~/` and absolute paths work. Import depth is 5. A file already on the import path is skipped (cycle guard). Lines inside a fenced code block are never imports. Each directory reads `CLAUDE.md`, then `.claude/CLAUDE.md`, then `CLAUDE.local.md`; `project_claude_md = false` skips all three. `claudeMdExcludes` is not applied yet.
+- CLAUDE.md: the opening prompt gets the system prompt, then the text of each CLAUDE.md. The user file counts only with `[chat] user_claude_md`. The project files run from the git root down to the working dir, and `[chat] project_claude_md = false` leaves out the working dir's files only. An `@path` import must be the whole line, with no spaces. `~/` and absolute paths work. Import depth is 5. A file already on the import path is skipped (cycle guard). Lines inside a fenced code block are never imports. Each directory reads `CLAUDE.md`, then `.claude/CLAUDE.md`, then `CLAUDE.local.md`; `project_claude_md = false` skips only the working dir's three files, as the `claudeMdExcludes` exact paths of `Isolation::for_chat` do for claude (`chat_project_excludes`, one shared list); files of parent directories still load.
 - ctx: `used` from `usage_update` is mapped to the usage of an assistant event. The window is the `[chat] reset_tokens` limit, not the window agy reports. `size` is not used.
 - Start notice: claude-only settings that are set on agy are listed in one start warning (`chat on agy ignores ...`): `[chat] skills`, `[chat] user_settings`, `[claude] config_dir`, subagents and attachments. `[chat.claude] model` is ignored too, with no warning.
 - Notices: agy puts warnings in the reply text, as a line that starts with `⚠`. A quota notice fails the turn with `agy quota reached; resets in <time>` and is not retried. An `API error` notice fails the turn as an outage, and the shared retry runs. An auth or unknown notice fails the turn with no retry.

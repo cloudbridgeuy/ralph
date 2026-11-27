@@ -1,5 +1,6 @@
 use crate::config::ChatSection;
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
+use ralph_core::claude_md::chat_project_excludes;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::worker::inbox_env;
 use std::io;
@@ -34,11 +35,7 @@ impl Isolation {
             project_excludes: if chat.project_claude_md {
                 Vec::new()
             } else {
-                vec![
-                    cwd.join("CLAUDE.md"),
-                    cwd.join("CLAUDE.local.md"),
-                    cwd.join(".claude").join("CLAUDE.md"),
-                ]
+                chat_project_excludes(cwd)
             },
             config_dir: config_dir.map(Path::to_path_buf),
             no_auto_memory: false,
@@ -539,6 +536,19 @@ mod tests {
             &Isolation::for_chat(&chat, Path::new("/work"), None),
             false,
         )
+    }
+
+    #[test]
+    fn project_claude_md_off_writes_the_shared_exclude_list() {
+        let chat = ChatSection {
+            project_claude_md: false,
+            ..ChatSection::default()
+        };
+        let isolation = Isolation::for_chat(&chat, Path::new("/work"), None);
+        assert_eq!(
+            isolation.project_excludes,
+            chat_project_excludes(Path::new("/work"))
+        );
     }
 
     #[test]
