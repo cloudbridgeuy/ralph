@@ -235,6 +235,46 @@ fn a_signal_on_connect_is_not_a_user_quit() {
 }
 
 #[test]
+fn a_missing_or_refused_socket_is_retried() {
+    for kind in [
+        io::ErrorKind::NotFound,
+        io::ErrorKind::ConnectionRefused,
+        io::ErrorKind::UnexpectedEof,
+        io::ErrorKind::ConnectionReset,
+        io::ErrorKind::BrokenPipe,
+        io::ErrorKind::NotConnected,
+    ] {
+        assert_eq!(
+            dial_step(kind, 0),
+            DialStep::Retry(DIAL_FIRST_DELAY),
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn other_dial_errors_fail_at_once() {
+    for kind in [
+        io::ErrorKind::PermissionDenied,
+        io::ErrorKind::InvalidInput,
+        io::ErrorKind::InvalidData,
+        io::ErrorKind::Other,
+    ] {
+        assert_eq!(dial_step(kind, 0), DialStep::Fail, "{kind:?}");
+    }
+}
+
+#[test]
+fn the_dial_delay_doubles_up_to_the_cap() {
+    let millis = |failures| match dial_step(io::ErrorKind::NotFound, failures) {
+        DialStep::Retry(delay) => delay.as_millis(),
+        DialStep::Fail => 0,
+    };
+    let delays = [0, 1, 2, 3, 4, 5, 6, u32::MAX].map(millis);
+    assert_eq!(delays, [250, 500, 1000, 2000, 4000, 5000, 5000, 5000]);
+}
+
+#[test]
 fn read_prompt_until_stops_on_interrupted_when_terminated() {
     let mut calls = 0;
     let flag = std::cell::Cell::new(false);

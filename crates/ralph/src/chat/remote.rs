@@ -20,6 +20,7 @@ use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::blocks::{truncate_string, OutputBlock};
 use ralph_core::turn_event::{TurnEvent, TurnSink};
 use ralph_core::worker::{blocked_notice, Attention, Report, ReportKind, Sender};
+use ralph_server::backoff::wait_unless;
 use ralph_server::chat::ask::Ask;
 use ralph_server::chat::port::{SessionPort, TurnCall};
 use ralph_server::chat::send_it::Screen;
@@ -43,6 +44,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(100);
+const DIAL_FIRST_DELAY: Duration = Duration::from_millis(250);
+const DIAL_DELAY_CAP: Duration = Duration::from_secs(5);
 
 #[derive(Debug, PartialEq)]
 enum Step {
@@ -274,6 +277,114 @@ fn read_prompt_until<T>(
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DialStep {
+    Retry(Duration),
+    Fail,
+}
+
+fn dial_step(kind: io::ErrorKind, failures: u32) -> DialStep {
+    use io::ErrorKind::{
+        BrokenPipe, ConnectionRefused, ConnectionReset, NotConnected, NotFound, UnexpectedEof,
+    };
+    match kind {
+        NotFound | ConnectionRefused | UnexpectedEof | ConnectionReset | BrokenPipe
+        | NotConnected => DialStep::Retry(
+            DIAL_FIRST_DELAY
+                .saturating_mul(2u32.saturating_pow(failures))
+                .min(DIAL_DELAY_CAP),
+        ),
+        _ => DialStep::Fail,
+    }
+}
+
+fn try_read(
+    reader: &mut BufReader<UnixStream>,
+    line: &mut String,
+) -> Result<Option<ServerMsg>, Box<dyn Error>> {
+    match reader.read_line(line) {
+        Ok(0) => Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "ralph serve closed the connection",
+        )
+        .into()),
+        Ok(_) if line.ends_with('\n') => {
+            let frame = decode_frame::<ServerMsg>(line.trim_end())?;
+            line.clear();
+            Ok(Some(frame.body))
+        }
+        Ok(_) => Ok(None),
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn greet(
+    socket: &Path,
+    stop: impl Fn() -> bool,
+) -> Result<Option<BufReader<UnixStream>>, Box<dyn Error>> {
+    let mut stream = UnixStream::connect(socket)?;
+    stream.set_read_timeout(Some(POLL))?;
+    stream.write_all(encode_frame(1, &ClientMsg::Hello { proto: VERSION }).as_bytes())?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    while !stop() {
+        match try_read(&mut reader, &mut line)? {
+            Some(ServerMsg::Hello { .. }) => return Ok(Some(reader)),
+            Some(ServerMsg::Error { message }) => return Err(message.into()),
+            Some(_) => return Err("ralph serve did not answer the hello".into()),
+            None => {}
+        }
+    }
+    Ok(None)
+}
+
+enum Dialed {
+    Up(BufReader<UnixStream>),
+    UserQuit,
+    Terminated,
+}
+
+fn dial(socket: &Path) -> Result<Dialed, Box<dyn Error>> {
+    let cancel = CancelToken::default();
+    let _armed = signal::arm(&cancel);
+    let stop = || cancel.is_cancelled() || signal::is_terminated();
+    let mut failures = 0;
+    while !stop() {
+        let error = match greet(socket, stop) {
+            Ok(Some(reader)) => return Ok(Dialed::Up(reader)),
+            Ok(None) => continue,
+            Err(error) => error,
+        };
+        let step = error
+            .downcast_ref::<io::Error>()
+            .map_or(DialStep::Fail, |io| dial_step(io.kind(), failures));
+        let DialStep::Retry(delay) = step else {
+            return Err(error);
+        };
+        if failures == 0 {
+            notice(format!(
+                "waiting for ralph serve at {}. Ctrl-C quits.",
+                socket.display()
+            ));
+        }
+        failures = failures.saturating_add(1);
+        wait_unless(stop, delay);
+    }
+    Ok(if signal::is_terminated() {
+        Dialed::Terminated
+    } else {
+        Dialed::UserQuit
+    })
+}
+
 struct RemoteSession {
     socket: PathBuf,
     stream: RefCell<BufReader<UnixStream>>,
@@ -286,32 +397,21 @@ struct RemoteSession {
 }
 
 impl RemoteSession {
-    fn connect(
+    fn greeted(
         socket: &Path,
+        reader: BufReader<UnixStream>,
         sink: Box<dyn TurnSink>,
         alert: AlertConfig,
-    ) -> Result<Option<Self>, Box<dyn Error>> {
-        let stream = UnixStream::connect(socket)?;
-        stream.set_read_timeout(Some(POLL))?;
-        let session = Self {
+    ) -> Self {
+        Self {
             socket: socket.to_path_buf(),
-            stream: RefCell::new(BufReader::new(stream)),
-            next_id: Cell::new(1),
+            stream: RefCell::new(reader),
+            next_id: Cell::new(2),
             turns: Cell::new(0),
             attached: RefCell::new(None),
             sink,
             stdout_is_tty: io::stdout().is_terminal(),
             alert,
-        };
-        session.write(&ClientMsg::Hello { proto: VERSION })?;
-        let Some(reply) = session.read_reply()? else {
-            session.end_session();
-            return Ok(None);
-        };
-        match reply {
-            ServerMsg::Hello { .. } => Ok(Some(session)),
-            ServerMsg::Error { message } => Err(message.into()),
-            _ => Err("ralph serve did not answer the hello".into()),
         }
     }
 
@@ -434,22 +534,8 @@ impl RemoteSession {
             if terminated() {
                 return Ok(None);
             }
-            match self.stream.borrow_mut().read_line(line) {
-                Ok(0) => return Err("ralph serve closed the connection".into()),
-                Ok(_) if line.ends_with('\n') => {
-                    let frame = decode_frame::<ServerMsg>(line.trim_end())?;
-                    line.clear();
-                    return Ok(Some(frame.body));
-                }
-                Ok(_) => {}
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::WouldBlock
-                            | io::ErrorKind::TimedOut
-                            | io::ErrorKind::Interrupted
-                    ) => {}
-                Err(e) => return Err(e.into()),
+            if let Some(msg) = try_read(&mut self.stream.borrow_mut(), line)? {
+                return Ok(Some(msg));
             }
             let (cancelled, sent) = match cancel.as_ref() {
                 Some((token, sent)) => (token.is_cancelled(), **sent),
@@ -633,9 +719,12 @@ pub(super) fn run(socket: &Path, alert: AlertConfig) -> Result<Departure, Box<dy
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     let theme = ThemeConfig::from_config_and_env();
     let sink = TerminalSink::new(None, &theme, screen_columns)?;
-    let Some(remote) = RemoteSession::connect(socket, Box::new(sink), alert)? else {
-        return Ok(Departure::Restart);
+    let reader = match dial(socket)? {
+        Dialed::Up(reader) => reader,
+        Dialed::UserQuit => return Ok(Departure::UserQuit),
+        Dialed::Terminated => return Ok(Departure::Restart),
     };
+    let remote = RemoteSession::greeted(socket, reader, Box::new(sink), alert);
     if settle(remote.status_line().map(print_or_exit))? == Flow::Exit {
         remote.end_session();
         return Ok(Departure::Restart);
